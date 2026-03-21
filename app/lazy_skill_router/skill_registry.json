@@ -1,0 +1,53 @@
+{
+  "version": "2.0.0",
+  "skills": [
+    {
+      "name": "realtime-lookup",
+      "description": "Fast real-time data lookups: weather, exchange rates, stock/crypto quotes, sports scores, fuel prices, time zones.",
+      "trigger_keywords": ["天气", "气温", "温度", "预报", "weather", "forecast", "汇率", "exchange rate", "股票", "股价", "stock", "比特币", "bitcoin", "以太坊", "ethereum", "加密货币", "crypto", "油价", "汽油", "柴油", "petrol", "diesel", "fuel", "比分", "score", "现在几点", "time", "东京", "伦敦", "纽约", "悉尼"],
+      "trigger_intents": ["realtime_weather", "realtime_quote", "realtime_rate", "realtime_fuel", "realtime_sports", "realtime_time"],
+      "priority": 85,
+      "path": "skills/bundles/realtime_lookup"
+    },
+    {
+      "name": "web-research",
+      "description": "Conducts deep web research, navigates pages, and extracts structured information from the internet.",
+      "trigger_keywords": ["搜索", "上网", "联网", "网页", "网站", "官网", "浏览", "链接", "url", "参数", "版本", "商品", "b站", "哔哩哔哩", "search", "find", "look up", "google", "research", "website", "link", "browse"],
+      "trigger_intents": ["web_search", "general_research"],
+      "priority": 50,
+      "path": "skills/bundles/web_research"
+    },
+    {
+      "name": "document-editing",
+      "description": "Reads, writes, summarizes, and edits local text and document files.",
+      "trigger_keywords": ["文件", "文档", "markdown", "md", "txt", "json", "csv", "yaml", "yml", ".py", "目录", "读取", "总结", "提取重点", "修改文档", "保存为新文件", "diff", "patch", "file", "document", "read", "write", "edit", "create", "save"],
+      "trigger_intents": ["local_action"],
+      "priority": 50,
+      "path": "skills/bundles/document_editing"
+    },
+    {
+      "name": "screen-understanding",
+      "description": "Captures and analyzes the user's current screen, active windows, and UI elements.",
+      "trigger_keywords": ["屏幕", "窗口", "界面", "截图", "点哪里", "下一步", "看看我屏幕", "活动窗口", "任务栏", "当前画面", "screen", "screenshot", "window", "look at", "see", "display", "visible", "UI"],
+      "trigger_intents": ["local_action"],
+      "priority": 60,
+      "path": "skills/bundles/screen_understanding"
+    },
+    {
+      "name": "terminal-agent",
+      "description": "Executes shell commands, manages system operations, and interacts with the local environment.",
+      "trigger_keywords": ["代码", "仓库", "repo", "project", "终端", "命令", "shell", "测试", "pytest", "build", "lint", "修复", "实现", "重构", "改代码", "run", "execute", "install", "command", "terminal", "script", "pip", "npm"],
+      "trigger_intents": ["local_action", "system_ops"],
+      "priority": 50,
+      "path": "skills/bundles/terminal_agent"
+    },
+    {
+      "name": "news-intelligence",
+      "description": "Retrieves, filters, and summarizes the latest news articles and headlines.",
+      "trigger_keywords": ["新闻", "头条", "快讯", "动态", "news", "it之家", "ithome", "科技简报", "值得看的科技新闻", "技术观察库", "观察库", "项目相关的新闻"],
+      "trigger_intents": ["news", "realtime_info"],
+      "priority": 40,
+      "path": "skills/bundles/news_intelligence"
+    }
+  ]
+}

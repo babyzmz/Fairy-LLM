@@ -1,0 +1,113 @@
+# OS / shell noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+_tmp*
+
+# Editors / local workspace metadata
+.idea/
+.vscode/
+.claude/
+*.code-workspace
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+cosyvoice_env/
+tools/python310/
+
+# AI / ML runtime caches
+/.cache/
+/cache/
+/.hf_home/
+/.matplotlib/
+/.vendor/
+
+# Runtime state / generated outputs
+/data/
+/project_output/
+/outputs/
+/artifacts/
+/reports/
+
+# Local config / secrets
+config/local_secrets.json
+config/app_preferences.json
+config/system_state.json
+
+# Models / checkpoints / large weights
+/models/
+/third_party/
+*.gguf
+*.ggml
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.model
+*.npz
+
+# Local native runtime binaries / media assets
+/app/ai/*.dll
+/app/ai/*.exe
+/app/ai/*.lib
+/app/ai/*.pyd
+/app/ai/voice/*.wav
+/app/ai/voice/*.WAV
+/app/ai/voice/*.mp3
+
+# Logs / databases
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Archives / office docs / generated packages
+*.zip
+*.7z
+*.tar
+*.gz
+*.rar
+*.docx
+
+# Legacy / scratch work
+/fairy_refactor/
+/debug_*.py
+/demonstrate_*.py

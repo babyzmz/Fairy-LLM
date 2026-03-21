@@ -1,0 +1,5 @@
+--extra-index-url https://download.pytorch.org/whl/cu128
+soundfile
+numpy
+huggingface_hub
+funasr

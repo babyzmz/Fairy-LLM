@@ -1,0 +1,10 @@
+[
+  "list_dir",
+  "search_files",
+  "read_text_file",
+  "write_text_file",
+  "summarize_document",
+  "extract_sections",
+  "propose_edit",
+  "apply_patch"
+]

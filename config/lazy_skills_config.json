@@ -1,0 +1,31 @@
+{
+  "use_lazy_skills": true,
+  "use_legacy_fallback": false,
+  "enable_debug_logging": true,
+  "graceful_fallback": true,
+  "prefer_realtime": true,
+  "realtime_timeout_sec": 8,
+  "web_research_timeout_sec": 15,
+  "_comments": {
+    "use_lazy_skills": "Enable the new Anthropic-style lazy skill pipeline",
+    "use_legacy_fallback": "DEPRECATED: Legacy skills are now isolated. Set to false to prevent loading.",
+    "enable_debug_logging": "Enable detailed logging for skill routing and execution",
+    "graceful_fallback": "If a skill fails, attempt fallback (if allowed by skill)",
+    "prefer_realtime": "Route real-time queries (weather, rates, etc.) to realtime_lookup first",
+    "realtime_timeout_sec": "Timeout for realtime_lookup operations",
+    "web_research_timeout_sec": "Timeout for web_research operations"
+  },
+  "_migration_notes": {
+    "stage": "2 - Legacy Isolation + Realtime Bundle",
+    "legacy_skills_location": "app/skills/legacy_isolation.py",
+    "realtime_bundle_location": "app/skills/bundles/realtime_lookup/",
+    "router_location": "app/skills/lazy_router.py",
+    "next_steps": [
+      "Implement realtime_lookup execution engine",
+      "Add tool implementations for weather, rates, quotes",
+      "Create comprehensive test suite",
+      "Monitor routing decisions and fallback rates"
+    ]
+  }
+}
+

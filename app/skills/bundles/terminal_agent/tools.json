@@ -1,0 +1,9 @@
+[
+  "read_file",
+  "run_command",
+  "search_web",
+  "open_url",
+  "browser_interact",
+  "edit_file",
+  "search_files"
+]

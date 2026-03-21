@@ -1,0 +1,7 @@
+[
+  "capture_screen",
+  "capture_active_window",
+  "get_active_app",
+  "get_accessibility_tree",
+  "describe_visible_regions"
+]
