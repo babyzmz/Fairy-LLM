@@ -595,6 +595,7 @@ class FairyCore:
     def _build_routing_debug_payload(self, decision: RoutingDecision) -> dict[str, Any]:
         return {
             "primary_intent": decision.primary_intent,
+            "planner_confidence": round(float(decision.planner_confidence), 4),
             "tool_needed": decision.tool_needed,
             "clarification_needed": decision.clarification_needed,
             "selected_tool": decision.selected_tool,
@@ -767,6 +768,7 @@ class FairyCore:
         user_request: str,
         attachments: list[str],
         memory_prompt: str,
+        route_context: RouteContext | None = None,
     ) -> SkillResult:
         if candidate.name in {"direct_answer", "knowledge_lookup"}:
             return self._execute_direct_answer(
@@ -793,6 +795,17 @@ class FairyCore:
             return skill.execute(user_request, candidate.allowed_tools, memory_context=memory_prompt)
         if skill_name == DocumentEditorSkill.SPEC.name:
             return skill.execute(user_request, candidate.allowed_tools, attachment_paths=attachments, memory_context=memory_prompt)
+        if skill_name == WebResearchSkill.SPEC.name:
+            return skill.execute(
+                user_request,
+                candidate.allowed_tools,
+                memory_context=memory_prompt,
+                runtime_context={
+                    "previous_skill": route_context.previous_skill if route_context else "",
+                    "previous_structured": dict(route_context.previous_structured or {}) if route_context else {},
+                    "session_id": route_context.session_id if route_context else "",
+                },
+            )
         return skill.execute(user_request, candidate.allowed_tools, memory_context=memory_prompt)
 
     @staticmethod
@@ -1035,8 +1048,9 @@ class FairyCore:
         selected_candidate = route_candidates[0]
         routing_payload = self._build_routing_debug_payload(routing)
         logger.info(
-            "routing_decision primary_intent=%s tool_needed=%s selected_tool=%s candidates=%s",
+            "routing_decision primary_intent=%s planner_confidence=%.2f tool_needed=%s selected_tool=%s candidates=%s",
             routing.primary_intent,
+            routing.planner_confidence,
             routing.tool_needed,
             routing.selected_tool,
             ",".join(f"{candidate.name}:{candidate.score:.2f}" for candidate in routing.candidates),
@@ -1112,11 +1126,12 @@ class FairyCore:
             status="running",
         )
         logger.info(
-            "skill_routed chosen_skill=%s allowed_tools=%s llm_intent=%s llm_confidence=%s",
+            "skill_routed chosen_skill=%s allowed_tools=%s llm_intent=%s llm_confidence=%s planner_confidence=%.2f",
             selected_candidate.name,
             selected_candidate.allowed_tools,
             llm_decision.primary_intent if llm_decision else "",
             llm_decision.confidence if llm_decision else "",
+            routing.planner_confidence,
         )
         self._emit_event(
             "skill_routed",
@@ -1125,6 +1140,7 @@ class FairyCore:
                 "reason": selected_candidate.reason,
                 "allowed_tools": selected_candidate.allowed_tools,
                 "llm_choice": llm_decision.primary_intent if llm_decision else "",
+                "planner_confidence": routing.planner_confidence,
                 "primary_intent": routing.primary_intent,
                 "tool_needed": routing.tool_needed,
                 "candidates": routing_payload["candidates"],
@@ -1141,6 +1157,7 @@ class FairyCore:
                 user_request=user_request,
                 attachments=attachments,
                 memory_prompt=combined_memory_prompt,
+                route_context=route_context,
             ),
             usefulness_checker=self._is_result_useful,
         )
@@ -1158,6 +1175,7 @@ class FairyCore:
         result.structured.setdefault("routing", {})
         result.structured["routing"] = {
             "primary_intent": routing.primary_intent,
+            "planner_confidence": routing.planner_confidence,
             "tool_needed": routing.tool_needed,
             "selected_tool": selected_candidate.name,
             "final_route": final_candidate.name,
@@ -1303,6 +1321,21 @@ class FairyCore:
             "previous_skill": route_context.previous_skill if route_context else "",
             "screen_followup_remaining": route_context.screen_followup_remaining if route_context else 0,
             "has_screen_summary": bool((route_context.previous_structured or {}).get("screen_summary")) if route_context else False,
+            "has_location_context": bool(
+                route_context
+                and isinstance(route_context.previous_structured, dict)
+                and (
+                    (
+                        route_context.previous_structured.get("lat") is not None
+                        and route_context.previous_structured.get("lon") is not None
+                    )
+                    or any(
+                        str(route_context.previous_structured.get(key, "") or "").strip()
+                        for key in ("map_url", "address", "title", "place_name", "image_url")
+                    )
+                )
+            ),
+            "last_card_type": str((route_context.previous_structured or {}).get("card_type", "") or ""),
             "available_routes": [
                 "direct_answer",
                 "weather",
@@ -1330,6 +1363,7 @@ class FairyCore:
         if primary_intent not in {
             "direct_answer",
             "general_chat",
+            "location",
             "realtime_info",
             "weather",
             "news",

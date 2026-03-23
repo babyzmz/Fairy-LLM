@@ -28,15 +28,15 @@ class RealtimeLookupResult:
     """
 
     success: bool
-    speech_text: str               # TTS-friendly plain text
-    card_payload: dict[str, Any]   # Structured card for UI
-    numeric_value: float | None    # Primary numeric value
-    confidence: float              # 0.0 – 1.0
-    stage_used: str = ""           # Which stage produced this result
+    speech_text: str
+    card_payload: dict[str, Any]
+    numeric_value: float | None
+    confidence: float
+    stage_used: str = ""
     subtype: str = ""
     source_urls: list[str] = field(default_factory=list)
     error_message: str = ""
-    tool_lock: bool = True         # Factual data — do not rewrite
+    tool_lock: bool = True
 
     @property
     def success_flag(self) -> bool:
@@ -45,17 +45,17 @@ class RealtimeLookupResult:
     def to_dict(self) -> dict[str, Any]:
         """Legacy-compatible dict for dispatch layer."""
         return {
-            "success":       self.success,
-            "answer":        self.speech_text,
-            "card":          self.card_payload,
-            "source":        self.stage_used,
-            "source_urls":   self.source_urls,
-            "confidence":    self.confidence,
-            "tool_lock":     self.tool_lock,
+            "success": self.success,
+            "answer": self.speech_text,
+            "card": self.card_payload,
+            "source": self.stage_used,
+            "source_urls": self.source_urls,
+            "confidence": self.confidence,
+            "tool_lock": self.tool_lock,
             "tool_lock_valid": True,
             "needs_clarification": False,
-            "reason":        self.error_message,
-            "subtype":       self.subtype,
+            "reason": self.error_message,
+            "subtype": self.subtype,
             "numeric_value": self.numeric_value,
         }
 
@@ -70,10 +70,16 @@ class RealtimeLookupError:
     retryable: bool = False
 
     def to_result(self) -> RealtimeLookupResult:
+        if self.reason == "cancelled":
+            speech_text = "本次查询已取消。"
+            card_payload = {"type": "generic_info", "data": {"title": "已取消", "summary": speech_text}}
+        else:
+            speech_text = "实时数据暂不可用"
+            card_payload = {"type": "error_card", "message": self.reason}
         return RealtimeLookupResult(
             success=False,
-            speech_text="实时数据暂不可用",
-            card_payload={"type": "error_card", "message": self.reason},
+            speech_text=speech_text,
+            card_payload=card_payload,
             numeric_value=None,
             confidence=0.0,
             stage_used=self.stage_reached,

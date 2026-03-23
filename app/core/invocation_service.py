@@ -12,11 +12,13 @@ Usage::
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Callable
 
 from app.core.capability_registry import CapabilityRegistry, get_registry
 
 logger = logging.getLogger(__name__)
+ProgressCallback = Callable[[str, dict[str, Any]], None]
 
 
 class InvocationService:
@@ -53,6 +55,8 @@ class InvocationService:
         strict_mode: bool = True,
         request_id: str = "",
         session_id: str = "",
+        progress_callback: ProgressCallback | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> dict[str, Any]:
         """Invoke an agent for the given skill and query.
 
@@ -67,9 +71,12 @@ class InvocationService:
         if cap.is_pure_llm:
             return self._fail("Pure-LLM skill — no agent backend", "pure_llm_skill")
 
+        if cancel_event is not None and cancel_event.is_set():
+            return self._fail("Invocation cancelled before execution.", "cancelled")
         agent = self._get_agent(skill_name)
         if agent is None:
             return self._fail(f"Agent load failed: {skill_name}", "agent_load_error")
+        self._prepare_agent(agent, progress_callback=progress_callback, cancel_event=cancel_event)
 
         # --- conversation state: resolve query before dispatch ---
         resolved_query = query
@@ -105,9 +112,13 @@ class InvocationService:
                 )
                 result = agent.execute(req)
             result_dict = result.to_dict()
+            if cancel_event is not None and cancel_event.is_set():
+                return self._fail("Invocation cancelled during execution.", "cancelled")
         except Exception as exc:
             logger.exception("invocation_error skill=%s error=%s", skill_name, exc)
             return self._fail(str(exc), "execution_error")
+        finally:
+            self._prepare_agent(agent, progress_callback=None, cancel_event=None)
 
         # --- conversation state: update after successful invocation ---
         if session_id and result_dict.get("success"):
@@ -156,6 +167,24 @@ class InvocationService:
         except Exception as exc:
             logger.error("agent_init_error skill=%s error=%s", skill_name, exc)
             return None
+
+    @staticmethod
+    def _prepare_agent(
+        agent: Any,
+        *,
+        progress_callback: ProgressCallback | None,
+        cancel_event: threading.Event | None,
+    ) -> None:
+        if hasattr(agent, "set_progress_callback"):
+            try:
+                agent.set_progress_callback(progress_callback)
+            except Exception:
+                logger.debug("agent_set_progress_callback_failed", exc_info=True)
+        if hasattr(agent, "set_cancel_event"):
+            try:
+                agent.set_cancel_event(cancel_event)
+            except Exception:
+                logger.debug("agent_set_cancel_event_failed", exc_info=True)
 
     @staticmethod
     def _fail(msg: str, reason: str) -> dict[str, Any]:

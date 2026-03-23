@@ -924,6 +924,11 @@ class DesktopPetWindow(QWidget):
     def append_chat_message(self, message: ChatMessage) -> None:
         self.chat_page.push_message(message)
 
+    def update_chat_message(self, message_id: str, *, text: str | None = None, payload: dict | None = None) -> bool:
+        updated = self.chat_page.update_message(message_id, text=text, payload=payload)
+        self._avatar_widget.kick(0.35)
+        return updated
+
     def show_assistant_chat_message(self, message: ChatMessage) -> None:
         self.append_chat_message(message)
         self._avatar_widget.kick(0.7)

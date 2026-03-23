@@ -212,13 +212,18 @@ Constraints:
 - do not treat tools as the default path
 - keep direct_answer when stable knowledge, reasoning, or provided context is sufficient
 - escalate to tool routes only when realtime info, system state, screen/file inspection, or project execution is actually needed
+- distinguish information display from desktop automation
+- treat city/region/address/place/where-is/map requests as location intent even if the model could answer from memory
+- treat phrases like "显示地图", "给我看看地图", "把地图打开看看", "地图展示一下" as information display, not OS control
+- only use local_action when the user explicitly wants Fairy to operate software, windows, screen elements, or project tools
 - if the request is ambiguous, prefer clarification_needed over over-routing
 
 Return strict JSON with keys: primary_intent, tool_needed, clarification_needed, reason, confidence, candidates.
-primary_intent must be one of: direct_answer, general_chat, realtime_info, weather, news, knowledge_lookup, system_ops, local_action, ambiguous.
+primary_intent must be one of: direct_answer, general_chat, location, realtime_info, weather, news, knowledge_lookup, system_ops, local_action, ambiguous.
 candidates must be a JSON array of 1-4 objects with keys: name, score, reason.
 candidate name must be one of: direct_answer, weather, news, web_search, knowledge_lookup, system_ops, document_editor, screen_understanding, agent_shell.
 Always include direct_answer in candidates.
+Use location for place/city/address/nearby/map-display requests, and pair it with web_search as the route candidate.
 Use weather instead of news for weather questions.
 Use system_ops for Fairy's own notifications, jobs, fingerprint, backend state, or runtime settings.
 Use knowledge_lookup for prior decisions, history, or project context.

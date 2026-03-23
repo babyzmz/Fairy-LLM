@@ -22,7 +22,7 @@ from app.config import llm_config
 from app.ui.components.chat import ChatMessage, DisplayMode, MessageWidget, RendererRegistry, normalize_display_mode
 from app.ui.components.status_chip import StatusChip
 from app.ui.i18n import LANG_ZH, localize_mode_label, localize_route_label, normalize_ui_language, tr
-from app.ui.theme import apply_soft_shadow, button_style, card_style, line_edit_style, mix, resolve_theme, rgba
+from app.ui.theme import apply_soft_shadow, button_style, card_style, line_edit_style, mix, resolve_theme, rgba, scrollbar_style
 
 
 class _MessageRow(QWidget):
@@ -168,7 +168,11 @@ class ChatPage(QWidget):
         self.chat_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.chat_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.chat_scroll.setStyleSheet(
+            "QScrollArea {"
             f"background:{rgba(mix(theme.surface, theme.fairy_blue_deep, 0.03), 252 if theme.scheme == 'light' else 244)};"
+            "border:none;"
+            "}"
+            + scrollbar_style(theme, "QScrollBar", thickness=10, radius=5)
         )
 
         self.message_column = QWidget(self.chat_scroll)
@@ -249,7 +253,7 @@ class ChatPage(QWidget):
         self._messages.append(message)
         self._render_message(message, animate=True)
 
-    def update_message(self, message_id: str, *, text: str | None = None, payload: dict | None = None) -> None:
+    def update_message(self, message_id: str, *, text: str | None = None, payload: dict | None = None) -> bool:
         for message in self._messages:
             if message.id != message_id:
                 continue
@@ -266,7 +270,8 @@ class ChatPage(QWidget):
                 row.updateGeometry()
             self._refresh_message_layout()
             self._scroll_to_bottom()
-            break
+            return True
+        return False
 
     def set_current_task(self, text: str) -> None:
         self._current_task_text = text

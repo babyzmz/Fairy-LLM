@@ -21,6 +21,7 @@ of the public API and must not be imported directly by external code.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Callable
 
 from app.agents.realtime_lookup.models import (
@@ -30,6 +31,7 @@ from app.agents.realtime_lookup.models import (
 )
 
 logger = logging.getLogger(__name__)
+ProgressCallback = Callable[[str, dict[str, Any]], None]
 
 
 class RealtimeLookupAgent:
@@ -48,11 +50,24 @@ class RealtimeLookupAgent:
         search_tool: Callable[..., list[dict]] | None = None,
         fetch_page: Callable[[str], str] | None = None,
         vision_fallback: Callable[[str], Any] | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         self._search_tool = search_tool
         self._fetch_page = fetch_page
         self._vision_fallback = vision_fallback
+        self._progress_callback = progress_callback
+        self._cancel_event: threading.Event | None = None
         self._engine: Any = None  # lazy-init
+
+    def set_progress_callback(self, callback: ProgressCallback | None) -> None:
+        self._progress_callback = callback
+        if self._engine is not None and hasattr(self._engine, "set_progress_callback"):
+            self._engine.set_progress_callback(callback)
+
+    def set_cancel_event(self, cancel_event: threading.Event | None) -> None:
+        self._cancel_event = cancel_event
+        if self._engine is not None and hasattr(self._engine, "set_cancel_event"):
+            self._engine.set_cancel_event(cancel_event)
 
     # ------------------------------------------------------------------
     # Public API
@@ -71,6 +86,11 @@ class RealtimeLookupAgent:
         try:
             raw = engine.run(request.query)
         except Exception as exc:
+            if str(exc).strip().lower() == "cancelled":
+                return RealtimeLookupError(
+                    reason="cancelled",
+                    retryable=False,
+                ).to_result()
             logger.exception(
                 "realtime_lookup_agent_error query=%s error=%s",
                 request.query[:50], exc,
@@ -125,5 +145,7 @@ class RealtimeLookupAgent:
             self._engine = LookupEngine(
                 search_fn=self._search_tool,
                 fetch_page_fn=self._fetch_page,
+                progress_callback=self._progress_callback,
+                cancel_event=self._cancel_event,
             )
         return self._engine

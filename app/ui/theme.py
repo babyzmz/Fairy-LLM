@@ -303,3 +303,44 @@ def tab_widget_style(theme: FairyTheme) -> str:
         "}"
     )
 
+
+def scrollbar_style(
+    theme: FairyTheme,
+    selector: str = "QScrollBar",
+    *,
+    thickness: int = 10,
+    radius: int = 5,
+    compact: bool = False,
+) -> str:
+    width = max(4, thickness - (2 if compact else 0))
+    handle = rgba(mix(theme.divider, theme.fairy_blue_soft, 0.28), 196 if theme.scheme == "light" else 172)
+    handle_hover = rgba(mix(theme.divider, theme.fairy_blue_soft, 0.48), 228 if theme.scheme == "light" else 210)
+    track = rgba(theme.surface_soft, 108 if theme.scheme == "light" else 76)
+    return (
+        f"{selector}:vertical {{"
+        f"width: {width}px; background: {track}; margin: 2px 0 2px 0; border-radius: {radius}px;"
+        "}"
+        f"{selector}::handle:vertical {{"
+        f"background: {handle}; border-radius: {radius}px; min-height: 28px;"
+        "}"
+        f"{selector}::handle:vertical:hover {{"
+        f"background: {handle_hover};"
+        "}"
+        f"{selector}:horizontal {{"
+        f"height: {width}px; background: {track}; margin: 0 2px 0 2px; border-radius: {radius}px;"
+        "}"
+        f"{selector}::handle:horizontal {{"
+        f"background: {handle}; border-radius: {radius}px; min-width: 28px;"
+        "}"
+        f"{selector}::handle:horizontal:hover {{"
+        f"background: {handle_hover};"
+        "}"
+        f"{selector}::add-line:vertical, {selector}::sub-line:vertical,"
+        f"{selector}::add-line:horizontal, {selector}::sub-line:horizontal {{"
+        "width: 0px; height: 0px; border: none; background: transparent;"
+        "}"
+        f"{selector}::add-page:vertical, {selector}::sub-page:vertical,"
+        f"{selector}::add-page:horizontal, {selector}::sub-page:horizontal {{"
+        "background: transparent;"
+        "}"
+    )

@@ -69,10 +69,22 @@ class ChatMessage:
             return text
         if self.type == "weather":
             city = str(self.payload.get("city", "") or "").strip()
-            temp = str(self.payload.get("temp", "") or "").strip()
+            temp = str(self.payload.get("temperature_c", "") or self.payload.get("temp", "") or "").strip()
             return f"{city} {temp}".strip()
+        if self.type == "map":
+            return str(self.payload.get("title", "") or self.payload.get("address", "") or "").strip()
+        if self.type == "image":
+            return str(self.payload.get("title", "") or self.payload.get("caption", "") or "").strip()
+        if self.type == "news":
+            items = self.payload.get("items", [])
+            if isinstance(items, list) and items:
+                first = items[0]
+                if isinstance(first, dict):
+                    return str(first.get("headline", "") or first.get("title", "") or "").strip()
         if self.type == "link":
             return str(self.payload.get("title", "") or self.payload.get("url", "") or "").strip()
+        if self.type == "generic_info":
+            return str(self.payload.get("title", "") or self.payload.get("summary", "") or self.payload.get("text", "") or "").strip()
         if self.type == "suggestion":
             return str(self.payload.get("body", "") or self.payload.get("text", "") or "").strip()
         return html.escape(str(self.payload))

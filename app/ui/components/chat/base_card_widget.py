@@ -158,6 +158,9 @@ class AsyncImageLabel(QLabel):
             return
         if source.startswith(("http://", "https://")):
             request = QNetworkRequest(QUrl(source))
+            request.setHeader(QNetworkRequest.UserAgentHeader, "Fairy/1.0 (desktop assistant)")
+            if hasattr(QNetworkRequest, "RedirectPolicyAttribute") and hasattr(QNetworkRequest, "NoLessSafeRedirectPolicy"):
+                request.setAttribute(QNetworkRequest.RedirectPolicyAttribute, QNetworkRequest.NoLessSafeRedirectPolicy)
             if self._reply is not None:
                 self._reply.deleteLater()
             self._reply = self._network.get(request)

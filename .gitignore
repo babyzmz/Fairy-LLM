@@ -111,3 +111,18 @@ config/system_state.json
 /fairy_refactor/
 /debug_*.py
 /demonstrate_*.py
+/fairy-desktop/node_modules/
+/fairy-desktop/dist/
+/fairy-desktop/src-tauri/target/
+
+# Local Rust / Tauri toolchains
+/.cargo/
+/.rustup/
+/.npm-cache/
+/tools/llvm-mingw/
+/tools/llvm-msvc-shim/
+/tools/xwin/
+/tools/xwin-cache/
+/tools/xwin-splat/
+/tools/rustup-init.exe
+/fairy-desktop/vendor/

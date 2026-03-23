@@ -1,8 +1,13 @@
 ﻿from __future__ import annotations
 
+# LEGACY_ENTRYPOINT
+# This Qt controller remains only as a legacy shell/consumer during migration.
+# The default desktop startup path is the Tauri shell.
+
 import html
 import logging
-from typing import Callable, Dict, List
+import uuid
+from typing import Any, Callable, Dict, List
 
 from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
 
@@ -14,6 +19,8 @@ from app.ai.voice import FairyVoice
 from app.config import system_config, voice_config
 from app.fairy_core import FairyCore
 from app.models.action_event import ActionEvent, build_action_event
+from app.response import ResponsePipeline
+from app.runtime import FairyRuntimeV2
 from app.rag import get_rag_manager, get_reindex_manager, save_rag_settings
 from app.settings import SecretStore, save_game_mode_settings
 from app.skill_router import RouteContext
@@ -21,7 +28,7 @@ from app.storage.repositories import MessageRepo, SessionRepo
 from app.system_notifications import NotificationEngine, NotificationScheduler
 from app.system_notifications.notification_presenter import is_active_notification, notification_counts
 from app.ui.app_mode_dialog import choose_app_settings
-from app.ui.components.chat import ChatMessage, build_assistant_chat_message
+from app.ui.components.chat import ChatMessage, build_chat_messages_from_response
 from app.ui.components.fairy_presence_window import FairyPresenceWindow
 from app.ui.desktop_pet import DesktopPetWindow, FairyAvatar
 from app.ui.i18n import tr
@@ -37,6 +44,7 @@ class ChatWorker(QObject):
     def __init__(
         self,
         llm: LLMClient,
+        runtime: FairyRuntimeV2,
         voice: FairyVoice | None,
         user_text: str,
         attachment_paths: List[str],
@@ -44,16 +52,22 @@ class ChatWorker(QObject):
         route_context: RouteContext,
         request_origin: str = "main_chat",
         request_id: str = "",
+        allow_voice_streaming: bool = False,
     ) -> None:
         super().__init__()
         self.llm = llm
+        self.runtime = runtime
         self.voice = voice
         self.user_text = user_text
         self.attachment_paths = attachment_paths
         self.user_log_text = user_log_text
         self.route_context = route_context
         self.request_origin = request_origin
-        self.request_id = request_id
+        self.request_id = request_id or uuid.uuid4().hex
+        self.allow_voice_streaming = bool(allow_voice_streaming)
+        self.stream_message_id = uuid.uuid4().hex
+        self._streamed_voice_tokens = False
+        self._streamed_ui_tokens = False
 
     def _is_cancelling(self) -> bool:
         return QThread.currentThread().isInterruptionRequested()
@@ -64,21 +78,83 @@ class ChatWorker(QObject):
             and voice_config.enabled
             and voice_config.speak_responses
             and voice_config.stream_responses
+            and self.allow_voice_streaming
         )
 
+    def _ui_can_stream(self) -> bool:
+        return self.request_origin == "main_chat"
+
+    def _legacy_execute(
+        self,
+        *,
+        message: str,
+        session_id: str,
+        request_id: str,
+        attachments: list[str],
+        request_origin: str,
+        route_hints: dict[str, Any],
+    ) -> dict[str, Any]:
+        _ = session_id, route_hints
+        core = FairyCore(
+            self.llm,
+            event_callback=self._emit_core_event,
+            response_chunk_callback=self._on_response_chunk if (self._ui_can_stream() or self._voice_can_stream()) else None,
+        )
+        result = core.handle_request(
+            message,
+            attachment_paths=attachments,
+            route_context=self.route_context,
+            request_origin=request_origin,
+            request_id=request_id,
+        )
+        response_text = (result.response_text or result.summary or "").strip()
+        return {
+            "user_text": message,
+            "assistant_text": response_text,
+            "user_log_text": self.user_log_text,
+            "skill_name": result.skill_name,
+            "success": result.success,
+            "summary": result.summary,
+            "sources": result.sources,
+            "warnings": result.warnings,
+            "structured": result.structured,
+            "changed_files": result.changed_files,
+            "commands_run": result.commands_run,
+            "validations": result.validations,
+            "cancelled": False,
+            "request_origin": request_origin,
+            "request_id": request_id,
+        }
+
     def _on_response_chunk(self, token: str) -> None:
-        if not token or self._is_cancelling() or self.voice is None:
+        if not token or self._is_cancelling():
             return
-        self._streamed_voice_tokens = True
-        self.voice.feed_token(token)
+        if self._ui_can_stream():
+            self._streamed_ui_tokens = True
+            self.progress.emit(
+                build_action_event(
+                    "assistant_response_chunk",
+                    {
+                        "request_id": self.request_id,
+                        "message_id": self.stream_message_id,
+                        "token": token,
+                    },
+                )
+            )
+        if self._voice_can_stream() and self.voice is not None:
+            self._streamed_voice_tokens = True
+            self.voice.feed_token(token)
 
     def _emit_core_event(self, event: str, payload: dict) -> None:
-        action_event = build_action_event(event, payload)
+        enriched_payload = dict(payload)
+        enriched_payload.setdefault("request_id", self.request_id)
+        enriched_payload.setdefault("request_origin", self.request_origin)
+        action_event = build_action_event(event, enriched_payload)
         self.progress.emit(action_event)
         if self.voice is None:
             return
 
-        tool_name = str(payload.get("tool_name", ""))
+        tool_name = str(enriched_payload.get("tool_name", ""))
         if event == "tool_call_start" and tool_name == "search_web":
             self.voice.system_line("searching")
         elif event == "tool_call_start" and tool_name in {"open_url", "extract_page_text"}:
@@ -97,57 +173,48 @@ class ChatWorker(QObject):
                         "assistant_text": "",
                         "user_log_text": self.user_log_text,
                         "cancelled": True,
+                        "request_origin": self.request_origin,
+                        "request_id": self.request_id,
+                        "stream_message_id": "",
+                        "voice_streamed": False,
                     }
                 )
                 return
 
-            self._streamed_voice_tokens = False
             if self._voice_can_stream():
                 self.voice.start_stream()
 
-            core = FairyCore(
-                self.llm,
-                event_callback=self._emit_core_event,
-                response_chunk_callback=self._on_response_chunk if self._voice_can_stream() else None,
-            )
-            result = core.handle_request(
+            result_payload = self.runtime.invoke(
                 self.user_text,
-                attachment_paths=self.attachment_paths,
-                route_context=self.route_context,
-                request_origin=self.request_origin,
+                session_id=self.route_context.session_id,
+                attachments=self.attachment_paths,
                 request_id=self.request_id,
+                previous_structured=dict(self.route_context.previous_structured),
+                legacy_executor=self._legacy_execute,
+                request_origin=self.request_origin,
+                # Qt shell is the only remaining compat consumer of deprecated bridge fields.
+                include_compat_fields=True,
             )
-            response_text = (result.response_text or result.summary or "").strip()
+            response_text = str(result_payload.get("assistant_text") or result_payload.get("text") or "").strip()
 
-            if not self._is_cancelling() and self.voice is not None and response_text:
-                if self._streamed_voice_tokens:
-                    self.voice.finish_stream()
-                else:
-                    if self._voice_can_stream():
-                        self.voice.cancel_stream()
-                    self.voice.speak(response_text)
+            if self._streamed_voice_tokens and self.voice is not None and not self._is_cancelling():
+                self.voice.finish_stream()
             elif self._voice_can_stream():
                 self.voice.cancel_stream()
 
-            self.finished.emit(
+            result_payload.update(
                 {
                     "user_text": self.user_text,
                     "assistant_text": response_text,
                     "user_log_text": self.user_log_text,
-                    "skill_name": result.skill_name,
-                    "success": result.success,
-                    "summary": result.summary,
-                    "sources": result.sources,
-                    "warnings": result.warnings,
-                    "structured": result.structured,
-                    "changed_files": result.changed_files,
-                    "commands_run": result.commands_run,
-                    "validations": result.validations,
                     "cancelled": False,
                     "request_origin": self.request_origin,
                     "request_id": self.request_id,
+                    "stream_message_id": self.stream_message_id if self._streamed_ui_tokens else "",
+                    "voice_streamed": self._streamed_voice_tokens,
                 }
             )
+            self.finished.emit(result_payload)
         except Exception as exc:  # noqa: BLE001
             if self._is_cancelling():
                 if self._voice_can_stream():
@@ -158,6 +225,10 @@ class ChatWorker(QObject):
                         "assistant_text": "",
                         "user_log_text": self.user_log_text,
                         "cancelled": True,
+                        "request_origin": self.request_origin,
+                        "request_id": self.request_id,
+                        "stream_message_id": "",
+                        "voice_streamed": False,
                     }
                 )
                 return
@@ -174,6 +245,10 @@ class ChatWorker(QObject):
                     "changed_files": [],
                     "commands_run": [],
                     "validations": [],
+                    "request_origin": self.request_origin,
+                    "request_id": self.request_id,
+                    "stream_message_id": self.stream_message_id if self._streamed_ui_tokens else "",
+                    "voice_streamed": False,
                 }
             )
 
@@ -198,6 +273,8 @@ class AssistantModeController(QObject):
         self.voice = FairyVoice(enabled=voice_config.enabled)
         self.initializer = FairyInitializer(self.voice)
         self.preferences = load_app_preferences()
+        self._response_pipeline = ResponsePipeline(language=self.preferences.ui_language)
+        self._runtime_v2 = FairyRuntimeV2(language=self.preferences.ui_language, response_pipeline=self._response_pipeline)
         self.history: List[Message] = []
         self._threads: list[QThread] = []
         self._workers: Dict[QThread, ChatWorker] = {}
@@ -218,6 +295,11 @@ class AssistantModeController(QObject):
         self._presence_notification_items: list[dict[str, object]] = []
         self._presence_jobs: list[dict[str, object]] = []
         self._presence_latest_job: dict[str, object] | None = None
+        self._streaming_message_text: dict[str, str] = {}
+        self._stream_message_aliases: dict[str, str] = {}
+        self._request_plans: dict[str, object] = {}
+        self._progress_message_ids: dict[str, str] = {}
+        self._progress_message_texts: dict[str, str] = {}
         self._presence_task_summary = tr("presence_tooltip_idle_summary", self.preferences.ui_language)
         self._current_task = ""
         self._system_state = "booting"
@@ -300,6 +382,7 @@ class AssistantModeController(QObject):
         self.preferences = settings.preferences
         self.window.set_ui_language(self.preferences.ui_language)
         self.presence_window.set_ui_language(self.preferences.ui_language)
+        self._runtime_v2.set_language(self.preferences.ui_language)
         save_game_mode_settings(settings.game_mode_settings)
         if settings.rag_settings is not None:
             save_rag_settings(settings.rag_settings)
@@ -945,12 +1028,34 @@ class AssistantModeController(QObject):
             return
 
         attachments = list(attachment_paths or [])
+        request_id = request_id or uuid.uuid4().hex
         user_log_text = self._build_user_log_text(user_text, attachments)
+        interruption = self._runtime_v2.concurrent_tasks.begin_request(request_id)
+        if interruption.interrupt_speech:
+            self.voice.interrupt()
+        if interruption.previous_request_id:
+            self._mark_request_interrupted(interruption.previous_request_id)
+        request_plan = self._runtime_v2.plan_request(
+            user_text,
+            previous_structured=dict(self._last_structured),
+            session_id=self._session_id,
+            request_id=request_id,
+        )
+        route_hints = self._runtime_v2.get_route_hints(request_id)
+        self._request_plans[request_id] = request_plan
+        logger.info(
+            "request_plan_selected request_id=%s intent=%s planner_confidence=%.2f modality=%s speech_mode=%s force_card=%s",
+            request_id,
+            getattr(request_plan, "intent", ""),
+            float(getattr(request_plan, "planner_confidence", 0.0) or 0.0),
+            getattr(request_plan, "modality", ""),
+            getattr(request_plan, "speech_mode", ""),
+            getattr(request_plan, "force_card_type", ""),
+        )
         self._current_task = user_text.strip()
         self._presence_processing = True
         self._presence_unread_reply = False
 
-        self.voice.interrupt()
         self._sync_runtime_snapshot()
         self.window.clear_session_trace()
         self.window.set_current_task(user_text)
@@ -961,6 +1066,7 @@ class AssistantModeController(QObject):
 
         worker = ChatWorker(
             self.llm,
+            self._runtime_v2,
             self.voice,
             user_text,
             attachments,
@@ -970,9 +1076,14 @@ class AssistantModeController(QObject):
                 previous_structured=dict(self._last_structured),
                 screen_followup_remaining=self._screen_followup_remaining,
                 session_id=self._session_id,
+                perception_intent=str(route_hints.get("perception_intent", "") or ""),
+                preferred_routes=list(route_hints.get("preferred_routes") or []),
+                preferred_modalities=list(route_hints.get("preferred_modalities") or []),
+                active_focus=dict(route_hints.get("active_focus") or {}),
             ),
             request_origin=request_origin,
             request_id=request_id,
+            allow_voice_streaming=request_plan.allow_voice_streaming,
         )
         thread = QThread()
         worker.moveToThread(thread)
@@ -989,17 +1100,56 @@ class AssistantModeController(QObject):
         thread.start()
         self._refresh_presence_surface()
 
+    def _active_main_chat_request_id(self) -> str:
+        return str(self._runtime_v2.concurrent_tasks.active_request_id or "").strip()
+
+    def _is_stale_main_chat_request(self, request_id: str, request_origin: str = "main_chat") -> bool:
+        if request_origin != "main_chat" or not request_id:
+            return False
+        active_request_id = self._active_main_chat_request_id()
+        return bool(active_request_id and active_request_id != request_id)
+
+    def _mark_request_interrupted(self, request_id: str) -> None:
+        if not request_id:
+            return
+        interrupted_text = tr("presence_request_cancelled", self.preferences.ui_language)
+        progress_message_id = self._progress_message_ids.get(request_id, "")
+        if progress_message_id:
+            self._progress_message_texts[request_id] = interrupted_text
+            self.window.update_chat_message(
+                progress_message_id,
+                text=interrupted_text,
+                payload={"speaker": "Fairy", "rich_text": False},
+            )
+        self._request_plans.pop(request_id, None)
+
     def _on_worker_progress(self, event_obj: object) -> None:
         if self._shutting_down or not isinstance(event_obj, ActionEvent):
             return
 
+        request_id = str(event_obj.payload.get("request_id", "") or "").strip()
+        request_origin = str(event_obj.payload.get("request_origin", "main_chat") or "main_chat").strip()
+        if self._is_stale_main_chat_request(request_id, request_origin):
+            logger.info("stale_progress_ignored request_id=%s active_request_id=%s event=%s", request_id, self._active_main_chat_request_id(), event_obj.name)
+            return
+
+        if event_obj.name == "assistant_response_chunk":
+            self._handle_assistant_stream_chunk(event_obj.payload)
+            return
+
         self.window.append_action_event(event_obj)
+        self._handle_progress_update(event_obj)
 
         if event_obj.name == "rag_retrieval_visualized":
             self.window.set_retrieval_debug_snapshot(event_obj.payload)
             return
 
         if event_obj.name == "skill_routed":
+            self._runtime_v2.record_tool_selection(
+                request_id,
+                str(event_obj.payload.get("chosen_skill", "") or ""),
+                str(event_obj.payload.get("reason", "") or ""),
+            )
             self.window.set_agent_route(
                 str(event_obj.payload.get("chosen_skill", "")),
                 str(event_obj.payload.get("reason", "")),
@@ -1028,6 +1178,138 @@ class AssistantModeController(QObject):
 
         if event_obj.name == "skill_result_ready":
             self.window.set_tool_status("", "")
+
+    def _handle_assistant_stream_chunk(self, payload: dict[str, object]) -> None:
+        original_message_id = str(payload.get("message_id", "") or "").strip()
+        request_id = str(payload.get("request_id", "") or "").strip()
+        if self._is_stale_main_chat_request(request_id):
+            logger.info("stale_stream_chunk_ignored request_id=%s active_request_id=%s", request_id, self._active_main_chat_request_id())
+            return
+        message_id = self._stream_message_aliases.get(original_message_id, original_message_id)
+        if request_id and message_id == original_message_id:
+            existing_progress_id = self._progress_message_ids.pop(request_id, "")
+            if existing_progress_id:
+                self._progress_message_texts.pop(request_id, None)
+                self._stream_message_aliases[original_message_id] = existing_progress_id
+                message_id = existing_progress_id
+        token = str(payload.get("token", "") or "")
+        if not message_id or not token:
+            return
+
+        current_text = self._streaming_message_text.get(message_id, "")
+        next_text = current_text + token
+        is_new_message = message_id not in self._streaming_message_text
+        reusing_existing_message = message_id != original_message_id
+        self._streaming_message_text[message_id] = next_text
+
+        if is_new_message:
+            if reusing_existing_message and self.window.update_chat_message(
+                message_id,
+                text=next_text,
+                payload={"rich_text": False, "speaker": "Fairy"},
+            ):
+                return
+            self.window.show_assistant_chat_message(
+                ChatMessage.from_legacy("Fairy", next_text, rich_text=False, message_id=message_id)
+            )
+            return
+
+        self.window.update_chat_message(
+            message_id,
+            text=next_text,
+            payload={"rich_text": False, "speaker": "Fairy"},
+        )
+
+    def _handle_progress_update(self, event_obj: ActionEvent) -> None:
+        request_id = str(event_obj.payload.get("request_id", "") or "").strip()
+        request_origin = str(event_obj.payload.get("request_origin", "main_chat") or "main_chat").strip()
+        if request_origin != "main_chat" or not request_id:
+            return
+        if self._is_stale_main_chat_request(request_id, request_origin):
+            return
+
+        request_plan = self._request_plans.get(request_id)
+        if request_plan is None:
+            return
+        if getattr(request_plan, "allow_voice_streaming", False) and event_obj.name == "skill_routed":
+            return
+
+        progress_event = self._runtime_v2.build_progress_event(
+            event_obj.name,
+            event_obj.payload,
+            user_text=self._current_task,
+            request_id=request_id,
+        )
+        if progress_event is None:
+            return
+
+        message_id = self._progress_message_ids.get(request_id)
+        progress_text = progress_event.text.strip()
+        if not progress_text:
+            return
+
+        if not message_id:
+            progress_message = ChatMessage.from_legacy("Fairy", progress_text, rich_text=False)
+            self._progress_message_ids[request_id] = progress_message.id
+            self._progress_message_texts[request_id] = progress_text
+            self.window.show_assistant_chat_message(progress_message)
+            return
+
+        if self._progress_message_texts.get(request_id) == progress_text:
+            return
+        self._progress_message_texts[request_id] = progress_text
+        self.window.update_chat_message(
+            message_id,
+            text=progress_text,
+            payload={"speaker": "Fairy", "rich_text": False},
+        )
+
+    def _consume_progress_message_id(self, request_id: str) -> str:
+        if not request_id:
+            return ""
+        self._progress_message_texts.pop(request_id, None)
+        return self._progress_message_ids.pop(request_id, "")
+
+    def _upsert_assistant_message(self, message: ChatMessage) -> None:
+        payload_update = dict(message.payload)
+        text = payload_update.pop("text", None)
+        updated = self.window.update_chat_message(
+            message.id,
+            text=str(text) if text is not None else None,
+            payload=payload_update,
+        )
+        if not updated:
+            self.window.show_assistant_chat_message(message)
+
+    def _select_presence_message(self, messages: list[ChatMessage]) -> ChatMessage | None:
+        if not messages:
+            return None
+        for message in messages:
+            if message.type != "text":
+                return message
+        return messages[0]
+
+    def _deliver_voice_response(self, normalized_response, *, payload: dict, user_log_text: str) -> None:
+        if not voice_config.enabled or payload.get("success") is False:
+            return
+
+        if bool(payload.get("voice_streamed")):
+            return
+
+        speech_payload = getattr(normalized_response, "speech_payload", None)
+        if speech_payload is not None:
+            speech_text = str(speech_payload.text or "").strip()
+        else:
+            speech_meta = dict((payload.get("meta") or {}).get("speech") or {})
+            speech_text = str(speech_meta.get("text") or "").strip()
+        if speech_text and len(speech_text) >= voice_config.speak_min_chars:
+            self.voice.speak(speech_text, priority=20)
+            return
+
+        if "[attachments]" in user_log_text:
+            self.voice.system_line("analysis_complete", priority=20)
+        else:
+            self.voice.system_line("complete", priority=20)
 
     def _render_assistant_text(self, payload: dict) -> str:
         assistant_text = str(payload.get("assistant_text", "") or "").strip()
@@ -1104,38 +1386,144 @@ class AssistantModeController(QObject):
             return compact
         return compact[:217].rstrip() + "..."
 
-    def _build_assistant_message(self, assistant_text: str, assistant_html: str, payload: dict) -> ChatMessage:
-        return build_assistant_chat_message(
-            assistant_text=assistant_text,
-            assistant_html=assistant_html,
-            payload=payload,
-            language=self.preferences.ui_language,
-        )
+    def _remember_structured_context(self, payload: dict, normalized_response=None) -> dict:
+        remembered = dict(payload.get("structured")) if isinstance(payload.get("structured"), dict) else {}
+        if normalized_response is None:
+            return remembered
+
+        if isinstance(normalized_response, dict):
+            raw_cards = list(normalized_response.get("cards") or [])
+            cards = []
+            for item in raw_cards:
+                if not isinstance(item, dict):
+                    continue
+                cards.append(
+                    type(
+                        "_CardRef",
+                        (),
+                        {
+                            "type": str(item.get("type") or "generic_info"),
+                            "data": dict(item.get("data") or {}),
+                        },
+                    )()
+                )
+            normalized_text_reply = str(normalized_response.get("text") or "").strip()
+        else:
+            cards = list(getattr(normalized_response, "card_payloads", []) or [])
+            normalized_text_reply = str(getattr(normalized_response, "text_reply", "") or "").strip()
+        primary_card = next((card for card in cards if card.type in {"weather", "location", "news_list"}), None)
+        if primary_card is None:
+            primary_card = cards[0] if cards else None
+        if primary_card is None:
+            return remembered
+
+        intent_payload = remembered.get("intent") if isinstance(remembered.get("intent"), dict) else {}
+        intent_map = {
+            "weather": "weather_lookup",
+            "location": "location_lookup",
+            "news_list": "news_lookup",
+            "generic_info": "generic_info",
+        }
+        intent_type = intent_map.get(primary_card.type, primary_card.type)
+        intent_payload.setdefault("intent_type", intent_type)
+        remembered["intent"] = intent_payload
+        remembered.setdefault("type", primary_card.type)
+        remembered.setdefault("card_type", primary_card.type)
+
+        card_data = dict(primary_card.data)
+        if primary_card.type == "weather":
+            remembered.setdefault("weather", dict(card_data))
+            remembered.setdefault("city", card_data.get("city"))
+            remembered.setdefault("country", card_data.get("country"))
+            remembered.setdefault("condition", card_data.get("condition"))
+            remembered.setdefault("temp", card_data.get("temperature_c"))
+            remembered.setdefault("high", card_data.get("high_c"))
+            remembered.setdefault("low", card_data.get("low_c"))
+            remembered.setdefault("feels_like", card_data.get("feels_like_c"))
+            remembered.setdefault("humidity", card_data.get("humidity_percent"))
+            remembered.setdefault("wind_kmh", card_data.get("wind_kmh"))
+            remembered.setdefault("weather_location", card_data.get("city"))
+            remembered.setdefault("summary", card_data.get("summary"))
+        elif primary_card.type == "location":
+            remembered.setdefault("location", dict(card_data))
+            remembered.setdefault("title", card_data.get("title"))
+            remembered.setdefault("place_name", card_data.get("title"))
+            remembered.setdefault("address", card_data.get("address"))
+            remembered.setdefault("city", card_data.get("city"))
+            remembered.setdefault("region", card_data.get("region"))
+            remembered.setdefault("country", card_data.get("country"))
+            remembered.setdefault("lat", card_data.get("lat"))
+            remembered.setdefault("lon", card_data.get("lon"))
+            remembered.setdefault("distance", card_data.get("distance_text"))
+            remembered.setdefault("image_url", card_data.get("map_preview_url"))
+            remembered.setdefault("map_preview_url", card_data.get("map_preview_url"))
+            remembered.setdefault("map_url", card_data.get("external_map_url"))
+            remembered.setdefault("external_map_url", card_data.get("external_map_url"))
+            remembered.setdefault("summary", card_data.get("summary"))
+        elif primary_card.type == "news_list":
+            remembered.setdefault("news_items", list(card_data.get("items") or []))
+            remembered.setdefault("summary", normalized_text_reply)
+
+        return remembered
+
+    def _clear_streaming_message(self, message_id: str) -> None:
+        if not message_id:
+            return
+        self._streaming_message_text.pop(message_id, None)
+        stale_aliases = [source for source, target in self._stream_message_aliases.items() if target == message_id or source == message_id]
+        for alias in stale_aliases:
+            self._stream_message_aliases.pop(alias, None)
 
     def _on_assistant_reply(self, payload: object) -> None:
         if self._shutting_down or not isinstance(payload, dict):
             return
 
-        # Filter responses by origin - main_chat window only processes main_chat responses
         request_origin = payload.get("request_origin", "main_chat")
         if request_origin != "main_chat":
             logger.info("assistant_reply_filtered_by_origin origin=%s expected=main_chat", request_origin)
             return
 
+        request_id = str(payload.get("request_id", "") or "").strip()
+        if self._is_stale_main_chat_request(request_id):
+            logger.info("stale_reply_ignored request_id=%s active_request_id=%s", request_id, self._active_main_chat_request_id())
+            stale_stream_message_id = self._stream_message_aliases.pop(
+                str(payload.get("stream_message_id", "") or "").strip(),
+                str(payload.get("stream_message_id", "") or "").strip(),
+            )
+            self._clear_streaming_message(stale_stream_message_id)
+            self._consume_progress_message_id(request_id)
+            self._request_plans.pop(request_id, None)
+            self._runtime_v2.concurrent_tasks.finish_request(request_id)
+            return
+
         self.window.stop_thinking()
         self.window.set_tool_status("", "")
         self._presence_processing = False
+        stream_message_id = self._stream_message_aliases.pop(
+            str(payload.get("stream_message_id", "") or "").strip(),
+            str(payload.get("stream_message_id", "") or "").strip(),
+        )
+        progress_message_id = self._consume_progress_message_id(request_id)
+        text_message_id = stream_message_id or progress_message_id or None
 
         if payload.get("cancelled"):
             cancelled_text = tr("presence_request_cancelled", self.preferences.ui_language)
-            cancelled_message = ChatMessage.from_legacy("Fairy", cancelled_text, rich_text=False)
-            self.window.show_assistant_chat_message(cancelled_message)
+            cancelled_message = ChatMessage.from_legacy(
+                "Fairy",
+                cancelled_text,
+                rich_text=False,
+                message_id=text_message_id,
+            )
+            self._upsert_assistant_message(cancelled_message)
+            self._clear_streaming_message(stream_message_id)
             if not self.window.isVisible():
                 self.presence_window.show_reply_message(cancelled_message, error=False)
             self._sync_runtime_snapshot()
             self.window.set_runtime_status(self.llm.get_runtime_status())
             self._presence_task_summary = tr("presence_request_cancelled_summary", self.preferences.ui_language)
             self._refresh_presence_surface()
+            self._request_plans.pop(request_id, None)
+            self._runtime_v2.concurrent_tasks.finish_request(request_id)
             return
 
         user_log_text = str(payload.get("user_log_text", "") or payload.get("user_text", ""))
@@ -1149,28 +1537,84 @@ class AssistantModeController(QObject):
         )
 
         if not assistant_text:
-            assistant_text = "请求已接收，但当前没有可返回的结果。"
-
-        assistant_message = self._build_assistant_message(assistant_text, assistant_html, payload)
+            assistant_text = "\u8bf7\u6c42\u5df2\u63a5\u6536\uff0c\u4f46\u5f53\u524d\u6ca1\u6709\u53ef\u8fd4\u56de\u7684\u7ed3\u679c\u3002"
 
         if self._is_error_reply(assistant_text) or payload.get("success") is False:
             self.voice.interrupt()
-            error_message = ChatMessage.from_legacy("Fairy", assistant_html or assistant_text, rich_text=bool(assistant_html))
-            self.window.show_assistant_chat_message(error_message)
+            error_message = ChatMessage.from_legacy(
+                "Fairy",
+                assistant_html or assistant_text,
+                rich_text=bool(assistant_html),
+                message_id=text_message_id,
+            )
+            self._upsert_assistant_message(error_message)
             self.window.flash_error_state()
             self._presence_task_summary = tr("presence_request_failed_summary", self.preferences.ui_language)
             if not self.window.isVisible():
                 self.presence_window.show_reply_message(error_message, error=True)
         else:
-            self.window.show_assistant_chat_message(assistant_message)
-            if voice_config.enabled and "[attachments]" in user_log_text:
-                self.voice.system_line("analysis_complete", priority=20)
+            request_plan = self._request_plans.get(request_id)
+            if isinstance(payload.get("cards"), list) and isinstance(payload.get("meta"), dict):
+                normalized_response = payload
             else:
-                self.voice.system_line("complete", priority=20)
+                logger.warning("assistant_mode_non_contract_payload request_id=%s", request_id)
+                normalized_response = {
+                    "request_id": request_id,
+                    "session_id": self._session_id,
+                    "text": assistant_text,
+                    "cards": [],
+                    "meta": {
+                        "intent": getattr(request_plan, "intent", ""),
+                        "modality": "text_only",
+                        "speech": {"mode": "detailed_explainer", "text": assistant_text, "allow_streaming": False},
+                    },
+                    "errors": list(payload.get("errors") or []),
+                }
+            modality = str((normalized_response.get("meta") or {}).get("modality") or "")
+            speech_mode = str((((normalized_response.get("meta") or {}).get("speech") or {}).get("mode")) or "")
+            card_names = ",".join(str(card.get("type") or "") for card in list(normalized_response.get("cards") or []))
+            trace_bundle = self._runtime_v2.get_trace_bundle(request_id)
+            logger.info(
+                "response_modality_decided request_id=%s intent=%s planner_confidence=%.2f modality=%s speech_mode=%s cards=%s",
+                request_id,
+                getattr(request_plan, "intent", ""),
+                float(getattr(request_plan, "planner_confidence", 0.0) or 0.0),
+                modality,
+                speech_mode,
+                card_names,
+            )
+            logger.info(
+                "runtime_trace_summary request_id=%s perception=%s tool_chain=%s selected_tool=%s schema_cards=%s renderers=%s speech_mode=%s states=%s fallback=%s",
+                request_id,
+                trace_bundle.get("response_trace", {}).get("perception", {}).get("intent", ""),
+                ",".join(trace_bundle.get("tool_trace", {}).get("tool_chain", []) or []),
+                trace_bundle.get("tool_trace", {}).get("selected_tool", ""),
+                ",".join(trace_bundle.get("schema_trace", {}).get("card_types", []) or []),
+                ",".join(trace_bundle.get("renderer_trace", {}).get("renderers", []) or []),
+                trace_bundle.get("speech_trace", {}).get("mode", ""),
+                "->".join(item.get("to_state", "") for item in trace_bundle.get("state_trace", []) if item.get("to_state")),
+                trace_bundle.get("schema_trace", {}).get("fallback_reason", "") or trace_bundle.get("renderer_trace", {}).get("fallback_reason", ""),
+            )
+            messages = build_chat_messages_from_response(
+                normalized_response,
+                text_message_id=text_message_id,
+            )
+            for message in messages:
+                self._upsert_assistant_message(message)
+            self._deliver_voice_response(
+                normalized_response,
+                payload=payload,
+                user_log_text=user_log_text,
+            )
             self._presence_task_summary = tr("presence_request_complete_summary", self.preferences.ui_language)
             if not self.window.isVisible():
-                self.presence_window.show_reply_message(assistant_message, error=False)
+                presence_message = self._select_presence_message(messages)
+                if presence_message is not None:
+                    self.presence_window.show_reply_message(presence_message, error=False)
                 self._presence_unread_reply = False
+        self._clear_streaming_message(stream_message_id)
+        self._request_plans.pop(request_id, None)
+        self._runtime_v2.concurrent_tasks.finish_request(request_id)
 
         self.window.show_session_artifacts(
             payload.get("changed_files") or [],
@@ -1203,8 +1647,7 @@ class AssistantModeController(QObject):
         self.history.append({"role": "user", "content": user_log_text})
         self.history.append({"role": "assistant", "content": assistant_text})
         self._last_skill_name = str(payload.get("skill_name", "") or "")
-        structured = payload.get("structured")
-        self._last_structured = dict(structured) if isinstance(structured, dict) else {}
+        self._last_structured = self._remember_structured_context(payload, normalized_response if "normalized_response" in locals() else None)
         if self._last_skill_name == "screen_understanding_skill":
             self._screen_followup_remaining = 3
         else:

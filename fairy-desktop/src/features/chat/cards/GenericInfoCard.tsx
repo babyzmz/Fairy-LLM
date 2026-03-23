@@ -1,0 +1,27 @@
+import type { GenericInfoCardEnvelope } from "../../../lib/types/api";
+
+interface GenericInfoCardProps {
+  card: GenericInfoCardEnvelope;
+}
+
+export function GenericInfoCard({ card }: GenericInfoCardProps): JSX.Element {
+  const fields = card.data.fields ?? [];
+  return (
+    <article className="card">
+      <div className="card__header">
+        <h3>{card.data.title || "Structured Info"}</h3>
+      </div>
+      {card.data.summary ? <p>{card.data.summary}</p> : null}
+      {fields.length > 0 ? (
+        <dl className="card__meta-grid">
+          {fields.map((field) => (
+            <div key={`${field.label}-${field.value}`}>
+              <dt>{field.label}</dt>
+              <dd>{field.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+    </article>
+  );
+}

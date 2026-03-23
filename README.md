@@ -32,3 +32,15 @@ python main.py
 
 
 
+## Default Desktop Path
+
+- Default shell: `fairy-desktop` (`Tauri -> FastAPI -> FairyRuntimeV2`)
+- Legacy shell: `main.py` / Qt (`Deprecated`, debug-only during migration)
+
+## Recommended Startup
+
+- Default desktop shell:
+  `powershell -ExecutionPolicy Bypass -File D:\桌面\~\deskllmchat\tools\start_fairy_desktop.ps1`
+- Legacy Qt shell:
+  `python main.py`
+  Use only for migration debugging. It is no longer the default runtime path.

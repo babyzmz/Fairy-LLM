@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# LEGACY_ENTRYPOINT
+# Qt shell is deprecated. The default desktop path is the Tauri shell:
+# Tauri -> FastAPI -> FairyRuntimeV2 -> structured response -> React renderer.
+
 import logging
 import sys
 from pathlib import Path

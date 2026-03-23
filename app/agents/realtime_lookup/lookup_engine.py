@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import threading
 from typing import Any, Callable
 
 from app.agents.realtime_lookup.query_analyzer import QueryAnalyzer, RealtimeIntent
@@ -26,6 +27,7 @@ from app.agents.realtime_lookup.providers.stock_provider import StockProvider
 from app.agents.realtime_lookup.providers.fx_provider import FxProvider
 
 logger = logging.getLogger(__name__)
+ProgressCallback = Callable[[str, dict[str, Any]], None]
 
 
 # ---------------------------------------------------------------------------
@@ -163,17 +165,29 @@ class LookupEngine:
         self,
         search_fn: Callable[[str], list[dict]] | None = None,
         fetch_page_fn: Callable[[str], str] | None = None,
+        progress_callback: ProgressCallback | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> None:
         self.search_fn = search_fn
         self.fetch_page_fn = fetch_page_fn
+        self._progress_callback = progress_callback
+        self._cancel_event = cancel_event
         self._analyzer = QueryAnalyzer()
+
+    def set_progress_callback(self, callback: ProgressCallback | None) -> None:
+        self._progress_callback = callback
+
+    def set_cancel_event(self, cancel_event: threading.Event | None) -> None:
+        self._cancel_event = cancel_event
 
     # --- public API ---
 
     def run(self, query: str) -> RealtimeResult:
         """Execute full 5-stage lookup for a single query string."""
         logger.info("lookup_engine_start query=%s", query[:60])
+        self._check_cancelled()
         intent = self._analyzer.analyze(query)
+        self._emit_progress("lookup_started", subtype=intent.subtype, query=query[:60])
         if not intent.is_realtime:
             return ResultBuilder.failure(subtype="unknown", error_message="非实时查询")
         return self._dispatch(intent)
@@ -211,9 +225,11 @@ class LookupEngine:
         if not handler:
             return ResultBuilder.failure(subtype=intent.subtype)
         try:
+            self._check_cancelled()
             result = handler(intent)
             if result and result.success:
                 logger.info("card_built subtype=%s stage=%s", intent.subtype, result.stage_used)
+                self._emit_progress("result_ready", subtype=intent.subtype, stage=result.stage_used, confidence=result.confidence)
                 return result
         except Exception as exc:
             logger.exception("dispatch_error subtype=%s error=%s", intent.subtype, exc)
@@ -223,41 +239,51 @@ class LookupEngine:
 
     def _s1_weather(self, location: str) -> RealtimeResult | None:
         logger.info("realtime_stage_entered stage=1 subtype=weather")
+        self._emit_progress("stage_entered", subtype="weather", stage="stage1", location=location)
         data = WeatherProvider.fetch(location)
         if data and data.get("temperature_c") is not None:
             logger.info("provider_success subtype=weather location=%s", location)
+            self._emit_progress("provider_success", subtype="weather", stage="stage1", location=location)
             return ResultBuilder.weather(location, data, confidence=0.95, stage="stage1")
         return None
 
     def _s1_time(self, location: str) -> RealtimeResult | None:
         logger.info("realtime_stage_entered stage=1 subtype=time")
+        self._emit_progress("stage_entered", subtype="time", stage="stage1", location=location)
         data = TimeProvider.fetch(location)
         if data:
             logger.info("provider_success subtype=time location=%s", location)
+            self._emit_progress("provider_success", subtype="time", stage="stage1", location=location)
             return ResultBuilder.time(location, data, confidence=0.99, stage="stage1")
         return None
 
     def _s1_crypto(self, symbol: str) -> RealtimeResult | None:
         logger.info("realtime_stage_entered stage=1 subtype=crypto")
+        self._emit_progress("stage_entered", subtype="crypto", stage="stage1", symbol=symbol)
         data = CryptoProvider.fetch(symbol)
         if data and data.get("price_usd") is not None:
             logger.info("provider_success subtype=crypto symbol=%s", symbol)
+            self._emit_progress("provider_success", subtype="crypto", stage="stage1", symbol=symbol)
             return ResultBuilder.crypto(symbol, data, confidence=0.95, stage="stage1")
         return None
 
     def _s1_stock(self, symbol: str) -> RealtimeResult | None:
         logger.info("realtime_stage_entered stage=1 subtype=stock")
+        self._emit_progress("stage_entered", subtype="stock", stage="stage1", symbol=symbol)
         data = StockProvider.fetch(symbol)
         if data and data.get("price_usd") is not None:
             logger.info("provider_success subtype=stock symbol=%s", symbol)
+            self._emit_progress("provider_success", subtype="stock", stage="stage1", symbol=symbol)
             return ResultBuilder.stock(symbol, data, confidence=0.92, stage="stage1")
         return None
 
     def _s1_fx(self, frm: str, to: str) -> RealtimeResult | None:
         logger.info("realtime_stage_entered stage=1 subtype=exchange")
+        self._emit_progress("stage_entered", subtype="exchange", stage="stage1", from_currency=frm, to_currency=to)
         data = FxProvider.fetch(frm, to)
         if data and data.get("rate") is not None:
             logger.info("provider_success subtype=exchange from=%s to=%s", frm, to)
+            self._emit_progress("provider_success", subtype="exchange", stage="stage1", from_currency=frm, to_currency=to)
             return ResultBuilder.fx(data, confidence=0.95, stage="stage1")
         return None
 
@@ -267,7 +293,9 @@ class LookupEngine:
         if not self.search_fn:
             return None
         logger.info("realtime_stage_entered stage=2 subtype=%s", subtype)
+        self._emit_progress("stage_entered", subtype=subtype, stage="stage2", **kw)
         for query in queries:
+            self._check_cancelled()
             try:
                 results = self.search_fn(query, max_results=5)
             except Exception as exc:
@@ -275,6 +303,7 @@ class LookupEngine:
                 continue
             if not results:
                 continue
+            self._emit_progress("search_results_received", subtype=subtype, stage="stage2", query=query[:60], count=len(results), **kw)
             combined = " ".join(
                 r.get("snippet", "") + " " + r.get("title", "")
                 for r in results[:3]
@@ -283,6 +312,7 @@ class LookupEngine:
             result = self._parse_snippet(combined, subtype, urls=urls, **kw)
             if result:
                 logger.info("snippet_extracted subtype=%s", subtype)
+                self._emit_progress("snippet_extracted", subtype=subtype, stage="stage2", count=len(results), **kw)
                 return result
         return None
 
@@ -340,21 +370,26 @@ class LookupEngine:
         if not self.search_fn or not self.fetch_page_fn:
             return None
         logger.info("realtime_stage_entered stage=3 subtype=%s", subtype)
+        self._emit_progress("stage_entered", subtype=subtype, stage="stage3", **kw)
         for query in queries:
+            self._check_cancelled()
             try:
                 results = self.search_fn(query, max_results=5)
             except Exception:
                 continue
             urls = [r.get("url", "") for r in results if r.get("url")]
             for url in urls[:max_pages]:
+                self._check_cancelled()
                 try:
                     logger.info("webpage_opened url=%s", url)
+                    self._emit_progress("page_opening", subtype=subtype, stage="stage3", url=url, **kw)
                     page_text = self.fetch_page_fn(url)
                     if not page_text:
                         continue
                     result = self._parse_page(page_text, subtype, url=url, **kw)
                     if result:
                         logger.info("structured_value_found stage=3 subtype=%s url=%s", subtype, url)
+                        self._emit_progress("structured_value_found", subtype=subtype, stage="stage3", url=url, **kw)
                         return result
                 except Exception as exc:
                     logger.debug("s3_page_error url=%s err=%s", url, exc)
@@ -372,7 +407,9 @@ class LookupEngine:
         if not self.search_fn or primary.numeric_value is None:
             return primary
         logger.info("realtime_stage_entered stage=4 subtype=%s", subtype)
+        self._emit_progress("stage_entered", subtype=subtype, stage="stage4", **kw)
         try:
+            self._check_cancelled()
             results = self.search_fn(queries[-1] if queries else "", max_results=3)
             if not results:
                 return primary
@@ -382,6 +419,7 @@ class LookupEngine:
                 dev = abs(primary.numeric_value - second.numeric_value) / max(abs(primary.numeric_value), 0.001)
                 if dev < 0.15:
                     logger.info("multi_source_validated subtype=%s deviation=%.3f", subtype, dev)
+                    self._emit_progress("validation_complete", subtype=subtype, stage="stage4", deviation=round(dev, 4), **kw)
                     import dataclasses
                     return dataclasses.replace(
                         primary,
@@ -397,10 +435,12 @@ class LookupEngine:
 
     def _stage5_fallback(self, intent: RealtimeIntent) -> RealtimeResult:
         logger.info("realtime_stage_entered stage=5 subtype=%s", intent.subtype)
+        self._emit_progress("stage_entered", subtype=intent.subtype, stage="stage5", query=intent.raw_query[:60])
         if self.search_fn:
             try:
                 results = self.search_fn(intent.raw_query, max_results=3)
                 if results:
+                    self._emit_progress("fallback_results_received", subtype=intent.subtype, stage="stage5", count=len(results))
                     snippet = results[0].get("snippet", "")
                     url = results[0].get("url", "")
                     if snippet:
@@ -426,6 +466,7 @@ class LookupEngine:
         loc = intent.entities.get("location", "")
         if not loc:
             return None
+        self._check_cancelled()
         r = self._s1_weather(loc)
         if r:
             return self._s4_validate(r, _weather_queries(loc), "weather", location=loc)
@@ -438,12 +479,14 @@ class LookupEngine:
         loc = intent.entities.get("location", "")
         if not loc:
             return None
+        self._check_cancelled()
         return self._s1_time(loc)  # time always uses Stage 1 (ZoneInfo)
 
     def _handle_crypto(self, intent: RealtimeIntent) -> RealtimeResult | None:
         sym = intent.entities.get("symbol", "")
         if not sym:
             return None
+        self._check_cancelled()
         r = self._s1_crypto(sym)
         if r:
             return self._s4_validate(r, _crypto_queries(sym), "crypto", symbol=sym)
@@ -456,6 +499,7 @@ class LookupEngine:
         sym = intent.entities.get("symbol", "")
         if not sym:
             return None
+        self._check_cancelled()
         r = self._s1_stock(sym)
         if r:
             return self._s4_validate(r, _stock_queries(sym), "stock", symbol=sym)
@@ -469,6 +513,7 @@ class LookupEngine:
         to  = intent.entities.get("to_currency", "")
         if not frm or not to:
             return None
+        self._check_cancelled()
         r = self._s1_fx(frm, to)
         if r:
             return self._s4_validate(r, _fx_queries(frm, to), "exchange", from_currency=frm, to_currency=to)
@@ -482,6 +527,7 @@ class LookupEngine:
         ft  = intent.entities.get("fuel_type", "petrol")
         if not loc:
             return None
+        self._check_cancelled()
         qs = _fuel_queries(loc, ft)
         # Fuel: no stage-1 provider → stage2 → stage3 (CRITICAL)
         r = self._s2_search(qs, "fuel", location=loc, fuel_type=ft)
@@ -493,8 +539,21 @@ class LookupEngine:
         event = intent.entities.get("event", "")
         if not event:
             return None
+        self._check_cancelled()
         qs = [f"{event} score today", f"{event} latest result", f"{event} game score"]
         r = self._s2_search(qs, "sports", event=event)
         if not r:
             r = self._s3_webpage(qs, "sports", event=event)
         return r
+
+    def _emit_progress(self, phase: str, **payload: Any) -> None:
+        if self._progress_callback is None:
+            return
+        try:
+            self._progress_callback("structured_tool_progress", {"phase": phase, **payload})
+        except Exception:
+            logger.debug("realtime_lookup_progress_callback_failed", exc_info=True)
+
+    def _check_cancelled(self) -> None:
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            raise RuntimeError("cancelled")

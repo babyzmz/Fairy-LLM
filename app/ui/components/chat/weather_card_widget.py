@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QVBoxLayout
 
 from app.ui.components.chat.base_card_widget import HoverCardFrame, SparklineWidget
@@ -121,29 +125,69 @@ class WeatherCardWidget(HoverCardFrame):
         self.message = message
         payload = message.payload
         city = str(payload.get("city", "") or ("Weather" if self.language.startswith("en") else "\u5929\u6c14")).strip()
-        temp = payload.get("temp", "--")
-        high = payload.get("high", "--")
-        low = payload.get("low", "--")
-        feels_like = payload.get("feels_like", "--")
+        country = str(payload.get("country", "") or "").strip()
+        temp = payload.get("temperature_c", payload.get("temp", "--"))
+        high = payload.get("high_c", payload.get("high", "--"))
+        low = payload.get("low_c", payload.get("low", "--"))
+        feels_like = payload.get("feels_like_c", payload.get("feels_like", "--"))
+        wind_value = payload.get("wind_kmh")
         wind = str(payload.get("wind", "--") or "--").strip()
-        condition = str(payload.get("condition", "") or ("Current" if self.language.startswith("en") else "\u5f53\u524d")).strip()
-        icon_type = str(payload.get("icon_type", "") or "").strip()
+        if wind_value not in {None, ""}:
+            try:
+                wind = f"{float(wind_value):.0f} km/h"
+            except (TypeError, ValueError):
+                pass
+        humidity_value = payload.get("humidity_percent", payload.get("humidity"))
+        condition = str(payload.get("condition", "") or payload.get("condition_key", "") or ("Current" if self.language.startswith("en") else "\u5f53\u524d")).strip()
+        icon_type = str(payload.get("icon_code", "") or payload.get("icon_type", "") or "").strip()
+        icon_path = str(payload.get("icon_path", "") or "").strip()
         summary = str(payload.get("summary", "") or "").strip()
 
-        self.city_label.setText(city)
+        self.city_label.setText(f"{city}, {country}" if country and not self.is_compact() else city)
         self.condition_label.setText(condition)
         self.temp_label.setText(f"{temp}\N{DEGREE SIGN}")
+        humidity_text = ""
+        try:
+            if humidity_value not in {None, "", "--"}:
+                humidity_text = f"{int(float(humidity_value))}%"
+        except (TypeError, ValueError):
+            humidity_text = ""
+
         if self.language.startswith("en"):
             self.range_label.setText(f"H {high}\N{DEGREE SIGN}   L {low}\N{DEGREE SIGN}")
             self.feels_label.setText(f"Feels {feels_like}\N{DEGREE SIGN}")
-            self.extra_label.setText(condition)
+            if humidity_text:
+                self.extra_label.setText(f"Humidity {humidity_text}")
+            else:
+                self.extra_label.setText(condition)
             self.wind_label.setText(f"Wind {wind}")
         else:
             self.range_label.setText(f"\u9ad8 {high}\N{DEGREE SIGN}   \u4f4e {low}\N{DEGREE SIGN}")
             self.feels_label.setText(f"\u4f53\u611f {feels_like}\N{DEGREE SIGN}")
-            self.extra_label.setText(condition)
+            if humidity_text:
+                self.extra_label.setText(f"\u6e7f\u5ea6 {humidity_text}")
+            else:
+                self.extra_label.setText(condition)
             self.wind_label.setText(f"\u98ce\u901f {wind}")
-        self.icon_label.setText(self._icon_for_condition(icon_type or condition))
+        pixmap = QPixmap()
+        if icon_path and not icon_path.startswith(("http://", "https://")):
+            candidate = Path(icon_path)
+            if not candidate.is_absolute():
+                candidate = (Path.cwd() / candidate).resolve()
+            pixmap = QPixmap(str(candidate))
+        if not pixmap.isNull():
+            self.icon_label.setPixmap(
+                pixmap.scaled(
+                    self.mode_metric(36, 28),
+                    self.mode_metric(36, 28),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+            )
+            self.icon_label.setText("")
+        else:
+            self.icon_label.setPixmap(QPixmap())
+            self.icon_label.setText(self._icon_for_condition(icon_type or condition))
 
         curve = payload.get("hourly_curve")
         can_show_curve = isinstance(curve, list) and len(curve) >= 2 and not self.is_compact()

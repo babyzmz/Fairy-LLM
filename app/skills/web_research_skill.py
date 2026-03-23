@@ -12,6 +12,7 @@ import requests
 from app.capabilities.browser_capability import BrowserCapability
 from app.models.skill_result import SkillResult
 from app.models.tool_result import ToolResult
+from app.services.assets import MapPreviewService, get_map_preview_service
 from app.skills.skill_spec import SkillSpec
 from skills.search_web import normalize_search_result_url
 
@@ -82,6 +83,22 @@ _METRIC_MARKERS = ("粉丝", "粉丝数", "followers", "subscriber", "subscribe"
 _INTERACTIVE_MARKERS = ("登录", "注册", "提交", "填写", "输入", "点击", "翻页", "滚动")
 _WEATHER_MARKERS = ("天气", "气温", "温度", "预报", "下雨", "降雨", "weather", "forecast")
 _NEWS_MARKERS = ("新闻", "科技新闻", "最新", "实时", "今日", "今天", "快讯", "动态", "news")
+_LOCATION_MARKERS = (
+    "where is",
+    "where's",
+    "在哪",
+    "在哪里",
+    "地址",
+    "位置",
+    "地点",
+    "附近",
+    "最近",
+    "nearest",
+    "nearby",
+    "post office",
+    "地图",
+)
+_NEARBY_MARKERS = ("附近", "最近", "nearest", "nearby", "closest")
 _SITE_MARKERS = {
     "bilibili": ("哔哩哔哩", "哔站", "b站", "bilibili"),
     "apple": ("apple", "苹果"),
@@ -150,12 +167,26 @@ class WebResearchSkill:
         output_schema=("summary", "compared_items", "differences", "recommendation", "sources"),
     )
 
-    def __init__(self, browser: BrowserCapability, llm_helper: Any) -> None:
+    def __init__(
+        self,
+        browser: BrowserCapability,
+        llm_helper: Any,
+        *,
+        map_preview_service: MapPreviewService | None = None,
+    ) -> None:
         self.browser = browser
         self.llm_helper = llm_helper
+        self.map_preview_service = map_preview_service or get_map_preview_service()
 
-    def execute(self, user_request: str, allowed_tools: list[str], *, memory_context: str = "") -> SkillResult:
-        intent = self._classify_intent(user_request)
+    def execute(
+        self,
+        user_request: str,
+        allowed_tools: list[str],
+        *,
+        memory_context: str = "",
+        runtime_context: dict[str, Any] | None = None,
+    ) -> SkillResult:
+        intent = self._classify_intent(user_request, runtime_context=runtime_context)
         plan = self._plan_navigation(intent)
         tool_results: list[ToolResult] = [
             ToolResult("intent_classification", ok=True, data=asdict(intent)),
@@ -219,6 +250,42 @@ class WebResearchSkill:
                     sources=[],
                     tool_results=tool_results,
                     response_text=message["response_text"],
+                )
+
+        if intent.intent_type == "location_lookup":
+            location_result = self._location_result_from_context(intent, runtime_context)
+            if location_result is not None:
+                tool_results.append(ToolResult("location_context_reuse", ok=True, data=location_result))
+                return SkillResult(
+                    skill_name=self.SPEC.name,
+                    success=True,
+                    summary=location_result["summary"],
+                    structured={
+                        "intent": asdict(intent),
+                        "plan": self._plan_to_dict(plan),
+                        **location_result,
+                    },
+                    recommendation=location_result["recommendation"],
+                    sources=location_result["sources"],
+                    tool_results=tool_results,
+                    response_text=location_result["response_text"],
+                )
+            location_result = self._try_location_lookup(intent)
+            if location_result is not None:
+                tool_results.append(ToolResult("location_lookup", ok=True, data=location_result))
+                return SkillResult(
+                    skill_name=self.SPEC.name,
+                    success=True,
+                    summary=location_result["summary"],
+                    structured={
+                        "intent": asdict(intent),
+                        "plan": self._plan_to_dict(plan),
+                        **location_result,
+                    },
+                    recommendation=location_result["recommendation"],
+                    sources=location_result["sources"],
+                    tool_results=tool_results,
+                    response_text=location_result["response_text"],
                 )
 
         if plan.missing_constraints:
@@ -331,7 +398,7 @@ class WebResearchSkill:
             response_text=synthesis.get("response_text", ""),
         )
 
-    def _classify_intent(self, user_request: str) -> WebResearchIntent:
+    def _classify_intent(self, user_request: str, runtime_context: dict[str, Any] | None = None) -> WebResearchIntent:
         normalized_query = self._normalize_query(user_request)
         urls = re.findall(r"https?://\S+", user_request)
         site_key = self._site_key(normalized_query)
@@ -354,8 +421,22 @@ class WebResearchSkill:
                 constraints={"route": route_pair} if route_pair else {},
                 allow_distance_fallback=True,
             )
+        weather_followup_location = self._resolve_weather_followup_location(normalized_query, runtime_context)
+        if weather_followup_location:
+            return WebResearchIntent(
+                intent_type="weather_lookup",
+                normalized_query=normalized_query,
+                target_entity=weather_followup_location,
+                target_metric="weather",
+                constraints={
+                    "location": weather_followup_location,
+                    "day_offset": self._extract_weather_day_offset(normalized_query),
+                    "followup_from_context": True,
+                },
+                allow_distance_fallback=False,
+            )
         if self._is_weather_request(normalized_query):
-            location = self._extract_weather_location(normalized_query)
+            location = self._resolve_weather_query_location(normalized_query, runtime_context)
             return WebResearchIntent(
                 intent_type="weather_lookup",
                 normalized_query=normalized_query,
@@ -364,6 +445,31 @@ class WebResearchSkill:
                 constraints={
                     "location": location,
                     "day_offset": self._extract_weather_day_offset(normalized_query),
+                },
+                allow_distance_fallback=False,
+            )
+        if self._is_map_display_followup(normalized_query, runtime_context):
+            target_query = self._extract_location_query(normalized_query, runtime_context=runtime_context)
+            return WebResearchIntent(
+                intent_type="location_lookup",
+                normalized_query=normalized_query,
+                target_entity=target_query,
+                constraints={
+                    "location_query": target_query,
+                    "nearby": False,
+                    "display_map_from_context": True,
+                },
+                allow_distance_fallback=False,
+            )
+        if self._is_location_request(normalized_query):
+            target_query = self._extract_location_query(normalized_query, runtime_context=runtime_context)
+            return WebResearchIntent(
+                intent_type="location_lookup",
+                normalized_query=normalized_query,
+                target_entity=target_query,
+                constraints={
+                    "location_query": target_query,
+                    "nearby": self._is_nearby_request(normalized_query),
                 },
                 allow_distance_fallback=False,
             )
@@ -445,6 +551,14 @@ class WebResearchSkill:
                 plan.notes.append("Weather lookup will try current approximate location before asking for a city.")
                 return plan
             plan.notes.append("Weather lookup uses geocoding plus Open-Meteo forecast API and does not rely on news pages.")
+            return plan
+
+        if intent.intent_type == "location_lookup":
+            location_query = str(intent.constraints.get("location_query", "") or intent.target_entity or "").strip()
+            if not location_query:
+                plan.missing_constraints.append("place")
+                return plan
+            plan.notes.append("Location lookup uses Nominatim geocoding and static map preview generation.")
             return plan
 
         if intent.intent_type == "site_metric_lookup" and intent.target_site == "bilibili":
@@ -736,6 +850,12 @@ class WebResearchSkill:
                 "recommendation": f"请补充 {missing}，例如“墨尔本今天天气怎么样”。",
                 "response_text": f"请求已接收。我已识别为天气查询，但目前缺少 {missing}。请告诉我要查哪个城市，我再直接给你天气结果。",
             }
+        if intent.intent_type == "location_lookup":
+            return {
+                "summary": "我已识别为地点查询，但目标地点还不明确。",
+                "recommendation": "请直接告诉我要找什么地点，例如“联邦广场在哪里”或“最近的邮局在哪”。",
+                "response_text": "请求已接收。我已识别为地点查询，但目标地点还不够明确。请直接告诉我要找什么地点，我就继续给你位置和地图预览。",
+            }
         if intent.intent_type == "travel_price_lookup":
             missing = "、".join(plan.missing_constraints)
             return {
@@ -755,6 +875,12 @@ class WebResearchSkill:
                 "summary": "我已识别为天气查询，但暂时没能从天气数据源拿到可靠结果。",
                 "recommendation": "建议确认城市名称，或稍后再试一次。",
                 "response_text": "请求已接收。我已识别为天气查询，但暂时没能从天气数据源拿到可靠结果。建议确认城市名称，或稍后再试一次。",
+            }
+        if intent.intent_type == "location_lookup":
+            return {
+                "summary": "我已识别为地点查询，但暂时没能确认可靠的位置结果。",
+                "recommendation": "建议换一个更具体的地点名称，或补充所在城市后再试一次。",
+                "response_text": "请求已接收。我已识别为地点查询，但这次没能确认可靠的位置结果。建议换一个更具体的地点名称，或补充所在城市后再试一次。",
             }
         if intent.intent_type == "site_metric_lookup" and intent.target_site == "bilibili":
             return {
@@ -824,6 +950,133 @@ class WebResearchSkill:
         lowered = text.lower()
         return any(marker in lowered for marker in _WEATHER_MARKERS)
 
+    def _is_location_request(self, text: str) -> bool:
+        lowered = text.lower()
+        if self._is_weather_request(text) or self._is_distance_request(text):
+            return False
+        return any(marker in lowered for marker in _LOCATION_MARKERS)
+
+    def _context_location_payload(self, runtime_context: dict[str, Any] | None) -> dict[str, Any]:
+        previous = runtime_context.get("previous_structured") if isinstance(runtime_context, dict) else {}
+        if not isinstance(previous, dict):
+            return {}
+        nested = previous.get("location") if isinstance(previous.get("location"), dict) else {}
+        merged = dict(previous)
+        if nested:
+            merged.update(nested)
+        return merged
+
+    def _context_weather_payload(self, runtime_context: dict[str, Any] | None) -> dict[str, Any]:
+        previous = runtime_context.get("previous_structured") if isinstance(runtime_context, dict) else {}
+        if not isinstance(previous, dict):
+            return {}
+        nested = previous.get("weather") if isinstance(previous.get("weather"), dict) else {}
+        merged = dict(previous)
+        if nested:
+            merged.update(nested)
+        return merged
+
+    def _context_intent_type(self, runtime_context: dict[str, Any] | None) -> str:
+        payload = runtime_context.get("previous_structured") if isinstance(runtime_context, dict) else {}
+        if not isinstance(payload, dict):
+            return ""
+        routing = payload.get("routing") if isinstance(payload.get("routing"), dict) else {}
+        intent = payload.get("intent") if isinstance(payload.get("intent"), dict) else {}
+        return str(
+            payload.get("type")
+            or payload.get("card_type")
+            or routing.get("primary_intent")
+            or intent.get("intent_type")
+            or ""
+        ).strip().lower()
+
+    def _context_location_query(self, runtime_context: dict[str, Any] | None) -> str:
+        payload = self._context_location_payload(runtime_context)
+        for key in ("place_name", "title", "address", "location", "city", "weather_location"):
+            value = str(payload.get(key, "") or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _context_weather_query(self, runtime_context: dict[str, Any] | None) -> str:
+        weather_payload = self._context_weather_payload(runtime_context)
+        for key in ("city", "weather_location", "title", "address"):
+            value = str(weather_payload.get(key, "") or "").strip()
+            if value:
+                return value
+        return self._context_location_query(runtime_context)
+
+    def _is_map_display_followup(self, text: str, runtime_context: dict[str, Any] | None) -> bool:
+        payload = self._context_location_payload(runtime_context)
+        if payload.get("lat") in {None, ""} or payload.get("lon") in {None, ""}:
+            if not any(str(payload.get(key, "") or "").strip() for key in ("map_url", "address", "title", "place_name", "image_url")):
+                return False
+        lowered = text.lower().strip()
+        if "地图" not in text and "map" not in lowered:
+            return False
+        cleaned = re.sub(
+            r"(显示出来|展示一下|打开看看|给我看看|显示|展示|打开|看看|看下|看一下|一下|出来|把|给我|show|display|open|the)",
+            " ",
+            text,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"(地图|map)", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" ，,。.!！？?")
+        return not cleaned
+
+    def _is_nearby_request(self, text: str) -> bool:
+        lowered = text.lower()
+        return any(marker in lowered for marker in _NEARBY_MARKERS)
+
+    def _has_weather_context(self, runtime_context: dict[str, Any] | None) -> bool:
+        context_intent = self._context_intent_type(runtime_context)
+        if context_intent in {"weather", "weather_lookup", "location", "location_lookup"}:
+            return bool(self._context_weather_query(runtime_context))
+        return False
+
+    def _is_weather_followup(self, text: str, runtime_context: dict[str, Any] | None) -> bool:
+        if not self._has_weather_context(runtime_context):
+            return False
+        context_intent = self._context_intent_type(runtime_context)
+        lowered = text.lower().strip()
+        if any(marker in lowered for marker in _WEATHER_MARKERS):
+            return True
+        if lowered in {"那天气呢", "天气呢", "weather there", "how about the weather"}:
+            return True
+        if context_intent in {"weather", "weather_lookup"}:
+            return bool(self._extract_short_followup_subject(text))
+        return False
+
+    def _resolve_weather_followup_location(self, text: str, runtime_context: dict[str, Any] | None) -> str:
+        if not self._is_weather_followup(text, runtime_context):
+            return ""
+        subject = self._extract_short_followup_subject(text)
+        if subject:
+            return subject
+        return self._context_weather_query(runtime_context)
+
+    def _resolve_weather_query_location(self, text: str, runtime_context: dict[str, Any] | None) -> str:
+        location = self._extract_weather_location(text)
+        if location and location not in {"那", "那里", "这里", "这边", "那边"}:
+            return location
+        return self._context_weather_query(runtime_context)
+
+    def _extract_short_followup_subject(self, text: str) -> str:
+        cleaned = str(text or "").strip()
+        if not cleaned or len(cleaned) > 30:
+            return ""
+        match = re.fullmatch(
+            r"(?:那|那么|那边|那儿|那里)?(?P<subject>[\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z·\\-\\s]{1,24}?)(?:呢|怎么样|如何)\??",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return ""
+        subject = str(match.group("subject") or "").strip()
+        if subject in {"天气", "地图", "这里", "那里", "这个地方", "那个地方"}:
+            return ""
+        return subject
+
     def _extract_weather_location(self, text: str) -> str:
         cleaned = text.strip()
         cleaned = re.sub(r"(今天天气|明天天气|后天天气)", " ", cleaned, flags=re.IGNORECASE)
@@ -840,6 +1093,27 @@ class WebResearchSkill:
         cleaned = re.sub(r"^(的|要|想|问|一下)\s*", "", cleaned)
         cleaned = re.sub(r"(呢|呀|啊|吗|嘛|吧|如何|怎样|咋样|怎么样)$", "", cleaned).strip()
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" ，,。.!！？?")
+        return cleaned
+
+    def _extract_location_query(self, text: str, runtime_context: dict[str, Any] | None = None) -> str:
+        cleaned = text.strip()
+        cleaned = re.sub(r"\bwhere\s+is\b", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\bwhere's\b", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\b(?:nearest|nearby|closest)\b", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"(在哪里|在哪|地址|位置|地点|地图|附近|最近|离我最近的|离我近的)", " ", cleaned, flags=re.IGNORECASE)
+        changed = True
+        while changed and cleaned:
+            changed = False
+            for prefix in _QUERY_PREFIXES + _ACTION_FILLERS + _LEADING_FILLERS:
+                if cleaned.startswith(prefix):
+                    cleaned = cleaned[len(prefix) :].lstrip()
+                    changed = True
+        cleaned = re.sub(r"^(的|要|想|问|一下)\s*", "", cleaned)
+        cleaned = re.sub(r"(呢|呀|啊|吗|嘛|吧|如何|怎样|咋样|怎么样)$", "", cleaned).strip()
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" ，,。.!！？?")
+        display_only = re.fullmatch(r"(显示出来|显示一下|展示一下|打开看看|看看|看下|看一下|打开|显示|展示)+", cleaned or "")
+        if not cleaned or cleaned.lower() in {"show", "display", "open"} or display_only is not None:
+            return self._context_location_query(runtime_context)
         return cleaned
 
     def _extract_weather_day_offset(self, text: str) -> int:
@@ -1076,6 +1350,136 @@ class WebResearchSkill:
             "response_text": response_text,
         }
 
+    def _location_result_from_context(
+        self,
+        intent: WebResearchIntent,
+        runtime_context: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not bool(intent.constraints.get("display_map_from_context")):
+            return None
+        payload = self._context_location_payload(runtime_context)
+        lat = self._safe_float(payload.get("lat"))
+        lon = self._safe_float(payload.get("lon"))
+        if lat is None or lon is None:
+            return None
+        title = str(payload.get("title") or payload.get("place_name") or payload.get("address") or intent.target_entity or "").strip()
+        address = str(payload.get("address") or title).strip()
+        if not title or not address:
+            return None
+        distance = str(payload.get("distance") or "").strip()
+        summary = f"{title} 位于 {address}。"
+        if distance:
+            summary += f" 距离你当前位置大约 {distance}。"
+        recommendation = "已根据上一次地点结果恢复地图预览。如果你要，我可以继续帮你找附近的相关地点。"
+        response_text = f"请求已接收。{summary}{recommendation}"
+        map_url = str(payload.get("map_url") or payload.get("url") or "").strip() or self._build_openstreetmap_url(lat, lon)
+        image_url = str(payload.get("image_url") or "").strip() or self._build_static_map_preview_url(lat, lon)
+        sources: list[dict[str, str]] = []
+        if map_url:
+            sources.append({"title": f"OpenStreetMap: {title}", "url": map_url})
+        return {
+            "summary": summary,
+            "recommendation": recommendation,
+            "response_text": response_text,
+            "sources": sources,
+            "title": title,
+            "place_name": title,
+            "address": address,
+            "lat": lat,
+            "lon": lon,
+            "distance": distance,
+            "map_url": map_url,
+            "image_url": image_url,
+            "map_preview_url": image_url,
+            "external_map_url": map_url,
+        }
+
+    def _try_location_lookup(self, intent: WebResearchIntent) -> dict[str, Any] | None:
+        raw_query = str(intent.constraints.get("location_query", "") or intent.target_entity or "").strip()
+        nearby = bool(intent.constraints.get("nearby"))
+        if not raw_query:
+            return None
+
+        detected = self._detect_current_location() if nearby else None
+        anchor_label = str((detected or {}).get("location", "") or "").strip()
+        search_queries = [raw_query]
+        if nearby and anchor_label:
+            search_queries = [
+                f"{raw_query} near {anchor_label}",
+                f"{raw_query} {anchor_label}",
+                raw_query,
+            ]
+
+        payload: list[dict[str, Any]] = []
+        response = None
+        search_query = raw_query
+        for candidate_query in search_queries:
+            search_query = candidate_query
+            try:
+                response = requests.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params={
+                        "q": candidate_query,
+                        "format": "jsonv2",
+                        "limit": 5,
+                        "accept-language": "zh-CN,en",
+                    },
+                    headers={"User-Agent": "Fairy/1.0 (desktop assistant)"},
+                    timeout=15,
+                )
+                response.raise_for_status()
+                candidate_payload = response.json()
+            except Exception:
+                continue
+            if isinstance(candidate_payload, list) and candidate_payload:
+                payload = candidate_payload
+                break
+
+        if not payload or response is None:
+            return None
+
+        best_item = self._choose_best_location_candidate(payload, raw_query, detected)
+        if best_item is None:
+            return None
+
+        try:
+            lat = float(best_item["lat"])
+            lon = float(best_item["lon"])
+        except Exception:
+            return None
+
+        title = str(best_item.get("name") or best_item.get("display_name") or raw_query).strip()
+        address = str(best_item.get("display_name") or title).strip()
+        distance = self._distance_from_anchor(detected, lat, lon)
+        recommendation = "如果你要，我可以继续帮你找附近的替代地点或打开地图导航。"
+        if nearby and not distance:
+            recommendation = "如果你要，我可以继续缩小范围，帮你找更近的候选地点。"
+        summary = f"{title} 位于 {address}。"
+        if distance:
+            summary += f" 距离你当前位置大约 {distance}。"
+        response_text = f"请求已接收。{summary}{recommendation}"
+        open_map_url = self._build_openstreetmap_url(lat, lon)
+        preview_image_url = self._build_static_map_preview_url(lat, lon)
+        sources = [{"title": f"Nominatim search: {search_query}", "url": str(response.url or 'https://nominatim.openstreetmap.org/')}]
+        if detected is not None and detected.get("source_url"):
+            sources.insert(0, {"title": "IP Geolocation", "url": str(detected.get("source_url"))})
+        return {
+            "summary": summary,
+            "recommendation": recommendation,
+            "response_text": response_text,
+            "sources": sources,
+            "title": title,
+            "place_name": title,
+            "address": address,
+            "lat": lat,
+            "lon": lon,
+            "distance": distance,
+            "map_url": open_map_url,
+            "image_url": preview_image_url,
+            "map_preview_url": preview_image_url,
+            "external_map_url": open_map_url,
+        }
+
     def _geocode_place(self, place: str) -> dict[str, Any] | None:
         try:
             response = requests.get(
@@ -1102,7 +1506,13 @@ class WebResearchSkill:
         except Exception:
             return None
         source_url = str(response.url) if response.url else "https://nominatim.openstreetmap.org/"
-        return {"lat": lat, "lon": lon, "source_url": source_url}
+        return {
+            "lat": lat,
+            "lon": lon,
+            "source_url": source_url,
+            "display_name": str(item.get("display_name", "") or "").strip(),
+            "name": str(item.get("name", "") or "").strip(),
+        }
 
     def _weather_geocode_place(self, place: str) -> dict[str, Any] | None:
         try:
@@ -1150,13 +1560,80 @@ class WebResearchSkill:
         location = city or region or country
         if not location:
             return None
+        lat = self._safe_float(payload.get("latitude"))
+        lon = self._safe_float(payload.get("longitude"))
         return {
             "location": location,
             "city": city,
             "region": region,
             "country": country,
+            "lat": lat,
+            "lon": lon,
             "source_url": str(response.url or "https://ipwho.is/"),
         }
+
+    def _choose_best_location_candidate(
+        self,
+        payload: list[dict[str, Any]],
+        raw_query: str,
+        detected: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        anchor_lat = self._safe_float((detected or {}).get("lat"))
+        anchor_lon = self._safe_float((detected or {}).get("lon"))
+        if anchor_lat is None or anchor_lon is None:
+            for item in payload:
+                if isinstance(item, dict) and item.get("lat") not in {None, ""} and item.get("lon") not in {None, ""}:
+                    return item
+            return None
+        normalized_query = raw_query.lower().replace(" ", "")
+        prefers_post_office = "postoffice" in normalized_query or "邮局" in raw_query
+        ranked: list[tuple[float, dict[str, Any]]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            try:
+                lat = float(item["lat"])
+                lon = float(item["lon"])
+            except Exception:
+                continue
+            label = str(item.get("display_name", "") or item.get("name", "") or "").lower().replace(" ", "")
+            query_bonus = 0.0
+            if normalized_query and normalized_query in label:
+                query_bonus = -25.0
+            if prefers_post_office:
+                category = str(item.get("category", "") or "").lower()
+                item_type = str(item.get("type", "") or "").lower()
+                if item_type == "post_office" or category == "amenity":
+                    query_bonus -= 12.0
+                else:
+                    query_bonus += 40.0
+            distance_penalty = 0.0
+            if anchor_lat is not None and anchor_lon is not None:
+                distance_penalty = self._haversine_km(anchor_lat, anchor_lon, lat, lon)
+            importance = self._safe_float(item.get("importance")) or 0.0
+            ranked.append((distance_penalty + query_bonus - (importance * 20.0), item))
+        if not ranked:
+            return None
+        ranked.sort(key=lambda pair: pair[0])
+        return ranked[0][1]
+
+    def _distance_from_anchor(self, detected: dict[str, Any] | None, lat: float, lon: float) -> str:
+        if not detected:
+            return ""
+        anchor_lat = self._safe_float(detected.get("lat"))
+        anchor_lon = self._safe_float(detected.get("lon"))
+        if anchor_lat is None or anchor_lon is None:
+            return ""
+        distance_km = self._haversine_km(anchor_lat, anchor_lon, lat, lon)
+        if distance_km < 1:
+            return f"{round(distance_km * 1000):.0f} m"
+        return f"{distance_km:.1f} km"
+
+    def _build_openstreetmap_url(self, lat: float, lon: float) -> str:
+        return self.map_preview_service.build_external_map_url(lat, lon)
+
+    def _build_static_map_preview_url(self, lat: float, lon: float) -> str:
+        return self.map_preview_service.resolve_preview_path(lat=lat, lon=lon)
 
     def _safe_float(self, value: Any) -> float | None:
         try:
