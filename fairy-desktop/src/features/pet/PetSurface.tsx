@@ -10,6 +10,7 @@ import { streamChat } from "../../lib/api/chat";
 import { petCompanion } from "../../lib/api/companion";
 import { getSystemState, performSystemAction } from "../../lib/api/system";
 import { SpeechBubble } from "../companion/SpeechBubble";
+import { sceneToSignal } from "../companion/sceneToAvatarMode";
 import { useCompanionStream } from "../companion/useCompanionStream";
 import type {
   CardUnion,
@@ -361,11 +362,14 @@ export function PetSurface(): JSX.Element {
   const abortRef = useRef<AbortController | null>(null);
   const settleTimerRef = useRef<number | null>(null);
 
-  const presence = useMemo(
-    () => derivePetPresence(systemState, phase, chatError, systemError, streamSignal),
-    [chatError, phase, streamSignal, systemError, systemState],
-  );
-  const { bubble, petBurst, triggerPet } = useCompanionStream();
+  const { bubble, petBurst, scene, triggerPet } = useCompanionStream();
+  const presence = useMemo(() => {
+    const base = derivePetPresence(systemState, phase, chatError, systemError, streamSignal);
+    if (phase !== "idle" || chatError || systemError || streamSignal) return base;
+    const sceneSignal = sceneToSignal(scene);
+    if (!sceneSignal) return base;
+    return { ...base, signal: sceneSignal, label: STATE_LABELS[sceneSignal.state], detail: `scene:${scene}` };
+  }, [chatError, phase, streamSignal, systemError, systemState, scene]);
   const visibleMessage = chatError || systemError || reply || (isBusy ? progress : "");
   const visibleQuestion = textValue(fairyMeta?.next_question);
   const hasAnswer = Boolean(visibleMessage || cards.length > 0 || visibleQuestion || isBusy);
@@ -589,12 +593,18 @@ export function PetSurface(): JSX.Element {
         <div className="pet-stage__halo" />
         <SpeechBubble bubble={bubble} />
         <button
-          className="pet-orb-button"
+          className={`pet-orb-button pet-orb-button--scene-${scene}${phase === "thinking" ? " pet-orb-button--listening" : ""}`}
           type="button"
           aria-label="Fairy"
           onClick={handleFairyPet}
           onDoubleClick={handleOpenMainWindow}
-          style={petBurst ? { filter: "drop-shadow(0 0 12px rgba(255,182,213,0.7))" } : undefined}
+          style={
+            petBurst
+              ? { filter: "drop-shadow(0 0 12px rgba(255,182,213,0.7))" }
+              : phase === "thinking"
+                ? { filter: "drop-shadow(0 0 14px rgba(143,181,255,0.85))" }
+                : undefined
+          }
         >
           <FairyAvatar size={154} animated mode={presence.signal.state} signal={presence.signal} />
         </button>

@@ -5,6 +5,8 @@ import time
 from dataclasses import asdict, dataclass
 
 from app.companion.observer import CompanionObserver, QuipEvent, get_companion_observer
+from app.companion.scene import Scene
+from app.companion.scene_state_machine import SceneStateMachine, SceneTransition, get_scene_state_machine
 
 
 BUBBLE_SHOW_SECONDS = 10.0
@@ -17,6 +19,8 @@ class BubbleSnapshot:
     quip: str
     category: str
     source: str
+    scene: str
+    repetition: bool
     quip_started_at: float
     fade_at: float
     expires_at: float
@@ -27,18 +31,30 @@ class BubbleSnapshot:
 
 
 class BubbleState:
-    def __init__(self, *, observer: CompanionObserver | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        observer: CompanionObserver | None = None,
+        scene_state: SceneStateMachine | None = None,
+    ) -> None:
         self._observer = observer or get_companion_observer()
+        self._scene_state = scene_state or get_scene_state_machine()
         self._lock = threading.Lock()
         self._current: QuipEvent | None = None
         self._quip_started_at: float = 0.0
         self._pet_started_at: float | None = None
         self._observer_unsub = self._observer.subscribe(self._on_quip)
+        self._scene_unsub = self._scene_state.subscribe(self._on_scene_transition)
+        self._last_scene_transition: SceneTransition | None = None
 
     def _on_quip(self, event: QuipEvent) -> None:
         with self._lock:
             self._current = event
             self._quip_started_at = time.monotonic()
+
+    def _on_scene_transition(self, transition: SceneTransition) -> None:
+        with self._lock:
+            self._last_scene_transition = transition
 
     def trigger_pet(self) -> float:
         with self._lock:
@@ -52,8 +68,13 @@ class BubbleState:
                 self._current = None
                 self._quip_started_at = 0.0
 
+    @property
+    def scene(self) -> Scene:
+        return self._scene_state.scene
+
     def snapshot(self) -> BubbleSnapshot | None:
         now_monotonic = time.monotonic()
+        scene_value = self._scene_state.scene.value
         with self._lock:
             current = self._current
             quip_started = self._quip_started_at
@@ -67,6 +88,8 @@ class BubbleState:
                 quip="",
                 category="",
                 source="",
+                scene=scene_value,
+                repetition=False,
                 quip_started_at=0.0,
                 fade_at=0.0,
                 expires_at=0.0,
@@ -89,6 +112,8 @@ class BubbleState:
             quip=current.text,
             category=current.category.value,
             source=current.source,
+            scene=current.scene.value,
+            repetition=current.repetition,
             quip_started_at=self._monotonic_to_wall(quip_started, now_monotonic),
             fade_at=self._monotonic_to_wall(quip_started + (BUBBLE_SHOW_SECONDS - FADE_WINDOW_SECONDS), now_monotonic),
             expires_at=self._monotonic_to_wall(quip_started + BUBBLE_SHOW_SECONDS, now_monotonic),
@@ -108,6 +133,7 @@ class BubbleState:
 
     def shutdown(self) -> None:
         self._observer_unsub()
+        self._scene_unsub()
 
 
 _singleton: BubbleState | None = None

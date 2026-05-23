@@ -80,6 +80,10 @@ class PassiveScreenWatcher:
             self._active_game = detected
         if detected != previous:
             self._emit_transition(previous, detected)
+        try:
+            self._observer.tick()
+        except Exception:
+            logger.exception("passive_screen_watcher_tick_failed")
         return self.snapshot()
 
     def _run(self) -> None:
@@ -100,15 +104,15 @@ class PassiveScreenWatcher:
 
     def _emit_transition(self, previous: str | None, current: str | None) -> None:
         if previous is None and current is not None:
-            self._observer.observe_game_event(QuipCategory.GAME_ENTER, source="screen_watcher")
+            self._observer.observe_game_enter(current, source="screen_watcher")
             logger.info("passive_screen_watcher_game_enter game=%s", current)
             return
         if previous is not None and current is None:
-            self._observer.observe_game_event(QuipCategory.GAME_EXIT, source="screen_watcher")
+            self._observer.observe_game_exit(source="screen_watcher")
             logger.info("passive_screen_watcher_game_exit previous=%s", previous)
             return
         if previous is not None and current is not None and previous != current:
-            self._observer.observe_game_event(QuipCategory.GAME_ENTER, source="screen_watcher")
+            self._observer.observe_game_enter(current, source="screen_watcher")
             logger.info("passive_screen_watcher_game_switch previous=%s current=%s", previous, current)
 
 

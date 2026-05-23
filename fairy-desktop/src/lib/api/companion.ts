@@ -4,14 +4,25 @@ import { apiRequest } from "./client";
 export interface QuipPayload {
   text: string;
   category: string;
+  scene: string;
+  repetition: boolean;
   source: string;
   emitted_at: number;
+}
+
+export interface SceneTransitionPayload {
+  previous: string;
+  current: string;
+  reason: string;
+  at: number;
 }
 
 export interface BubbleSnapshot {
   quip: string;
   category: string;
   source: string;
+  scene: string;
+  repetition: boolean;
   quip_started_at: number;
   fade_at: number;
   expires_at: number;
@@ -31,7 +42,14 @@ export interface WatcherSnapshot {
 export interface CompanionStateResponse {
   bubble: BubbleSnapshot | null;
   watcher: WatcherSnapshot;
+  scene: string;
+  current_game: string | null;
   muted: boolean;
+  persistent: {
+    games_played: Record<string, number>;
+    consecutive_victories: number;
+    consecutive_defeats: number;
+  };
 }
 
 export function getCompanionState(): Promise<CompanionStateResponse> {
@@ -58,17 +76,35 @@ export function stopWatcher(): Promise<{ running: boolean }> {
 }
 
 export type QuipStreamCallback = (event: QuipPayload) => void;
+export type SceneStreamCallback = (event: SceneTransitionPayload) => void;
 
-export function subscribeQuipStream(onQuip: QuipStreamCallback): () => void {
+export interface QuipStreamHandlers {
+  onQuip?: QuipStreamCallback;
+  onScene?: SceneStreamCallback;
+}
+
+export function subscribeQuipStream(onQuipOrHandlers: QuipStreamCallback | QuipStreamHandlers): () => void {
+  const handlers: QuipStreamHandlers =
+    typeof onQuipOrHandlers === "function" ? { onQuip: onQuipOrHandlers } : onQuipOrHandlers;
   const url = `${API_BASE_URL}/companion/quip-stream`;
   const source = new EventSource(url);
-  source.addEventListener("quip", (event) => {
-    try {
-      const payload = JSON.parse((event as MessageEvent).data) as QuipPayload;
-      onQuip(payload);
-    } catch {
-      /* ignore malformed event */
-    }
-  });
+  if (handlers.onQuip) {
+    source.addEventListener("quip", (event) => {
+      try {
+        handlers.onQuip!(JSON.parse((event as MessageEvent).data) as QuipPayload);
+      } catch {
+        /* ignore malformed event */
+      }
+    });
+  }
+  if (handlers.onScene) {
+    source.addEventListener("scene", (event) => {
+      try {
+        handlers.onScene!(JSON.parse((event as MessageEvent).data) as SceneTransitionPayload);
+      } catch {
+        /* ignore malformed event */
+      }
+    });
+  }
   return () => source.close();
 }

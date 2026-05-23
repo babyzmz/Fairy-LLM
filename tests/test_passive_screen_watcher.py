@@ -8,6 +8,8 @@ from app.companion.game_event_detector import GameMatcher, WhitelistConfig, dete
 from app.companion.observer import CompanionObserver, QuipEvent
 from app.companion.passive_screen_watcher import PassiveScreenWatcher
 from app.companion.quip_pool import QuipCategory
+from app.companion.scene import Scene
+from app.companion.scene_state_machine import SceneStateMachine
 
 
 def _window(process: str, title: str) -> ForegroundWindow:
@@ -40,7 +42,13 @@ class GameMatcherTests(unittest.TestCase):
 class ScreenWatcherTransitionTests(unittest.TestCase):
     def _watcher(self, probes: list[ForegroundWindow | None]) -> tuple[PassiveScreenWatcher, list[QuipEvent]]:
         events: list[QuipEvent] = []
-        observer = CompanionObserver(emit_probability=1.0, cooldown_seconds=0.0, rng=random.Random(0))
+        scene_state = SceneStateMachine()
+        observer = CompanionObserver(
+            emit_probability=1.0,
+            cooldown_seconds=0.0,
+            rng=random.Random(0),
+            scene_state=scene_state,
+        )
         observer.subscribe(events.append)
         whitelist = WhitelistConfig(
             matchers=(
@@ -61,8 +69,8 @@ class ScreenWatcherTransitionTests(unittest.TestCase):
         watcher, events = self._watcher([None, _window("genshinimpact.exe", "原神")])
         watcher.poll_once()
         watcher.poll_once()
-        categories = [event.category for event in events]
-        self.assertIn(QuipCategory.GAME_ENTER, categories)
+        scenes = [event.scene for event in events]
+        self.assertIn(Scene.GAME_WARMING, scenes)
 
     def test_exit_emits_game_exit(self) -> None:
         watcher, events = self._watcher(
@@ -73,8 +81,8 @@ class ScreenWatcherTransitionTests(unittest.TestCase):
         )
         watcher.poll_once()
         watcher.poll_once()
-        categories = [event.category for event in events]
-        self.assertIn(QuipCategory.GAME_EXIT, categories)
+        scenes = [event.scene for event in events]
+        self.assertIn(Scene.IDLE, scenes)
 
     def test_switch_emits_game_enter_again(self) -> None:
         watcher, events = self._watcher(
@@ -86,8 +94,8 @@ class ScreenWatcherTransitionTests(unittest.TestCase):
         watcher.poll_once()
         events.clear()
         watcher.poll_once()
-        categories = [event.category for event in events]
-        self.assertIn(QuipCategory.GAME_ENTER, categories)
+        scenes = [event.scene for event in events]
+        self.assertIn(Scene.GAME_WARMING, scenes)
 
 
 if __name__ == "__main__":

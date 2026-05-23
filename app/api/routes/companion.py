@@ -14,9 +14,12 @@ from pydantic import BaseModel
 
 from app.companion import (
     QuipEvent,
+    SceneTransition,
     get_bubble_state,
     get_companion_observer,
     get_passive_screen_watcher,
+    get_persistent_memory,
+    get_scene_state_machine,
 )
 
 
@@ -37,27 +40,44 @@ def _quip_event_payload(event: QuipEvent) -> dict[str, object]:
     return {
         "text": event.text,
         "category": event.category.value,
+        "scene": event.scene.value,
+        "repetition": event.repetition,
         "source": event.source,
         "emitted_at": event.emitted_at,
+    }
+
+
+def _scene_transition_payload(transition: SceneTransition) -> dict[str, object]:
+    return {
+        "previous": transition.previous.value,
+        "current": transition.current.value,
+        "reason": transition.reason,
+        "at": transition.at,
     }
 
 
 @router.get("/quip-stream")
 async def quip_stream(request: Request) -> StreamingResponse:
     observer = get_companion_observer()
+    scene_state = get_scene_state_machine()
     bubble = get_bubble_state()
     snapshot = bubble.snapshot_dict()
+    initial_scene = scene_state.scene.value
 
     event_queue: queue.Queue[dict[str, object] | None] = queue.Queue()
 
     def on_quip(event: QuipEvent) -> None:
         event_queue.put({"kind": "quip", "payload": _quip_event_payload(event)})
 
-    unsubscribe = observer.subscribe(on_quip)
+    def on_scene(transition: SceneTransition) -> None:
+        event_queue.put({"kind": "scene", "payload": _scene_transition_payload(transition)})
+
+    unsub_quip = observer.subscribe(on_quip)
+    unsub_scene = scene_state.subscribe(on_scene)
 
     async def event_stream():
         try:
-            yield _format_sse("hello", {"ts": time(), "snapshot": snapshot})
+            yield _format_sse("hello", {"ts": time(), "snapshot": snapshot, "scene": initial_scene})
             while True:
                 if await request.is_disconnected():
                     return
@@ -68,10 +88,14 @@ async def quip_stream(request: Request) -> StreamingResponse:
                     continue
                 if item is None:
                     return
-                if item.get("kind") == "quip":
+                kind = item.get("kind")
+                if kind == "quip":
                     yield _format_sse("quip", item["payload"])  # type: ignore[arg-type]
+                elif kind == "scene":
+                    yield _format_sse("scene", item["payload"])  # type: ignore[arg-type]
         finally:
-            unsubscribe()
+            unsub_quip()
+            unsub_scene()
 
     headers = {
         "Cache-Control": "no-cache",
@@ -86,10 +110,19 @@ async def quip_stream(request: Request) -> StreamingResponse:
 def get_state() -> JSONResponse:
     bubble = get_bubble_state()
     watcher = get_passive_screen_watcher()
+    scene_state = get_scene_state_machine()
+    persistent = get_persistent_memory().snapshot()
     payload = {
         "bubble": bubble.snapshot_dict(),
         "watcher": asdict(watcher.snapshot()),
+        "scene": scene_state.scene.value,
+        "current_game": scene_state.current_game,
         "muted": get_companion_observer().muted,
+        "persistent": {
+            "games_played": persistent.games_played,
+            "consecutive_victories": persistent.consecutive_victories,
+            "consecutive_defeats": persistent.consecutive_defeats,
+        },
     }
     return JSONResponse(payload)
 

@@ -3271,12 +3271,11 @@ def initialize_runtime_service() -> FairyRuntimeService:
             _runtime_service = FairyRuntimeService()
             logger.info("api_runtime_service_initialized")
             try:
-                from app.companion import get_passive_screen_watcher
+                from app.companion.lifecycle import start_companion
 
-                get_passive_screen_watcher().start()
-                logger.info("companion_passive_screen_watcher_started")
+                start_companion()
             except Exception:
-                logger.exception("companion_passive_screen_watcher_start_failed")
+                logger.exception("companion_start_failed")
         return _runtime_service
 
 
@@ -3286,11 +3285,11 @@ def shutdown_runtime_service() -> None:
         service = _runtime_service
         _runtime_service = None
     try:
-        from app.companion import get_passive_screen_watcher
+        from app.companion.lifecycle import stop_companion
 
-        get_passive_screen_watcher().stop()
+        stop_companion()
     except Exception:
-        logger.exception("companion_passive_screen_watcher_stop_failed")
+        logger.exception("companion_stop_failed")
     if service is not None:
         service.shutdown()
         logger.info("api_runtime_service_shutdown")
