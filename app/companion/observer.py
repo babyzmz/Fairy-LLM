@@ -10,12 +10,16 @@ from typing import Callable
 from app.companion.density_governor import DensityGovernor
 from app.companion.quip_pool import QuipCategory, classify_text, pick_quip
 from app.companion.scene import GAME_SCENES, Scene
-from app.companion.scene_quips import pick_scene_quip, pick_transition_quip
+from app.companion.scene_quips import pick_afk_deep_quip, pick_scene_quip, pick_transition_quip
 from app.companion.scene_state_machine import (
     SceneStateMachine,
     SceneTransition,
     get_scene_state_machine,
 )
+
+
+AFK_DEEP_TICK_PROBABILITY = 0.005
+AFK_LONG_TICK_PROBABILITY = 0.002
 
 
 logger = logging.getLogger(__name__)
@@ -133,11 +137,39 @@ class CompanionObserver:
 
     def tick(self) -> QuipEvent | None:
         transition = self._scene_state.tick()
-        if transition is None:
+        if transition is not None:
+            if transition.current == Scene.AFK:
+                return self._emit_for_transition(transition, source="tick/afk")
+            return self._emit_for_transition(transition, source="tick")
+        return self._maybe_emit_deep_afk()
+
+    def _maybe_emit_deep_afk(self) -> QuipEvent | None:
+        if self._scene_state.scene != Scene.AFK:
             return None
-        if transition.current == Scene.AFK:
-            return self._emit_for_transition(transition, source="tick/afk")
-        return self._emit_for_transition(transition, source="tick")
+        tier = self._scene_state.afk_tier()
+        if tier == "long":
+            threshold = AFK_LONG_TICK_PROBABILITY
+        elif tier == "deep":
+            threshold = AFK_DEEP_TICK_PROBABILITY
+        else:
+            return None
+        if self._rng.random() > threshold:
+            return None
+        text = pick_afk_deep_quip(tier=tier, rng=self._rng)
+        if text is None:
+            return None
+        if not self._reserve_slot(force=False):
+            return None
+        event = QuipEvent(
+            text=text,
+            category=QuipCategory.GENERAL,
+            emitted_at=time.time(),
+            source=f"tick/afk_{tier}",
+            scene=Scene.AFK,
+            repetition=False,
+        )
+        self._dispatch(event)
+        return event
 
     def force_emit(self, category: QuipCategory, *, source: str = "manual") -> QuipEvent:
         event = self._build_event_for_category(category, source=source)

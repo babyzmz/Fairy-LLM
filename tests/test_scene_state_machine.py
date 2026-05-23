@@ -89,5 +89,45 @@ class SceneStateMachineTests(unittest.TestCase):
         self.assertEqual(sm.scene, Scene.HOMECOMING)
 
 
+class AfkDepthTests(unittest.TestCase):
+    def _build(self) -> tuple[SceneStateMachine, FakeClock]:
+        clock = FakeClock()
+        sm = SceneStateMachine(afk_seconds=60.0, clock=clock)
+        return sm, clock
+
+    def test_no_afk_initially(self) -> None:
+        sm, _ = self._build()
+        self.assertEqual(sm.afk_tier(), "none")
+        self.assertEqual(sm.afk_depth_seconds(), 0.0)
+
+    def test_shallow_afk(self) -> None:
+        sm, clock = self._build()
+        clock.advance(61.0)
+        sm.tick()
+        self.assertEqual(sm.afk_tier(), "shallow")
+
+    def test_deep_afk_at_30_min(self) -> None:
+        sm, clock = self._build()
+        clock.advance(61.0)
+        sm.tick()
+        clock.advance(30 * 60)
+        self.assertEqual(sm.afk_tier(), "deep")
+
+    def test_long_afk_at_60_min(self) -> None:
+        sm, clock = self._build()
+        clock.advance(61.0)
+        sm.tick()
+        clock.advance(60 * 60)
+        self.assertEqual(sm.afk_tier(), "long")
+
+    def test_wake_resets_afk(self) -> None:
+        sm, clock = self._build()
+        clock.advance(61.0)
+        sm.tick()
+        sm.observe_assistant_text("我回来了")
+        self.assertEqual(sm.afk_tier(), "none")
+        self.assertEqual(sm.afk_depth_seconds(), 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

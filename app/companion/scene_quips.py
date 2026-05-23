@@ -77,6 +77,20 @@ REPETITION_QUIPS: dict[Scene, tuple[str, ...]] = {
 }
 
 
+DEEP_AFK_QUIPS: tuple[str, ...] = (
+    "还在。",
+    "没关。",
+    "继续守着。",
+)
+
+
+LONG_AFK_QUIPS: tuple[str, ...] = (
+    "今天很安静。",
+    "桌面无事。",
+    "时间过得真快。",
+)
+
+
 GAME_ENTRY_TRANSITION_QUIPS: tuple[str, ...] = (
     "陪玩通道开启。",
     "进入游戏模式。",
@@ -109,3 +123,12 @@ def pick_transition_quip(*, entering_game: bool, rng: random.Random | None = Non
     chooser = rng or random
     pool = GAME_ENTRY_TRANSITION_QUIPS if entering_game else GAME_EXIT_TRANSITION_QUIPS
     return chooser.choice(pool)
+
+
+def pick_afk_deep_quip(*, tier: str, rng: random.Random | None = None) -> str | None:
+    chooser = rng or random
+    if tier == "long":
+        return chooser.choice(LONG_AFK_QUIPS)
+    if tier == "deep":
+        return chooser.choice(DEEP_AFK_QUIPS)
+    return None

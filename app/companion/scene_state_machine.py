@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from app.companion.scene import (
+    AFK_DEEP_THRESHOLD_SECONDS,
+    AFK_LONG_THRESHOLD_SECONDS,
     AFK_THRESHOLD_SECONDS,
     DEFEAT_REGROUP_SECONDS,
     GAME_SCENES,
@@ -63,6 +65,23 @@ class SceneStateMachine:
         self._scene_entered_at = clock()
         self._current_game: str | None = None
         self._scene_expires_at: float | None = None
+        self._afk_entered_at: float | None = None
+
+    def afk_depth_seconds(self) -> float:
+        with self._lock:
+            if self._scene != Scene.AFK or self._afk_entered_at is None:
+                return 0.0
+            return max(0.0, self._clock() - self._afk_entered_at)
+
+    def afk_tier(self) -> str:
+        if self._scene != Scene.AFK:
+            return "none"
+        depth = self.afk_depth_seconds()
+        if depth >= AFK_LONG_THRESHOLD_SECONDS:
+            return "long"
+        if depth >= AFK_DEEP_THRESHOLD_SECONDS:
+            return "deep"
+        return "shallow"
 
     @property
     def scene(self) -> Scene:
@@ -193,6 +212,7 @@ class SceneStateMachine:
             self._scene = target
             self._scene_entered_at = now
             self._scene_expires_at = now + duration if duration else None
+            self._afk_entered_at = now if target == Scene.AFK else None
             listeners = list(self._listeners)
         transition = SceneTransition(previous=previous, current=target, reason=reason, at=now)
         for listener in listeners:

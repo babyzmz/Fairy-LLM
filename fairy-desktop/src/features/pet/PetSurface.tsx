@@ -11,7 +11,11 @@ import { petCompanion } from "../../lib/api/companion";
 import { getSystemState, performSystemAction } from "../../lib/api/system";
 import { SpeechBubble } from "../companion/SpeechBubble";
 import { sceneToSignal } from "../companion/sceneToAvatarMode";
+import { useAttendingState } from "../companion/useAttendingState";
 import { useCompanionStream } from "../companion/useCompanionStream";
+
+
+const ATTENDING_SIGNAL: FairyAvatarSignal = { state: "focused", certainty: 0.9, urgency: 0.18 };
 import type {
   CardUnion,
   ChatStreamEvent,
@@ -363,13 +367,17 @@ export function PetSurface(): JSX.Element {
   const settleTimerRef = useRef<number | null>(null);
 
   const { bubble, petBurst, scene, triggerPet } = useCompanionStream();
+  const { isAttending } = useAttendingState();
   const presence = useMemo(() => {
+    if (isAttending) {
+      return { signal: ATTENDING_SIGNAL, label: "聆听", detail: "attending" };
+    }
     const base = derivePetPresence(systemState, phase, chatError, systemError, streamSignal);
     if (phase !== "idle" || chatError || systemError || streamSignal) return base;
     const sceneSignal = sceneToSignal(scene);
     if (!sceneSignal) return base;
     return { ...base, signal: sceneSignal, label: STATE_LABELS[sceneSignal.state], detail: `scene:${scene}` };
-  }, [chatError, phase, streamSignal, systemError, systemState, scene]);
+  }, [chatError, isAttending, phase, streamSignal, systemError, systemState, scene]);
   const visibleMessage = chatError || systemError || reply || (isBusy ? progress : "");
   const visibleQuestion = textValue(fairyMeta?.next_question);
   const hasAnswer = Boolean(visibleMessage || cards.length > 0 || visibleQuestion || isBusy);
@@ -591,18 +599,28 @@ export function PetSurface(): JSX.Element {
     <main className={`pet-surface pet-surface--${presence.signal.state} pet-surface--${phase}`}>
       <section className="pet-stage" title={presence.detail} data-tauri-drag-region style={{ position: "relative" }}>
         <div className="pet-stage__halo" />
-        <SpeechBubble bubble={bubble} />
+        {isAttending ? null : <SpeechBubble bubble={bubble} />}
         <button
-          className={`pet-orb-button pet-orb-button--scene-${scene}${phase === "thinking" ? " pet-orb-button--listening" : ""}`}
+          className={[
+            "pet-orb-button",
+            `pet-orb-button--scene-${scene}`,
+            isAttending ? "pet-orb-button--attending" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           type="button"
           aria-label="Fairy"
           onClick={handleFairyPet}
           onDoubleClick={handleOpenMainWindow}
           style={
-            petBurst
-              ? { filter: "drop-shadow(0 0 12px rgba(255,182,213,0.7))" }
-              : phase === "thinking"
-                ? { filter: "drop-shadow(0 0 14px rgba(143,181,255,0.85))" }
+            isAttending
+              ? {
+                  filter: "drop-shadow(0 0 10px rgba(200,230,255,0.55))",
+                  transform: "translateY(-2px)",
+                  transition: "transform 0.4s ease-out, filter 0.3s ease-out",
+                }
+              : petBurst
+                ? { filter: "drop-shadow(0 0 12px rgba(255,182,213,0.7))" }
                 : undefined
           }
         >
