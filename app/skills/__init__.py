@@ -1,6 +1,9 @@
-﻿from .agent_shell_skill import AgentShellSkill
-from .document_editor_skill import DocumentEditorSkill
-from .screen_understanding_skill import ScreenUnderstandingSkill
-from .web_research_skill import WebResearchSkill
+from app.skills.bundles.document_editing.runtime import DocumentEditingRuntime
+from app.skills.bundles.screen_understanding.runtime import ScreenUnderstandingSkill as ScreenUnderstandingRuntime
+from app.skills.bundles.terminal_agent.runtime import AgentShellSkill as TerminalAgentRuntime
 
-__all__ = ["AgentShellSkill", "WebResearchSkill", "DocumentEditorSkill", "ScreenUnderstandingSkill"]
+__all__ = [
+    "DocumentEditingRuntime",
+    "ScreenUnderstandingRuntime",
+    "TerminalAgentRuntime",
+]

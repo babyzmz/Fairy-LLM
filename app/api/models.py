@@ -16,6 +16,7 @@ class CardModel(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
     layout: str = "single"
     metadata: dict[str, Any] = Field(default_factory=dict)
+    actions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):
@@ -94,11 +95,14 @@ class SystemEventModel(BaseModel):
 
 class SystemStateResponse(BaseModel):
     backend_status: str
+    current_state: str = "booting"
     active_session: str | None = None
     active_stream_request: str | None = None
     is_streaming: bool = False
     last_error: str | None = None
+    fairy: dict[str, Any] = Field(default_factory=dict)
     capabilities: dict[str, Any] = Field(default_factory=dict)
+    runtime_state_trace: list[dict[str, Any]] = Field(default_factory=list)
     recent_events: list[SystemEventModel] = Field(default_factory=list)
 
 
@@ -112,3 +116,13 @@ class SystemActionResponse(BaseModel):
     ok: bool
     message: str = ""
     detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class VoiceSynthesizeRequest(BaseModel):
+    text: str = Field(min_length=1)
+    system_voice: bool = False
+
+
+class VoiceSynthesizeResponse(BaseModel):
+    audio_base64: str
+    mime_type: str = "audio/wav"

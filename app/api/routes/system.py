@@ -3,7 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from app.api.dependencies import FairyRuntimeService, get_runtime_service
-from app.api.models import SystemActionRequest, SystemActionResponse, SystemEventModel, SystemStateResponse
+from app.api.models import (
+    SystemActionRequest,
+    SystemActionResponse,
+    SystemEventModel,
+    SystemStateResponse,
+    VoiceSynthesizeRequest,
+    VoiceSynthesizeResponse,
+)
 
 
 router = APIRouter(prefix="/system", tags=["system"])
@@ -28,3 +35,13 @@ def perform_system_action(
     runtime_service: FairyRuntimeService = Depends(get_runtime_service),
 ) -> SystemActionResponse:
     return SystemActionResponse.model_validate(runtime_service.perform_system_action(payload.action, payload.payload))
+
+
+@router.post("/voice/synthesize", response_model=VoiceSynthesizeResponse)
+def synthesize_voice(
+    payload: VoiceSynthesizeRequest,
+    runtime_service: FairyRuntimeService = Depends(get_runtime_service),
+) -> VoiceSynthesizeResponse:
+    return VoiceSynthesizeResponse.model_validate(
+        runtime_service.synthesize_voice(text=payload.text, system_voice=payload.system_voice)
+    )

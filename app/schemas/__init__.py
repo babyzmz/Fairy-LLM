@@ -3,6 +3,8 @@ from .location_schema import LocationSchema
 from .news_schema import NewsItemSchema, NewsListSchema
 from .schema_normalizer import SchemaNormalizer
 from .schema_validator import SchemaValidationResult, SchemaValidator
+from .time_schema import TimeSchema
+from .visual_read_schema import VisualReadSchema
 from .weather_schema import WeatherSchema
 
 __all__ = [
@@ -14,5 +16,7 @@ __all__ = [
     "SchemaNormalizer",
     "SchemaValidationResult",
     "SchemaValidator",
+    "TimeSchema",
+    "VisualReadSchema",
     "WeatherSchema",
 ]

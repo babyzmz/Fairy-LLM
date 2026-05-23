@@ -14,6 +14,12 @@ from app.ui.components.chat.message_widget import DisplayMode, MessageWidget, no
 from app.ui.components.chat.news_carousel_widget import NewsCarouselWidget
 from app.ui.components.chat.suggestion_card_widget import SuggestionCardWidget
 from app.ui.components.chat.weather_card_widget import WeatherCardWidget
+from app.ui.components.chat.web_result_card_widgets import (
+    CompareCardWidget,
+    ReleaseCardWidget,
+    SpecsCardWidget,
+    WebBriefCardWidget,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +54,30 @@ class CardRendererRegistry:
                 language=language,
                 display_mode=display_mode,
             ),
+            "specs": lambda message, parent, language, display_mode: SpecsCardWidget(
+                message,
+                parent,
+                language=language,
+                display_mode=display_mode,
+            ),
+            "compare": lambda message, parent, language, display_mode: CompareCardWidget(
+                message,
+                parent,
+                language=language,
+                display_mode=display_mode,
+            ),
+            "release": lambda message, parent, language, display_mode: ReleaseCardWidget(
+                message,
+                parent,
+                language=language,
+                display_mode=display_mode,
+            ),
+            "web_brief": lambda message, parent, language, display_mode: WebBriefCardWidget(
+                message,
+                parent,
+                language=language,
+                display_mode=display_mode,
+            ),
             "image": lambda message, parent, language, display_mode: ImageCardWidget(
                 message,
                 parent,
@@ -72,11 +102,15 @@ class CardRendererRegistry:
             "map": "location",
             "news": "news_list",
             "generic_info": "generic_info",
+            "specs": "specs",
+            "compare": "compare",
+            "release": "release",
+            "web_brief": "web_brief",
             "image": "image",
             "link": "link",
             "suggestion": "suggestion",
         }
-        self._legacy_type_map = {
+        self._compat_type_map = {
             "weather_card": "weather",
             "location_map_card": "location",
             "map_card": "location",
@@ -121,4 +155,4 @@ class CardRendererRegistry:
 
     def _canonicalize(self, card_type: str) -> str:
         normalized = str(card_type or "").strip().lower()
-        return self._legacy_type_map.get(normalized, normalized or "generic_info")
+        return self._compat_type_map.get(normalized, normalized or "generic_info")

@@ -69,7 +69,7 @@ class KnowledgeQualityTest(unittest.TestCase):
             response_text="结论：persona 子系统改成设置开关，默认关闭。",
             recommendation="默认先关闭，必要时再开启。",
             task_category="coding_help",
-            skill_name="agent_shell_skill",
+            skill_name="terminal-agent",
             session_id=session_id,
         )
         self.rag.maybe_store_task_knowledge(**payload)
@@ -92,7 +92,7 @@ class KnowledgeQualityTest(unittest.TestCase):
             response_text="结论：persona 子系统改成设置开关，默认关闭。",
             recommendation="默认先关闭，必要时再开启。",
             task_category="coding_help",
-            skill_name="agent_shell_skill",
+            skill_name="terminal-agent",
             session_id=session_id,
         )
         pending = self.rag.list_pending_decisions(limit=10)
@@ -121,7 +121,7 @@ class KnowledgeQualityTest(unittest.TestCase):
             response_text="当前架构规则已经明确，模块职责和默认配置都已收敛。",
             recommendation="继续按当前规则推进。",
             task_category="planning",
-            skill_name="agent_shell_skill",
+            skill_name="terminal-agent",
             session_id=session_id,
         )
         self.assertEqual(stats["session_summary"], 1)

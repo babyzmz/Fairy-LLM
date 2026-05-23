@@ -41,11 +41,13 @@ class LLMConfig:
     api_base: str = "http://127.0.0.1:12765"
     api_path: str = "/v1/chat/completions"
     api_key: str | None = None
-    model: str = "Qwen3.5-4B-Q4_K_M"
+    model: str = "Qwen3.5-9B-Q4_K_M"
 
     server_executable: Path = DEFAULT_BUNDLED_SERVER
-    model_path: Path = Path("D:/llm_models/Qwen3.5-4B-Q4_K_M.gguf")
-    mmproj_path: Optional[Path] = Path("D:/llm_models/mmproj-BF16.gguf")
+    # Keep this relative so llama.cpp receives an ASCII path even when the repo
+    # lives under a non-ASCII Windows directory.
+    model_path: Path = Path("model") / "Qwen3.5-9B-Q4_K_M.gguf"
+    mmproj_path: Optional[Path] = None
     ctx_size: int = 4096
     gpu_layers: int = 99
     threads: int = 12
@@ -83,8 +85,6 @@ class LLMConfig:
     search_backend: str = "auto"
     search_api_url: str = ""
     search_api_key: str = ""
-    tavily_api_url: str = "https://api.tavily.com/search"
-    tavily_api_key: str = _get_secret("TAVILY_API_KEY")
     browser_automation_enabled: bool = True
     browser_navigation_timeout_sec: int = 15
     browser_post_load_wait_ms: int = 1200
@@ -126,7 +126,6 @@ class UIConfig:
 @dataclass
 class SystemConfig:
     state_file: Path = BASE_DIR / "config" / "system_state.json"
-    welcome_audio_path: Path = BASE_DIR / "app" / "ai" / "voice" / "欢迎语音.mp3"
     startup_status_lines: tuple[str, ...] = (
         "系统启动中。",
         "正在加载核心模块。",
@@ -149,18 +148,19 @@ class SystemConfig:
 class VoiceConfig:
     enabled: bool = True
     backend: str = "cosyvoice2_service"
-    speak_responses: bool = False
+    voice_profile: str = "clone_mecha"
+    voice_prompt_selection_mode: str = "auto"
+    speak_responses: bool = True
     speak_system: bool = True
     speak_thinking_notice: bool = False
-    stream_responses: bool = False
+    stream_responses: bool = True
     speak_min_chars: int = 8
     thinking_notice_delay_sec: float = 1.8
     max_sentence_chars: int = 40
     max_response_sentences: int = 0
     max_response_chars: int = 0
     warmup_on_start: bool = True
-    system_voice_dir: Path = BASE_DIR / "data" / "voice_lines"
-    robotic_effect: bool = False
+    voice_prompt_dir: Path = BASE_DIR / "app" / "ai" / "voice"
     audio_sample_rate: int = 24000
     cosyvoice_model_repo: str = "FunAudioLLM/CosyVoice2-0.5B"
     cosyvoice_model_dir: Path = BASE_DIR / "models" / "CosyVoice2-0.5B"
@@ -174,15 +174,18 @@ class VoiceConfig:
     cosyvoice_service_start_timeout_sec: int = 180
     cosyvoice_request_timeout_sec: int = 180
     cosyvoice_text_frontend: bool = False
-    prompt_wav_path: Path = BASE_DIR / "app" / "ai" / "voice" / "fairy_prompt.wav"
-    prompt_text_path: Path = BASE_DIR / "app" / "ai" / "voice" / "fairy_prompt.txt"
     prepared_prompt_dir: Path = BASE_DIR / "data" / "voice_prompt"
-    voice_clone_enabled: bool = True
     prompt_min_sec: float = 4.0
     prompt_max_sec: float = 30.0
     prompt_target_sec: float = 28.0
     cosyvoice_startup_timeout_sec: int = 600
     timestamp_chars_per_second: float = 7.2
+
+    def uses_clone_profile(self) -> bool:
+        return self.voice_profile in {"clone_clean", "clone_mecha"}
+
+    def uses_mecha_profile(self) -> bool:
+        return self.voice_profile == "clone_mecha"
 
 
 @dataclass
@@ -266,7 +269,15 @@ def apply_cli_overrides(argv: Sequence[str] | None = None) -> LLMConfig:
     parser.add_argument("--api-base")
     parser.add_argument("--model-path", type=Path)
     parser.add_argument("--mmproj-path", type=Path)
-    parser.add_argument("--search-backend", choices=["auto", "tavily", "searxng"])
+    parser.add_argument(
+        "--search-backend",
+        choices=[
+            "auto",
+            "searxng",
+            "ddgs",
+            "browser",
+        ],
+    )
     parser.add_argument("--search-api-url")
     parser.add_argument("--disable-auto-start-server", action="store_true")
     args, _ = parser.parse_known_args(list(argv) if argv is not None else None)
@@ -306,8 +317,6 @@ def validate_llm_config(config: LLMConfig) -> None:
         if config.mmproj_path is not None and not config.mmproj_path.exists():
             errors.append(f"mmproj file not found: {config.mmproj_path}")
 
-    if config.search_backend == "tavily" and not config.tavily_api_key.strip():
-        errors.append("search_backend is 'tavily' but no Tavily API key is configured.")
     if config.search_backend == "searxng" and not config.search_api_url.strip():
         errors.append("search_backend is 'searxng' but search_api_url is empty.")
 

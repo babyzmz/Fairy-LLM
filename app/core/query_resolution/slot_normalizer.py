@@ -13,6 +13,14 @@ class SlotNormalizationResult:
 
 
 class SlotNormalizer:
+    _DIRECT_LOCATION_PATTERNS = (
+        re.compile(r"^(?:显示|打开|看看|看一看|查看)?\s*(?P<location>.+?)\s*地图$", re.IGNORECASE),
+        re.compile(r"^(?P<location>.+?)\s*(?:在哪里|在哪儿|在哪)$", re.IGNORECASE),
+        re.compile(r"^(?:导航到|导航去|前往)\s*(?P<location>.+)$", re.IGNORECASE),
+        re.compile(r"^(?:看看|看一看|查看)\s*(?P<location>.+?)\s*位置$", re.IGNORECASE),
+        re.compile(r"^(?:show|display|open)\s+map\s+for\s+(?P<location>.+)$", re.IGNORECASE),
+        re.compile(r"^(?:where\s+is)\s+(?P<location>.+)$", re.IGNORECASE),
+    )
     _LOCATION_ALIASES = {
         "chengdu": "成都",
         "成都": "成都",
@@ -88,6 +96,9 @@ class SlotNormalizer:
 
     def _normalize_location(self, value: str) -> str:
         cleaned = str(value or "").strip()
+        direct_match = self._extract_direct_location_target(cleaned)
+        if direct_match:
+            cleaned = direct_match
         cleaned = re.sub(r"^(帮我看看|给我看看|看看|查一下|查|搜一下|搜)\s*", "", cleaned).strip()
         cleaned = re.sub(r"^(那里的|那里|那边的|那边|这里的|这里)\s*", "", cleaned).strip()
         cleaned = re.sub(r"^(里的|这边的|那边的)\s*", "", cleaned).strip()
@@ -106,6 +117,19 @@ class SlotNormalizer:
         if cleaned in {"那里", "那边", "这里", "这个地方", "那个地方", "天气", "地图", "现在", "时间"}:
             return ""
         return cleaned
+
+    def _extract_direct_location_target(self, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        for pattern in self._DIRECT_LOCATION_PATTERNS:
+            match = pattern.match(text)
+            if not match:
+                continue
+            candidate = str(match.group("location") or "").strip()
+            if candidate:
+                return candidate
+        return ""
 
     def _normalize_date(self, value: str) -> str:
         cleaned = str(value or "").strip()

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import itertools
+import logging
 import queue
+import re
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable
 
 from app.config import voice_config
@@ -15,6 +16,8 @@ from .fairy_tts import FairyTTS
 from .sentence_buffer import SentenceBuffer
 from .timestamps import StreamingTextAllocator, build_character_timestamps
 from .voice_lines import VOICE_LINES
+
+logger = logging.getLogger(__name__)
 
 
 ERROR_PRIORITY = 0
@@ -121,17 +124,13 @@ class FairyVoice:
         if (now - last_spoken) < cooldown:
             return
         self._last_system_spoken_at[event] = now
+        self.speak_system_text(line, priority=priority)
 
-        asset = self._tts.resolve_system_audio(event)
-        if asset is not None:
-            self._player.enqueue(asset, priority=priority, ephemeral=False)
+    def speak_system_text(self, text: str, *, priority: int = SYSTEM_PRIORITY) -> None:
+        if not self.enabled or not voice_config.speak_system:
             return
-        self._enqueue_text(line, priority=priority, system_voice=True)
-
-    def play_audio_file(self, audio_path: str | Path, *, priority: int = SYSTEM_PRIORITY, ephemeral: bool = False) -> None:
-        if not self.enabled:
-            return
-        self._player.enqueue(audio_path, priority=priority, ephemeral=ephemeral)
+        for segment in self._prepare_system_segments(text):
+            self._enqueue_text(segment, priority=priority, system_voice=True)
 
     def is_ready(self) -> bool:
         if not self.enabled:
@@ -224,6 +223,40 @@ class FairyVoice:
         )
         self._tasks.put((task.priority, task.order, task))
 
+    def _prepare_system_segments(self, text: str) -> list[str]:
+        cleaned = " ".join(str(text or "").replace("\r", "\n").split())
+        if not cleaned:
+            return []
+
+        fragments: list[str] = []
+        for block in re.split(r"[\n]+", str(text or "")):
+            normalized_block = " ".join(block.split()).strip()
+            if not normalized_block:
+                continue
+            fragments.extend(self._split_system_block(normalized_block))
+
+        if fragments:
+            return fragments
+        return self._split_system_block(cleaned)
+
+    def _split_system_block(self, text: str) -> list[str]:
+        buffer = SentenceBuffer(max_chars=min(18, voice_config.max_sentence_chars))
+        chunks: list[str] = []
+        normalized = text.strip()
+        if not normalized:
+            return chunks
+        normalized = re.sub(r"[，,]{2,}", "，", normalized)
+        normalized = re.sub(r"\s+", " ", normalized)
+        for chunk in buffer.add_token(normalized):
+            chunk = chunk.strip()
+            if chunk:
+                chunks.append(chunk)
+        for tail in buffer.flush():
+            tail = tail.strip()
+            if tail:
+                chunks.append(tail)
+        return chunks
+
     def _allow_stream_sentence(self, sentence: str) -> bool:
         if voice_config.max_response_sentences > 0 and self._stream_spoken_sentences >= voice_config.max_response_sentences:
             return False
@@ -259,7 +292,13 @@ class FairyVoice:
                     )
                 if not yielded:
                     continue
-            except Exception:
+            except Exception as error:
+                logger.exception(
+                    "fairy_tts_task_failed system_voice=%s text=%r",
+                    task.system_voice,
+                    task.text[:120],
+                )
+                self._emit_voice_error(error, task)
                 continue
 
     def _clear_pending_speech(self) -> None:
@@ -316,6 +355,29 @@ class FairyVoice:
         enriched["char_index"] = char_index
         try:
             callback(enriched)
+        except Exception:
+            pass
+
+    def _emit_voice_error(self, error: Exception, task: SpeechTask) -> None:
+        event_callback = self.on_playback_event
+        if event_callback is not None:
+            try:
+                event_callback("voice_error")
+            except Exception:
+                pass
+
+        progress_callback = self.on_playback_progress
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(
+                {
+                    "event": "voice_error",
+                    "text": task.text,
+                    "system_voice": task.system_voice,
+                    "error": str(error),
+                }
+            )
         except Exception:
             pass
 

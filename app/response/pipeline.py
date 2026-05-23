@@ -54,22 +54,220 @@ class ResponsePipeline:
         stage_name = str(payload.get("stage", "") or "").strip().lower()
 
         if event_name == "structured_tool_progress" and phase:
-            if phase in {"legacy_surface_dispatch"}:
-                action_name = str(payload.get("action_name") or "legacy_surface").strip()
+            if phase == "execution_started":
                 return ResponseProgressEvent(
-                    stage="legacy_surface_dispatch",
+                    stage="execution_started",
                     text=self._localize(
-                        f"旧桌面自动化已显式触发：{action_name}",
-                        f"Explicit legacy desktop automation requested: {action_name}.",
+                        "\u6b63\u5728\u542f\u52a8\u7f51\u9875\u8bbf\u95ee\u6267\u884c\u94fe\u8def\u3002",
+                        "Starting the web access execution ladder.",
                     ),
                 )
-            if phase in {"legacy_surface_result"}:
-                action_name = str(payload.get("action_name") or "legacy_surface").strip()
+            if phase == "web_access_decided":
+                access_mode = str(payload.get("access_mode") or "http_fetch").strip()
+                intent_type = str(payload.get("intent_type") or "general_web_research").strip()
                 return ResponseProgressEvent(
-                    stage="legacy_surface_result",
+                    stage="web_access_decided",
                     text=self._localize(
-                        f"旧桌面自动化未执行：{action_name}",
-                        f"Legacy desktop automation was not executed: {action_name}.",
+                        f"已完成联网访问决策：{intent_type} / {access_mode}。",
+                        f"Web access decided: {intent_type} via {access_mode}.",
+                    ),
+                )
+            if phase == "retrieval_plan_built":
+                return ResponseProgressEvent(
+                    stage="retrieval_plan_built",
+                    text=self._localize(
+                        "已生成网页检索计划，正在选择最佳入口。",
+                        "Retrieval plan ready. Choosing the best entry path.",
+                    ),
+                )
+            if phase == "understanding_request":
+                return ResponseProgressEvent(
+                    stage="understanding_request",
+                    text=self._localize(
+                        "正在理解你要找的是参数、发布、新闻还是一般信息。",
+                        "Understanding whether you need specs, release info, news, or general information.",
+                    ),
+                )
+            if phase == "opening_page":
+                return ResponseProgressEvent(
+                    stage="opening_page",
+                    text=self._localize(
+                        "正在打开网页入口页...",
+                        "Opening the site entry page...",
+                    ),
+                )
+            if phase == "understanding_page":
+                return ResponseProgressEvent(
+                    stage="understanding_page",
+                    text=self._localize(
+                        "正在理解当前页面结构和页面类型...",
+                        "Understanding the current page structure and page type...",
+                    ),
+                )
+            if phase == "page_answer_context_built":
+                blocked = bool(payload.get("blocked_for_answer"))
+                text_zh = "已从当前页提炼出可回答上下文。"
+                text_en = "Built answer-ready context from the current page."
+                if blocked:
+                    reason = str(payload.get("block_reason") or "").strip()
+                    text_zh = f"已完成当前页梳理，但这页暂不适合直接回答：{reason}"
+                    text_en = f"Built page context, but this page should not be answered from yet: {reason}"
+                return ResponseProgressEvent(stage="page_answer_context_built", text=self._localize(text_zh, text_en))
+            if phase == "ranking_links":
+                return ResponseProgressEvent(
+                    stage="ranking_links",
+                    text=self._localize(
+                        "正在比较页面里的候选链接...",
+                        "Comparing candidate links on the page...",
+                    ),
+                )
+            if phase == "navigating_deeper":
+                return ResponseProgressEvent(
+                    stage="navigating_deeper",
+                    text=self._localize(
+                        "正在继续深入到更相关的页面...",
+                        "Navigating deeper into a more relevant page...",
+                    ),
+                )
+            if phase == "extracting_answer":
+                return ResponseProgressEvent(
+                    stage="extracting_answer",
+                    text=self._localize(
+                        "正在从目标页提取答案...",
+                        "Extracting the answer from the target page...",
+                    ),
+                )
+            if phase == "answer_blocked":
+                reason = str(payload.get("block_reason") or "").strip()
+                return ResponseProgressEvent(
+                    stage="answer_blocked",
+                    text=self._localize(
+                        f"当前页被判定为不宜直接回答：{reason}",
+                        f"The current page was blocked for direct answering: {reason}",
+                    ),
+                )
+            if phase == "answer_validation_blocked":
+                reason = str(payload.get("reason") or "").strip()
+                return ResponseProgressEvent(
+                    stage="answer_validation_blocked",
+                    text=self._localize(
+                        f"已生成答案草稿，但终态校验未通过：{reason}",
+                        f"Draft answer generated, but terminal validation rejected it: {reason}",
+                    ),
+                )
+            if phase == "terminal_answer_validated":
+                valid = bool(payload.get("terminal_answer_valid"))
+                reason = str(payload.get("terminal_answer_validation_reason") or "").strip()
+                text_zh = "当前页的答案终态校验已通过。"
+                text_en = "The current page passed terminal answer validation."
+                if not valid:
+                    text_zh = f"当前页的答案终态校验未通过：{reason}"
+                    text_en = f"The current page failed terminal answer validation: {reason}"
+                return ResponseProgressEvent(stage="terminal_answer_validated", text=self._localize(text_zh, text_en))
+            if phase == "fallback_action_chosen":
+                chosen_action = str(payload.get("chosen_action") or "").strip()
+                reason = str(payload.get("reason") or "").strip()
+                return ResponseProgressEvent(
+                    stage="fallback_action_chosen",
+                    text=self._localize(
+                        f"模型决策不稳定，已选择兜底动作：{chosen_action} ({reason})",
+                        f"Model decision was unstable. Chose fallback action: {chosen_action} ({reason}).",
+                    ),
+                )
+            if phase == "stop_decided":
+                stop_reason = str(payload.get("stop_reason") or "").strip()
+                stop_detail = str(payload.get("stop_detail") or "").strip()
+                return ResponseProgressEvent(
+                    stage="stop_decided",
+                    text=self._localize(
+                        f"已决定结束当前网页流程：{stop_reason} / {stop_detail}",
+                        f"Web loop stop decided: {stop_reason} / {stop_detail}.",
+                    ),
+                )
+            if phase == "stop_candidate_rejected":
+                return ResponseProgressEvent(
+                    stage="stop_candidate_rejected",
+                    text=self._localize(
+                        "停止信号还不够稳定，正在继续查找...",
+                        "The stop signal was too weak, so the browse flow is continuing.",
+                    ),
+                )
+            if phase == "http_fetch_started":
+                return ResponseProgressEvent(
+                    stage="http_fetch_started",
+                    text=self._localize(
+                        "正在进行搜索并抓取网页内容...",
+                        "Searching and fetching web content...",
+                    ),
+                )
+            if phase == "rendered_read_started":
+                return ResponseProgressEvent(
+                    stage="rendered_read_started",
+                    text=self._localize(
+                        "静态提取不足，正在读取渲染后的页面...",
+                        "Static extraction was weak. Reading the rendered page...",
+                    ),
+                )
+            if phase == "browser_interaction_started":
+                return ResponseProgressEvent(
+                    stage="browser_interaction_started",
+                    text=self._localize(
+                        "需要页面交互，正在打开浏览器并执行动作...",
+                        "Browser interaction required. Opening the page and performing actions...",
+                    ),
+                )
+            if phase == "browser_attempted":
+                available = bool(payload.get("available"))
+                if available:
+                    text_zh = "\u6d4f\u89c8\u5668\u4ea4\u4e92\u80fd\u529b\u53ef\u7528\uff0c\u6b63\u5728\u8fdb\u5165\u9875\u9762\u4ea4\u4e92\u3002"
+                    text_en = "Browser interaction is available. Entering the interactive page flow."
+                else:
+                    reason = str(payload.get("reason") or "browser_unavailable").strip()
+                    text_zh = f"\u6d4f\u89c8\u5668\u80fd\u529b\u4e0d\u53ef\u7528\uff0c\u6b63\u5728\u56de\u9000\u5904\u7406\uff1a{reason}"
+                    text_en = f"Browser interaction is unavailable. Falling back instead: {reason}."
+                return ResponseProgressEvent(stage="browser_attempted", text=self._localize(text_zh, text_en))
+            if phase == "visual_read_started":
+                return ResponseProgressEvent(
+                    stage="visual_read_started",
+                    text=self._localize(
+                        "DOM 提取不可靠，正在通过视觉读取页面区域...",
+                        "DOM extraction was unreliable. Reading the page visually...",
+                    ),
+                )
+            if phase == "fallback_applied":
+                stage = str(payload.get("stage") or "fallback").strip()
+                reason = str(payload.get("reason") or "unknown").strip()
+                return ResponseProgressEvent(
+                    stage="fallback_applied",
+                    text=self._localize(
+                        f"\u5df2\u89e6\u53d1\u8bbf\u95ee\u964d\u7ea7\uff1a{stage} ({reason})",
+                        f"Fallback applied: {stage} ({reason}).",
+                    ),
+                )
+            if phase == "web_access_fallback_applied":
+                return ResponseProgressEvent(
+                    stage="web_access_fallback_applied",
+                    text=self._localize(
+                        "前一层网页访问不足，正在升级到更高层级...",
+                        "Earlier web access was insufficient. Escalating to a higher access level...",
+                    ),
+                )
+            if phase in {"desktop_automation_dispatch"}:
+                action_name = str(payload.get("action_name") or "desktop_automation").strip()
+                return ResponseProgressEvent(
+                    stage="desktop_automation_dispatch",
+                    text=self._localize(
+                        f"桌面自动化已显式触发：{action_name}",
+                        f"Explicit desktop automation requested: {action_name}.",
+                    ),
+                )
+            if phase in {"desktop_automation_result"}:
+                action_name = str(payload.get("action_name") or "desktop_automation").strip()
+                return ResponseProgressEvent(
+                    stage="desktop_automation_result",
+                    text=self._localize(
+                        f"桌面自动化未执行：{action_name}",
+                        f"Desktop automation was not executed: {action_name}.",
                     ),
                 )
             if phase in {"desktop_action_dispatch"}:
@@ -336,9 +534,17 @@ class ResponsePipeline:
     ) -> list[tuple[str, dict[str, Any], str]]:
         candidates: list[tuple[str, dict[str, Any], str]] = []
 
+        explicit_card = self._extract_structured_card_candidate(structured)
+        if explicit_card:
+            candidates.append(explicit_card)
+
         weather_payload = self._extract_weather_payload(structured, plain_text, intent=request_plan.intent)
         if weather_payload:
             candidates.append(("weather", weather_payload, "weather_signals"))
+
+        time_payload = self._extract_time_payload(structured, plain_text, intent=request_plan.intent)
+        if time_payload:
+            candidates.append(("time", time_payload, "time_signals"))
 
         location_payload = self._extract_location_payload(structured)
         if not location_payload and getattr(request_plan, "force_card_type", "") in {"location", "location_map_card"}:
@@ -362,6 +568,20 @@ class ResponsePipeline:
 
         return candidates
 
+    def _extract_structured_card_candidate(self, structured: dict[str, Any]) -> tuple[str, dict[str, Any], str] | None:
+        card_blob = structured.get("card")
+        if not isinstance(card_blob, dict):
+            return None
+        card_type = str(card_blob.get("type") or structured.get("card_type") or "").strip().lower()
+        if not card_type:
+            return None
+        raw_data = dict(card_blob.get("data") or {})
+        if not raw_data:
+            raw_data = {key: value for key, value in card_blob.items() if key != "type"}
+        if not raw_data:
+            return None
+        return card_type, raw_data, "structured_card"
+
     def _infer_structured_response_type(self, structured: dict[str, Any], payload: dict[str, Any], intent: str) -> str:
         explicit_type = ""
         card_blob = structured.get("card")
@@ -373,6 +593,8 @@ class ResponsePipeline:
             return explicit_type
         if intent == "weather":
             return "weather"
+        if intent == "time":
+            return "time"
         if intent == "location":
             return "location"
         if intent == "news":
@@ -400,6 +622,27 @@ class ResponsePipeline:
                     f"{city} is {temp}\u00b0C and {condition.lower()}. Expect roughly {low}\u00b0C to {high}\u00b0C today.",
                 )
 
+        time_card = next((card for card in card_payloads if card.type == "time"), None)
+        if time_card is not None:
+            data = time_card.data
+            location = str(data.get("location") or self._localize("\u5f53\u5730\u65f6\u95f4", "Local time")).strip()
+            time_text = str(data.get("time_text") or "").strip()
+            date_text = str(data.get("date_text") or "").strip()
+            weekday = str(data.get("weekday") or "").strip()
+            period = str(data.get("period") or "").strip()
+            pieces = [item for item in (date_text, weekday, period) if item]
+            detail = " ".join(pieces).strip()
+            if location and time_text:
+                if detail:
+                    return self._localize(
+                        f"{location} \u73b0\u5728\u662f {time_text}\uff0c{detail}\u3002",
+                        f"In {location}, it is {time_text}. {detail}.",
+                    )
+                return self._localize(
+                    f"{location} \u73b0\u5728\u662f {time_text}\u3002",
+                    f"In {location}, it is {time_text}.",
+                )
+
         location_card = next((card for card in card_payloads if card.type == "location"), None)
         if location_card is not None:
             data = location_card.data
@@ -416,6 +659,17 @@ class ResponsePipeline:
         news_card = next((card for card in card_payloads if card.type == "news_list"), None)
         if news_card is not None:
             return self._limit_sentences(plain_text, max_sentences=3, max_chars=260)
+
+        web_card = next((card for card in card_payloads if card.type in {"specs", "compare", "release", "web_brief"}), None)
+        if web_card is not None:
+            if plain_text.strip():
+                return self._limit_sentences(plain_text, max_sentences=3, max_chars=260)
+            title = str(web_card.data.get("title") or "").strip()
+            summary = str(web_card.data.get("summary") or web_card.data.get("recommendation") or "").strip()
+            if summary:
+                if web_card.type == "web_brief" and title and title not in summary:
+                    summary = f"{title}：{summary}"
+                return self._limit_sentences(summary, max_sentences=3, max_chars=260)
 
         generic_card = next((card for card in card_payloads if card.type == "generic_info"), None)
         if generic_card is not None:
@@ -451,6 +705,26 @@ class ResponsePipeline:
                 allow_streaming=False,
             )
 
+        time_card = next((card for card in card_payloads if card.type == "time"), None)
+        if time_card is not None:
+            data = time_card.data
+            location = str(data.get("location") or "").strip()
+            time_text = str(data.get("time_text") or "").strip()
+            date_text = str(data.get("date_text") or "").strip()
+            weekday = str(data.get("weekday") or "").strip()
+            period = str(data.get("period") or "").strip()
+            timezone = str(data.get("timezone") or "").strip()
+            suffix = "，".join(item for item in (date_text, weekday, period, timezone) if item).strip()
+            spoken = self._localize(
+                f"{location} 现在是 {time_text}。{suffix}" if suffix else f"{location} 现在是 {time_text}。",
+                f"In {location}, it is {time_text}. {suffix}" if suffix else f"In {location}, it is {time_text}.",
+            )
+            return SpeechPayload(
+                mode="concise_structured",
+                text=self._limit_sentences(spoken, max_sentences=2, max_chars=140),
+                allow_streaming=False,
+            )
+
         location_card = next((card for card in card_payloads if card.type == "location"), None)
         if location_card is not None:
             data = location_card.data
@@ -474,6 +748,15 @@ class ResponsePipeline:
             return SpeechPayload(
                 mode="summary_first",
                 text=self._build_news_speech(news_card.data, fallback=text_reply),
+                allow_streaming=False,
+            )
+
+        web_card = next((card for card in card_payloads if card.type in {"specs", "compare", "release", "web_brief"}), None)
+        if web_card is not None:
+            speech_text = str(web_card.data.get("summary") or web_card.data.get("recommendation") or text_reply).strip()
+            return SpeechPayload(
+                mode="summary_first",
+                text=self._limit_sentences(speech_text, max_sentences=2, max_chars=180),
                 allow_streaming=False,
             )
 
@@ -547,6 +830,73 @@ class ResponsePipeline:
             "summary": summary,
             "hourly_curve": source.get("hourly_curve"),
         }
+
+    def _extract_time_payload(self, structured: dict[str, Any], assistant_text: str, *, intent: str = "") -> dict[str, Any]:
+        time_blob = structured.get("time") if isinstance(structured.get("time"), dict) else {}
+        source = time_blob or structured
+        has_time_metrics = any(
+            source.get(key) not in {None, ""}
+            for key in ("time", "date", "timezone", "tz_name", "weekday", "period")
+        )
+        parsed_from_text = self._parse_time_payload_from_text(assistant_text) if intent == "time" or has_time_metrics else {}
+        if intent != "time" and not has_time_metrics and not parsed_from_text:
+            return {}
+        secondary = list(source.get("secondary") or []) if isinstance(source.get("secondary"), list) else []
+        summary = str(source.get("summary") or structured.get("summary") or parsed_from_text.get("summary") or assistant_text).strip()
+        location = str(source.get("location") or source.get("city") or source.get("title") or parsed_from_text.get("location") or "").strip()
+        if location.endswith("当前时间"):
+            location = location[:-4].strip()
+        if location.endswith("褰撳墠鏃堕棿"):
+            location = location[:-6].strip()
+        return {
+            "location": location,
+            "time_text": str(source.get("time") or source.get("primary") or parsed_from_text.get("time_text") or "").strip(),
+            "date_text": str(source.get("date") or parsed_from_text.get("date_text") or (secondary[0] if len(secondary) >= 1 else "")).strip(),
+            "weekday": str(source.get("weekday") or parsed_from_text.get("weekday") or (secondary[1] if len(secondary) >= 2 else "")).strip(),
+            "period": str(source.get("period") or source.get("period_zh") or parsed_from_text.get("period") or (secondary[2] if len(secondary) >= 3 else "")).strip(),
+            "timezone": str(source.get("timezone") or source.get("tz_name") or parsed_from_text.get("timezone") or "").strip(),
+            "is_daytime": source.get("is_daytime", parsed_from_text.get("is_daytime")),
+            "summary": summary,
+        }
+
+    def _parse_time_payload_from_text(self, assistant_text: str) -> dict[str, Any]:
+        text = " ".join(str(assistant_text or "").split())
+        if not text:
+            return {}
+        colon_pattern = re.match(
+            r"^(?P<location>[^:：\n]{1,80})[:：]\s*(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<time>\d{1,2}:\d{2})(?:\s+(?P<period>[\u4e00-\u9fa5A-Za-z]+))?(?:\s*\((?P<weekday>[^)]+)\))?$",
+            text,
+        )
+        if colon_pattern:
+            data = colon_pattern.groupdict()
+            return {
+                "location": str(data.get("location") or "").strip(),
+                "time_text": str(data.get("time") or "").strip(),
+                "date_text": str(data.get("date") or "").strip(),
+                "weekday": str(data.get("weekday") or "").strip(),
+                "period": str(data.get("period") or "").strip(),
+                "timezone": "",
+                "is_daytime": None,
+                "summary": text,
+            }
+        localized_pattern = re.match(
+            r"^(?P<location>.+?)\s+(?:现在是|is)\s+(?P<time>\d{1,2}:\d{2})(?:\s*(?P<period>[\u4e00-\u9fa5A-Za-z]+))?(?:[，,]\s*(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<weekday>[^()]+?))?(?:\s*\((?P<weekday_en>[^)]+)\))?$",
+            text,
+        )
+        if localized_pattern:
+            data = localized_pattern.groupdict()
+            weekday = str(data.get("weekday") or data.get("weekday_en") or "").strip()
+            return {
+                "location": str(data.get("location") or "").strip(),
+                "time_text": str(data.get("time") or "").strip(),
+                "date_text": str(data.get("date") or "").strip(),
+                "weekday": weekday,
+                "period": str(data.get("period") or "").strip(),
+                "timezone": "",
+                "is_daytime": None,
+                "summary": text,
+            }
+        return {}
 
     def _extract_location_payload(self, structured: dict[str, Any]) -> dict[str, Any]:
         location_blob = structured.get("location") if isinstance(structured.get("location"), dict) else {}

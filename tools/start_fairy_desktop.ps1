@@ -3,7 +3,12 @@ param(
     [string]$HostAddress = "127.0.0.1",
     [int]$BackendPort = 8000,
     [int]$BackendReadyTimeoutSec = 30,
-    [string]$SessionName = "fairy_desktop_dev"
+    [string]$SessionName = "fairy_desktop_dev",
+    [bool]$StartBrowserCdp = $true,
+    [int]$BrowserPort = 9778,
+    [int]$BrowserReadyTimeoutSec = 20,
+    [string]$BrowserExe = "",
+    [bool]$BrowserHeadless = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +20,10 @@ $stateFile = Join-Path $runtimeDir "$SessionName.json"
 $backendHealthUrl = "http://$HostAddress`:$BackendPort/health"
 $backendApiModule = "app.api.main:app"
 $backendArgs = "-m uvicorn $backendApiModule --host $HostAddress --port $BackendPort"
+$browserDebugUrl = "http://127.0.0.1`:$BrowserPort/json/version"
+$script:backendProcess = $null
+$script:tauriProcess = $null
+$script:browserProcess = $null
 
 function Write-Status {
     param([string]$Message)
@@ -43,10 +52,37 @@ function Resolve-PythonExe {
     throw "Unable to locate Python executable."
 }
 
+function Resolve-BrowserExe {
+    if ($BrowserExe -and (Test-Path $BrowserExe)) {
+        return $BrowserExe
+    }
+    $candidates = @(
+        $env:FAIRY_BROWSER_EXECUTABLE_PATH,
+        "C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+    ) | Where-Object { $_ }
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+    throw "Unable to locate browser executable. Set -BrowserExe or FAIRY_BROWSER_EXECUTABLE_PATH."
+}
+
 function Test-BackendReady {
     try {
         $response = Invoke-RestMethod -Uri $backendHealthUrl -TimeoutSec 3 -Method Get
         return ($response.status -eq "ok")
+    }
+    catch {
+        return $false
+    }
+}
+
+function Test-BrowserReady {
+    try {
+        $response = Invoke-RestMethod -Uri $browserDebugUrl -TimeoutSec 3 -Method Get
+        return [bool]($response.Browser -or $response.'Protocol-Version')
     }
     catch {
         return $false
@@ -65,6 +101,18 @@ function Wait-BackendReady {
     return $false
 }
 
+function Wait-BrowserReady {
+    param([int]$TimeoutSec)
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-BrowserReady) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
 if (-not (Test-Path $desktopRoot)) {
     throw "Missing fairy-desktop directory: $desktopRoot"
 }
@@ -76,6 +124,10 @@ if (-not (Test-Path (Join-Path $desktopRoot "node_modules"))) {
 New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
 
 $pythonExe = Resolve-PythonExe
+$browserExecutable = $null
+if ($StartBrowserCdp) {
+    $browserExecutable = Resolve-BrowserExe
+}
 
 $jobTypeSource = @"
 using System;
@@ -170,19 +222,23 @@ function Add-ProcessToJob {
 }
 
 function Write-StateFile {
-    $backendProcess = $childProcesses | Where-Object { $_.StartInfo.WorkingDirectory -eq $repoRoot } | Select-Object -First 1
-    $tauriProcess = $childProcesses | Where-Object { $_.StartInfo.WorkingDirectory -eq $desktopRoot } | Select-Object -First 1
     $state = @{
         session_name = $SessionName
         started_at = (Get-Date).ToString("o")
         launcher_pid = $PID
         backend = @{
-            pid = if ($backendProcess) { $backendProcess.Id } else { 0 }
+            pid = if ($script:backendProcess) { $script:backendProcess.Id } else { 0 }
             url = "http://$HostAddress`:$BackendPort"
             health_url = $backendHealthUrl
         }
         tauri = @{
-            pid = if ($tauriProcess) { $tauriProcess.Id } else { 0 }
+            pid = if ($script:tauriProcess) { $script:tauriProcess.Id } else { 0 }
+        }
+        browser = @{
+            pid = if ($script:browserProcess) { $script:browserProcess.Id } else { 0 }
+            url = "http://127.0.0.1`:$BrowserPort"
+            devtools_url = $browserDebugUrl
+            executable = if ($script:browserProcess) { $script:browserProcess.Path } else { "" }
         }
     }
     $state | ConvertTo-Json -Depth 4 | Set-Content -Path $stateFile -Encoding UTF8
@@ -210,10 +266,45 @@ try {
     if (Test-BackendReady) {
         throw "Backend already running at $backendHealthUrl. Stop the existing backend first, or use the existing session."
     }
+    if ($StartBrowserCdp -and (Test-BrowserReady)) {
+        throw "Browser CDP already running at $browserDebugUrl. Stop the existing browser session first, or use the existing session."
+    }
+
+    if ($StartBrowserCdp) {
+        $browserProfilePath = Join-Path $runtimeDir "browser_cdp_$SessionName"
+        New-Item -ItemType Directory -Path $browserProfilePath -Force | Out-Null
+        $browserArgs = @()
+        if ($BrowserHeadless) {
+            $browserArgs += "--headless=new"
+        }
+        $browserArgs += @(
+            "--disable-gpu",
+            "--no-sandbox",
+            "--remote-debugging-port=$BrowserPort",
+            "--user-data-dir=$browserProfilePath",
+            "about:blank"
+        )
+        Write-Status "Starting browser CDP on $browserDebugUrl"
+        $script:browserProcess = Start-Process -FilePath $browserExecutable -ArgumentList $browserArgs -WorkingDirectory $repoRoot -PassThru
+        Add-ProcessToJob -Process $script:browserProcess
+        if (-not (Wait-BrowserReady -TimeoutSec $BrowserReadyTimeoutSec)) {
+            Write-Warning "Browser CDP failed to become ready within $BrowserReadyTimeoutSec seconds. Continuing without browser automation."
+            try {
+                Stop-Process -Id $script:browserProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+            catch {
+            }
+            [void]$childProcesses.Remove($script:browserProcess)
+            $script:browserProcess = $null
+        }
+        else {
+            Write-Status "Browser CDP ready"
+        }
+    }
 
     Write-Status "Starting backend on $backendHealthUrl"
-    $backendProcess = Start-Process -FilePath $pythonExe -ArgumentList $backendArgs -WorkingDirectory $repoRoot -PassThru
-    Add-ProcessToJob -Process $backendProcess
+    $script:backendProcess = Start-Process -FilePath $pythonExe -ArgumentList $backendArgs -WorkingDirectory $repoRoot -PassThru
+    Add-ProcessToJob -Process $script:backendProcess
 
     if (-not (Wait-BackendReady -TimeoutSec $BackendReadyTimeoutSec)) {
         throw "Backend failed to become ready within $BackendReadyTimeoutSec seconds."
@@ -221,18 +312,24 @@ try {
     Write-Status "Backend ready"
 
     Write-Status "Starting Tauri dev shell"
-    $tauriProcess = Start-Process -FilePath "npm.cmd" -ArgumentList "run tauri:dev" -WorkingDirectory $desktopRoot -PassThru
-    Add-ProcessToJob -Process $tauriProcess
+    $script:tauriProcess = Start-Process -FilePath "npm.cmd" -ArgumentList "run tauri:dev" -WorkingDirectory $desktopRoot -PassThru
+    Add-ProcessToJob -Process $script:tauriProcess
 
     Write-StateFile
 
     Write-Status "Session file: $stateFile"
-    Write-Status "Press Ctrl+C to stop backend and Tauri together."
+    Write-Status "Press Ctrl+C to stop browser, backend, and Tauri together."
 
     while ($true) {
         Start-Sleep -Seconds 1
         foreach ($proc in $childProcesses) {
             if ($proc.HasExited) {
+                if ($script:tauriProcess -and $proc.Id -eq $script:tauriProcess.Id) {
+                    Write-Warning "Tauri launcher process exited; leaving child shell processes managed by job object."
+                    [void]$childProcesses.Remove($proc)
+                    $script:tauriProcess = $null
+                    break
+                }
                 throw "Process exited early: PID=$($proc.Id)"
             }
         }

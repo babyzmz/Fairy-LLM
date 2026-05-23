@@ -4,7 +4,6 @@ import json
 import socket
 from dataclasses import dataclass
 from datetime import date
-from pathlib import Path
 from typing import Any
 
 from app.config import system_config
@@ -20,9 +19,9 @@ class FairyBootResult:
 
 
 class FairyInitializer:
-    """Handles Fairy boot state, daily welcome voice, and capability snapshot."""
+    """Handles Fairy boot state, daily welcome speech gating, and capability snapshot."""
 
-    def __init__(self, tts=None, state_file: Path | None = None) -> None:
+    def __init__(self, tts=None, state_file=None) -> None:
         self.tts = tts
         self.state_file = state_file or system_config.state_file
         self._welcome_pending = False
@@ -75,28 +74,6 @@ class FairyInitializer:
 
     def mark_welcome_played(self) -> None:
         self._welcome_pending = False
-
-    def resolve_welcome_audio(self) -> Path | None:
-        path = system_config.welcome_audio_path
-        return path if path.exists() else None
-
-    def resolve_status_audio(self, status_text: str) -> Path | None:
-        voice_dir = system_config.welcome_audio_path.parent
-        stem = status_text.strip().rstrip("。！？!?")
-        candidates = [
-            voice_dir / f"{stem}.wav",
-            voice_dir / f"{stem}.WAV",
-            voice_dir / f"{stem}.mp3",
-            voice_dir / f"{stem}.MP3",
-            voice_dir / f"{status_text}.wav",
-            voice_dir / f"{status_text}.WAV",
-            voice_dir / f"{status_text}.mp3",
-            voice_dir / f"{status_text}.MP3",
-        ]
-        for path in candidates:
-            if path.exists():
-                return path
-        return None
 
     def _load_state(self) -> dict[str, Any]:
         if not self.state_file.exists():

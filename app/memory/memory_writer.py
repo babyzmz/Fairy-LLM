@@ -26,7 +26,7 @@ class MemoryWriter:
         if preference is not None:
             candidates.append(preference)
 
-        if success and project and (changed_files or skill_name in {"agent_shell_skill", "document_editor_skill"}):
+        if success and project and (changed_files or skill_name in {"terminal-agent", "document-editing"}):
             module = Path(changed_files[0]).name if changed_files else skill_name
             detail_bits = []
             if summary:
@@ -67,7 +67,7 @@ class MemoryWriter:
                     scope=skill_name or "general",
                     content=experience_summary,
                     confidence=0.74,
-                    importance=0.66 if skill_name == "web_research_skill" else 0.82,
+                    importance=0.66 if skill_name == "web-research" else 0.82,
                     tags=[skill_name or "general", "experience"],
                     metadata={"project": project, "result_structured": bool(result), "experience_scope": skill_name or "general"},
                 )

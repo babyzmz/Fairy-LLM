@@ -358,7 +358,7 @@ def test_7_full_dispatcher():
         logger.info("  Result: skill=%s success=%s text=%s", result.skill_name, result.success, result.response_text[:100])
         logger.info("  Structured: %s", json.dumps(result.structured, ensure_ascii=False, default=str)[:300])
     else:
-        logger.info("  Result: None (would fall back to legacy)")
+        logger.info("  Result: None (would fall back to bundle runtime)")
 
     logger.info("  Events emitted: %d", len(_collected_events))
     for name, payload in _collected_events:
@@ -376,7 +376,7 @@ def test_8_feature_flags():
     from app.lazy_runtime.feature_flags import lazy_skills_flags
 
     logger.info("  use_lazy_skills: %s", lazy_skills_flags.use_lazy_skills)
-    logger.info("  use_legacy_fallback: %s", lazy_skills_flags.use_legacy_fallback)
+    logger.info("  use_bundle_fallback: %s", lazy_skills_flags.use_bundle_fallback)
     logger.info("  enable_debug_logging: %s", lazy_skills_flags.enable_debug_logging)
     logger.info("  graceful_fallback: %s", lazy_skills_flags.graceful_fallback)
 
@@ -401,7 +401,7 @@ def test_9_action_event_mapping():
         ("lazy_tool_exposure_activated", {"skill": "web-research", "exposed": ["search_web"], "missing": []}),
         ("lazy_context_built", {"skill": "web-research", "token_breakdown": {"total": 500}, "tools": ["search_web"]}),
         ("lazy_tool_calls_blocked", {"skill": "web-research", "blocked": ["run_command"]}),
-        ("lazy_pipeline_fallback", {"reason": "dispatch_returned_none", "pipeline": "legacy"}),
+        ("lazy_pipeline_fallback", {"reason": "dispatch_returned_none", "pipeline": "bundle_runtime"}),
     ]
 
     for event_name, payload in test_events:

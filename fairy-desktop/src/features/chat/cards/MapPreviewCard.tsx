@@ -1,5 +1,7 @@
 import { AssetResolver } from "../../../lib/assets/assetResolver";
+import { firstCardAction } from "../../../lib/actions/cardActions";
 import type { LocationCardEnvelope } from "../../../lib/types/api";
+import { ActionButton } from "./ActionButton";
 
 interface MapPreviewCardProps {
   card: LocationCardEnvelope;
@@ -10,6 +12,8 @@ export function MapPreviewCard({ card }: MapPreviewCardProps): JSX.Element {
   const previewUrl = AssetResolver.resolveMapPreview(data.map_preview_path || data.image_path);
   const title = data.title || data.city || "Location";
   const subtitle = [data.address, data.region, data.country].filter(Boolean).join(", ");
+  const mapAction = firstCardAction(card.actions, ["open_map"]);
+  const navigateAction = firstCardAction(card.actions, ["navigate"]);
 
   return (
     <article className="card">
@@ -37,16 +41,8 @@ export function MapPreviewCard({ card }: MapPreviewCardProps): JSX.Element {
         ) : null}
       </dl>
       <div className="card__actions">
-        {data.external_map_url ? (
-          <a href={data.external_map_url} target="_blank" rel="noreferrer">
-            Open in Maps
-          </a>
-        ) : null}
-        {data.navigate_url ? (
-          <a href={data.navigate_url} target="_blank" rel="noreferrer">
-            Navigate
-          </a>
-        ) : null}
+        <ActionButton action={mapAction} label="Open in Maps" />
+        <ActionButton action={navigateAction} label="Navigate" />
       </div>
     </article>
   );

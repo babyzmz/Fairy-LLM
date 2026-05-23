@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 SENTENCE_ENDINGS = {"。", "！", "？", ".", "!", "?"}
-SOFT_BREAKS = {"，", "、", "；", ",", ";", ":", "："}
+SOFT_BREAKS = {"，", "、", "；", "：", ",", ";", ":"}
 
 
 class SentenceBuffer:

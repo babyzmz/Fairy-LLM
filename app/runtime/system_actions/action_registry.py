@@ -170,10 +170,10 @@ class SystemActionRegistry:
             ),
         ):
             return SystemActionResolution(
-                name="legacy_screen_action",
-                category="legacy_only",
-                summary="This request still targets a legacy surface automation path.",
-                reason="matched_legacy_surface_automation",
+                name="desktop_automation_compatibility_action",
+                category="desktop_automation_compatibility",
+                summary="This request targets the desktop automation compatibility path.",
+                reason="matched_desktop_automation_compatibility",
             )
 
         return SystemActionResolution(
@@ -193,7 +193,10 @@ class SystemActionRegistry:
             "open_panel": ("desktop_action", "Open a desktop panel in the shell."),
             "focus_window": ("desktop_action", "Focus the main desktop window."),
             "show_notification": ("desktop_action", "Show a desktop notification."),
-            "legacy_screen_action": ("legacy_only", "This request still targets a legacy surface automation path."),
+            "desktop_automation_compatibility_action": (
+                "desktop_automation_compatibility",
+                "This request targets the desktop automation compatibility path.",
+            ),
         }
         matched = mapping.get(normalized)
         if matched is None:

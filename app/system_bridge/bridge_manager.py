@@ -37,6 +37,33 @@ class SystemBridgeManager:
         with self._lock:
             self._state.capabilities = dict(capabilities or {})
 
+    def update_runtime_state(
+        self,
+        *,
+        current_state: str,
+        trace: list[dict[str, Any]] | None = None,
+        request_id: str | None = None,
+        session_id: str | None = None,
+        reason: str = "",
+        fairy: dict[str, Any] | None = None,
+        emit_event: bool = True,
+    ) -> None:
+        with self._lock:
+            self._state.current_state = str(current_state or self._state.current_state or "booting")
+            if fairy is not None:
+                self._state.fairy = dict(fairy or {})
+            if trace is not None:
+                self._state.runtime_state_trace = [dict(item or {}) for item in trace]
+            if emit_event:
+                self._events.append(
+                    SystemEvent(
+                        event="runtime_state_changed",
+                        request_id=request_id,
+                        session_id=session_id,
+                        detail={"state": self._state.current_state, "reason": reason},
+                    )
+                )
+
     def set_backend_status(
         self,
         status: str,

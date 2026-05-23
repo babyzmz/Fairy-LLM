@@ -57,3 +57,18 @@ The timeout and stopped synthetic lifecycle scenarios are not yet fully determin
 - Core packaged GUI path is independently runnable without Qt.
 - Core chat, streaming, assets, and desktop-bridge system actions no longer require Qt.
 - Remaining Qt retention reasons are limited to legacy modules and legacy surface automation, not the core packaged GUI runtime.
+
+## Debug Surface Notes
+
+- Runtime state is visible in the System Panel and tracked in stream timeline metadata.
+- Query-resolution debug is surfaced for:
+  - `location_source`
+  - `matched_rules`
+  - `arbitration_correction_applied`
+- Voice debug is surfaced for:
+  - last voice event
+  - last voice key
+  - queue length
+  - cooldowns
+  - last runtime transition
+- Regression checklist: [debug_surface_regression_checklist.md](/D:/桌面/~/deskllmchat/docs/platform_migration/debug_surface_regression_checklist.md)

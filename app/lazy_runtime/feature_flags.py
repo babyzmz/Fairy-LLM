@@ -1,20 +1,8 @@
 """
-Fairy Lazy Skills Feature Flags
-================================
+Fairy bundle runtime feature flags.
 
-Controls whether the new Anthropic-style lazy skill runtime is active.
-
-Feature flags can be set via:
-  1. Environment variables (highest priority)
-  2. config/lazy_skills_config.json file
-  3. Hardcoded defaults (lowest priority)
-
-Usage in code:
-    from app.lazy_runtime.feature_flags import lazy_skills_flags
-    if lazy_skills_flags.use_lazy_skills:
-        # new path
-    else:
-        # legacy path
+These flags tune the canonical bundle runtime and deterministic direct executors.
+They no longer represent a legacy-vs-new pipeline split.
 """
 
 from __future__ import annotations
@@ -46,33 +34,25 @@ def _load_config_file() -> dict:
 
 @dataclass
 class LazySkillsFlags:
-    """Runtime feature flags for the lazy skill system."""
+    """Runtime feature flags for the canonical bundle runtime."""
 
-    # Master switch: enable the new lazy skill routing pipeline
     use_lazy_skills: bool = False
-
-    # Keep legacy skills available as fallback
-    use_legacy_fallback: bool = True
-
-    # Log detailed debug info for the new pipeline
+    use_bundle_fallback: bool = True
     enable_debug_logging: bool = True
-
-    # If True, the new pipeline will be tried first; if it fails, fall back to legacy
-    # If False and use_lazy_skills is True, ONLY the new pipeline runs (no fallback)
     graceful_fallback: bool = True
 
     def __post_init__(self) -> None:
         logger.info(
-            "lazy_skills_flags use_lazy=%s legacy_fallback=%s debug=%s graceful=%s",
+            "lazy_skills_flags use_lazy=%s bundle_fallback=%s debug=%s graceful=%s",
             self.use_lazy_skills,
-            self.use_legacy_fallback,
+            self.use_bundle_fallback,
             self.enable_debug_logging,
             self.graceful_fallback,
         )
 
 
 def _resolve_flags() -> LazySkillsFlags:
-    """Resolve feature flags from env vars → config file → defaults."""
+    """Resolve feature flags from env vars -> config file -> defaults."""
     config = _load_config_file()
 
     use_lazy = os.getenv("USE_LAZY_SKILLS")
@@ -81,11 +61,11 @@ def _resolve_flags() -> LazySkillsFlags:
     else:
         use_lazy_val = config.get("use_lazy_skills", False)
 
-    use_legacy = os.getenv("USE_LEGACY_FALLBACK")
-    if use_legacy is not None:
-        use_legacy_val = _str_to_bool(use_legacy)
+    use_bundle_fallback = os.getenv("USE_BUNDLE_FALLBACK")
+    if use_bundle_fallback is not None:
+        use_bundle_fallback_val = _str_to_bool(use_bundle_fallback)
     else:
-        use_legacy_val = config.get("use_legacy_fallback", True)
+        use_bundle_fallback_val = config.get("use_bundle_fallback", True)
 
     debug = os.getenv("LAZY_SKILLS_DEBUG")
     if debug is not None:
@@ -101,11 +81,10 @@ def _resolve_flags() -> LazySkillsFlags:
 
     return LazySkillsFlags(
         use_lazy_skills=use_lazy_val,
-        use_legacy_fallback=use_legacy_val,
+        use_bundle_fallback=use_bundle_fallback_val,
         enable_debug_logging=debug_val,
         graceful_fallback=graceful_val,
     )
 
 
-# Module-level singleton – imported by fairy_core.py and test scripts
 lazy_skills_flags = _resolve_flags()

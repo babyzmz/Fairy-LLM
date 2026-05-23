@@ -132,8 +132,118 @@ class ServerManager:
     def is_owned_server_alive(self) -> bool:
         return self._server_process is not None and self._server_process.poll() is None
 
+    def _resolve_server_executable(self) -> Path:
+        configured = Path(self.config.server_executable)
+        if configured.exists():
+            return configured
+
+        bundled = self.base_dir / "app" / "ai" / "llama-server.exe"
+        if bundled.exists():
+            return bundled
+
+        local_dir = configured.parent if configured.parent != Path(".") else (self.base_dir / "app" / "ai")
+        if local_dir.exists():
+            matches = sorted(local_dir.glob("llama-server*.exe"))
+            if matches:
+                return matches[0]
+
+        return configured
+
+    def _path_for_runtime_arg(self, path: Path) -> Path:
+        try:
+            return path.resolve().relative_to(self.base_dir.resolve())
+        except ValueError:
+            return path
+        except Exception:  # noqa: BLE001
+            return path
+
+    def _configured_path_exists(self, path: Path) -> bool:
+        if path.exists():
+            return True
+        if not path.is_absolute():
+            return (self.base_dir / path).exists()
+        return False
+
+    def _discover_model_path(self) -> Path:
+        configured = Path(self.config.model_path)
+        if self._configured_path_exists(configured):
+            return configured
+
+        model_name = str(getattr(self.config, "model", "") or "").strip().lower()
+        search_roots: list[Path] = []
+        configured_parent = configured.parent if configured.parent != Path(".") else None
+        if configured_parent is not None:
+            if configured_parent.is_absolute():
+                search_roots.append(configured_parent)
+            else:
+                search_roots.append(self.base_dir / configured_parent)
+        search_roots.extend(
+            [
+                Path("D:/llm_models"),
+                self.base_dir / "model",
+                self.base_dir / "app" / "ai" / "models",
+                self.base_dir / "models",
+            ]
+        )
+
+        candidates: list[Path] = []
+        seen: set[str] = set()
+        for root in search_roots:
+            root_key = str(root).lower()
+            if root_key in seen or not root.exists():
+                continue
+            seen.add(root_key)
+            candidates.extend(root.rglob("*.gguf"))
+
+        if not candidates:
+            return configured
+
+        preferred = [path for path in candidates if model_name and model_name in path.name.lower()]
+        if preferred:
+            return self._path_for_runtime_arg(max(preferred, key=lambda path: len(path.name)))
+
+        return self._path_for_runtime_arg(max(candidates, key=lambda path: len(path.name)))
+
+    def _discover_mmproj_path(self, model_path: Path) -> Path | None:
+        configured = self.config.mmproj_path
+        if configured is not None:
+            configured_path = Path(configured)
+            if self._configured_path_exists(configured_path):
+                return configured_path
+
+        search_roots: list[Path] = []
+        model_path_for_search = self.base_dir / model_path if model_path and not model_path.is_absolute() else model_path
+        model_parent = model_path_for_search.parent if model_path_for_search else None
+        if model_parent is not None:
+            search_roots.append(model_parent)
+        search_roots.append(self.base_dir / "model")
+
+        seen: set[str] = set()
+        for root in search_roots:
+            root_key = str(root).lower()
+            if root_key in seen or not root.exists():
+                continue
+            seen.add(root_key)
+            matches = sorted(root.rglob("mmproj*.gguf"))
+            if matches:
+                return self._path_for_runtime_arg(matches[0])
+        return None
+
+    def _refresh_runtime_assets(self) -> None:
+        resolved_server = self._resolve_server_executable()
+        if Path(self.config.server_executable) != resolved_server:
+            self.config.server_executable = resolved_server
+
+        resolved_model = self._discover_model_path()
+        if Path(self.config.model_path) != resolved_model:
+            self.config.model_path = resolved_model
+
+        resolved_mmproj = self._discover_mmproj_path(resolved_model)
+        self.config.mmproj_path = resolved_mmproj
+
     def ensure_server_running(self) -> None:
         with self._server_lock:
+            self._refresh_runtime_assets()
             try:
                 self.probe_server(timeout=2.0)
                 log_tail = self.read_log_tail(self.base_dir / "data" / "llama_server.log")

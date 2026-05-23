@@ -9,10 +9,10 @@ from bs4 import BeautifulSoup
 from app.config import llm_config
 from app.mcp_client_layer import MCPClientLayer
 from app.tool_registry import ToolRegistry
-from skills.crawl_webpage import crawl_webpage
-from skills.search_web import search_web_detailed, search_web_queries
-from utils.browser_automation import browser_automation
+from app.tools.browser.http_page_loader import crawl_webpage
+from app.tools.search.html_search import search_web_detailed, search_web_queries
 from utils.web_content_extractor import extract_web_content
+from app.web_access.browser_executor import BrowserExecutor
 
 
 PRICE_RE = re.compile(r"(?:[$€¥£]|USD|AUD|CNY|RMB)\s?\d[\d,]*(?:\.\d+)?", re.IGNORECASE)
@@ -26,9 +26,11 @@ DATE_RE = re.compile(r"\b(?:20\d{2}[-/年]\d{1,2}(?:[-/月]\d{1,2})?)\b")
 
 
 class BrowserCapability:
-    def __init__(self, registry: ToolRegistry, mcp: MCPClientLayer) -> None:
+    def __init__(self, registry: ToolRegistry, mcp: MCPClientLayer, web_runtime: Any | None = None) -> None:
         self.registry = registry
         self.mcp = mcp
+        self.web_runtime = web_runtime
+        self._browser_executor = BrowserExecutor()
         self._register_tools()
 
     def _register_tools(self) -> None:
@@ -139,55 +141,54 @@ class BrowserCapability:
         return detailed
 
     def _tool_open_url(self, url: str) -> dict[str, Any]:
-        if llm_config.browser_automation_enabled and browser_automation.available():
+        if self.web_runtime is not None:
             try:
-                page = browser_automation.open_interactive_page(
-                    url,
-                    timeout_ms=llm_config.browser_navigation_timeout_sec * 1000,
-                    wait_after_load_ms=llm_config.browser_post_load_wait_ms,
-                    capture_screenshot=True,
-                )
-                return self._page_result_to_dict(page, source="browser")
+                opened = self.web_runtime.open_page(str(url or "").strip(), task_type="general_info")
+                snapshot = dict(opened.get("snapshot") or {})
+                if snapshot:
+                    return self._snapshot_to_dict(
+                        snapshot,
+                        source="web_access",
+                        blocked_reason=str(opened.get("failure_reason") or "").strip(),
+                    )
             except Exception:
                 pass
 
+        rendered = self._browser_executor.rendered_read(str(url or "").strip())
+        if rendered.get("ok"):
+            snapshot = dict(rendered.get("page") or {})
+            if snapshot:
+                return self._snapshot_to_dict(snapshot, source="browser")
+
         page = crawl_webpage(url)
-        return {
-            "url": page.url,
-            "final_url": page.final_url,
-            "title": page.title,
-            "status_code": page.status_code,
-            "html": page.html,
-            "meta_description": "",
-            "visible_text": "",
-            "headings": [],
-            "links": [],
-            "key_values": [],
-            "table_rows": [],
-            "screenshot_path": "",
-            "handle_id": "",
-            "source": "http",
-            "blocked_reason": getattr(page, "blocked_reason", ""),
-        }
+        return self._crawled_page_to_dict(page)
 
     def _tool_extract_page_text(self, source: dict[str, Any] | str) -> dict[str, Any]:
         page = self._normalize_page_source(source)
         handle_id = str(page.get("handle_id", "")).strip()
-        if handle_id and llm_config.browser_automation_enabled and browser_automation.available():
+        if handle_id:
             try:
-                fresh = browser_automation.extract_session(handle_id, capture_screenshot=False)
-                page = self._page_result_to_dict(fresh, source="browser")
+                refreshed = self._browser_executor.execute(
+                    target_url=str(page.get("final_url") or page.get("url") or "").strip(),
+                    actions=[{"type": "extract_page"}],
+                    existing_handle_id=handle_id,
+                )
+                fresh_page = dict(refreshed.get("page") or {})
+                if fresh_page:
+                    page = self._snapshot_to_dict(fresh_page, source="browser")
             except Exception:
                 pass
 
         page_html = str(page.get("html", ""))
         title = str(page.get("title", "")).strip()
         url = str(page.get("final_url") or page.get("url", "")).strip()
+        content_type = str(page.get("content_type", "")).strip()
+        text_content = str(page.get("text_content", "")).strip()
         meta_description = str(page.get("meta_description", "")).strip()
         visible_text = str(page.get("visible_text", "")).strip()
 
         extracted = extract_web_content(page_html) if page_html.strip() else None
-        readable_text = visible_text or (extracted.body_text if extracted is not None else "")
+        readable_text = visible_text or text_content or (extracted.body_text if extracted is not None else "")
         if not title and extracted is not None:
             title = extracted.title
         if not meta_description and extracted is not None:
@@ -215,6 +216,7 @@ class BrowserCapability:
         return {
             "title": title,
             "url": url,
+            "content_type": content_type,
             "meta_description": meta_description,
             "body_text": readable_text[:8000],
             "headings": headings[:12],
@@ -225,6 +227,11 @@ class BrowserCapability:
             "handle_id": handle_id,
             "structured_signals": structured,
             "blocked_reason": str(page.get("blocked_reason", "")),
+            "persisted_path": str(page.get("persisted_path", "")),
+            "persisted_size": page.get("persisted_size"),
+            "redirect_url": str(page.get("redirect_url", "")),
+            "redirect_status_code": page.get("redirect_status_code"),
+            "cache_hit": bool(page.get("cache_hit", False)),
         }
 
     def _tool_extract_structured_fields(self, source: dict[str, Any] | str, schema: list[str]) -> dict[str, Any]:
@@ -244,10 +251,16 @@ class BrowserCapability:
     def _tool_snapshot_page(self, source: dict[str, Any] | str) -> dict[str, Any]:
         page = self._normalize_page_source(source)
         handle_id = str(page.get("handle_id", "")).strip()
-        if handle_id and llm_config.browser_automation_enabled and browser_automation.available():
+        if handle_id:
             try:
-                fresh = browser_automation.extract_session(handle_id, capture_screenshot=True)
-                page = self._page_result_to_dict(fresh, source="browser")
+                refreshed = self._browser_executor.execute(
+                    target_url=str(page.get("final_url") or page.get("url") or "").strip(),
+                    actions=[{"type": "capture_screenshot"}],
+                    existing_handle_id=handle_id,
+                )
+                fresh_page = dict(refreshed.get("page") or {})
+                if fresh_page:
+                    page = self._snapshot_to_dict(fresh_page, source="browser")
             except Exception:
                 pass
         extracted = self._tool_extract_page_text(page)
@@ -274,16 +287,16 @@ class BrowserCapability:
     ) -> dict[str, Any]:
         if not handle_id:
             raise ValueError("browser_interact requires handle_id")
-        page = browser_automation.interact(
-            handle_id,
-            action=action,
-            selector=selector,
-            text=text,
-            key=key,
-            timeout_ms=llm_config.browser_navigation_timeout_sec * 1000,
-            wait_after_load_ms=llm_config.browser_post_load_wait_ms,
+        browser_action = self._map_browser_action(action, selector=selector, text=text, key=key)
+        result = self._browser_executor.execute(
+            target_url="",
+            actions=[browser_action],
+            existing_handle_id=handle_id,
         )
-        return self._page_result_to_dict(page, source="browser")
+        if not result.get("ok"):
+            raise ValueError(str(result.get("error") or "browser_interaction_failed"))
+        page = dict(result.get("page") or {})
+        return self._snapshot_to_dict(page, source="browser")
 
     def _tool_compare_structured_results(self, items: list[dict[str, Any]], focus: str = "") -> dict[str, Any]:
         normalized: list[dict[str, Any]] = []
@@ -340,7 +353,87 @@ class BrowserCapability:
     def _normalize_page_source(self, source: dict[str, Any] | str) -> dict[str, Any]:
         if isinstance(source, str):
             return self._tool_open_url(source)
-        return dict(source)
+        payload = dict(source)
+        if isinstance(payload.get("snapshot"), dict):
+            return self._snapshot_to_dict(
+                dict(payload.get("snapshot") or {}),
+                source=str(payload.get("source") or "web_access"),
+                blocked_reason=str(payload.get("failure_reason") or "").strip(),
+            )
+        return payload
+
+    def _snapshot_to_dict(self, snapshot: dict[str, Any], *, source: str, blocked_reason: str = "") -> dict[str, Any]:
+        return {
+            "url": str(snapshot.get("requested_url") or snapshot.get("url") or "").strip(),
+            "final_url": str(snapshot.get("final_url") or snapshot.get("url") or "").strip(),
+            "title": str(snapshot.get("title") or "").strip(),
+            "status_code": snapshot.get("status_code"),
+            "html": str(snapshot.get("html") or ""),
+            "content_type": str(snapshot.get("content_type") or ""),
+            "text_content": str(snapshot.get("text_content") or ""),
+            "meta_description": str(snapshot.get("meta_description") or ""),
+            "visible_text": str(snapshot.get("visible_text") or ""),
+            "headings": list(snapshot.get("headings") or []),
+            "links": list(snapshot.get("links") or []),
+            "key_values": list(snapshot.get("key_values") or []),
+            "table_rows": list(snapshot.get("table_rows") or []),
+            "screenshot_path": str(snapshot.get("screenshot_path") or ""),
+            "handle_id": str(snapshot.get("handle_id") or ""),
+            "source": source,
+            "blocked_reason": blocked_reason,
+            "persisted_path": str(snapshot.get("persisted_path") or ""),
+            "persisted_size": snapshot.get("persisted_size"),
+            "redirect_url": str(snapshot.get("redirect_url") or ""),
+            "redirect_status_code": snapshot.get("redirect_status_code"),
+            "cache_hit": bool(snapshot.get("cache_hit", False)),
+        }
+
+    def _crawled_page_to_dict(self, page: Any) -> dict[str, Any]:
+        return {
+            "url": page.url,
+            "final_url": page.final_url,
+            "title": page.title,
+            "status_code": page.status_code,
+            "html": page.html,
+            "content_type": page.content_type,
+            "text_content": page.text_content,
+            "meta_description": "",
+            "visible_text": "",
+            "headings": [],
+            "links": [],
+            "key_values": [],
+            "table_rows": [],
+            "screenshot_path": "",
+            "handle_id": "",
+            "source": "http",
+            "blocked_reason": getattr(page, "blocked_reason", ""),
+            "persisted_path": getattr(page, "persisted_path", ""),
+            "persisted_size": getattr(page, "persisted_size", None),
+            "redirect_url": getattr(page, "redirect_url", ""),
+            "redirect_status_code": getattr(page, "redirect_status_code", None),
+            "cache_hit": getattr(page, "cache_hit", False),
+        }
+
+    def _map_browser_action(self, action: str, *, selector: str, text: str, key: str) -> dict[str, Any]:
+        normalized = str(action or "").strip().lower()
+        if normalized == "click":
+            selector_value = str(selector or "").strip()
+            if selector_value.startswith("text="):
+                return {"type": "click_text", "value": selector_value[5:]}
+            if selector_value:
+                return {"type": "click_selector", "selector": selector_value}
+            if text.strip():
+                return {"type": "click_text", "value": text.strip()}
+            raise ValueError("browser_interact click requires selector or text")
+        if normalized == "fill":
+            return {"type": "type", "selector": str(selector or "").strip(), "value": str(text or "").strip()}
+        if normalized == "press":
+            return {"type": "submit", "selector": str(selector or "").strip(), "value": str(key or "Enter").strip()}
+        if normalized == "scroll":
+            return {"type": "scroll", "value": str(text or "960").strip()}
+        if normalized in {"goto", "extract_page", "capture_screenshot"}:
+            return {"type": normalized, "value": str(text or "").strip()}
+        raise ValueError(f"unsupported_browser_action:{normalized}")
 
     def _page_result_to_dict(self, page, *, source: str) -> dict[str, Any]:
         return {
@@ -349,6 +442,8 @@ class BrowserCapability:
             "title": page.title,
             "status_code": page.status_code,
             "html": page.html,
+            "content_type": getattr(page, "content_type", ""),
+            "text_content": getattr(page, "text_content", ""),
             "meta_description": page.meta_description,
             "visible_text": page.visible_text,
             "headings": page.headings,
@@ -359,6 +454,11 @@ class BrowserCapability:
             "handle_id": page.handle_id,
             "source": source,
             "blocked_reason": getattr(page, "blocked_reason", ""),
+            "persisted_path": getattr(page, "persisted_path", ""),
+            "persisted_size": getattr(page, "persisted_size", None),
+            "redirect_url": getattr(page, "redirect_url", ""),
+            "redirect_status_code": getattr(page, "redirect_status_code", None),
+            "cache_hit": bool(getattr(page, "cache_hit", False)),
         }
 
     def _extract_structured_signals(

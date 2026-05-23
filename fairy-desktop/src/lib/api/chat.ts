@@ -7,6 +7,7 @@ import type {
 } from "../types/api";
 import { API_BASE_URL } from "../config/env";
 import { ApiRequestError, apiRequest } from "./client";
+import { normalizeChatInvokeResponse, normalizeChatStreamEvent } from "../types/cardContract";
 
 export function getHealth(): Promise<HealthResponse> {
   return apiRequest<HealthResponse>("/health");
@@ -17,10 +18,10 @@ export function getCapabilities(): Promise<CapabilitiesResponse> {
 }
 
 export function invokeChat(payload: ChatInvokeRequest): Promise<ChatInvokeResponse> {
-  return apiRequest<ChatInvokeResponse>("/chat/invoke", {
+  return apiRequest<unknown>("/chat/invoke", {
     method: "POST",
     body: JSON.stringify(payload),
-  });
+  }).then((response) => normalizeChatInvokeResponse(response));
 }
 
 interface StreamChatOptions {
@@ -31,7 +32,7 @@ interface StreamChatOptions {
 function parseStreamEventPayload(eventName: string, rawData: string): ChatStreamEvent {
   const payload = (JSON.parse(rawData) as Record<string, unknown>) || {};
   payload.event = String(payload.event || eventName);
-  return payload as unknown as ChatStreamEvent;
+  return normalizeChatStreamEvent(eventName, payload);
 }
 
 function consumeSseBuffer(
@@ -103,7 +104,7 @@ export async function streamChat(payload: ChatInvokeRequest, options: StreamChat
   }
 
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder("utf-8");
   let buffer = "";
   try {
     while (true) {

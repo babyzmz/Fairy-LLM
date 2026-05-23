@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,6 +26,14 @@ class CapabilityCandidate:
 
 
 class CapabilityCandidateGenerator:
+    _DIRECT_LOCATION_PATTERNS = (
+        re.compile(r"^(?:显示|打开|看看|看一看|查看)?\s*(?P<location>.+?)\s*地图$", re.IGNORECASE),
+        re.compile(r"^(?P<location>.+?)\s*(?:在哪里|在哪儿|在哪)$", re.IGNORECASE),
+        re.compile(r"^(?:导航到|导航去|前往)\s*(?P<location>.+)$", re.IGNORECASE),
+        re.compile(r"^(?:看看|看一看|查看)\s*(?P<location>.+?)\s*位置$", re.IGNORECASE),
+        re.compile(r"^(?:show|display|open)\s+map\s+for\s+(?P<location>.+)$", re.IGNORECASE),
+        re.compile(r"^(?:where\s+is)\s+(?P<location>.+)$", re.IGNORECASE),
+    )
     _TIME_TERMS = (
         "几点",
         "现在几点",
@@ -50,6 +59,7 @@ class CapabilityCandidateGenerator:
     _MAP_TERMS = ("地图", "map", "显示地图", "看看地图", "打开地图")
     _NEWS_TERMS = ("新闻", "news", "快讯", "头条", "资讯")
     _EXPLANATION_TERMS = ("解释", "是什么", "什么意思", "why", "explain", "怎么回事", "关系")
+    _COMPARE_TERMS = ("区别", "差异", "对比", "比较", "difference", "compare", "comparison", " vs ", "versus")
     _SEARCH_TERMS = ("查", "搜", "帮我查", "帮我找", "看看", "有没有", "值不值得买", "价格", "功耗", "性能")
     _SYSTEM_TERMS = ("重启后端", "刷新能力", "清理缓存", "open panel", "restart backend")
 
@@ -61,11 +71,18 @@ class CapabilityCandidateGenerator:
         entities: list[DetectedEntity],
         session_context: Any,
         followup_target: str = "",
+        forced_capability: str = "",
+        capability_boosts: dict[str, float] | None = None,
+        allow_sticky_bonus: bool = True,
     ) -> list[CapabilityCandidate]:
         lowered = str(normalized_text or "").strip().lower()
         entity_map = self._entity_map(entities)
+        direct_location = self._extract_direct_location_target(normalized_text)
+        if direct_location and not entity_map.get("location"):
+            entity_map["location"] = direct_location
         last_capability = str(getattr(session_context, "last_capability", "") or "").strip()
         clarification_target = str(getattr(session_context, "last_clarification_target", "") or "").strip()
+        boosts = dict(capability_boosts or {})
         candidates: dict[str, CapabilityCandidate] = {}
 
         def add(
@@ -76,17 +93,18 @@ class CapabilityCandidateGenerator:
             extracted_slots: dict[str, Any] | None = None,
             semantic_flags: dict[str, Any] | None = None,
         ) -> None:
+            effective_score = float(score) + float(boosts.get(capability, 0.0) or 0.0)
             existing = candidates.get(capability)
-            if existing is None or score > existing.score:
+            if existing is None or effective_score > existing.score:
                 candidates[capability] = CapabilityCandidate(
                     capability=capability,
-                    score=score,
+                    score=effective_score,
                     evidence=[evidence],
                     extracted_slots=dict(extracted_slots or {}),
                     semantic_flags=dict(semantic_flags or {}),
                 )
                 return
-            existing.score = max(existing.score, score)
+            existing.score = max(existing.score, effective_score)
             if evidence not in existing.evidence:
                 existing.evidence.append(evidence)
             existing.extracted_slots.update(dict(extracted_slots or {}))
@@ -108,7 +126,9 @@ class CapabilityCandidateGenerator:
             if entity_map.get("location"):
                 add("location_lookup", 0.28, evidence="location_entity_with_weather_phrase", extracted_slots=self._location_slots(entity_map))
 
-        if self._contains_any(lowered, self._MAP_TERMS):
+        if direct_location and (self._contains_any(lowered, self._MAP_TERMS) or self._contains_any(lowered, self._LOCATION_TERMS)):
+            add("location_lookup", 1.02, evidence="direct_location_phrase", extracted_slots=self._location_slots(entity_map))
+        elif self._contains_any(lowered, self._MAP_TERMS):
             add("display_information", 0.95, evidence="map_phrase", extracted_slots=self._location_slots(entity_map))
 
         if self._contains_any(lowered, self._LOCATION_TERMS):
@@ -122,6 +142,9 @@ class CapabilityCandidateGenerator:
             topic = entity_map.get("topic") or ""
             add("explanation", 0.88, evidence="explanation_phrase", extracted_slots={"topic": topic} if topic else {})
 
+        if self._contains_any(lowered, self._COMPARE_TERMS):
+            add("generic_search", 0.98, evidence="compare_phrase", extracted_slots={"query": normalized_text})
+
         if self._contains_any(lowered, self._SYSTEM_TERMS):
             add("system_action", 0.94, evidence="system_action_phrase")
 
@@ -132,20 +155,31 @@ class CapabilityCandidateGenerator:
             add("weather_lookup", 0.82, evidence="followup_target:weather", extracted_slots=self._location_slots(entity_map))
             if self._contains_any(lowered, self._TIME_TERMS):
                 add("time_lookup", 0.86, evidence="followup_target:weather_with_time", extracted_slots=self._location_slots(entity_map))
+
         if followup_target == "location":
             add("location_lookup", 0.82, evidence="followup_target:location", extracted_slots=self._location_slots(entity_map))
             if self._contains_any(lowered, self._TIME_TERMS):
                 add("time_lookup", 0.88, evidence="followup_target:location_with_time", extracted_slots=self._location_slots(entity_map))
-            if self._contains_any(lowered, self._MAP_TERMS):
-                add("display_information", 0.9, evidence="followup_target:location_map", extracted_slots=self._location_slots(entity_map))
+            if direct_location:
+                add("location_lookup", 0.94, evidence="followup_target:location_direct", extracted_slots=self._location_slots(entity_map))
+            elif self._contains_any(lowered, self._MAP_TERMS):
+                add("display_information", 0.90, evidence="followup_target:location_map", extracted_slots=self._location_slots(entity_map))
 
-        if last_capability == "explanation" and self._contains_any(lowered, ("关系", "difference", "embedding", "why", "解释")):
+        if allow_sticky_bonus and last_capability == "explanation" and self._contains_any(lowered, ("关系", "difference", "embedding", "why", "解释")):
             add("explanation", 0.84, evidence="last_capability:explanation")
-        if last_capability == "generic_search" and self._contains_any(lowered, ("价格", "price", "功耗", "性能", "值不值得买")):
+        if allow_sticky_bonus and last_capability == "generic_search" and self._contains_any(lowered, ("价格", "price", "功耗", "性能", "值不值得买")):
             add("generic_search", 0.84, evidence="last_capability:generic_search")
 
+        if forced_capability:
+            add(
+                forced_capability,
+                1.20,
+                evidence=f"forced_capability:{forced_capability}",
+                extracted_slots=self._location_slots(entity_map),
+            )
+
         if not candidates:
-            add("generic_search", 0.5, evidence="fallback_generic_search", extracted_slots={"query": normalized_text})
+            add("generic_search", 0.50, evidence="fallback_generic_search", extracted_slots={"query": normalized_text})
 
         ordered = sorted(candidates.values(), key=lambda item: (-item.score, item.capability))
         return ordered[:3]
@@ -171,3 +205,16 @@ class CapabilityCandidateGenerator:
     def _location_slots(entity_map: dict[str, str]) -> dict[str, Any]:
         location = str(entity_map.get("location") or "").strip()
         return {"location": location} if location else {}
+
+    def _extract_direct_location_target(self, text: str) -> str:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return ""
+        for pattern in self._DIRECT_LOCATION_PATTERNS:
+            match = pattern.match(cleaned)
+            if not match:
+                continue
+            candidate = str(match.group("location") or "").strip()
+            if candidate:
+                return candidate
+        return ""

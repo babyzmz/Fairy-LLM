@@ -1,1 +1,9 @@
-{"tools": ["search_web", "fetch_page"]}
+[
+  "search_web",
+  "open_url",
+  "extract_page_text",
+  "extract_structured_fields",
+  "snapshot_page",
+  "browser_interact",
+  "compare_structured_results"
+]

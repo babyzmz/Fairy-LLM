@@ -34,7 +34,7 @@ class ChatMessage:
         )
 
     @classmethod
-    def from_legacy(
+    def from_text_payload(
         cls,
         speaker: str,
         text: str,
@@ -85,6 +85,8 @@ class ChatMessage:
             return str(self.payload.get("title", "") or self.payload.get("url", "") or "").strip()
         if self.type == "generic_info":
             return str(self.payload.get("title", "") or self.payload.get("summary", "") or self.payload.get("text", "") or "").strip()
+        if self.type in {"specs", "compare", "release", "web_brief"}:
+            return str(self.payload.get("title", "") or self.payload.get("summary", "") or "").strip()
         if self.type == "suggestion":
             return str(self.payload.get("body", "") or self.payload.get("text", "") or "").strip()
         return html.escape(str(self.payload))

@@ -62,8 +62,16 @@ class QueryResolutionResult:
     clarification_needed: bool = False
     clarification_message: str | None = None
     clarification_title: str | None = None
-    route_hints: dict[str, str] = field(default_factory=dict)
+    route_hints: dict[str, Any] = field(default_factory=dict)
     trace: list[ResolutionTraceEvent] = field(default_factory=list)
+    matched_rules: list[str] = field(default_factory=list)
+    inferred_followup_type: str = ""
+    sticky_capability_before: str = ""
+    sticky_capability_after: str = ""
+    slot_override_applied: bool = False
+    llm_capability_candidate: str = ""
+    final_capability_decision: str = ""
+    arbitration_correction_applied: bool = False
 
     def to_meta(self) -> dict[str, Any]:
         return {
@@ -91,4 +99,12 @@ class QueryResolutionResult:
             "normalized_query": self.normalized_query,
             "route_hints": dict(self.route_hints),
             "trace": [item.to_dict() for item in self.trace],
+            "matched_rules": list(self.matched_rules),
+            "inferred_followup_type": self.inferred_followup_type,
+            "sticky_capability_before": self.sticky_capability_before,
+            "sticky_capability_after": self.sticky_capability_after,
+            "slot_override_applied": self.slot_override_applied,
+            "llm_capability_candidate": self.llm_capability_candidate,
+            "final_capability_decision": self.final_capability_decision or self.selected_capability or self.capability,
+            "arbitration_correction_applied": self.arbitration_correction_applied,
         }

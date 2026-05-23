@@ -29,7 +29,7 @@ class ModalityPlanner:
                 response_mode="text_plus_card",
                 speech_mode="concise_structured",
                 layout_mode="single",
-                card_types=["generic_info"],
+                card_types=["time"],
                 allow_streaming=False,
             )
         if frame.intent in {"location_lookup", "display_information"}:

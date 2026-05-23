@@ -4,6 +4,7 @@ from app.memory.memory_injection_policy import MemoryInjectionPolicy
 from app.memory.memory_schema import MemoryRetrievalBundle
 from app.memory.memory_store import StructuredMemoryStore
 from app.memory.memory_vector_store import VectorMemoryStore
+from app.memory.relevance_scorer import find_relevant_memories
 
 
 class MemoryRetriever:
@@ -32,7 +33,8 @@ class MemoryRetriever:
                 bundle.task = [task_row]
         if policy.include_semantic:
             semantic_scope = "web_research" if task_category == "web_research" else project or task_category
-            bundle.semantic = self.vector_store.search(query, scope=semantic_scope, limit=5)
-            if not bundle.semantic:
-                bundle.semantic = self.vector_store.search(query, limit=5)
+            candidates = self.vector_store.search(query, scope=semantic_scope, limit=12)
+            if not candidates:
+                candidates = self.vector_store.search(query, limit=12)
+            bundle.semantic = find_relevant_memories(query, candidates, top_k=5)
         return bundle

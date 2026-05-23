@@ -39,6 +39,27 @@ print(dst)
 "@ $thirdPartyDir
 
 & $PythonPath -c @"
+from pathlib import Path
+from zipfile import ZipFile
+import io, requests, shutil, sys
+cosyvoice_root = Path(sys.argv[1])
+third_party = cosyvoice_root / 'third_party'
+third_party.mkdir(parents=True, exist_ok=True)
+target = third_party / 'Matcha-TTS'
+extracted = third_party / 'Matcha-TTS-main'
+if extracted.exists():
+    shutil.rmtree(extracted)
+resp = requests.get('https://codeload.github.com/shivammehta25/Matcha-TTS/zip/refs/heads/main', timeout=180)
+resp.raise_for_status()
+with ZipFile(io.BytesIO(resp.content)) as zf:
+    zf.extractall(third_party)
+if target.exists():
+    shutil.rmtree(target)
+extracted.rename(target)
+print(target)
+"@ $cosyVoiceDir
+
+& $PythonPath -c @"
 import sys
 sys.path.insert(0, r'$cosyVoiceDir')
 sys.path.insert(0, r'$cosyVoiceDir\third_party\Matcha-TTS')

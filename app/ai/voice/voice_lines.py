@@ -11,14 +11,3 @@ VOICE_LINES: dict[str, str] = {
     "analysis_complete": "\u5206\u6790\u5b8c\u6210\u3002",
     "information_found": "\u4fe1\u606f\u5df2\u627e\u5230\u3002",
 }
-
-VOICE_LINE_FILES: dict[str, str] = {
-    "analyzing_image": "analyzing.wav",
-    "searching": "searching.wav",
-    "reading_webpage": "reading_webpage.wav",
-    "thinking": "thinking.wav",
-    "processing": "processing.wav",
-    "complete": "complete.wav",
-    "analysis_complete": "analysis_complete.wav",
-    "information_found": "information_found.wav",
-}

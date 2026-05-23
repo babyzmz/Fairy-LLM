@@ -239,10 +239,10 @@ class ChatPage(QWidget):
             self._rerender_messages()
 
     def add_message(self, speaker: str, text: str, *, rich_text: bool = False) -> str:
-        return self.push_legacy_message(speaker, text, rich_text=rich_text)
+        return self.push_text_message(speaker, text, rich_text=rich_text)
 
-    def push_legacy_message(self, speaker: str, text: str, *, rich_text: bool = False) -> str:
-        message = ChatMessage.from_legacy(speaker, text, rich_text=rich_text)
+    def push_text_message(self, speaker: str, text: str, *, rich_text: bool = False) -> str:
+        message = ChatMessage.from_text_payload(speaker, text, rich_text=rich_text)
         self.push_message(message)
         return message.id
 
@@ -322,7 +322,7 @@ class ChatPage(QWidget):
         self._demo_injected = True
         self.clear_trace()
         demo_messages = [
-            ChatMessage.from_legacy("You", "今天悉尼天气怎么样？"),
+            ChatMessage.from_text_payload("You", "今天悉尼天气怎么样？"),
             ChatMessage.create(
                 role="assistant",
                 message_type="weather",

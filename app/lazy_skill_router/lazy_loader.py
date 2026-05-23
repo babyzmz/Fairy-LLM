@@ -257,6 +257,10 @@ class SkillLazyLoader:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, list):
                 return [str(t) for t in data]
+            if isinstance(data, dict):
+                tools = data.get("tools")
+                if isinstance(tools, list):
+                    return [str(t) for t in tools]
         except (json.JSONDecodeError, OSError):
             pass
         return []

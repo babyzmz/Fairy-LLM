@@ -36,10 +36,41 @@ class FollowUpResolver:
     _LOCATION_DEICTIC_PATTERNS = (
         "这个地方在哪",
         "这个地方在哪里",
-        "再给我看看",
-        "再看看",
         "that place",
         "this place",
+    )
+    _NON_LOCATION_FOLLOWUP_TERMS = (
+        "新闻",
+        "资讯",
+        "推荐",
+        "发布",
+        "官网",
+        "网页",
+        "页面",
+        "公告",
+        "最新",
+        "继续",
+        "继续找",
+        "帮我",
+        "想买",
+        "买吗",
+        "价格",
+        "评测",
+        "参数",
+        "配置",
+        "文章",
+        "来源",
+        "search",
+        "news",
+        "latest",
+        "review",
+        "price",
+        "official",
+        "website",
+        "page",
+        "announcement",
+        "recommend",
+        "buy",
     )
     _SHORT_ENTITY_PATTERN = re.compile(
         r"^(?:那|那么|那边|那儿|那里)?(?P<subject>[\u4e00-\u9fffA-Za-z][\u4e00-\u9fffA-Za-z路街区县市州省国\-\s]{1,24}?)(?:呢|怎么样|如何)?\??$",
@@ -70,10 +101,11 @@ class FollowUpResolver:
         if subject and structured_type in {"weather", "weather_lookup"}:
             return FollowUpContext(target="weather", reused=True, reason="elliptical_weather_followup", focus_value=subject)
 
-        if subject and structured_type in {"location", "location_lookup"}:
+        location_followup_blocked = self._blocks_location_followup(text)
+        if subject and structured_type in {"location", "location_lookup"} and not location_followup_blocked:
             return FollowUpContext(target="location", reused=True, reason="elliptical_location_followup", focus_value=subject)
 
-        if self._contains_any(lowered, self._LOCATION_DEICTIC_PATTERNS) and location_value:
+        if self._contains_any(lowered, self._LOCATION_DEICTIC_PATTERNS) and location_value and not location_followup_blocked:
             return FollowUpContext(target="location", reused=True, reason="location_deictic_followup", focus_value=location_value)
 
         return FollowUpContext()
@@ -130,6 +162,14 @@ class FollowUpResolver:
         if subject in blocked:
             return ""
         return subject
+
+    def _blocks_location_followup(self, text: str) -> bool:
+        lowered = str(text or "").strip().lower()
+        if not lowered:
+            return False
+        if len(lowered) > 18:
+            return True
+        return any(term.lower() in lowered for term in self._NON_LOCATION_FOLLOWUP_TERMS)
 
     def _contains_any(self, lowered: str, patterns: tuple[str, ...]) -> bool:
         return any(pattern in lowered for pattern in patterns)

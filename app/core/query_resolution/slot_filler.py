@@ -6,10 +6,21 @@ from typing import Any
 from app.core.perception.perception_models import DetectedEntity
 
 from .capability_contracts import CapabilitySlotContract
-from .slot_sources import get_configured_default_city
+from .slot_sources import get_configured_default_city, get_detected_current_city
 
 
 class SlotFiller:
+    _NOISY_CONTEXT_TOKENS = (
+        "no running session file found",
+        "web access failed",
+        "runtime_stream_error",
+        "error_card",
+        "type: error_card",
+        "message:",
+        "traceback",
+        "exception",
+        "data\\runtime\\fairy_desktop_dev.json",
+    )
     _GENERIC_LOCATION_VALUES = {
         "今天",
         "明天",
@@ -34,6 +45,62 @@ class SlotFiller:
     }
     _GENERIC_TOPIC_VALUES = {"查", "看看", "帮我查", "解释一下", "解释", "新闻"}
     _NEWS_GENERIC_PREFIXES = ("查", "看看", "帮我查", "来点", "给我看", "新闻", "今天", "最新")
+
+    _SCREEN_CONTEXT_PATTERNS = (
+        r"屏幕",
+        r"当前屏幕",
+        r"分析.*屏幕",
+        r"现在要干什么",
+        r"这步要怎么继续",
+        r"下一步.*怎么",
+        r"点哪里",
+    )
+
+    _CONTINUATION_ONLY_QUERIES = {
+        "\u7ee7\u7eed",
+        "\u7ee7\u7eed\u627e",
+        "\u63a5\u7740\u627e",
+        "\u518d\u627e\u627e",
+        "\u7ee7\u7eed\u770b",
+        "\u63a5\u7740\u770b",
+        "\u6362\u4e2a\u6765\u6e90\u7ee7\u7eed\u627e",
+        "continue",
+        "keep going",
+        "go on",
+    }
+    _ELLIPTICAL_TOPIC_FOLLOWUP_PATTERNS = (
+        re.compile(r"^(?:\u90a3|\u518d)?(?:\u7eed\u822a|\u53c2\u6570|\u89c4\u683c|\u914d\u7f6e|\u65b0\u95fb|\u4ef7\u683c)(?:\u5462|\u5417)?$", re.IGNORECASE),
+        re.compile(r"^(?:\u5b98\u7f51)?\u8fd8\u6709(?:\u522b\u7684)?(?:\u5417)?$", re.IGNORECASE),
+        re.compile(r"^(?:\u90a3|\u518d).{0,8}(?:\u5462|\u5417)?$", re.IGNORECASE),
+    )
+    _STANDALONE_WEB_QUERY_TERMS = (
+        "\u5b98\u7f51",
+        "\u53c2\u6570",
+        "\u89c4\u683c",
+        "\u914d\u7f6e",
+        "\u65b0\u95fb",
+        "\u65b0\u6d88\u606f",
+        "\u533a\u522b",
+        "\u5bf9\u6bd4",
+        "\u662f\u5e72\u561b\u7684",
+        "\u4ec0\u4e48\u662f",
+        "official",
+        "website",
+        "site",
+        "specs",
+        "spec",
+        "technical specifications",
+        "news",
+        "latest",
+        "newsroom",
+        "what is",
+        "about",
+        "overview",
+        "compare",
+        "comparison",
+        "versus",
+        " vs ",
+    )
 
     def extract_explicit_slots(
         self,
@@ -92,7 +159,7 @@ class SlotFiller:
             slots["topic"] = topic_keyword
             sources["topic"] = "topic_keyword"
 
-        active_topic = str(getattr(session_context, "active_topic", "") or "").strip()
+        active_topic = self._sanitize_context_value("topic", getattr(session_context, "active_topic", ""))
         if capability == "explanation" and not slots.get("context_entity") and active_topic and not self._is_non_specific_explanation_topic(active_topic):
             slots["context_entity"] = active_topic
             sources["context_entity"] = "followup_context"
@@ -110,9 +177,13 @@ class SlotFiller:
         previous_structured: dict[str, Any] | None,
         followup_target: str,
         followup_focus_value: str,
+        suppress_slots: set[str] | None = None,
     ) -> tuple[dict[str, str], dict[str, str], list[dict[str, str]]]:
         applied_defaults: list[dict[str, str]] = []
+        blocked_slots = set(suppress_slots or set())
         for slot_name, source_names in contract.default_slot_sources.items():
+            if slot_name in blocked_slots:
+                continue
             if slots.get(slot_name):
                 continue
             for source_name in source_names:
@@ -149,51 +220,122 @@ class SlotFiller:
     ) -> str:
         if source_name == "followup_context":
             if followup_focus_value and followup_target in {"location", "weather"} and slot_name in {"location", "topic"}:
-                candidate = str(followup_focus_value).strip()
+                candidate = self._sanitize_context_value(slot_name, followup_focus_value)
                 if slot_name == "location" and self._is_generic_location(candidate):
                     return ""
                 return candidate
             if slot_name == "topic":
-                return str(
-                    getattr(session_context, "active_topic", "")
-                    or getattr(session_context, "last_explanation_topic", "")
-                    or getattr(session_context, "last_generic_query", "")
-                    or ""
-                ).strip()
+                if self.should_block_topic_carryover(normalized_text):
+                    return ""
+                return self._sanitize_context_value(
+                    slot_name,
+                    str(
+                        getattr(session_context, "active_topic", "")
+                        or getattr(session_context, "last_explanation_topic", "")
+                        or getattr(session_context, "last_generic_query", "")
+                        or ""
+                    ).strip(),
+                )
         if source_name == "session_last_weather_location":
-            return str(getattr(session_context, "active_weather_location", "") or "").strip()
+            return self._sanitize_context_value(slot_name, getattr(session_context, "active_weather_location", ""))
         if source_name == "session_last_location":
-            return str(getattr(session_context, "active_location_target", "") or "").strip()
+            return self._sanitize_context_value(slot_name, getattr(session_context, "active_location_target", ""))
         if source_name == "session_last_city":
-            return str(getattr(session_context, "active_city", "") or "").strip()
+            return self._sanitize_context_value(slot_name, getattr(session_context, "active_city", ""))
         if source_name == "previous_weather_card":
-            return self._from_previous(
-                previous_structured,
-                ("weather.city", "weather.weather_location", "city", "weather_location", "title"),
+            return self._sanitize_context_value(
+                slot_name,
+                self._from_previous(
+                    previous_structured,
+                    ("weather.city", "weather.weather_location", "city", "weather_location", "title"),
+                ),
             )
         if source_name == "previous_location_card":
-            return self._from_previous(previous_structured, ("location.title", "location.city", "title", "city", "address"))
+            return self._sanitize_context_value(
+                slot_name,
+                self._from_previous(previous_structured, ("location.title", "location.city", "title", "city", "address")),
+            )
         if source_name == "configured_default_city":
-            return get_configured_default_city()
+            return self._sanitize_context_value(slot_name, get_configured_default_city())
+        if source_name == "detected_current_city":
+            return self._sanitize_context_value(slot_name, get_detected_current_city())
         if source_name == "default_today":
             return "today"
         if source_name == "topic_keyword":
-            return self._derive_topic_from_text(normalized_text)
+            return self._sanitize_context_value(slot_name, self._derive_topic_from_text(normalized_text))
         if source_name == "normalized_query":
-            return self._derive_search_query(normalized_text)
+            return self._sanitize_context_value(slot_name, self._derive_search_query(normalized_text))
         if source_name == "previous_card_topic":
             topics = list(getattr(session_context, "last_card_topics", []) or [])
-            return str(topics[0] if topics else "").strip()
+            return self._sanitize_context_value(slot_name, str(topics[0] if topics else "").strip())
         if source_name == "previous_user_query_focus":
-            return str(
-                getattr(session_context, "last_generic_query", "")
-                or getattr(session_context, "last_explanation_topic", "")
-                or getattr(session_context, "active_topic", "")
-                or ""
-            ).strip()
+            return self._sanitize_context_value(
+                slot_name,
+                str(
+                    getattr(session_context, "active_topic", "")
+                    or getattr(session_context, "last_generic_query", "")
+                    or getattr(session_context, "last_explanation_topic", "")
+                    or ""
+                ).strip(),
+            )
         if source_name == "current_ui_context":
             return "main_window"
         return ""
+
+    @classmethod
+    def _looks_like_noisy_context_value(cls, value: str) -> bool:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            return False
+        lowered = cleaned.lower()
+        if any(token in lowered for token in cls._NOISY_CONTEXT_TOKENS):
+            return True
+        if re.search(r"[a-z]:\\", lowered):
+            return True
+        if lowered.startswith("type: ") or lowered.startswith("message: "):
+            return True
+        if ".json" in lowered and ("runtime" in lowered or "session" in lowered):
+            return True
+        return False
+
+    @classmethod
+    def _looks_like_screen_context_value(cls, value: str) -> bool:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            return False
+        return any(re.search(pattern, cleaned, flags=re.IGNORECASE) for pattern in cls._SCREEN_CONTEXT_PATTERNS)
+
+    def _sanitize_context_value(self, slot_name: str, value: Any) -> str:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            return ""
+        if self._looks_like_noisy_context_value(cleaned):
+            return ""
+        if slot_name in {"topic", "context_entity"} and self._looks_like_screen_context_value(cleaned):
+            return ""
+        if slot_name == "location" and self._is_generic_location(cleaned):
+            return ""
+        return cleaned
+
+    def should_block_topic_carryover(self, normalized_text: str) -> bool:
+        cleaned = str(normalized_text or "").strip()
+        if not cleaned:
+            return False
+        lowered = cleaned.lower()
+        if lowered in self._CONTINUATION_ONLY_QUERIES:
+            return True
+        if any(pattern.match(cleaned) for pattern in self._ELLIPTICAL_TOPIC_FOLLOWUP_PATTERNS):
+            return False
+        if re.search(r"https?://|www\.", lowered):
+            return True
+        if any(term in lowered for term in self._STANDALONE_WEB_QUERY_TERMS):
+            return True
+        query_tokens = [
+            token
+            for token in re.split(r"[^a-z0-9\u4e00-\u9fff]+", lowered)
+            if token and (len(token) >= 3 or token.isdigit())
+        ]
+        return len(cleaned) >= 8 and len(query_tokens) >= 2
 
     def _entity_map(self, entities: list[DetectedEntity]) -> dict[str, str]:
         values: dict[str, str] = {}

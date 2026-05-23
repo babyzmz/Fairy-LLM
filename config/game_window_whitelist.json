@@ -1,0 +1,65 @@
+{
+  "games": [
+    {
+      "name": "原神",
+      "process": ["genshinimpact.exe", "yuanshen.exe"],
+      "title_keywords": ["原神", "Genshin Impact"]
+    },
+    {
+      "name": "崩坏：星穹铁道",
+      "process": ["starrail.exe"],
+      "title_keywords": ["星穹铁道", "Honkai: Star Rail"]
+    },
+    {
+      "name": "崩坏3",
+      "process": ["bh3.exe"],
+      "title_keywords": ["崩坏3", "Honkai Impact"]
+    },
+    {
+      "name": "鸣潮",
+      "process": ["wuwa.exe", "client-win64-shipping.exe"],
+      "title_keywords": ["鸣潮", "Wuthering Waves"]
+    },
+    {
+      "name": "黑神话：悟空",
+      "process": ["b1.exe"],
+      "title_keywords": ["黑神话", "Black Myth"]
+    },
+    {
+      "name": "League of Legends",
+      "process": ["league of legends.exe", "leagueclient.exe"],
+      "title_keywords": ["League of Legends", "英雄联盟"]
+    },
+    {
+      "name": "Dota 2",
+      "process": ["dota2.exe"],
+      "title_keywords": ["Dota 2"]
+    },
+    {
+      "name": "Counter-Strike 2",
+      "process": ["cs2.exe"],
+      "title_keywords": ["Counter-Strike 2"]
+    },
+    {
+      "name": "Elden Ring",
+      "process": ["eldenring.exe"],
+      "title_keywords": ["ELDEN RING"]
+    },
+    {
+      "name": "永劫无间",
+      "process": ["naraka.exe"],
+      "title_keywords": ["永劫无间", "Naraka"]
+    },
+    {
+      "name": "PUBG",
+      "process": ["tslgame.exe"],
+      "title_keywords": ["PUBG", "绝地求生"]
+    },
+    {
+      "name": "Valorant",
+      "process": ["valorant.exe", "valorant-win64-shipping.exe"],
+      "title_keywords": ["VALORANT"]
+    }
+  ],
+  "poll_interval_seconds": 5.0
+}

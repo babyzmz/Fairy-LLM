@@ -919,7 +919,7 @@ class DesktopPetWindow(QWidget):
             callback(text, attachments)
 
     def _append_chat(self, speaker: str, text: str, rich_text: bool = False) -> None:
-        self.chat_page.push_legacy_message(speaker, text, rich_text=rich_text)
+        self.chat_page.push_text_message(speaker, text, rich_text=rich_text)
 
     def append_chat_message(self, message: ChatMessage) -> None:
         self.chat_page.push_message(message)
@@ -1094,7 +1094,7 @@ class DesktopPetWindow(QWidget):
         self._sync_shell_state()
 
     def show_assistant_message(self, text: str, rich_text: bool = False) -> None:
-        self.show_assistant_chat_message(ChatMessage.from_legacy("Fairy", text, rich_text=rich_text))
+        self.show_assistant_chat_message(ChatMessage.from_text_payload("Fairy", text, rich_text=rich_text))
 
     def set_voice_active(self, active: bool) -> None:
         self._voice_active = active

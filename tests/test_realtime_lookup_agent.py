@@ -87,7 +87,7 @@ class TestRealtimeLookupAgent:
         r = self.agent.execute(req)
         assert isinstance(r, RealtimeLookupResult)
 
-    def test_to_dict_legacy_shape(self):
+    def test_to_dict_compat_shape(self):
         req = RealtimeLookupRequest(query="\u6bd4\u7279\u5e01\u4ef7\u683c")
         r = self.agent.execute(req)
         d = r.to_dict()

@@ -24,7 +24,7 @@ def test_request_origin_tracking():
     logger.info("=" * 70 + "\n")
 
     from app.assistant_mode import ChatWorker
-    from app.skill_router import RouteContext
+    from app.route_context import RouteContext
 
     # Create a mock LLM client
     mock_llm = MagicMock()
@@ -76,7 +76,7 @@ def test_fairy_core_origin_propagation():
     logger.info("=" * 70 + "\n")
 
     from app.fairy_core import FairyCore
-    from app.skill_router import RouteContext
+    from app.route_context import RouteContext
 
     # Create a mock LLM client
     mock_llm = MagicMock()
@@ -164,7 +164,7 @@ def test_origin_in_skill_result():
         structured={
             "request_origin": "desktop_pet",
             "request_id": "req-002",
-            "pipeline": "legacy",
+            "pipeline": "bundle_runtime",
         },
     )
 
@@ -257,7 +257,7 @@ def test_backward_compatibility():
     logger.info("=" * 70 + "\n")
 
     from app.assistant_mode import ChatWorker
-    from app.skill_router import RouteContext
+    from app.route_context import RouteContext
 
     # Create a mock LLM client
     mock_llm = MagicMock()

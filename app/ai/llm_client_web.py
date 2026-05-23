@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import Any, Callable, Iterable
 
-from skills.web_research import run_web_research
+from app.tools.web.research_pipeline import run_web_research
 
 
 Message = dict[str, Any]

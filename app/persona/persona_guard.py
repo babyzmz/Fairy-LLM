@@ -24,12 +24,13 @@ class PersonaGuard:
     def evaluate(self, text: str, persona: PersonaProfile) -> GuardReport:
         guard = persona.anti_drift_guard
         verdict_prefixes = tuple(str(prefix) for prefix in persona.verdict_style.hard_prefixes)
+        stripped = text.strip()
         return GuardReport(
             emotional_score=self._count_markers(text, guard.emotional_markers) + text.count("！") + text.count("!"),
             cute_score=self._count_markers(text, guard.cute_markers),
             toxicity_score=self._count_markers(text, guard.toxic_markers),
             customer_service_score=self._count_markers(text, guard.customer_service_markers),
-            verdict_present=any(prefix and prefix in text[:48] for prefix in verdict_prefixes),
+            verdict_present=any(self._has_verdict_prefix(stripped, prefix) for prefix in verdict_prefixes),
         )
 
     def apply(
@@ -67,12 +68,59 @@ class PersonaGuard:
             user_input=user_input,
         )
         final_report = self.evaluate(current, persona)
+        if (
+            persona.anti_drift_guard.enforce_verdict_presence
+            and not final_report.verdict_present
+            and self._should_enforce_verdict(task_type, current)
+        ):
+            current = self._add_verdict_prefix(current, task_type=task_type, user_input=user_input)
+            report.modifications.append("verdict_prefix_added")
+
+        final_report = self.evaluate(current, persona)
         final_report.modifications = report.modifications
         return current, final_report
 
     def _count_markers(self, text: str, markers: list[str]) -> int:
         lowered = text.lower()
         return sum(lowered.count(str(marker).lower()) for marker in markers)
+
+    def _has_verdict_prefix(self, text: str, prefix: str) -> bool:
+        if not prefix:
+            return False
+        candidates = (text, text.removeprefix("可以。").lstrip())
+        for candidate in candidates:
+            if candidate == prefix:
+                return True
+            if candidate.startswith(prefix):
+                suffix = candidate[len(prefix) : len(prefix) + 1]
+                if suffix in {"", "：", ":", "。", "，", ",", "、", " "}:
+                    return True
+        return False
+
+    def _should_enforce_verdict(self, task_type: str, text: str) -> bool:
+        if not text.strip():
+            return False
+        return task_type in {"chat", "coding", "debugging", "planning", "web_search", "file_reading", "summary"}
+
+    def _add_verdict_prefix(self, text: str, *, task_type: str, user_input: str = "") -> str:
+        current = text.strip()
+        lowered_input = user_input.lower()
+
+        if current.startswith("可以。") and any(token in user_input for token in ("夸", "认可", "鼓励")):
+            rest = current.removeprefix("可以。").strip()
+            return f"可以。判断：{rest}" if rest else "可以。判断成立。"
+
+        if task_type == "planning":
+            if any(token in user_input for token in ("是不是", "是否", "能不能", "要不要", "该不该")):
+                return f"肯定：{current}"
+            return f"判断：{current}"
+        if task_type in {"coding", "debugging", "summary"}:
+            return f"结论：{current}"
+        if task_type in {"web_search", "file_reading"}:
+            return f"确认：{current}"
+        if any(token in lowered_input for token in ("why", "how", "what")):
+            return f"判断：{current}"
+        return f"确认：{current}"
 
     def _strip_cute_style(self, text: str) -> str:
         replacements = {

@@ -28,7 +28,8 @@ class SemanticSlotValidator:
     _LOCATION_TERMS = ("在哪里", "在哪", "where is", "地址", "位置", "地点", "在中国吗", "哪个州", "哪个国家")
     _MAP_TERMS = ("地图", "map", "显示地图", "看看地图", "打开地图")
     _NEWS_TERMS = ("新闻", "news", "快讯", "头条")
-    _EXPLANATION_TERMS = ("解释", "是什么", "什么意思", "why", "explain", "关系", "difference")
+    _EXPLANATION_TERMS = ("解释", "是什么", "什么意思", "why", "explain", "关系")
+    _COMPARE_TERMS = ("区别", "差异", "对比", "比较", "difference", "compare", "comparison", " vs ", "versus")
 
     def validate(
         self,
@@ -46,6 +47,7 @@ class SemanticSlotValidator:
             "has_map_phrase": self._contains_any(lowered, self._MAP_TERMS),
             "has_news_phrase": self._contains_any(lowered, self._NEWS_TERMS),
             "has_explanation_phrase": self._contains_any(lowered, self._EXPLANATION_TERMS),
+            "has_compare_phrase": self._contains_any(lowered, self._COMPARE_TERMS),
             "has_location_slot": bool(str(slots.get("location") or "").strip()),
         }
 
@@ -93,6 +95,8 @@ class SemanticSlotValidator:
             return SemanticValidationResult(True, -0.06, "weak_news_signal", flags=flags)
 
         if capability == "explanation":
+            if flags["has_compare_phrase"]:
+                return SemanticValidationResult(False, -0.44, "compare_phrase_prefers_generic_search", "generic_search", flags)
             if flags["has_explanation_phrase"]:
                 return SemanticValidationResult(True, 0.46, "explanation_phrase_supports_explanation", flags=flags)
             if flags["has_time_phrase"]:
@@ -102,6 +106,8 @@ class SemanticSlotValidator:
             return SemanticValidationResult(True, -0.04, "weak_explanation_signal", flags=flags)
 
         if capability == "generic_search":
+            if flags["has_compare_phrase"]:
+                return SemanticValidationResult(True, 0.18, "compare_phrase_supports_generic_search", flags=flags)
             if flags["has_time_phrase"] or flags["has_weather_phrase"] or flags["has_location_phrase"] or flags["has_news_phrase"]:
                 return SemanticValidationResult(True, -0.34, "specific_capability_available_generic_search_penalized", flags=flags)
             return SemanticValidationResult(True, 0.08, "generic_search_fallback", flags=flags)

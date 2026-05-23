@@ -29,17 +29,17 @@ def classify_task_category(user_request: str, attachments: Iterable[str] | None 
         return "fairy_development"
     if chosen_skill == "direct_answer":
         return "casual_chat"
-    if chosen_skill == "web_research_skill" or any(token in lowered for token in ("上网", "联网", "搜索", "网页", "官网", "网址", "b站", "价格", "机票", "粉丝")):
+    if chosen_skill == "web-research" or any(token in lowered for token in ("上网", "联网", "搜索", "网页", "官网", "网址", "b站", "价格", "机票", "粉丝")):
         if any(token in lowered for token in ("机票", "价格", "报价", "售价", "多少钱", "折扣", "优惠", "购物")):
             return "shopping"
         return "web_research"
-    if chosen_skill == "agent_shell_skill" or any(token in lowered for token in ("代码", "仓库", "repo", "project", "命令", "终端", "测试", "重构", "修复", "实现", "patch")):
+    if chosen_skill == "terminal-agent" or any(token in lowered for token in ("代码", "仓库", "repo", "project", "命令", "终端", "测试", "重构", "修复", "实现", "patch")):
         if "fairy" in lowered or "deskllmchat" in lowered:
             return "fairy_development"
         return "coding_help"
-    if chosen_skill == "screen_understanding_skill" or any(token in lowered for token in ("屏幕", "窗口", "界面", "下一步", "点哪里", "点击")):
+    if chosen_skill == "screen-understanding" or any(token in lowered for token in ("屏幕", "窗口", "界面", "下一步", "点哪里", "点击")):
         return "browser_agent_task"
-    if chosen_skill == "document_editor_skill" or attached or any(token in lowered for token in ("文档", "文件", "markdown", "json", "csv", "yaml", ".py")):
+    if chosen_skill == "document-editing" or attached or any(token in lowered for token in ("文档", "文件", "markdown", "json", "csv", "yaml", ".py")):
         return "coding_help"
     return "casual_chat"
 

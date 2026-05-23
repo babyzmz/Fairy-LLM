@@ -13,7 +13,6 @@ import requests
 from app.ai.llm_client_file_processor import FileProcessor
 from app.ai.llm_client_server_manager import ServerManager
 from app.ai.llm_client_transport import ChatTransport
-from app.ai.llm_client_web import WebSearchSupport
 from app.config import llm_config
 from app.prompts import build_core_system_prompt, build_secondary_instruction_block
 from app.providers.provider_router import ProviderRouter
@@ -48,7 +47,6 @@ class LLMClient:
             self._ensure_utf8_response,
         )
         self.provider_router = ProviderRouter()
-        self.web_support = WebSearchSupport(config, self._post_chat_completion)
         atexit.register(self.shutdown)
 
     @property
@@ -69,6 +67,11 @@ class LLMClient:
 
     def try_start_server(self) -> None:
         self.server_manager.try_start_server()
+
+    def start_server_background(self) -> None:
+        if self.config.runtime_mode != "local_server" or not self.config.auto_start_server:
+            return
+        self.server_manager.start_background()
 
     def _build_headers(self) -> Dict[str, str]:
         return self.server_manager.build_headers()
@@ -339,26 +342,6 @@ class LLMClient:
         if clipped_memory:
             system_prompt += f'\n\n[Known user context]\n{clipped_memory}'
 
-        used_web = False
-        web_page_count = 0
-        web_basis = self.web_support.resolve_web_basis(history, user_input)
-        if self.web_support.should_use_web(web_basis):
-            web_context, web_page_count = self.web_support.build_web_context(web_basis, status_callback=status_callback)
-            if web_context:
-                used_web = True
-                system_prompt += (
-                    '\n\n[Web research evidence]\n'
-                    'Use the following evidence as the primary basis for any time-sensitive answer.\n'
-                    'If evidence is incomplete, say what is confirmed, what remains uncertain, and still give the closest useful answer or next step instead of stopping.\n\n'
-                    f'{web_context}'
-                )
-            else:
-                system_prompt += (
-                    '\n\n[Web lookup status]\n'
-                    'This request appears time-sensitive, but the latest lookup did not return enough evidence. '
-                    'Do not invent a current answer. Use stable knowledge, explicit uncertainty, and a practical fallback recommendation.'
-                )
-
         user_content, _, has_images = self._build_user_message_content(
             user_input,
             attachment_paths,
@@ -368,7 +351,7 @@ class LLMClient:
         messages = self._compose_messages(system_prompt, history, user_content, hidden_notes)
         output_tokens = self.config.vision_max_tokens if has_images else self.config.text_max_tokens
         messages = self._prune_messages_for_budget(messages, output_tokens)
-        return PreparedRequest(messages=messages, has_images=has_images, used_web=used_web, web_page_count=web_page_count)
+        return PreparedRequest(messages=messages, has_images=has_images)
 
     def _safe_read_text(self, path: Path) -> str:
         return self.file_processor.safe_read_text(path)

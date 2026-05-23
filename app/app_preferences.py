@@ -13,8 +13,10 @@ PREFERENCES_FILE = BASE_DIR / "config" / "app_preferences.json"
 @dataclass(slots=True)
 class AppPreferences:
     ui_language: str = "zh_CN"
-    speak_responses: bool = False
-    stream_responses: bool = False
+    speak_responses: bool = True
+    stream_responses: bool = True
+    voice_profile: str = "clone_mecha"
+    voice_prompt_selection_mode: str = "auto"
     persona_enabled: bool = False
     persona_mode: str = "full"
     game_mode_force_disable_persona: bool = True
@@ -31,10 +33,19 @@ def load_app_preferences() -> AppPreferences:
         data = json.loads(PREFERENCES_FILE.read_text(encoding="utf-8"))
     except Exception:
         return AppPreferences()
+    has_voice_profile = "voice_profile" in data
+    has_speak_responses = "speak_responses" in data
+    has_stream_responses = "stream_responses" in data
+    speak_responses = bool(data.get("speak_responses", True))
+    stream_responses = bool(data.get("stream_responses", True))
+    if not has_voice_profile and has_speak_responses and not speak_responses and not stream_responses:
+        speak_responses = True
     return AppPreferences(
         ui_language=str(data.get("ui_language", "zh_CN") or "zh_CN"),
-        speak_responses=bool(data.get("speak_responses", False)),
-        stream_responses=bool(data.get("stream_responses", False)),
+        speak_responses=speak_responses,
+        stream_responses=stream_responses,
+        voice_profile=str(data.get("voice_profile", "clone_mecha") or "clone_mecha"),
+        voice_prompt_selection_mode=str(data.get("voice_prompt_selection_mode", "auto") or "auto"),
         persona_enabled=bool(data.get("persona_enabled", False)),
         persona_mode=str(data.get("persona_mode", "full") or "full"),
         game_mode_force_disable_persona=bool(data.get("game_mode_force_disable_persona", True)),
@@ -56,6 +67,10 @@ def save_app_preferences(preferences: AppPreferences) -> None:
 def apply_app_preferences(preferences: AppPreferences) -> None:
     voice_config.speak_responses = preferences.speak_responses
     voice_config.stream_responses = preferences.stream_responses
+    voice_config.voice_profile = str(preferences.voice_profile or voice_config.voice_profile or "clone_mecha").strip() or "clone_mecha"
+    voice_config.voice_prompt_selection_mode = (
+        str(preferences.voice_prompt_selection_mode or voice_config.voice_prompt_selection_mode or "auto").strip() or "auto"
+    )
 
 
 def load_and_apply_app_preferences() -> AppPreferences:

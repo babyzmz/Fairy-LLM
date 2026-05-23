@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 from app.config import news_config
 from app.news.news_models import NewsArticle
 from app.news.news_provider_base import BaseNewsProvider
-from skills.crawl_webpage import crawl_webpage
+from app.tools.browser.http_page_loader import crawl_webpage
 from utils.web_content_extractor import extract_web_content
 
 

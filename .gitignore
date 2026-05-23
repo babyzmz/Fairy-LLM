@@ -62,6 +62,7 @@ tools/python310/
 /outputs/
 /artifacts/
 /reports/
+/.browser-runtime/
 
 # Local config / secrets
 config/local_secrets.json
@@ -114,6 +115,8 @@ config/system_state.json
 /fairy-desktop/node_modules/
 /fairy-desktop/dist/
 /fairy-desktop/src-tauri/target/
+/fairy-desktop/.voice-regression-dist/
+/fairy-desktop/.voice-smoke-dist/
 
 # Local Rust / Tauri toolchains
 /.cargo/
@@ -126,3 +129,14 @@ config/system_state.json
 /tools/xwin-splat/
 /tools/rustup-init.exe
 /fairy-desktop/vendor/
+
+# rust / tauri
+.cargo/
+fairy-desktop/vendor/
+fairy-desktop/src-tauri/target/
+
+# node
+node_modules/
+
+# python
+__pycache__/

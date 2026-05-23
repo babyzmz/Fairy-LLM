@@ -9,17 +9,14 @@ import subprocess
 import threading
 import time
 import uuid
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
 import requests
-import soundfile as sf
 
 from app.config import BASE_DIR, voice_config
-
-from .voice_lines import VOICE_LINE_FILES, VOICE_LINES
-
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +30,11 @@ class TTSChunk:
 
 
 class FairyTTS:
-    """Python 3.13 client for the external Python 3.10 CosyVoice2 runtime."""
+    """Python 3.13 client for the external Python 3.10 CosyVoice runtime."""
 
     def __init__(self, cache_dir: Path | None = None) -> None:
         self.cache_dir = cache_dir or (BASE_DIR / "data" / "voice_cache")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-
-        self.system_voice_dir = voice_config.system_voice_dir
-        self.system_voice_dir.mkdir(parents=True, exist_ok=True)
 
         self.log_path = BASE_DIR / "data" / "cosyvoice_service.log"
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,27 +64,14 @@ class FairyTTS:
                 f"{self._base_url}/warmup",
                 timeout=voice_config.cosyvoice_request_timeout_sec,
             ).raise_for_status()
-            for event, line in VOICE_LINES.items():
-                target = self.system_voice_dir / VOICE_LINE_FILES[event]
-                if target.exists():
-                    continue
-                generated = self.synthesize_to_file(line, system_voice=True)
-                generated.replace(target)
         except Exception:
             logger.exception("CosyVoice warmup failed")
-
-    def resolve_system_audio(self, event: str) -> Path | None:
-        filename = VOICE_LINE_FILES.get(event)
-        if not filename:
-            return None
-        path = self.system_voice_dir / filename
-        return path if path.exists() else None
 
     def is_ready(self) -> bool:
         return self._is_service_healthy()
 
     def stream_chunks(self, text: str, *, system_voice: bool = False) -> Iterator[TTSChunk]:
-        prepared_text = self._normalize_text(text)
+        prepared_text = self._normalize_text(text, system_voice=system_voice)
         if not prepared_text:
             return
 
@@ -148,14 +129,7 @@ class FairyTTS:
             return chunk_paths[0]
 
         merged_path = self.cache_dir / f"{uuid.uuid4().hex}.wav"
-        merged = []
-        sample_rate = voice_config.audio_sample_rate
-        for chunk_path in chunk_paths:
-            data, sample_rate = sf.read(chunk_path, always_2d=False)
-            merged.append(data)
-        import numpy as np
-
-        sf.write(merged_path, np.concatenate(merged, axis=0), sample_rate)
+        self._merge_wav_files(chunk_paths, merged_path)
         for chunk_path in chunk_paths:
             chunk_path.unlink(missing_ok=True)
         return merged_path
@@ -256,10 +230,16 @@ class FairyTTS:
         except Exception:
             return False
 
-    def _normalize_text(self, text: str) -> str:
-        cleaned = text.strip()
+    def _normalize_text(self, text: str, *, system_voice: bool) -> str:
+        cleaned = " ".join(str(text or "").replace("\r", "\n").split())
         if not cleaned:
             return ""
+        if system_voice:
+            cleaned = cleaned.replace("：", "，")
+            cleaned = cleaned.replace(":", "，")
+            cleaned = cleaned.replace(" - ", "，")
+            cleaned = cleaned.replace("—", "，")
+            cleaned = cleaned.replace("…", "。")
         if cleaned[-1] not in "\u3002\uff01\uff1f.!?":
             cleaned += "\u3002"
         return cleaned
@@ -267,9 +247,32 @@ class FairyTTS:
     def _write_chunk_file(self, wav_bytes: bytes, *, sample_rate: int, system_voice: bool) -> tuple[Path, float]:
         prefix = "system" if system_voice else "reply"
         path = self.cache_dir / f"{prefix}_{uuid.uuid4().hex}.wav"
-        data, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32")
-        actual_sr = sr or sample_rate
-        sf.write(path, data, actual_sr)
-        frame_count = len(data) if getattr(data, "ndim", 1) == 1 else len(data[:, 0])
-        duration_sec = frame_count / max(actual_sr, 1)
+        path.write_bytes(wav_bytes)
+        duration_sec = self._wav_duration_sec(wav_bytes, fallback_sample_rate=sample_rate)
         return path, duration_sec
+
+    def _wav_duration_sec(self, wav_bytes: bytes, *, fallback_sample_rate: int) -> float:
+        try:
+            with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
+                frame_rate = wav_file.getframerate() or fallback_sample_rate
+                return wav_file.getnframes() / max(frame_rate, 1)
+        except Exception:
+            return 0.0
+
+    def _merge_wav_files(self, chunk_paths: list[Path], output_path: Path) -> None:
+        params: wave._wave_params | None = None
+        frames: list[bytes] = []
+        for chunk_path in chunk_paths:
+            with wave.open(str(chunk_path), "rb") as wav_file:
+                current_params = wav_file.getparams()
+                if params is None:
+                    params = current_params
+                elif current_params[:4] != params[:4]:
+                    raise RuntimeError("CosyVoice returned chunks with incompatible WAV parameters.")
+                frames.append(wav_file.readframes(wav_file.getnframes()))
+        if params is None:
+            raise RuntimeError("CosyVoice service returned no mergeable WAV chunks.")
+        with wave.open(str(output_path), "wb") as wav_file:
+            wav_file.setparams(params)
+            for frame_block in frames:
+                wav_file.writeframes(frame_block)

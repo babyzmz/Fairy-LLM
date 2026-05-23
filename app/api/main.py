@@ -8,7 +8,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import build_error_contract, initialize_runtime_service, shutdown_runtime_service
-from app.api.routes import assets_router, capabilities_router, chat_router, health_router, system_router
+from app.api.routes import (
+    assets_router,
+    capabilities_router,
+    chat_router,
+    commands_router,
+    companion_router,
+    health_router,
+    system_router,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +55,8 @@ app.include_router(capabilities_router)
 app.include_router(chat_router)
 app.include_router(assets_router)
 app.include_router(system_router)
+app.include_router(companion_router)
+app.include_router(commands_router)
 
 
 @app.exception_handler(Exception)

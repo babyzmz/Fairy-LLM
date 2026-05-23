@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QComboBox,
 )
 
+from app.ai.voice.prompt_assets import select_best_prompt_candidate
 from app.config import BASE_DIR, voice_config
 from app.training import (
     DEFAULT_FAIRY_TEMPLATE,
@@ -821,6 +822,7 @@ class TrainingDataWorkspace(QMainWindow):
 
         save_app_preferences(settings.preferences)
         apply_app_preferences(settings.preferences)
+        self.voice_status_label.setText(self._build_voice_status_text())
         save_game_mode_settings(settings.game_mode_settings)
         if settings.rag_settings is not None:
             save_rag_settings(settings.rag_settings)
@@ -855,6 +857,28 @@ class TrainingDataWorkspace(QMainWindow):
             return f"未找到 Fairy prompt wav：{voice_config.prompt_wav_path}"
         if voice_config.voice_clone_enabled and not voice_config.prompt_text_path.exists():
             return f"未找到 Fairy prompt text：{voice_config.prompt_text_path}"
+        return None
+
+    def _build_voice_status_text(self) -> str:
+        candidate = select_best_prompt_candidate(voice_config.voice_prompt_dir)
+        prompt_label = (
+            f"{candidate.audio_path.name} + {candidate.text_path.name}"
+            if candidate is not None
+            else "none"
+        )
+        return (
+            "当前训练语音引擎："
+            f"{voice_config.backend} / {voice_config.voice_profile} | "
+            f"prompt: {prompt_label}"
+        )
+
+    def _validate_cosyvoice_ready(self) -> str | None:
+        if voice_config.backend != "cosyvoice2_service":
+            return f"当前 backend={voice_config.backend}，训练导出已强制要求使用 cosyvoice2_service。"
+        if not voice_config.cosyvoice_python_path.exists():
+            return f"未找到 CosyVoice Python 运行时：{voice_config.cosyvoice_python_path}"
+        if voice_config.uses_clone_profile() and select_best_prompt_candidate(voice_config.voice_prompt_dir) is None:
+            return f"未找到可用 Fairy prompt 对：{voice_config.voice_prompt_dir}"
         return None
 
     def closeEvent(self, event) -> None:  # noqa: N802

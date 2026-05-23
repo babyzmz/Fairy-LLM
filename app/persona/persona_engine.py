@@ -44,13 +44,13 @@ class PersonaEngine:
 
     def classify_task_type(self, user_request: str, *, chosen_skill: str = "", task_category: str = "") -> str:
         lowered = user_request.lower()
-        if chosen_skill == "document_editor_skill":
+        if chosen_skill == "document-editing":
             return "file_reading"
-        if chosen_skill in {"web_research_skill", "news_intelligence_skill"} or task_category == "web_research":
+        if chosen_skill in {"web-research", "news-intelligence"} or task_category == "web_research":
             return "web_search"
-        if chosen_skill == "screen_understanding_skill":
+        if chosen_skill == "screen-understanding":
             return "planning"
-        if chosen_skill == "agent_shell_skill":
+        if chosen_skill == "terminal-agent":
             if any(token in lowered for token in ("debug", "报错", "错误", "异常", "排查", "修复", "fix")):
                 return "debugging"
             if any(token in lowered for token in ("计划", "路线", "优先级", "先做什么", "先改", "方案")):
@@ -127,8 +127,9 @@ class PersonaEngine:
         prefixes = " / ".join(self.persona.verdict_style.hard_prefixes[:4])
         return (
             "[Persona hint]\n"
-            f"- role: {self.persona.name}，长期运行在用户电脑上的个人 AI 助手与技术合伙人\n"
-            "- style: 中文、自然、清晰、有判断力、不过度安抚、不卖萌\n"
+            f"- role: {self.persona.name}，长期运行在用户电脑上的系统级智能体与桌面辅助核心\n"
+            "- style: 中文、冷静、精确、任务优先、轻微系统播报感、低频吐槽、不过度安抚、不卖萌\n"
+            "- opener: 不要长篇自我介绍；不要自称技术合伙人；普通问候用短句确认在线\n"
             f"- verdict_prefixes: {prefixes}\n"
             f"- task_bias: {task_bias}"
         )

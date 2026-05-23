@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import os
 import queue
+import re
 import threading
 import uuid
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Iterable
-
-from app.core.invocation_service import InvocationService
 from app.agent.perception import EntityExtractor, FollowUpResolver, InputNormalizer, IntentClassifier
 from app.context import ContextManager
 from app.core.perception import ModalityDetector
@@ -42,16 +42,22 @@ from app.runtime.orchestration import (
     PlanExtensionHook,
     StepExecutionResult,
 )
-from app.legacy_surface import is_explicit_desktop_automation_command, strip_explicit_desktop_automation_prefix
+from app.runtime.state_machine import RuntimeAssistantState, RuntimeStateMachine
+from app.runtime.fairy_presence import fairy_meta_for_response, fairy_meta_for_runtime_state
+from app.runtime.system_actions.desktop_automation_compat import (
+    is_explicit_desktop_automation_command,
+    strip_explicit_desktop_automation_prefix,
+)
 from app.runtime.system_actions import SystemActionExecutor
 from app.system_bridge import SystemActionResult, SystemBridgeManager
 from app.tools.adapters.structured_tool_router import StructuredToolRouter
+from app.config import voice_config
 
 
 logger = logging.getLogger(__name__)
 
-LegacyExecutor = Callable[..., dict[str, Any]]
-StreamingLegacyExecutor = Callable[..., Iterable[dict[str, Any]]]
+BundleExecutor = Callable[..., dict[str, Any]]
+StreamingBundleExecutor = Callable[..., Iterable[dict[str, Any]]]
 DirectCapabilityExecutor = Callable[..., dict[str, Any]]
 StreamingDirectCapabilityExecutor = Callable[..., Iterable[dict[str, Any]]]
 
@@ -84,11 +90,13 @@ class FairyRuntimeV2:
         search_tool: Callable[..., list[dict[str, Any]]] | None = None,
         fetch_page: Callable[[str], str] | None = None,
         vision_fallback: Callable[[str], Any] | None = None,
-        legacy_executor: LegacyExecutor | None = None,
-        streaming_legacy_executor: StreamingLegacyExecutor | None = None,
+        bundle_executor: BundleExecutor | None = None,
+        streaming_bundle_executor: StreamingBundleExecutor | None = None,
         capability_executors: dict[str, DirectCapabilityExecutor] | None = None,
         streaming_capability_executors: dict[str, StreamingDirectCapabilityExecutor] | None = None,
         system_bridge: SystemBridgeManager | None = None,
+        semantic_arbitration_callback: Callable[..., Any] | None = None,
+        web_browse_decision_callback: Callable[..., Any] | None = None,
     ) -> None:
         self.language = language
         self.response_pipeline = response_pipeline or ResponsePipeline(language=language)
@@ -97,7 +105,10 @@ class FairyRuntimeV2:
         self.entity_extractor = EntityExtractor()
         self.followup_resolver = FollowUpResolver()
         self.modality_detector = ModalityDetector()
-        self.query_resolver = QueryResolver()
+        self.query_resolver = QueryResolver(
+            semantic_arbitration_callback=semantic_arbitration_callback,
+            web_browse_decision_callback=web_browse_decision_callback,
+        )
         contract_issues = self.query_resolver.validate_contracts()
         coverage = self.query_resolver.coverage_report()
         if contract_issues:
@@ -109,13 +120,11 @@ class FairyRuntimeV2:
         self.speech_planner = SpeechPlanner()
         self.speech_router = SpeechRouter()
         self.tool_router = StructuredToolRouter()
-        self.invocation_service = InvocationService(
-            search_tool=search_tool,
-            fetch_page=fetch_page,
-            vision_fallback=vision_fallback,
-        )
-        self._legacy_executor = legacy_executor
-        self._streaming_legacy_executor = streaming_legacy_executor
+        self.invocation_service = None
+        active_bundle_executor = bundle_executor
+        active_streaming_bundle_executor = streaming_bundle_executor
+        self._bundle_executor = active_bundle_executor
+        self._streaming_bundle_executor = active_streaming_bundle_executor
         self._capability_executors = dict(capability_executors or {})
         self._streaming_capability_executors = dict(streaming_capability_executors or {})
         self.activity_tracker = ActivityTracker()
@@ -125,16 +134,18 @@ class FairyRuntimeV2:
         self._renderer_traces: dict[str, RendererTrace] = {}
         self._speech_traces: dict[str, SpeechTrace] = {}
         self._state_traces: dict[str, list[StateTrace]] = {}
-        self.enable_legacy_surface = str(os.getenv("FAIRY_ENABLE_LEGACY_SURFACE") or "").strip().lower() in {
+        self.enable_desktop_automation_compatibility = str(os.getenv("FAIRY_ENABLE_DESKTOP_AUTOMATION_COMPAT") or "").strip().lower() in {
             "1",
             "true",
             "yes",
             "on",
         }
         self.system_bridge = system_bridge or SystemBridgeManager()
+        self.runtime_state_machine = RuntimeStateMachine()
         self.system_action_executor = SystemActionExecutor(runtime_action_handler=self.execute_system_action)
         self.plan_extension_hook = PlanExtensionHook()
         self.system_bridge.update_capabilities(self.capabilities_snapshot())
+        self._sync_runtime_state_snapshot(reason="runtime_constructed")
         self.system_bridge.register_action_handler("clear_asset_cache", lambda _payload: self.clear_asset_cache())
         self.system_bridge.register_action_handler("refresh_capabilities", lambda _payload: self.refresh_capabilities())
         self.system_bridge.register_action_handler(
@@ -147,24 +158,37 @@ class FairyRuntimeV2:
         )
         self._capability_executors.setdefault("system_action", self._direct_system_action_execute)
         self._streaming_capability_executors.setdefault("system_action", self._stream_direct_system_action_execute)
+        self._set_runtime_state("warming_up", reason="runtime_components_initialized", force=True)
 
     def set_language(self, language: str) -> None:
         self.language = language
         self.response_pipeline.set_language(language)
 
-    def set_legacy_executor(self, executor: LegacyExecutor | None) -> None:
-        self._legacy_executor = executor
+    def set_bundle_executor(self, executor: BundleExecutor | None) -> None:
+        self._bundle_executor = executor
 
-    def set_streaming_legacy_executor(self, executor: StreamingLegacyExecutor | None) -> None:
-        self._streaming_legacy_executor = executor
+    def set_streaming_bundle_executor(self, executor: StreamingBundleExecutor | None) -> None:
+        self._streaming_bundle_executor = executor
 
     def capabilities_snapshot(self) -> dict[str, Any]:
         return {
             "chat": True,
             "streaming": True,
             "voice_input": False,
-            "voice_output": False,
-            "cards": ["weather", "location", "map_preview", "news_list", "generic_info"],
+            "voice_output": bool(voice_config.enabled and (voice_config.speak_responses or voice_config.speak_system)),
+            "cards": [
+                "weather",
+                "time",
+                "location",
+                "map_preview",
+                "news_list",
+                "visual_read",
+                "generic_info",
+                "specs",
+                "compare",
+                "release",
+                "web_brief",
+            ],
             "system_actions": [
                 "cancel_current_request",
                 "restart_backend",
@@ -175,7 +199,7 @@ class FairyRuntimeV2:
                 "backend": self.system_action_executor.supported_backend_actions(),
                 "desktop": self.system_action_executor.supported_desktop_actions(),
             },
-            "legacy_surface_enabled": self.enable_legacy_surface,
+            "desktop_automation_compatibility_enabled": self.enable_desktop_automation_compatibility,
         }
 
     def get_system_state(self) -> dict[str, Any]:
@@ -220,6 +244,94 @@ class FairyRuntimeV2:
             detail={"capabilities": capabilities},
         )
 
+    def set_runtime_presence_state(
+        self,
+        state: RuntimeAssistantState,
+        *,
+        reason: str = "",
+        request_id: str = "",
+        session_id: str = "",
+        force: bool = False,
+    ) -> None:
+        self._set_runtime_state(state, reason=reason, request_id=request_id, session_id=session_id, force=force)
+
+    def runtime_state_snapshot(self) -> dict[str, Any]:
+        return self.system_bridge.snapshot()
+
+    def _runtime_fairy_meta(self, *, state: str | None = None, reason: str = "", last_error: str = "") -> dict[str, Any]:
+        return fairy_meta_for_runtime_state(
+            state or self.runtime_state_machine.current_state,
+            reason=reason,
+            last_error=last_error,
+        )
+
+    def _response_fairy_meta(
+        self,
+        *,
+        payload: dict[str, Any] | None = None,
+        meta: dict[str, Any] | None = None,
+        text: str = "",
+        cards: list[Any] | None = None,
+        errors: list[dict[str, Any]] | None = None,
+        resolution: dict[str, Any] | None = None,
+        selected_capability: str = "",
+    ) -> dict[str, Any]:
+        return fairy_meta_for_response(
+            payload=payload,
+            meta=meta,
+            text=text,
+            cards=cards,
+            errors=errors,
+            resolution=resolution,
+            selected_capability=selected_capability,
+        )
+
+    def _sync_runtime_state_snapshot(
+        self,
+        *,
+        request_id: str = "",
+        session_id: str = "",
+        reason: str = "",
+        emit_event: bool = False,
+    ) -> None:
+        self.system_bridge.update_runtime_state(
+            current_state=self.runtime_state_machine.current_state,
+            trace=self.runtime_state_machine.trace_snapshot(),
+            request_id=request_id or None,
+            session_id=session_id or None,
+            reason=reason,
+            fairy=self._runtime_fairy_meta(reason=reason),
+            emit_event=emit_event,
+        )
+
+    def _set_runtime_state(
+        self,
+        next_state: RuntimeAssistantState,
+        *,
+        reason: str = "",
+        request_id: str = "",
+        session_id: str = "",
+        force: bool = False,
+    ) -> None:
+        transition = self.runtime_state_machine.transition(
+            next_state,
+            reason=reason,
+            request_id=request_id or None,
+            session_id=session_id or None,
+            force=force,
+        )
+        if transition is None:
+            return
+        self.system_bridge.update_runtime_state(
+            current_state=self.runtime_state_machine.current_state,
+            trace=self.runtime_state_machine.trace_snapshot(),
+            request_id=request_id or None,
+            session_id=session_id or None,
+            reason=transition.reason,
+            fairy=self._runtime_fairy_meta(reason=transition.reason),
+            emit_event=True,
+        )
+
     def _direct_system_action_execute(
         self,
         *,
@@ -240,7 +352,7 @@ class FairyRuntimeV2:
             request_origin=request_origin,
             cancel_event=None,
             explicit_intent=explicit_intent,
-            allow_legacy_surface=self.enable_legacy_surface and explicit_intent == "desktop_automation",
+            allow_desktop_automation_compatibility=self.enable_desktop_automation_compatibility and explicit_intent == "desktop_automation",
         )
 
     def _stream_direct_system_action_execute(
@@ -267,7 +379,7 @@ class FairyRuntimeV2:
             request_origin=request_origin,
             cancel_event=cancel_event,
             explicit_intent=explicit_intent,
-            allow_legacy_surface=self.enable_legacy_surface and explicit_intent == "desktop_automation",
+            allow_desktop_automation_compatibility=self.enable_desktop_automation_compatibility and explicit_intent == "desktop_automation",
         )
 
     def plan_request(
@@ -278,6 +390,7 @@ class FairyRuntimeV2:
         session_id: str = "",
         request_id: str = "",
     ) -> ResponseRequestPlan:
+        self._set_runtime_state("thinking", reason="request_accepted", request_id=request_id, session_id=session_id)
         perception = self._build_perception_frame(user_text, previous_structured=previous_structured, session_id=session_id)
         planned = self.response_planner.plan(perception, previous_structured=previous_structured)
         runtime_request_id = request_id or ""
@@ -297,18 +410,26 @@ class FairyRuntimeV2:
         state_machine = AssistantStateMachine()
         state_machine.transition("planning")
         self._record_state(runtime_request_id, "", "planning")
+        resolution_meta = dict(perception.metadata.get("resolution") or {})
+        resolution_route_hints = dict(resolution_meta.get("route_hints") or {})
         route_hints = {
             "perception_intent": perception.intent,
-            "preferred_routes": self._preferred_routes_for(perception.intent),
+            "preferred_routes": self._preferred_route_hints_for(perception.intent),
             "active_focus": dict(perception.metadata.get("active_focus") or {}),
             "preferred_modalities": list(perception.preferred_modalities),
             "explicit_intent": str(perception.metadata.get("explicit_intent") or ""),
-            "resolved_query": str((perception.metadata.get("resolution") or {}).get("normalized_query") or user_text).strip(),
-            "resolution": dict(perception.metadata.get("resolution") or {}),
-            "clarification_needed": bool((perception.metadata.get("resolution") or {}).get("clarification_needed")),
-            "execution_mode": str((perception.metadata.get("resolution") or {}).get("execution_mode") or "single"),
-            "secondary_intents": list((perception.metadata.get("resolution") or {}).get("secondary_intents") or []),
+            "raw_user_text": str(user_text or "").strip(),
+            "normalized_user_text": str(perception.normalized_text or "").strip(),
+            "resolved_query": str(resolution_meta.get("normalized_query") or user_text).strip(),
+            "followup_target": str(perception.followup_target or ""),
+            "followup_focus_value": str((perception.metadata.get("active_focus") or {}).get("location") or ""),
+            "followup_reused": bool(perception.metadata.get("followup_reused")),
+            "resolution": resolution_meta,
+            "clarification_needed": bool(resolution_meta.get("clarification_needed")),
+            "execution_mode": str(resolution_meta.get("execution_mode") or "single"),
+            "secondary_intents": list(resolution_meta.get("secondary_intents") or []),
         }
+        route_hints.update(resolution_route_hints)
         if runtime_request_id:
             self._request_contexts[runtime_request_id] = RuntimeRequestContext(
                 request_id=runtime_request_id,
@@ -348,133 +469,173 @@ class FairyRuntimeV2:
         *,
         request_id: str = "",
         previous_structured: dict[str, Any] | None = None,
-        legacy_executor: LegacyExecutor | None = None,
+        bundle_executor: BundleExecutor | None = None,
         request_origin: str = "runtime",
         include_compat_fields: bool = False,
     ) -> dict[str, Any]:
         runtime_request_id = request_id or uuid.uuid4().hex
-        request_plan = self.plan_request(
-            message,
-            previous_structured=previous_structured,
-            session_id=session_id,
-            request_id=runtime_request_id,
-        )
-        runtime_context = self._request_contexts.get(runtime_request_id)
-        resolution = dict((runtime_context.perception.metadata.get("resolution") or {}) if runtime_context else {})
-        bypass_clarification = self._should_bypass_resolution_clarification(
-            runtime_context=runtime_context,
-            request_plan=request_plan,
-            resolution=resolution,
-        )
-        if resolution.get("clarification_needed") and not bypass_clarification:
-            self.context_manager.mark_clarification(
-                session_id,
-                capability=str(resolution.get("capability") or request_plan.intent),
-                message=str(resolution.get("clarification_message") or ""),
-            )
-            contract = self._build_clarification_contract(
-                request_id=runtime_request_id,
+        try:
+            request_plan = self.plan_request(
+                message,
+                previous_structured=previous_structured,
                 session_id=session_id,
+                request_id=runtime_request_id,
+            )
+            runtime_context = self._request_contexts.get(runtime_request_id)
+            resolution = dict((runtime_context.perception.metadata.get("resolution") or {}) if runtime_context else {})
+            bypass_clarification = self._should_bypass_resolution_clarification(
+                runtime_context=runtime_context,
                 request_plan=request_plan,
                 resolution=resolution,
-                include_compat_fields=include_compat_fields,
-                request_origin=request_origin,
             )
-            self.system_bridge.set_last_error("")
-            return contract
-        orchestration_plan = self._build_runtime_execution_plan_from_resolution(resolution)
-        if orchestration_plan is None:
-            orchestration_plan = self._build_continuation_plan_from_resolution(resolution)
-        if orchestration_plan is not None and orchestration_plan.steps:
-            return self._invoke_orchestration(
+            if resolution.get("clarification_needed") and not bypass_clarification:
+                self.context_manager.mark_clarification(
+                    session_id,
+                    capability=str(resolution.get("capability") or request_plan.intent),
+                    message=str(resolution.get("clarification_message") or ""),
+                )
+                self._set_runtime_state("replying", reason="clarification_response", request_id=runtime_request_id, session_id=session_id)
+                self._set_runtime_state("idle", reason="clarification_completed", request_id=runtime_request_id, session_id=session_id)
+                contract = self._build_clarification_contract(
+                    request_id=runtime_request_id,
+                    session_id=session_id,
+                    request_plan=request_plan,
+                    resolution=resolution,
+                    include_compat_fields=include_compat_fields,
+                    request_origin=request_origin,
+                )
+                self.system_bridge.set_last_error("")
+                return contract
+            orchestration_plan = self._build_runtime_execution_plan_from_resolution(resolution)
+            if orchestration_plan is None:
+                orchestration_plan = self._build_continuation_plan_from_resolution(resolution)
+            active_bundle_executor = bundle_executor or self._bundle_executor
+            if orchestration_plan is not None and orchestration_plan.steps:
+                self._set_runtime_state("analyzing", reason="orchestration_plan_built", request_id=runtime_request_id, session_id=session_id)
+                return self._invoke_orchestration(
+                    request_id=runtime_request_id,
+                    session_id=session_id,
+                    message=message,
+                    request_plan=request_plan,
+                    resolution=resolution,
+                    plan=orchestration_plan,
+                    attachments=list(attachments or []),
+                    bundle_executor=active_bundle_executor,
+                    request_origin=request_origin,
+                    include_compat_fields=include_compat_fields,
+                )
+            route_hints = self.get_route_hints(runtime_request_id)
+            forced_bundle = str(route_hints.get("forced_bundle") or "").strip()
+            selected_capability = self._capability_for_intent(request_plan.intent)
+            effective_message = str(route_hints.get("resolved_query") or message).strip() or message
+            execution_payload = self._invoke_capability(
+                capability_name=selected_capability,
+                message=effective_message,
                 request_id=runtime_request_id,
                 session_id=session_id,
-                message=message,
-                request_plan=request_plan,
-                resolution=resolution,
-                plan=orchestration_plan,
+                bundle_executor=active_bundle_executor,
                 attachments=list(attachments or []),
-                legacy_executor=legacy_executor or self._legacy_executor,
                 request_origin=request_origin,
-                include_compat_fields=include_compat_fields,
+                route_hints=route_hints,
             )
-        selected_capability = self._capability_for_intent(request_plan.intent)
-        route_hints = self.get_route_hints(runtime_request_id)
-        effective_message = str(route_hints.get("resolved_query") or message).strip() or message
-        execution_payload = self._invoke_capability(
-            capability_name=selected_capability,
-            message=effective_message,
-            request_id=runtime_request_id,
-            session_id=session_id,
-            legacy_executor=legacy_executor or self._legacy_executor,
-            attachments=list(attachments or []),
-            request_origin=request_origin,
-        )
-        normalized = self.normalize_result(
-            user_text=message,
-            payload=execution_payload,
-            assistant_text=str(execution_payload.get("assistant_text") or execution_payload.get("text") or "").strip(),
-            assistant_html=str(execution_payload.get("assistant_html") or "").strip(),
-            request_plan=request_plan,
-            session_id=session_id,
-            request_id=runtime_request_id,
-        )
-        contract = normalized.to_contract_dict()
-        meta = dict(contract.get("meta") or {})
-        meta["resolution"] = resolution
-        meta["runtime"] = {
-            "selected_capability": selected_capability or "legacy",
-            "executor_path": str(execution_payload.get("_runtime_executor_path") or ""),
-            "used_legacy_fallback": bool(execution_payload.get("_legacy_fallback")),
-            "request_origin": request_origin,
-            "compat_fields_emitted": bool(include_compat_fields),
-            "explicit_intent": str(runtime_context.perception.metadata.get("explicit_intent") or "") if runtime_context else "",
-            "legacy_surface_automation": bool(execution_payload.get("_legacy_surface_automation")),
-            "system_action_type": str(execution_payload.get("_runtime_system_action_type") or ""),
-            "system_action_name": str(execution_payload.get("_runtime_system_action_name") or ""),
-            "desktop_bridge_result": dict(execution_payload.get("_runtime_desktop_bridge_result") or {}),
-        }
-        contract["meta"] = meta
-        if execution_payload.get("errors"):
-            contract["errors"] = list(contract.get("errors") or []) + list(execution_payload.get("errors") or [])
-        if contract.get("errors"):
-            self.system_bridge.set_last_error(
-                str((contract.get("errors") or [{}])[0].get("message") or ""),
-                request_id=runtime_request_id,
+            normalized = self.normalize_result(
+                user_text=message,
+                payload=execution_payload,
+                assistant_text=str(execution_payload.get("assistant_text") or execution_payload.get("text") or "").strip(),
+                assistant_html=str(execution_payload.get("assistant_html") or "").strip(),
+                request_plan=request_plan,
                 session_id=session_id,
+                request_id=runtime_request_id,
             )
-        else:
-            self.context_manager.clear_clarification(session_id)
-            self.system_bridge.set_last_error("")
-        self._remember_completed_single_step_plan(
-            session_id=session_id,
-            request_id=runtime_request_id,
-            capability=selected_capability or "legacy",
-            normalized_query=effective_message,
-            slots=dict(resolution.get("validated_slots") or resolution.get("slots") or {}),
-            normalized=normalized,
-            payload=execution_payload,
-        )
-        if include_compat_fields:
-            contract.update(
-                {
-                    # Deprecated Qt bridge fields. Keep them opt-in so they do not leak into the API contract.
-                    "assistant_text": normalized.text_reply,
-                    "assistant_html": normalized.text_rich_html,
-                    "summary": str(execution_payload.get("summary") or normalized.text_reply).strip(),
-                    "sources": list(execution_payload.get("sources") or []),
-                    "warnings": list(execution_payload.get("warnings") or []),
-                    "structured": dict(execution_payload.get("structured") or {}),
-                    "skill_name": str(execution_payload.get("skill_name") or selected_capability or "legacy"),
-                    "success": bool(execution_payload.get("success", True)) and not contract["errors"],
-                    "changed_files": list(execution_payload.get("changed_files") or []),
-                    "commands_run": list(execution_payload.get("commands_run") or []),
-                    "validations": list(execution_payload.get("validations") or []),
-                    "cancelled": bool(execution_payload.get("cancelled", False)),
-                    "request_origin": request_origin,
-                }
+            if normalized.text_reply or normalized.cards:
+                self._set_runtime_state("replying", reason="response_ready", request_id=runtime_request_id, session_id=session_id)
+            self._set_runtime_state("idle", reason="request_completed", request_id=runtime_request_id, session_id=session_id)
+            contract = normalized.to_contract_dict()
+            meta = dict(contract.get("meta") or {})
+            meta["resolution"] = resolution
+            meta["runtime_state"] = self.runtime_state_snapshot()
+            meta["runtime"] = {
+                "selected_capability": selected_capability or "bundle-runtime",
+                "selected_bundle": str(
+                    execution_payload.get("skill_name")
+                    or forced_bundle
+                    or execution_payload.get("_runtime_forced_bundle")
+                    or ""
+                ),
+                "forced_bundle": forced_bundle,
+                "executor_path": str(execution_payload.get("_runtime_executor_path") or ""),
+                "used_bundle_fallback": bool(execution_payload.get("_bundle_fallback")),
+                "request_origin": request_origin,
+                "compat_fields_emitted": bool(include_compat_fields),
+                "explicit_intent": str(runtime_context.perception.metadata.get("explicit_intent") or "") if runtime_context else "",
+                "desktop_automation_compatibility": bool(execution_payload.get("_desktop_automation_compatibility")),
+                "system_action_type": str(execution_payload.get("_runtime_system_action_type") or ""),
+                "system_action_name": str(execution_payload.get("_runtime_system_action_name") or ""),
+                "desktop_bridge_result": dict(execution_payload.get("_runtime_desktop_bridge_result") or {}),
+                "web_access": dict(execution_payload.get("_runtime_web_access") or {}),
+                "query_debug": dict(execution_payload.get("_runtime_query_debug") or {}),
+                "activity": dict(execution_payload.get("_runtime_activity") or {}),
+            }
+            contract["meta"] = meta
+            if execution_payload.get("errors"):
+                contract["errors"] = list(contract.get("errors") or []) + list(execution_payload.get("errors") or [])
+            meta = dict(contract.get("meta") or {})
+            meta["fairy"] = self._response_fairy_meta(
+                payload=execution_payload,
+                meta=meta,
+                text=str(contract.get("text") or ""),
+                cards=list(contract.get("cards") or []),
+                errors=list(contract.get("errors") or []),
+                resolution=resolution,
+                selected_capability=selected_capability or forced_bundle or "bundle-runtime",
             )
-        return contract
+            contract["meta"] = meta
+            if contract.get("errors"):
+                self.system_bridge.set_last_error(
+                    str((contract.get("errors") or [{}])[0].get("message") or ""),
+                    request_id=runtime_request_id,
+                    session_id=session_id,
+                )
+            else:
+                self.context_manager.clear_clarification(session_id)
+                self.system_bridge.set_last_error("")
+            self._remember_completed_single_step_plan(
+                session_id=session_id,
+                request_id=runtime_request_id,
+                capability=str(
+                    execution_payload.get("skill_name")
+                    or forced_bundle
+                    or selected_capability
+                    or "bundle-runtime"
+                ),
+                normalized_query=effective_message,
+                slots=dict(resolution.get("validated_slots") or resolution.get("slots") or {}),
+                normalized=normalized,
+                payload=execution_payload,
+            )
+            if include_compat_fields:
+                contract.update(
+                    {
+                        # Deprecated Qt bridge fields. Keep them opt-in so they do not leak into the API contract.
+                        "assistant_text": normalized.text_reply,
+                        "assistant_html": normalized.text_rich_html,
+                        "summary": str(execution_payload.get("summary") or normalized.text_reply).strip(),
+                        "sources": list(execution_payload.get("sources") or []),
+                        "warnings": list(execution_payload.get("warnings") or []),
+                        "structured": dict(execution_payload.get("structured") or {}),
+                        "skill_name": str(execution_payload.get("skill_name") or selected_capability or "bundle-runtime"),
+                        "success": bool(execution_payload.get("success", True)) and not contract["errors"],
+                        "changed_files": list(execution_payload.get("changed_files") or []),
+                        "commands_run": list(execution_payload.get("commands_run") or []),
+                        "validations": list(execution_payload.get("validations") or []),
+                        "cancelled": bool(execution_payload.get("cancelled", False)),
+                        "request_origin": request_origin,
+                    }
+                )
+            return contract
+        except Exception as exc:
+            self._set_runtime_state("error", reason=f"invoke_failed:{type(exc).__name__}", request_id=runtime_request_id, session_id=session_id, force=True)
+            raise
 
     def stream_invoke(
         self,
@@ -484,8 +645,8 @@ class FairyRuntimeV2:
         *,
         request_id: str = "",
         previous_structured: dict[str, Any] | None = None,
-        legacy_executor: LegacyExecutor | None = None,
-        streaming_legacy_executor: StreamingLegacyExecutor | None = None,
+        bundle_executor: BundleExecutor | None = None,
+        streaming_bundle_executor: StreamingBundleExecutor | None = None,
         request_origin: str = "runtime_stream",
         cancel_event: threading.Event | None = None,
     ) -> Iterable[StreamEventBase]:
@@ -493,6 +654,8 @@ class FairyRuntimeV2:
         effective_session_id = session_id or "default"
         if cancel_event is None:
             cancel_event = threading.Event()
+        active_bundle_executor = bundle_executor or self._bundle_executor
+        active_streaming_bundle_executor = streaming_bundle_executor or self._streaming_bundle_executor
         request_plan = self.plan_request(
             message,
             previous_structured=previous_structured,
@@ -521,6 +684,8 @@ class FairyRuntimeV2:
                 "modality": request_plan.modality,
                 "speech_mode": request_plan.speech_mode,
                 "resolution": resolution,
+                "runtime_state": self.runtime_state_snapshot(),
+                "fairy": self._runtime_fairy_meta(state="thinking", reason="stream_started"),
             },
         )
         for trace_event in list(resolution.get("trace") or []):
@@ -539,6 +704,7 @@ class FairyRuntimeV2:
                 capability=str(resolution.get("capability") or request_plan.intent),
                 message=str(resolution.get("clarification_message") or ""),
             )
+            self._set_runtime_state("replying", reason="clarification_response", request_id=runtime_request_id, session_id=effective_session_id)
             clarification = self._build_clarification_response(
                 request_id=runtime_request_id,
                 session_id=effective_session_id,
@@ -558,10 +724,20 @@ class FairyRuntimeV2:
                     session_id=effective_session_id,
                     card=card,
                 )
+            self._set_runtime_state("idle", reason="clarification_completed", request_id=runtime_request_id, session_id=effective_session_id)
             end_meta = dict(clarification.meta)
             runtime_meta = dict(end_meta.get("runtime") or {})
             runtime_meta["compat_fields_emitted"] = False
             end_meta["runtime"] = runtime_meta
+            end_meta["runtime_state"] = self.runtime_state_snapshot()
+            end_meta["fairy"] = self._response_fairy_meta(
+                meta=end_meta,
+                text=clarification.text_reply,
+                cards=clarification.cards,
+                errors=list(clarification.errors),
+                resolution=resolution,
+                selected_capability=self._capability_for_intent(request_plan.intent) or "clarification",
+            )
             yield MessageEndEvent(
                 request_id=runtime_request_id,
                 session_id=effective_session_id,
@@ -581,6 +757,7 @@ class FairyRuntimeV2:
         if orchestration_plan is None:
             orchestration_plan = self._build_continuation_plan_from_resolution(resolution)
         if orchestration_plan is not None and orchestration_plan.steps:
+            self._set_runtime_state("analyzing", reason="orchestration_plan_built", request_id=runtime_request_id, session_id=effective_session_id)
             yield from self._stream_orchestration(
                 request_id=runtime_request_id,
                 session_id=effective_session_id,
@@ -589,29 +766,84 @@ class FairyRuntimeV2:
                 resolution=resolution,
                 plan=orchestration_plan,
                 attachments=attachments,
-                legacy_executor=legacy_executor or self._legacy_executor,
+                bundle_executor=active_bundle_executor,
                 request_origin=request_origin,
                 cancel_event=cancel_event,
             )
             return
 
+        route_hints = self.get_route_hints(runtime_request_id)
+        forced_bundle = str(route_hints.get("forced_bundle") or "").strip()
+
         yield ProgressStreamEvent(
             request_id=runtime_request_id,
             session_id=effective_session_id,
             stage="planning",
-            text=f"Selected execution path: {selected_capability or 'legacy_executor'}.",
+            text=f"Selected execution path: {forced_bundle or selected_capability or 'bundle_runtime_executor'}.",
         )
 
         emitted_text_delta = False
         execution_payload: dict[str, Any] | None = None
-        active_streaming_executor = streaming_legacy_executor or self._streaming_legacy_executor
+        active_streaming_executor = active_streaming_bundle_executor
         direct_streaming_executor = self._streaming_capability_executors.get(selected_capability or "")
-        route_hints = self.get_route_hints(runtime_request_id)
         effective_message = str(route_hints.get("resolved_query") or message).strip() or message
         try:
             if cancel_event is not None and cancel_event.is_set():
                 raise RuntimeError("cancelled")
-            if selected_capability and self._can_use_invocation_service(selected_capability):
+            if forced_bundle:
+                if active_streaming_executor is not None:
+                    for event in active_streaming_executor(
+                        message=effective_message,
+                        session_id=effective_session_id,
+                        request_id=runtime_request_id,
+                        attachments=attachments,
+                        request_origin=request_origin,
+                        route_hints=route_hints,
+                        cancel_event=cancel_event,
+                    ):
+                        kind = str(event.get("kind") or "").strip().lower()
+                        if kind == "text_delta":
+                            token = str(event.get("text") or "")
+                            if token:
+                                emitted_text_delta = True
+                                yield TextDeltaEvent(
+                                    request_id=runtime_request_id,
+                                    session_id=effective_session_id,
+                                    text=token,
+                                )
+                            continue
+                        if kind == "progress":
+                            progress = self.build_progress_event(
+                                str(event.get("event_name") or ""),
+                                dict(event.get("payload") or {}),
+                                user_text=message,
+                                request_id=runtime_request_id,
+                            )
+                            if progress is not None:
+                                yield ProgressStreamEvent(
+                                    request_id=runtime_request_id,
+                                    session_id=effective_session_id,
+                                    stage=progress.stage,
+                                    text=progress.text,
+                                )
+                            continue
+                        if kind == "error":
+                            raise RuntimeError(str(event.get("message") or "Streaming bundle executor failed."))
+                        if kind == "result":
+                            execution_payload = dict(event.get("payload") or {})
+                            execution_payload.setdefault("_runtime_forced_bundle", forced_bundle)
+                else:
+                    execution_payload = self._invoke_capability(
+                        capability_name=selected_capability,
+                        message=effective_message,
+                        request_id=runtime_request_id,
+                        session_id=effective_session_id,
+                        bundle_executor=active_bundle_executor,
+                        attachments=attachments,
+                        request_origin=request_origin,
+                        route_hints=route_hints,
+                    )
+            elif selected_capability and self._can_use_invocation_service(selected_capability):
                 for event in self._stream_invocation_service(
                     capability_name=selected_capability,
                     message=effective_message,
@@ -645,7 +877,7 @@ class FairyRuntimeV2:
                     selected_capability,
                     "runtime_facade_direct_streaming_executor",
                 )
-                delegate_to_legacy = False
+                delegate_to_bundle_runtime = False
                 delegate_reason = ""
                 delegated_runtime_meta: dict[str, Any] = {}
                 for event in direct_streaming_executor(
@@ -660,14 +892,16 @@ class FairyRuntimeV2:
                     if cancel_event is not None and cancel_event.is_set():
                         break
                     kind = str(event.get("kind") or "").strip().lower()
-                    if kind == "delegate_legacy":
-                        delegate_to_legacy = True
-                        delegate_reason = str(event.get("reason") or "streaming_direct_executor_requested_legacy_fallback").strip()
+                    if kind == "delegate_bundle_runtime":
+                        delegate_to_bundle_runtime = True
+                        delegate_reason = str(event.get("reason") or "streaming_direct_executor_requested_bundle_fallback").strip()
                         delegated_runtime_meta = {
                             "system_action_type": str(event.get("system_action_type") or ""),
                             "system_action_name": str(event.get("system_action_name") or ""),
-                            "legacy_surface_automation": bool(event.get("legacy_surface")),
-                            "executor_path": str(event.get("executor_path") or "legacy_surface_legacy_executor"),
+                            "desktop_automation_compatibility": bool(event.get("desktop_automation_compatibility")),
+                            "executor_path": str(
+                                event.get("executor_path") or "desktop_automation_compatibility_executor"
+                            ),
                         }
                         break
                     if kind == "text_delta":
@@ -699,11 +933,11 @@ class FairyRuntimeV2:
                         raise RuntimeError(str(event.get("message") or "Streaming direct executor failed."))
                     if kind == "result":
                         execution_payload = dict(event.get("payload") or {})
-                if delegate_to_legacy:
+                if delegate_to_bundle_runtime:
                     logger.info(
-                        "runtime_v2_direct_streaming_executor_delegated_to_legacy request_id=%s capability=%s reason=%s",
+                        "runtime_v2_direct_streaming_executor_delegated_to_bundle_runtime request_id=%s capability=%s reason=%s",
                         runtime_request_id,
-                        selected_capability or "legacy_fallback",
+                        selected_capability or "bundle_fallback",
                         delegate_reason,
                     )
                     if active_streaming_executor is not None:
@@ -743,35 +977,43 @@ class FairyRuntimeV2:
                                     )
                                 continue
                             if kind == "error":
-                                raise RuntimeError(str(event.get("message") or "Streaming legacy executor failed."))
+                                raise RuntimeError(str(event.get("message") or "Streaming bundle executor failed."))
                             if kind == "result":
                                 execution_payload = dict(event.get("payload") or {})
                                 execution_payload["_runtime_system_action_type"] = str(
-                                    delegated_runtime_meta.get("system_action_type") or "legacy_only"
+                                    delegated_runtime_meta.get("system_action_type") or "desktop_automation_compatibility"
                                 )
                                 execution_payload["_runtime_system_action_name"] = str(
-                                    delegated_runtime_meta.get("system_action_name") or "legacy_screen_action"
+                                    delegated_runtime_meta.get("system_action_name") or "desktop_automation_compatibility_action"
                                 )
                                 execution_payload["_runtime_executor_path"] = str(
-                                    delegated_runtime_meta.get("executor_path") or "legacy_surface_legacy_executor"
+                                    delegated_runtime_meta.get("executor_path") or "desktop_automation_compatibility_executor"
                                 )
-                                execution_payload["_legacy_surface_automation"] = bool(
-                                    delegated_runtime_meta.get("legacy_surface_automation")
+                                execution_payload["_desktop_automation_compatibility"] = bool(
+                                    delegated_runtime_meta.get("desktop_automation_compatibility")
                                 )
                     else:
                         execution_payload = {
-                            "assistant_text": "This system action still requires the legacy executor, but no compatible legacy stream executor is available.",
-                            "summary": "This system action still requires the legacy executor, but no compatible legacy stream executor is available.",
+                            "assistant_text": "This system action still requires the bundle executor, but no compatible streaming bundle executor is available.",
+                            "summary": "This system action still requires the bundle executor, but no compatible streaming bundle executor is available.",
                             "sources": [],
-                            "warnings": ["missing_streaming_legacy_executor"],
+                            "warnings": ["missing_streaming_bundle_executor"],
                             "structured": {},
                             "skill_name": selected_capability or "system_action",
                             "success": False,
-                            "errors": [{"code": "missing_streaming_legacy_executor", "message": "No streaming legacy executor was available for the delegated system action."}],
-                            "_runtime_system_action_type": str(delegated_runtime_meta.get("system_action_type") or "legacy_only"),
-                            "_runtime_system_action_name": str(delegated_runtime_meta.get("system_action_name") or "legacy_screen_action"),
-                            "_runtime_executor_path": str(delegated_runtime_meta.get("executor_path") or "legacy_surface_legacy_executor"),
-                            "_legacy_surface_automation": bool(delegated_runtime_meta.get("legacy_surface_automation")),
+                            "errors": [{"code": "missing_streaming_bundle_executor", "message": "No streaming bundle executor was available for the delegated system action."}],
+                            "_runtime_system_action_type": str(
+                                delegated_runtime_meta.get("system_action_type") or "desktop_automation_compatibility"
+                            ),
+                            "_runtime_system_action_name": str(
+                                delegated_runtime_meta.get("system_action_name") or "desktop_automation_compatibility_action"
+                            ),
+                            "_runtime_executor_path": str(
+                                delegated_runtime_meta.get("executor_path") or "desktop_automation_compatibility_executor"
+                            ),
+                            "_desktop_automation_compatibility": bool(
+                                delegated_runtime_meta.get("desktop_automation_compatibility")
+                            ),
                         }
             elif active_streaming_executor is not None:
                 for event in active_streaming_executor(
@@ -810,7 +1052,7 @@ class FairyRuntimeV2:
                             )
                         continue
                     if kind == "error":
-                        raise RuntimeError(str(event.get("message") or "Streaming legacy executor failed."))
+                        raise RuntimeError(str(event.get("message") or "Streaming bundle executor failed."))
                     if kind == "result":
                         execution_payload = dict(event.get("payload") or {})
             else:
@@ -825,9 +1067,10 @@ class FairyRuntimeV2:
                     message=effective_message,
                     request_id=runtime_request_id,
                     session_id=effective_session_id,
-                    legacy_executor=legacy_executor or self._legacy_executor,
+                    bundle_executor=active_bundle_executor,
                     attachments=attachments,
                     request_origin=request_origin,
+                    route_hints=route_hints,
                 )
             if cancel_event is not None and cancel_event.is_set():
                 raise RuntimeError("cancelled")
@@ -854,27 +1097,54 @@ class FairyRuntimeV2:
             )
             if not emitted_text_delta:
                 for chunk in self._chunk_text_for_streaming(normalized.text_reply):
+                    self._set_runtime_state("replying", reason="streaming_text", request_id=runtime_request_id, session_id=effective_session_id)
                     yield TextDeltaEvent(
                         request_id=runtime_request_id,
                         session_id=effective_session_id,
                         text=chunk,
                     )
             for card in normalized.cards:
+                self._set_runtime_state("replying", reason="streaming_card", request_id=runtime_request_id, session_id=effective_session_id)
                 yield CardStreamEvent(
                     request_id=runtime_request_id,
                     session_id=effective_session_id,
                     card=card,
                 )
+            self._set_runtime_state("idle", reason="stream_finished", request_id=runtime_request_id, session_id=effective_session_id)
             end_meta = dict(normalized.meta)
             end_meta["resolution"] = resolution
+            end_meta["runtime_state"] = self.runtime_state_snapshot()
             runtime_meta = dict(end_meta.get("runtime") or {})
+            runtime_meta["selected_capability"] = selected_capability or "bundle-runtime"
+            runtime_meta["selected_bundle"] = str(
+                execution_payload.get("skill_name")
+                or forced_bundle
+                or execution_payload.get("_runtime_forced_bundle")
+                or ""
+            )
+            runtime_meta["forced_bundle"] = forced_bundle
+            runtime_meta["executor_path"] = str(execution_payload.get("_runtime_executor_path") or "")
             runtime_meta["compat_fields_emitted"] = False
             runtime_meta["explicit_intent"] = str((runtime_context.perception.metadata.get("explicit_intent") or "") if runtime_context else "")
-            runtime_meta["legacy_surface_automation"] = bool(execution_payload.get("_legacy_surface_automation"))
+            runtime_meta["desktop_automation_compatibility"] = bool(
+                execution_payload.get("_desktop_automation_compatibility")
+            )
             runtime_meta["system_action_type"] = str(execution_payload.get("_runtime_system_action_type") or "")
             runtime_meta["system_action_name"] = str(execution_payload.get("_runtime_system_action_name") or "")
             runtime_meta["desktop_bridge_result"] = dict(execution_payload.get("_runtime_desktop_bridge_result") or {})
+            runtime_meta["web_access"] = dict(execution_payload.get("_runtime_web_access") or {})
+            runtime_meta["query_debug"] = dict(execution_payload.get("_runtime_query_debug") or {})
+            runtime_meta["activity"] = dict(execution_payload.get("_runtime_activity") or {})
             end_meta["runtime"] = runtime_meta
+            end_meta["fairy"] = self._response_fairy_meta(
+                payload=execution_payload,
+                meta=end_meta,
+                text=normalized.text_reply,
+                cards=normalized.cards,
+                errors=list(normalized.errors),
+                resolution=resolution,
+                selected_capability=selected_capability or forced_bundle or "bundle-runtime",
+            )
             yield MessageEndEvent(
                 request_id=runtime_request_id,
                 session_id=effective_session_id,
@@ -892,7 +1162,12 @@ class FairyRuntimeV2:
             self._remember_completed_single_step_plan(
                 session_id=effective_session_id,
                 request_id=runtime_request_id,
-                capability=selected_capability or "legacy",
+                capability=str(
+                    execution_payload.get("skill_name")
+                    or forced_bundle
+                    or selected_capability
+                    or "bundle-runtime"
+                ),
                 normalized_query=effective_message,
                 slots=dict(resolution.get("validated_slots") or resolution.get("slots") or {}),
                 normalized=normalized,
@@ -902,6 +1177,13 @@ class FairyRuntimeV2:
         except Exception as exc:
             logger.exception("runtime_v2_stream_invoke_failed request_id=%s", runtime_request_id)
             error_code = "cancelled" if str(exc).strip().lower() == "cancelled" else "runtime_stream_error"
+            self._set_runtime_state(
+                "idle" if error_code == "cancelled" else "error",
+                reason="stream_cancelled" if error_code == "cancelled" else f"stream_failed:{type(exc).__name__}",
+                request_id=runtime_request_id,
+                session_id=effective_session_id,
+                force=error_code != "cancelled",
+            )
             self.system_bridge.finish_stream(
                 request_id=runtime_request_id,
                 session_id=effective_session_id,
@@ -947,6 +1229,7 @@ class FairyRuntimeV2:
                     session_id=session_id,
                     progress_callback=emit_progress,
                     cancel_event=cancel_event,
+                    skip_state_resolution=True,
                 )
                 normalized_payload = self._normalize_execution_payload(
                     result,
@@ -1034,6 +1317,15 @@ class FairyRuntimeV2:
             self.context_manager.update_from_turn(session_id, runtime_context.perception, structured=structured_payload)
         if runtime_context is not None:
             normalized.meta["resolution"] = dict(runtime_context.perception.metadata.get("resolution") or {})
+        normalized.meta["fairy"] = self._response_fairy_meta(
+            payload=payload,
+            meta=normalized.meta,
+            text=normalized.text_reply,
+            cards=normalized.cards,
+            errors=list(normalized.errors),
+            resolution=dict(normalized.meta.get("resolution") or {}),
+            selected_capability=str(payload.get("skill_name") or ""),
+        )
         logger.info(
             "runtime_v2_normalized request_id=%s intent=%s cards=%s speech_mode=%s speech_route=%s",
             request_id,
@@ -1056,22 +1348,36 @@ class FairyRuntimeV2:
                 intents.append(item)
         if len(intents) <= 1:
             return None
-        steps = [
-            RuntimeExecutionStep(
-                capability=str(item.get("capability") or "").strip(),
+        steps: list[RuntimeExecutionStep] = []
+        step_ids_by_index: dict[int, str] = {}
+        for index, item in enumerate(intents):
+            capability = str(item.get("capability") or "").strip()
+            if not capability:
+                continue
+            step = RuntimeExecutionStep(
+                capability=capability,
                 slots=dict(item.get("slots") or {}),
                 step_index=index,
                 normalized_query=str(item.get("normalized_query") or "").strip(),
+                retryable=True,
+                can_run_parallel=bool(item.get("can_run_parallel")),
+                branch_key=f"branch_{index}" if bool(item.get("can_run_parallel")) else "main",
+                dependency_mode=str(item.get("dependency_mode") or "success"),
+                execution_confidence_score=float(item.get("confidence") or 0.72),
             )
-            for index, item in enumerate(intents)
-            if str(item.get("capability") or "").strip()
-        ]
+            steps.append(step)
+            step_ids_by_index[index] = step.step_id
+        for step, item in zip(steps, intents):
+            dependency_indexes = [int(value) for value in list(item.get("depends_on") or []) if str(value).strip()]
+            step.depends_on = [step_ids_by_index[idx] for idx in dependency_indexes if idx in step_ids_by_index]
         if len(steps) <= 1:
             return None
         return RuntimeExecutionPlan(
             steps=steps,
             allow_partial_failure=True,
             continuation_of_plan_id=str(resolution.get("continuation_plan_id") or ""),
+            graph_mode="graph" if any(step.can_run_parallel or step.depends_on for step in steps) else "linear",
+            parallel_enabled=any(step.can_run_parallel for step in steps),
         )
 
     def _build_continuation_plan_from_resolution(self, resolution: dict[str, Any]) -> RuntimeExecutionPlan | None:
@@ -1086,6 +1392,7 @@ class FairyRuntimeV2:
             step_index=0,
             normalized_query=str(primary.get("normalized_query") or resolution.get("normalized_query") or "").strip(),
             retryable=True,
+            execution_confidence_score=float(primary.get("confidence") or 0.72),
         )
         if not step.capability:
             return None
@@ -1093,6 +1400,8 @@ class FairyRuntimeV2:
             steps=[step],
             allow_partial_failure=True,
             continuation_of_plan_id=str(resolution.get("continuation_plan_id") or ""),
+            graph_mode="linear",
+            parallel_enabled=False,
         )
 
     def _request_plan_for_capability(self, capability: str, *, planner_confidence: float, context_payload: dict[str, Any]) -> ResponseRequestPlan:
@@ -1113,7 +1422,7 @@ class FairyRuntimeV2:
             force_card_type = "weather"
         elif capability == "time_lookup":
             modality = "text_plus_card"
-            force_card_type = "generic_info"
+            force_card_type = "time"
         elif capability in {"location_lookup", "display_information"}:
             modality = "card_primary_text_summary"
             force_card_type = "location"
@@ -1144,6 +1453,16 @@ class FairyRuntimeV2:
                     step_index=int(item.get("step_index") or 0),
                     normalized_query=str(item.get("normalized_query") or "").strip(),
                     retryable=bool(item.get("retryable", True)),
+                    step_id=str(item.get("step_id") or ""),
+                    depends_on=[str(value).strip() for value in list(item.get("depends_on") or []) if str(value).strip()],
+                    can_run_parallel=bool(item.get("can_run_parallel")),
+                    abort_group=str(item.get("abort_group") or ""),
+                    branch_key=str(item.get("branch_key") or "main"),
+                    dependency_mode=str(item.get("dependency_mode") or "success"),
+                    execution_confidence_score=float(item.get("execution_confidence_score") or 0.72),
+                    inserted_by=str(item.get("inserted_by") or ""),
+                    rewrite_source=str(item.get("rewrite_source") or ""),
+                    alternative_capabilities=[str(value).strip() for value in list(item.get("alternative_capabilities") or []) if str(value).strip()],
                 )
                 for item in steps_payload
                 if str(item.get("capability") or "").strip()
@@ -1155,10 +1474,21 @@ class FairyRuntimeV2:
                     step_index=len(current_steps),
                     normalized_query=step.normalized_query,
                     retryable=step.retryable,
+                    step_id=step.step_id,
+                    depends_on=list(step.depends_on),
+                    can_run_parallel=step.can_run_parallel,
+                    abort_group=step.abort_group,
+                    branch_key=step.branch_key,
+                    dependency_mode=step.dependency_mode,
+                    execution_confidence_score=step.execution_confidence_score,
+                    inserted_by=step.inserted_by,
+                    rewrite_source=step.rewrite_source,
+                    alternative_capabilities=list(step.alternative_capabilities),
                 )
                 current_steps.append(cloned)
             existing_results = [
                 StepExecutionResult(
+                    step_id=str(item.get("step_id") or ""),
                     capability=str(item.get("capability") or "").strip(),
                     success=bool(item.get("success")),
                     output_summary=str(item.get("output_summary") or "").strip() or None,
@@ -1166,6 +1496,11 @@ class FairyRuntimeV2:
                     error_type=str(item.get("error_type") or "").strip() or None,
                     skipped=bool(item.get("skipped")),
                     retry_count=int(item.get("retry_count") or 0),
+                    execution_confidence_score=float(item.get("execution_confidence_score") or 0.0),
+                    confidence_factors=[str(value).strip() for value in list(item.get("confidence_factors") or []) if str(value).strip()],
+                    branch_key=str(item.get("branch_key") or "main"),
+                    inserted_steps=[str(value).strip() for value in list(item.get("inserted_steps") or []) if str(value).strip()],
+                    metadata=dict(item.get("metadata") or {}),
                 )
                 for item in list(existing.get("results") or [])
                 if str(item.get("capability") or "").strip()
@@ -1176,6 +1511,10 @@ class FairyRuntimeV2:
                 current_index=int(existing.get("current_index") or len(steps_payload) or 0),
                 status="running",
                 results=existing_results,
+                step_statuses={str(key): str(value) for key, value in dict(existing.get("step_statuses") or {}).items()},
+                rewrite_log=list(existing.get("rewrite_log") or []),
+                branch_statuses={str(key): str(value) for key, value in dict(existing.get("branch_statuses") or {}).items()},
+                active_batch=[str(value) for value in list(existing.get("active_batch") or []) if str(value).strip()],
             )
         else:
             state = RuntimeExecutionPlanState(
@@ -1187,6 +1526,16 @@ class FairyRuntimeV2:
                         step_index=index,
                         normalized_query=step.normalized_query,
                         retryable=step.retryable,
+                        step_id=step.step_id,
+                        depends_on=list(step.depends_on),
+                        can_run_parallel=step.can_run_parallel,
+                        abort_group=step.abort_group,
+                        branch_key=step.branch_key,
+                        dependency_mode=step.dependency_mode,
+                        execution_confidence_score=step.execution_confidence_score,
+                        inserted_by=step.inserted_by,
+                        rewrite_source=step.rewrite_source,
+                        alternative_capabilities=list(step.alternative_capabilities),
                     )
                     for index, step in enumerate(plan.steps)
                 ],
@@ -1203,16 +1552,16 @@ class FairyRuntimeV2:
 
     def _extract_step_entities(self, *, step: RuntimeExecutionStep, normalized: NormalizedAssistantResponse, payload: dict[str, Any]) -> list[str]:
         entities: list[str] = []
-        if bool(payload.get("_legacy_surface_automation")):
-            entities.append("legacy_surface_call")
-        for key in ("location", "topic", "query"):
+        if bool(payload.get("_desktop_automation_compatibility")):
+            entities.append("desktop_automation_call")
+        for key in ("location", "topic", "query", "action_name"):
             value = str(step.slots.get(key) or "").strip()
-            if value:
+            if value and not self._is_noise_entity_value(value):
                 entities.append(value)
         structured = dict(payload.get("structured") or {}) if isinstance(payload.get("structured"), dict) else {}
         for key in ("city", "title", "topic", "weather_location", "address", "query"):
             value = str(structured.get(key) or "").strip()
-            if value:
+            if value and not self._is_noise_entity_value(value):
                 entities.append(value)
         for card in normalized.cards:
             if not isinstance(card, dict):
@@ -1220,7 +1569,7 @@ class FairyRuntimeV2:
             data = dict(card.get("data") or {})
             for key in ("city", "title", "topic", "address"):
                 value = str(data.get(key) or "").strip()
-                if value:
+                if value and not self._is_noise_entity_value(value):
                     entities.append(value)
         deduped: list[str] = []
         seen: set[str] = set()
@@ -1229,6 +1578,32 @@ class FairyRuntimeV2:
                 seen.add(item)
                 deduped.append(item)
         return deduped[:4]
+
+    @staticmethod
+    def _is_noise_entity_value(value: str) -> bool:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            return False
+        lowered = cleaned.lower()
+        noisy_tokens = (
+            "web access failed",
+            "error_card",
+            "type: error_card",
+            "runtime_stream_error",
+            "no running session file found",
+            "message:",
+            "traceback",
+            "exception",
+            "实时数据暂不可用",
+            "data\\runtime\\fairy_desktop_dev.json",
+        )
+        if any(token in lowered for token in noisy_tokens):
+            return True
+        if re.search(r"[a-z]:\\", lowered):
+            return True
+        if ".json" in lowered and ("runtime" in lowered or "session" in lowered):
+            return True
+        return False
 
     def _should_retry_step(self, step: RuntimeExecutionStep, errors: list[dict[str, Any]]) -> tuple[bool, str]:
         if not step.retryable or not errors:
@@ -1252,6 +1627,63 @@ class FairyRuntimeV2:
             return True, "empty_normalized_query"
         return False, ""
 
+    @staticmethod
+    def _step_request_id(request_id: str, step: RuntimeExecutionStep) -> str:
+        return f"{request_id}:{step.step_id}"
+
+    def _route_hints_for_step(self, request_id: str, step: RuntimeExecutionStep) -> dict[str, Any]:
+        route_hints = dict(self.get_route_hints(request_id))
+        route_hints.update(
+            {
+                "resolved_query": step.normalized_query,
+                "resolved_slots": dict(step.slots),
+                "orchestration_step_id": step.step_id,
+                "orchestration_step_capability": step.capability,
+                "orchestration_step_confidence": step.execution_confidence_score,
+            }
+        )
+        return route_hints
+
+    @staticmethod
+    def _confidence_clamp(value: float) -> float:
+        return max(0.0, min(1.0, value))
+
+    def _estimate_step_confidence(
+        self,
+        *,
+        step: RuntimeExecutionStep,
+        normalized: NormalizedAssistantResponse | None,
+        payload: dict[str, Any] | None,
+        retry_count: int,
+        skipped: bool,
+    ) -> tuple[float, list[str]]:
+        if skipped:
+            return 0.0, ["skipped"]
+        score = float(step.execution_confidence_score or 0.72)
+        factors: list[str] = [f"base={score:.2f}"]
+        payload = dict(payload or {})
+        normalized = normalized or NormalizedAssistantResponse(intent="text", modality="text_only", text_reply="")
+        if normalized.text_reply:
+            score += 0.05
+            factors.append("text_reply")
+        if normalized.card_payloads:
+            score += 0.08
+            factors.append("card_payload")
+        produced = self._extract_step_entities(step=step, normalized=normalized, payload=payload)
+        if produced:
+            score += 0.06
+            factors.append("produced_entities")
+        if normalized.errors:
+            score -= 0.35
+            factors.append("has_errors")
+        if retry_count:
+            score -= 0.12 * retry_count
+            factors.append(f"retry_penalty={retry_count}")
+        if payload.get("_bundle_fallback"):
+            score -= 0.1
+            factors.append("bundle_fallback_penalty")
+        return self._confidence_clamp(score), factors
+
     def _build_step_execution_result(
         self,
         *,
@@ -1263,7 +1695,15 @@ class FairyRuntimeV2:
         retry_count: int = 0,
     ) -> StepExecutionResult:
         if skipped:
+            confidence_score, confidence_factors = self._estimate_step_confidence(
+                step=step,
+                normalized=None,
+                payload=None,
+                retry_count=retry_count,
+                skipped=True,
+            )
             return StepExecutionResult(
+                step_id=step.step_id,
                 capability=step.capability,
                 success=False,
                 output_summary=skip_reason or None,
@@ -1271,27 +1711,48 @@ class FairyRuntimeV2:
                 error_type=skip_reason or "skipped",
                 skipped=True,
                 retry_count=retry_count,
+                execution_confidence_score=confidence_score,
+                confidence_factors=confidence_factors,
+                branch_key=step.branch_key,
             )
         payload = dict(payload or {})
         normalized = normalized or NormalizedAssistantResponse(intent="text", modality="text_only", text_reply="")
         errors = list(normalized.errors)
+        produced_entities = self._extract_step_entities(step=step, normalized=normalized, payload=payload)
+        confidence_score, confidence_factors = self._estimate_step_confidence(
+            step=step,
+            normalized=normalized,
+            payload=payload,
+            retry_count=retry_count,
+            skipped=False,
+        )
         return StepExecutionResult(
+            step_id=step.step_id,
             capability=step.capability,
             success=not errors,
             output_summary=normalized.text_reply or str(payload.get("summary") or "").strip() or None,
-            produced_entities=self._extract_step_entities(step=step, normalized=normalized, payload=payload),
+            produced_entities=produced_entities,
             error_type=str((errors[0] if errors else {}).get("code") or "").strip() or None,
             skipped=False,
             retry_count=retry_count,
+            execution_confidence_score=confidence_score,
+            confidence_factors=confidence_factors,
+            branch_key=step.branch_key,
+            metadata={
+                "executor_path": str(payload.get("_runtime_executor_path") or ""),
+                "bundle_fallback": bool(payload.get("_bundle_fallback")),
+            },
         )
 
     def _apply_step_result_to_session_context(self, session_id: str, step: RuntimeExecutionStep, result: StepExecutionResult) -> None:
         context = self.context_manager.get_or_create(session_id)
         context.last_step_capability = step.capability
-        if "legacy_surface_call" in result.produced_entities:
-            context.flags["used_legacy_surface"] = True
-        if result.produced_entities:
-            primary = result.produced_entities[0]
+        if "desktop_automation_call" in result.produced_entities:
+            context.flags["used_desktop_automation_compatibility"] = True
+        if not result.success:
+            return
+        primary = next((item for item in result.produced_entities if not self._is_noise_entity_value(item)), "")
+        if primary:
             if step.capability in {"location_lookup", "display_information"}:
                 context.active_location_target = primary
                 context.active_city = primary
@@ -1302,9 +1763,11 @@ class FairyRuntimeV2:
             if step.capability in {"generic_search", "news_lookup", "explanation"}:
                 context.active_topic = primary
         if step.capability == "generic_search" and result.output_summary:
-            context.last_generic_query = str(step.slots.get("query") or context.last_generic_query or "").strip()
-        if step.capability == "explanation" and result.produced_entities:
-            context.last_explanation_topic = result.produced_entities[0]
+            query_value = str(step.slots.get("query") or "").strip()
+            if query_value and not self._is_noise_entity_value(query_value):
+                context.last_generic_query = query_value
+        if step.capability == "explanation" and primary:
+            context.last_explanation_topic = primary
 
     def _remember_completed_single_step_plan(
         self,
@@ -1333,12 +1796,191 @@ class FairyRuntimeV2:
         )
         result = self._build_step_execution_result(step=step, normalized=normalized, payload=payload, retry_count=0)
         state.results.append(result)
+        state.mark_step_status(step.step_id, "failed" if normalized.errors else "completed")
+        state.sync_branch_statuses()
         self._persist_plan_state(session_id, state)
         self._apply_step_result_to_session_context(session_id, step, result)
         self._update_session_execution_context(
             session_id,
             RuntimeExecutionPlan(steps=[step], allow_partial_failure=True),
             state=state,
+        )
+
+    def _execute_step_invoke(
+        self,
+        *,
+        step: RuntimeExecutionStep,
+        parent_request_id: str,
+        session_id: str,
+        request_plan: ResponseRequestPlan,
+        bundle_executor: BundleExecutor | None,
+        attachments: list[str],
+        request_origin: str,
+        original_message: str,
+    ) -> dict[str, Any]:
+        step_request_id = self._step_request_id(parent_request_id, step)
+        step_plan = self._request_plan_for_capability(
+            step.capability,
+            planner_confidence=request_plan.planner_confidence,
+            context_payload=request_plan.context_payload,
+        )
+        retry_count = 0
+        retry_reason = ""
+        while True:
+            payload = self._invoke_capability(
+                capability_name=step.capability,
+                message=step.normalized_query or original_message,
+                request_id=step_request_id,
+                session_id=session_id,
+                bundle_executor=bundle_executor,
+                attachments=attachments,
+                request_origin=request_origin,
+                route_hints=self._route_hints_for_step(parent_request_id, step),
+            )
+            normalized = self.normalize_result(
+                user_text=step.normalized_query or original_message,
+                payload=payload,
+                assistant_text=str(payload.get("assistant_text") or payload.get("text") or "").strip(),
+                assistant_html=str(payload.get("assistant_html") or "").strip(),
+                request_plan=step_plan,
+                session_id=session_id,
+                request_id=step_request_id,
+            )
+            should_retry, retry_reason = self._should_retry_step(step, list(normalized.errors))
+            if should_retry and retry_count < 1:
+                retry_count += 1
+                continue
+            break
+        step_result = self._build_step_execution_result(
+            step=step,
+            normalized=normalized,
+            payload=payload,
+            retry_count=retry_count,
+        )
+        return {
+            "step": step,
+            "payload": payload,
+            "normalized": normalized,
+            "step_result": step_result,
+            "retry_count": retry_count,
+            "retry_reason": retry_reason,
+        }
+
+    @staticmethod
+    def _coerce_step_error(normalized: NormalizedAssistantResponse) -> dict[str, Any] | None:
+        return normalized.errors[0] if normalized.errors else None
+
+    def _apply_plan_extension_decision(
+        self,
+        *,
+        plan: RuntimeExecutionPlan,
+        state: RuntimeExecutionPlanState,
+        decision: Any,
+    ) -> list[str]:
+        inserted_step_ids: list[str] = []
+        if getattr(decision, "updated_steps", None):
+            updated_map = {step.step_id: step for step in decision.updated_steps}
+            if updated_map:
+                for index, existing in enumerate(list(plan.steps)):
+                    replacement = updated_map.get(existing.step_id)
+                    if replacement is None:
+                        continue
+                    replacement.step_index = existing.step_index
+                    plan.steps[index] = replacement
+                for index, existing in enumerate(list(state.steps)):
+                    replacement = updated_map.get(existing.step_id)
+                    if replacement is None:
+                        continue
+                    replacement.step_index = existing.step_index
+                    state.steps[index] = replacement
+        if getattr(decision, "cancelled_step_ids", None):
+            for step_id in decision.cancelled_step_ids:
+                if step_id in state.step_statuses and state.step_statuses.get(step_id) == "pending":
+                    state.mark_step_status(step_id, "cancelled")
+        if getattr(decision, "inserted_steps", None):
+            start_index = len(plan.steps)
+            for offset, inserted in enumerate(decision.inserted_steps):
+                inserted.step_index = start_index + offset
+                plan.steps.append(inserted)
+                state.append_steps([inserted])
+                inserted_step_ids.append(inserted.step_id)
+        if getattr(decision, "reasoning", None):
+            state.rewrite_log.extend(list(decision.reasoning))
+        state.sync_branch_statuses()
+        return inserted_step_ids
+
+    def _finalize_batch_result(
+        self,
+        *,
+        session_id: str,
+        plan: RuntimeExecutionPlan,
+        state: RuntimeExecutionPlanState,
+        message: str,
+        step_result: StepExecutionResult,
+        step: RuntimeExecutionStep,
+        reasoning: list[dict[str, Any]],
+    ) -> list[str]:
+        self._apply_step_result_to_session_context(session_id, step, step_result)
+        decision = self.plan_extension_hook.extend(
+            original_message=message,
+            step=step,
+            result=step_result,
+            current_state=state,
+            session_context=self.context_manager.get_or_create(session_id),
+        )
+        inserted_step_ids = self._apply_plan_extension_decision(plan=plan, state=state, decision=decision)
+        if decision.reasoning:
+            reasoning.extend(list(decision.reasoning))
+        return inserted_step_ids
+
+    def _mark_failed_dependency_steps(
+        self,
+        *,
+        plan: RuntimeExecutionPlan,
+        state: RuntimeExecutionPlanState,
+        reasoning: list[dict[str, Any]],
+    ) -> list[RuntimeExecutionStep]:
+        blocked = plan.blocked_by_failed_dependencies(
+            completed=state.completed_step_ids,
+            failed=state.failed_step_ids,
+            skipped=state.skipped_step_ids,
+        )
+        skipped_steps: list[RuntimeExecutionStep] = []
+        for step in blocked:
+            if state.step_statuses.get(step.step_id) != "pending":
+                continue
+            state.mark_step_status(step.step_id, "skipped")
+            skipped_steps.append(step)
+            state.results.append(
+                self._build_step_execution_result(
+                    step=step,
+                    normalized=None,
+                    payload=None,
+                    skipped=True,
+                    skip_reason="dependency_failed",
+                )
+            )
+            reasoning.append(
+                {
+                    "capability": step.capability,
+                    "why_skipped": "dependency_failed",
+                    "depends_on": list(step.depends_on),
+                }
+            )
+        if skipped_steps:
+            state.sync_branch_statuses()
+        return skipped_steps
+
+    def _next_step_batch(
+        self,
+        *,
+        plan: RuntimeExecutionPlan,
+        state: RuntimeExecutionPlanState,
+    ) -> list[RuntimeExecutionStep]:
+        return plan.next_parallel_batch(
+            completed=state.completed_step_ids,
+            failed=state.failed_step_ids,
+            skipped=state.skipped_step_ids,
         )
 
     def _invoke_orchestration(
@@ -1351,7 +1993,7 @@ class FairyRuntimeV2:
         resolution: dict[str, Any],
         plan: RuntimeExecutionPlan,
         attachments: list[str],
-        legacy_executor: LegacyExecutor | None,
+        bundle_executor: BundleExecutor | None,
         request_origin: str,
         include_compat_fields: bool,
     ) -> dict[str, Any]:
@@ -1362,68 +2004,113 @@ class FairyRuntimeV2:
         reasoning: list[dict[str, Any]] = []
         last_payload: dict[str, Any] = {}
         plan_state = self._create_plan_state(session_id=session_id, plan=plan, plan_id=request_id)
-        index = plan_state.current_index
-        while index < len(plan_state.steps):
-            step = plan_state.steps[index]
-            plan_state.current_index = index
-            self._persist_plan_state(session_id, plan_state)
-            skip_step, skip_reason = self._should_skip_step(step)
-            if skip_step:
-                step_result = self._build_step_execution_result(
-                    step=step,
-                    normalized=None,
-                    payload=None,
-                    skipped=True,
-                    skip_reason=skip_reason,
-                )
-                plan_state.results.append(step_result)
+        self._set_runtime_state("analyzing", reason="orchestration_plan_built", request_id=request_id, session_id=session_id)
+        while True:
+            blocked = self._mark_failed_dependency_steps(plan=plan, state=plan_state, reasoning=reasoning)
+            for skipped_step in blocked:
                 step_results.append(
                     {
-                        "capability": step.capability,
+                        "step_id": skipped_step.step_id,
+                        "capability": skipped_step.capability,
                         "success": False,
-                        "error": {"code": "step_skipped", "message": skip_reason},
+                        "error": {"code": "step_skipped", "message": "dependency_failed"},
                         "skipped": True,
                         "retry_count": 0,
+                        "produced_entities": [],
+                        "execution_confidence_score": 0.0,
+                        "inserted_steps": [],
                     }
                 )
-                reasoning.append(
-                    {
-                        "capability": step.capability,
-                        "why_skipped": skip_reason,
+            batch = self._next_step_batch(plan=plan, state=plan_state)
+            if not batch:
+                break
+            plan_state.active_batch = [step.step_id for step in batch]
+            for step in batch:
+                plan_state.mark_step_status(step.step_id, "running")
+            plan_state.sync_branch_statuses()
+            self._persist_plan_state(session_id, plan_state)
+            batch_outcomes: list[dict[str, Any]] = []
+            if len(batch) == 1:
+                step = batch[0]
+                skip_step, skip_reason = self._should_skip_step(step)
+                if skip_step:
+                    step_result = self._build_step_execution_result(
+                        step=step,
+                        normalized=None,
+                        payload=None,
+                        skipped=True,
+                        skip_reason=skip_reason,
+                    )
+                    batch_outcomes.append(
+                        {
+                            "step": step,
+                            "payload": {},
+                            "normalized": None,
+                            "step_result": step_result,
+                            "retry_count": 0,
+                            "retry_reason": "",
+                            "skip_reason": skip_reason,
+                        }
+                    )
+                else:
+                    batch_outcomes.append(
+                        self._execute_step_invoke(
+                            step=step,
+                            parent_request_id=request_id,
+                            session_id=session_id,
+                            request_plan=request_plan,
+                            bundle_executor=bundle_executor,
+                            attachments=attachments,
+                            request_origin=request_origin,
+                            original_message=message,
+                        )
+                    )
+            else:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch), thread_name_prefix="fairy-orch") as pool:
+                    future_map = {
+                        pool.submit(
+                            self._execute_step_invoke,
+                            step=step,
+                            parent_request_id=request_id,
+                            session_id=session_id,
+                            request_plan=request_plan,
+                            bundle_executor=bundle_executor,
+                            attachments=attachments,
+                            request_origin=request_origin,
+                            original_message=message,
+                        ): step
+                        for step in batch
                     }
-                )
-                index += 1
-                plan_state.current_index = index
-                self._persist_plan_state(session_id, plan_state)
-                continue
-            step_plan = self._request_plan_for_capability(
-                step.capability,
-                planner_confidence=request_plan.planner_confidence,
-                context_payload=request_plan.context_payload,
-            )
-            retry_count = 0
-            while True:
-                payload = self._invoke_capability(
-                    capability_name=step.capability,
-                    message=step.normalized_query or message,
-                    request_id=request_id,
-                    session_id=session_id,
-                    legacy_executor=legacy_executor,
-                    attachments=attachments,
-                    request_origin=request_origin,
-                )
-                normalized = self.normalize_result(
-                    user_text=step.normalized_query or message,
-                    payload=payload,
-                    assistant_text=str(payload.get("assistant_text") or payload.get("text") or "").strip(),
-                    assistant_html=str(payload.get("assistant_html") or "").strip(),
-                    request_plan=step_plan,
-                    session_id=session_id,
-                    request_id=request_id,
-                )
-                should_retry, retry_reason = self._should_retry_step(step, list(normalized.errors))
-                if should_retry and retry_count < 1:
-                    retry_count += 1
+                    for future in concurrent.futures.as_completed(future_map):
+                        batch_outcomes.append(future.result())
+            for outcome in sorted(batch_outcomes, key=lambda item: int(item["step"].step_index)):
+                step = outcome["step"]
+                skip_reason = str(outcome.get("skip_reason") or "").strip()
+                if skip_reason:
+                    step_result = outcome["step_result"]
+                    plan_state.results.append(step_result)
+                    plan_state.mark_step_status(step.step_id, "skipped")
+                    reasoning.append({"capability": step.capability, "why_skipped": skip_reason})
+                    step_results.append(
+                        {
+                            "step_id": step.step_id,
+                            "capability": step.capability,
+                            "success": False,
+                            "error": {"code": "step_skipped", "message": skip_reason},
+                            "skipped": True,
+                            "retry_count": 0,
+                            "produced_entities": [],
+                            "execution_confidence_score": step_result.execution_confidence_score,
+                            "inserted_steps": [],
+                        }
+                    )
+                    continue
+                normalized = outcome["normalized"]
+                payload = outcome["payload"]
+                step_result = outcome["step_result"]
+                retry_count = int(outcome.get("retry_count") or 0)
+                retry_reason = str(outcome.get("retry_reason") or "").strip()
+                if retry_count:
                     reasoning.append(
                         {
                             "capability": step.capability,
@@ -1431,70 +2118,80 @@ class FairyRuntimeV2:
                             "retry_count": retry_count,
                         }
                     )
-                    continue
-                break
-            if normalized.text_reply:
-                texts.append(normalized.text_reply)
-            cards.extend(normalized.cards)
-            errors.extend(list(normalized.errors))
-            step_result = self._build_step_execution_result(
-                step=step,
-                normalized=normalized,
-                payload=payload,
-                retry_count=retry_count,
-            )
-            plan_state.results.append(step_result)
-            step_success = step_result.success
-            step_results.append(
-                {
-                    "capability": step.capability,
-                    "success": step_success,
-                    "error": normalized.errors[0] if normalized.errors else None,
-                    "skipped": False,
-                    "retry_count": retry_count,
-                    "produced_entities": list(step_result.produced_entities),
-                }
-            )
-            self._apply_step_result_to_session_context(session_id, step, step_result)
-            extension = self.plan_extension_hook.extend(
-                original_message=message,
-                step=step,
-                result=step_result,
-                current_steps=plan_state.steps,
-            )
-            if extension.inserted_steps:
-                for inserted in extension.inserted_steps:
-                    inserted.step_index = len(plan_state.steps)
-                    plan_state.steps.append(inserted)
-                reasoning.extend(extension.reasoning)
-            last_payload = payload
-            index += 1
-            plan_state.current_index = index
+                if normalized.text_reply:
+                    self._set_runtime_state("replying", reason=f"step_output:{step.capability}", request_id=request_id, session_id=session_id)
+                    texts.append(normalized.text_reply)
+                if normalized.cards:
+                    self._set_runtime_state("replying", reason=f"step_card:{step.capability}", request_id=request_id, session_id=session_id)
+                cards.extend(normalized.cards)
+                errors.extend(list(normalized.errors))
+                plan_state.results.append(step_result)
+                plan_state.mark_step_status(step.step_id, "completed" if step_result.success else "failed")
+                inserted_step_ids = self._finalize_batch_result(
+                    session_id=session_id,
+                    plan=plan,
+                    state=plan_state,
+                    message=message,
+                    step_result=step_result,
+                    step=step,
+                    reasoning=reasoning,
+                )
+                step_result.inserted_steps.extend(inserted_step_ids)
+                step_results.append(
+                    {
+                        "step_id": step.step_id,
+                        "capability": step.capability,
+                        "success": step_result.success,
+                        "error": self._coerce_step_error(normalized),
+                        "skipped": False,
+                        "retry_count": retry_count,
+                        "produced_entities": list(step_result.produced_entities),
+                        "execution_confidence_score": step_result.execution_confidence_score,
+                        "inserted_steps": list(inserted_step_ids),
+                    }
+                )
+                last_payload = payload
+                if not step_result.success and not plan.allow_partial_failure:
+                    plan_state.status = "failed"
+            plan_state.current_index = len(plan_state.completed_step_ids | plan_state.failed_step_ids | plan_state.skipped_step_ids)
+            plan_state.active_batch = []
+            plan_state.sync_branch_statuses()
             self._persist_plan_state(session_id, plan_state)
-            if not step_success and not plan.allow_partial_failure:
-                plan_state.status = "failed"
-                self._persist_plan_state(session_id, plan_state)
+            if plan_state.status == "failed":
                 break
         if plan_state.status not in {"failed", "cancelled"}:
             plan_state.status = "completed"
             self._persist_plan_state(session_id, plan_state)
 
-        summary_card = build_orchestration_summary_card(step_results=step_results, text_blocks=texts)
+        summary_card = build_orchestration_summary_card(
+            step_results=step_results,
+            text_blocks=texts,
+            reasoning=reasoning,
+            graph_mode=plan.graph_mode,
+        )
         if summary_card is not None:
+            self._set_runtime_state("replying", reason="orchestration_summary_ready", request_id=request_id, session_id=session_id)
             cards.append(summary_card)
 
+        self._set_runtime_state("idle", reason="orchestration_completed", request_id=request_id, session_id=session_id)
         meta_runtime = {
             "selected_capability": plan.steps[0].capability,
-            "executor_path": "sequential_orchestration",
-            "used_legacy_fallback": False,
+            "executor_path": "adaptive_orchestration_graph" if plan.graph_mode == "graph" else "sequential_orchestration",
+            "used_bundle_fallback": False,
             "request_origin": request_origin,
             "compat_fields_emitted": bool(include_compat_fields),
-            "legacy_surface_automation": any("legacy_surface_call" in list(item.produced_entities) for item in plan_state.results),
+            "desktop_automation_compatibility": any(
+                "desktop_automation_call" in list(item.produced_entities) for item in plan_state.results
+            ),
             "orchestration": {
                 "execution_mode": "sequential",
                 "plan_id": plan_state.plan_id,
                 "status": plan_state.status,
+                "graph_mode": plan.graph_mode,
+                "parallel_enabled": plan.parallel_enabled,
                 "step_results": [item.to_dict() for item in plan_state.results],
+                "rewrite_log": list(plan_state.rewrite_log),
+                "branch_statuses": dict(plan_state.branch_statuses),
             },
             "orchestration_reasoning": {
                 "step_decisions": reasoning,
@@ -1510,7 +2207,16 @@ class FairyRuntimeV2:
                 "modality": request_plan.modality,
                 "speech": {"mode": request_plan.speech_mode, "text": "", "allow_streaming": False},
                 "resolution": resolution,
+                "runtime_state": self.runtime_state_snapshot(),
                 "runtime": meta_runtime,
+                "fairy": self._response_fairy_meta(
+                    payload=last_payload,
+                    text="\n\n".join(item for item in texts if item).strip(),
+                    cards=cards,
+                    errors=errors,
+                    resolution=resolution,
+                    selected_capability=plan.steps[0].capability if plan.steps else "bundle-runtime",
+                ),
             },
             "errors": errors,
         }
@@ -1545,206 +2251,368 @@ class FairyRuntimeV2:
         resolution: dict[str, Any],
         plan: RuntimeExecutionPlan,
         attachments: list[str],
-        legacy_executor: LegacyExecutor | None,
+        bundle_executor: BundleExecutor | None,
         request_origin: str,
         cancel_event: threading.Event | None,
     ) -> Iterable[StreamEventBase]:
         plan_state = self._create_plan_state(session_id=session_id, plan=plan, plan_id=request_id)
+        self._set_runtime_state("analyzing", reason="orchestration_plan_built", request_id=request_id, session_id=session_id)
         yield ProgressStreamEvent(
             request_id=request_id,
             session_id=session_id,
             stage="orchestration_plan_built",
-            text=f"Built sequential execution plan with {len(plan_state.steps)} steps.",
+            text=f"Built {plan.graph_mode} execution plan with {len(plan_state.steps)} steps.",
         )
         text_parts: list[str] = []
         cards: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
         step_results: list[dict[str, Any]] = []
         reasoning: list[dict[str, Any]] = []
-        index = plan_state.current_index
-        while index < len(plan_state.steps):
+        while True:
             if cancel_event is not None and cancel_event.is_set():
                 plan_state.status = "cancelled"
                 break
-            step = plan_state.steps[index]
-            plan_state.current_index = index
-            self._persist_plan_state(session_id, plan_state)
-            yield ProgressStreamEvent(
-                request_id=request_id,
-                session_id=session_id,
-                stage="orchestration_step_start",
-                text=f"Starting step {step.step_index + 1}: {step.capability}",
-            )
-            if cancel_event is not None and cancel_event.is_set():
-                plan_state.status = "cancelled"
-                self._persist_plan_state(session_id, plan_state)
-                break
-            skip_step, skip_reason = self._should_skip_step(step)
-            if skip_step:
-                step_result = self._build_step_execution_result(
-                    step=step,
-                    normalized=None,
-                    payload=None,
-                    skipped=True,
-                    skip_reason=skip_reason,
-                )
-                plan_state.results.append(step_result)
+            blocked = self._mark_failed_dependency_steps(plan=plan, state=plan_state, reasoning=reasoning)
+            for skipped_step in blocked:
                 step_results.append(
                     {
-                        "capability": step.capability,
+                        "step_id": skipped_step.step_id,
+                        "capability": skipped_step.capability,
                         "success": False,
-                        "error": {"code": "step_skipped", "message": skip_reason},
+                        "error": {"code": "step_skipped", "message": "dependency_failed"},
                         "skipped": True,
                         "retry_count": 0,
                         "produced_entities": [],
+                        "execution_confidence_score": 0.0,
+                        "inserted_steps": [],
                     }
                 )
-                reasoning.append({"capability": step.capability, "why_skipped": skip_reason})
                 yield ProgressStreamEvent(
                     request_id=request_id,
                     session_id=session_id,
                     stage="orchestration_step_skipped",
-                    text=f"Skipped step {step.step_index + 1}: {skip_reason}",
+                    text=f"Skipped step {skipped_step.step_index + 1}: dependency_failed",
                 )
-                index += 1
-                plan_state.current_index = index
-                self._persist_plan_state(session_id, plan_state)
-                continue
-            step_plan = self._request_plan_for_capability(
-                step.capability,
-                planner_confidence=request_plan.planner_confidence,
-                context_payload=request_plan.context_payload,
-            )
-            retry_count = 0
-            while True:
-                normalized = yield from self._stream_capability_step(
-                    capability_name=step.capability,
-                    message=step.normalized_query or message,
+            batch = self._next_step_batch(plan=plan, state=plan_state)
+            if not batch:
+                break
+            plan_state.active_batch = [step.step_id for step in batch]
+            for step in batch:
+                plan_state.mark_step_status(step.step_id, "running")
+                yield ProgressStreamEvent(
                     request_id=request_id,
                     session_id=session_id,
-                    request_plan=step_plan,
-                    legacy_executor=legacy_executor,
-                    attachments=attachments,
-                    request_origin=request_origin,
-                    cancel_event=cancel_event,
+                    stage="orchestration_step_start",
+                    text=f"Starting step {step.step_index + 1}: {step.capability}",
                 )
-                if normalized is None:
-                    plan_state.status = "cancelled"
-                    self._persist_plan_state(session_id, plan_state)
-                    break
-                should_retry, retry_reason = self._should_retry_step(step, list(normalized.errors))
-                if should_retry and retry_count < 1 and not normalized.text_reply and not normalized.cards:
-                    retry_count += 1
-                    reasoning.append(
+            plan_state.sync_branch_statuses()
+            self._persist_plan_state(session_id, plan_state)
+            if len(batch) == 1 and not batch[0].can_run_parallel:
+                step = batch[0]
+                skip_step, skip_reason = self._should_skip_step(step)
+                if skip_step:
+                    step_result = self._build_step_execution_result(
+                        step=step,
+                        normalized=None,
+                        payload=None,
+                        skipped=True,
+                        skip_reason=skip_reason,
+                    )
+                    plan_state.results.append(step_result)
+                    plan_state.mark_step_status(step.step_id, "skipped")
+                    reasoning.append({"capability": step.capability, "why_skipped": skip_reason})
+                    step_results.append(
                         {
+                            "step_id": step.step_id,
                             "capability": step.capability,
-                            "why_retry": retry_reason or "retryable_error",
-                            "retry_count": retry_count,
+                            "success": False,
+                            "error": {"code": "step_skipped", "message": skip_reason},
+                            "skipped": True,
+                            "retry_count": 0,
+                            "produced_entities": [],
+                            "execution_confidence_score": step_result.execution_confidence_score,
+                            "inserted_steps": [],
                         }
                     )
                     yield ProgressStreamEvent(
                         request_id=request_id,
                         session_id=session_id,
-                        stage="orchestration_step_retry",
-                        text=f"Retrying step {step.step_index + 1}: {step.capability}",
+                        stage="orchestration_step_skipped",
+                        text=f"Skipped step {step.step_index + 1}: {skip_reason}",
                     )
-                    continue
-                break
-            if normalized is None:
-                break
-            if normalized.text_reply:
-                text_parts.append(normalized.text_reply)
-            for card in normalized.cards:
-                cards.append(card)
-            step_result = self._build_step_execution_result(
-                step=step,
-                normalized=normalized,
-                payload={},
-                retry_count=retry_count,
-            )
-            plan_state.results.append(step_result)
-            self._apply_step_result_to_session_context(session_id, step, step_result)
-            step_success = step_result.success
-            if normalized.errors:
-                errors.extend(list(normalized.errors))
+                else:
+                    step_plan = self._request_plan_for_capability(
+                        step.capability,
+                        planner_confidence=request_plan.planner_confidence,
+                        context_payload=request_plan.context_payload,
+                    )
+                    retry_count = 0
+                    payload = {}
+                    while True:
+                        normalized = yield from self._stream_capability_step(
+                            capability_name=step.capability,
+                            message=step.normalized_query or message,
+                            request_id=self._step_request_id(request_id, step),
+                            session_id=session_id,
+                            request_plan=step_plan,
+                            bundle_executor=bundle_executor,
+                            attachments=attachments,
+                            request_origin=request_origin,
+                            cancel_event=cancel_event,
+                            route_hints=self._route_hints_for_step(request_id, step),
+                        )
+                        if normalized is None:
+                            plan_state.status = "cancelled"
+                            self._persist_plan_state(session_id, plan_state)
+                            break
+                        should_retry, retry_reason = self._should_retry_step(step, list(normalized.errors))
+                        if should_retry and retry_count < 1 and not normalized.text_reply and not normalized.cards:
+                            retry_count += 1
+                            reasoning.append(
+                                {
+                                    "capability": step.capability,
+                                    "why_retry": retry_reason or "retryable_error",
+                                    "retry_count": retry_count,
+                                }
+                            )
+                            yield ProgressStreamEvent(
+                                request_id=request_id,
+                                session_id=session_id,
+                                stage="orchestration_step_retry",
+                                text=f"Retrying step {step.step_index + 1}: {step.capability}",
+                            )
+                            continue
+                        break
+                    if normalized is None:
+                        break
+                    if normalized.text_reply:
+                        self._set_runtime_state("replying", reason=f"step_output:{step.capability}", request_id=request_id, session_id=session_id)
+                        text_parts.append(normalized.text_reply)
+                    for card in normalized.cards:
+                        self._set_runtime_state("replying", reason=f"step_card:{step.capability}", request_id=request_id, session_id=session_id)
+                        cards.append(card)
+                    step_result = self._build_step_execution_result(
+                        step=step,
+                        normalized=normalized,
+                        payload=payload,
+                        retry_count=retry_count,
+                    )
+                    plan_state.results.append(step_result)
+                    plan_state.mark_step_status(step.step_id, "completed" if step_result.success else "failed")
+                    inserted_step_ids = self._finalize_batch_result(
+                        session_id=session_id,
+                        plan=plan,
+                        state=plan_state,
+                        message=message,
+                        step_result=step_result,
+                        step=step,
+                        reasoning=reasoning,
+                    )
+                    step_result.inserted_steps.extend(inserted_step_ids)
+                    if normalized.errors:
+                        errors.extend(list(normalized.errors))
+                        yield ProgressStreamEvent(
+                            request_id=request_id,
+                            session_id=session_id,
+                            stage="orchestration_partial_failure",
+                            text=f"Step {step.step_index + 1} failed: {normalized.errors[0].get('message') or step.capability}",
+                        )
+                    if inserted_step_ids:
+                        yield ProgressStreamEvent(
+                            request_id=request_id,
+                            session_id=session_id,
+                            stage="orchestration_plan_extended",
+                            text=f"Inserted {len(inserted_step_ids)} adaptive step(s).",
+                        )
+                    step_results.append(
+                        {
+                            "step_id": step.step_id,
+                            "capability": step.capability,
+                            "success": step_result.success,
+                            "error": self._coerce_step_error(normalized),
+                            "skipped": False,
+                            "retry_count": retry_count,
+                            "produced_entities": list(step_result.produced_entities),
+                            "execution_confidence_score": step_result.execution_confidence_score,
+                            "inserted_steps": list(inserted_step_ids),
+                        }
+                    )
+                    yield ProgressStreamEvent(
+                        request_id=request_id,
+                        session_id=session_id,
+                        stage="orchestration_step_complete",
+                        text=f"Completed step {step.step_index + 1}: {step.capability}",
+                    )
+                    if not step_result.success and not plan.allow_partial_failure:
+                        plan_state.status = "failed"
+            else:
                 yield ProgressStreamEvent(
                     request_id=request_id,
                     session_id=session_id,
-                    stage="orchestration_partial_failure",
-                    text=f"Step {step.step_index + 1} failed: {normalized.errors[0].get('message') or step.capability}",
+                    stage="orchestration_parallel_batch",
+                    text=f"Running {len(batch)} steps in parallel.",
                 )
-            step_results.append(
-                {
-                    "capability": step.capability,
-                    "success": step_success,
-                    "error": normalized.errors[0] if normalized.errors else None,
-                    "skipped": False,
-                    "retry_count": retry_count,
-                    "produced_entities": list(step_result.produced_entities),
-                }
-            )
-            extension = self.plan_extension_hook.extend(
-                original_message=message,
-                step=step,
-                result=step_result,
-                current_steps=plan_state.steps,
-            )
-            if extension.inserted_steps:
-                for inserted in extension.inserted_steps:
-                    inserted.step_index = len(plan_state.steps)
-                    plan_state.steps.append(inserted)
-                reasoning.extend(extension.reasoning)
-                yield ProgressStreamEvent(
-                    request_id=request_id,
-                    session_id=session_id,
-                    stage="orchestration_plan_extended",
-                    text=f"Inserted {len(extension.inserted_steps)} follow-up step(s).",
-                )
-            yield ProgressStreamEvent(
-                request_id=request_id,
-                session_id=session_id,
-                stage="orchestration_step_complete",
-                text=f"Completed step {step.step_index + 1}: {step.capability}",
-            )
-            index += 1
-            plan_state.current_index = index
+                with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch), thread_name_prefix="fairy-orch") as pool:
+                    future_map = {
+                        pool.submit(
+                            self._execute_step_invoke,
+                            step=step,
+                            parent_request_id=request_id,
+                            session_id=session_id,
+                            request_plan=request_plan,
+                            bundle_executor=bundle_executor,
+                            attachments=attachments,
+                            request_origin=request_origin,
+                            original_message=message,
+                        ): step
+                        for step in batch
+                    }
+                    for future in concurrent.futures.as_completed(future_map):
+                        if cancel_event is not None and cancel_event.is_set():
+                            plan_state.status = "cancelled"
+                            break
+                        outcome = future.result()
+                        step = outcome["step"]
+                        normalized = outcome["normalized"]
+                        payload = outcome["payload"]
+                        step_result = outcome["step_result"]
+                        retry_count = int(outcome.get("retry_count") or 0)
+                        retry_reason = str(outcome.get("retry_reason") or "").strip()
+                        if retry_count:
+                            reasoning.append(
+                                {
+                                    "capability": step.capability,
+                                    "why_retry": retry_reason or "retryable_error",
+                                    "retry_count": retry_count,
+                                }
+                            )
+                            yield ProgressStreamEvent(
+                                request_id=request_id,
+                                session_id=session_id,
+                                stage="orchestration_step_retry",
+                                text=f"Retried step {step.step_index + 1}: {step.capability}",
+                            )
+                        if normalized.text_reply:
+                            self._set_runtime_state("replying", reason=f"step_output:{step.capability}", request_id=request_id, session_id=session_id)
+                            text_parts.append(normalized.text_reply)
+                            yield TextDeltaEvent(request_id=request_id, session_id=session_id, text=normalized.text_reply)
+                        for card in normalized.cards:
+                            self._set_runtime_state("replying", reason=f"step_card:{step.capability}", request_id=request_id, session_id=session_id)
+                            cards.append(card)
+                            yield CardStreamEvent(request_id=request_id, session_id=session_id, card=card)
+                        if normalized.errors:
+                            errors.extend(list(normalized.errors))
+                            yield ProgressStreamEvent(
+                                request_id=request_id,
+                                session_id=session_id,
+                                stage="orchestration_partial_failure",
+                                text=f"Step {step.step_index + 1} failed: {normalized.errors[0].get('message') or step.capability}",
+                            )
+                        plan_state.results.append(step_result)
+                        plan_state.mark_step_status(step.step_id, "completed" if step_result.success else "failed")
+                        inserted_step_ids = self._finalize_batch_result(
+                            session_id=session_id,
+                            plan=plan,
+                            state=plan_state,
+                            message=message,
+                            step_result=step_result,
+                            step=step,
+                            reasoning=reasoning,
+                        )
+                        step_result.inserted_steps.extend(inserted_step_ids)
+                        if inserted_step_ids:
+                            yield ProgressStreamEvent(
+                                request_id=request_id,
+                                session_id=session_id,
+                                stage="orchestration_plan_extended",
+                                text=f"Inserted {len(inserted_step_ids)} adaptive step(s).",
+                            )
+                        step_results.append(
+                            {
+                                "step_id": step.step_id,
+                                "capability": step.capability,
+                                "success": step_result.success,
+                                "error": self._coerce_step_error(normalized),
+                                "skipped": False,
+                                "retry_count": retry_count,
+                                "produced_entities": list(step_result.produced_entities),
+                                "execution_confidence_score": step_result.execution_confidence_score,
+                                "inserted_steps": list(inserted_step_ids),
+                            }
+                        )
+                        yield ProgressStreamEvent(
+                            request_id=request_id,
+                            session_id=session_id,
+                            stage="orchestration_step_complete",
+                            text=f"Completed step {step.step_index + 1}: {step.capability}",
+                        )
+                        if not step_result.success and not plan.allow_partial_failure:
+                            plan_state.status = "failed"
+            plan_state.current_index = len(plan_state.completed_step_ids | plan_state.failed_step_ids | plan_state.skipped_step_ids)
+            plan_state.active_batch = []
+            plan_state.sync_branch_statuses()
             self._persist_plan_state(session_id, plan_state)
-            if not step_success and not plan.allow_partial_failure:
-                plan_state.status = "failed"
-                self._persist_plan_state(session_id, plan_state)
+            if plan_state.status in {"failed", "cancelled"}:
                 break
         if plan_state.status not in {"failed", "cancelled"}:
             plan_state.status = "completed"
             self._persist_plan_state(session_id, plan_state)
 
         final_text = "\n\n".join(part for part in text_parts if part).strip()
-        summary_card = build_orchestration_summary_card(step_results=step_results, text_blocks=text_parts)
+        summary_card = build_orchestration_summary_card(
+            step_results=step_results,
+            text_blocks=text_parts,
+            reasoning=reasoning,
+            graph_mode=plan.graph_mode,
+        )
         if summary_card is not None:
+            self._set_runtime_state("replying", reason="orchestration_summary_ready", request_id=request_id, session_id=session_id)
             cards.append(summary_card)
             yield CardStreamEvent(request_id=request_id, session_id=session_id, card=summary_card)
+        self._set_runtime_state(
+            "idle" if plan_state.status != "cancelled" else "idle",
+            reason="orchestration_cancelled" if plan_state.status == "cancelled" else "orchestration_completed",
+            request_id=request_id,
+            session_id=session_id,
+        )
         end_meta = {
             "intent": request_plan.intent,
             "modality": request_plan.modality,
             "speech": {"mode": request_plan.speech_mode, "text": "", "allow_streaming": False},
             "resolution": resolution,
+            "runtime_state": self.runtime_state_snapshot(),
             "runtime": {
                 "selected_capability": plan_state.steps[0].capability if plan_state.steps else "",
-                "executor_path": "sequential_orchestration",
-                "used_legacy_fallback": False,
+                "executor_path": "adaptive_orchestration_graph" if plan.graph_mode == "graph" else "sequential_orchestration",
+                "used_bundle_fallback": False,
                 "request_origin": request_origin,
                 "compat_fields_emitted": False,
-                "legacy_surface_automation": any("legacy_surface_call" in list(item.produced_entities) for item in plan_state.results),
+                "desktop_automation_compatibility": any(
+                    "desktop_automation_call" in list(item.produced_entities) for item in plan_state.results
+                ),
                 "orchestration": {
                     "execution_mode": "sequential",
                     "plan_id": plan_state.plan_id,
                     "status": plan_state.status,
+                    "graph_mode": plan.graph_mode,
+                    "parallel_enabled": plan.parallel_enabled,
                     "step_results": [item.to_dict() for item in plan_state.results],
+                    "rewrite_log": list(plan_state.rewrite_log),
+                    "branch_statuses": dict(plan_state.branch_statuses),
                 },
                 "orchestration_reasoning": {
                     "step_decisions": reasoning,
                 },
             },
         }
+        end_meta["fairy"] = self._response_fairy_meta(
+            meta=end_meta,
+            text=final_text,
+            cards=cards,
+            errors=errors,
+            resolution=resolution,
+            selected_capability=plan_state.steps[0].capability if plan_state.steps else "bundle-runtime",
+        )
         yield MessageEndEvent(
             request_id=request_id,
             session_id=session_id,
@@ -1774,48 +2642,23 @@ class FairyRuntimeV2:
         request_id: str,
         session_id: str,
         request_plan: ResponseRequestPlan,
-        legacy_executor: LegacyExecutor | None,
+        bundle_executor: BundleExecutor | None,
         attachments: list[str],
         request_origin: str,
         cancel_event: threading.Event | None,
+        route_hints: dict[str, Any] | None = None,
     ) -> Iterable[StreamEventBase]:
         emitted_text_delta = False
         execution_payload: dict[str, Any] | None = None
-        active_streaming_executor = self._streaming_legacy_executor
+        active_streaming_executor = self._streaming_bundle_executor
         direct_streaming_executor = self._streaming_capability_executors.get(capability_name or "")
+        effective_route_hints = dict(route_hints or self.get_route_hints(request_id))
         try:
+            self._set_runtime_state("analyzing", reason=f"step_started:{capability_name or 'bundle-runtime'}", request_id=request_id, session_id=session_id)
             if cancel_event is not None and cancel_event.is_set():
                 return None
-            if capability_name and self._can_use_invocation_service(capability_name):
-                for event in self._stream_invocation_service(
-                    capability_name=capability_name,
-                    message=message,
-                    request_id=request_id,
-                    session_id=session_id,
-                    cancel_event=cancel_event,
-                ):
-                    kind = str(event.get("kind") or "").strip().lower()
-                    if kind == "progress":
-                        progress = self.build_progress_event(
-                            str(event.get("event_name") or ""),
-                            dict(event.get("payload") or {}),
-                            user_text=message,
-                            request_id=request_id,
-                        )
-                        if progress is not None:
-                            yield ProgressStreamEvent(
-                                request_id=request_id,
-                                session_id=session_id,
-                                stage=progress.stage,
-                                text=progress.text,
-                            )
-                        continue
-                    if kind == "error":
-                        raise RuntimeError(str(event.get("message") or "Streaming execution failed."))
-                    if kind == "result":
-                        execution_payload = dict(event.get("payload") or {})
-            elif capability_name and direct_streaming_executor is not None:
-                delegate_to_legacy = False
+            if capability_name and direct_streaming_executor is not None:
+                delegate_to_bundle_runtime = False
                 delegate_reason = ""
                 delegated_runtime_meta: dict[str, Any] = {}
                 for event in direct_streaming_executor(
@@ -1824,20 +2667,22 @@ class FairyRuntimeV2:
                     request_id=request_id,
                     attachments=attachments,
                     request_origin=request_origin,
-                    route_hints={},
+                    route_hints=effective_route_hints,
                     cancel_event=cancel_event,
                 ):
                     if cancel_event is not None and cancel_event.is_set():
                         return None
                     kind = str(event.get("kind") or "").strip().lower()
-                    if kind == "delegate_legacy":
-                        delegate_to_legacy = True
-                        delegate_reason = str(event.get("reason") or "streaming_direct_executor_requested_legacy_fallback").strip()
+                    if kind == "delegate_bundle_runtime":
+                        delegate_to_bundle_runtime = True
+                        delegate_reason = str(event.get("reason") or "streaming_direct_executor_requested_bundle_fallback").strip()
                         delegated_runtime_meta = {
                             "system_action_type": str(event.get("system_action_type") or ""),
                             "system_action_name": str(event.get("system_action_name") or ""),
-                            "legacy_surface_automation": bool(event.get("legacy_surface")),
-                            "executor_path": str(event.get("executor_path") or "legacy_surface_legacy_executor"),
+                            "desktop_automation_compatibility": bool(event.get("desktop_automation_compatibility")),
+                            "executor_path": str(
+                                event.get("executor_path") or "desktop_automation_compatibility_executor"
+                            ),
                         }
                         break
                     if kind == "text_delta":
@@ -1865,11 +2710,11 @@ class FairyRuntimeV2:
                         raise RuntimeError(str(event.get("message") or "Streaming direct executor failed."))
                     if kind == "result":
                         execution_payload = dict(event.get("payload") or {})
-                if delegate_to_legacy:
+                if delegate_to_bundle_runtime:
                     logger.info(
-                        "runtime_v2_orchestration_direct_streaming_executor_delegated_to_legacy request_id=%s capability=%s reason=%s",
+                        "runtime_v2_orchestration_direct_streaming_executor_delegated_to_bundle_runtime request_id=%s capability=%s reason=%s",
                         request_id,
-                        capability_name or "legacy_fallback",
+                        capability_name or "bundle_fallback",
                         delegate_reason,
                     )
                     if active_streaming_executor is not None:
@@ -1879,7 +2724,7 @@ class FairyRuntimeV2:
                             request_id=request_id,
                             attachments=attachments,
                             request_origin=request_origin,
-                            route_hints={},
+                            route_hints=effective_route_hints,
                             cancel_event=cancel_event,
                         ):
                             kind = str(event.get("kind") or "").strip().lower()
@@ -1905,36 +2750,72 @@ class FairyRuntimeV2:
                                     )
                                 continue
                             if kind == "error":
-                                raise RuntimeError(str(event.get("message") or "Streaming legacy executor failed."))
+                                raise RuntimeError(str(event.get("message") or "Streaming bundle executor failed."))
                             if kind == "result":
                                 execution_payload = dict(event.get("payload") or {})
                                 execution_payload["_runtime_system_action_type"] = str(
-                                    delegated_runtime_meta.get("system_action_type") or "legacy_only"
+                                    delegated_runtime_meta.get("system_action_type") or "desktop_automation_compatibility"
                                 )
                                 execution_payload["_runtime_system_action_name"] = str(
-                                    delegated_runtime_meta.get("system_action_name") or "legacy_screen_action"
+                                    delegated_runtime_meta.get("system_action_name") or "desktop_automation_compatibility_action"
                                 )
                                 execution_payload["_runtime_executor_path"] = str(
-                                    delegated_runtime_meta.get("executor_path") or "legacy_surface_legacy_executor"
+                                    delegated_runtime_meta.get("executor_path") or "desktop_automation_compatibility_executor"
                                 )
-                                execution_payload["_legacy_surface_automation"] = bool(
-                                    delegated_runtime_meta.get("legacy_surface_automation")
+                                execution_payload["_desktop_automation_compatibility"] = bool(
+                                    delegated_runtime_meta.get("desktop_automation_compatibility")
                                 )
                     else:
                         execution_payload = {
-                            "assistant_text": "This system action still requires the legacy executor, but no compatible legacy stream executor is available.",
-                            "summary": "This system action still requires the legacy executor, but no compatible legacy stream executor is available.",
+                            "assistant_text": "This system action still requires the bundle executor, but no compatible streaming bundle executor is available.",
+                            "summary": "This system action still requires the bundle executor, but no compatible streaming bundle executor is available.",
                             "sources": [],
-                            "warnings": ["missing_streaming_legacy_executor"],
+                            "warnings": ["missing_streaming_bundle_executor"],
                             "structured": {},
                             "skill_name": capability_name or "system_action",
                             "success": False,
-                            "errors": [{"code": "missing_streaming_legacy_executor", "message": "No streaming legacy executor was available for the delegated system action."}],
-                            "_runtime_system_action_type": str(delegated_runtime_meta.get("system_action_type") or "legacy_only"),
-                            "_runtime_system_action_name": str(delegated_runtime_meta.get("system_action_name") or "legacy_screen_action"),
-                            "_runtime_executor_path": str(delegated_runtime_meta.get("executor_path") or "legacy_surface_legacy_executor"),
-                            "_legacy_surface_automation": bool(delegated_runtime_meta.get("legacy_surface_automation")),
+                            "errors": [{"code": "missing_streaming_bundle_executor", "message": "No streaming bundle executor was available for the delegated system action."}],
+                            "_runtime_system_action_type": str(
+                                delegated_runtime_meta.get("system_action_type") or "desktop_automation_compatibility"
+                            ),
+                            "_runtime_system_action_name": str(
+                                delegated_runtime_meta.get("system_action_name") or "desktop_automation_compatibility_action"
+                            ),
+                            "_runtime_executor_path": str(
+                                delegated_runtime_meta.get("executor_path") or "desktop_automation_compatibility_executor"
+                            ),
+                            "_desktop_automation_compatibility": bool(
+                                delegated_runtime_meta.get("desktop_automation_compatibility")
+                            ),
                         }
+            elif capability_name and self._can_use_invocation_service(capability_name):
+                for event in self._stream_invocation_service(
+                    capability_name=capability_name,
+                    message=message,
+                    request_id=request_id,
+                    session_id=session_id,
+                    cancel_event=cancel_event,
+                ):
+                    kind = str(event.get("kind") or "").strip().lower()
+                    if kind == "progress":
+                        progress = self.build_progress_event(
+                            str(event.get("event_name") or ""),
+                            dict(event.get("payload") or {}),
+                            user_text=message,
+                            request_id=request_id,
+                        )
+                        if progress is not None:
+                            yield ProgressStreamEvent(
+                                request_id=request_id,
+                                session_id=session_id,
+                                stage=progress.stage,
+                                text=progress.text,
+                            )
+                        continue
+                    if kind == "error":
+                        raise RuntimeError(str(event.get("message") or "Streaming execution failed."))
+                    if kind == "result":
+                        execution_payload = dict(event.get("payload") or {})
             elif active_streaming_executor is not None:
                 for event in active_streaming_executor(
                     message=message,
@@ -1968,7 +2849,7 @@ class FairyRuntimeV2:
                             )
                         continue
                     if kind == "error":
-                        raise RuntimeError(str(event.get("message") or "Streaming legacy executor failed."))
+                        raise RuntimeError(str(event.get("message") or "Streaming bundle executor failed."))
                     if kind == "result":
                         execution_payload = dict(event.get("payload") or {})
             else:
@@ -1983,7 +2864,7 @@ class FairyRuntimeV2:
                     message=message,
                     request_id=request_id,
                     session_id=session_id,
-                    legacy_executor=legacy_executor,
+                    bundle_executor=bundle_executor,
                     attachments=attachments,
                     request_origin=request_origin,
                 )
@@ -2051,29 +2932,43 @@ class FairyRuntimeV2:
         message: str,
         request_id: str,
         session_id: str,
-        legacy_executor: LegacyExecutor | None,
+        bundle_executor: BundleExecutor | None,
         attachments: list[str],
         request_origin: str,
+        route_hints: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        executor = legacy_executor
+        executor = bundle_executor
         delegated_runtime_meta: dict[str, Any] = {}
-        if capability_name and self._can_use_invocation_service(capability_name):
-            self.record_tool_selection(request_id, capability_name, "runtime_facade_invocation_service")
-            result = self.invocation_service.invoke(
-                capability_name,
-                message,
-                request_id=request_id,
-                session_id=session_id,
+        effective_route_hints = dict(route_hints or self.get_route_hints(request_id))
+        forced_bundle = str(effective_route_hints.get("forced_bundle") or "").strip()
+        execution_label = forced_bundle or capability_name or "bundle-runtime"
+        self._set_runtime_state("analyzing", reason=f"capability_started:{execution_label}", request_id=request_id, session_id=session_id)
+        if forced_bundle and executor is not None:
+            logger.info(
+                "runtime_v2_forced_bundle_runtime request_id=%s bundle=%s capability=%s",
+                request_id,
+                forced_bundle,
+                capability_name or "",
             )
-            normalized_agent = self._normalize_execution_payload(
+            self.record_tool_selection(request_id, forced_bundle, "runtime_facade_forced_bundle_executor")
+            result = executor(
+                message=message,
+                session_id=session_id,
+                request_id=request_id,
+                attachments=attachments,
+                request_origin=request_origin,
+                route_hints=effective_route_hints,
+            )
+            normalized_forced_bundle = self._normalize_execution_payload(
                 result,
-                skill_name=capability_name,
+                skill_name=str(result.get("skill_name") or forced_bundle),
                 request_id=request_id,
                 session_id=session_id,
             )
-            normalized_agent["_runtime_executor_path"] = "invocation_service"
-            normalized_agent["_legacy_fallback"] = False
-            return normalized_agent
+            normalized_forced_bundle["_runtime_executor_path"] = "bundle_runtime_executor"
+            normalized_forced_bundle["_bundle_fallback"] = False
+            normalized_forced_bundle["_runtime_forced_bundle"] = forced_bundle
+            return normalized_forced_bundle
         direct_executor = self._capability_executors.get(capability_name or "")
         if capability_name and direct_executor is not None:
             self.record_tool_selection(request_id, capability_name, "runtime_facade_direct_capability_executor")
@@ -2083,21 +2978,23 @@ class FairyRuntimeV2:
                 request_id=request_id,
                 attachments=attachments,
                 request_origin=request_origin,
-                route_hints=self.get_route_hints(request_id),
+                route_hints=effective_route_hints,
             )
-            if isinstance(result, dict) and result.get("_force_legacy_fallback"):
-                legacy_reason = str(result.get("_legacy_reason") or "direct_executor_requested_legacy_fallback").strip()
+            if isinstance(result, dict) and result.get("_force_bundle_fallback"):
+                bundle_reason = str(result.get("_bundle_reason") or "direct_executor_requested_bundle_fallback").strip()
                 delegated_runtime_meta = {
-                    "executor_path": str(result.get("_runtime_executor_path") or "legacy_surface_legacy_executor"),
+                    "executor_path": str(
+                        result.get("_runtime_executor_path") or "desktop_automation_compatibility_executor"
+                    ),
                     "system_action_type": str(result.get("_runtime_system_action_type") or ""),
                     "system_action_name": str(result.get("_runtime_system_action_name") or ""),
-                    "legacy_surface_automation": bool(result.get("_legacy_surface_automation")),
+                    "desktop_automation_compatibility": bool(result.get("_desktop_automation_compatibility")),
                 }
                 logger.info(
-                    "runtime_v2_direct_executor_delegated_to_legacy request_id=%s capability=%s reason=%s",
+                    "runtime_v2_direct_executor_delegated_to_bundle_runtime request_id=%s capability=%s reason=%s",
                     request_id,
-                    capability_name or "legacy_fallback",
-                    legacy_reason,
+                    capability_name or "bundle_fallback",
+                    bundle_reason,
                 )
             else:
                 normalized_direct = self._normalize_execution_payload(
@@ -2107,65 +3004,84 @@ class FairyRuntimeV2:
                     session_id=session_id,
                 )
                 normalized_direct["_runtime_executor_path"] = str(result.get("_runtime_executor_path") or "direct_capability_executor")
-                normalized_direct["_legacy_fallback"] = False
+                normalized_direct["_bundle_fallback"] = False
                 if isinstance(result, dict):
                     normalized_direct["_runtime_system_action_type"] = str(result.get("_runtime_system_action_type") or "")
                     normalized_direct["_runtime_system_action_name"] = str(result.get("_runtime_system_action_name") or "")
                     normalized_direct["_runtime_desktop_bridge_result"] = dict(result.get("_runtime_desktop_bridge_result") or {})
                 return normalized_direct
+        if capability_name and self._can_use_invocation_service(capability_name):
+            self.record_tool_selection(request_id, capability_name, "runtime_facade_invocation_service")
+            result = self.invocation_service.invoke(
+                capability_name,
+                message,
+                request_id=request_id,
+                session_id=session_id,
+                skip_state_resolution=True,
+            )
+            normalized_agent = self._normalize_execution_payload(
+                result,
+                skill_name=capability_name,
+                request_id=request_id,
+                session_id=session_id,
+            )
+            normalized_agent["_runtime_executor_path"] = "invocation_service"
+            normalized_agent["_bundle_fallback"] = False
+            return normalized_agent
         if executor is None:
-            self.record_tool_selection(request_id, "legacy_fallback", "runtime_facade_missing_legacy_executor")
+            self.record_tool_selection(request_id, "bundle_runtime", "runtime_facade_missing_bundle_executor")
             return {
                 "assistant_text": "当前没有可用的执行器。",
                 "summary": "当前没有可用的执行器。",
                 "sources": [],
-                "warnings": ["missing_legacy_executor"],
+                "warnings": ["missing_bundle_executor"],
                 "structured": {},
-                "skill_name": capability_name or "legacy_fallback",
+                "skill_name": capability_name or "bundle-runtime",
                 "success": False,
                 "changed_files": [],
                 "commands_run": [],
                 "validations": [],
-                "errors": [{"code": "missing_legacy_executor", "message": "No compatible executor was provided."}],
+                "errors": [{"code": "missing_bundle_executor", "message": "No compatible bundle executor was provided."}],
                 "request_id": request_id,
                 "session_id": session_id,
                 "request_origin": request_origin,
-                "_runtime_executor_path": "missing_legacy_executor",
-                "_legacy_fallback": True,
+                "_runtime_executor_path": "missing_bundle_executor",
+                "_bundle_fallback": False,
             }
         logger.info(
-            "runtime_v2_legacy_fallback request_id=%s capability=%s reason=runtime_facade_legacy_executor",
+            "runtime_v2_bundle_runtime request_id=%s capability=%s reason=runtime_facade_bundle_executor",
             request_id,
-            capability_name or "legacy_fallback",
+            capability_name or "bundle_runtime",
         )
-        self.record_tool_selection(request_id, capability_name or "legacy_fallback", "runtime_facade_legacy_executor")
+        self.record_tool_selection(request_id, capability_name or "bundle_runtime", "runtime_facade_bundle_executor")
         result = executor(
             message=message,
             session_id=session_id,
             request_id=request_id,
             attachments=attachments,
             request_origin=request_origin,
-            route_hints=self.get_route_hints(request_id),
+            route_hints=effective_route_hints,
         )
-        normalized_legacy = self._normalize_execution_payload(
+        normalized_bundle = self._normalize_execution_payload(
             result,
-            skill_name=str(result.get("skill_name") or capability_name or "legacy"),
+            skill_name=str(result.get("skill_name") or capability_name or "bundle-runtime"),
             request_id=request_id,
             session_id=session_id,
         )
-        normalized_legacy["_runtime_executor_path"] = str(delegated_runtime_meta.get("executor_path") or "legacy_executor")
-        normalized_legacy["_legacy_fallback"] = True
+        normalized_bundle["_runtime_executor_path"] = str(delegated_runtime_meta.get("executor_path") or "bundle_runtime_executor")
+        normalized_bundle["_bundle_fallback"] = False
         if "result" in locals() and isinstance(result, dict):
-            normalized_legacy["_runtime_system_action_type"] = str(
+            normalized_bundle["_runtime_system_action_type"] = str(
                 delegated_runtime_meta.get("system_action_type") or result.get("_runtime_system_action_type") or ""
             )
-            normalized_legacy["_runtime_system_action_name"] = str(
+            normalized_bundle["_runtime_system_action_name"] = str(
                 delegated_runtime_meta.get("system_action_name") or result.get("_runtime_system_action_name") or ""
             )
-            normalized_legacy["_legacy_surface_automation"] = bool(
-                delegated_runtime_meta.get("legacy_surface_automation") or result.get("_legacy_surface_automation")
+            normalized_bundle["_desktop_automation_compatibility"] = bool(
+                delegated_runtime_meta.get("desktop_automation_compatibility")
+                or result.get("_desktop_automation_compatibility")
             )
-        return normalized_legacy
+        return normalized_bundle
 
     def _normalize_execution_payload(
         self,
@@ -2250,6 +3166,12 @@ class FairyRuntimeV2:
                 "weather": source,
                 **source,
             }
+        if card_type in {"time", "time_card"}:
+            return {
+                "card_type": "time",
+                "time": source,
+                **source,
+            }
         if card_type in {"location", "location_map_card", "map_card"}:
             return {
                 "card_type": "location",
@@ -2287,12 +3209,6 @@ class FairyRuntimeV2:
         return ""
 
     def _can_use_invocation_service(self, capability_name: str) -> bool:
-        if not capability_name:
-            return False
-        if capability_name == "realtime_lookup":
-            return getattr(self.invocation_service, "_search_tool", None) is not None
-        if capability_name == "web_research":
-            return getattr(self.invocation_service, "_search_tool", None) is not None
         return False
 
     def _chunk_text_for_streaming(self, text: str, *, max_chunk_chars: int = 28) -> list[str]:
@@ -2321,11 +3237,19 @@ class FairyRuntimeV2:
         effective_steps = list(state.steps) if state is not None else list(plan.steps)
         context.last_execution_plan = [
             {
+                "step_id": step.step_id,
                 "step_index": step.step_index,
                 "capability": step.capability,
                 "slots": dict(step.slots),
                 "normalized_query": step.normalized_query,
                 "retryable": step.retryable,
+                "depends_on": list(step.depends_on),
+                "can_run_parallel": step.can_run_parallel,
+                "branch_key": step.branch_key,
+                "dependency_mode": step.dependency_mode,
+                "execution_confidence_score": step.execution_confidence_score,
+                "inserted_by": step.inserted_by,
+                "rewrite_source": step.rewrite_source,
             }
             for step in effective_steps
         ]
@@ -2386,7 +3310,7 @@ class FairyRuntimeV2:
                     metadata={"source": "followup_context"},
                 )
             )
-        stable_intent = self._structured_intent(
+        stable_intent = self._resolution_intent_hint(
             normalized_text,
             base_intent=base_intent,
             followup_target=followup.target,
@@ -2484,7 +3408,56 @@ class FairyRuntimeV2:
     ) -> bool:
         explicit_intent = str((runtime_context.perception.metadata.get("explicit_intent") or "") if runtime_context else "").strip().lower()
         capability = str(resolution.get("capability") or request_plan.intent or "").strip().lower()
-        return explicit_intent == "desktop_automation" and capability == "system_action"
+        if explicit_intent == "desktop_automation" and capability == "system_action":
+            return True
+        if capability not in {"location_lookup", "display_information"} or runtime_context is None:
+            return False
+        location_slots = dict(
+            resolution.get("validated_slots")
+            or resolution.get("normalized_slots")
+            or resolution.get("slots")
+            or {}
+        )
+        has_location_slot = bool(str(location_slots.get("location") or "").strip())
+        has_location_entity = any(
+            getattr(entity, "kind", "") == "location" and str(getattr(entity, "value", "") or "").strip()
+            for entity in runtime_context.perception.entities
+        )
+        raw_text = str(runtime_context.perception.raw_text or "").strip()
+        normalized_text = str(runtime_context.perception.normalized_text or "").strip()
+        return (
+            has_location_slot
+            or has_location_entity
+            or FairyRuntimeV2._looks_like_explicit_location_map_request(raw_text)
+            or FairyRuntimeV2._looks_like_explicit_location_map_request(normalized_text)
+        )
+
+    @staticmethod
+    def _looks_like_explicit_location_map_request(text: str) -> bool:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return False
+        lowered = cleaned.lower()
+        if "地图" in cleaned:
+            stripped = cleaned.replace("地图", "")
+            for token in ("显示", "打开", "看看", "查看", "看一下", "给我看看", "给我看"):
+                stripped = stripped.replace(token, "")
+            if stripped.strip(" ，,。.!！？?"):
+                return True
+        if "在哪里" in cleaned or "在哪儿" in cleaned or "在哪" in cleaned:
+            stripped = cleaned.replace("在哪里", "").replace("在哪儿", "").replace("在哪", "")
+            if stripped.strip(" ，,。.!！？?"):
+                return True
+        if "位置" in cleaned and any(token in cleaned for token in ("看看", "查看", "看一下")):
+            stripped = cleaned.replace("位置", "").replace("看看", "").replace("查看", "").replace("看一下", "")
+            if stripped.strip(" ，,。.!！？?"):
+                return True
+        for prefix in ("show map for", "display map for", "open map for", "where is"):
+            if lowered.startswith(prefix):
+                remainder = lowered[len(prefix) :].strip(" ,.!?")
+                if remainder:
+                    return True
+        return False
 
     def _build_clarification_response(
         self,
@@ -2553,7 +3526,7 @@ class FairyRuntimeV2:
             {
                 "selected_capability": self._capability_for_intent(request_plan.intent) or "clarification",
                 "executor_path": "query_resolution_clarification",
-                "used_legacy_fallback": False,
+                "used_bundle_fallback": False,
                 "request_origin": request_origin,
                 "compat_fields_emitted": bool(include_compat_fields),
                 "system_action_type": "",
@@ -2562,7 +3535,16 @@ class FairyRuntimeV2:
             }
         )
         meta["runtime"] = runtime_meta
+        meta["runtime_state"] = self.runtime_state_snapshot()
         meta["resolution"] = dict(resolution)
+        meta["fairy"] = self._response_fairy_meta(
+            meta=meta,
+            text=clarification.text_reply,
+            cards=clarification.cards,
+            errors=list(clarification.errors),
+            resolution=resolution,
+            selected_capability=self._capability_for_intent(request_plan.intent) or "clarification",
+        )
         contract["meta"] = meta
         if include_compat_fields:
             contract.update(
@@ -2701,6 +3683,40 @@ class FairyRuntimeV2:
             return ["system_bridge", "agent_shell"]
         return ["direct_answer"]
 
+    def _resolution_intent_hint(
+        self,
+        normalized_text: str,
+        *,
+        base_intent: str,
+        followup_target: str = "",
+        explicit_intent: str = "",
+    ) -> str:
+        _ = normalized_text
+        if explicit_intent == "desktop_automation":
+            return "system_action"
+        if followup_target == "weather":
+            return "weather_lookup"
+        if followup_target == "location":
+            return "location_lookup"
+        if base_intent == "system_action":
+            return "system_action"
+        if base_intent == "explanation":
+            return "explanation"
+        return "generic_search"
+
+    def _preferred_route_hints_for(self, perception_intent: str) -> list[str]:
+        if perception_intent == "weather_lookup":
+            return ["weather", "web_search"]
+        if perception_intent == "time_lookup":
+            return ["realtime_lookup"]
+        if perception_intent in {"location_lookup", "display_information"}:
+            return ["web_search"]
+        if perception_intent == "news_lookup":
+            return ["news", "web_search"]
+        if perception_intent == "system_action":
+            return ["system_bridge", "agent_shell"]
+        return []
+
     def _validate_cards(self, normalized: NormalizedAssistantResponse, *, request_id: str = "") -> NormalizedAssistantResponse:
         validated_cards = []
         issues: list[str] = []
@@ -2737,8 +3753,13 @@ class FairyRuntimeV2:
     def _renderer_name_for(self, card_type: str) -> str:
         mapping = {
             "weather": "WeatherCardWidget",
+            "time": "TimeCardWidget",
             "location": "MapPreviewWidget",
             "news_list": "NewsCarouselWidget",
+            "specs": "SpecsCardWidget",
+            "compare": "CompareCardWidget",
+            "release": "ReleaseCardWidget",
+            "web_brief": "WebBriefCardWidget",
             "generic_info": "GenericInfoCardWidget",
             "image": "ImageCardWidget",
             "link": "LinkCardWidget",

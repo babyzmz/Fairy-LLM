@@ -3,9 +3,11 @@ import { CardRenderer } from "./CardRenderer";
 
 interface MessageItemProps {
   message: ChatUiMessage;
+  activityPreview?: string;
+  onOpenActivity?: (requestId: string) => void;
 }
 
-export function MessageItem({ message }: MessageItemProps): JSX.Element {
+export function MessageItem({ message, activityPreview = "", onOpenActivity }: MessageItemProps): JSX.Element {
   const roleClass =
     message.kind === "user"
       ? "message message--user"
@@ -16,13 +18,28 @@ export function MessageItem({ message }: MessageItemProps): JSX.Element {
   const cards = "cards" in message ? message.cards : [];
   const errors = "errors" in message ? message.errors : [];
   const text = "text" in message ? message.text : "";
-  const progressText = message.kind === "assistant_partial" ? message.progressText : "";
+  const attachments = "attachments" in message && Array.isArray(message.attachments) ? message.attachments : [];
+  const requestId = "requestId" in message && typeof message.requestId === "string" ? message.requestId : "";
+  const showThoughtChip = Boolean(activityPreview) && Boolean(requestId) && message.kind !== "user" && message.kind !== "error";
 
   return (
     <article className={roleClass}>
       <div className="message__bubble">
-        {progressText ? <div className="message__progress">{progressText}</div> : null}
+        {showThoughtChip ? (
+          <button className="message__thought-chip" onClick={() => onOpenActivity?.(requestId)} type="button">
+            {activityPreview}
+          </button>
+        ) : null}
         {text ? <p className="message__text">{text}</p> : null}
+        {attachments.length > 0 ? (
+          <div className="message__attachments">
+            {attachments.map((attachment) => (
+              <span className="message__attachment-chip" key={`${attachment.path}-${attachment.name}`}>
+                {attachment.name}
+              </span>
+            ))}
+          </div>
+        ) : null}
         {errors.length > 0 ? (
           <div className="message__errors">
             {errors.map((error) => (

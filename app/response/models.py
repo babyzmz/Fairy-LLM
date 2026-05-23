@@ -42,6 +42,7 @@ class CardPayload:
     data: dict[str, Any]
     layout: CardLayoutMode
     metadata: dict[str, Any]
+    actions: list[dict[str, Any]]
 
     def __init__(
         self,
@@ -51,6 +52,7 @@ class CardPayload:
         data: dict[str, Any] | None = None,
         layout: CardLayoutMode = "single",
         metadata: dict[str, Any] | None = None,
+        actions: list[dict[str, Any]] | None = None,
         card_type: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> None:
@@ -60,6 +62,7 @@ class CardPayload:
         self.data = dict(data or payload or {})
         self.layout = layout
         self.metadata = dict(metadata or {})
+        self.actions = [dict(item) for item in list(actions or []) if isinstance(item, dict)]
 
     @property
     def card_type(self) -> str:
@@ -76,6 +79,7 @@ class CardPayload:
             "data": dict(self.data),
             "layout": self.layout,
             "metadata": dict(self.metadata),
+            "actions": [dict(item) for item in self.actions],
         }
 
 

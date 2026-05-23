@@ -1,5 +1,11 @@
 import { API_BASE_URL } from "../config/env";
-import type { DesktopSystemState, SystemActionResponse, SystemStateResponse } from "../types/api";
+import type {
+  DesktopSystemState,
+  PersistedAttachment,
+  SystemActionResponse,
+  SystemStateResponse,
+  VoiceSynthesizeResponse,
+} from "../types/api";
 import { apiRequest } from "./client";
 
 const DESKTOP_ACTIONS = new Set(["restart_backend", "reveal_asset_folder", "open_panel", "focus_window", "show_notification"]);
@@ -11,6 +17,17 @@ async function invokeTauri<T>(command: string, args?: Record<string, unknown>): 
   } catch {
     return null;
   }
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
 }
 
 function wrapRuntimeState(runtimeState: SystemStateResponse): DesktopSystemState {
@@ -54,4 +71,31 @@ export async function performSystemAction(
     ...runtimeResponse,
     system_state: await getSystemState(),
   };
+}
+
+export async function persistChatAttachments(files: File[]): Promise<PersistedAttachment[]> {
+  if (files.length === 0) {
+    return [];
+  }
+  const mod = await import("@tauri-apps/api/core").catch(() => null);
+  if (!mod) {
+    throw new Error("Attachments require the Fairy desktop shell.");
+  }
+  return Promise.all(
+    files.map(async (file) => {
+      const dataBase64 = arrayBufferToBase64(await file.arrayBuffer());
+      return mod.invoke<PersistedAttachment>("persist_chat_attachment", {
+        file_name: file.name,
+        mime_type: file.type || undefined,
+        data_base64: dataBase64,
+      });
+    }),
+  );
+}
+
+export async function synthesizeVoiceAudio(text: string, systemVoice = false): Promise<VoiceSynthesizeResponse> {
+  return apiRequest<VoiceSynthesizeResponse>("/system/voice/synthesize", {
+    method: "POST",
+    body: JSON.stringify({ text, system_voice: systemVoice }),
+  });
 }

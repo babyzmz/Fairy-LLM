@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+from app.ai.voice.prompt_assets import select_best_prompt_candidate
 from app.ai.voice.fairy_tts import FairyTTS
 from app.config import voice_config
 
@@ -75,11 +76,10 @@ class BatchTTSGenerator:
             raise RuntimeError(
                 f"CosyVoice Python 运行时不存在：{voice_config.cosyvoice_python_path}"
             )
-        if voice_config.voice_clone_enabled:
-            if not voice_config.prompt_wav_path.exists():
-                raise FileNotFoundError(f"缺少 Fairy prompt wav：{voice_config.prompt_wav_path}")
-            if not voice_config.prompt_text_path.exists():
-                raise FileNotFoundError(f"缺少 Fairy prompt text：{voice_config.prompt_text_path}")
+        if voice_config.uses_clone_profile():
+            candidate = select_best_prompt_candidate(voice_config.voice_prompt_dir)
+            if candidate is None:
+                raise FileNotFoundError(f"缺少可用 Fairy prompt 对：{voice_config.voice_prompt_dir}")
 
         self._tts = FairyTTS()
         succeeded = 0
@@ -168,5 +168,4 @@ class BatchTTSGenerator:
 
 
 def _provider_name() -> str:
-    mode = "zero_shot_clone" if voice_config.voice_clone_enabled else "sft"
-    return f"{voice_config.backend}/{mode}"
+    return f"{voice_config.backend}/{voice_config.voice_profile}"

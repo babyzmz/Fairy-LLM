@@ -35,7 +35,7 @@ def _load_text_rows(conn: sqlite3.Connection, table_name: str, column_names: lis
     return payloads
 
 
-def build_legacy_preview(db_path: Path | None = None) -> dict[str, Any]:
+def build_compatibility_preview(db_path: Path | None = None) -> dict[str, Any]:
     path = Path(db_path or memory_config.db_path)
     if not path.exists():
         return {
@@ -93,7 +93,7 @@ def main() -> None:
     parser.add_argument("--output", default="", help="Optional file path to save JSON preview")
     args = parser.parse_args()
 
-    preview = build_legacy_preview(Path(args.db))
+    preview = build_compatibility_preview(Path(args.db))
     payload = json.dumps(preview, ensure_ascii=False, indent=2)
     if args.output:
         Path(args.output).write_text(payload, encoding="utf-8")

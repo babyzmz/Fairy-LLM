@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import itertools
+import logging
 import queue
 import threading
 import time
+import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 
 _QUEUE_STOP = object()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(order=True)
@@ -38,6 +41,7 @@ class AudioPlayer:
         self._stop_event = threading.Event()
         self._interrupt_event = threading.Event()
         self._ready = False
+        self._backend = "unavailable"
         self._pygame = None
         self._state_lock = threading.Lock()
         self._current_priority: int | None = None
@@ -113,13 +117,35 @@ class AudioPlayer:
             pygame.mixer.pre_init(self.sample_rate, -16, 2, 1024)
             pygame.mixer.init()
             self._pygame = pygame
+            self._backend = "pygame"
             self._ready = True
+            logger.info("AudioPlayer initialized with pygame backend")
+            return
         except Exception:
+            logger.warning("AudioPlayer pygame backend unavailable; falling back to winsound")
+
+        try:
+            import winsound  # noqa: F401
+
+            self._backend = "winsound"
+            self._ready = True
+            logger.info("AudioPlayer initialized with winsound backend")
+        except Exception:
+            self._backend = "unavailable"
             self._ready = False
+            logger.exception("AudioPlayer failed to initialize any playback backend")
 
     def _play_file(self, job: AudioJob) -> None:
-        if not self._ready or self._pygame is None:
+        if not self._ready:
             return
+        if self._backend == "pygame" and self._pygame is not None:
+            self._play_file_pygame(job)
+            return
+        if self._backend == "winsound":
+            self._play_file_winsound(job)
+            return
+
+    def _play_file_pygame(self, job: AudioJob) -> None:
         with self._state_lock:
             self._current_priority = job.priority
         self._set_speaking(True)
@@ -135,6 +161,7 @@ class AudioPlayer:
                 self._emit_progress(job, current_sec, final=False)
                 time.sleep(0.04)
         except Exception:
+            logger.exception("AudioPlayer pygame playback failed for %s", job.path)
             self._stop_current()
         finally:
             self._emit_progress(job, None, final=True)
@@ -145,6 +172,36 @@ class AudioPlayer:
                 self._pygame.mixer.music.unload()
             except Exception:
                 pass
+            self._interrupt_event.clear()
+
+    def _play_file_winsound(self, job: AudioJob) -> None:
+        import winsound
+
+        duration_sec = self._estimate_duration(job.path)
+        with self._state_lock:
+            self._current_priority = job.priority
+        self._set_speaking(True)
+        started_at = time.monotonic()
+        try:
+            winsound.PlaySound(str(job.path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+            self._emit_progress(job, 0.0, final=False)
+            while True:
+                if self._stop_event.is_set() or self._interrupt_event.is_set():
+                    self._stop_current()
+                    break
+                elapsed = max(0.0, time.monotonic() - started_at)
+                if duration_sec > 0 and elapsed >= duration_sec:
+                    break
+                self._emit_progress(job, elapsed, final=False)
+                time.sleep(0.04)
+        except Exception:
+            logger.exception("AudioPlayer winsound playback failed for %s", job.path)
+            self._stop_current()
+        finally:
+            self._emit_progress(job, None, final=True)
+            with self._state_lock:
+                self._current_priority = None
+            self._set_speaking(False)
             self._interrupt_event.clear()
 
     def _emit_progress(self, job: AudioJob, current_sec: float | None, *, final: bool) -> None:
@@ -172,12 +229,21 @@ class AudioPlayer:
             pass
 
     def _stop_current(self) -> None:
-        if not self._ready or self._pygame is None:
+        if not self._ready:
             return
-        try:
-            self._pygame.mixer.music.stop()
-        except Exception:
-            pass
+        if self._backend == "pygame" and self._pygame is not None:
+            try:
+                self._pygame.mixer.music.stop()
+            except Exception:
+                logger.exception("AudioPlayer failed to stop pygame playback")
+            return
+        if self._backend == "winsound":
+            try:
+                import winsound
+
+                winsound.PlaySound(None, 0)
+            except Exception:
+                logger.exception("AudioPlayer failed to stop winsound playback")
 
     def _drop_lower_priority(self, threshold: int) -> None:
         retained: list[tuple[int, int, Any]] = []
@@ -217,9 +283,19 @@ class AudioPlayer:
             pass
 
     def _quit_mixer(self) -> None:
-        if not self._ready or self._pygame is None:
+        if self._backend != "pygame" or self._pygame is None:
             return
         try:
             self._pygame.mixer.quit()
         except Exception:
-            pass
+            logger.exception("AudioPlayer failed to quit pygame mixer")
+
+    def _estimate_duration(self, path: Path) -> float:
+        try:
+            with wave.open(str(path), "rb") as handle:
+                frame_rate = handle.getframerate() or self.sample_rate
+                frame_count = handle.getnframes()
+            return frame_count / max(frame_rate, 1)
+        except Exception:
+            logger.exception("AudioPlayer failed to estimate duration for %s", path)
+            return 0.0

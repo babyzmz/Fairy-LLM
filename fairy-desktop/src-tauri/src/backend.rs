@@ -1,7 +1,8 @@
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -70,6 +71,14 @@ pub struct DesktopActionResponse {
     pub message: String,
     #[serde(default)]
     pub data: Value,
+}
+
+#[derive(Clone, Serialize)]
+pub struct PersistedAttachment {
+    pub path: String,
+    pub name: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
 }
 
 pub fn start_desktop_action_bridge(app: &AppHandle) {
@@ -286,6 +295,28 @@ pub fn system_state(app: AppHandle) -> Result<DesktopSystemState, String> {
 }
 
 #[tauri::command]
+pub fn persist_chat_attachment(
+    file_name: String,
+    mime_type: Option<String>,
+    data_base64: String,
+) -> Result<PersistedAttachment, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|error| format!("Failed to decode attachment payload: {error}"))?;
+    let directory = env::temp_dir().join("fairy-desktop").join("attachments");
+    fs::create_dir_all(&directory).map_err(|error| format!("Failed to create attachment directory: {error}"))?;
+    let sanitized_name = sanitize_attachment_name(&file_name);
+    let output_path = directory.join(format!("{}-{}", now_ms(), sanitized_name));
+    fs::write(&output_path, &bytes).map_err(|error| format!("Failed to persist attachment: {error}"))?;
+    Ok(PersistedAttachment {
+        path: output_path.to_string_lossy().to_string(),
+        name: file_name,
+        mime_type: mime_type.unwrap_or_default(),
+        size_bytes: bytes.len() as u64,
+    })
+}
+
+#[tauri::command]
 pub fn backend_control(
     app: AppHandle,
     action: String,
@@ -362,10 +393,12 @@ fn build_system_state(app: &AppHandle) -> DesktopSystemState {
         fetch_runtime_state().unwrap_or_else(|error| {
             json!({
                 "backend_status": "error",
+                "current_state": "error",
                 "active_session": null,
                 "active_stream_request": null,
                 "is_streaming": false,
                 "last_error": error,
+                "fairy": {"state": "alert", "certainty": 0.62, "urgency": 0.94, "tone": "attention"},
                 "capabilities": {},
                 "recent_events": [],
             })
@@ -373,10 +406,16 @@ fn build_system_state(app: &AppHandle) -> DesktopSystemState {
     } else {
         json!({
             "backend_status": lifecycle.status,
+            "current_state": if lifecycle.status == "ready" { "idle" } else { "booting" },
             "active_session": null,
             "active_stream_request": null,
             "is_streaming": false,
             "last_error": lifecycle.message,
+            "fairy": if lifecycle.status == "ready" {
+                json!({"state": "standby", "certainty": 0.9, "urgency": 0.08, "tone": "ready"})
+            } else {
+                json!({"state": "standby", "certainty": 0.45, "urgency": 0.36, "tone": "initializing"})
+            },
             "capabilities": {},
             "recent_events": [],
         })
@@ -792,6 +831,30 @@ fn project_root() -> PathBuf {
 
 fn backend_url() -> String {
     format!("http://{BACKEND_HOST}:{BACKEND_PORT}")
+}
+
+fn sanitize_attachment_name(file_name: &str) -> String {
+    let fallback = "attachment.bin";
+    let raw_name = Path::new(file_name)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(fallback);
+    let sanitized: String = raw_name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = sanitized.trim_matches('_');
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn now_ms() -> u64 {

@@ -35,7 +35,7 @@ class MemoryManager:
         self.retriever = MemoryRetriever(self.store, self.vector_store)
         self.writer = MemoryWriter()
         self.pruner = MemoryPruner(self.store, self.vector_store, max_semantic_items=memory_config.max_semantic_items)
-        logger.info("legacy_memory_mode=%s", self._legacy_mode())
+        logger.info("legacy_memory_mode=%s", self._compatibility_mode())
 
     def new_task_id(self) -> str:
         return f"task_{uuid.uuid4().hex[:12]}"
@@ -53,7 +53,7 @@ class MemoryManager:
         chosen_skill: str = "",
     ) -> tuple[MemoryRetrievalBundle, str, dict[str, int], str]:
         category = self.classify_task(user_request, attachments, chosen_skill=chosen_skill)
-        if self._legacy_mode() == "disabled":
+        if self._compatibility_mode() == "disabled":
             bundle = MemoryRetrievalBundle()
             return bundle, "", bundle.counts(), category
         policy = policy_for_task_category(category)
@@ -86,7 +86,7 @@ class MemoryManager:
         return prompt_block, counts, category
 
     def start_task(self, task_id: str, goal: str) -> None:
-        if not self._legacy_writable():
+        if not self._compatibility_writable():
             return
         self.store.create_or_update_task_memory(task_id, goal, current_step="received", done_steps=[], status="running")
 
@@ -101,7 +101,7 @@ class MemoryManager:
         last_url: str = "",
         status: str = "running",
     ) -> None:
-        if not self._legacy_writable():
+        if not self._compatibility_writable():
             return
         self.store.create_or_update_task_memory(
             task_id,
@@ -114,7 +114,7 @@ class MemoryManager:
         )
 
     def finish_task(self, task_context: dict[str, Any]) -> dict[str, Any]:
-        if not self._legacy_writable():
+        if not self._compatibility_writable():
             return {"persisted": {"profile": 0, "project": 0, "semantic": 0, "structured": 0}, "pruned": {"expired_deleted": 0, "semantic_trimmed": 0}}
         task_id = str(task_context.get("task_id", "") or "")
         user_request = str(task_context.get("user_request", "") or "")
@@ -230,7 +230,7 @@ class MemoryManager:
                 return {"ok": False, "response_text": "未找到对应 memory id。"}
             return {"ok": True, "response_text": json.dumps(item, ensure_ascii=False, indent=2)}
         if command == "delete" and len(parts) >= 4:
-            if not self._legacy_writable():
+            if not self._compatibility_writable():
                 return {"ok": False, "response_text": "legacy memory 当前处于只读或禁用状态，无法删除。"}
             deleted = self.store.delete_memory(parts[3].strip())
             return {"ok": deleted, "response_text": "已删除。" if deleted else "未找到对应 memory id。"}
@@ -251,7 +251,7 @@ class MemoryManager:
         timezone_name = os.getenv("TZ") or os.getenv("TIMEZONE") or "Australia/Sydney"
         self.store.upsert_profile("environment_profile", "timezone", timezone_name)
 
-    def _migrate_legacy_memory(self) -> None:
+    def _migrate_compatibility_memory(self) -> None:
         migrated_flag = next((item for item in self.store.list_profile("environment_profile") if item.get("key") == "legacy_memory_migrated"), None)
         if migrated_flag is not None:
             return
@@ -274,12 +274,12 @@ class MemoryManager:
                     self.store.upsert_profile("user_profile", memory_id, pref.content)
         self.store.upsert_profile("environment_profile", "legacy_memory_migrated", "1")
 
-    def _legacy_mode(self) -> str:
+    def _compatibility_mode(self) -> str:
         settings = RAGSettings.from_dict(self.settings_repo.get_json("rag_settings"))
         return settings.legacy_memory_mode.strip().lower() or "read_only"
 
-    def _legacy_writable(self) -> bool:
-        return self._legacy_mode() not in {"read_only", "disabled"}
+    def _compatibility_writable(self) -> bool:
+        return self._compatibility_mode() not in {"read_only", "disabled"}
 
     def _extract_last_url(self, task_context: dict[str, Any]) -> str:
         structured = task_context.get("structured") or {}

@@ -24,9 +24,9 @@ class ResponsePlanner:
     def plan(self, frame: PerceptionFrame, *, previous_structured: dict[str, Any] | None = None) -> PlannedResponse:
         modality = self._modality_planner.plan(frame)
         request_plan = ResponseRequestPlan(
-            intent=self._legacy_intent(frame, modality),
+            intent=self._request_intent_label(frame, modality),
             modality=modality.response_mode,  # type: ignore[arg-type]
-            speech_mode=self._legacy_speech_mode(modality.speech_mode),  # type: ignore[arg-type]
+            speech_mode=self._request_speech_mode(modality.speech_mode),  # type: ignore[arg-type]
             allow_voice_streaming=modality.allow_streaming,
             planner_confidence=frame.confidence,
             force_card_type=(modality.card_types[0] if modality.card_types else ""),
@@ -62,7 +62,7 @@ class ResponsePlanner:
             return "generic_search"
         return "direct_answer"
 
-    def _legacy_intent(self, frame: PerceptionFrame, modality: ModalityPlan) -> str:
+    def _request_intent_label(self, frame: PerceptionFrame, modality: ModalityPlan) -> str:
         if frame.intent == "weather_lookup":
             return "weather"
         if frame.intent == "time_lookup":
@@ -79,7 +79,7 @@ class ResponsePlanner:
             return "system_action"
         return "text"
 
-    def _legacy_speech_mode(self, speech_mode: str) -> str:
+    def _request_speech_mode(self, speech_mode: str) -> str:
         if speech_mode in {"concise_structured", "summary_first", "detailed_explainer"}:
             return speech_mode
         return "detailed_explainer"

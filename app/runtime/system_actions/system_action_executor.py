@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable
 
-from app.legacy_surface.surface_executor import LegacySurfaceExecutor
 from app.runtime.system_actions.action_models import SystemActionResolution
+from app.runtime.system_actions.desktop_automation_compat import DesktopAutomationCompatibilityExecutor
 from app.runtime.system_actions.action_registry import SystemActionRegistry
 from app.runtime.system_actions.tauri_bridge_client import TauriBridgeClient
 
@@ -18,12 +18,14 @@ class SystemActionExecutor:
         runtime_action_handler: RuntimeActionHandler,
         desktop_bridge_client: TauriBridgeClient | None = None,
         registry: SystemActionRegistry | None = None,
-        legacy_surface_executor: LegacySurfaceExecutor | None = None,
+        desktop_automation_compatibility_executor: DesktopAutomationCompatibilityExecutor | None = None,
     ) -> None:
         self._runtime_action_handler = runtime_action_handler
         self._desktop_bridge_client = desktop_bridge_client or TauriBridgeClient()
         self._registry = registry or SystemActionRegistry()
-        self._legacy_surface_executor = legacy_surface_executor or LegacySurfaceExecutor()
+        self._desktop_automation_compatibility_executor = (
+            desktop_automation_compatibility_executor or DesktopAutomationCompatibilityExecutor()
+        )
 
     def execute(
         self,
@@ -34,14 +36,14 @@ class SystemActionExecutor:
         request_origin: str,
         cancel_event: Any | None = None,
         explicit_intent: str = "",
-        allow_legacy_surface: bool = False,
+        allow_desktop_automation_compatibility: bool = False,
     ) -> dict[str, Any]:
         resolution = self._registry.resolve(message)
-        if resolution.category == "legacy_only":
-            return self._legacy_surface_executor.prepare(
+        if resolution.category == "desktop_automation_compatibility":
+            return self._desktop_automation_compatibility_executor.prepare(
                 resolution=resolution,
                 explicit_intent=explicit_intent,
-                enabled=allow_legacy_surface,
+                enabled=allow_desktop_automation_compatibility,
             )
         if resolution.category == "backend_action":
             return self._execute_backend_action(
@@ -74,7 +76,7 @@ class SystemActionExecutor:
         request_origin: str,
         cancel_event: Any | None = None,
         explicit_intent: str = "",
-        allow_legacy_surface: bool = False,
+        allow_desktop_automation_compatibility: bool = False,
     ) -> Iterable[dict[str, Any]]:
         resolution = self._registry.resolve(message)
         yield {
@@ -87,30 +89,30 @@ class SystemActionExecutor:
                 "action_type": resolution.category,
             },
         }
-        if resolution.category == "legacy_only":
-            payload = self._legacy_surface_executor.prepare(
+        if resolution.category == "desktop_automation_compatibility":
+            payload = self._desktop_automation_compatibility_executor.prepare(
                 resolution=resolution,
                 explicit_intent=explicit_intent,
-                enabled=allow_legacy_surface,
+                enabled=allow_desktop_automation_compatibility,
             )
-            if payload.get("_force_legacy_fallback"):
+            if payload.get("_force_bundle_fallback"):
                 yield {
                     "kind": "progress",
                     "event_name": "structured_tool_progress",
                     "payload": {
-                        "phase": "legacy_surface_dispatch",
+                        "phase": "desktop_automation_dispatch",
                         "subtype": "system_action",
                         "action_name": resolution.name,
                         "action_type": resolution.category,
                     },
                 }
                 yield {
-                    "kind": "delegate_legacy",
+                    "kind": "delegate_bundle_runtime",
                     "system_action_type": resolution.category,
                     "system_action_name": resolution.name,
                     "reason": resolution.reason,
-                    "legacy_surface": True,
-                    "executor_path": str(payload.get("_runtime_executor_path") or "legacy_surface_legacy_executor"),
+                    "desktop_automation_compatibility": True,
+                    "executor_path": str(payload.get("_runtime_executor_path") or "desktop_automation_compatibility_executor"),
                 }
                 return
             summary = str(payload.get("summary") or payload.get("assistant_text") or "").strip()
@@ -120,7 +122,7 @@ class SystemActionExecutor:
                 "kind": "progress",
                 "event_name": "structured_tool_progress",
                 "payload": {
-                    "phase": "legacy_surface_result",
+                    "phase": "desktop_automation_result",
                     "subtype": "system_action",
                     "action_name": resolution.name,
                     "action_type": resolution.category,
@@ -146,7 +148,7 @@ class SystemActionExecutor:
             request_origin=request_origin,
             cancel_event=cancel_event,
             explicit_intent=explicit_intent,
-            allow_legacy_surface=allow_legacy_surface,
+            allow_desktop_automation_compatibility=allow_desktop_automation_compatibility,
         )
         summary = str(payload.get("summary") or payload.get("assistant_text") or "").strip()
         if summary:

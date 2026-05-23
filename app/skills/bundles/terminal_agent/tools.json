@@ -1,9 +1,15 @@
 [
-  "read_file",
+  "list_dir",
+  "search_files",
+  "read_text_file",
+  "write_text_file",
+  "propose_edit",
+  "apply_patch",
   "run_command",
   "search_web",
   "open_url",
+  "extract_page_text",
+  "snapshot_page",
   "browser_interact",
-  "edit_file",
-  "search_files"
+  "compare_structured_results"
 ]

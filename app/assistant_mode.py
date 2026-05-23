@@ -1,10 +1,11 @@
 ﻿from __future__ import annotations
 
 # LEGACY_ENTRYPOINT
-# This Qt controller remains only as a legacy shell/consumer during migration.
+# This Qt controller remains only as a compatibility shell/consumer while the desktop app owns the main UX.
 # The default desktop startup path is the Tauri shell.
 
 import html
+import json
 import logging
 import uuid
 from typing import Any, Callable, Dict, List
@@ -22,8 +23,8 @@ from app.models.action_event import ActionEvent, build_action_event
 from app.response import ResponsePipeline
 from app.runtime import FairyRuntimeV2
 from app.rag import get_rag_manager, get_reindex_manager, save_rag_settings
+from app.route_context import RouteContext
 from app.settings import SecretStore, save_game_mode_settings
-from app.skill_router import RouteContext
 from app.storage.repositories import MessageRepo, SessionRepo
 from app.system_notifications import NotificationEngine, NotificationScheduler
 from app.system_notifications.notification_presenter import is_active_notification, notification_counts
@@ -84,7 +85,7 @@ class ChatWorker(QObject):
     def _ui_can_stream(self) -> bool:
         return self.request_origin == "main_chat"
 
-    def _legacy_execute(
+    def _bundle_execute(
         self,
         *,
         message: str,
@@ -190,7 +191,7 @@ class ChatWorker(QObject):
                 attachments=self.attachment_paths,
                 request_id=self.request_id,
                 previous_structured=dict(self.route_context.previous_structured),
-                legacy_executor=self._legacy_execute,
+                bundle_executor=self._bundle_execute,
                 request_origin=self.request_origin,
                 # Qt shell is the only remaining compat consumer of deprecated bridge fields.
                 include_compat_fields=True,
@@ -270,11 +271,17 @@ class AssistantModeController(QObject):
         self.notification_scheduler = NotificationScheduler(
             interval_seconds=self.rag_manager.load_settings().notification_scan_interval_seconds
         )
+        self.preferences = load_app_preferences()
+        apply_app_preferences(self.preferences)
         self.voice = FairyVoice(enabled=voice_config.enabled)
         self.initializer = FairyInitializer(self.voice)
-        self.preferences = load_app_preferences()
         self._response_pipeline = ResponsePipeline(language=self.preferences.ui_language)
-        self._runtime_v2 = FairyRuntimeV2(language=self.preferences.ui_language, response_pipeline=self._response_pipeline)
+        self._runtime_v2 = FairyRuntimeV2(
+            language=self.preferences.ui_language,
+            response_pipeline=self._response_pipeline,
+            semantic_arbitration_callback=self._semantic_llm_arbitrate,
+            web_browse_decision_callback=self._semantic_web_browse_decide,
+        )
         self.history: List[Message] = []
         self._threads: list[QThread] = []
         self._workers: Dict[QThread, ChatWorker] = {}
@@ -364,6 +371,140 @@ class AssistantModeController(QObject):
         self._refresh_knowledge_surfaces()
         self._refresh_system_notifications(force=True)
         self._refresh_presence_surface()
+
+    def _semantic_llm_arbitrate(
+        self,
+        *,
+        raw_text: str,
+        normalized_text: str,
+        intent_hint: str,
+        default_capability: str,
+        followup_target: str,
+        session_context: Any,
+        matched_rules: list[str],
+        candidate_meta: list[dict[str, Any]],
+    ) -> dict[str, str]:
+        allowed = [str(item.get("capability") or "").strip() for item in candidate_meta if str(item.get("capability") or "").strip()]
+        if len(allowed) < 2:
+            return {}
+        prompt = (
+            "You are an internal semantic arbitration helper for a desktop assistant.\n"
+            "Choose the single best capability from the provided candidates.\n"
+            "Rules:\n"
+            "- Prefer explicit realtime intent phrases over prior context.\n"
+            "- Prefer switching capability when the query contains a new strong intent signal.\n"
+            "- For short follow-ups, keep the prior intent only if the utterance mainly overrides a slot value.\n"
+            "- Do not invent new capabilities.\n"
+            "Return strict JSON only: {\"capability\": \"...\", \"reason\": \"...\"}"
+        )
+        payload = {
+            "raw_text": raw_text,
+            "normalized_text": normalized_text,
+            "intent_hint": intent_hint,
+            "default_capability": default_capability,
+            "followup_target": followup_target,
+            "last_capability": str(getattr(session_context, "last_capability", "") or ""),
+            "matched_rules": matched_rules,
+            "candidates": candidate_meta,
+            "allowed_capabilities": allowed,
+        }
+        try:
+            response = self.llm.execute_task(
+                prompt,
+                json.dumps(payload, ensure_ascii=False),
+                temperature=0.0,
+                max_tokens=120,
+                instruction_label="Semantic arbitration",
+            )
+        except Exception:
+            logger.debug("assistant_mode_semantic_arbitration_failed", exc_info=True)
+            return {}
+        text = str(response.text or "").strip()
+        if not text or text.startswith("模型服务未就绪"):
+            return {}
+        try:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start < 0 or end < start:
+                return {}
+            data = json.loads(text[start : end + 1])
+        except Exception:
+            logger.debug("assistant_mode_semantic_arbitration_parse_failed text=%r", text)
+            return {}
+        capability = str(data.get("capability") or "").strip()
+        if capability not in allowed:
+            return {}
+        return {
+            "capability": capability,
+            "reason": str(data.get("reason") or "").strip(),
+        }
+
+    def _semantic_web_browse_decide(
+        self,
+        *,
+        raw_text: str,
+        normalized_text: str,
+        selected_capability: str,
+        intent_hint: str,
+        followup_target: str,
+        session_context: Any,
+        resolution: dict[str, Any],
+    ) -> dict[str, Any]:
+        prompt = (
+            "You are an internal web-routing planner for a desktop assistant.\n"
+            "Decide whether this request should enter the web-research bundle.\n"
+            "The decision must be model-first: infer user intent from natural language, not keyword matching.\n"
+            "Use web-research when the answer depends on current real-world web content such as product facts, official docs, release status, news, comparisons, pricing, or purchase advice.\n"
+            "Do not use web-research for pure explanation, translation, writing, coding help, or local desktop/system tasks.\n"
+            "Allowed task_type values: general_info, specs, compare, news, release, product_lookup, none.\n"
+            "Map natural questions like screen size, versions, worth buying, how to choose, and whether something is out yet to the best web task type.\n"
+            "Return strict JSON only with keys: should_browse, task_type, entity, search_query, answer_focus, confidence, reason."
+        )
+        payload = {
+            "raw_text": raw_text,
+            "normalized_text": normalized_text,
+            "selected_capability": selected_capability,
+            "intent_hint": intent_hint,
+            "followup_target": followup_target,
+            "last_capability": str(getattr(session_context, "last_capability", "") or ""),
+            "previous_structured": dict(getattr(session_context, "previous_structured", {}) or {}),
+            "resolution": resolution,
+        }
+        try:
+            response = self.llm.execute_task(
+                prompt,
+                json.dumps(payload, ensure_ascii=False),
+                temperature=0.0,
+                max_tokens=220,
+                instruction_label="Web browse routing",
+            )
+        except Exception:
+            logger.debug("assistant_mode_semantic_web_browse_decide_failed", exc_info=True)
+            return {}
+        text = str(response.text or "").strip()
+        if not text or text.startswith("模型服务未就绪"):
+            return {}
+        try:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start < 0 or end < start:
+                return {}
+            data = json.loads(text[start : end + 1])
+        except Exception:
+            logger.debug("assistant_mode_semantic_web_browse_decide_parse_failed text=%r", text)
+            return {}
+        task_type = str(data.get("task_type") or "").strip().lower()
+        if task_type == "none":
+            task_type = ""
+        return {
+            "should_browse": bool(data.get("should_browse")) and bool(task_type),
+            "task_type": task_type,
+            "entity": str(data.get("entity") or "").strip(),
+            "search_query": str(data.get("search_query") or "").strip(),
+            "answer_focus": str(data.get("answer_focus") or "").strip(),
+            "confidence": float(data.get("confidence") or 0.0),
+            "reason": str(data.get("reason") or "").strip(),
+        }
 
     def run(self) -> None:
         self.presence_window.show()
@@ -911,7 +1052,7 @@ class AssistantModeController(QObject):
     def _schedule_voice_warmup(self) -> None:
         if self._voice_warmup_scheduled or not voice_config.enabled or not voice_config.warmup_on_start:
             return
-        if not (voice_config.speak_responses or voice_config.stream_responses):
+        if not (voice_config.speak_responses or voice_config.stream_responses or voice_config.speak_system):
             return
         self._voice_warmup_scheduled = True
         QTimer.singleShot(8000, self.voice.start_background_warmup)
@@ -924,10 +1065,7 @@ class AssistantModeController(QObject):
             return
         if cleaned == system_config.startup_status_lines[-1] and self.initializer.is_first_launch_today():
             return
-        audio_path = self.initializer.resolve_status_audio(cleaned)
-        if audio_path is None:
-            return
-        self.voice.play_audio_file(audio_path, priority=5, ephemeral=False)
+        self.voice.speak_system_text(cleaned, priority=5)
         self._last_startup_status_spoken = cleaned
 
     def _next_startup_status_text(self) -> str:
@@ -955,9 +1093,7 @@ class AssistantModeController(QObject):
             return
         if state != "idle":
             return
-        audio_path = self.initializer.resolve_welcome_audio()
-        if audio_path is not None and voice_config.enabled:
-            self.voice.play_audio_file(audio_path, priority=1, ephemeral=False)
+        self.voice.speak_system_text(system_config.welcome_voice_text, priority=1)
         self.initializer.mark_welcome_played()
         self._welcome_played = True
 
@@ -1077,6 +1213,10 @@ class AssistantModeController(QObject):
                 screen_followup_remaining=self._screen_followup_remaining,
                 session_id=self._session_id,
                 perception_intent=str(route_hints.get("perception_intent", "") or ""),
+                forced_bundle=str(route_hints.get("forced_bundle", "") or ""),
+                web_task_type=str(route_hints.get("web_task_type", "") or ""),
+                web_intent_plan=dict(route_hints.get("web_intent_plan") or {}),
+                web_context=dict((self._last_structured or {}).get("web_context") or {}),
                 preferred_routes=list(route_hints.get("preferred_routes") or []),
                 preferred_modalities=list(route_hints.get("preferred_modalities") or []),
                 active_focus=dict(route_hints.get("active_focus") or {}),
@@ -1210,7 +1350,7 @@ class AssistantModeController(QObject):
             ):
                 return
             self.window.show_assistant_chat_message(
-                ChatMessage.from_legacy("Fairy", next_text, rich_text=False, message_id=message_id)
+                ChatMessage.from_text_payload("Fairy", next_text, rich_text=False, message_id=message_id)
             )
             return
 
@@ -1249,7 +1389,7 @@ class AssistantModeController(QObject):
             return
 
         if not message_id:
-            progress_message = ChatMessage.from_legacy("Fairy", progress_text, rich_text=False)
+            progress_message = ChatMessage.from_text_payload("Fairy", progress_text, rich_text=False)
             self._progress_message_ids[request_id] = progress_message.id
             self._progress_message_texts[request_id] = progress_text
             self.window.show_assistant_chat_message(progress_message)
@@ -1326,7 +1466,7 @@ class AssistantModeController(QObject):
                     assistant_text = str(structured.get("summary", "")).strip()
                 elif suggested_next_step:
                     assistant_text = suggested_next_step
-            elif payload.get("skill_name") == "screen_understanding_skill" and screen_summary and len(assistant_text) < 48:
+            elif payload.get("skill_name") == "screen-understanding" and screen_summary and len(assistant_text) < 48:
                 extra_lines = [assistant_text, screen_summary]
                 if suggested_next_step:
                     extra_lines.append(f"\u5efa\u8bae\uff1a{suggested_next_step}")
@@ -1508,7 +1648,7 @@ class AssistantModeController(QObject):
 
         if payload.get("cancelled"):
             cancelled_text = tr("presence_request_cancelled", self.preferences.ui_language)
-            cancelled_message = ChatMessage.from_legacy(
+            cancelled_message = ChatMessage.from_text_payload(
                 "Fairy",
                 cancelled_text,
                 rich_text=False,
@@ -1541,7 +1681,7 @@ class AssistantModeController(QObject):
 
         if self._is_error_reply(assistant_text) or payload.get("success") is False:
             self.voice.interrupt()
-            error_message = ChatMessage.from_legacy(
+            error_message = ChatMessage.from_text_payload(
                 "Fairy",
                 assistant_html or assistant_text,
                 rich_text=bool(assistant_html),
@@ -1648,7 +1788,7 @@ class AssistantModeController(QObject):
         self.history.append({"role": "assistant", "content": assistant_text})
         self._last_skill_name = str(payload.get("skill_name", "") or "")
         self._last_structured = self._remember_structured_context(payload, normalized_response if "normalized_response" in locals() else None)
-        if self._last_skill_name == "screen_understanding_skill":
+        if self._last_skill_name == "screen-understanding":
             self._screen_followup_remaining = 3
         else:
             self._screen_followup_remaining = 0

@@ -1,5 +1,7 @@
 import { AssetResolver } from "../../../lib/assets/assetResolver";
+import { firstCardAction } from "../../../lib/actions/cardActions";
 import type { NewsCardEnvelope } from "../../../lib/types/api";
+import { ActionButton } from "./ActionButton";
 
 interface NewsCardProps {
   card: NewsCardEnvelope;
@@ -26,11 +28,7 @@ export function NewsCard({ card }: NewsCardProps): JSX.Element {
                   <span>{item.source || "Source"}</span>
                   {item.published_at ? <span>{item.published_at}</span> : null}
                 </div>
-                {item.url ? (
-                  <a href={item.url} target="_blank" rel="noreferrer">
-                    Open
-                  </a>
-                ) : null}
+                <ActionButton action={firstCardAction(item.actions, ["open_url"])} className="card__inline-action" label="Open" />
               </div>
             </section>
           );

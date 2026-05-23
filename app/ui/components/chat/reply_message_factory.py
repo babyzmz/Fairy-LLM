@@ -60,6 +60,7 @@ def build_chat_messages_from_response(
         payload.setdefault("card_layout", card.layout)
         payload.setdefault("layout_mode", card.layout)
         payload.setdefault("card_metadata", dict(card.metadata))
+        payload.setdefault("card_actions", [dict(item) for item in card.actions])
         card_messages.append(
             ChatMessage.create(
                 role="assistant",
@@ -95,6 +96,7 @@ def _coerce_response_contract(response: NormalizedAssistantResponse | dict[str, 
                 data=dict(item.get("data") or {}),
                 layout=str(item.get("layout") or "single").strip().lower() or "single",
                 metadata=dict(item.get("metadata") or {}),
+                actions=[dict(action) for action in list(item.get("actions") or []) if isinstance(action, dict)],
             )
         )
 
@@ -132,6 +134,10 @@ def _card_type_to_message_type(card_type: str) -> str:
         "news_card": "news",
         "generic_info": "generic_info",
         "generic_info_card": "generic_info",
+        "specs": "specs",
+        "compare": "compare",
+        "release": "release",
+        "web_brief": "web_brief",
         "image_card": "image",
         "link_card": "link",
         "suggestion_card": "suggestion",

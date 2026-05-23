@@ -1,14 +1,64 @@
-import { useId, useMemo } from "react";
+import { type CSSProperties, useId, useMemo } from "react";
 
-type FairyAvatarMode = "default" | "idle" | "active";
+export type FairyWorkState = "standby" | "relaxed" | "thinking" | "focused" | "uncertain" | "alert";
+
+export type FairyAvatarMode =
+  | FairyWorkState
+  | "idle"
+  | "booting"
+  | "warming_up"
+  | "analyzing"
+  | "replying"
+  | "error"
+  | "sleeping";
+
+export interface FairyAvatarSignal {
+  state: FairyWorkState;
+  certainty?: number;
+  urgency?: number;
+}
 
 interface FairyAvatarProps {
   size?: number;
   animated?: boolean;
   className?: string;
   mode?: FairyAvatarMode;
+  signal?: FairyAvatarSignal;
   glow?: boolean;
 }
+
+interface FairyPhysicalParams {
+  baseFreq: number;
+  rippleSpeed: number;
+  amplitude: number;
+  jitter: number;
+  glow: number;
+}
+
+export interface FairyResolvedDynamics extends FairyPhysicalParams {
+  state: FairyWorkState;
+  certainty: number;
+  urgency: number;
+  freq: number;
+}
+
+const FAIRY_STATE_PARAMS: Record<FairyWorkState, FairyPhysicalParams> = {
+  standby: { baseFreq: 0.18, rippleSpeed: 0.15, amplitude: 0.18, jitter: 0.02, glow: 0.25 },
+  relaxed: { baseFreq: 0.28, rippleSpeed: 0.25, amplitude: 0.25, jitter: 0.03, glow: 0.35 },
+  thinking: { baseFreq: 0.55, rippleSpeed: 0.6, amplitude: 0.22, jitter: 0.08, glow: 0.4 },
+  focused: { baseFreq: 0.35, rippleSpeed: 0.45, amplitude: 0.32, jitter: 0.03, glow: 0.55 },
+  uncertain: { baseFreq: 0.25, rippleSpeed: 0.3, amplitude: 0.2, jitter: 0.06, glow: 0.3 },
+  alert: { baseFreq: 0.75, rippleSpeed: 0.8, amplitude: 0.28, jitter: 0.1, glow: 0.65 },
+};
+
+const DEFAULT_SIGNAL_BY_STATE: Record<FairyWorkState, Required<FairyAvatarSignal>> = {
+  standby: { state: "standby", certainty: 0.82, urgency: 0.08 },
+  relaxed: { state: "relaxed", certainty: 0.78, urgency: 0.18 },
+  thinking: { state: "thinking", certainty: 0.58, urgency: 0.58 },
+  focused: { state: "focused", certainty: 0.88, urgency: 0.32 },
+  uncertain: { state: "uncertain", certainty: 0.34, urgency: 0.34 },
+  alert: { state: "alert", certainty: 0.7, urgency: 0.88 },
+};
 
 const COLORS = {
   deepNavy: "#0F2A5A",
@@ -20,6 +70,63 @@ const COLORS = {
   dotWhite: "#F4F7FB",
   particle: "#C2E8FF",
 };
+
+function clamp01(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(1, value));
+}
+
+function lerp(start: number, end: number, ratio: number): number {
+  return start + (end - start) * ratio;
+}
+
+export function resolveFairyAvatarSignal(mode: FairyAvatarMode): Required<FairyAvatarSignal> {
+  switch (mode) {
+    case "standby":
+    case "relaxed":
+    case "thinking":
+    case "focused":
+    case "uncertain":
+    case "alert":
+      return DEFAULT_SIGNAL_BY_STATE[mode];
+    case "booting":
+      return { state: "standby", certainty: 0.45, urgency: 0.36 };
+    case "warming_up":
+      return { state: "relaxed", certainty: 0.58, urgency: 0.28 };
+    case "analyzing":
+      return { state: "focused", certainty: 0.76, urgency: 0.52 };
+    case "replying":
+      return { state: "focused", certainty: 0.9, urgency: 0.28 };
+    case "error":
+      return { state: "alert", certainty: 0.62, urgency: 0.94 };
+    case "sleeping":
+      return { state: "standby", certainty: 0.84, urgency: 0.03 };
+    case "idle":
+    default:
+      return DEFAULT_SIGNAL_BY_STATE.standby;
+  }
+}
+
+export function resolveFairyAvatarDynamics(signal: FairyAvatarSignal): FairyResolvedDynamics {
+  const fallback = DEFAULT_SIGNAL_BY_STATE[signal.state];
+  const certainty = clamp01(signal.certainty, fallback.certainty);
+  const urgency = clamp01(signal.urgency, fallback.urgency);
+  const base = FAIRY_STATE_PARAMS[signal.state];
+  const amplitude = base.amplitude * lerp(0.85, 1.25, certainty);
+  const freq = base.baseFreq * lerp(0.8, 1.8, urgency);
+  const jitter = base.jitter * lerp(1.2, 0.6, certainty);
+  return {
+    ...base,
+    state: signal.state,
+    certainty,
+    urgency,
+    amplitude,
+    freq,
+    jitter,
+  };
+}
 
 function polar(cx: number, cy: number, radius: number, angle: number) {
   return {
@@ -68,12 +175,18 @@ export function FairyAvatar({
   size = 180,
   animated = true,
   className = "",
-  mode = "default",
+  mode = "idle",
+  signal,
   glow = true,
 }: FairyAvatarProps): JSX.Element {
   const gradientId = useId().replace(/:/g, "");
   const shellPath = useMemo(() => buildShellPath(size), [size]);
   const particles = useMemo(() => buildParticles(size), [size]);
+  const effectiveSignal = useMemo(
+    () => signal ?? resolveFairyAvatarSignal(mode),
+    [mode, signal?.certainty, signal?.state, signal?.urgency],
+  );
+  const dynamics = useMemo(() => resolveFairyAvatarDynamics(effectiveSignal), [effectiveSignal]);
   const cx = size / 2;
   const cy = size / 2;
   const outerRingRadius = size * 0.1635;
@@ -81,6 +194,23 @@ export function FairyAvatar({
   const orbitRadius = size * 0.118;
   const orbitDotRadius = size * 0.0435;
   const coreRadius = size * 0.0695;
+  const breathDuration = 1 / Math.max(dynamics.freq, 0.08);
+  const avatarStyle = {
+    width: size,
+    height: size,
+    "--fairy-ring-duration": `${breathDuration.toFixed(2)}s`,
+    "--fairy-inner-duration": `${(breathDuration * 0.86).toFixed(2)}s`,
+    "--fairy-core-duration": `${(breathDuration * 0.78).toFixed(2)}s`,
+    "--fairy-orbit-duration": `${Math.max(8, 24 - dynamics.rippleSpeed * 14).toFixed(2)}s`,
+    "--fairy-shell-duration": `${Math.max(7, 20 - dynamics.rippleSpeed * 11).toFixed(2)}s`,
+    "--fairy-particle-duration": `${Math.max(1.6, 5.4 - dynamics.rippleSpeed * 3.2).toFixed(2)}s`,
+    "--fairy-ring-scale": (1 + dynamics.amplitude * 0.08).toFixed(4),
+    "--fairy-inner-scale": (1 + dynamics.amplitude * 0.05).toFixed(4),
+    "--fairy-core-scale": (1 + dynamics.amplitude * 0.16).toFixed(4),
+    "--fairy-glow-opacity": Math.min(1, 0.54 + dynamics.glow * 0.74).toFixed(3),
+    "--fairy-jitter-distance": `${(dynamics.jitter * size * 0.16).toFixed(2)}px`,
+    "--fairy-particle-opacity": (0.26 + dynamics.glow * 0.42).toFixed(3),
+  } as CSSProperties;
 
   return (
     <div
@@ -89,11 +219,12 @@ export function FairyAvatar({
         animated ? "fairy-avatar--animated" : "fairy-avatar--static",
         glow ? "fairy-avatar--glow" : "",
         `fairy-avatar--${mode}`,
+        mode !== dynamics.state ? `fairy-avatar--${dynamics.state}` : "",
         className,
       ]
         .filter(Boolean)
         .join(" ")}
-      style={{ width: size, height: size }}
+      style={avatarStyle}
     >
       <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} aria-hidden="true">
         <defs>

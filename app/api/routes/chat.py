@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api.dependencies import FairyRuntimeService, build_error_contract, get_runtime_service
 from app.api.models import ChatInvokeRequest, ChatInvokeResponse
+from app.api.routes.companion import notify_assistant_text
 
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ def invoke_chat(
             attachments=payload.attachments,
         )
         request_id = str(result.get("request_id") or "")
+        notify_assistant_text(str(result.get("text") or ""))
     except Exception as exc:
         logger.exception("api_chat_invoke_failed session_id=%s", session_id)
         result = build_error_contract(
@@ -144,6 +146,8 @@ async def stream_chat(
                     cards_emitted += 1
                 if str(normalized.get("event") or "") == "error":
                     error_count += 1
+                if str(normalized.get("event") or "") == "message_end":
+                    notify_assistant_text(str(normalized.get("text") or ""))
                 event_name = str(normalized.get("event") or "message_end")
                 yield _format_sse_event(event_name, normalized)
         except Exception as exc:
@@ -196,5 +200,6 @@ async def stream_chat(
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
         "X-Accel-Buffering": "no",
+        "Content-Type": "text/event-stream; charset=utf-8",
     }
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)

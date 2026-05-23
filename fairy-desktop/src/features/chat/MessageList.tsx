@@ -1,13 +1,16 @@
 import { useEffect, useRef } from "react";
 
-import type { ChatUiMessage } from "../../lib/stores/chatStore";
+import type { ChatUiMessage, StreamTimelineEntry } from "../../lib/stores/chatStore";
+import { buildActivityPreview } from "./activity";
 import { MessageItem } from "./MessageItem";
 
 interface MessageListProps {
   messages: ChatUiMessage[];
+  streamTimeline: StreamTimelineEntry[];
+  onOpenActivity?: (requestId: string) => void;
 }
 
-export function MessageList({ messages }: MessageListProps): JSX.Element {
+export function MessageList({ messages, streamTimeline, onOpenActivity }: MessageListProps): JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -26,7 +29,12 @@ export function MessageList({ messages }: MessageListProps): JSX.Element {
         </div>
       ) : null}
       {messages.map((message) => (
-        <MessageItem key={message.id} message={message} />
+        <MessageItem
+          key={message.id}
+          message={message}
+          activityPreview={buildActivityPreview(message, streamTimeline)}
+          onOpenActivity={onOpenActivity}
+        />
       ))}
     </div>
   );

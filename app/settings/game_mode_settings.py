@@ -20,7 +20,7 @@ class FallbackSettings:
     on_network_error: bool = True
     on_provider_error: bool = True
     local_provider: str = "local_server"
-    local_model: str = "Qwen3.5-4B-Q4_K_M"
+    local_model: str = "Qwen3.5-9B-Claude-4.6-Opus-V2-KL.Q4_K_M"
 
 
 @dataclass(slots=True)

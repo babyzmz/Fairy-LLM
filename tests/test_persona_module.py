@@ -11,7 +11,7 @@ class PersonaModuleTests(unittest.TestCase):
 
     def test_persona_prompt_contains_structured_sections(self) -> None:
         prompt = self.engine.build_persona_prompt(
-            context={"chosen_skill": "agent_shell_skill", "memory_category": "coding_help"},
+            context={"chosen_skill": "terminal-agent", "memory_category": "coding_help"},
             user_profile=[{"key": "pref_direct", "value": "回答更直接，少废话"}],
             task_type="coding",
             recent_summary="最近在重构 Fairy 的工具链和记忆注入。",

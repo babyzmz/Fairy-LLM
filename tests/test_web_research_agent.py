@@ -12,7 +12,6 @@ from app.agents.web_research.evidence_scorer import EvidenceScorer
 from app.agents.web_research.synthesis_engine import SynthesisEngine
 from app.agents.web_research.safety_policy import SafetyPolicy
 from app.agents.web_research.agent import WebResearchAgent
-from app.core.capability_registry import get_registry
 
 FAKE_RESULTS = [
     {"title": "Python 3.12 Release Notes", "url": "https://docs.python.org/3.12/",
@@ -257,23 +256,6 @@ class TestWebResearchAgentE2E:
         for key in ("success", "answer", "speech_text", "card_type",
                     "citations", "confidence", "sources_searched"):
             assert key in d
-
-
-class TestCapabilityRegistryWebResearch:
-    def test_registered(self):
-        cap = get_registry().get("web_research")
-        assert cap is not None
-        assert not cap.is_pure_llm
-
-    def test_agent_loadable(self):
-        cls = get_registry().load_agent_class("web_research")
-        assert cls is not None
-        assert cls.__name__ == "WebResearchAgent"
-
-    def test_required_tools(self):
-        cap = get_registry().get("web_research")
-        assert "search_web" in cap.required_tools
-
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__])

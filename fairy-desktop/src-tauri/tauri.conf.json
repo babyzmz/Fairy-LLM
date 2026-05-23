@@ -16,6 +16,20 @@
         "width": 1080,
         "height": 760,
         "resizable": true
+      },
+      {
+        "label": "fairy-pet",
+        "title": "Fairy",
+        "url": "index.html?surface=pet",
+        "width": 296,
+        "height": 420,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false
       }
     ],
     "security": {
