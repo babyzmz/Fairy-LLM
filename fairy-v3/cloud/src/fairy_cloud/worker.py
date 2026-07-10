@@ -27,7 +27,12 @@ class OutboxStore(Protocol):
         lease_seconds: int,
     ) -> list[OutboxItem]: ...
 
-    async def mark_outbox_published(self, *, owner_id: str, item_ids: list[int]) -> int: ...
+    async def mark_outbox_published(
+        self,
+        *,
+        owner_id: str,
+        items: list[OutboxItem],
+    ) -> int: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +64,7 @@ class OutboxWorker:
             batch_size=self._batch_size,
             lease_seconds=self._lease_seconds,
         )
-        successful: list[int] = []
+        successful: list[OutboxItem] = []
         failed = 0
         for item in items:
             handler = self._handlers.get(item.topic)
@@ -73,10 +78,10 @@ class OutboxWorker:
                 failed += 1
                 logger.exception("Outbox item %s failed", item.id)
             else:
-                successful.append(item.id)
+                successful.append(item)
         published = await self._store.mark_outbox_published(
             owner_id=self._owner_id,
-            item_ids=successful,
+            items=successful,
         )
         return WorkerCycle(claimed=len(items), published=published, failed=failed)
 

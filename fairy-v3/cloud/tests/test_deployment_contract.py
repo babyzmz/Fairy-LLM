@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import yaml
+from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
@@ -15,8 +17,41 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260710_0001"]
-    assert scripts.get_revision("20260710_0001").down_revision is None
+    assert scripts.get_heads() == ["20260710_0002"]
+    assert scripts.get_revision("20260710_0002").down_revision == "20260710_0001"
+
+
+def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.upgrade(config, "head", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    for table_name in (
+        "CORE_TENANTS",
+        "CORE_PROJECTS",
+        "CORE_CONVERSATIONS",
+        "CORE_VERSIONS",
+        "CORE_TASKS",
+        "CORE_CHANGESETS",
+        "CORE_APPROVALS",
+        "CORE_CHECKPOINTS",
+        "COMMAND_RUNS",
+        "TASK_EVENT_SEQUENCES",
+    ):
+        assert f"CREATE TABLE {table_name}" in ddl
+    assert "ALTER TABLE DOMAIN_EVENTS ADD COLUMN TENANT_ID" in ddl
+    assert "LEASE_FENCE" in ddl
+    assert "CREATE INDEX IX_OUTBOX_CLAIM_GLOBAL" in ddl
+    assert "ENABLE ROW LEVEL SECURITY" in ddl
+    assert "FORCE ROW LEVEL SECURITY" in ddl
+    assert "CURRENT_SETTING('APP.TENANT_ID', TRUE)" in ddl
+    assert "PROJECT_OWNERSHIP_MISMATCH" in ddl
+    assert "JSON_BUILD_OBJECT" in ddl
+    assert "PAYLOAD ->> 'RUN_ID'" in ddl
+    assert "CONSTRAINT FK_DOMAIN_EVENTS_RUN" not in ddl
+    assert "DROP TABLE CLOUD_PROJECTS" in ddl
 
 
 def test_compose_uses_supported_brokerless_development_services() -> None:
@@ -30,6 +65,7 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
         "object-store",
         "oidc",
         "postgres",
+        "postgres-permissions",
         "worker",
     }
     assert services["postgres"]["image"] == "postgres:18.4-alpine3.24"
@@ -45,12 +81,46 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
     assert services["worker"]["read_only"] is True
     assert services["worker"]["cap_drop"] == ["ALL"]
     assert services["migrate"]["depends_on"]["postgres"]["condition"] == "service_healthy"
-    assert services["api"]["depends_on"]["migrate"]["condition"] == (
+    assert services["postgres-permissions"]["depends_on"]["migrate"]["condition"] == (
+        "service_completed_successfully"
+    )
+    assert services["api"]["depends_on"]["postgres-permissions"]["condition"] == (
+        "service_completed_successfully"
+    )
+    assert services["worker"]["depends_on"]["postgres-permissions"]["condition"] == (
         "service_completed_successfully"
     )
     assert services["integration"]["profiles"] == ["test"]
+    assert "fairy_app:" in services["api"]["environment"]["FAIRY_POSTGRES_DSN"]
+    assert "fairy_worker:" in services["worker"]["environment"]["FAIRY_POSTGRES_DSN"]
+    assert "fairy:" in services["migrate"]["environment"]["FAIRY_POSTGRES_DSN"]
+    assert any(
+        "docker-entrypoint-initdb.d/010-fairy-roles.sh" in volume
+        for volume in services["postgres"]["volumes"]
+    )
     assert not ({"redis", "nats"} & set(services))
     assert "docker.sock" not in (CLOUD_ROOT / "compose.yaml").read_text(encoding="utf-8")
+
+
+def test_postgres_init_creates_rls_app_and_cross_tenant_worker_roles() -> None:
+    script = (CLOUD_ROOT / "docker/postgres/010-fairy-roles.sh").read_text(encoding="utf-8")
+    app_role = next(line for line in script.splitlines() if line.startswith("ALTER ROLE fairy_app"))
+    worker_role = next(
+        line for line in script.splitlines() if line.startswith("ALTER ROLE fairy_worker")
+    )
+
+    assert "NOSUPERUSER" in app_role
+    assert "NOBYPASSRLS" in app_role
+    assert "NOSUPERUSER" in worker_role
+    assert "BYPASSRLS" in worker_role
+    assert "NOBYPASSRLS" not in worker_role
+    assert "ALTER DEFAULT PRIVILEGES" in script
+    assert "GRANT USAGE, SELECT ON ALL SEQUENCES" in script
+    assert "ON ALL TABLES IN SCHEMA public TO fairy_app, fairy_worker" not in script
+    assert "ON TABLE public.outbox TO fairy_worker" in script
+    assert "ON TABLE public.worker_leases TO fairy_worker" in script
+    assert "TABLES TO fairy_app, fairy_worker" not in script
+    assert "REVOKE ALL ON TABLE public.alembic_version FROM fairy_app, fairy_worker" in script
 
 
 def test_cloud_image_is_pinned_and_runs_as_non_root() -> None:

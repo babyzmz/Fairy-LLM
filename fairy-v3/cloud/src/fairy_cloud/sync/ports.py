@@ -19,6 +19,7 @@ class SyncStore(Protocol):
         self,
         *,
         event_id: str,
+        run_id: str | None = None,
         user_id: str,
         device_id: str,
         project_id: str | None,
@@ -29,6 +30,7 @@ class SyncStore(Protocol):
         schema_version: int,
         event_type: str,
         visibility: str = "user",
+        message: str | None = None,
         payload: Mapping[str, Any],
     ) -> int: ...
 

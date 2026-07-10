@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from fairy_core.domain.errors import IdempotencyConflictError
 from fairy_core.domain.ids import new_id
 from fairy_core.transports.stdio import build_local_dispatcher
 from httpx import ASGITransport, AsyncClient
@@ -68,6 +69,8 @@ async def test_uploaded_events_are_identity_bound_and_resumable(sync_app) -> Non
     ) as client:
         first = await client.post("/v1/sync/events", json={"items": [event]})
         duplicate = await client.post("/v1/sync/events", json={"items": [event]})
+        changed_event = {**event, "payload": {"status": "changed"}}
+        changed = await client.post("/v1/sync/events", json={"items": [changed_event]})
         stream = await client.get("/v1/events", params={"follow": False})
         resumed = await client.get(
             "/v1/events",
@@ -81,6 +84,8 @@ async def test_uploaded_events_are_identity_bound_and_resumable(sync_app) -> Non
     resumed.raise_for_status()
     assert first.json()["accepted"] == [{"event_id": event["id"], "cursor": 1}]
     assert duplicate.json()["accepted"] == [{"event_id": event["id"], "cursor": 1}]
+    assert changed.status_code == 409
+    assert changed.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"
     stored = await sync_store.events_after(user_id="user-a", cursor=0)
     assert len(stored) == 1
     assert stored[0].device_id == "device-a"
@@ -88,6 +93,56 @@ async def test_uploaded_events_are_identity_bound_and_resumable(sync_app) -> Non
     assert streamed[0]["id"] == "1"
     assert streamed[0]["data"]["id"] == event["id"]
     assert _parse_sse(resumed.text) == []
+
+
+@pytest.mark.asyncio
+async def test_memory_sync_store_scopes_same_ids_by_tenant() -> None:
+    store = MemorySyncStore()
+    await store.register_project(project_id="shared-project", user_id="user-a")
+    await store.register_project(project_id="shared-project", user_id="user-b")
+
+    cursor_a = await store.append_event(
+        event_id="shared-event",
+        user_id="user-a",
+        device_id="device-a",
+        project_id="shared-project",
+        task_id="shared-task",
+        task_sequence=1,
+        schema_version=1,
+        event_type="task.created",
+        payload={"owner": "a"},
+    )
+    cursor_b = await store.append_event(
+        event_id="shared-event",
+        user_id="user-b",
+        device_id="device-b",
+        project_id="shared-project",
+        task_id="shared-task",
+        task_sequence=1,
+        schema_version=1,
+        event_type="task.created",
+        payload={"owner": "b"},
+    )
+
+    assert cursor_b > cursor_a
+    assert [event.payload for event in await store.events_after(user_id="user-a", cursor=0)] == [
+        {"owner": "a"}
+    ]
+    assert [event.payload for event in await store.events_after(user_id="user-b", cursor=0)] == [
+        {"owner": "b"}
+    ]
+    with pytest.raises(IdempotencyConflictError, match="task sequence"):
+        await store.append_event(
+            event_id="different-event",
+            user_id="user-a",
+            device_id="device-a",
+            project_id="shared-project",
+            task_id="shared-task",
+            task_sequence=1,
+            schema_version=1,
+            event_type="task.updated",
+            payload={"owner": "a"},
+        )
 
 
 @pytest.mark.asyncio
@@ -170,6 +225,7 @@ async def test_snapshot_promotion_keeps_stale_device_version_as_candidate(sync_a
         "version.promoted",
         "version.candidate_retained",
     ]
+    assert all("created_at" not in event.payload for event in decision_events)
 
 
 def _event_payload() -> dict[str, object]:

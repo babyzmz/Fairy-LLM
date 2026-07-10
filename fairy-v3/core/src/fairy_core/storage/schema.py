@@ -4,11 +4,13 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Column,
     DateTime,
+    ForeignKeyConstraint,
     Index,
-    Integer,
     MetaData,
+    PrimaryKeyConstraint,
     String,
     Table,
     UniqueConstraint,
@@ -61,9 +63,10 @@ projects = Table(
     Column("residency", String(32), nullable=False),
     Column("active_version_id", String(ID_LENGTH)),
     Column("active_preview_id", String(ID_LENGTH)),
-    Column("revision", Integer, nullable=False),
+    Column("revision", BigInteger, nullable=False),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_projects"),
 )
 
 conversations = Table(
@@ -79,6 +82,13 @@ conversations = Table(
     Column("active_preview_id", String(ID_LENGTH)),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_conversations"),
+    ForeignKeyConstraint(
+        ["tenant_id", "project_id"],
+        [projects.c.tenant_id, projects.c.id],
+        name="fk_core_conversations_project",
+        ondelete="CASCADE",
+    ),
 )
 
 versions = Table(
@@ -93,6 +103,18 @@ versions = Table(
     Column("project_root", String(4096), nullable=False),
     Column("visibility", String(32), nullable=False),
     Column("created_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_versions"),
+    ForeignKeyConstraint(
+        ["tenant_id", "project_id"],
+        [projects.c.tenant_id, projects.c.id],
+        name="fk_core_versions_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "source_conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_versions_source_conversation",
+    ),
 )
 
 tasks = Table(
@@ -111,7 +133,20 @@ tasks = Table(
     Column("idempotency_key", String(512), nullable=False),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_tasks"),
     UniqueConstraint("tenant_id", "idempotency_key", name="uq_core_tasks_tenant_idempotency"),
+    ForeignKeyConstraint(
+        ["tenant_id", "project_id"],
+        [projects.c.tenant_id, projects.c.id],
+        name="fk_core_tasks_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_tasks_conversation",
+        ondelete="CASCADE",
+    ),
 )
 
 changesets = Table(
@@ -132,10 +167,35 @@ changesets = Table(
     Column("approval_decision", String(32), nullable=False),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_changesets"),
     UniqueConstraint(
         "tenant_id",
         "idempotency_key",
         name="uq_core_changesets_tenant_idempotency",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "project_id"],
+        [projects.c.tenant_id, projects.c.id],
+        name="fk_core_changesets_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_changesets_conversation",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "task_id"],
+        [tasks.c.tenant_id, tasks.c.id],
+        name="fk_core_changesets_task",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "version_id"],
+        [versions.c.tenant_id, versions.c.id],
+        name="fk_core_changesets_version",
+        ondelete="CASCADE",
     ),
 )
 
@@ -153,6 +213,19 @@ approvals = Table(
     Column("decided_by", String(128)),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("decided_at", UTCDateTime()),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_approvals"),
+    ForeignKeyConstraint(
+        ["tenant_id", "task_id"],
+        [tasks.c.tenant_id, tasks.c.id],
+        name="fk_core_approvals_task",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "changeset_id"],
+        [changesets.c.tenant_id, changesets.c.id],
+        name="fk_core_approvals_changeset",
+        ondelete="CASCADE",
+    ),
 )
 
 checkpoints = Table(
@@ -166,6 +239,19 @@ checkpoints = Table(
     Column("command_run_ids", JSON, nullable=False),
     Column("preview_artifact_id", String(ID_LENGTH)),
     Column("created_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_checkpoints"),
+    ForeignKeyConstraint(
+        ["tenant_id", "task_id"],
+        [tasks.c.tenant_id, tasks.c.id],
+        name="fk_core_checkpoints_task",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "version_id"],
+        [versions.c.tenant_id, versions.c.id],
+        name="fk_core_checkpoints_version",
+        ondelete="CASCADE",
+    ),
 )
 
 Index("ix_core_projects_tenant_updated", projects.c.tenant_id, projects.c.updated_at)

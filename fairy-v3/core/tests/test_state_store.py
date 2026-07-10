@@ -278,15 +278,35 @@ def test_new_project_conversation_never_inherits_another_draft(tmp_path: Path) -
 def test_execution_records_survive_restart_with_explicit_ownership(tmp_path: Path) -> None:
     database_path = tmp_path / "state.db"
     store = SqliteStateStore(database_path)
-    project_id = new_id()
-    conversation_id = new_id()
-    task_id = new_id()
-    version_id = new_id()
+    project = Project.create(name="State", residency=ProjectResidency.LOCAL_ONLY)
+    conversation = Conversation.create(
+        project_id=project.id,
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+        base_version_id=None,
+    )
+    task = Task.create(
+        project_id=project.id,
+        conversation_id=conversation.id,
+        user_request="Update readme",
+        operation_mode=OperationMode.CONTINUE_CURRENT_DRAFT,
+        base_version_id=None,
+        execution_target="local",
+    )
+    version = Version.create(
+        version_id=new_id(),
+        project_id=project.id,
+        source_conversation_id=conversation.id,
+        source_task_id=task.id,
+        parent_version_id=None,
+        project_root=tmp_path / "version",
+        visibility=VersionVisibility.CHAT_DRAFT,
+    )
+    task.bind_target_version(version.id)
     changeset = Changeset.create(
-        project_id=project_id,
-        conversation_id=conversation_id,
-        task_id=task_id,
-        version_id=version_id,
+        project_id=project.id,
+        conversation_id=conversation.id,
+        task_id=task.id,
+        version_id=version.id,
         files=("README.md",),
         patches=("updated",),
         reason="Update readme",
@@ -295,7 +315,7 @@ def test_execution_records_survive_restart_with_explicit_ownership(tmp_path: Pat
     )
     changeset.transition_to(ChangesetStatus.AWAITING_APPROVAL)
     approval = Approval.create(
-        task_id=task_id,
+        task_id=task.id,
         command_run_id=new_id(),
         changeset_id=changeset.id,
         requested_by="agent",
@@ -303,13 +323,17 @@ def test_execution_records_survive_restart_with_explicit_ownership(tmp_path: Pat
     )
     approval.decide(decision=ApprovalDecision.APPROVED, decided_by="user")
     checkpoint = Checkpoint.create(
-        task_id=task_id,
-        version_id=version_id,
+        task_id=task.id,
+        version_id=version.id,
         changed_files=("README.md",),
         command_run_ids=(approval.command_run_id,),
         preview_artifact_id=None,
     )
 
+    store.save_project(project)
+    store.save_conversation(conversation)
+    store.save_version(version)
+    store.save_task(task, idempotency_key="task:state")
     store.save_changeset(changeset)
     store.save_approval(approval)
     store.save_checkpoint(checkpoint)

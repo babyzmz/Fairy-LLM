@@ -26,11 +26,12 @@ from fairy_core.contracts.models import (
     VersionAcceptInput,
     VersionModel,
 )
-from fairy_core.domain.errors import VersionConflictError
+from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.sse import EventSourceResponse, ServerSentEvent
+from starlette.responses import JSONResponse
 from starlette.types import Lifespan
 
 from fairy_cloud.auth import AuthenticationError, DenyAllAuthenticator
@@ -63,6 +64,22 @@ def create_cloud_app(
     dispatcher_resolver: Callable[[RequestIdentity], JsonRpcDispatcher] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Fairy Cloud API", version="0.1.0", lifespan=lifespan)
+
+    @app.exception_handler(IdempotencyConflictError)
+    async def idempotency_conflict_handler(
+        _request: Request,
+        error: IdempotencyConflictError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": {
+                    "code": "IDEMPOTENCY_CONFLICT",
+                    "message": str(error),
+                }
+            },
+        )
+
     protected = APIRouter(prefix="/v1")
     request_ids = count(1)
     token_authenticator = authenticator or DenyAllAuthenticator()
@@ -328,6 +345,7 @@ def create_cloud_app(
         for event in body.items:
             cursor = await store.append_event(
                 event_id=str(event.id),
+                run_id=str(event.run_id) if event.run_id is not None else None,
                 user_id=identity.user_id,
                 device_id=identity.device_id,
                 project_id=str(event.project_id) if event.project_id is not None else None,
@@ -338,6 +356,7 @@ def create_cloud_app(
                 schema_version=event.schema_version,
                 event_type=event.event_type,
                 visibility=event.visibility.value,
+                message=event.message,
                 payload=event.model_dump(mode="json"),
             )
             accepted.append({"event_id": str(event.id), "cursor": cursor})
@@ -500,6 +519,7 @@ def _synced_event_json(event: SyncedEvent) -> dict[str, Any]:
         {
             "id": event.event_id,
             "cursor": event.cursor,
+            "run_id": event.run_id,
             "project_id": event.project_id,
             "conversation_id": event.conversation_id,
             "task_id": event.task_id,
@@ -507,6 +527,7 @@ def _synced_event_json(event: SyncedEvent) -> dict[str, Any]:
             "task_sequence": event.task_sequence,
             "event_type": event.event_type,
             "visibility": event.visibility,
+            "message": event.message,
             "schema_version": event.schema_version,
         }
     )

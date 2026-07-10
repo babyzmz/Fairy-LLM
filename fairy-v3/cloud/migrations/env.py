@@ -5,6 +5,8 @@ import os
 from logging.config import fileConfig
 
 from alembic import context
+from fairy_core.commanding.schema import command_metadata
+from fairy_core.storage.schema import state_metadata
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
@@ -18,7 +20,7 @@ database_url = os.environ.get("FAIRY_POSTGRES_DSN")
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
 
-target_metadata = cloud_metadata
+target_metadata = [state_metadata, command_metadata, cloud_metadata]
 
 
 def run_migrations_offline() -> None:

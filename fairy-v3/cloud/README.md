@@ -20,6 +20,11 @@ capabilities dropped, no host filesystem mounts, and no Docker socket. The
 stateful dependencies are PostgreSQL 18.4, SeaweedFS 4.39 as local S3, and
 `mock-oauth2-server` 4.0.0 for Authorization Code + PKCE testing.
 
+Alembic uses the PostgreSQL owner role. The API uses `fairy_app` with forced
+RLS, while the cross-tenant `fairy_worker` role can only update the outbox and
+manage Worker leases. The idempotent `postgres-permissions` service reapplies
+those grants after every migration, including when an existing volume is used.
+
 - API readiness: `http://127.0.0.1:8088/v1/ready`
 - S3 endpoint: `http://127.0.0.1:8333`
 - OIDC debugger: `http://host.docker.internal:8090/fairy/debugger`

@@ -5,8 +5,9 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from fairy_core.domain.errors import VersionConflictError
+from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
 
+from fairy_cloud.sync.fingerprints import canonical_payload_fingerprint
 from fairy_cloud.sync.models import ProjectRevisionState, SyncedEvent
 
 
@@ -15,10 +16,11 @@ class MemorySyncStore:
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
-        self._projects: dict[str, tuple[str, ProjectRevisionState]] = {}
+        self._projects: dict[tuple[str, str], ProjectRevisionState] = {}
         self._events: list[SyncedEvent] = []
-        self._event_cursors: dict[str, tuple[str, int]] = {}
-        self._manifests: dict[tuple[str, str], dict[str, Any]] = {}
+        self._event_cursors: dict[tuple[str, str], int] = {}
+        self._task_sequences: dict[tuple[str, str, int], str] = {}
+        self._manifests: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     async def register_project(
         self,
@@ -28,24 +30,23 @@ class MemorySyncStore:
         active_version_id: str | None = None,
     ) -> ProjectRevisionState:
         async with self._lock:
-            existing = self._projects.get(project_id)
+            project_key = (user_id, project_id)
+            existing = self._projects.get(project_key)
             if existing is not None:
-                owner, state = existing
-                if owner != user_id:
-                    raise PermissionError("project belongs to a different user")
-                return state
+                return existing
             state = ProjectRevisionState(
                 project_id=project_id,
                 revision=0,
                 active_version_id=active_version_id,
             )
-            self._projects[project_id] = (user_id, state)
+            self._projects[project_key] = state
             return state
 
     async def append_event(
         self,
         *,
         event_id: str,
+        run_id: str | None = None,
         user_id: str,
         device_id: str,
         project_id: str | None,
@@ -56,11 +57,13 @@ class MemorySyncStore:
         schema_version: int,
         event_type: str,
         visibility: str = "user",
+        message: str | None = None,
         payload: Mapping[str, Any],
     ) -> int:
         async with self._lock:
             return self._append_event_unlocked(
                 event_id=event_id,
+                run_id=run_id,
                 user_id=user_id,
                 device_id=device_id,
                 project_id=project_id,
@@ -71,6 +74,7 @@ class MemorySyncStore:
                 schema_version=schema_version,
                 event_type=event_type,
                 visibility=visibility,
+                message=message or event_type,
                 payload=payload,
             )
 
@@ -105,10 +109,8 @@ class MemorySyncStore:
         task_sequence: int | None = None,
     ) -> ProjectRevisionState:
         async with self._lock:
-            owner, state = self._projects[project_id]
-            if owner != user_id:
-                raise PermissionError("project belongs to a different user")
-            self._manifests.setdefault((project_id, version_id), dict(manifest))
+            state = self._projects[(user_id, project_id)]
+            self._manifests.setdefault((user_id, project_id, version_id), dict(manifest))
             conflict: VersionConflictError | None = None
             try:
                 state.promote(version_id=version_id, expected_revision=expected_revision)
@@ -120,7 +122,11 @@ class MemorySyncStore:
                     raise ValueError("version decision event requires complete scope")
                 outcome = "candidate_retained" if conflict is not None else "promoted"
                 event_type = f"version.{outcome}"
-                created_at = datetime.now(UTC)
+                message = (
+                    "Version retained as a conflict candidate"
+                    if conflict is not None
+                    else "Version promoted"
+                )
                 event_payload = {
                     "id": decision_event_id,
                     "run_id": None,
@@ -131,21 +137,17 @@ class MemorySyncStore:
                     "task_sequence": task_sequence,
                     "event_type": event_type,
                     "visibility": "user",
-                    "message": (
-                        "Version retained as a conflict candidate"
-                        if conflict is not None
-                        else "Version promoted"
-                    ),
+                    "message": message,
                     "payload": {
                         "expected_revision": expected_revision,
                         "project_revision": state.revision,
                         "manifest": dict(manifest),
                     },
                     "schema_version": 1,
-                    "created_at": created_at.isoformat(),
                 }
                 self._append_event_unlocked(
                     event_id=decision_event_id,
+                    run_id=None,
                     user_id=user_id,
                     device_id=str(device_id),
                     project_id=project_id,
@@ -156,6 +158,7 @@ class MemorySyncStore:
                     schema_version=1,
                     event_type=event_type,
                     visibility="user",
+                    message=message,
                     payload=event_payload,
                 )
 
@@ -164,12 +167,20 @@ class MemorySyncStore:
             return state
 
     def project_state(self, project_id: str) -> ProjectRevisionState:
-        return self._projects[project_id][1]
+        matches = [
+            state
+            for (_user_id, stored_project_id), state in self._projects.items()
+            if stored_project_id == project_id
+        ]
+        if len(matches) != 1:
+            raise KeyError(f"project id is missing or ambiguous: {project_id}")
+        return matches[0]
 
     def _append_event_unlocked(
         self,
         *,
         event_id: str,
+        run_id: str | None,
         user_id: str,
         device_id: str,
         project_id: str | None,
@@ -180,19 +191,52 @@ class MemorySyncStore:
         schema_version: int,
         event_type: str,
         visibility: str,
+        message: str,
         payload: Mapping[str, Any],
     ) -> int:
-        existing = self._event_cursors.get(event_id)
+        event_key = (user_id, event_id)
+        existing = self._event_cursors.get(event_key)
         if existing is not None:
-            owner, cursor = existing
-            if owner != user_id:
-                raise PermissionError("event id belongs to a different user")
+            cursor = existing
+            stored = self._events[cursor - 1]
+            immutable = {
+                "run_id": (stored.run_id, run_id),
+                "device_id": (stored.device_id, device_id),
+                "project_id": (stored.project_id, project_id),
+                "conversation_id": (stored.conversation_id, conversation_id),
+                "task_id": (stored.task_id, task_id),
+                "version_id": (stored.version_id, version_id),
+                "task_sequence": (stored.task_sequence, task_sequence),
+                "schema_version": (stored.schema_version, schema_version),
+                "event_type": (stored.event_type, event_type),
+                "visibility": (stored.visibility, visibility),
+                "message": (stored.message, message),
+            }
+            mismatched = [
+                field for field, (saved, requested) in immutable.items() if saved != requested
+            ]
+            if canonical_payload_fingerprint(stored.payload) != canonical_payload_fingerprint(
+                payload
+            ):
+                mismatched.append("payload")
+            if mismatched:
+                raise IdempotencyConflictError(
+                    f"event replay changed immutable fields: {', '.join(mismatched)}"
+                )
             return cursor
+        if task_id is not None and task_sequence is not None:
+            sequence_key = (user_id, task_id, task_sequence)
+            sequence_owner = self._task_sequences.get(sequence_key)
+            if sequence_owner is not None:
+                raise IdempotencyConflictError(
+                    f"task sequence {task_sequence} is already owned by event {sequence_owner}"
+                )
         cursor = len(self._events) + 1
         self._events.append(
             SyncedEvent(
                 cursor=cursor,
                 event_id=event_id,
+                run_id=run_id,
                 user_id=user_id,
                 device_id=device_id,
                 project_id=project_id,
@@ -203,9 +247,12 @@ class MemorySyncStore:
                 schema_version=schema_version,
                 event_type=event_type,
                 visibility=visibility,
+                message=message,
                 payload=dict(payload),
                 created_at=datetime.now(UTC),
             )
         )
-        self._event_cursors[event_id] = (user_id, cursor)
+        self._event_cursors[event_key] = cursor
+        if task_id is not None and task_sequence is not None:
+            self._task_sequences[(user_id, task_id, task_sequence)] = event_id
         return cursor

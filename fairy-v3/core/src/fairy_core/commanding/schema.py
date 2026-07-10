@@ -8,6 +8,7 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    PrimaryKeyConstraint,
     String,
     Table,
     UniqueConstraint,
@@ -39,6 +40,7 @@ command_runs = Table(
     Column("lease_fence", BigInteger, nullable=False, server_default="0"),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_command_runs"),
     UniqueConstraint(
         "tenant_id",
         "idempotency_key",
@@ -52,6 +54,11 @@ task_event_sequences = Table(
     Column("tenant_id", String(TENANT_ID_LENGTH), primary_key=True),
     Column("task_id", String(ID_LENGTH), primary_key=True),
     Column("last_sequence", BigInteger, nullable=False),
+    PrimaryKeyConstraint(
+        "tenant_id",
+        "task_id",
+        name="pk_task_event_sequences",
+    ),
 )
 
 _CURSOR_TYPE = BigInteger().with_variant(Integer, "sqlite")
@@ -76,6 +83,7 @@ domain_events = Table(
     Column("message", String, nullable=False),
     Column("payload", JSON, nullable=False),
     Column("created_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("cursor", name="pk_domain_events"),
     UniqueConstraint("tenant_id", "event_id", name="uq_domain_events_tenant_event"),
     UniqueConstraint(
         "tenant_id",

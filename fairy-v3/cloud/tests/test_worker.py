@@ -12,8 +12,10 @@ class FakeOutboxStore:
     def __init__(self) -> None:
         expires = datetime.now(UTC) + timedelta(seconds=30)
         self.items = [
-            OutboxItem(1, "event-1", "domain.events", {"ok": True}, 1, "worker", expires),
-            OutboxItem(2, "event-2", "task.run", {"ok": False}, 1, "worker", expires),
+            OutboxItem(
+                "tenant", 1, "event-1", "domain.events", {"ok": True}, 1, "worker", expires, 1
+            ),
+            OutboxItem("tenant", 2, "event-2", "task.run", {"ok": False}, 1, "worker", expires, 1),
         ]
         self.published: list[int] = []
 
@@ -21,10 +23,10 @@ class FakeOutboxStore:
         del owner_id, batch_size, lease_seconds
         return self.items
 
-    async def mark_outbox_published(self, *, owner_id: str, item_ids: list[int]) -> int:
+    async def mark_outbox_published(self, *, owner_id: str, items: list[OutboxItem]) -> int:
         del owner_id
-        self.published.extend(item_ids)
-        return len(item_ids)
+        self.published.extend(item.id for item in items)
+        return len(items)
 
 
 @pytest.mark.asyncio

@@ -35,6 +35,7 @@ class ProjectRevisionState:
 class SyncedEvent:
     cursor: int
     event_id: str
+    run_id: str | None
     user_id: str
     device_id: str
     project_id: str | None
@@ -45,5 +46,6 @@ class SyncedEvent:
     schema_version: int
     event_type: str
     visibility: str
+    message: str
     payload: dict[str, Any]
     created_at: datetime

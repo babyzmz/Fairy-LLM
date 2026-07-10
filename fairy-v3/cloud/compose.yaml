@@ -5,7 +5,7 @@ x-cloud-build: &cloud-build
   dockerfile: cloud/Dockerfile
 
 x-cloud-environment: &cloud-environment
-  FAIRY_POSTGRES_DSN: postgresql+asyncpg://fairy:${FAIRY_POSTGRES_PASSWORD:-fairy-dev-only}@postgres:5432/fairy
+  FAIRY_POSTGRES_DSN: postgresql+asyncpg://fairy_app:${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}@postgres:5432/fairy
   FAIRY_CORE_DATA_DIR: /var/lib/fairy/core
   FAIRY_OIDC_ISSUER: http://host.docker.internal:${FAIRY_OIDC_PORT:-8090}/fairy
   FAIRY_OIDC_AUDIENCE: fairy-cloud
@@ -22,10 +22,13 @@ services:
       POSTGRES_DB: fairy
       POSTGRES_USER: fairy
       POSTGRES_PASSWORD: ${FAIRY_POSTGRES_PASSWORD:-fairy-dev-only}
+      FAIRY_APP_POSTGRES_PASSWORD: ${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}
+      FAIRY_WORKER_POSTGRES_PASSWORD: ${FAIRY_WORKER_POSTGRES_PASSWORD:-fairy-worker-dev-only}
     ports:
       - "127.0.0.1:${FAIRY_POSTGRES_PORT:-54320}:5432"
     volumes:
       - fairy-postgres:/var/lib/postgresql
+      - ./docker/postgres/010-fairy-roles.sh:/docker-entrypoint-initdb.d/010-fairy-roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U fairy -d fairy"]
       interval: 2s
@@ -89,6 +92,29 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  postgres-permissions:
+    image: postgres:18.4-alpine3.24
+    command: ["/bin/sh", "/opt/fairy/010-fairy-roles.sh"]
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGPASSWORD: ${FAIRY_POSTGRES_PASSWORD:-fairy-dev-only}
+      POSTGRES_DB: fairy
+      POSTGRES_USER: fairy
+      FAIRY_APP_POSTGRES_PASSWORD: ${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}
+      FAIRY_WORKER_POSTGRES_PASSWORD: ${FAIRY_WORKER_POSTGRES_PASSWORD:-fairy-worker-dev-only}
+    volumes:
+      - ./docker/postgres/010-fairy-roles.sh:/opt/fairy/010-fairy-roles.sh:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+
   api:
     image: fairy-cloud:dev
     build:
@@ -101,7 +127,7 @@ services:
     volumes:
       - fairy-core:/var/lib/fairy
     depends_on:
-      migrate:
+      postgres-permissions:
         condition: service_completed_successfully
       object-store:
         condition: service_healthy
@@ -135,10 +161,11 @@ services:
     command: ["python", "-m", "fairy_cloud.worker"]
     environment:
       <<: *cloud-environment
+      FAIRY_POSTGRES_DSN: postgresql+asyncpg://fairy_worker:${FAIRY_WORKER_POSTGRES_PASSWORD:-fairy-worker-dev-only}@postgres:5432/fairy
       FAIRY_WORKER_OWNER_ID: worker-compose-1
       FAIRY_WORKER_HEARTBEAT_PATH: /tmp/fairy-worker-ready
     depends_on:
-      migrate:
+      postgres-permissions:
         condition: service_completed_successfully
     read_only: true
     tmpfs:
@@ -172,7 +199,7 @@ services:
       FAIRY_S3_ACCESS_KEY: ${FAIRY_S3_ACCESS_KEY:-fairy-dev}
       FAIRY_S3_SECRET_KEY: ${FAIRY_S3_SECRET_KEY:-fairy-dev-secret}
     depends_on:
-      migrate:
+      postgres-permissions:
         condition: service_completed_successfully
       object-store:
         condition: service_healthy
