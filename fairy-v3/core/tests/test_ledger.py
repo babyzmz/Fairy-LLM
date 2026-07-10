@@ -227,6 +227,49 @@ def test_ledger_recovers_run_and_events_after_restart(tmp_path: Path) -> None:
     assert [event.task_sequence for event in events] == [1, 2]
 
 
+def test_ledger_persists_memory_snapshot_binding_in_scope(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.db"
+    unbound = _scope(tmp_path)
+    snapshot_id = new_id()
+    snapshot_hash = "a" * 64
+    scope = ScopeContract.create(
+        workspace_type=unbound.workspace_type,
+        project_id=unbound.project_id,
+        conversation_id=unbound.conversation_id,
+        task_id=unbound.task_id,
+        operation_mode=unbound.operation_mode,
+        base_version_id=unbound.base_version_id,
+        target_version_id=unbound.target_version_id,
+        project_root=unbound.project_root,
+        allowed_write_paths=unbound.allowed_write_paths,
+        forbidden_write_paths=unbound.forbidden_write_paths,
+        execution_target=unbound.execution_target,
+        network_policy=unbound.network_policy,
+        memory_read_scope=unbound.memory_read_scope,
+        memory_write_scope=unbound.memory_write_scope,
+        memory_snapshot_id=snapshot_id,
+        memory_snapshot_hash=snapshot_hash,
+    )
+    ledger = SqliteCommandLedger(path)
+
+    ledger.create_run(
+        command_name="project.read",
+        actor="agent",
+        scope=scope,
+        input_payload={},
+        risk_level=RiskLevel.LOW,
+        idempotency_key="snapshot-scope",
+    )
+    ledger.close()
+
+    with sqlite3.connect(path) as connection:
+        stored_scope = json.loads(
+            connection.execute("SELECT scope FROM command_runs").fetchone()[0]
+        )
+    assert stored_scope["memory_snapshot_id"] == str(snapshot_id)
+    assert stored_scope["memory_snapshot_hash"] == snapshot_hash
+
+
 def test_idempotency_key_returns_existing_run_without_duplicate_event(tmp_path: Path) -> None:
     ledger = SqliteCommandLedger(tmp_path / "ledger.db")
     scope = _scope(tmp_path)

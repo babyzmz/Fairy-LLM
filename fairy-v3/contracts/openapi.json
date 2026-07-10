@@ -1922,6 +1922,30 @@
             "title": "Memory Read Scope",
             "type": "array"
           },
+          "memory_snapshot_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Snapshot Hash"
+          },
+          "memory_snapshot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Snapshot Id"
+          },
           "memory_write_scope": {
             "items": {
               "type": "string"
@@ -1993,6 +2017,8 @@
           "network_policy",
           "memory_read_scope",
           "memory_write_scope",
+          "memory_snapshot_id",
+          "memory_snapshot_hash",
           "scope_digest"
         ],
         "title": "ScopeContractModel",
@@ -2142,6 +2168,30 @@
             "title": "Id",
             "type": "string"
           },
+          "memory_snapshot_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Snapshot Hash"
+          },
+          "memory_snapshot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Snapshot Id"
+          },
           "operation_mode": {
             "$ref": "#/components/schemas/OperationMode"
           },
@@ -2191,6 +2241,8 @@
           "base_version_id",
           "execution_target",
           "target_version_id",
+          "memory_snapshot_id",
+          "memory_snapshot_hash",
           "status",
           "created_at",
           "updated_at"

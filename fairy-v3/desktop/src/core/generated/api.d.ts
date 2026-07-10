@@ -1191,6 +1191,10 @@ export interface components {
             forbidden_write_paths: string[];
             /** Memory Read Scope */
             memory_read_scope: string[];
+            /** Memory Snapshot Hash */
+            memory_snapshot_hash: string | null;
+            /** Memory Snapshot Id */
+            memory_snapshot_id: string | null;
             /** Memory Write Scope */
             memory_write_scope: string[];
             /** Network Policy */
@@ -1269,6 +1273,10 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Memory Snapshot Hash */
+            memory_snapshot_hash: string | null;
+            /** Memory Snapshot Id */
+            memory_snapshot_id: string | null;
             operation_mode: components["schemas"]["OperationMode"];
             /** Project Id */
             project_id: string | null;

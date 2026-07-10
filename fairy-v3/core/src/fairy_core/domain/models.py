@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -10,6 +11,8 @@ from uuid import UUID
 
 from fairy_core.domain.errors import InvalidTransitionError, VersionConflictError
 from fairy_core.domain.ids import new_id
+
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _now() -> datetime:
@@ -190,9 +193,20 @@ class Task:
     base_version_id: UUID | None
     execution_target: str
     target_version_id: UUID | None = None
+    memory_snapshot_id: UUID | None = None
+    memory_snapshot_hash: str | None = None
     status: TaskStatus = TaskStatus.CREATED
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
+
+    def __post_init__(self) -> None:
+        if (self.memory_snapshot_id is None) != (self.memory_snapshot_hash is None):
+            raise ValueError("memory Snapshot ID and hash must be both present")
+        if (
+            self.memory_snapshot_hash is not None
+            and _SHA256_PATTERN.fullmatch(self.memory_snapshot_hash) is None
+        ):
+            raise ValueError("memory_snapshot_hash must be a lowercase SHA-256 hex digest")
 
     @classmethod
     def create(
@@ -225,6 +239,18 @@ class Task:
             raise ValueError("target version is already bound")
         self.target_version_id = version_id
         self.updated_at = _now()
+
+    def bind_memory_snapshot(self, snapshot_id: UUID, content_hash: str) -> None:
+        if _SHA256_PATTERN.fullmatch(content_hash) is None:
+            raise ValueError("content_hash must be a lowercase SHA-256 hex digest")
+        if self.memory_snapshot_id is None and self.memory_snapshot_hash is None:
+            self.memory_snapshot_id = snapshot_id
+            self.memory_snapshot_hash = content_hash
+            self.updated_at = _now()
+            return
+        if self.memory_snapshot_id == snapshot_id and self.memory_snapshot_hash == content_hash:
+            return
+        raise InvalidTransitionError("memory Snapshot is already bound")
 
     def transition_to(self, status: TaskStatus) -> None:
         if status not in _TASK_TRANSITIONS[self.status]:
@@ -283,6 +309,8 @@ class ScopeContract:
     network_policy: str
     memory_read_scope: tuple[str, ...]
     memory_write_scope: tuple[str, ...]
+    memory_snapshot_id: UUID | None
+    memory_snapshot_hash: str | None
     scope_digest: str
 
     @classmethod
@@ -303,7 +331,16 @@ class ScopeContract:
         network_policy: str,
         memory_read_scope: tuple[str, ...],
         memory_write_scope: tuple[str, ...],
+        memory_snapshot_id: UUID | None = None,
+        memory_snapshot_hash: str | None = None,
     ) -> ScopeContract:
+        if (memory_snapshot_id is None) != (memory_snapshot_hash is None):
+            raise ValueError("memory_snapshot_id and memory_snapshot_hash must be both present")
+        if (
+            memory_snapshot_hash is not None
+            and _SHA256_PATTERN.fullmatch(memory_snapshot_hash) is None
+        ):
+            raise ValueError("memory_snapshot_hash must be a lowercase SHA-256 hex digest")
         root = project_root.resolve(strict=False)
         allowed = tuple(path.resolve(strict=False) for path in allowed_write_paths)
         forbidden = tuple(path.resolve(strict=False) for path in forbidden_write_paths)
@@ -322,6 +359,10 @@ class ScopeContract:
             "network_policy": network_policy,
             "memory_read_scope": list(memory_read_scope),
             "memory_write_scope": list(memory_write_scope),
+            "memory_snapshot_id": (
+                str(memory_snapshot_id) if memory_snapshot_id is not None else None
+            ),
+            "memory_snapshot_hash": memory_snapshot_hash,
         }
         encoded = json.dumps(digest_payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
         return cls(
@@ -339,5 +380,7 @@ class ScopeContract:
             network_policy=network_policy,
             memory_read_scope=memory_read_scope,
             memory_write_scope=memory_write_scope,
+            memory_snapshot_id=memory_snapshot_id,
+            memory_snapshot_hash=memory_snapshot_hash,
             scope_digest=hashlib.sha256(encoded).hexdigest(),
         )

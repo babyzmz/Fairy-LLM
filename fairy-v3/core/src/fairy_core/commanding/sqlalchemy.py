@@ -677,6 +677,10 @@ class SqlAlchemyCommandLedger:
             "network_policy": scope.network_policy,
             "memory_read_scope": list(scope.memory_read_scope),
             "memory_write_scope": list(scope.memory_write_scope),
+            "memory_snapshot_id": (
+                str(scope.memory_snapshot_id) if scope.memory_snapshot_id else None
+            ),
+            "memory_snapshot_hash": scope.memory_snapshot_hash,
             "scope_digest": scope.scope_digest,
         }
 

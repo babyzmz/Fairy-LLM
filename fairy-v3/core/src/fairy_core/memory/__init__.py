@@ -19,6 +19,17 @@ from fairy_core.memory.policy import (
     MemoryPolicy,
     MemoryPolicyDecision,
 )
+from fairy_core.memory.retrieval_models import (
+    MemoryProjectionHealth,
+    MemorySearchDocument,
+    MemorySearchHit,
+    MemorySelectionReason,
+    MemorySnapshot,
+    MemorySnapshotItem,
+    MemorySnapshotStatus,
+    MemorySourceKind,
+    ProjectionState,
+)
 
 __all__ = [
     "CLAIM_TRANSITIONS",
@@ -32,10 +43,19 @@ __all__ = [
     "MemoryObservation",
     "MemoryPolicy",
     "MemoryPolicyDecision",
+    "MemoryProjectionHealth",
     "MemoryScanResult",
+    "MemorySearchDocument",
+    "MemorySearchHit",
+    "MemorySelectionReason",
     "MemorySensitivity",
+    "MemorySnapshot",
+    "MemorySnapshotItem",
+    "MemorySnapshotStatus",
+    "MemorySourceKind",
     "MemorySourceType",
     "MemoryTargetKind",
     "MemoryTombstone",
     "ObservationStatus",
+    "ProjectionState",
 ]
