@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from fairy_core.domain.models import OperationMode
+from fairy_core.domain.models import OperationMode, ProjectResidency, WorkspaceType
 
 
 class ContractModel(BaseModel):
@@ -49,6 +50,43 @@ class TaskCreate(ContractModel):
     operation_mode: OperationMode
     execution_target: ExecutionTarget
     idempotency_key: str = Field(min_length=1, max_length=255)
+
+
+class ProjectCreate(ContractModel):
+    name: str = Field(min_length=1, max_length=255)
+    residency: ProjectResidency
+
+
+class ProjectImport(ProjectCreate):
+    source_path: Path
+
+
+class ConversationCreate(ContractModel):
+    project_id: UUID | None
+    workspace_type: WorkspaceType
+
+
+class ApprovalDecisionInput(ContractModel):
+    approval_id: UUID
+    approved: bool
+    decided_by: str = Field(min_length=1, max_length=255)
+
+
+class TaskIdInput(ContractModel):
+    task_id: UUID
+
+
+class ProjectIdInput(ContractModel):
+    project_id: UUID
+
+
+class VersionIdInput(ContractModel):
+    version_id: UUID
+
+
+class VersionAcceptInput(TaskIdInput):
+    expected_project_revision: int = Field(ge=0)
+    user_confirmed: bool
 
 
 class FileMutation(ContractModel):

@@ -1,0 +1,189 @@
+name: fairy-v3
+
+x-cloud-build: &cloud-build
+  context: ..
+  dockerfile: cloud/Dockerfile
+
+x-cloud-environment: &cloud-environment
+  FAIRY_POSTGRES_DSN: postgresql+asyncpg://fairy:${FAIRY_POSTGRES_PASSWORD:-fairy-dev-only}@postgres:5432/fairy
+  FAIRY_CORE_DATA_DIR: /var/lib/fairy/core
+  FAIRY_OIDC_ISSUER: http://host.docker.internal:${FAIRY_OIDC_PORT:-8090}/fairy
+  FAIRY_OIDC_AUDIENCE: fairy-cloud
+  FAIRY_OIDC_ALLOW_INSECURE_HTTP: "true"
+  FAIRY_S3_ENDPOINT: http://object-store:8333
+  FAIRY_S3_BUCKET: fairy-objects
+  FAIRY_S3_ACCESS_KEY: ${FAIRY_S3_ACCESS_KEY:-fairy-dev}
+  FAIRY_S3_SECRET_KEY: ${FAIRY_S3_SECRET_KEY:-fairy-dev-secret}
+
+services:
+  postgres:
+    image: postgres:18.4-alpine3.24
+    environment:
+      POSTGRES_DB: fairy
+      POSTGRES_USER: fairy
+      POSTGRES_PASSWORD: ${FAIRY_POSTGRES_PASSWORD:-fairy-dev-only}
+    ports:
+      - "127.0.0.1:${FAIRY_POSTGRES_PORT:-54320}:5432"
+    volumes:
+      - fairy-postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fairy -d fairy"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    security_opt:
+      - no-new-privileges:true
+
+  object-store:
+    image: chrislusf/seaweedfs:4.39
+    command: ["mini", "-dir=/data"]
+    environment:
+      AWS_ACCESS_KEY_ID: ${FAIRY_S3_ACCESS_KEY:-fairy-dev}
+      AWS_SECRET_ACCESS_KEY: ${FAIRY_S3_SECRET_KEY:-fairy-dev-secret}
+      S3_BUCKET: fairy-objects
+    ports:
+      - "127.0.0.1:${FAIRY_S3_PORT:-8333}:8333"
+    volumes:
+      - fairy-objects:/data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8333"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    security_opt:
+      - no-new-privileges:true
+
+  oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:4.0.0
+    hostname: host.docker.internal
+    environment:
+      SERVER_PORT: 8080
+      JSON_CONFIG: >-
+        {"interactiveLogin":true,"httpServer":"NettyWrapper","tokenCallbacks":[{"issuerId":"fairy","tokenExpiry":300,"requestMappings":[{"requestParam":"subject","match":".*","claims":{"sub":"$${subject}","aud":["fairy-cloud"],"scope":"openid fairy.api","device_id":"device-dev"}}]}]}
+    ports:
+      - "127.0.0.1:${FAIRY_OIDC_PORT:-8090}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/isalive"]
+      start_period: 5s
+      interval: 2s
+      timeout: 1s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+
+  migrate:
+    image: fairy-cloud:dev
+    build:
+      <<: *cloud-build
+      target: runtime
+    command: ["alembic", "-c", "/app/cloud/alembic.ini", "upgrade", "head"]
+    environment:
+      FAIRY_POSTGRES_DSN: postgresql+asyncpg://fairy:${FAIRY_POSTGRES_PASSWORD:-fairy-dev-only}@postgres:5432/fairy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+
+  api:
+    image: fairy-cloud:dev
+    build:
+      <<: *cloud-build
+      target: runtime
+    command: ["python", "-m", "fairy_cloud.main"]
+    environment: *cloud-environment
+    ports:
+      - "127.0.0.1:${FAIRY_API_PORT:-8088}:8080"
+    volumes:
+      - fairy-core:/var/lib/fairy
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      object-store:
+        condition: service_healthy
+      oidc:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/v1/ready', timeout=2).read()"
+      start_period: 5s
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    image: fairy-cloud:dev
+    build:
+      <<: *cloud-build
+      target: runtime
+    command: ["python", "-m", "fairy_cloud.worker"]
+    environment:
+      <<: *cloud-environment
+      FAIRY_WORKER_OWNER_ID: worker-compose-1
+      FAIRY_WORKER_HEARTBEAT_PATH: /tmp/fairy-worker-ready
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    stop_grace_period: 15s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import pathlib,sys,time; p=pathlib.Path('/tmp/fairy-worker-ready'); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime < 30 else 1)"
+      start_period: 5s
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  integration:
+    build:
+      <<: *cloud-build
+      target: test
+    profiles: ["test"]
+    command: ["pytest", "-m", "integration", "-q"]
+    environment:
+      FAIRY_TEST_POSTGRES_DSN: postgresql+asyncpg://fairy:${FAIRY_POSTGRES_PASSWORD:-fairy-dev-only}@postgres:5432/fairy
+      FAIRY_TEST_S3_ENDPOINT: http://object-store:8333
+      FAIRY_TEST_S3_BUCKET: fairy-objects
+      FAIRY_S3_ACCESS_KEY: ${FAIRY_S3_ACCESS_KEY:-fairy-dev}
+      FAIRY_S3_SECRET_KEY: ${FAIRY_S3_SECRET_KEY:-fairy-dev-secret}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      object-store:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  fairy-postgres:
+  fairy-objects:
+  fairy-core:

@@ -14,43 +14,24 @@ from fairy_core.application.core import CoreApplication
 from fairy_core.commanding.ledger import EventVisibility, SqliteCommandLedger
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.types import PermissionProfile
-from fairy_core.contracts.models import ChangesetProposal, TaskCreate
+from fairy_core.contracts.models import (
+    ApprovalDecisionInput,
+    ChangesetProposal,
+    ConversationCreate,
+    ProjectCreate,
+    ProjectIdInput,
+    ProjectImport,
+    TaskCreate,
+    TaskIdInput,
+    VersionAcceptInput,
+    VersionIdInput,
+)
 from fairy_core.domain.errors import DomainError
-from fairy_core.domain.models import ProjectResidency, WorkspaceType
 from fairy_core.workspace.worker_transport import WorkerRpcError
 
 
 class _Params(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-class _ProjectCreateParams(_Params):
-    name: str
-    residency: ProjectResidency
-
-
-class _ConversationCreateParams(_Params):
-    project_id: UUID | None
-    workspace_type: WorkspaceType
-
-
-class _ProjectImportParams(_ProjectCreateParams):
-    source_path: Path
-
-
-class _ApprovalDecisionParams(_Params):
-    approval_id: UUID
-    approved: bool
-    decided_by: str
-
-
-class _TaskIdParams(_Params):
-    task_id: UUID
-
-
-class _VersionAcceptParams(_TaskIdParams):
-    expected_project_revision: int = Field(ge=0)
-    user_confirmed: bool
 
 
 class _CapabilityParams(_Params):
@@ -169,14 +150,14 @@ class JsonRpcDispatcher:
         return {"status": "ok", "service": "fairy-core", "protocol": "jsonrpc-2.0"}
 
     def _create_project(self, params: dict[str, Any]) -> Any:
-        validated = _ProjectCreateParams.model_validate(params)
+        validated = ProjectCreate.model_validate(params)
         return self._application.create_project(
             name=validated.name,
             residency=validated.residency,
         )
 
     def _import_project(self, params: dict[str, Any]) -> Any:
-        validated = _ProjectImportParams.model_validate(params)
+        validated = ProjectImport.model_validate(params)
         return self._application.create_project(
             name=validated.name,
             residency=validated.residency,
@@ -184,11 +165,11 @@ class JsonRpcDispatcher:
         )
 
     def _get_project(self, params: dict[str, Any]) -> Any:
-        validated = _TaskIdParams.model_validate({"task_id": params.get("project_id")})
-        return self._application.get_project(validated.task_id)
+        validated = ProjectIdInput.model_validate(params)
+        return self._application.get_project(validated.project_id)
 
     def _create_conversation(self, params: dict[str, Any]) -> Any:
-        validated = _ConversationCreateParams.model_validate(params)
+        validated = ConversationCreate.model_validate(params)
         return self._application.create_conversation(
             project_id=validated.project_id,
             workspace_type=validated.workspace_type,
@@ -198,18 +179,18 @@ class JsonRpcDispatcher:
         return self._application.create_task(TaskCreate.model_validate(params))
 
     def _get_task(self, params: dict[str, Any]) -> Any:
-        validated = _TaskIdParams.model_validate(params)
+        validated = TaskIdInput.model_validate(params)
         return self._application.get_task(validated.task_id)
 
     def _review_task(self, params: dict[str, Any]) -> Any:
-        validated = _TaskIdParams.model_validate(params)
+        validated = TaskIdInput.model_validate(params)
         return self._application.review_task(validated.task_id)
 
     def _propose_changeset(self, params: dict[str, Any]) -> Any:
         return self._application.propose_changeset(ChangesetProposal.model_validate(params))
 
     def _decide_approval(self, params: dict[str, Any]) -> Any:
-        validated = _ApprovalDecisionParams.model_validate(params)
+        validated = ApprovalDecisionInput.model_validate(params)
         return self._application.decide_approval(
             approval_id=validated.approval_id,
             approved=validated.approved,
@@ -217,11 +198,11 @@ class JsonRpcDispatcher:
         )
 
     def _get_version(self, params: dict[str, Any]) -> Any:
-        validated = _TaskIdParams.model_validate({"task_id": params.get("version_id")})
-        return self._application.get_version(validated.task_id)
+        validated = VersionIdInput.model_validate(params)
+        return self._application.get_version(validated.version_id)
 
     def _accept_version(self, params: dict[str, Any]) -> Any:
-        validated = _VersionAcceptParams.model_validate(params)
+        validated = VersionAcceptInput.model_validate(params)
         return self._application.accept_task_version(
             task_id=validated.task_id,
             expected_project_revision=validated.expected_project_revision,
@@ -229,7 +210,7 @@ class JsonRpcDispatcher:
         )
 
     def _discard_version(self, params: dict[str, Any]) -> Any:
-        validated = _TaskIdParams.model_validate(params)
+        validated = TaskIdInput.model_validate(params)
         return self._application.discard_task_version(validated.task_id)
 
     def _get_capabilities(self, params: dict[str, Any]) -> Any:

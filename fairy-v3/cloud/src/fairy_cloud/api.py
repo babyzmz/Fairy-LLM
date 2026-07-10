@@ -1,0 +1,438 @@
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextvars import ContextVar
+from itertools import count
+from typing import Annotated, Any
+from uuid import UUID
+
+from fairy_core.commanding.types import PermissionProfile
+from fairy_core.contracts.models import (
+    ApprovalDecisionInput,
+    ChangesetProposal,
+    ConversationCreate,
+    ProjectCreate,
+    ProjectImport,
+    TaskCreate,
+    VersionAcceptInput,
+)
+from fairy_core.domain.errors import VersionConflictError
+from fairy_core.transports.jsonrpc import JsonRpcDispatcher
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.sse import EventSourceResponse, ServerSentEvent
+from starlette.types import Lifespan
+
+from fairy_cloud.auth import AuthenticationError, DenyAllAuthenticator
+from fairy_cloud.auth.models import Authenticator, RequestIdentity
+from fairy_cloud.storage.objects import (
+    ImmutableObjectConflict,
+    ObjectIntegrityError,
+    S3ObjectStore,
+)
+from fairy_cloud.sync.contracts import (
+    SyncEventBatch,
+    SyncProjectRegistration,
+    VersionManifestInput,
+)
+from fairy_cloud.sync.models import SyncedEvent
+from fairy_cloud.sync.ports import SyncStore
+
+_MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
+
+
+def create_cloud_app(
+    dispatcher: JsonRpcDispatcher,
+    *,
+    authenticator: Authenticator | None = None,
+    sync_store: SyncStore | None = None,
+    object_store: S3ObjectStore | None = None,
+    max_snapshot_bytes: int = _MAX_SNAPSHOT_BYTES,
+    readiness: Callable[[], Awaitable[dict[str, Any]]] | None = None,
+    lifespan: Lifespan[FastAPI] | None = None,
+    dispatcher_resolver: Callable[[RequestIdentity], JsonRpcDispatcher] | None = None,
+) -> FastAPI:
+    app = FastAPI(title="Fairy Cloud API", version="0.1.0", lifespan=lifespan)
+    protected = APIRouter(prefix="/v1")
+    request_ids = count(1)
+    token_authenticator = authenticator or DenyAllAuthenticator()
+    bearer = HTTPBearer(auto_error=False)
+    request_identity: ContextVar[RequestIdentity | None] = ContextVar(
+        "fairy_cloud_request_identity",
+        default=None,
+    )
+
+    async def require_identity(
+        request: Request,
+        credentials: Annotated[
+            HTTPAuthorizationCredentials | None,
+            Depends(bearer),
+        ],
+        device_id: Annotated[str | None, Header(alias="X-Fairy-Device-ID")] = None,
+    ) -> AsyncIterator[None]:
+        authorization = None
+        if credentials is not None:
+            authorization = f"{credentials.scheme} {credentials.credentials}"
+        try:
+            identity = await token_authenticator.authenticate(
+                authorization=authorization,
+                device_id=device_id,
+            )
+        except AuthenticationError as error:
+            raise HTTPException(
+                status_code=401,
+                detail={"code": error.code, "message": str(error)},
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from error
+        request.state.identity = identity
+        context_token = request_identity.set(identity)
+        try:
+            yield
+        finally:
+            request_identity.reset(context_token)
+
+    protected.dependencies.append(Depends(require_identity))
+
+    def rpc(method: str, params: dict[str, Any]) -> Any:
+        active_identity = request_identity.get()
+        active_dispatcher = (
+            dispatcher_resolver(active_identity)
+            if dispatcher_resolver is not None and active_identity is not None
+            else dispatcher
+        )
+        response = active_dispatcher.dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": next(request_ids),
+                "method": method,
+                "params": params,
+            }
+        )
+        failure = response.get("error")
+        if isinstance(failure, dict):
+            data = failure.get("data") if isinstance(failure.get("data"), dict) else {}
+            error_code = str(data.get("error_code", "CORE_ERROR"))
+            status_code = {
+                "NOT_FOUND": 404,
+                "VERSION_CONFLICT": 409,
+                "APPROVAL_REQUIRED": 409,
+                "INVALID_PARAMS": 422,
+                "WORKER_INTERRUPTED": 503,
+            }.get(error_code, 400)
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "code": error_code,
+                    "message": str(failure.get("message", "Core request failed")),
+                    "details": data,
+                },
+            )
+        return response["result"]
+
+    def identity_for(request: Request) -> RequestIdentity:
+        identity = getattr(request.state, "identity", None)
+        if not isinstance(identity, RequestIdentity):
+            raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED"})
+        return identity
+
+    def configured_sync_store() -> SyncStore:
+        if sync_store is None:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "SYNC_UNAVAILABLE", "message": "cloud sync is unavailable"},
+            )
+        return sync_store
+
+    def configured_object_store() -> S3ObjectStore:
+        if object_store is None:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "SYNC_UNAVAILABLE", "message": "object storage is unavailable"},
+            )
+        return object_store
+
+    @app.get("/v1/health")
+    def health() -> dict[str, Any]:
+        return rpc("health", {})
+
+    @app.get("/v1/ready")
+    async def ready() -> dict[str, Any]:
+        if readiness is None:
+            return {"status": "ready"}
+        return await readiness()
+
+    @protected.post("/projects")
+    async def create_project(body: ProjectCreate, request: Request) -> dict[str, Any]:
+        result = rpc("projects.create", body.model_dump(mode="json"))
+        if sync_store is not None:
+            identity = identity_for(request)
+            await sync_store.register_project(
+                project_id=str(result["project"]["id"]),
+                user_id=identity.user_id,
+                active_version_id=result["project"].get("active_version_id"),
+            )
+        return result
+
+    @protected.post("/projects/import")
+    async def import_project(body: ProjectImport, request: Request) -> dict[str, Any]:
+        result = rpc("projects.import", body.model_dump(mode="json"))
+        if sync_store is not None:
+            identity = identity_for(request)
+            await sync_store.register_project(
+                project_id=str(result["project"]["id"]),
+                user_id=identity.user_id,
+                active_version_id=result["project"].get("active_version_id"),
+            )
+        return result
+
+    @protected.post("/conversations")
+    def create_conversation(request: ConversationCreate) -> dict[str, Any]:
+        return rpc("conversations.create", request.model_dump(mode="json"))
+
+    @protected.post("/tasks")
+    def create_task(request: TaskCreate) -> dict[str, Any]:
+        return rpc("tasks.create", request.model_dump(mode="json"))
+
+    @protected.post("/changesets")
+    def propose_changeset(request: ChangesetProposal) -> dict[str, Any]:
+        return rpc("changesets.propose", request.model_dump(mode="json"))
+
+    @protected.post("/approvals/{approval_id}/decision")
+    def decide_approval(
+        approval_id: UUID,
+        request: ApprovalDecisionInput,
+    ) -> dict[str, Any]:
+        if request.approval_id != approval_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "approval id mismatch"},
+            )
+        return rpc("approvals.decide", request.model_dump(mode="json"))
+
+    @protected.post("/tasks/{task_id}/review")
+    def review_task(task_id: UUID) -> dict[str, Any]:
+        return rpc("tasks.review", {"task_id": str(task_id)})
+
+    @protected.post("/tasks/{task_id}/accept-version")
+    def accept_version(task_id: UUID, request: VersionAcceptInput) -> dict[str, Any]:
+        if request.task_id != task_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "task id mismatch"},
+            )
+        return rpc("versions.accept", request.model_dump(mode="json"))
+
+    @protected.delete("/tasks/{task_id}/version")
+    def discard_version(task_id: UUID) -> dict[str, Any]:
+        return rpc("versions.discard", {"task_id": str(task_id)})
+
+    @protected.get("/capabilities")
+    def capabilities(
+        profile: Annotated[PermissionProfile, Query()] = PermissionProfile.STANDARD,
+        sandbox_healthy: Annotated[bool, Query()] = False,
+    ) -> dict[str, Any]:
+        return rpc(
+            "capabilities.get",
+            {"profile": profile.value, "sandbox_healthy": sandbox_healthy},
+        )
+
+    @protected.post("/sync/projects")
+    async def register_synced_project(
+        body: SyncProjectRegistration,
+        request: Request,
+    ) -> dict[str, Any]:
+        identity = identity_for(request)
+        state = await configured_sync_store().register_project(
+            project_id=str(body.project_id),
+            user_id=identity.user_id,
+            active_version_id=(
+                str(body.active_version_id) if body.active_version_id is not None else None
+            ),
+        )
+        return {
+            "project_id": state.project_id,
+            "revision": state.revision,
+            "active_version_id": state.active_version_id,
+        }
+
+    @protected.post("/sync/events")
+    async def upload_sync_events(body: SyncEventBatch, request: Request) -> dict[str, Any]:
+        identity = identity_for(request)
+        store = configured_sync_store()
+        accepted: list[dict[str, Any]] = []
+        for event in body.items:
+            cursor = await store.append_event(
+                event_id=str(event.id),
+                user_id=identity.user_id,
+                device_id=identity.device_id,
+                project_id=str(event.project_id) if event.project_id is not None else None,
+                conversation_id=str(event.conversation_id),
+                task_id=str(event.task_id),
+                version_id=str(event.version_id) if event.version_id is not None else None,
+                task_sequence=event.task_sequence,
+                schema_version=event.schema_version,
+                event_type=event.event_type,
+                visibility=event.visibility.value,
+                payload=event.model_dump(mode="json"),
+            )
+            accepted.append({"event_id": str(event.id), "cursor": cursor})
+        return {
+            "accepted": accepted,
+            "next_cursor": max(item["cursor"] for item in accepted),
+        }
+
+    @protected.put("/sync/projects/{project_id}/versions/{version_id}/snapshot")
+    async def upload_version_snapshot(
+        project_id: UUID,
+        version_id: UUID,
+        request: Request,
+    ) -> dict[str, Any]:
+        if request.headers.get("content-type", "").split(";", 1)[0] != "application/zstd":
+            raise HTTPException(
+                status_code=415,
+                detail={"code": "INVALID_PARAMS", "message": "snapshot must be application/zstd"},
+            )
+        payload = bytearray()
+        async for chunk in request.stream():
+            payload.extend(chunk)
+            if len(payload) > max_snapshot_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail={"code": "PAYLOAD_TOO_LARGE", "message": "snapshot exceeds limit"},
+                )
+        identity = identity_for(request)
+        try:
+            location = await asyncio.to_thread(
+                configured_object_store().put_version_snapshot,
+                user_id=identity.user_id,
+                project_id=str(project_id),
+                version_id=str(version_id),
+                payload=bytes(payload),
+            )
+        except ImmutableObjectConflict as error:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "VERSION_CONFLICT", "message": str(error)},
+            ) from error
+        return {
+            "bucket": location.bucket,
+            "key": location.key,
+            "sha256": location.sha256,
+            "size": location.size,
+        }
+
+    @protected.post("/sync/projects/{project_id}/versions/{version_id}/promote")
+    async def promote_synced_version(
+        project_id: UUID,
+        version_id: UUID,
+        body: VersionManifestInput,
+        request: Request,
+    ) -> dict[str, Any]:
+        identity = identity_for(request)
+        expected_key = (
+            f"users/{identity.user_id}/projects/{project_id}/versions/{version_id}/snapshot.zst"
+        )
+        if body.snapshot_key != expected_key:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "snapshot key is out of scope"},
+            )
+        try:
+            await asyncio.to_thread(
+                configured_object_store().verify_version_snapshot,
+                user_id=identity.user_id,
+                project_id=str(project_id),
+                version_id=str(version_id),
+                expected_sha256=body.snapshot_sha256,
+                expected_size=body.snapshot_size,
+            )
+            state = await configured_sync_store().promote_version(
+                user_id=identity.user_id,
+                project_id=str(project_id),
+                version_id=str(version_id),
+                expected_revision=body.expected_revision,
+                manifest=body.model_dump(mode="json"),
+                decision_event_id=str(body.decision_event_id),
+                device_id=identity.device_id,
+                conversation_id=str(body.conversation_id),
+                task_id=str(body.task_id),
+                task_sequence=body.task_sequence,
+            )
+        except ObjectIntegrityError as error:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": str(error)},
+            ) from error
+        except VersionConflictError as error:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "VERSION_CONFLICT", "message": str(error)},
+            ) from error
+        return {
+            "project_id": state.project_id,
+            "active_version_id": state.active_version_id,
+            "revision": state.revision,
+        }
+
+    @protected.get("/events", response_class=EventSourceResponse)
+    async def events(
+        request: Request,
+        cursor: Annotated[int, Query(ge=0)] = 0,
+        follow: Annotated[bool, Query()] = True,
+        last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+    ) -> AsyncIterator[ServerSentEvent]:
+        current = cursor
+        if last_event_id is not None:
+            try:
+                current = max(current, int(last_event_id))
+            except ValueError as error:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Last-Event-ID must be an integer",
+                ) from error
+        while True:
+            if sync_store is None:
+                batch = rpc("events.subscribe", {"cursor": current})
+                items = batch["items"]
+            else:
+                identity = identity_for(request)
+                synced_events = await sync_store.events_after(
+                    user_id=identity.user_id,
+                    cursor=current,
+                )
+                items = [_synced_event_json(event) for event in synced_events]
+            for item in items:
+                current = int(item["cursor"])
+                yield ServerSentEvent(
+                    data=item,
+                    event=str(item["event_type"]),
+                    id=str(current),
+                    retry=1_000,
+                )
+            if not follow or await request.is_disconnected():
+                break
+            if not items:
+                yield ServerSentEvent(comment="keepalive")
+            await asyncio.sleep(1)
+
+    app.include_router(protected)
+    return app
+
+
+def _synced_event_json(event: SyncedEvent) -> dict[str, Any]:
+    item = dict(event.payload)
+    item.update(
+        {
+            "id": event.event_id,
+            "cursor": event.cursor,
+            "project_id": event.project_id,
+            "conversation_id": event.conversation_id,
+            "task_id": event.task_id,
+            "version_id": event.version_id,
+            "task_sequence": event.task_sequence,
+            "event_type": event.event_type,
+            "visibility": event.visibility,
+            "schema_version": event.schema_version,
+        }
+    )
+    item.setdefault("created_at", event.created_at.isoformat())
+    return item
