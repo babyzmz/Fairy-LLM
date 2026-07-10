@@ -104,4 +104,9 @@ def test_local_core_engine_initializes_all_memory_tables(tmp_path: Path) -> None
         "memory_claims",
         "memory_claim_revisions",
         "memory_tombstones",
+        "memory_snapshots",
+        "memory_snapshot_items",
+        "memory_search_documents",
+        "memory_access_log",
+        "memory_projection_checkpoints",
     } <= tables

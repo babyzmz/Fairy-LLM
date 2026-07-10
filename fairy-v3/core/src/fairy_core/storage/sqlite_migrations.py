@@ -20,6 +20,7 @@ from fairy_core.storage.schema import (
 )
 
 _PRE_TENANT_REVISION = "20260710_pre_tenant_state"
+_SNAPSHOT_BINDING_REVISION = "20260711_task_snapshot_binding"
 
 
 def _datetime(value: str | None) -> datetime | None:
@@ -139,6 +140,48 @@ def migrate_pre_tenant_schema(engine: Engine, *, tenant_id: str) -> None:
             ),
             {
                 "revision": _PRE_TENANT_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_task_snapshot_binding(engine: Engine) -> None:
+    """Add nullable Task Snapshot binding columns to an existing local V3 database."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS core_local_migrations (
+                revision TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _SNAPSHOT_BINDING_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        if "core_tasks" in tables:
+            columns = {column["name"] for column in inspect(connection).get_columns("core_tasks")}
+            if "memory_snapshot_id" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE core_tasks ADD COLUMN memory_snapshot_id VARCHAR(36)"
+                )
+            if "memory_snapshot_hash" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE core_tasks ADD COLUMN memory_snapshot_hash VARCHAR(64)"
+                )
+        connection.execute(
+            text(
+                """
+                INSERT INTO core_local_migrations (revision, applied_at)
+                VALUES (:revision, :applied_at)
+                """
+            ),
+            {
+                "revision": _SNAPSHOT_BINDING_REVISION,
                 "applied_at": datetime.now(UTC).isoformat(),
             },
         )

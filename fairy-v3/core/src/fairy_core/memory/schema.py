@@ -9,6 +9,7 @@ from sqlalchemy import (
     Float,
     ForeignKeyConstraint,
     Index,
+    Integer,
     MetaData,
     PrimaryKeyConstraint,
     String,
@@ -231,6 +232,207 @@ memory_tombstones = Table(
     ),
 )
 
+memory_snapshots = Table(
+    "memory_snapshots",
+    memory_metadata,
+    _tenant_id(),
+    _id(),
+    Column("project_id", String(ID_LENGTH)),
+    Column("conversation_id", String(ID_LENGTH), nullable=False),
+    Column("task_id", String(ID_LENGTH), nullable=False),
+    Column("base_version_id", String(ID_LENGTH)),
+    Column("target_version_id", String(ID_LENGTH)),
+    Column("snapshot_version", Integer, nullable=False),
+    Column("policy_version", String(128), nullable=False),
+    Column("source_watermark_cursor", BigInteger, nullable=False),
+    Column("projection_generation", BigInteger, nullable=False),
+    Column("projection_watermark_cursor", BigInteger, nullable=False),
+    Column("projection_state", String(32), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("degraded_reason", String(128)),
+    Column("content_hash", String(64), nullable=False),
+    Column("token_count", Integer, nullable=False),
+    Column("request_fingerprint", String(64), nullable=False),
+    Column("content_fingerprint", String(64), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_memory_snapshots"),
+    UniqueConstraint("tenant_id", "task_id", name="uq_memory_snapshots_tenant_task"),
+    UniqueConstraint(
+        "tenant_id",
+        "request_fingerprint",
+        name="uq_memory_snapshots_tenant_request",
+    ),
+    CheckConstraint("snapshot_version = 1", name="ck_memory_snapshots_version"),
+    CheckConstraint(
+        "source_watermark_cursor >= 0 AND projection_generation >= 1 AND "
+        "projection_watermark_cursor >= 0",
+        name="ck_memory_snapshots_watermarks",
+    ),
+    CheckConstraint(
+        "token_count >= 0 AND token_count <= 3000",
+        name="ck_memory_snapshots_token_count",
+    ),
+    CheckConstraint(
+        "(status = 'ready' AND projection_state = 'ready' AND "
+        "degraded_reason IS NULL AND "
+        "projection_watermark_cursor >= source_watermark_cursor) OR "
+        "(status = 'degraded' AND projection_state <> 'ready' AND "
+        "degraded_reason IS NOT NULL)",
+        name="ck_memory_snapshots_status",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "project_id"],
+        [projects.c.tenant_id, projects.c.id],
+        name="fk_memory_snapshots_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_memory_snapshots_conversation",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "task_id"],
+        [tasks.c.tenant_id, tasks.c.id],
+        name="fk_memory_snapshots_task",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "base_version_id"],
+        [versions.c.tenant_id, versions.c.id],
+        name="fk_memory_snapshots_base_version",
+        ondelete="RESTRICT",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "target_version_id"],
+        [versions.c.tenant_id, versions.c.id],
+        name="fk_memory_snapshots_target_version",
+        ondelete="RESTRICT",
+    ),
+)
+
+memory_snapshot_items = Table(
+    "memory_snapshot_items",
+    memory_metadata,
+    _tenant_id(),
+    Column("snapshot_id", String(ID_LENGTH), primary_key=True),
+    Column("ordinal", Integer, primary_key=True),
+    Column("source_kind", String(32), nullable=False),
+    Column("source_id", String(ID_LENGTH), nullable=False),
+    Column("source_revision", BigInteger),
+    Column("namespace", String(32)),
+    Column("selection_reason", String(32), nullable=False),
+    Column("authority", String(32), nullable=False),
+    Column("score_components", JSON, nullable=False),
+    Column("rendered_text", Text, nullable=False),
+    Column("rendered_text_hash", String(64), nullable=False),
+    Column("token_count", Integer, nullable=False),
+    PrimaryKeyConstraint(
+        "tenant_id",
+        "snapshot_id",
+        "ordinal",
+        name="pk_memory_snapshot_items",
+    ),
+    CheckConstraint("ordinal >= 0", name="ck_memory_snapshot_items_ordinal"),
+    CheckConstraint("token_count >= 1", name="ck_memory_snapshot_items_token_count"),
+    ForeignKeyConstraint(
+        ["tenant_id", "snapshot_id"],
+        [memory_snapshots.c.tenant_id, memory_snapshots.c.id],
+        name="fk_memory_snapshot_items_snapshot",
+        ondelete="CASCADE",
+    ),
+)
+
+memory_search_documents = Table(
+    "memory_search_documents",
+    memory_metadata,
+    _tenant_id(),
+    _id(),
+    Column("source_kind", String(32), nullable=False),
+    Column("source_id", String(ID_LENGTH), nullable=False),
+    Column("source_revision", BigInteger, nullable=False),
+    Column("namespace", String(32)),
+    Column("project_id", String(ID_LENGTH)),
+    Column("conversation_id", String(ID_LENGTH)),
+    Column("task_id", String(ID_LENGTH)),
+    Column("version_id", String(ID_LENGTH)),
+    Column("language", String(32), nullable=False),
+    Column("normalized_text", Text, nullable=False),
+    Column("content_hash", String(64), nullable=False),
+    Column("source_cursor", BigInteger, nullable=False),
+    Column("projection_generation", BigInteger, nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_memory_search_documents"),
+    UniqueConstraint(
+        "tenant_id",
+        "projection_generation",
+        "source_kind",
+        "source_id",
+        "source_revision",
+        name="uq_memory_search_documents_tenant_source",
+    ),
+    CheckConstraint("source_revision >= 0", name="ck_memory_search_documents_revision"),
+    CheckConstraint(
+        "source_cursor >= 1 AND projection_generation >= 1",
+        name="ck_memory_search_documents_watermarks",
+    ),
+    *_scope_foreign_keys("memory_search_documents"),
+)
+
+memory_access_log = Table(
+    "memory_access_log",
+    memory_metadata,
+    _tenant_id(),
+    _id(),
+    Column("snapshot_id", String(ID_LENGTH), nullable=False),
+    Column("project_id", String(ID_LENGTH)),
+    Column("conversation_id", String(ID_LENGTH), nullable=False),
+    Column("task_id", String(ID_LENGTH), nullable=False),
+    Column("version_id", String(ID_LENGTH)),
+    Column("source_kind", String(32), nullable=False),
+    Column("source_id", String(ID_LENGTH), nullable=False),
+    Column("source_revision", BigInteger),
+    Column("decision", String(32), nullable=False),
+    Column("rejection_reason", String(128)),
+    Column("score_components", JSON, nullable=False),
+    Column("latency_ms", Float, nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_memory_access_log"),
+    CheckConstraint("latency_ms >= 0", name="ck_memory_access_log_latency"),
+    ForeignKeyConstraint(
+        ["tenant_id", "snapshot_id"],
+        [memory_snapshots.c.tenant_id, memory_snapshots.c.id],
+        name="fk_memory_access_log_snapshot",
+        ondelete="CASCADE",
+    ),
+    *_scope_foreign_keys("memory_access_log"),
+)
+
+memory_projection_checkpoints = Table(
+    "memory_projection_checkpoints",
+    memory_metadata,
+    _tenant_id(),
+    Column("generation", BigInteger, primary_key=True),
+    Column("source_watermark_cursor", BigInteger, nullable=False),
+    Column("projected_watermark_cursor", BigInteger, nullable=False),
+    Column("state", String(32), nullable=False),
+    Column("schema_version", String(128), nullable=False),
+    Column("retry_count", Integer, nullable=False),
+    Column("last_error_code", String(128)),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint(
+        "tenant_id",
+        "generation",
+        name="pk_memory_projection_checkpoints",
+    ),
+    CheckConstraint(
+        "generation >= 1 AND source_watermark_cursor >= 0 AND "
+        "projected_watermark_cursor >= 0 AND retry_count >= 0",
+        name="ck_memory_projection_checkpoints_bounds",
+    ),
+)
+
 Index(
     "ix_memory_observations_tenant_scope",
     memory_observations.c.tenant_id,
@@ -238,6 +440,27 @@ Index(
     memory_observations.c.project_id,
     memory_observations.c.conversation_id,
     memory_observations.c.status,
+)
+Index(
+    "ix_memory_snapshots_tenant_scope",
+    memory_snapshots.c.tenant_id,
+    memory_snapshots.c.project_id,
+    memory_snapshots.c.conversation_id,
+    memory_snapshots.c.created_at,
+)
+Index(
+    "ix_memory_search_documents_tenant_scope",
+    memory_search_documents.c.tenant_id,
+    memory_search_documents.c.projection_generation,
+    memory_search_documents.c.project_id,
+    memory_search_documents.c.conversation_id,
+    memory_search_documents.c.namespace,
+)
+Index(
+    "ix_memory_access_log_tenant_snapshot",
+    memory_access_log.c.tenant_id,
+    memory_access_log.c.snapshot_id,
+    memory_access_log.c.created_at,
 )
 Index(
     "ix_memory_claims_tenant_scope",
@@ -265,9 +488,14 @@ Index(
 
 
 __all__ = [
+    "memory_access_log",
     "memory_claim_revisions",
     "memory_claims",
     "memory_metadata",
     "memory_observations",
+    "memory_projection_checkpoints",
+    "memory_search_documents",
+    "memory_snapshot_items",
+    "memory_snapshots",
     "memory_tombstones",
 ]

@@ -17,8 +17,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260710_0004"]
-    assert scripts.get_revision("20260710_0004").down_revision == "20260710_0003"
+    assert scripts.get_heads() == ["20260711_0005"]
+    assert scripts.get_revision("20260711_0005").down_revision == "20260710_0004"
 
 
 def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
@@ -43,6 +43,11 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "MEMORY_CLAIMS",
         "MEMORY_CLAIM_REVISIONS",
         "MEMORY_TOMBSTONES",
+        "MEMORY_SNAPSHOTS",
+        "MEMORY_SNAPSHOT_ITEMS",
+        "MEMORY_SEARCH_DOCUMENTS",
+        "MEMORY_ACCESS_LOG",
+        "MEMORY_PROJECTION_CHECKPOINTS",
     ):
         assert f"CREATE TABLE {table_name}" in ddl
     assert "ALTER TABLE DOMAIN_EVENTS ADD COLUMN TENANT_ID" in ddl
@@ -61,6 +66,11 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
     assert "CREATE TRIGGER TRG_DOMAIN_EVENT_OUTBOX" in ddl
     assert "ON CONFLICT (TENANT_ID, EVENT_ID) DO NOTHING" in ddl
     assert "SECURITY DEFINER" not in ddl
+    assert "ALTER TABLE CORE_TASKS ADD COLUMN MEMORY_SNAPSHOT_ID" in ddl
+    assert "GENERATED ALWAYS AS" in ddl
+    assert "TO_TSVECTOR('SIMPLE'" in ddl
+    assert "USING GIN" in ddl
+    assert "CK_MEMORY_SNAPSHOTS_STATUS" in ddl
 
 
 def test_compose_uses_supported_brokerless_development_services() -> None:

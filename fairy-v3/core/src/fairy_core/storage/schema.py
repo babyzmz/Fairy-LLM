@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import (
     JSON,
     BigInteger,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKeyConstraint,
@@ -129,12 +130,19 @@ tasks = Table(
     Column("base_version_id", String(ID_LENGTH)),
     Column("target_version_id", String(ID_LENGTH)),
     Column("execution_target", String(32), nullable=False),
+    Column("memory_snapshot_id", String(ID_LENGTH)),
+    Column("memory_snapshot_hash", String(64)),
     Column("status", String(32), nullable=False),
     Column("idempotency_key", String(512), nullable=False),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
     PrimaryKeyConstraint("tenant_id", "id", name="pk_core_tasks"),
     UniqueConstraint("tenant_id", "idempotency_key", name="uq_core_tasks_tenant_idempotency"),
+    CheckConstraint(
+        "(memory_snapshot_id IS NULL AND memory_snapshot_hash IS NULL) OR "
+        "(memory_snapshot_id IS NOT NULL AND memory_snapshot_hash IS NOT NULL)",
+        name="ck_core_tasks_memory_snapshot_binding",
+    ),
     ForeignKeyConstraint(
         ["tenant_id", "project_id"],
         [projects.c.tenant_id, projects.c.id],

@@ -56,6 +56,11 @@ def test_outbox_claim_uses_postgres_skip_locked_without_external_broker() -> Non
         "memory_claims",
         "memory_claim_revisions",
         "memory_tombstones",
+        "memory_snapshots",
+        "memory_snapshot_items",
+        "memory_search_documents",
+        "memory_access_log",
+        "memory_projection_checkpoints",
     } <= canonical_tables
     assert {"tenant_id", "lease_fence"} <= {
         column.name for column in cloud_metadata.tables["outbox"].c
@@ -135,6 +140,16 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "fk_memory_claim_revisions_claim",
         "fk_memory_tombstones_source_event",
         "ck_memory_claims_namespace_scope",
+        "pk_memory_snapshots",
+        "pk_memory_snapshot_items",
+        "pk_memory_search_documents",
+        "pk_memory_access_log",
+        "pk_memory_projection_checkpoints",
+        "uq_memory_snapshots_tenant_task",
+        "fk_memory_snapshot_items_snapshot",
+        "fk_memory_access_log_snapshot",
+        "ck_core_tasks_memory_snapshot_binding",
+        "ck_memory_snapshots_status",
     } <= constraint_names
     assert "fk_domain_events_run" not in constraint_names
 

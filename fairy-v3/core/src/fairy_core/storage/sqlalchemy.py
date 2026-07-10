@@ -206,6 +206,10 @@ class SqlAlchemyStateStore:
                     str(task.target_version_id) if task.target_version_id else None
                 ),
                 "execution_target": task.execution_target,
+                "memory_snapshot_id": (
+                    str(task.memory_snapshot_id) if task.memory_snapshot_id else None
+                ),
+                "memory_snapshot_hash": task.memory_snapshot_hash,
                 "status": task.status.value,
                 "idempotency_key": idempotency_key,
                 "created_at": task.created_at,
@@ -501,6 +505,8 @@ class SqlAlchemyStateStore:
             base_version_id=_uuid(row["base_version_id"]),
             execution_target=row["execution_target"],
             target_version_id=_uuid(row["target_version_id"]),
+            memory_snapshot_id=_uuid(row["memory_snapshot_id"]),
+            memory_snapshot_hash=row["memory_snapshot_hash"],
             status=TaskStatus(row["status"]),
             created_at=_datetime(row["created_at"]),
             updated_at=_datetime(row["updated_at"]),

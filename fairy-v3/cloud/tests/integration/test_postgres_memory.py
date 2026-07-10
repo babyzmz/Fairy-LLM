@@ -29,6 +29,14 @@ from fairy_core.memory.models import (
     MemoryObservation,
     MemorySensitivity,
 )
+from fairy_core.memory.retrieval_models import (
+    MemorySelectionReason,
+    MemorySnapshot,
+    MemorySnapshotItem,
+    MemorySnapshotStatus,
+    MemorySourceKind,
+    ProjectionState,
+)
 from fairy_core.persistence import SqlAlchemyUnitOfWorkFactory
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -179,6 +187,40 @@ async def test_postgres_memory_repository_uses_rls_and_shared_uow(tmp_path: Path
                 revision=revision,
                 request_fingerprint=_fingerprint("revision:postgres"),
             )
+            rendered_text = "React Aria is required."
+            item = MemorySnapshotItem.create(
+                ordinal=0,
+                source_kind=MemorySourceKind.CLAIM_REVISION,
+                source_id=claim.id,
+                source_revision=1,
+                namespace=MemoryNamespace.PROJECT_CANONICAL,
+                selection_reason=MemorySelectionReason.EXACT_CANONICAL,
+                authority=MemoryAuthority.EXPLICIT_USER,
+                score_components={"authority": 1.0, "exact": 1.0},
+                rendered_text=rendered_text,
+                token_count=len(rendered_text.encode("utf-8")),
+            )
+            snapshot = MemorySnapshot.create(
+                project_id=project.id,
+                conversation_id=conversation.id,
+                task_id=task.id,
+                base_version_id=base.id,
+                target_version_id=draft.id,
+                policy_version="hermes-lexical-v1",
+                source_watermark_cursor=event.cursor,
+                projection_generation=1,
+                projection_watermark_cursor=event.cursor,
+                projection_state=ProjectionState.READY,
+                status=MemorySnapshotStatus.READY,
+                degraded_reason=None,
+                items=(item,),
+            )
+            unit_of_work.snapshots.append(
+                snapshot,
+                request_fingerprint=_fingerprint("snapshot:postgres"),
+            )
+            task.bind_memory_snapshot(snapshot.id, snapshot.content_hash)
+            unit_of_work.state.save_task(task)
             unit_of_work.commit()
 
         with factory() as unit_of_work:
@@ -186,12 +228,15 @@ async def test_postgres_memory_repository_uses_rls_and_shared_uow(tmp_path: Path
             assert recovered is not None
             assert recovered.current_revision == 1
             assert unit_of_work.memory.revisions_for_claim(claim.id) == [revision]
+            assert unit_of_work.snapshots.get_for_task(task.id) == snapshot
+            assert unit_of_work.state.get_task(task.id) == task
 
         with SqlAlchemyUnitOfWorkFactory(
             core_engine,
             tenant_id=other_tenant_id,
         )() as unit_of_work:
             assert unit_of_work.memory.get_claim(claim.id) is None
+            assert unit_of_work.snapshots.get_for_task(task.id) is None
     finally:
         core_engine.dispose()
         await _delete_tenants(admin_engine, (tenant_id, other_tenant_id))
@@ -200,6 +245,11 @@ async def test_postgres_memory_repository_uses_rls_and_shared_uow(tmp_path: Path
 
 async def _delete_tenants(admin_engine, tenant_ids: tuple[str, ...]) -> None:
     tables = (
+        "memory_access_log",
+        "memory_snapshot_items",
+        "memory_search_documents",
+        "memory_projection_checkpoints",
+        "memory_snapshots",
         "memory_tombstones",
         "memory_claim_revisions",
         "memory_claims",

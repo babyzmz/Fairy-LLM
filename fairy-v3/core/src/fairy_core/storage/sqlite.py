@@ -4,7 +4,10 @@ from pathlib import Path
 
 from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
-from fairy_core.storage.sqlite_migrations import migrate_pre_tenant_schema
+from fairy_core.storage.sqlite_migrations import (
+    migrate_pre_tenant_schema,
+    migrate_task_snapshot_binding,
+)
 
 
 class SqliteStateStore(SqlAlchemyStateStore):
@@ -16,4 +19,5 @@ class SqliteStateStore(SqlAlchemyStateStore):
             initialize_schema=True,
             owns_engine=True,
         )
+        migrate_task_snapshot_binding(engine)
         migrate_pre_tenant_schema(engine, tenant_id="local")

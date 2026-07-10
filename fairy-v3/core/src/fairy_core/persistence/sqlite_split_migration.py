@@ -33,7 +33,10 @@ from fairy_core.storage.schema import (
     versions,
 )
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
-from fairy_core.storage.sqlite_migrations import migrate_pre_tenant_schema
+from fairy_core.storage.sqlite_migrations import (
+    migrate_pre_tenant_schema,
+    migrate_task_snapshot_binding,
+)
 
 _STATE_IMPORT_REVISION = "20260710_split_state_db_v1"
 _LEDGER_IMPORT_REVISION = "20260710_split_ledger_db_v1"
@@ -207,6 +210,7 @@ def _normalized_copy(
 
 def _normalize_state_database(engine: Engine, tenant_id: str) -> None:
     state_metadata.create_all(engine)
+    migrate_task_snapshot_binding(engine)
     migrate_pre_tenant_schema(engine, tenant_id=tenant_id)
 
 

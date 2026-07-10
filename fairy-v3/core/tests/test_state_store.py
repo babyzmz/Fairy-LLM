@@ -185,6 +185,7 @@ def test_state_store_recovers_project_graph_after_restart(tmp_path: Path) -> Non
         base_version_id=version.id,
         execution_target="local",
     )
+    task.bind_memory_snapshot(new_id(), "a" * 64)
     store.save_project(project)
     store.save_version(version)
     store.save_conversation(conversation)
@@ -198,6 +199,43 @@ def test_state_store_recovers_project_graph_after_restart(tmp_path: Path) -> Non
     assert restarted.get_conversation(conversation.id) == conversation
     assert restarted.get_task(task.id) == task
     assert restarted.find_task_by_idempotency_key("device:request") == task
+
+
+def test_local_core_engine_adds_snapshot_columns_to_existing_tasks(tmp_path: Path) -> None:
+    from fairy_core.persistence.sqlite import create_sqlite_core_engine
+
+    database_path = tmp_path / "existing-core.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE core_tasks (
+                tenant_id TEXT NOT NULL,
+                id TEXT NOT NULL,
+                project_id TEXT,
+                conversation_id TEXT NOT NULL,
+                user_request TEXT NOT NULL,
+                operation_mode TEXT NOT NULL,
+                base_version_id TEXT,
+                target_version_id TEXT,
+                execution_target TEXT NOT NULL,
+                status TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, id),
+                UNIQUE (tenant_id, idempotency_key)
+            )
+            """
+        )
+
+    engine = create_sqlite_core_engine(database_path)
+    try:
+        with sqlite3.connect(database_path) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(core_tasks)")}
+    finally:
+        engine.dispose()
+
+    assert {"memory_snapshot_id", "memory_snapshot_hash"} <= columns
 
 
 def test_accept_version_is_atomic_compare_and_swap(tmp_path: Path) -> None:
