@@ -29,6 +29,8 @@ Preview, Artifact, Checkpoint, and Memory state.
     shell.
 11. Canonical memory is relational, versioned, scoped, and command-driven;
     retrieval projections can never create or overwrite a Claim.
+12. A Task binds one immutable Memory Snapshot ID and hash before execution;
+    later writes or fresher projections cannot replace that context.
 
 ## Components
 
@@ -92,10 +94,36 @@ and requires explicit confirmation for promotion. Every mutation crosses the
 Command Bus, uses a Core-injected Scope, and emits a typed durable event without
 placing Claim values in user-visible event payloads.
 
-Snapshot building, full-text retrieval, Episodes, pgvector ranking, and
-multi-device memory controls are deferred slices. They are rebuildable or
-derived layers over canonical Observations and Claims; neither RAG nor an
-embedding index is a memory authority.
+Lexical retrieval is a disposable projection over those rows. SQLite FTS5 and
+PostgreSQL generated `tsvector`/GIN adapters consume the same scoped search
+contract. A hit is only a candidate: Core resolves supported source IDs back to
+canonical Observations or Claim revisions, rechecks tenant/namespace/Project/
+Conversation/Task/Version provenance, validity, tombstones, sensitivity, and
+scan state, then escapes and labels source text as data. Projection-only source
+kinds are rejected until a canonical resolver exists.
+
+Task creation records the current ledger cursor, checks projection generation
+and watermark health, and builds one deterministic Snapshot. Selection order
+is exact Project Canonical, remaining Project Canonical, exact User Profile,
+remaining User Profile, Conversation Draft, then history. Within a section,
+authority is deterministic Core, accepted Version, explicit user, then model
+suggestion, followed by exact match, lexical score, source cursor, confidence,
+and stable source identity. The default budget is 2,400 conservative UTF-8
+bytes with a 3,000-byte hard ceiling and fixed section allocations.
+
+The Snapshot hash covers policy/version metadata, source and projection
+watermarks, generation/state, degraded reason, and every ordered item's source
+identity, revision, namespace, reason, authority, score components, rendered
+text hash, and token count. Snapshot persistence and Task binding share one
+Unit of Work. Projection refreshes and later memory writes never rebuild or
+replace an already-bound Snapshot.
+
+If the projection is missing, stale, failed, or throws during search, Core
+builds a bounded relational-fallback Snapshot with an explicit degraded state
+and stable error code. Canonical writes remain committed independently.
+Episodes, pgvector semantic expansion, parallel projection generations,
+asynchronous rebuild workers, and multi-device memory controls remain later
+slices; neither RAG nor an embedding index is a memory authority.
 
 ## Permission model
 

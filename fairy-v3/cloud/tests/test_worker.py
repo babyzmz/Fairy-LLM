@@ -7,7 +7,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from fairy_cloud.storage.postgres import OutboxItem
-from fairy_cloud.worker import OutboxWorker as CompatibilityOutboxWorker
 from fairy_cloud.workers.outbox import OutboxWorker
 
 
@@ -30,10 +29,6 @@ class FakeOutboxStore:
         del owner_id
         self.published.extend(item.id for item in items)
         return len(items)
-
-
-def test_legacy_worker_module_is_a_compatibility_reexport() -> None:
-    assert CompatibilityOutboxWorker is OutboxWorker
 
 
 def test_outbox_worker_module_entrypoint_has_no_eager_import_warning() -> None:

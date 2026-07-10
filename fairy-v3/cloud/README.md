@@ -27,8 +27,12 @@ those grants after every migration, including when an existing volume is used.
 The API keeps an asyncpg pool for async sync/SSE paths and a psycopg pool for
 the synchronous CoreService; both use the same canonical PostgreSQL tables.
 Hermes Observations, Claims, revisions, and tombstones are relational source
-data protected by the same forced tenant RLS. Search and embedding data remain
-rebuildable projections and are not part of this persistence slice.
+data protected by the same forced tenant RLS. Lexical search documents,
+projection checkpoints, immutable Memory Snapshots, ordered Snapshot items,
+and access logs use the same tenant keys and forced RLS. PostgreSQL generates
+the `tsvector` column and maintains its GIN index; these search rows remain
+rebuildable projections and are never memory authority. Embeddings and
+pgvector semantic expansion are not part of the delivered lexical slice.
 `FAIRY_CORE_DATA_DIR` contains tenant workspace files only and never SQLite
 state in Cloud composition.
 
@@ -41,10 +45,9 @@ PostgreSQL 18, S3, and OIDC providers and requires HTTPS.
 
 Every insert into the canonical `domain_events` ledger is copied into Outbox
 by a PostgreSQL trigger in the same transaction. The worker entry point is
-`fairy_cloud.workers.outbox`; `fairy_cloud.worker` is a temporary compatibility
-re-export. This worker publishes durable events only. The future non-root OCI
-project-execution Worker is a separate component and is not part of this
-persistence milestone.
+`fairy_cloud.workers.outbox`; it is the only module entry point. This worker
+publishes durable events only. The future non-root OCI project-execution Worker
+is a separate component and is not part of this persistence milestone.
 
 Apply the cloud schema only through Alembic:
 
@@ -57,6 +60,12 @@ Run the real PostgreSQL/S3 adapters inside the same network:
 ```powershell
 docker compose --profile test run --build --rm integration
 ```
+
+This profile also runs canonical Core, Memory Snapshot/FTS, same-ID RLS,
+concurrency, recovery, migration, and generated-vector integration tests
+against PostgreSQL 18.4. A local static/unit pass is not a substitute for this
+gate; `scripts/test-all.ps1` prints an explicit skip when Docker CLI or the
+daemon is unavailable.
 
 The integration DSN must point to a dedicated test database. No Redis or NATS
 service is required; PostgreSQL owns leases and the transactional outbox.

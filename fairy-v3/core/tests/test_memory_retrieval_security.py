@@ -170,3 +170,44 @@ def test_untrusted_bidi_projection_never_enters_task_snapshot(tmp_path: Path) ->
     assert snapshot.status is MemorySnapshotStatus.READY
     assert malicious.source_id not in {item.source_id for item in snapshot.items}
     engine.dispose()
+
+
+def test_unresolved_domain_event_projection_never_enters_task_snapshot(
+    tmp_path: Path,
+) -> None:
+    engine, factory, core, _service = _stack(tmp_path)
+    project, conversation = _project_conversation(core, "Unresolved projection")
+    with factory() as unit_of_work:
+        cursor = unit_of_work.commands.current_cursor()
+    forged = MemorySearchDocument.create(
+        source_kind=MemorySourceKind.DOMAIN_EVENT,
+        source_id=new_id(),
+        source_revision=None,
+        namespace=MemoryNamespace.CONVERSATION_DRAFT,
+        project_id=project.project.id,
+        conversation_id=conversation.id,
+        task_id=None,
+        version_id=project.initial_version.id,
+        language="und",
+        normalized_text="Projection-only text must not become trusted history.",
+        source_cursor=cursor,
+        projection_generation=1,
+    )
+    writer = SqlAlchemyMemoryProjectionWriter(engine, tenant_id="local")
+    writer.upsert_documents((forged,))
+    writer.advance_checkpoint(generation=1, source_watermark_cursor=cursor)
+
+    task = _task(
+        core,
+        conversation.id,
+        "security:unresolved-domain-event",
+        request="projection only text",
+    )
+    snapshot = SqlAlchemyMemorySnapshotRepository(
+        engine,
+        tenant_id="local",
+    ).get_for_task(task.task.id)
+
+    assert snapshot is not None
+    assert forged.source_id not in {item.source_id for item in snapshot.items}
+    engine.dispose()

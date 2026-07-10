@@ -1,6 +1,6 @@
 # Fairy V3 Hermes Database Memory Design
 
-- Status: approved design
+- Status: approved design; delivery slices 1-2 implemented
 - Date: 2026-07-10
 - Scope: Core persistence, local/cloud memory, synchronization, retrieval, and prompt snapshots
 
@@ -15,6 +15,23 @@ The design extends the Hermes Agent model of bounded curated memory and
 searchable session history to Fairy's Project, Conversation, Task, Version,
 Scope, and multi-device contracts. The reference behavior is documented at
 <https://hermes-agent.nousresearch.com/docs/user-guide/features/memory/>.
+
+## Implementation status
+
+As of 2026-07-11, canonical Observations, Claims, immutable revisions,
+Tombstones, governed commands, SQLite/PostgreSQL persistence, forced RLS,
+transactional Outbox events, lexical projection/checkpoints, deterministic
+Task-bound Snapshots, degraded relational fallback, and public search/Snapshot/
+health contracts are implemented. SQLite uses FTS5; PostgreSQL migrations use a
+generated `tsvector` with GIN. The same CoreService serves local JSON-RPC and
+cloud REST/SSE.
+
+Episodes, embedding rows, pgvector, semantic expansion, asynchronous outbox
+projection workers, parallel generation switching, multi-device memory
+conflict/tombstone propagation, user controls, and performance tuning remain
+approved later slices. PostgreSQL/S3/RLS integration tests exist under the
+Docker profile; a run without an available Docker CLI/daemon is reported as
+skipped and is not equivalent to real database verification.
 
 ## Goals
 
@@ -71,9 +88,11 @@ current project facts.
 ### Searchable history
 
 Conversation messages and user-visible ledger events remain in their canonical
-tables. A full-text projection makes their original content searchable with
-source IDs and cursors. Search results never become curated claims merely by
-being retrieved.
+tables. The delivered full-text projection indexes canonical Observations and
+Claim revisions with source IDs and cursors. Ledger/message history becomes
+eligible only after its source kind has a canonical resolver; unresolved
+projection rows fail closed. Search results never become curated claims merely
+by being retrieved.
 
 ## Invariants
 
@@ -124,6 +143,8 @@ constraint permits one current revision per claim.
 
 ### `memory_episodes`
 
+Planned for delivery slice 3.
+
 Immutable Task outcomes containing request summary, Scope digest, tool and
 CommandRun IDs, terminal state, error codes, Artifact and Version IDs, user
 feedback, reusable lesson, quality score, and timestamps. Raw command logs stay
@@ -153,28 +174,33 @@ SQLite uses an FTS5 external-content virtual table. PostgreSQL uses a generated
 
 ### `memory_embeddings`
 
+Planned for delivery slice 3; no embedding/vector adapter is currently active.
+
 Rebuildable semantic projection with source kind and ID, source content hash,
 embedding model ID, dimensions, projection generation, vector payload, and
 creation time. A content hash and model ID uniquely identify an embedding.
 
-PostgreSQL development uses pgvector 0.8.2 built into the pinned PostgreSQL
-18.4 image. The vector extension is optional at runtime: exact and FTS recall
-continue when it is unavailable. Local SQLite initially stores compact float
-vectors and performs an exact scan only over a bounded FTS/scope shortlist. A
-signed packaged SQLite vector extension may replace that adapter later without
-changing Core contracts.
+Slice 3 will pin pgvector source and checksum against PostgreSQL 18.4. The
+vector extension remains optional: exact and FTS recall must continue when it
+is unavailable. Local SQLite will initially scan compact vectors only over a
+bounded FTS/scope shortlist. A signed packaged SQLite vector extension may
+replace that adapter later without changing Core contracts.
 
 ### `memory_access_log`
 
 Append-only record of retrieval candidates, selected items, rejection reasons,
 snapshot ID, downstream acceptance or correction, and latency. It supports
-quality evaluation and decay but is not model-visible by default.
+quality evaluation and decay but is not model-visible by default. The table and
+RLS policy are delivered; access-log writing and quality feedback remain later
+work.
 
 ### `memory_projection_checkpoints`
 
-Tracks each projection generation, source watermark, model/schema version,
-state, retry count, and last error. A new generation is built alongside the
-active generation and switched atomically after validation.
+Tracks each projection generation, source watermark, schema version, state,
+retry count, and last error. The delivered lexical refresher updates documents
+and advances one generation checkpoint in a single transaction. Stale or
+failed checkpoints force degraded retrieval. Building a second generation and
+switching it atomically remains slice 3.
 
 ## Write pipeline
 
@@ -187,8 +213,13 @@ Durable user-visible event
   -> append Claim revision or Episode
   -> append memory domain event and transactional outbox
   -> commit
-  -> asynchronous FTS and embedding projection
+  -> internal memory.projection.refresh Command
+  -> replace lexical documents and checkpoint in a separate transaction
 ```
+
+Projection failure cannot roll back the canonical commit. The refresh Command
+is marked failed and the next Task receives an explicit degraded Snapshot.
+Outbox-driven rebuild workers and embedding projection are slice 3.
 
 Models may propose Observations or Claim changes through registered tools. The
 Core injects tenant and Scope identity, recomputes content hashes, scans the
@@ -201,9 +232,12 @@ The initial commands are:
 - `memory.claim.promote`
 - `memory.claim.supersede`
 - `memory.claim.resolve_conflict`
-- `memory.episode.record`
 - `memory.forget`
-- `memory.projection.rebuild`
+- `memory.projection.refresh` (internal)
+- `memory.snapshot.build` (internal)
+
+`memory.episode.record` and generation-wide `memory.projection.rebuild` are
+reserved for later slices.
 
 Every command uses the shared Command Bus, idempotency fingerprint, policy
 matrix, fenced execution, Event Ledger, and outbox.
@@ -231,9 +265,8 @@ physically deletes eligible payloads after the configured retention period.
 Scope and tenant filter
   -> exact typed Claim lookup
   -> project canonical selection
-  -> FTS history and Claim search
-  -> relevant Task Episodes
-  -> optional vector expansion
+  -> FTS Observation and Claim search
+  -> future Task Episodes and optional vector expansion
   -> validity, conflict, sensitivity, and injection checks
   -> authority-aware ranking
   -> bounded immutable Snapshot
@@ -275,9 +308,11 @@ Core defines these transport-independent interfaces:
 - `MemorySnapshotBuilder`: policy-driven retrieval and immutable assembly.
 - `MemoryPolicy`: scope, authority, sensitivity, injection, and approval.
 
-`CoreUnitOfWork` exposes `memory` beside StateStore, CommandLedger, Event
-Ledger, and outbox writers on one database transaction. External projection
-work happens after commit through outbox jobs.
+`CoreUnitOfWork` exposes canonical memory, lexical search/projection, Snapshot
+storage, StateStore, and CommandLedger on one database transaction. Canonical
+mutation commits first; the delivered internal refresh Command opens a separate
+transaction for projection rows and its checkpoint. External projection work
+through outbox jobs remains slice 3.
 
 The public CoreClient gains scoped read/search, Claim inspection, conflict
 resolution, explicit remember/forget, Snapshot inspection, and projection
@@ -292,7 +327,7 @@ SQLite:
 
 - one tenant per database, with the same tenant columns retained for parity;
 - WAL mode, foreign keys, busy timeout, schema migrations, and FTS5;
-- bounded exact vector scan adapter;
+- future bounded exact vector scan over a scoped FTS shortlist;
 - local-only data excluded from sync by namespace policy.
 
 PostgreSQL:
@@ -300,13 +335,12 @@ PostgreSQL:
 - shared schema with `(tenant_id, id)` keys, composite foreign keys, explicit
   predicates, and forced row level security;
 - PostgreSQL full-text search with GIN indexes;
-- pgvector as a rebuildable semantic projection;
 - global Event Ledger cursor and transactional outbox;
-- `SKIP LOCKED` projection workers with owner, expiry, and fencing token.
+- future pgvector semantic projection and `SKIP LOCKED` rebuild workers.
 
-The Docker image remains deterministic: build pgvector 0.8.2 from pinned
-source and checksum on top of `postgres:18.4-alpine3.24`. Do not use a rolling
-pgvector image tag. Docker Compose still has no Redis, NATS, or Docker socket.
+The delivered Docker environment pins `postgres:18.4-alpine3.24`. Slice 3 must
+build pgvector from pinned source and checksum rather than a rolling image tag.
+Docker Compose has no Redis, NATS, host filesystem mount, or Docker socket.
 
 ## Synchronization
 
@@ -373,11 +407,13 @@ ranking traces stay developer-visible and contain no chain-of-thought.
 
 ## Delivery slices
 
-1. Canonical schema, ports, Unit of Work, tenant/RLS, Claim lifecycle, and
-   SQLite/PostgreSQL contract tests.
-2. Full-text history, Snapshot builder, prompt budgets, provenance, and
-   degraded fallback.
-3. Episodes, outbox projection workers, pgvector Docker support, semantic
+1. **Implemented:** canonical schema, ports, Unit of Work, tenant/RLS, Claim
+   lifecycle, and SQLite/PostgreSQL contract tests.
+2. **Implemented:** Observation/Claim full-text retrieval, Snapshot builder,
+   prompt budgets, provenance, and degraded fallback. Ledger/message history
+   waits for a canonical resolver.
+3. **Planned:** Episodes, outbox projection workers, pgvector Docker support, semantic
    expansion, and projection generation rebuilds.
-4. Multi-device conflict/tombstone sync, user controls, diagnostics, security,
-   recovery, and performance gates.
+4. **Partially implemented:** security and recovery gates. Multi-device
+   conflict/tombstone sync, user controls, diagnostics, and performance tuning
+   remain planned.

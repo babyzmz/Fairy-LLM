@@ -48,10 +48,17 @@ managed workspace files. Canonical Hermes Observations, Claims, immutable
 revisions, and tombstones now share the same SQLite/PostgreSQL Unit of Work.
 Governed Memory commands are exposed through the shared Core contract, and
 PostgreSQL enqueues every canonical domain event through a transaction-local
-Outbox trigger. Property, crash-recovery, fence, contract, and production SSE
-gates cover the delivered persistence slice. Snapshot/FTS retrieval, Episodes,
-pgvector ranking, multi-device memory controls, and final product workflows
-remain separate implementation slices.
+Outbox trigger. A disposable lexical projection provides SQLite FTS5 and
+PostgreSQL generated-`tsvector` search behind one port. Every Task is bound to
+one deterministic, bounded, immutable Memory Snapshot before execution; stale
+or failed projections produce an explicit relational-fallback Snapshot instead
+of silently reusing context. Search, Snapshot inspection, and projection
+health are available through the shared CoreClient contract. Property,
+crash-recovery, scope, injection, fence, contract, and production SSE gates
+cover the delivered persistence and lexical retrieval slices. Episodes,
+pgvector expansion, asynchronous projection rebuild workers, multi-device
+memory controls, and final product workflows remain separate implementation
+slices.
 
 Run every locally available release gate with:
 

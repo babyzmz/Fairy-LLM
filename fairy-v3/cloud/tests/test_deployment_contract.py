@@ -13,6 +13,10 @@ from fairy_cloud.openapi import build_openapi_document
 CLOUD_ROOT = Path(__file__).parents[1]
 
 
+def test_outbox_worker_has_one_canonical_module_entrypoint() -> None:
+    assert not (CLOUD_ROOT / "src" / "fairy_cloud" / "worker.py").exists()
+
+
 def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
