@@ -21,6 +21,8 @@ $backendHealthUrl = "http://$HostAddress`:$BackendPort/health"
 $backendApiModule = "app.api.main:app"
 $backendArgs = "-m uvicorn $backendApiModule --host $HostAddress --port $BackendPort"
 $browserDebugUrl = "http://127.0.0.1`:$BrowserPort/json/version"
+$cosyVoiceHealthUrl = "http://127.0.0.1`:12970/health"
+$llamaHealthUrl = "http://127.0.0.1`:12765/health"
 $script:backendProcess = $null
 $script:tauriProcess = $null
 $script:browserProcess = $null
@@ -79,6 +81,61 @@ function Test-BackendReady {
     }
 }
 
+function Test-PortAlive {
+    param([int]$Port)
+    try {
+        $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+        return [bool]$conn
+    }
+    catch {
+        return $false
+    }
+}
+
+function Stop-OrphansOnPorts {
+    param([int[]]$Ports, [string[]]$ProcessNames = @())
+    foreach ($port in $Ports) {
+        try {
+            $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+            if ($conn) {
+                Write-Status "Killing orphan on :$port (pid $($conn.OwningProcess))"
+                Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
+            }
+        }
+        catch {
+        }
+    }
+    foreach ($name in $ProcessNames) {
+        try {
+            Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        }
+        catch {
+        }
+    }
+}
+
+function Test-CosyVoiceReady {
+    try {
+        $response = Invoke-RestMethod -Uri $cosyVoiceHealthUrl -TimeoutSec 2 -Method Get
+        return [bool]$response.ok
+    }
+    catch {
+        return $false
+    }
+}
+
+function Wait-CosyVoiceReady {
+    param([int]$TimeoutSec)
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-CosyVoiceReady) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 800
+    }
+    return $false
+}
+
 function Test-BrowserReady {
     try {
         $response = Invoke-RestMethod -Uri $browserDebugUrl -TimeoutSec 3 -Method Get
@@ -113,13 +170,62 @@ function Wait-BrowserReady {
     return $false
 }
 
-if (-not (Test-Path $desktopRoot)) {
-    throw "Missing fairy-desktop directory: $desktopRoot"
+function Invoke-PreflightChecks {
+    Write-Status "Pre-flight checks..."
+    $issues = @()
+    if (-not (Test-Path $desktopRoot)) {
+        $issues += "Missing fairy-desktop directory: $desktopRoot"
+    }
+    if (-not (Test-Path (Join-Path $desktopRoot "node_modules"))) {
+        $issues += "Missing fairy-desktop\node_modules. Run 'npm install' in $desktopRoot first."
+    }
+    $venvPython = Join-Path $repoRoot "cosyvoice_env\Scripts\python.exe"
+    if (-not (Test-Path $venvPython)) {
+        $issues += "Missing cosyvoice_env\Scripts\python.exe. Run tools\setup_cosyvoice_runtime.ps1 first."
+    }
+    $cosyRepo = Join-Path $repoRoot "third_party\CosyVoice"
+    if (-not (Test-Path $cosyRepo)) {
+        Write-Warning "third_party\CosyVoice missing. Voice synthesis will be disabled."
+    }
+    $cloneWav = Join-Path $repoRoot "app\ai\voice\fairy_clone_core.wav"
+    if (-not (Test-Path $cloneWav)) {
+        Write-Warning "fairy_clone_core.wav missing. CosyVoice will fall back to default voice."
+    }
+    if ($issues.Count -gt 0) {
+        foreach ($issue in $issues) { Write-Error $issue }
+        throw "Pre-flight checks failed."
+    }
+    Write-Status "Pre-flight checks ok"
 }
 
-if (-not (Test-Path (Join-Path $desktopRoot "node_modules"))) {
-    throw "Missing fairy-desktop\\node_modules. Run npm install in $desktopRoot first."
+function Write-FinalStatus {
+    Write-Host ""
+    Write-Host "================ Fairy Dev session ready ================" -ForegroundColor Cyan
+    $browserHealthy = $true
+    if ($StartBrowserCdp) { $browserHealthy = Test-BrowserReady }
+    $rows = @(
+        @{ Name = "Backend";   Port = $BackendPort; Healthy = (Test-BackendReady) },
+        @{ Name = "LLM";       Port = 12765;        Healthy = (Test-PortAlive 12765) },
+        @{ Name = "CosyVoice"; Port = 12970;        Healthy = (Test-CosyVoiceReady) },
+        @{ Name = "Browser";   Port = $BrowserPort; Healthy = $browserHealthy },
+        @{ Name = "Vite";      Port = 1420;         Healthy = (Test-PortAlive 1420) }
+    )
+    foreach ($entry in $rows) {
+        if ($entry.Healthy) {
+            $mark = "[ok]"
+            $color = "Green"
+        } else {
+            $mark = "[--]"
+            $color = "Yellow"
+        }
+        Write-Host ("  {0,-5} {1,-10} :{2}" -f $mark, $entry.Name, $entry.Port) -ForegroundColor $color
+    }
+    Write-Host "=========================================================" -ForegroundColor Cyan
+    Write-Host ""
 }
+
+Invoke-PreflightChecks
+Stop-OrphansOnPorts -Ports @(1420, 12970, 12765) -ProcessNames @()
 
 New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
 
@@ -248,11 +354,22 @@ function Stop-Children {
     foreach ($proc in $childProcesses) {
         if ($null -ne $proc -and -not $proc.HasExited) {
             try {
-                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                # Tree-kill so backend's spawned subprocesses (CosyVoice py3.10, llama-server)
+                # also go down with their parent.
+                & taskkill.exe /PID $proc.Id /T /F 2>&1 | Out-Null
             }
             catch {
+                try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch { }
             }
         }
+    }
+    # Belt-and-suspenders: directly clean known managed ports in case any subprocess
+    # escaped the job object (Windows kill races, dev-mode hot-reload chains).
+    foreach ($port in @($BackendPort, 12765, 12970, 1420)) {
+        try {
+            $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+            if ($conn) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue }
+        } catch { }
     }
 }
 
@@ -311,14 +428,22 @@ try {
     }
     Write-Status "Backend ready"
 
+    Write-Status "Waiting for CosyVoice (TTS subprocess) — up to 90s for cold start"
+    if (Wait-CosyVoiceReady -TimeoutSec 90) {
+        Write-Status "CosyVoice ready"
+    } else {
+        Write-Warning "CosyVoice did not become ready within 90s. Voice playback may be silent until it warms up."
+    }
+
     Write-Status "Starting Tauri dev shell"
     $script:tauriProcess = Start-Process -FilePath "npm.cmd" -ArgumentList "run tauri:dev" -WorkingDirectory $desktopRoot -PassThru
     Add-ProcessToJob -Process $script:tauriProcess
 
     Write-StateFile
+    Write-FinalStatus
 
     Write-Status "Session file: $stateFile"
-    Write-Status "Press Ctrl+C to stop browser, backend, and Tauri together."
+    Write-Status "Press Ctrl+C to stop browser, backend, Tauri, and TTS together."
 
     while ($true) {
         Start-Sleep -Seconds 1

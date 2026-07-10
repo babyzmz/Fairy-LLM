@@ -908,8 +908,8 @@ class RetrievalPlanBuilder:
             text = text.replace(marker, " ")
         for marker in _COMPARE_TERMS_EN:
             lowered = lowered.replace(marker, " ")
-        compact = " ".join(lowered.split()).strip(" 锛屻€傦紒锛?/")
-        return compact or " ".join(text.split()).strip(" 锛屻€傦紒锛?/")
+        compact = " ".join(lowered.split()).strip(" ，。！？?/")
+        return compact or " ".join(text.split()).strip(" ，。！？?/")
 
     def _general_queries(self, *, query: str, topic: str, date: str, language: str) -> tuple[list[str], list[str], str]:
         if self._looks_like_release_query(query):

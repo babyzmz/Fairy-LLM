@@ -405,7 +405,7 @@ class BrowserExecutor:
         if any(token in combined for token in ("press release", "新闻稿", "announces", "发布")) and re.search(r"\d{4}", combined):
             return "news"
         if entity_text and (entity_text in url or entity_text in combined):
-            if task_type == "specs" and any(term in combined for term in ("tech specs", "specifications", "鍙傛暟", "瑙勬牸")):
+            if task_type == "specs" and any(term in combined for term in ("tech specs", "specifications", "参数", "规格")):
                 return "docs"
             if task_type == "release" and re.search(r"\d{4}", combined):
                 return "news"

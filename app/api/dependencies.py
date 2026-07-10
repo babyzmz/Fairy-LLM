@@ -16,7 +16,6 @@ from app.agents.realtime_lookup.agent import RealtimeLookupAgent
 from app.agents.realtime_lookup.models import RealtimeLookupRequest
 from app.app_preferences import load_app_preferences
 from app.fairy_core import FairyCore
-from app.persona.tone_preference import build_fairy_tone_preference_result, looks_like_fairy_tone_preference
 from app.runtime.fairy_presence import fairy_meta_for_response
 from app.models.skill_result import SkillResult
 from app.response import ResponsePipeline
@@ -198,6 +197,7 @@ class FairyRuntimeService:
         self._session_web_context: dict[str, dict[str, Any]] = {}
         self._session_lock = threading.Lock()
         self._tts = FairyTTS()
+        self._tts.start_warmup()
         self._location_skill = WebResearchSkill(browser=None, llm_helper=self.llm)
         self._realtime_agent = RealtimeLookupAgent(search_tool=self._search_web, fetch_page=self._fetch_page)
         self._web_access_resolver = WebAccessResolver()
@@ -231,9 +231,15 @@ class FairyRuntimeService:
         if shortcut is not None:
             self._remember_session_contract(effective_session, shortcut)
             return shortcut
+        if self._is_game_chat_fast_path(message):
+            contract = self._game_chat_fast_path_invoke(message=message, session_id=effective_session)
+            if contract is not None:
+                self._remember_session_contract(effective_session, contract)
+                return contract
+        effective_message = self._augment_with_companion_context(message)
         previous_structured = self._get_previous_structured(effective_session)
         contract = self.runtime.invoke(
-            message=message,
+            message=effective_message,
             session_id=effective_session,
             attachments=list(attachments or []),
             request_origin="api_local",
@@ -286,9 +292,16 @@ class FairyRuntimeService:
                 "errors": [],
             }
             return
+        if self._is_game_chat_fast_path(message):
+            contract = self._game_chat_fast_path_invoke(message=message, session_id=effective_session)
+            if contract is not None:
+                self._remember_session_contract(effective_session, contract)
+                yield from self._emit_contract_as_stream(contract, effective_session)
+                return
+        effective_message = self._augment_with_companion_context(message)
         previous_structured = self._get_previous_structured(effective_session)
         for event in self.runtime.stream_invoke(
-            message=message,
+            message=effective_message,
             session_id=effective_session,
             attachments=list(attachments or []),
             request_origin="api_stream",
@@ -314,29 +327,238 @@ class FairyRuntimeService:
     def capabilities(self) -> dict[str, Any]:
         return self.runtime.capabilities_snapshot()
 
-    def _shortcut_contract(self, *, message: str, session_id: str) -> dict[str, Any] | None:
+    _GAME_CHAT_BLOCKERS = (
+        "截图", "屏幕", "界面", "screen", "screenshot",
+        "打开", "启动", "open", "官网", "网站", "url", "http://", "https://",
+        "天气", "weather",
+        "新闻", "news", "最新动态",
+        "几点", "现在时间",
+        "在哪", "在哪里", "地图", "map", "导航",
+        "/", "@",
+    )
+
+    def _is_game_chat_fast_path(self, message: str) -> bool:
+        try:
+            from app.companion import Scene, get_scene_state_machine
+        except Exception:
+            return False
+        try:
+            scene_state = get_scene_state_machine()
+            scene = scene_state.scene
+            current_game = (scene_state.current_game or "").strip()
+        except Exception:
+            return False
+        if not current_game:
+            return False
+        game_scenes = {
+            Scene.GAME_WARMING,
+            Scene.GAME_ACTIVE,
+            Scene.COMBAT,
+            Scene.BOSS,
+            Scene.VICTORY_AFTERGLOW,
+            Scene.DEFEAT_REGROUP,
+        }
+        if scene not in game_scenes:
+            return False
+        clean = (message or "").strip()
+        if not clean or len(clean) > 200:
+            return False
+        lowered = clean.lower()
+        if any(marker in clean or marker.lower() in lowered for marker in self._GAME_CHAT_BLOCKERS):
+            return False
+        return True
+
+    def _game_chat_fast_path_invoke(self, *, message: str, session_id: str) -> dict[str, Any] | None:
+        try:
+            from app.companion import get_scene_state_machine
+        except Exception:
+            return None
+        scene_state = get_scene_state_machine()
+        current_game = (scene_state.current_game or "").strip()
+        if not current_game:
+            return None
+
+        rewritten_query = self._game_query_rewrite(message=message, game=current_game)
+        web_summary = self._game_web_brief(query=rewritten_query) if rewritten_query else ""
+
+        overlay_lines = [
+            f"用户当前在玩《{current_game}》，问题大概率与此游戏相关。",
+            "用桌宠人格回答：自然口语 + 轻微吐槽 + 实用建议，短句优先（会被 TTS 念）。",
+            "如果你不熟某个具体细节（例如最新版本调整、某模式特殊机制），承认并建议查攻略站，不要瞎编。",
+        ]
+        if web_summary:
+            overlay_lines.append("")
+            overlay_lines.append(f"以下是刚联网查到的相关资料（可参考但不要照抄）：\n{web_summary}")
+        overlay = "\n".join(overlay_lines)
+
         request_id = uuid.uuid4().hex
-        if looks_like_fairy_tone_preference(message):
-            result = build_fairy_tone_preference_result(
-                task_id="api-shortcut",
-                request_origin="api_local",
-                request_id=request_id,
+        try:
+            response = self.llm.execute_task(
+                overlay,
+                message,
+                temperature=0.5,
+                max_tokens=420,
+                instruction_label="Game chat fast path",
             )
-            return self._text_shortcut_contract(
-                text=result.response_text,
-                session_id=session_id,
-                request_id=request_id,
-                intent="persona_preference",
-                title="语气偏好已切换",
+        except Exception:
+            logger.exception("game_chat_fast_path_failed")
+            return None
+        text = str(response.text or "").strip()
+        if not text:
+            return None
+
+        meta: dict[str, Any] = {
+            "intent": "game_chat",
+            "modality": "text",
+            "speech": {
+                "mode": "full_read",
+                "text": text,
+                "allow_streaming": True,
+            },
+            "runtime": {
+                "selected_bundle": "game_chat_fast_path",
+                "selected_capability": "game_chat",
+                "executor_path": "game_chat_fast_path",
+                "context": {
+                    "current_game": current_game,
+                    "scene": scene_state.scene.value,
+                    "rewritten_query": rewritten_query,
+                    "web_brief_used": bool(web_summary),
+                },
+            },
+        }
+        meta["fairy"] = fairy_meta_for_response(meta=meta, text=text, cards=[], errors=[])
+        return {
+            "request_id": request_id,
+            "session_id": session_id,
+            "text": text,
+            "cards": [],
+            "meta": meta,
+            "errors": [],
+        }
+
+    def _game_query_rewrite(self, *, message: str, game: str) -> str:
+        """Convert a casual Chinese game question into a compact search query."""
+        try:
+            prompt = (
+                "你是一个搜索查询改写助手。把用户的口语化游戏问题改写成更适合搜索引擎的简短查询。\n"
+                "输出仅一行查询语句，不超过 30 个字符，包含游戏名 + 核心关键词。不要解释。"
             )
-        if _looks_like_presence_greeting(message):
-            return self._text_shortcut_contract(
-                text="在线。任务目标？",
-                session_id=session_id,
-                request_id=request_id,
-                intent="presence_greeting",
-                title="在线",
+            payload = f"游戏：{game}\n用户原问题：{message}"
+            response = self.llm.execute_task(
+                prompt,
+                payload,
+                temperature=0.0,
+                max_tokens=80,
+                instruction_label="Game query rewrite",
             )
+        except Exception:
+            logger.debug("game_query_rewrite_failed", exc_info=True)
+            return ""
+        text = str(response.text or "").strip()
+        for token in ("\n", "查询：", "Query:", "搜索：", "改写：", "Output:"):
+            if token in text:
+                text = text.split(token, 1)[-1].strip()
+        text = text.strip("\"' ")
+        if len(text) > 80:
+            text = text[:80]
+        return text
+
+    def _game_web_brief(self, *, query: str, max_results: int = 4) -> str:
+        if not query:
+            return ""
+        try:
+            results = self._search_web(query, max_results=max_results)
+        except Exception:
+            logger.debug("game_web_brief_search_failed", exc_info=True)
+            return ""
+        if not results:
+            return ""
+        lines: list[str] = []
+        for item in results[:max_results]:
+            title = str(item.get("title") or "").strip()
+            snippet = str(item.get("snippet") or item.get("description") or "").strip()
+            url = str(item.get("url") or "").strip()
+            if not (title or snippet):
+                continue
+            lines.append(f"- {title}\n  {snippet}\n  {url}")
+        return "\n".join(lines)
+
+    def _augment_with_companion_context(self, message: str) -> str:
+        """Attach the companion's detected game as request-level data, not system prompt."""
+        try:
+            from app.companion import get_scene_state_machine
+        except Exception:
+            return message
+        try:
+            scene_state = get_scene_state_machine()
+            current_game = (scene_state.current_game or "").strip()
+        except Exception:
+            return message
+        if not current_game:
+            return message
+        return (
+            f"[场景上下文 / 仅供参考: 用户当前在玩 {current_game}。"
+            f"如果用户的问题与该游戏相关（角色、出装、攻略、玩法、模式等），"
+            f"请基于此理解问题；如果无关，请忽略本提示。]\n\n{message}"
+        )
+
+    def _emit_contract_as_stream(self, contract: dict[str, Any], session_id: str) -> Iterable[dict[str, Any]]:
+        request_id = str(contract.get("request_id") or "")
+        text = str(contract.get("text") or "")
+        cards = list(contract.get("cards") or [])
+        meta = dict(contract.get("meta") or {})
+        errors = list(contract.get("errors") or [])
+        yield {
+            "event": "message_start",
+            "request_id": request_id,
+            "session_id": session_id,
+            "meta": meta,
+        }
+        if text:
+            for piece in self._chunk_text_for_stream(text):
+                yield {
+                    "event": "text_delta",
+                    "request_id": request_id,
+                    "session_id": session_id,
+                    "text": piece,
+                }
+        for card in cards:
+            yield {
+                "event": "card",
+                "request_id": request_id,
+                "session_id": session_id,
+                "card": card,
+            }
+        yield {
+            "event": "message_end",
+            "request_id": request_id,
+            "session_id": session_id,
+            "text": text,
+            "cards": cards,
+            "meta": meta,
+            "errors": errors,
+        }
+
+    @staticmethod
+    def _chunk_text_for_stream(text: str, max_chunk: int = 60) -> list[str]:
+        """Split assistant text into TTS-friendly chunks at sentence boundaries."""
+        if not text:
+            return []
+        parts: list[str] = []
+        buffer = ""
+        for ch in text:
+            buffer += ch
+            if ch in "。！？!?\n" or (ch in "，,；;" and len(buffer) >= max_chunk):
+                if buffer.strip():
+                    parts.append(buffer)
+                buffer = ""
+        if buffer.strip():
+            parts.append(buffer)
+        return parts or [text]
+
+    def _shortcut_contract(self, *, message: str, session_id: str) -> dict[str, Any] | None:
+        del message, session_id
         return None
 
     def _text_shortcut_contract(
@@ -2411,12 +2633,12 @@ class FairyRuntimeService:
             and not browser_status.available
         ):
             if browser_status.reason == "browser_launch_failed":
-                return "??????????????????????????????????????"
+                return "这个网站需要浏览器访问，但当前浏览器启动失败，我已经尝试了替代方式。"
             if browser_status.reason == "browser_binary_missing":
-                return "???????????????????????????????????????"
+                return "这个网站需要浏览器访问，但当前环境缺少可用浏览器。"
             if browser_status.reason == "package_missing":
-                return "???????????????????????????????????????"
-            return "????????????????????????????????"
+                return "这个网站需要浏览器访问，但当前浏览器自动化依赖还没有准备好。"
+            return "这个网站需要浏览器访问，但当前环境还不能稳定执行浏览器交互。"
         if decision is not None and decision.intent_type == "source_constrained_lookup" and source_name:
             return f"我在{source_name}没找到这次要的可靠结果，要不要我扩大到全网？"
         if decision is not None and decision.access_mode == "visual_read":
@@ -2475,7 +2697,7 @@ class FairyRuntimeService:
     def _source_name_from_url(self, url: str) -> str:
         text = str(url or "").strip().lower()
         if "ithome.com" in text:
-            return "IT??"
+            return "IT之家"
         if "openai.com" in text:
             return "OpenAI"
         return text.split("/")[2] if text.startswith(("http://", "https://")) else ""
@@ -2597,7 +2819,6 @@ class FairyRuntimeService:
                 f"已尝试 {max(1, len(attempted))} 条 query，"
                 f"筛出 {filtered} 条可用结果。"
             )
-            return "鎴戝凡缁忓紑濮嬬綉椤垫祻瑙堬紝浣嗚繖涓€杞繕娌℃湁鎷垮埌鍙敤鐨勫€欓€夋潵婧愩€?"
         if execution.failure_reason == "browse_no_candidate_links":
             if task_type == "specs":
                 return "我已经打开了官网入口页，但没在页面里找到足够明确的规格入口或产品链接。"

@@ -267,8 +267,13 @@ class FairyTTS:
                 current_params = wav_file.getparams()
                 if params is None:
                     params = current_params
-                elif current_params[:4] != params[:4]:
-                    raise RuntimeError("CosyVoice returned chunks with incompatible WAV parameters.")
+                elif current_params[:3] != params[:3]:
+                    # Only compare nchannels / sampwidth / framerate.
+                    # nframes (params[3]) legitimately differs per chunk.
+                    raise RuntimeError(
+                        "CosyVoice returned chunks with incompatible WAV format "
+                        f"(got {current_params[:3]}, expected {params[:3]})."
+                    )
                 frames.append(wav_file.readframes(wav_file.getnframes()))
         if params is None:
             raise RuntimeError("CosyVoice service returned no mergeable WAV chunks.")

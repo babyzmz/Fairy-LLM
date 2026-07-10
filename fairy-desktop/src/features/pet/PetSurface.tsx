@@ -7,8 +7,9 @@ import {
   resolveFairyAvatarSignal,
 } from "../../components/fairy/FairyAvatar";
 import { streamChat } from "../../lib/api/chat";
-import { petCompanion } from "../../lib/api/companion";
+import { muteCompanion, petCompanion } from "../../lib/api/companion";
 import { getSystemState, performSystemAction } from "../../lib/api/system";
+import { useFairyVoiceRuntime } from "../../components/fairy/useFairyVoiceRuntime";
 import { SpeechBubble } from "../companion/SpeechBubble";
 import { sceneToSignal } from "../companion/sceneToAvatarMode";
 import { useAttendingState } from "../companion/useAttendingState";
@@ -362,12 +363,18 @@ export function PetSurface(): JSX.Element {
   const [fairyMeta, setFairyMeta] = useState<FairyMeta | null>(null);
   const [streamSignal, setStreamSignal] = useState<FairyAvatarSignal | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const settleTimerRef = useRef<number | null>(null);
 
   const { bubble, petBurst, scene, triggerPet } = useCompanionStream();
   const { isAttending } = useAttendingState();
+  const voice = useFairyVoiceRuntime({
+    backendStatus: systemState?.bridge_status === "ready" || systemState?.bridge_status === "reused" ? "online" : systemState ? "offline" : "unknown",
+    systemState,
+  });
   const presence = useMemo(() => {
     if (isAttending) {
       return { signal: ATTENDING_SIGNAL, label: "聆听", detail: "attending" };
@@ -463,6 +470,7 @@ export function PetSurface(): JSX.Element {
     if (nextMeta) {
       setFairyMeta(nextMeta);
     }
+    const requestId = "request_id" in event ? String(event.request_id || "") : "";
     switch (event.event) {
       case "message_start":
         setProgress("正在理解请求");
@@ -476,6 +484,7 @@ export function PetSurface(): JSX.Element {
         appendText(event.text);
         setProgress("");
         setPhase("replying");
+        voice.handleChatReplyChunk(requestId, event.text);
         break;
       case "card":
         setCards((current) => [...current, event.card]);
@@ -486,6 +495,7 @@ export function PetSurface(): JSX.Element {
         if (event.errors.length > 0) {
           setChatError(event.errors[0]?.message || "请求失败");
           setPhase("error");
+          voice.handleChatReplyError(requestId, event.errors[0]?.message);
           break;
         }
         if (event.text.trim()) {
@@ -496,11 +506,22 @@ export function PetSurface(): JSX.Element {
         }
         setProgress("");
         setPhase("replying");
+        voice.handleChatReply({
+          id: `pet-${requestId || Date.now()}`,
+          kind: "assistant_final",
+          requestId,
+          text: event.text || "",
+          cards: event.cards || [],
+          errors: event.errors || [],
+          meta: event.meta as Record<string, unknown> | undefined,
+          createdAt: Date.now(),
+        });
         break;
       case "error":
         setChatError(event.message);
         setProgress("");
         setPhase("error");
+        voice.handleChatReplyError(requestId, event.message);
         break;
       default:
         break;
@@ -595,8 +616,123 @@ export function PetSurface(): JSX.Element {
     inputRef.current?.focus();
   };
 
+  const handleContextMenu = (event: React.MouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY });
+  };
+
+  const closeContextMenu = () => setContextMenu(null);
+
+  const handleToggleMute = () => {
+    const next = !muted;
+    setMuted(next);
+    void muteCompanion(next).catch(() => undefined);
+    closeContextMenu();
+  };
+
+  const handleShowMain = () => {
+    void performSystemAction("focus_window").catch(() => undefined);
+    closeContextMenu();
+  };
+
+  const handleQuitApp = () => {
+    closeContextMenu();
+    void (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("quit_app");
+      } catch (err) {
+        console.error("[fairy] quit_app failed:", err);
+      }
+    })();
+  };
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const onDocPointer = () => closeContextMenu();
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeContextMenu();
+    };
+    window.addEventListener("mousedown", onDocPointer);
+    window.addEventListener("keydown", onEsc);
+    return () => {
+      window.removeEventListener("mousedown", onDocPointer);
+      window.removeEventListener("keydown", onEsc);
+    };
+  }, [contextMenu]);
+
+  const handleAvatarPointerDown = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let dragStarted = false;
+
+    const onMove = (move: MouseEvent) => {
+      if (dragStarted) return;
+      const dx = Math.abs(move.clientX - startX);
+      const dy = Math.abs(move.clientY - startY);
+      if (dx > 4 || dy > 4) {
+        dragStarted = true;
+        cleanup();
+        void (async () => {
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            await invoke("plugin:window|start_dragging");
+          } catch (err) {
+            console.error("[fairy] start_dragging failed:", err);
+          }
+        })();
+      }
+    };
+
+    const onUp = () => {
+      cleanup();
+      if (!dragStarted) {
+        handleFairyPet();
+      }
+    };
+
+    function cleanup() {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   return (
-    <main className={`pet-surface pet-surface--${presence.signal.state} pet-surface--${phase}`}>
+    <main className={`pet-surface pet-surface--${presence.signal.state} pet-surface--${phase}`} onContextMenu={handleContextMenu}>
+      {contextMenu ? (
+        <ul
+          className="pet-context-menu"
+          style={{
+            position: "fixed",
+            left: Math.min(contextMenu.x, window.innerWidth - 160),
+            top: Math.min(contextMenu.y, window.innerHeight - 160),
+            zIndex: 100,
+            margin: 0,
+            padding: "4px 0",
+            listStyle: "none",
+            minWidth: 140,
+            backgroundColor: "rgba(10, 24, 56, 0.96)",
+            border: "1px solid rgba(143,181,255,0.45)",
+            borderRadius: 8,
+            boxShadow: "0 4px 14px rgba(0,0,0,0.45)",
+            color: "rgba(236, 240, 246, 0.96)",
+            fontSize: 13,
+            userSelect: "none",
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <li style={{ padding: "6px 14px", cursor: "pointer" }} onClick={handleShowMain}>显示主聊天窗</li>
+          <li style={{ padding: "6px 14px", cursor: "pointer" }} onClick={handleToggleMute}>
+            {muted ? "取消静音" : "静音桌宠"}
+          </li>
+          <li style={{ height: 1, margin: "4px 0", backgroundColor: "rgba(143,181,255,0.25)" }} />
+          <li style={{ padding: "6px 14px", cursor: "pointer", color: "rgba(255,170,170,0.92)" }} onClick={handleQuitApp}>退出 Fairy</li>
+        </ul>
+      ) : null}
       <section className="pet-stage" title={presence.detail} data-tauri-drag-region style={{ position: "relative" }}>
         <div className="pet-stage__halo" />
         {isAttending ? null : <SpeechBubble bubble={bubble} />}
@@ -610,7 +746,7 @@ export function PetSurface(): JSX.Element {
             .join(" ")}
           type="button"
           aria-label="Fairy"
-          onClick={handleFairyPet}
+          onMouseDown={handleAvatarPointerDown}
           onDoubleClick={handleOpenMainWindow}
           style={
             isAttending

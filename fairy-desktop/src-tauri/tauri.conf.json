@@ -15,7 +15,8 @@
         "title": "Fairy Desktop",
         "width": 1080,
         "height": 760,
-        "resizable": true
+        "resizable": true,
+        "visible": false
       },
       {
         "label": "fairy-pet",
@@ -29,7 +30,7 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "shadow": false,
-        "focus": false
+        "focus": true
       }
     ],
     "security": {

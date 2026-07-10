@@ -290,6 +290,12 @@ pub fn system_action_execute(
 }
 
 #[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    shutdown_backend(&app);
+    app.exit(0);
+}
+
+#[tauri::command]
 pub fn system_state(app: AppHandle) -> Result<DesktopSystemState, String> {
     Ok(build_system_state(&app))
 }

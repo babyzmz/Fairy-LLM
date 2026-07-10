@@ -18,7 +18,6 @@ from app.memory import MemoryManager
 from app.news.news_service import NewsService
 from app.models.skill_result import SkillResult
 from app.persona import PersonaEngine, get_effective_persona_mode
-from app.persona.tone_preference import build_fairy_tone_preference_result, looks_like_fairy_tone_preference
 from app.prompts import build_json_helper_prompt
 from app.rag import RagManager, get_reindex_manager
 from app.route_context import RouteContext
@@ -1245,15 +1244,6 @@ class FairyCore:
                 summary="RAG 调试命令已执行。",
                 response_text=str(rag_debug_result.get("response_text", "")).strip(),
                 structured={"task_id": task_id},
-            )
-            self._finalize_task(task_id, user_request, result)
-            return result
-
-        if looks_like_fairy_tone_preference(user_request):
-            result = build_fairy_tone_preference_result(
-                task_id=task_id,
-                request_origin=request_origin,
-                request_id=request_id,
             )
             self._finalize_task(task_id, user_request, result)
             return result

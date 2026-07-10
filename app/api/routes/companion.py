@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import queue
 import threading
 from dataclasses import asdict
 from time import time
@@ -64,13 +63,20 @@ async def quip_stream(request: Request) -> StreamingResponse:
     snapshot = bubble.snapshot_dict()
     initial_scene = scene_state.scene.value
 
-    event_queue: queue.Queue[dict[str, object] | None] = queue.Queue()
+    loop = asyncio.get_running_loop()
+    event_queue: asyncio.Queue[dict[str, object] | None] = asyncio.Queue()
 
     def on_quip(event: QuipEvent) -> None:
-        event_queue.put({"kind": "quip", "payload": _quip_event_payload(event)})
+        loop.call_soon_threadsafe(
+            event_queue.put_nowait,
+            {"kind": "quip", "payload": _quip_event_payload(event)},
+        )
 
     def on_scene(transition: SceneTransition) -> None:
-        event_queue.put({"kind": "scene", "payload": _scene_transition_payload(transition)})
+        loop.call_soon_threadsafe(
+            event_queue.put_nowait,
+            {"kind": "scene", "payload": _scene_transition_payload(transition)},
+        )
 
     unsub_quip = observer.subscribe(on_quip)
     unsub_scene = scene_state.subscribe(on_scene)
@@ -82,8 +88,8 @@ async def quip_stream(request: Request) -> StreamingResponse:
                 if await request.is_disconnected():
                     return
                 try:
-                    item = event_queue.get(timeout=0.5)
-                except queue.Empty:
+                    item = await asyncio.wait_for(event_queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
                     yield _format_sse("ping", {"ts": time()})
                     continue
                 if item is None:

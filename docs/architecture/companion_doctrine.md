@@ -76,11 +76,36 @@ companion = illusion of presence ← LLM 永远不在这里
 ### 规则
 `BUBBLE_ADDENDUM` 是**静态字符串常量**，永远是 43 行。不允许：
 
-- ✗ 把 `current_scene` 拼进 prompt
-- ✗ 把 `recent_quips` 拼进 prompt
-- ✗ 把 `companion_memory` 拼进 prompt
-- ✗ 把 `current_game` 拼进 prompt
-- ✗ 任何 `f"...{companion_state}..."` 形式的 prompt 构造
+- ✗ 把 `current_scene` 拼进 system prompt
+- ✗ 把 `recent_quips` 拼进 system prompt
+- ✗ 把 `companion_memory` 拼进 system prompt
+- ✗ 把 `current_game` 拼进 system prompt
+- ✗ 任何 `f"...{companion_state}..."` 形式的 system prompt 构造
+
+### 重要边界 — 这条规则不禁止的事
+
+**System prompt 是人格层。User message / request-level context 是数据层。**
+
+允许（且鼓励）：
+
+- ✓ 在 `FairyRuntimeService.invoke()` 入口处把 `current_game` 拼到 **用户消息**前面
+  （例如 `[场景上下文: 用户当前在玩 League of Legends] {原消息}`）
+- ✓ 给单次 LLM 调用传一个**临时 instruction overlay**（例如 game fast path 用的"游戏陪玩"提示词）
+- ✓ 用 `route_context` / `route_hints` 在路由层传任意情境数据
+
+理由：这些不会修改 Fairy 的**人格定义**（FAIRY_CORE_SYSTEM_PROMPT + BUBBLE_ADDENDUM）。
+它们改的是**这一次请求的输入数据**。assistant 在每轮接受新数据是它的正常工作，
+不是 doctrine 关心的"人格漂移 / hidden coupling / latent behavior mutation"问题。
+
+判定方法：
+
+| 问题 | 答 |
+|---|---|
+| 它会改 `FAIRY_CORE_SYSTEM_PROMPT` 的内容吗？ | 改 = 违规 |
+| 它会改 `BUBBLE_ADDENDUM` 的内容吗？ | 改 = 违规 |
+| 它在 user message 或单次 instruction overlay 里加场景数据吗？ | 加 = OK |
+
+实际案例：`app/api/dependencies.py:_augment_with_companion_context` 是合规的做法。
 
 ### 为什么
 
@@ -105,7 +130,7 @@ companion = illusion of presence ← LLM 永远不在这里
 | 诱惑 | 正确做法 |
 |---|---|
 | "让 assistant 知道 fairy 现在在 boss 状态" | 不需要知道。Bubble 是 companion 自己的事 |
-| "让 assistant 用更连贯的语气" | persona layer 已经有 tone_preference，改那里 |
+| "让 assistant 用更连贯的语气" | 改 `app/prompts/fairy_runtime_prompts.py` 和 persona 默认配置，不要在 companion 拼 prompt |
 | "让 assistant 提到用户最近常玩什么" | 走 memory_retriever（assistant 的长期记忆），不走 companion |
 
 ---

@@ -46,7 +46,8 @@ fn main() {
             backend::system_state,
             backend::backend_control,
             backend::system_action_execute,
-            backend::persist_chat_attachment
+            backend::persist_chat_attachment,
+            backend::quit_app
         ])
         .setup(|app| {
             backend::initialize_backend(&app.handle());
