@@ -7,19 +7,20 @@ import boto3
 import uvicorn
 from botocore.config import Config
 from fastapi import FastAPI
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from fairy_cloud.api import create_cloud_app
 from fairy_cloud.auth import OidcTokenVerifier, RemoteJwksProvider
-from fairy_cloud.dispatchers import TenantDispatcherRegistry
+from fairy_cloud.dispatchers import TenantRuntimeRegistry
 from fairy_cloud.settings import CloudSettings
 from fairy_cloud.storage.objects import S3ObjectStore
 from fairy_cloud.storage.postgres import PostgresSyncStore
 
 settings = CloudSettings()
-engine = create_async_engine(settings.postgres_dsn, pool_pre_ping=True)
-sync_store = PostgresSyncStore(engine)
+async_engine = create_async_engine(settings.postgres_dsn, pool_pre_ping=True)
+core_engine = create_engine(settings.core_postgres_dsn, pool_pre_ping=True)
+sync_store = PostgresSyncStore(async_engine)
 jwks = RemoteJwksProvider(
     issuer=settings.oidc_issuer,
     allow_insecure_http=settings.oidc_allow_insecure_http,
@@ -43,12 +44,12 @@ s3_client = boto3.client(
     ),
 )
 object_store = S3ObjectStore(client=s3_client, bucket=settings.s3_bucket)
-dispatchers = TenantDispatcherRegistry(root=settings.core_data_dir)
-dispatcher = dispatchers.system_dispatcher()
+runtimes = TenantRuntimeRegistry(root=settings.core_data_dir, engine=core_engine)
+service = runtimes.system_service()
 
 
 async def readiness() -> dict[str, str]:
-    async with engine.connect() as connection:
+    async with async_engine.connect() as connection:
         await connection.execute(text("SELECT 1"))
     await asyncio.to_thread(s3_client.head_bucket, Bucket=settings.s3_bucket)
     return {"status": "ready", "postgres": "ok", "object_store": "ok"}
@@ -58,17 +59,19 @@ async def readiness() -> dict[str, str]:
 async def lifespan(_app: FastAPI):
     yield
     await jwks.close()
-    await engine.dispose()
+    await async_engine.dispose()
+    runtimes.close()
+    await asyncio.to_thread(core_engine.dispose)
 
 
 app = create_cloud_app(
-    dispatcher,
+    service,
     authenticator=authenticator,
     sync_store=sync_store,
     object_store=object_store,
     readiness=readiness,
     lifespan=lifespan,
-    dispatcher_resolver=dispatchers.for_identity,
+    service_resolver=runtimes.for_identity,
 )
 
 

@@ -48,6 +48,31 @@ def build_claim_outbox_statement(*, batch_size: int) -> Select:
     )
 
 
+def build_events_after_statement(
+    *,
+    tenant_id: str,
+    cursor: int,
+    limit: int,
+    visibilities: frozenset[str],
+) -> Select:
+    if cursor < 0:
+        raise ValueError("cursor cannot be negative")
+    if not 1 <= limit <= 2_000:
+        raise ValueError("limit must be between 1 and 2000")
+    if not visibilities:
+        raise ValueError("visibilities must not be empty")
+    return (
+        select(domain_events)
+        .where(
+            domain_events.c.tenant_id == tenant_id,
+            domain_events.c.cursor > cursor,
+            domain_events.c.visibility.in_(visibilities),
+        )
+        .order_by(domain_events.c.cursor)
+        .limit(limit)
+    )
+
+
 def build_append_event_statement(
     *,
     tenant_id: str,
@@ -462,16 +487,11 @@ class PostgresSyncStore:
         if not visibilities:
             return []
         tenant_id = tenant_id_for_user(user_id)
-        statement = (
-            select(domain_events)
-            .where(
-                domain_events.c.tenant_id == tenant_id,
-                domain_events.c.user_id == user_id,
-                domain_events.c.cursor > cursor,
-                domain_events.c.visibility.in_(visibilities),
-            )
-            .order_by(domain_events.c.cursor)
-            .limit(limit)
+        statement = build_events_after_statement(
+            tenant_id=tenant_id,
+            cursor=cursor,
+            limit=limit,
+            visibilities=visibilities,
         )
         async with self._engine.begin() as connection:
             await _set_tenant(connection, tenant_id)

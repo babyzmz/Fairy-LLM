@@ -1,110 +1,39 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
 from uuid import UUID
-from weakref import finalize
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ValidationError
 
-from fairy_core.application.core import CoreApplication
-from fairy_core.commanding import CommandLedger, EventVisibility
-from fairy_core.commanding.registry import ToolRegistry
-from fairy_core.contracts.models import (
-    ApprovalDecisionInput,
-    CapabilityRequest,
-    ChangesetProposal,
-    ConversationCreate,
-    ProjectCreate,
-    ProjectIdInput,
-    ProjectImport,
-    TaskCreate,
-    TaskIdInput,
-    VersionAcceptInput,
-    VersionIdInput,
-)
+from fairy_core.application.service import CoreResponseValidationError, CoreService
+from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.domain.errors import DomainError
 from fairy_core.workspace.worker_transport import WorkerRpcError
 
-_PUBLIC_METHOD_NAMES = frozenset(
-    {
-        "approvals.decide",
-        "capabilities.get",
-        "changesets.propose",
-        "conversations.create",
-        "events.subscribe",
-        "health",
-        "projects.create",
-        "projects.get",
-        "projects.import",
-        "tasks.create",
-        "tasks.get",
-        "tasks.review",
-        "versions.accept",
-        "versions.discard",
-        "versions.get",
-    }
-)
-
-
-class _Params(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class _EventSubscribeParams(_Params):
-    cursor: int = Field(default=0, ge=0)
-
 
 class JsonRpcDispatcher:
-    def __init__(
-        self,
-        application: CoreApplication,
-        *,
-        ledger: CommandLedger,
-        registry: ToolRegistry,
-        on_close: Callable[[], None] | None = None,
-    ) -> None:
-        self._application = application
-        self._ledger = ledger
-        self._registry = registry
-        self._finalizer = finalize(self, on_close) if on_close is not None else None
-        self._methods: dict[str, Callable[[dict[str, Any]], Any]] = {
-            "health": self._health,
-            "projects.create": self._create_project,
-            "projects.import": self._import_project,
-            "projects.get": self._get_project,
-            "conversations.create": self._create_conversation,
-            "tasks.create": self._create_task,
-            "tasks.get": self._get_task,
-            "tasks.review": self._review_task,
-            "changesets.propose": self._propose_changeset,
-            "approvals.decide": self._decide_approval,
-            "versions.get": self._get_version,
-            "versions.accept": self._accept_version,
-            "versions.discard": self._discard_version,
-            "capabilities.get": self._get_capabilities,
-            "events.subscribe": self._subscribe_events,
-        }
-        if self._methods.keys() != _PUBLIC_METHOD_NAMES:
-            raise RuntimeError("JSON-RPC handlers do not match the public method contract")
+    """JSON-RPC 2.0 envelope adapter around CoreService."""
+
+    def __init__(self, service: CoreService) -> None:
+        self._service = service
 
     def close(self) -> None:
-        if self._finalizer is not None:
-            self._finalizer()
+        close = getattr(self._service, "close", None)
+        if callable(close):
+            close()
 
     @classmethod
     def method_names(cls) -> frozenset[str]:
-        return _PUBLIC_METHOD_NAMES
+        return frozenset(CORE_METHODS)
 
     def dispatch(self, request: dict[str, Any]) -> dict[str, Any]:
         request_id = request.get("id")
         method_name = str(request.get("method") or "")
-        method = self._methods.get(method_name)
-        if method is None:
+        if method_name not in CORE_METHODS:
             return self._error(
                 request_id,
                 code=-32601,
@@ -120,7 +49,7 @@ class JsonRpcDispatcher:
                 data={"error_code": "INVALID_PARAMS"},
             )
         try:
-            result = method(params)
+            result = self._service.invoke(method_name, params)
         except ValidationError as exc:
             return self._error(
                 request_id,
@@ -156,6 +85,13 @@ class JsonRpcDispatcher:
                 message="Invalid params",
                 data={"error_code": "INVALID_PARAMS", "details": str(exc)},
             )
+        except CoreResponseValidationError as exc:
+            return self._error(
+                request_id,
+                code=-32603,
+                message="Internal error",
+                data={"error_code": "CORE_ERROR", "method": exc.method},
+            )
         return {"jsonrpc": "2.0", "id": request_id, "result": _json_value(result)}
 
     @staticmethod
@@ -172,101 +108,10 @@ class JsonRpcDispatcher:
             "error": {"code": code, "message": message, "data": data},
         }
 
-    @staticmethod
-    def _health(_params: dict[str, Any]) -> dict[str, Any]:
-        return {"status": "ok", "service": "fairy-core", "protocol": "jsonrpc-2.0"}
-
-    def _create_project(self, params: dict[str, Any]) -> Any:
-        validated = ProjectCreate.model_validate(params)
-        return self._application.create_project(
-            name=validated.name,
-            residency=validated.residency,
-        )
-
-    def _import_project(self, params: dict[str, Any]) -> Any:
-        validated = ProjectImport.model_validate(params)
-        return self._application.create_project(
-            name=validated.name,
-            residency=validated.residency,
-            source=validated.source_path,
-        )
-
-    def _get_project(self, params: dict[str, Any]) -> Any:
-        validated = ProjectIdInput.model_validate(params)
-        return self._application.get_project(validated.project_id)
-
-    def _create_conversation(self, params: dict[str, Any]) -> Any:
-        validated = ConversationCreate.model_validate(params)
-        return self._application.create_conversation(
-            project_id=validated.project_id,
-            workspace_type=validated.workspace_type,
-        )
-
-    def _create_task(self, params: dict[str, Any]) -> Any:
-        return self._application.create_task(TaskCreate.model_validate(params))
-
-    def _get_task(self, params: dict[str, Any]) -> Any:
-        validated = TaskIdInput.model_validate(params)
-        return self._application.get_task(validated.task_id)
-
-    def _review_task(self, params: dict[str, Any]) -> Any:
-        validated = TaskIdInput.model_validate(params)
-        return self._application.review_task(validated.task_id)
-
-    def _propose_changeset(self, params: dict[str, Any]) -> Any:
-        return self._application.propose_changeset(ChangesetProposal.model_validate(params))
-
-    def _decide_approval(self, params: dict[str, Any]) -> Any:
-        validated = ApprovalDecisionInput.model_validate(params)
-        return self._application.decide_approval(
-            approval_id=validated.approval_id,
-            approved=validated.approved,
-            decided_by=validated.decided_by,
-        )
-
-    def _get_version(self, params: dict[str, Any]) -> Any:
-        validated = VersionIdInput.model_validate(params)
-        return self._application.get_version(validated.version_id)
-
-    def _accept_version(self, params: dict[str, Any]) -> Any:
-        validated = VersionAcceptInput.model_validate(params)
-        return self._application.accept_task_version(
-            task_id=validated.task_id,
-            expected_project_revision=validated.expected_project_revision,
-            user_confirmed=validated.user_confirmed,
-        )
-
-    def _discard_version(self, params: dict[str, Any]) -> Any:
-        validated = TaskIdInput.model_validate(params)
-        return self._application.discard_task_version(validated.task_id)
-
-    def _get_capabilities(self, params: dict[str, Any]) -> Any:
-        validated = CapabilityRequest.model_validate(params)
-        return {
-            "profile": validated.profile,
-            "operations": self._registry.capability_manifest(
-                profile=validated.profile,
-                sandbox_healthy=validated.sandbox_healthy,
-                overrides=validated.overrides,
-            ),
-            "sandbox_healthy": validated.sandbox_healthy,
-            "command_metadata": self._registry.frontend_metadata(),
-            "schema_version": 1,
-        }
-
-    def _subscribe_events(self, params: dict[str, Any]) -> Any:
-        validated = _EventSubscribeParams.model_validate(params)
-        events = self._ledger.events_after(
-            cursor=validated.cursor,
-            allowed_visibilities={EventVisibility.USER, EventVisibility.DEVELOPER},
-        )
-        return {
-            "items": events,
-            "next_cursor": events[-1].cursor if events else validated.cursor,
-        }
-
 
 def _json_value(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
     if is_dataclass(value) and not isinstance(value, type):
         return _json_value(asdict(value))
     if isinstance(value, dict):

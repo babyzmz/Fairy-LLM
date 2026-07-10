@@ -1,41 +1,84 @@
 from __future__ import annotations
 
-import hashlib
 import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from fairy_core.transports.jsonrpc import JsonRpcDispatcher
-from fairy_core.transports.stdio import build_local_dispatcher
+from fairy_core.application.core import CoreApplication
+from fairy_core.application.service import CoreService
+from fairy_core.commanding.policy import PolicyEngine
+from fairy_core.commanding.registry import build_default_registry
+from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
+from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
+from sqlalchemy.engine import Engine
 
 from fairy_cloud.auth import RequestIdentity
+from fairy_cloud.storage.postgres import tenant_id_for_user
+
+RuntimeBuilder = Callable[[str, Path, Engine], CoreService]
+_SYSTEM_TENANT_ID = "system"
 
 
-class TenantDispatcherRegistry:
-    """Process-local Core registry with opaque, isolated tenant data roots."""
+def build_postgres_core_service(
+    tenant_id: str,
+    workspace_root: Path,
+    engine: Engine,
+) -> CoreService:
+    registry = build_default_registry()
+    unit_of_work_factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id=tenant_id)
+    application = CoreApplication(
+        unit_of_work_factory=unit_of_work_factory,
+        workspace_provisioner=FileSystemWorkspaceProvisioner(workspace_root),
+        registry=registry,
+        policy=PolicyEngine(registry),
+    )
+    return CoreService(
+        application,
+        unit_of_work_factory=unit_of_work_factory,
+        registry=registry,
+    )
+
+
+class TenantRuntimeRegistry:
+    """Caches tenant-bound Core services over one shared PostgreSQL Engine."""
 
     def __init__(
         self,
         *,
         root: Path,
-        builder: Callable[[Path], JsonRpcDispatcher] = build_local_dispatcher,
+        engine: Engine,
+        builder: RuntimeBuilder = build_postgres_core_service,
     ) -> None:
         self._root = root
+        self._engine = engine
         self._builder = builder
-        self._dispatchers: dict[str, JsonRpcDispatcher] = {}
+        self._services: dict[str, CoreService] = {}
         self._lock = threading.RLock()
 
-    def system_dispatcher(self) -> JsonRpcDispatcher:
-        return self._dispatcher_for_key("system", self._root / "system")
+    def system_service(self) -> CoreService:
+        return self._service_for_tenant(_SYSTEM_TENANT_ID, self._root / "system")
 
-    def for_identity(self, identity: RequestIdentity) -> JsonRpcDispatcher:
-        tenant_key = hashlib.sha256(identity.user_id.encode("utf-8")).hexdigest()
-        return self._dispatcher_for_key(tenant_key, self._root / "tenants" / tenant_key)
+    def for_identity(self, identity: RequestIdentity) -> CoreService:
+        tenant_id = tenant_id_for_user(identity.user_id)
+        return self._service_for_tenant(
+            tenant_id,
+            self._root / "tenants" / tenant_id,
+        )
 
-    def _dispatcher_for_key(self, key: str, path: Path) -> JsonRpcDispatcher:
+    def close(self) -> None:
         with self._lock:
-            dispatcher = self._dispatchers.get(key)
-            if dispatcher is None:
-                dispatcher = self._builder(path)
-                self._dispatchers[key] = dispatcher
-            return dispatcher
+            services = tuple(self._services.values())
+            self._services.clear()
+        for service in services:
+            service.close()
+
+    def _service_for_tenant(self, tenant_id: str, path: Path) -> CoreService:
+        with self._lock:
+            service = self._services.get(tenant_id)
+            if service is None:
+                service = self._builder(tenant_id, path, self._engine)
+                self._services[tenant_id] = service
+            return service
+
+
+__all__ = ["TenantRuntimeRegistry", "build_postgres_core_service"]

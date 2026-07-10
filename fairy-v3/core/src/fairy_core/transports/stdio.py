@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TextIO
 
 from fairy_core.application.core import CoreApplication
-from fairy_core.commanding import SqlAlchemyCommandLedger
+from fairy_core.application.service import CoreService
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.persistence.data_directory_lock import DataDirectoryLock
@@ -21,11 +21,11 @@ from fairy_core.workspace.rust_worker import RustWorkspaceProvisioner
 from fairy_core.workspace.worker_transport import SubprocessWorkerTransport
 
 
-def build_local_dispatcher(
+def build_local_service(
     data_dir: Path,
     *,
     environment: Mapping[str, str] | None = None,
-) -> JsonRpcDispatcher:
+) -> CoreService:
     data_dir.mkdir(parents=True, exist_ok=True)
     resources = ExitStack()
     try:
@@ -56,23 +56,30 @@ def build_local_dispatcher(
             legacy_ledger_path=data_dir / "ledger.db",
         )
         resources.callback(engine.dispose)
-        ledger = SqlAlchemyCommandLedger(engine, tenant_id="local")
-        resources.callback(ledger.close)
+        unit_of_work_factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
         application = CoreApplication(
-            unit_of_work_factory=SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local"),
+            unit_of_work_factory=unit_of_work_factory,
             workspace_provisioner=workspace_provisioner,
             registry=registry,
             policy=PolicyEngine(registry),
         )
-        return JsonRpcDispatcher(
+        return CoreService(
             application,
-            ledger=ledger,
+            unit_of_work_factory=unit_of_work_factory,
             registry=registry,
             on_close=resources.close,
         )
     except BaseException:
         resources.close()
         raise
+
+
+def build_local_dispatcher(
+    data_dir: Path,
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> JsonRpcDispatcher:
+    return JsonRpcDispatcher(build_local_service(data_dir, environment=environment))
 
 
 def process_stream(

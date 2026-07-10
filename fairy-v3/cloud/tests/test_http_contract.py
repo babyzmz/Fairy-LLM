@@ -1,21 +1,102 @@
 from __future__ import annotations
 
 import json
+import threading
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
-from fairy_core.transports.jsonrpc import JsonRpcDispatcher
-from fairy_core.transports.stdio import build_local_dispatcher
+from fairy_core.application.service import CoreService
+from fairy_core.contracts.methods import CORE_METHODS
+from fairy_core.transports.stdio import build_local_service
 from httpx import ASGITransport, AsyncClient
 
 from fairy_cloud.api import create_cloud_app
 from fairy_cloud.auth import RequestIdentity, StaticTokenAuthenticator
-from fairy_cloud.dispatchers import TenantDispatcherRegistry
+from fairy_cloud.dispatchers import TenantRuntimeRegistry
 
 AUTH_HEADERS = {
     "Authorization": "Bearer test-token",
     "X-Fairy-Device-ID": "device-1",
 }
+
+
+@pytest.mark.asyncio
+async def test_fastapi_invokes_core_service_without_jsonrpc_envelope() -> None:
+    class RecordingService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def invoke(self, method: str, params: dict[str, Any]) -> Any:
+            self.calls.append((method, params))
+            return {"status": "ok", "service": "fake", "protocol": "core-service-v1"}
+
+    service = RecordingService()
+    direct_app = create_cloud_app(cast(CoreService, service))
+    async with AsyncClient(
+        transport=ASGITransport(app=direct_app),
+        base_url="http://test",
+    ) as client:
+        response = await client.get("/v1/health")
+
+    response.raise_for_status()
+    assert service.calls == [("health", {})]
+
+
+@pytest.mark.asyncio
+async def test_async_core_routes_run_sync_service_in_threadpool() -> None:
+    class ThreadRecordingService:
+        def __init__(self) -> None:
+            self.thread_id: int | None = None
+
+        def invoke(self, method: str, _params: dict[str, Any]) -> Any:
+            assert method == "projects.create"
+            self.thread_id = threading.get_ident()
+            now = datetime.now(UTC).isoformat()
+            return {
+                "project": {
+                    "id": "018f0f7c-1234-7000-8000-000000000001",
+                    "name": "Threaded",
+                    "residency": "synced",
+                    "active_version_id": "018f0f7c-1234-7000-8000-000000000002",
+                    "active_preview_id": None,
+                    "revision": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                "initial_version": {
+                    "id": "018f0f7c-1234-7000-8000-000000000002",
+                    "project_id": "018f0f7c-1234-7000-8000-000000000001",
+                    "source_conversation_id": None,
+                    "source_task_id": None,
+                    "parent_version_id": None,
+                    "project_root": "/managed/project",
+                    "visibility": "project_active",
+                    "created_at": now,
+                },
+            }
+
+    identity = RequestIdentity("user", "device", frozenset({"fairy.api"}))
+    service = ThreadRecordingService()
+    direct_app = create_cloud_app(
+        cast(CoreService, service),
+        authenticator=StaticTokenAuthenticator({"thread-token": identity}),
+    )
+    event_loop_thread = threading.get_ident()
+    async with AsyncClient(
+        transport=ASGITransport(app=direct_app),
+        base_url="http://test",
+        headers={"Authorization": "Bearer thread-token", "X-Fairy-Device-ID": "device"},
+    ) as client:
+        response = await client.post(
+            "/v1/projects",
+            json={"name": "Threaded", "residency": "synced"},
+        )
+
+    response.raise_for_status()
+    assert service.thread_id is not None
+    assert service.thread_id != event_loop_thread
 
 
 @pytest.fixture
@@ -26,7 +107,7 @@ def app(tmp_path: Path):
         scopes=frozenset({"fairy.api"}),
     )
     return create_cloud_app(
-        build_local_dispatcher(tmp_path / "cloud"),
+        build_local_service(tmp_path / "cloud"),
         authenticator=StaticTokenAuthenticator({"test-token": identity}),
     )
 
@@ -114,7 +195,7 @@ def test_openapi_declares_native_typed_sse(app) -> None:
         for operation in path.values()
         if isinstance(operation, dict) and "operationId" in operation
     }
-    assert JsonRpcDispatcher.method_names() <= operation_ids
+    assert set(CORE_METHODS) <= operation_ids
 
 
 @pytest.mark.asyncio
@@ -159,11 +240,15 @@ async def test_authenticated_commands_resolve_an_isolated_tenant_core(tmp_path: 
         "token-b": RequestIdentity("user-b", "device-b", frozenset({"fairy.api"})),
     }
 
-    registry = TenantDispatcherRegistry(root=tmp_path / "tenant-cores")
+    registry = TenantRuntimeRegistry(
+        root=tmp_path / "tenant-cores",
+        engine=cast(Any, object()),
+        builder=lambda _tenant_id, path, _engine: build_local_service(path),
+    )
     app = create_cloud_app(
-        build_local_dispatcher(tmp_path / "system"),
+        build_local_service(tmp_path / "system"),
         authenticator=StaticTokenAuthenticator(identities),
-        dispatcher_resolver=registry.for_identity,
+        service_resolver=registry.for_identity,
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response_a = await client.post(
@@ -181,16 +266,12 @@ async def test_authenticated_commands_resolve_an_isolated_tenant_core(tmp_path: 
     response_b.raise_for_status()
     project_a = response_a.json()["project"]["id"]
     project_b = response_b.json()["project"]["id"]
-    dispatcher_a = registry.for_identity(identities["token-a"])
-    own_project = dispatcher_a.dispatch(
-        {"jsonrpc": "2.0", "id": 1, "method": "projects.get", "params": {"project_id": project_a}}
-    )
-    other_project = dispatcher_a.dispatch(
-        {"jsonrpc": "2.0", "id": 2, "method": "projects.get", "params": {"project_id": project_b}}
-    )
+    service_a = registry.for_identity(identities["token-a"])
+    own_project = service_a.invoke("projects.get", {"project_id": project_a})
 
-    assert own_project["result"]["id"] == project_a
-    assert other_project["error"]["data"]["error_code"] == "NOT_FOUND"
+    assert own_project["id"] == project_a
+    with pytest.raises(KeyError, match="project not found"):
+        service_a.invoke("projects.get", {"project_id": project_b})
 
 
 def _parse_sse(payload: str) -> list[dict[str, object]]:

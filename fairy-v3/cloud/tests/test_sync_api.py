@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fairy_core.domain.errors import IdempotencyConflictError
 from fairy_core.domain.ids import new_id
-from fairy_core.transports.stdio import build_local_dispatcher
+from fairy_core.transports.stdio import build_local_service
 from httpx import ASGITransport, AsyncClient
 
 from fairy_cloud.api import create_cloud_app
@@ -50,7 +50,7 @@ def sync_app(tmp_path: Path):
     )
     sync_store = MemorySyncStore()
     app = create_cloud_app(
-        build_local_dispatcher(tmp_path / "sync-core"),
+        build_local_service(tmp_path / "sync-core"),
         authenticator=StaticTokenAuthenticator({"sync-token": identity}),
         sync_store=sync_store,
         object_store=S3ObjectStore(client=FakeS3Client(), bucket="fairy-objects"),

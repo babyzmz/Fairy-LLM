@@ -4,6 +4,16 @@ from pathlib import Path
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+
+
+def to_sync_postgres_dsn(dsn: str) -> str:
+    url = make_url(dsn)
+    if url.drivername == "postgresql+psycopg":
+        return url.render_as_string(hide_password=False)
+    if url.drivername != "postgresql+asyncpg":
+        raise ValueError("FAIRY_POSTGRES_DSN must use postgresql+asyncpg")
+    return url.set(drivername="postgresql+psycopg").render_as_string(hide_password=False)
 
 
 class CloudSettings(BaseSettings):
@@ -28,3 +38,7 @@ class CloudSettings(BaseSettings):
     worker_owner_id: str = "fairy-cloud-worker"
     worker_poll_seconds: float = Field(default=1.0, gt=0, le=60)
     worker_heartbeat_path: Path = Path("/tmp/fairy-worker-ready")
+
+    @property
+    def core_postgres_dsn(self) -> str:
+        return to_sync_postgres_dsn(self.postgres_dsn)

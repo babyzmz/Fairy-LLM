@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
+from fairy_core.application.service import CoreService
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.transports.stdio import build_local_dispatcher
 
@@ -19,6 +21,24 @@ def _call(dispatcher: JsonRpcDispatcher, request_id: int, method: str, params: d
             "params": params,
         }
     )
+
+
+def test_jsonrpc_transport_invokes_one_core_service_without_own_handlers() -> None:
+    class RecordingService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def invoke(self, method: str, params: dict[str, Any]) -> Any:
+            self.calls.append((method, params))
+            return {"status": "ok", "service": "fake", "protocol": "core-service-v1"}
+
+    service = RecordingService()
+    dispatcher = JsonRpcDispatcher(cast(CoreService, service))
+
+    response = _call(dispatcher, 7, "health", {})
+
+    assert service.calls == [("health", {})]
+    assert response["result"]["service"] == "fake"
 
 
 def test_jsonrpc_project_conversation_task_vertical_slice(tmp_path: Path) -> None:

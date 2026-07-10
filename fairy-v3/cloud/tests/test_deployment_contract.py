@@ -91,6 +91,11 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
         "service_completed_successfully"
     )
     assert services["integration"]["profiles"] == ["test"]
+    assert "fairy_app:" in services["integration"]["environment"]["FAIRY_TEST_APP_POSTGRES_DSN"]
+    assert (
+        "postgresql+psycopg://fairy_app:"
+        in services["integration"]["environment"]["FAIRY_TEST_CORE_POSTGRES_DSN"]
+    )
     assert "fairy_app:" in services["api"]["environment"]["FAIRY_POSTGRES_DSN"]
     assert "fairy_worker:" in services["worker"]["environment"]["FAIRY_POSTGRES_DSN"]
     assert "fairy:" in services["migrate"]["environment"]["FAIRY_POSTGRES_DSN"]

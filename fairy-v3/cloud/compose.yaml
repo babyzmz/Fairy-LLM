@@ -194,6 +194,8 @@ services:
     command: ["pytest", "-m", "integration", "-q"]
     environment:
       FAIRY_TEST_POSTGRES_DSN: postgresql+asyncpg://fairy:${FAIRY_POSTGRES_PASSWORD:-fairy-dev-only}@postgres:5432/fairy
+      FAIRY_TEST_APP_POSTGRES_DSN: postgresql+asyncpg://fairy_app:${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}@postgres:5432/fairy
+      FAIRY_TEST_CORE_POSTGRES_DSN: postgresql+psycopg://fairy_app:${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}@postgres:5432/fairy
       FAIRY_TEST_S3_ENDPOINT: http://object-store:8333
       FAIRY_TEST_S3_BUCKET: fairy-objects
       FAIRY_S3_ACCESS_KEY: ${FAIRY_S3_ACCESS_KEY:-fairy-dev}

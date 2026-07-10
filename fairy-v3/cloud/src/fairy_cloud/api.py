@@ -1,10 +1,15 @@
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextvars import ContextVar
-from itertools import count
 from typing import Annotated, Any
 from uuid import UUID
 
+from fairy_core.application.service import (
+    CoreMethodNotFoundError,
+    CoreResponseValidationError,
+    CoreService,
+)
+from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.contracts.models import (
     ApprovalDecisionInput,
     CapabilityManifestModel,
@@ -26,11 +31,13 @@ from fairy_core.contracts.models import (
     VersionAcceptInput,
     VersionModel,
 )
-from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
-from fairy_core.transports.jsonrpc import JsonRpcDispatcher
+from fairy_core.domain.errors import DomainError, IdempotencyConflictError, VersionConflictError
+from fairy_core.workspace.worker_transport import WorkerRpcError
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.sse import EventSourceResponse, ServerSentEvent
+from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 from starlette.types import Lifespan
 
@@ -53,7 +60,7 @@ _MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
 
 
 def create_cloud_app(
-    dispatcher: JsonRpcDispatcher,
+    service: CoreService,
     *,
     authenticator: Authenticator | None = None,
     sync_store: SyncStore | None = None,
@@ -61,7 +68,7 @@ def create_cloud_app(
     max_snapshot_bytes: int = _MAX_SNAPSHOT_BYTES,
     readiness: Callable[[], Awaitable[dict[str, Any]]] | None = None,
     lifespan: Lifespan[FastAPI] | None = None,
-    dispatcher_resolver: Callable[[RequestIdentity], JsonRpcDispatcher] | None = None,
+    service_resolver: Callable[[RequestIdentity], CoreService] | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Fairy Cloud API", version="0.1.0", lifespan=lifespan)
 
@@ -81,7 +88,6 @@ def create_cloud_app(
         )
 
     protected = APIRouter(prefix="/v1")
-    request_ids = count(1)
     token_authenticator = authenticator or DenyAllAuthenticator()
     bearer = HTTPBearer(auto_error=False)
     request_identity: ContextVar[RequestIdentity | None] = ContextVar(
@@ -120,41 +126,26 @@ def create_cloud_app(
 
     protected.dependencies.append(Depends(require_identity))
 
-    def rpc(method: str, params: dict[str, Any]) -> Any:
+    def active_service() -> CoreService:
         active_identity = request_identity.get()
-        active_dispatcher = (
-            dispatcher_resolver(active_identity)
-            if dispatcher_resolver is not None and active_identity is not None
-            else dispatcher
+        return (
+            service_resolver(active_identity)
+            if service_resolver is not None and active_identity is not None
+            else service
         )
-        response = active_dispatcher.dispatch(
-            {
-                "jsonrpc": "2.0",
-                "id": next(request_ids),
-                "method": method,
-                "params": params,
-            }
-        )
-        failure = response.get("error")
-        if isinstance(failure, dict):
-            data = failure.get("data") if isinstance(failure.get("data"), dict) else {}
-            error_code = str(data.get("error_code", "CORE_ERROR"))
-            status_code = {
-                "NOT_FOUND": 404,
-                "VERSION_CONFLICT": 409,
-                "APPROVAL_REQUIRED": 409,
-                "INVALID_PARAMS": 422,
-                "WORKER_INTERRUPTED": 503,
-            }.get(error_code, 400)
-            raise HTTPException(
-                status_code=status_code,
-                detail={
-                    "code": error_code,
-                    "message": str(failure.get("message", "Core request failed")),
-                    "details": data,
-                },
-            )
-        return response["result"]
+
+    def invoke(method: str, params: dict[str, Any]) -> Any:
+        try:
+            return active_service().invoke(method, params)
+        except Exception as error:
+            raise _core_http_exception(error) from error
+
+    async def invoke_async(method: str, params: dict[str, Any]) -> Any:
+        selected = active_service()
+        try:
+            return await run_in_threadpool(selected.invoke, method, params)
+        except Exception as error:
+            raise _core_http_exception(error) from error
 
     def identity_for(request: Request) -> RequestIdentity:
         identity = getattr(request.state, "identity", None)
@@ -180,7 +171,7 @@ def create_cloud_app(
 
     @app.get("/v1/health", operation_id="health", response_model=HealthModel)
     def health() -> dict[str, Any]:
-        return rpc("health", {})
+        return invoke("health", {})
 
     @app.get("/v1/ready", operation_id="cloud.ready")
     async def ready() -> dict[str, Any]:
@@ -194,7 +185,7 @@ def create_cloud_app(
         response_model=ProjectContextModel,
     )
     async def create_project(body: ProjectCreate, request: Request) -> dict[str, Any]:
-        result = rpc("projects.create", body.model_dump(mode="json"))
+        result = await invoke_async("projects.create", body.model_dump(mode="json"))
         if sync_store is not None:
             identity = identity_for(request)
             await sync_store.register_project(
@@ -210,7 +201,7 @@ def create_cloud_app(
         response_model=ProjectContextModel,
     )
     async def import_project(body: ProjectImport, request: Request) -> dict[str, Any]:
-        result = rpc("projects.import", body.model_dump(mode="json"))
+        result = await invoke_async("projects.import", body.model_dump(mode="json"))
         if sync_store is not None:
             identity = identity_for(request)
             await sync_store.register_project(
@@ -226,7 +217,7 @@ def create_cloud_app(
         response_model=ProjectModel,
     )
     def get_project(project_id: UUID) -> dict[str, Any]:
-        return rpc("projects.get", {"project_id": str(project_id)})
+        return invoke("projects.get", {"project_id": str(project_id)})
 
     @protected.post(
         "/conversations",
@@ -234,15 +225,15 @@ def create_cloud_app(
         response_model=ConversationModel,
     )
     def create_conversation(request: ConversationCreate) -> dict[str, Any]:
-        return rpc("conversations.create", request.model_dump(mode="json"))
+        return invoke("conversations.create", request.model_dump(mode="json"))
 
     @protected.post("/tasks", operation_id="tasks.create", response_model=TaskContextModel)
     def create_task(request: TaskCreate) -> dict[str, Any]:
-        return rpc("tasks.create", request.model_dump(mode="json"))
+        return invoke("tasks.create", request.model_dump(mode="json"))
 
     @protected.get("/tasks/{task_id}", operation_id="tasks.get", response_model=TaskModel)
     def get_task(task_id: UUID) -> dict[str, Any]:
-        return rpc("tasks.get", {"task_id": str(task_id)})
+        return invoke("tasks.get", {"task_id": str(task_id)})
 
     @protected.post(
         "/changesets",
@@ -250,7 +241,7 @@ def create_cloud_app(
         response_model=PendingChangesetModel,
     )
     def propose_changeset(request: ChangesetProposal) -> dict[str, Any]:
-        return rpc("changesets.propose", request.model_dump(mode="json"))
+        return invoke("changesets.propose", request.model_dump(mode="json"))
 
     @protected.post(
         "/approvals/{approval_id}/decision",
@@ -266,7 +257,7 @@ def create_cloud_app(
                 status_code=409,
                 detail={"code": "SCOPE_MISMATCH", "message": "approval id mismatch"},
             )
-        return rpc("approvals.decide", request.model_dump(mode="json"))
+        return invoke("approvals.decide", request.model_dump(mode="json"))
 
     @protected.post(
         "/tasks/{task_id}/review",
@@ -274,7 +265,7 @@ def create_cloud_app(
         response_model=CheckpointModel,
     )
     def review_task(task_id: UUID) -> dict[str, Any]:
-        return rpc("tasks.review", {"task_id": str(task_id)})
+        return invoke("tasks.review", {"task_id": str(task_id)})
 
     @protected.post(
         "/tasks/{task_id}/accept-version",
@@ -287,7 +278,7 @@ def create_cloud_app(
                 status_code=409,
                 detail={"code": "SCOPE_MISMATCH", "message": "task id mismatch"},
             )
-        return rpc("versions.accept", request.model_dump(mode="json"))
+        return invoke("versions.accept", request.model_dump(mode="json"))
 
     @protected.delete(
         "/tasks/{task_id}/version",
@@ -295,7 +286,7 @@ def create_cloud_app(
         response_model=TaskModel,
     )
     def discard_version(task_id: UUID) -> dict[str, Any]:
-        return rpc("versions.discard", {"task_id": str(task_id)})
+        return invoke("versions.discard", {"task_id": str(task_id)})
 
     @protected.get(
         "/versions/{version_id}",
@@ -303,7 +294,7 @@ def create_cloud_app(
         response_model=VersionModel,
     )
     def get_version(version_id: UUID) -> dict[str, Any]:
-        return rpc("versions.get", {"version_id": str(version_id)})
+        return invoke("versions.get", {"version_id": str(version_id)})
 
     @protected.post(
         "/capabilities",
@@ -313,7 +304,7 @@ def create_cloud_app(
     def capabilities(
         request: CapabilityRequest,
     ) -> dict[str, Any]:
-        return rpc(
+        return invoke(
             "capabilities.get",
             request.model_dump(mode="json"),
         )
@@ -486,7 +477,7 @@ def create_cloud_app(
                 ) from error
         while True:
             if sync_store is None:
-                batch = rpc("events.subscribe", {"cursor": current})
+                batch = await invoke_async("events.subscribe", {"cursor": current})
                 items = batch["items"]
             else:
                 identity = identity_for(request)
@@ -509,6 +500,14 @@ def create_cloud_app(
                 yield ServerSentEvent(comment="keepalive")
             await asyncio.sleep(1)
 
+    operation_ids = {
+        route.operation_id
+        for route in (*app.routes, *protected.routes)
+        if getattr(route, "operation_id", None) is not None
+    }
+    missing_methods = set(CORE_METHODS).difference(operation_ids)
+    if missing_methods:
+        raise RuntimeError(f"FastAPI routes are missing Core methods: {sorted(missing_methods)}")
     app.include_router(protected)
     return app
 
@@ -533,3 +532,56 @@ def _synced_event_json(event: SyncedEvent) -> dict[str, Any]:
     )
     item.setdefault("created_at", event.created_at.isoformat())
     return item
+
+
+def _core_http_exception(error: Exception) -> HTTPException:
+    if isinstance(error, ValidationError):
+        return HTTPException(
+            status_code=422,
+            detail={
+                "code": "INVALID_PARAMS",
+                "message": "Invalid params",
+                "details": error.errors(include_url=False),
+            },
+        )
+    if isinstance(error, KeyError):
+        return HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": str(error)},
+        )
+    if isinstance(error, DomainError):
+        error_code = str(getattr(error, "code", "DOMAIN_ERROR"))
+        status_code = {
+            "APPROVAL_REQUIRED": 409,
+            "IDEMPOTENCY_CONFLICT": 409,
+            "VERSION_CONFLICT": 409,
+            "WORKER_INTERRUPTED": 503,
+        }.get(error_code, 400)
+        return HTTPException(
+            status_code=status_code,
+            detail={"code": error_code, "message": str(error)},
+        )
+    if isinstance(error, WorkerRpcError):
+        return HTTPException(
+            status_code=503 if error.error_code == "WORKER_INTERRUPTED" else 400,
+            detail={"code": error.error_code, "message": str(error)},
+        )
+    if isinstance(error, CoreMethodNotFoundError):
+        return HTTPException(
+            status_code=404,
+            detail={"code": "METHOD_NOT_FOUND", "message": str(error)},
+        )
+    if isinstance(error, ValueError):
+        return HTTPException(
+            status_code=422,
+            detail={"code": "INVALID_PARAMS", "message": str(error)},
+        )
+    if isinstance(error, CoreResponseValidationError):
+        return HTTPException(
+            status_code=500,
+            detail={"code": "CORE_ERROR", "message": str(error)},
+        )
+    return HTTPException(
+        status_code=500,
+        detail={"code": "CORE_ERROR", "message": "Core request failed"},
+    )

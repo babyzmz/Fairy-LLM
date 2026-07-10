@@ -37,9 +37,11 @@ dispatches scoped workspace operations to the Rust worker, and the durable
 ledger covers import, worktree creation, Changeset approval, review,
 checkpoint, accept, discard, capabilities, and resumable events. The Docker
 cloud environment, OIDC, PostgreSQL sync/outbox, S3 snapshots, and generated
-cloud client exist. Cloud Core state is being moved from the temporary local
-composition to the canonical PostgreSQL Unit of Work before the cloud
-milestone is considered complete.
+cloud client exist. Local JSON-RPC and Cloud REST now invoke the same
+transport-independent CoreService; Cloud Core state uses the canonical
+tenant-scoped PostgreSQL Unit of Work, while `FAIRY_CORE_DATA_DIR` holds only
+managed workspace files. Hermes memory, broader recovery tests, and final
+product workflows remain under active implementation.
 
 Run the legacy-dependency boundary gate with:
 

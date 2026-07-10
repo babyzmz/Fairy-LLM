@@ -14,6 +14,7 @@ from fairy_cloud.storage.postgres import (
     build_acquire_worker_lease_statement,
     build_append_event_statement,
     build_claim_outbox_statement,
+    build_events_after_statement,
     build_promote_version_statement,
     canonical_payload_fingerprint,
     cloud_metadata,
@@ -66,6 +67,24 @@ def test_outbox_claim_uses_postgres_skip_locked_without_external_broker() -> Non
         "id",
     ]
     assert "published_at IS NULL" in str(claim_index.dialect_options["postgresql"]["where"])
+
+
+def test_event_subscription_uses_tenant_as_the_authorization_boundary() -> None:
+    sql = str(
+        build_events_after_statement(
+            tenant_id="tenant-a",
+            cursor=7,
+            limit=50,
+            visibilities=frozenset({"user", "developer"}),
+        ).compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    ).upper()
+
+    assert "DOMAIN_EVENTS.TENANT_ID = 'TENANT-A'" in sql
+    assert "DOMAIN_EVENTS.CURSOR > 7" in sql
+    assert "DOMAIN_EVENTS.USER_ID =" not in sql
 
 
 def test_runtime_metadata_matches_canonical_constraint_names() -> None:
