@@ -9,7 +9,15 @@ from sqlalchemy.engine import Connection, Engine, Transaction
 from fairy_core.commanding.ports import CommandLedger
 from fairy_core.commanding.sqlalchemy import SqlAlchemyCommandLedger
 from fairy_core.memory.ports import MemoryRepository
-from fairy_core.memory.retrieval_ports import MemorySnapshotRepository
+from fairy_core.memory.retrieval_ports import (
+    MemoryProjectionWriter,
+    MemorySearchIndex,
+    MemorySnapshotRepository,
+)
+from fairy_core.memory.search_sqlalchemy import (
+    SqlAlchemyMemoryProjectionWriter,
+    SqlAlchemyMemorySearchIndex,
+)
 from fairy_core.memory.snapshot_sqlalchemy import SqlAlchemyMemorySnapshotRepository
 from fairy_core.memory.sqlalchemy import SqlAlchemyMemoryRepository
 from fairy_core.persistence.tenant import normalize_tenant_id
@@ -22,6 +30,8 @@ class CoreUnitOfWork(Protocol):
     commands: CommandLedger
     memory: MemoryRepository
     snapshots: MemorySnapshotRepository
+    memory_search: MemorySearchIndex
+    memory_projections: MemoryProjectionWriter
 
     def __enter__(self) -> Self: ...
 
@@ -64,6 +74,14 @@ class SqlAlchemyUnitOfWork:
             self.commands = SqlAlchemyCommandLedger(connection, tenant_id=self._tenant_id)
             self.memory = SqlAlchemyMemoryRepository(connection, tenant_id=self._tenant_id)
             self.snapshots = SqlAlchemyMemorySnapshotRepository(
+                connection,
+                tenant_id=self._tenant_id,
+            )
+            self.memory_search = SqlAlchemyMemorySearchIndex(
+                connection,
+                tenant_id=self._tenant_id,
+            )
+            self.memory_projections = SqlAlchemyMemoryProjectionWriter(
                 connection,
                 tenant_id=self._tenant_id,
             )

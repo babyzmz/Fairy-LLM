@@ -110,3 +110,18 @@ def test_local_core_engine_initializes_all_memory_tables(tmp_path: Path) -> None
         "memory_access_log",
         "memory_projection_checkpoints",
     } <= tables
+
+
+def test_local_core_engine_initializes_external_content_fts(tmp_path: Path) -> None:
+    engine = create_sqlite_core_engine(tmp_path / "fts.db")
+    try:
+        with engine.connect() as connection:
+            row = connection.exec_driver_sql(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'memory_search_documents_fts'"
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+    assert "USING fts5" in row
+    assert "content='memory_search_documents'" in row

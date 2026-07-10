@@ -30,6 +30,7 @@ from fairy_core.memory.models import (
     MemorySensitivity,
 )
 from fairy_core.memory.retrieval_models import (
+    MemorySearchDocument,
     MemorySelectionReason,
     MemorySnapshot,
     MemorySnapshotItem,
@@ -187,6 +188,25 @@ async def test_postgres_memory_repository_uses_rls_and_shared_uow(tmp_path: Path
                 revision=revision,
                 request_fingerprint=_fingerprint("revision:postgres"),
             )
+            search_document = MemorySearchDocument.create(
+                source_kind=MemorySourceKind.CLAIM_REVISION,
+                source_id=claim.id,
+                source_revision=1,
+                namespace=MemoryNamespace.PROJECT_CANONICAL,
+                project_id=project.id,
+                conversation_id=conversation.id,
+                task_id=task.id,
+                version_id=draft.id,
+                language="und",
+                normalized_text="react aria accessibility framework",
+                source_cursor=event.cursor,
+                projection_generation=1,
+            )
+            unit_of_work.memory_projections.upsert_documents((search_document,))
+            unit_of_work.memory_projections.advance_checkpoint(
+                generation=1,
+                source_watermark_cursor=event.cursor,
+            )
             rendered_text = "React Aria is required."
             item = MemorySnapshotItem.create(
                 ordinal=0,
@@ -230,6 +250,20 @@ async def test_postgres_memory_repository_uses_rls_and_shared_uow(tmp_path: Path
             assert unit_of_work.memory.revisions_for_claim(claim.id) == [revision]
             assert unit_of_work.snapshots.get_for_task(task.id) == snapshot
             assert unit_of_work.state.get_task(task.id) == task
+            hits = unit_of_work.memory_search.search(
+                scope=scope,
+                query="accessibility framework",
+                generation=1,
+                limit=10,
+            )
+            assert [hit.document.source_id for hit in hits] == [claim.id]
+            assert (
+                unit_of_work.memory_search.health(
+                    generation=1,
+                    source_watermark_cursor=event.cursor,
+                ).state
+                is ProjectionState.READY
+            )
 
         with SqlAlchemyUnitOfWorkFactory(
             core_engine,

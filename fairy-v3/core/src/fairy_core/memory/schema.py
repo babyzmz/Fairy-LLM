@@ -349,6 +349,7 @@ memory_search_documents = Table(
     memory_metadata,
     _tenant_id(),
     _id(),
+    Column("fts_rowid", BigInteger),
     Column("source_kind", String(32), nullable=False),
     Column("source_id", String(ID_LENGTH), nullable=False),
     Column("source_revision", BigInteger, nullable=False),
@@ -373,6 +374,10 @@ memory_search_documents = Table(
         name="uq_memory_search_documents_tenant_source",
     ),
     CheckConstraint("source_revision >= 0", name="ck_memory_search_documents_revision"),
+    CheckConstraint(
+        "fts_rowid IS NULL OR fts_rowid > 0",
+        name="ck_memory_search_documents_fts_rowid",
+    ),
     CheckConstraint(
         "source_cursor >= 1 AND projection_generation >= 1",
         name="ck_memory_search_documents_watermarks",
@@ -455,6 +460,11 @@ Index(
     memory_search_documents.c.project_id,
     memory_search_documents.c.conversation_id,
     memory_search_documents.c.namespace,
+)
+Index(
+    "uq_memory_search_documents_fts_rowid",
+    memory_search_documents.c.fts_rowid,
+    unique=True,
 )
 Index(
     "ix_memory_access_log_tenant_snapshot",

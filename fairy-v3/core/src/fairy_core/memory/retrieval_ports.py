@@ -23,7 +23,12 @@ class MemorySearchIndex(Protocol):
         limit: int,
     ) -> tuple[MemorySearchHit, ...]: ...
 
-    def health(self, *, source_watermark_cursor: int) -> MemoryProjectionHealth: ...
+    def health(
+        self,
+        *,
+        generation: int,
+        source_watermark_cursor: int,
+    ) -> MemoryProjectionHealth: ...
 
 
 class MemoryProjectionWriter(Protocol):

@@ -17,8 +17,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260711_0005"]
-    assert scripts.get_revision("20260711_0005").down_revision == "20260710_0004"
+    assert scripts.get_heads() == ["20260711_0006"]
+    assert scripts.get_revision("20260711_0006").down_revision == "20260711_0005"
 
 
 def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
@@ -71,6 +71,8 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
     assert "TO_TSVECTOR('SIMPLE'" in ddl
     assert "USING GIN" in ddl
     assert "CK_MEMORY_SNAPSHOTS_STATUS" in ddl
+    assert "ALTER TABLE MEMORY_SEARCH_DOCUMENTS ADD COLUMN FTS_ROWID" in ddl
+    assert "UQ_MEMORY_SEARCH_DOCUMENTS_FTS_ROWID" in ddl
 
 
 def test_compose_uses_supported_brokerless_development_services() -> None:

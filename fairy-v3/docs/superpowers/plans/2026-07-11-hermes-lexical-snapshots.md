@@ -198,9 +198,11 @@ git commit -m "feat(v3): persist memory snapshot provenance"
 
 **Files:**
 - Create: `fairy-v3/core/src/fairy_core/memory/search_sqlalchemy.py`
+- Create: `fairy-v3/core/src/fairy_core/memory/search_queries.py`
 - Create: `fairy-v3/core/src/fairy_core/memory/sqlite_fts.py`
 - Modify: `fairy-v3/core/src/fairy_core/persistence/sqlite.py`
 - Modify: `fairy-v3/core/src/fairy_core/persistence/unit_of_work.py`
+- Create: `fairy-v3/cloud/migrations/versions/20260711_0006_fts_row_identity.py`
 - Test: `fairy-v3/core/tests/test_memory_search.py`
 - Test: `fairy-v3/core/tests/test_sqlite_core.py`
 - Modify: `fairy-v3/cloud/tests/integration/test_postgres_memory.py`
@@ -217,11 +219,11 @@ Cover exact phrases, prefix/token queries, Unicode, punctuation-only input, quot
 
 - [ ] **Step 2: Bootstrap SQLite FTS5 as an external-content table**
 
-Create `memory_search_documents_fts` with `content='memory_search_documents'` and `content_rowid='rowid'`, plus insert/update/delete synchronization triggers. Verify FTS5 availability during local engine initialization; expose unavailable health instead of silently substituting an in-memory index.
+Create `memory_search_documents_fts` with `content='memory_search_documents'` and `content_rowid='fts_rowid'`, plus insert/update/delete synchronization triggers. `fts_rowid` is a stable, positive, globally unique projection identifier derived from tenant/source identity; do not use SQLite's implicit rowid because `VACUUM` may rewrite it. Verify FTS5 availability during local engine initialization; expose unavailable health instead of silently substituting an in-memory index.
 
 - [ ] **Step 3: Implement parameterized SQLite search**
 
-Tokenize and quote normalized user terms in Core code, use bound parameters for the FTS `MATCH` expression, join FTS row IDs to canonical projection rows, apply tenant/generation/scope predicates in SQL, and return deterministic ties ordered by authority, lexical score, source cursor, and source ID.
+Tokenize and quote normalized user terms in Core code, use bound parameters for the FTS `MATCH` expression, join stable FTS row IDs to canonical projection rows, apply tenant/generation/scope predicates in SQL, and return deterministic ties ordered by authority, lexical score, source cursor, and source ID. Test that the index remains joined correctly after deleting an earlier row and running `VACUUM`.
 
 - [ ] **Step 4: Implement PostgreSQL generated-vector search**
 

@@ -152,6 +152,13 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "ck_memory_snapshots_status",
     } <= constraint_names
     assert "fk_domain_events_run" not in constraint_names
+    index_names = {
+        index.name
+        for metadata in (state_metadata, command_metadata, memory_metadata, cloud_metadata)
+        for table in metadata.tables.values()
+        for index in table.indexes
+    }
+    assert "uq_memory_search_documents_fts_rowid" in index_names
 
 
 def test_active_version_statement_uses_revision_compare_and_swap() -> None:
