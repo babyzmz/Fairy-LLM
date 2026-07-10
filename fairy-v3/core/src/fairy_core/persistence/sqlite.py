@@ -9,6 +9,7 @@ from fairy_core.commanding.sqlite_migrations import (
     migrate_pre_tenant_ledger,
     prepare_pre_tenant_schema,
 )
+from fairy_core.memory.schema import memory_metadata
 from fairy_core.persistence.sqlite_split_migration import import_split_sqlite_databases
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.storage.schema import state_metadata
@@ -29,6 +30,7 @@ def create_sqlite_core_engine(
         prepare_pre_tenant_schema(engine)
         state_metadata.create_all(engine)
         command_metadata.create_all(engine)
+        memory_metadata.create_all(engine)
         migrate_pre_tenant_schema(engine, tenant_id=tenant_id)
         migrate_pre_tenant_ledger(engine, tenant_id=tenant_id)
         import_split_sqlite_databases(

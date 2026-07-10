@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fairy_core.commanding.schema import command_metadata
 from fairy_core.domain.errors import VersionConflictError
+from fairy_core.memory.schema import memory_metadata
 from fairy_core.storage.schema import state_metadata
 from sqlalchemy.dialects import postgresql
 
@@ -40,7 +41,7 @@ def test_outbox_claim_uses_postgres_skip_locked_without_external_broker() -> Non
     }
     canonical_tables = {
         table.name
-        for metadata in (state_metadata, command_metadata, cloud_metadata)
+        for metadata in (state_metadata, command_metadata, memory_metadata, cloud_metadata)
         for table in metadata.tables.values()
     }
     assert {
@@ -51,6 +52,10 @@ def test_outbox_claim_uses_postgres_skip_locked_without_external_broker() -> Non
         "task_event_sequences",
         "version_candidates",
         "worker_leases",
+        "memory_observations",
+        "memory_claims",
+        "memory_claim_revisions",
+        "memory_tombstones",
     } <= canonical_tables
     assert {"tenant_id", "lease_fence"} <= {
         column.name for column in cloud_metadata.tables["outbox"].c
@@ -90,7 +95,7 @@ def test_event_subscription_uses_tenant_as_the_authorization_boundary() -> None:
 def test_runtime_metadata_matches_canonical_constraint_names() -> None:
     constraint_names = {
         constraint.name
-        for metadata in (state_metadata, command_metadata, cloud_metadata)
+        for metadata in (state_metadata, command_metadata, memory_metadata, cloud_metadata)
         for table in metadata.tables.values()
         for constraint in table.constraints
         if constraint.name is not None
@@ -122,6 +127,14 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "uq_domain_events_tenant_event",
         "uq_outbox_tenant_event",
         "uq_version_candidate_tenant_project_version",
+        "pk_memory_observations",
+        "pk_memory_claims",
+        "pk_memory_claim_revisions",
+        "pk_memory_tombstones",
+        "fk_memory_observations_source_event",
+        "fk_memory_claim_revisions_claim",
+        "fk_memory_tombstones_source_event",
+        "ck_memory_claims_namespace_scope",
     } <= constraint_names
     assert "fk_domain_events_run" not in constraint_names
 

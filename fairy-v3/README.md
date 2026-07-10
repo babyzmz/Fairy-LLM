@@ -40,8 +40,10 @@ cloud environment, OIDC, PostgreSQL sync/outbox, S3 snapshots, and generated
 cloud client exist. Local JSON-RPC and Cloud REST now invoke the same
 transport-independent CoreService; Cloud Core state uses the canonical
 tenant-scoped PostgreSQL Unit of Work, while `FAIRY_CORE_DATA_DIR` holds only
-managed workspace files. Hermes memory, broader recovery tests, and final
-product workflows remain under active implementation.
+managed workspace files. Canonical Hermes Observations, Claims, immutable
+revisions, and tombstones now share the same SQLite/PostgreSQL Unit of Work;
+public Memory commands, Snapshot/FTS retrieval, broader recovery tests, and
+final product workflows remain under active implementation.
 
 Run the legacy-dependency boundary gate with:
 

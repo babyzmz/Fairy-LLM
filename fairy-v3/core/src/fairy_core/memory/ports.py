@@ -8,6 +8,7 @@ from fairy_core.memory.models import (
     MemoryClaimRevision,
     MemoryNamespace,
     MemoryObservation,
+    MemoryTargetKind,
     MemoryTombstone,
 )
 
@@ -22,7 +23,12 @@ class MemoryRepository(Protocol):
 
     def get_observation(self, observation_id: UUID) -> MemoryObservation | None: ...
 
-    def create_claim(self, claim: MemoryClaim) -> MemoryClaim: ...
+    def create_claim(
+        self,
+        claim: MemoryClaim,
+        *,
+        request_fingerprint: str,
+    ) -> MemoryClaim: ...
 
     def get_claim(self, claim_id: UUID) -> MemoryClaim | None: ...
 
@@ -32,6 +38,7 @@ class MemoryRepository(Protocol):
         *,
         expected_revision: int,
         revision: MemoryClaimRevision,
+        request_fingerprint: str,
     ) -> MemoryClaim: ...
 
     def revisions_for_claim(self, claim_id: UUID) -> list[MemoryClaimRevision]: ...
@@ -43,13 +50,20 @@ class MemoryRepository(Protocol):
         expected_revision: int,
         revision: MemoryClaimRevision,
         resolved_claim_ids: tuple[UUID, ...],
+        request_fingerprint: str,
     ) -> MemoryClaim: ...
 
-    def forget(self, tombstone: MemoryTombstone) -> MemoryTombstone: ...
+    def forget(
+        self,
+        tombstone: MemoryTombstone,
+        *,
+        request_fingerprint: str,
+    ) -> MemoryTombstone: ...
 
     def get_tombstone(
         self,
         *,
+        target_kind: MemoryTargetKind,
         target_id: UUID,
     ) -> MemoryTombstone | None: ...
 
@@ -62,6 +76,15 @@ class MemoryRepository(Protocol):
         task_id: UUID | None = None,
         device_id: str | None = None,
     ) -> list[MemoryClaim]: ...
+
+    def observations_for_scope(
+        self,
+        *,
+        namespace: MemoryNamespace,
+        project_id: UUID | None = None,
+        conversation_id: UUID | None = None,
+        task_id: UUID | None = None,
+    ) -> list[MemoryObservation]: ...
 
 
 __all__ = ["MemoryRepository"]

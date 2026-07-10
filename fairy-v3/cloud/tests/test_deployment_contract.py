@@ -17,8 +17,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260710_0002"]
-    assert scripts.get_revision("20260710_0002").down_revision == "20260710_0001"
+    assert scripts.get_heads() == ["20260710_0003"]
+    assert scripts.get_revision("20260710_0003").down_revision == "20260710_0002"
 
 
 def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
@@ -39,6 +39,10 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_CHECKPOINTS",
         "COMMAND_RUNS",
         "TASK_EVENT_SEQUENCES",
+        "MEMORY_OBSERVATIONS",
+        "MEMORY_CLAIMS",
+        "MEMORY_CLAIM_REVISIONS",
+        "MEMORY_TOMBSTONES",
     ):
         assert f"CREATE TABLE {table_name}" in ddl
     assert "ALTER TABLE DOMAIN_EVENTS ADD COLUMN TENANT_ID" in ddl
@@ -52,6 +56,7 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
     assert "PAYLOAD ->> 'RUN_ID'" in ddl
     assert "CONSTRAINT FK_DOMAIN_EVENTS_RUN" not in ddl
     assert "DROP TABLE CLOUD_PROJECTS" in ddl
+    assert "CREATE UNIQUE INDEX UQ_MEMORY_CLAIM_REVISIONS_CURRENT" in ddl
 
 
 def test_compose_uses_supported_brokerless_development_services() -> None:

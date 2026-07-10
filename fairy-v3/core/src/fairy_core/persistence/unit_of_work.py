@@ -8,6 +8,8 @@ from sqlalchemy.engine import Connection, Engine, Transaction
 
 from fairy_core.commanding.ports import CommandLedger
 from fairy_core.commanding.sqlalchemy import SqlAlchemyCommandLedger
+from fairy_core.memory.ports import MemoryRepository
+from fairy_core.memory.sqlalchemy import SqlAlchemyMemoryRepository
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.storage.ports import StateStore
 from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
@@ -16,6 +18,7 @@ from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
 class CoreUnitOfWork(Protocol):
     state: StateStore
     commands: CommandLedger
+    memory: MemoryRepository
 
     def __enter__(self) -> Self: ...
 
@@ -56,6 +59,7 @@ class SqlAlchemyUnitOfWork:
                 )
             self.state = SqlAlchemyStateStore(connection, tenant_id=self._tenant_id)
             self.commands = SqlAlchemyCommandLedger(connection, tenant_id=self._tenant_id)
+            self.memory = SqlAlchemyMemoryRepository(connection, tenant_id=self._tenant_id)
         except BaseException:
             try:
                 if transaction is not None and transaction.is_active:

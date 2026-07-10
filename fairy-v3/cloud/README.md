@@ -26,6 +26,9 @@ manage Worker leases. The idempotent `postgres-permissions` service reapplies
 those grants after every migration, including when an existing volume is used.
 The API keeps an asyncpg pool for async sync/SSE paths and a psycopg pool for
 the synchronous CoreService; both use the same canonical PostgreSQL tables.
+Hermes Observations, Claims, revisions, and tombstones are relational source
+data protected by the same forced tenant RLS. Search and embedding data remain
+rebuildable projections and are not part of this persistence slice.
 `FAIRY_CORE_DATA_DIR` contains tenant workspace files only and never SQLite
 state in Cloud composition.
 

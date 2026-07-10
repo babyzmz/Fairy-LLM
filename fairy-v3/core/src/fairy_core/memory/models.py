@@ -438,6 +438,7 @@ class MemoryClaimRevision:
     recorded_at: datetime
     actor: str
     supersedes_revision: int | None
+    resolved_claim_ids: tuple[UUID, ...]
 
     @classmethod
     def create(
@@ -456,6 +457,7 @@ class MemoryClaimRevision:
         valid_to: datetime | None = None,
         recorded_at: datetime | None = None,
         supersedes_revision: int | None = None,
+        resolved_claim_ids: tuple[UUID, ...] = (),
     ) -> MemoryClaimRevision:
         if revision < 1:
             raise ValueError("revision must be positive")
@@ -502,6 +504,7 @@ class MemoryClaimRevision:
             recorded_at=timestamp,
             actor=normalized_actor,
             supersedes_revision=supersedes_revision,
+            resolved_claim_ids=tuple(resolved_claim_ids),
         )
 
     @property

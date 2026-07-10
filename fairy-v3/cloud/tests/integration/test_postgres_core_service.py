@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -41,7 +42,7 @@ async def test_rest_core_command_is_visible_once_through_postgres_sse(tmp_path: 
     old_dsn = os.environ.get("FAIRY_POSTGRES_DSN")
     os.environ["FAIRY_POSTGRES_DSN"] = ADMIN_DSN
     try:
-        command.upgrade(config, "head")
+        await asyncio.to_thread(command.upgrade, config, "head")
     finally:
         if old_dsn is None:
             os.environ.pop("FAIRY_POSTGRES_DSN", None)
