@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import TextIO
 
 from fairy_core.application.core import CoreApplication
+from fairy_core.commanding import SqliteCommandLedger
 from fairy_core.commanding.bus import CommandBus
-from fairy_core.commanding.ledger import SqliteCommandLedger
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.storage import SqliteStateStore

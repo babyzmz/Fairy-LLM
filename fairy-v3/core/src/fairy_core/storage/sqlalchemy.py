@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Table, insert, select, update
+from sqlalchemy import Table, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine, RowMapping
@@ -68,6 +68,10 @@ class SqlAlchemyStateStore:
             raise ValueError("tenant_id must not be empty")
         if len(normalized_tenant) > TENANT_ID_LENGTH:
             raise ValueError(f"tenant_id must not exceed {TENANT_ID_LENGTH} characters")
+        if engine.dialect.name not in {"postgresql", "sqlite"}:
+            raise ValueError(f"unsupported state-store dialect: {engine.dialect.name}")
+        if initialize_schema and engine.dialect.name != "sqlite":
+            raise ValueError("PostgreSQL schemas must be initialized through Alembic")
         self._engine = engine
         self._tenant_id = normalized_tenant
         self._owns_engine = owns_engine
@@ -425,29 +429,8 @@ class SqlAlchemyStateStore:
                 index_elements=[table.c.tenant_id, table.c.id],
                 set_=updates,
             )
-        else:
-            self._portable_upsert(table, scoped_values, updates)
-            return
         with self._engine.begin() as connection:
             connection.execute(statement)
-
-    def _portable_upsert(
-        self,
-        table: Table,
-        scoped_values: dict[str, object],
-        updates: dict[str, object],
-    ) -> None:
-        with self._engine.begin() as connection:
-            result = connection.execute(
-                update(table)
-                .where(
-                    table.c.tenant_id == self._tenant_id,
-                    table.c.id == scoped_values["id"],
-                )
-                .values(**updates)
-            )
-            if result.rowcount == 0:
-                connection.execute(insert(table).values(**scoped_values))
 
     @staticmethod
     def _task_from_row(row: Mapping[str, Any]) -> Task:

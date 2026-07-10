@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Protocol
+from uuid import UUID
+
+from fairy_core.commanding.models import (
+    CommandRun,
+    CommandStatus,
+    EventEnvelope,
+    EventVisibility,
+)
+from fairy_core.commanding.registry import RiskLevel
+from fairy_core.domain.models import ScopeContract
+
+
+class CommandLedger(Protocol):
+    def create_run(
+        self,
+        *,
+        command_name: str,
+        actor: str,
+        scope: ScopeContract,
+        input_payload: dict[str, Any],
+        risk_level: RiskLevel,
+        idempotency_key: str,
+    ) -> CommandRun: ...
+
+    def get_run(self, run_id: UUID) -> CommandRun | None: ...
+
+    def transition(self, run_id: UUID, status: CommandStatus) -> CommandRun: ...
+
+    def append_event(
+        self,
+        *,
+        run_id: UUID,
+        event_type: str,
+        visibility: EventVisibility,
+        message: str,
+        payload: dict[str, Any],
+    ) -> EventEnvelope: ...
+
+    def events_after(
+        self,
+        *,
+        cursor: int,
+        allowed_visibilities: set[EventVisibility] | None = None,
+    ) -> list[EventEnvelope]: ...
+
+    def claim_next(self, *, worker_id: str, lease_until: datetime) -> CommandRun | None: ...
+
+    def close(self) -> None: ...

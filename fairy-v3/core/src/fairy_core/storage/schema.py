@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from sqlalchemy import (
     JSON,
     Column,
@@ -11,11 +13,34 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
 )
+from sqlalchemy.engine import Dialect
+from sqlalchemy.types import TypeDecorator
 
 TENANT_ID_LENGTH = 128
 ID_LENGTH = 36
 
 state_metadata = MetaData()
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    impl = DateTime
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Dialect):
+        return dialect.type_descriptor(DateTime(timezone=dialect.name != "sqlite"))
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            raise ValueError("datetime values must include a timezone")
+        normalized = value.astimezone(UTC)
+        return normalized.replace(tzinfo=None) if dialect.name == "sqlite" else normalized
+
+    def process_result_value(self, value: datetime | None, _dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _tenant_id() -> Column[str]:
@@ -36,8 +61,8 @@ projects = Table(
     Column("active_version_id", String(ID_LENGTH)),
     Column("active_preview_id", String(ID_LENGTH)),
     Column("revision", Integer, nullable=False),
-    Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
 )
 
 conversations = Table(
@@ -51,8 +76,8 @@ conversations = Table(
     Column("active_draft_version_id", String(ID_LENGTH)),
     Column("active_task_id", String(ID_LENGTH)),
     Column("active_preview_id", String(ID_LENGTH)),
-    Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
 )
 
 versions = Table(
@@ -66,7 +91,7 @@ versions = Table(
     Column("parent_version_id", String(ID_LENGTH)),
     Column("project_root", String(4096), nullable=False),
     Column("visibility", String(32), nullable=False),
-    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
 )
 
 tasks = Table(
@@ -83,8 +108,8 @@ tasks = Table(
     Column("execution_target", String(32), nullable=False),
     Column("status", String(32), nullable=False),
     Column("idempotency_key", String(512), nullable=False),
-    Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
     UniqueConstraint("tenant_id", "idempotency_key", name="uq_core_tasks_tenant_idempotency"),
 )
 
@@ -104,8 +129,8 @@ changesets = Table(
     Column("idempotency_key", String(512), nullable=False),
     Column("status", String(32), nullable=False),
     Column("approval_decision", String(32), nullable=False),
-    Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
     UniqueConstraint(
         "tenant_id",
         "idempotency_key",
@@ -125,8 +150,8 @@ approvals = Table(
     Column("reason", String, nullable=False),
     Column("decision", String(32), nullable=False),
     Column("decided_by", String(128)),
-    Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("decided_at", DateTime(timezone=True)),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("decided_at", UTCDateTime()),
 )
 
 checkpoints = Table(
@@ -139,7 +164,7 @@ checkpoints = Table(
     Column("changed_files", JSON, nullable=False),
     Column("command_run_ids", JSON, nullable=False),
     Column("preview_artifact_id", String(ID_LENGTH)),
-    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
 )
 
 Index("ix_core_projects_tenant_updated", projects.c.tenant_id, projects.c.updated_at)

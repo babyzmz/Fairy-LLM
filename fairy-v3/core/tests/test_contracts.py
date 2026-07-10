@@ -80,6 +80,7 @@ def test_public_error_codes_are_stable() -> None:
     assert ErrorCode.PATH_OUT_OF_SCOPE == "PATH_OUT_OF_SCOPE"
     assert ErrorCode.SANDBOX_UNAVAILABLE == "SANDBOX_UNAVAILABLE"
     assert ErrorCode.VERSION_CONFLICT == "VERSION_CONFLICT"
+    assert ErrorCode.IDEMPOTENCY_CONFLICT == "IDEMPOTENCY_CONFLICT"
     assert ErrorCode.SECRET_EGRESS_BLOCKED == "SECRET_EGRESS_BLOCKED"
 
 

@@ -4,11 +4,11 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from fairy_core.commanding.ledger import (
+from fairy_core.commanding import (
+    CommandLedger,
     CommandRun,
     CommandStatus,
     EventVisibility,
-    SqliteCommandLedger,
 )
 from fairy_core.commanding.policy import PermissionProfile, PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
@@ -39,7 +39,7 @@ class CommandBus:
         *,
         registry: ToolRegistry,
         policy: PolicyEngine,
-        ledger: SqliteCommandLedger,
+        ledger: CommandLedger,
     ) -> None:
         self._registry = registry
         self._policy = policy

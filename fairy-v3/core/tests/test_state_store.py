@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, create_mock_engine
 from sqlalchemy.pool import StaticPool
 
 from fairy_core.domain.errors import VersionConflictError
@@ -27,6 +29,69 @@ from fairy_core.domain.models import (
     WorkspaceType,
 )
 from fairy_core.storage import SqlAlchemyStateStore, SqliteStateStore
+
+
+def test_sqlite_state_store_migrates_the_pre_tenant_v3_schema(tmp_path: Path) -> None:
+    database_path = tmp_path / "state.db"
+    project = Project.create(name="Pre-tenant V3", residency=ProjectResidency.LOCAL_ONLY)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                residency TEXT NOT NULL,
+                active_version_id TEXT,
+                active_preview_id TEXT,
+                revision INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO projects (
+                id, name, residency, active_version_id, active_preview_id,
+                revision, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(project.id),
+                project.name,
+                project.residency.value,
+                None,
+                None,
+                project.revision,
+                project.created_at.isoformat(),
+                project.updated_at.isoformat(),
+            ),
+        )
+
+    store = SqliteStateStore(database_path)
+
+    assert store.get_project(project.id) == project
+
+
+def test_sqlite_state_store_preserves_non_utc_datetime_instants(tmp_path: Path) -> None:
+    store = SqliteStateStore(tmp_path / "state.db")
+    offset_time = datetime(2026, 1, 2, 10, tzinfo=timezone(timedelta(hours=10)))
+    project = Project.create(name="Timezone", residency=ProjectResidency.LOCAL_ONLY)
+    project = replace(project, created_at=offset_time, updated_at=offset_time)
+
+    store.save_project(project)
+    recovered = store.get_project(project.id)
+
+    assert recovered is not None
+    assert recovered.created_at == datetime(2026, 1, 2, 0, tzinfo=UTC)
+    assert recovered.updated_at == datetime(2026, 1, 2, 0, tzinfo=UTC)
+
+
+def test_postgres_schema_initialization_requires_alembic() -> None:
+    engine = create_mock_engine("postgresql+psycopg://", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(ValueError, match="Alembic"):
+        SqlAlchemyStateStore(engine, tenant_id="tenant-a", initialize_schema=True)
 
 
 def test_sqlalchemy_state_store_isolates_tenants_and_idempotency_keys(

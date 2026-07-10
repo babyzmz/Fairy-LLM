@@ -11,7 +11,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from fairy_core.application.core import CoreApplication
-from fairy_core.commanding.ledger import EventVisibility, SqliteCommandLedger
+from fairy_core.commanding import CommandLedger, EventVisibility
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.contracts.models import (
     ApprovalDecisionInput,
@@ -63,7 +63,7 @@ class JsonRpcDispatcher:
         self,
         application: CoreApplication,
         *,
-        ledger: SqliteCommandLedger,
+        ledger: CommandLedger,
         registry: ToolRegistry,
     ) -> None:
         self._application = application

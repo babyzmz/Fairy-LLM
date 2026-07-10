@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import json
+import sqlite3
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 
+from fairy_core.commanding import SqlAlchemyCommandLedger
 from fairy_core.commanding.ledger import (
     CommandStatus,
     EventVisibility,
     SqliteCommandLedger,
 )
 from fairy_core.commanding.registry import RiskLevel
-from fairy_core.domain.errors import InvalidTransitionError
+from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
 from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import OperationMode, ScopeContract, WorkspaceType
 
@@ -35,6 +41,140 @@ def _scope(tmp_path: Path) -> ScopeContract:
         memory_read_scope=("project_canonical",),
         memory_write_scope=("current_conversation_draft",),
     )
+
+
+def test_sqlite_ledger_migrates_pre_tenant_v3_runs_and_events(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.db"
+    scope = _scope(tmp_path)
+    run_id = new_id()
+    event_id = new_id()
+    now = datetime.now(UTC).isoformat()
+    scope_payload = {
+        "workspace_type": scope.workspace_type.value,
+        "project_id": str(scope.project_id),
+        "conversation_id": str(scope.conversation_id),
+        "task_id": str(scope.task_id),
+        "operation_mode": scope.operation_mode.value,
+        "base_version_id": str(scope.base_version_id),
+        "target_version_id": str(scope.target_version_id),
+        "project_root": str(scope.project_root),
+        "allowed_write_paths": [str(path) for path in scope.allowed_write_paths],
+        "forbidden_write_paths": [str(path) for path in scope.forbidden_write_paths],
+        "execution_target": scope.execution_target,
+        "network_policy": scope.network_policy,
+        "memory_read_scope": list(scope.memory_read_scope),
+        "memory_write_scope": list(scope.memory_write_scope),
+    }
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE command_runs (
+                id TEXT PRIMARY KEY,
+                command_name TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                scope_json TEXT NOT NULL,
+                scope_digest TEXT NOT NULL,
+                project_id TEXT,
+                conversation_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                input_json TEXT NOT NULL,
+                risk_level TEXT NOT NULL,
+                status TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                lease_owner TEXT,
+                lease_until TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE command_events (
+                cursor INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT NOT NULL UNIQUE,
+                run_id TEXT NOT NULL,
+                project_id TEXT,
+                conversation_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                version_id TEXT,
+                task_sequence INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                visibility TEXT NOT NULL,
+                message TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(task_id, task_sequence)
+            );
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO command_runs (
+                id, command_name, actor, scope_json, scope_digest, project_id,
+                conversation_id, task_id, input_json, risk_level, status,
+                idempotency_key, lease_owner, lease_until, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(run_id),
+                "project.read",
+                "agent",
+                json.dumps(scope_payload, sort_keys=True),
+                scope.scope_digest,
+                str(scope.project_id),
+                str(scope.conversation_id),
+                str(scope.task_id),
+                json.dumps({"query": "entrypoints"}, sort_keys=True),
+                RiskLevel.LOW.value,
+                CommandStatus.CREATED.value,
+                "legacy-key",
+                None,
+                None,
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO command_events (
+                cursor, id, run_id, project_id, conversation_id, task_id,
+                version_id, task_sequence, event_type, visibility, message,
+                payload_json, schema_version, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                7,
+                str(event_id),
+                str(run_id),
+                str(scope.project_id),
+                str(scope.conversation_id),
+                str(scope.task_id),
+                str(scope.target_version_id),
+                3,
+                "command.created",
+                EventVisibility.USER.value,
+                "Command created: project.read",
+                json.dumps({"status": CommandStatus.CREATED.value}),
+                1,
+                now,
+            ),
+        )
+
+    ledger = SqliteCommandLedger(path)
+    migrated = ledger.get_run(run_id)
+    migrated_events = ledger.events_after(cursor=0)
+    appended = ledger.append_event(
+        run_id=run_id,
+        event_type="command.queued",
+        visibility=EventVisibility.USER,
+        message="Command queued",
+        payload={"status": CommandStatus.QUEUED.value},
+    )
+
+    assert migrated is not None
+    assert migrated.input_payload == {"query": "entrypoints"}
+    assert [event.cursor for event in migrated_events] == [7]
+    assert [event.task_sequence for event in migrated_events] == [3]
+    assert appended.cursor == 8
+    assert appended.task_sequence == 4
 
 
 def test_ledger_recovers_run_and_events_after_restart(tmp_path: Path) -> None:
@@ -93,6 +233,65 @@ def test_idempotency_key_returns_existing_run_without_duplicate_event(tmp_path: 
 
     assert second.id == first.id
     assert len(ledger.events_after(cursor=0)) == 1
+
+
+def test_idempotency_key_rejects_a_different_request(tmp_path: Path) -> None:
+    ledger = SqliteCommandLedger(tmp_path / "ledger.db")
+    scope = _scope(tmp_path)
+    ledger.create_run(
+        command_name="project.read",
+        actor="agent",
+        scope=scope,
+        input_payload={"query": "first"},
+        risk_level=RiskLevel.LOW,
+        idempotency_key="same-key",
+    )
+
+    with pytest.raises(IdempotencyConflictError):
+        ledger.create_run(
+            command_name="project.read",
+            actor="agent",
+            scope=scope,
+            input_payload={"query": "different"},
+            risk_level=RiskLevel.LOW,
+            idempotency_key="same-key",
+        )
+
+
+def test_sqlalchemy_ledger_isolates_tenant_keys_and_event_cursors(tmp_path: Path) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    tenant_a = SqlAlchemyCommandLedger(
+        engine,
+        tenant_id="tenant-a",
+        initialize_schema=True,
+    )
+    tenant_b = SqlAlchemyCommandLedger(engine, tenant_id="tenant-b")
+    scope = _scope(tmp_path)
+
+    run_a = tenant_a.create_run(
+        command_name="project.read",
+        actor="agent",
+        scope=scope,
+        input_payload={},
+        risk_level=RiskLevel.LOW,
+        idempotency_key="same-key",
+    )
+    run_b = tenant_b.create_run(
+        command_name="project.read",
+        actor="agent",
+        scope=scope,
+        input_payload={},
+        risk_level=RiskLevel.LOW,
+        idempotency_key="same-key",
+    )
+
+    assert run_a.id != run_b.id
+    assert [event.run_id for event in tenant_a.events_after(cursor=0)] == [run_a.id]
+    assert [event.run_id for event in tenant_b.events_after(cursor=0)] == [run_b.id]
 
 
 def test_command_run_rejects_invalid_transition(tmp_path: Path) -> None:
@@ -157,3 +356,34 @@ def test_only_one_worker_can_claim_a_queued_run(tmp_path: Path) -> None:
     assert claimed.status is CommandStatus.RUNNING
     assert claimed.lease_owner == "worker-a"
     assert unavailable is None
+
+
+def test_expired_worker_lease_is_reclaimed_with_a_higher_fence(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.db"
+    first = SqliteCommandLedger(path)
+    second = SqliteCommandLedger(path)
+    run = first.create_run(
+        command_name="review.test",
+        actor="core",
+        scope=_scope(tmp_path),
+        input_payload={},
+        risk_level=RiskLevel.LOW,
+        idempotency_key="reclaim",
+    )
+    first.transition(run.id, CommandStatus.QUEUED)
+    first_claim = first.claim_next(
+        worker_id="worker-a",
+        lease_until=datetime.now(UTC) + timedelta(milliseconds=5),
+    )
+    time.sleep(0.02)
+
+    second_claim = second.claim_next(
+        worker_id="worker-b",
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+
+    assert first_claim is not None
+    assert second_claim is not None
+    assert second_claim.id == first_claim.id
+    assert second_claim.lease_owner == "worker-b"
+    assert second_claim.lease_fence == first_claim.lease_fence + 1

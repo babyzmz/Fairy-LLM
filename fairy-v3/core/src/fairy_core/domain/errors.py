@@ -10,6 +10,10 @@ class VersionConflictError(DomainError):
     code = "VERSION_CONFLICT"
 
 
+class IdempotencyConflictError(DomainError):
+    code = "IDEMPOTENCY_CONFLICT"
+
+
 class ScopeViolationError(DomainError):
     def __init__(self, message: str, *, code: str = "PATH_OUT_OF_SCOPE") -> None:
         super().__init__(message)

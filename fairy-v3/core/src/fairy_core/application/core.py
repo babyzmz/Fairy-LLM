@@ -7,8 +7,8 @@ from typing import TypeVar
 from uuid import UUID
 
 from fairy_core.application.errors import ApprovalRequiredError
+from fairy_core.commanding import CommandStatus
 from fairy_core.commanding.bus import CommandBus, CommandRequest
-from fairy_core.commanding.ledger import CommandStatus
 from fairy_core.commanding.types import PermissionProfile
 from fairy_core.contracts.models import ChangesetProposal, TaskCreate
 from fairy_core.domain.errors import InvalidTransitionError
