@@ -21,7 +21,12 @@ class MemoryRepository(Protocol):
         request_fingerprint: str,
     ) -> MemoryObservation: ...
 
-    def get_observation(self, observation_id: UUID) -> MemoryObservation | None: ...
+    def get_observation(
+        self,
+        observation_id: UUID,
+        *,
+        include_forgotten: bool = False,
+    ) -> MemoryObservation | None: ...
 
     def create_claim(
         self,
@@ -30,7 +35,12 @@ class MemoryRepository(Protocol):
         request_fingerprint: str,
     ) -> MemoryClaim: ...
 
-    def get_claim(self, claim_id: UUID) -> MemoryClaim | None: ...
+    def get_claim(
+        self,
+        claim_id: UUID,
+        *,
+        include_forgotten: bool = False,
+    ) -> MemoryClaim | None: ...
 
     def append_revision(
         self,

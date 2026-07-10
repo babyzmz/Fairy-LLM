@@ -7,6 +7,12 @@ import type {
   CoreMethodName,
   EventEnvelope,
   EventSubscriptionOptions,
+  MemoryClaimPromoteInput,
+  MemoryClaimResolveInput,
+  MemoryClaimSupersedeInput,
+  MemoryForgetInput,
+  MemoryNamespace,
+  MemoryObserveInput,
   ProjectCreateInput,
   ProjectImportInput,
   TaskCreateInput,
@@ -64,6 +70,37 @@ export class CoreClient {
 
   readonly capabilities = {
     get: (input: CapabilityRequest) => this.transport.call("capabilities.get", input),
+  };
+
+  readonly memory = {
+    observations: {
+      create: (input: MemoryObserveInput) =>
+        this.transport.call("memory.observations.create", input),
+      list: (taskId: string, namespace: MemoryNamespace) =>
+        this.transport.call("memory.observations.list", {
+          task_id: taskId,
+          namespace,
+        }),
+    },
+    claims: {
+      promote: (input: MemoryClaimPromoteInput) =>
+        this.transport.call("memory.claims.promote", input),
+      get: (taskId: string, claimId: string) =>
+        this.transport.call("memory.claims.get", {
+          task_id: taskId,
+          claim_id: claimId,
+        }),
+      list: (taskId: string, namespace: MemoryNamespace) =>
+        this.transport.call("memory.claims.list", {
+          task_id: taskId,
+          namespace,
+        }),
+      supersede: (input: MemoryClaimSupersedeInput) =>
+        this.transport.call("memory.claims.supersede", input),
+      resolveConflict: (input: MemoryClaimResolveInput) =>
+        this.transport.call("memory.claims.resolve_conflict", input),
+    },
+    forget: (input: MemoryForgetInput) => this.transport.call("memory.forget", input),
   };
 
   readonly events = {

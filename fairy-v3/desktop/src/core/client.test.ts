@@ -84,6 +84,53 @@ describe("CoreClient", () => {
       sandbox_healthy: true,
       overrides: { "network.http": false },
     });
+    await client.memory.observations.create({
+      task_id: id,
+      content: "Use compact navigation.",
+      idempotency_key: "memory-observe-1",
+    });
+    await client.memory.observations.list(id, "conversation_draft");
+    await client.memory.claims.promote({
+      task_id: id,
+      observation_id: id,
+      subject: "project",
+      predicate: "framework",
+      value: "React",
+      normalized_text: "react",
+      user_confirmed: true,
+      idempotency_key: "memory-promote-1",
+    });
+    await client.memory.claims.get(id, id);
+    await client.memory.claims.list(id, "project_canonical");
+    await client.memory.claims.supersede({
+      task_id: id,
+      claim_id: id,
+      expected_revision: 1,
+      source_observation_ids: [id],
+      value: "React 19",
+      normalized_text: "react 19",
+      user_confirmed: true,
+      idempotency_key: "memory-supersede-1",
+    });
+    await client.memory.claims.resolveConflict({
+      task_id: id,
+      claim_id: id,
+      expected_revision: 2,
+      source_observation_ids: [id],
+      resolved_claim_ids: [id],
+      value: "React 19.2",
+      normalized_text: "react 19.2",
+      user_confirmed: true,
+      idempotency_key: "memory-resolve-1",
+    });
+    await client.memory.forget({
+      task_id: id,
+      target_kind: "claim",
+      target_id: id,
+      reason: "No longer relevant",
+      user_confirmed: true,
+      idempotency_key: "memory-forget-1",
+    });
 
     expect(transport.requests.map(({ method }) => method)).toEqual([
       "health",
@@ -100,6 +147,14 @@ describe("CoreClient", () => {
       "versions.accept",
       "versions.discard",
       "capabilities.get",
+      "memory.observations.create",
+      "memory.observations.list",
+      "memory.claims.promote",
+      "memory.claims.get",
+      "memory.claims.list",
+      "memory.claims.supersede",
+      "memory.claims.resolve_conflict",
+      "memory.forget",
     ]);
     expect(transport.requests[3]?.params).toEqual({ project_id: id });
     expect(transport.requests[7]?.params).toEqual({ task_id: id });

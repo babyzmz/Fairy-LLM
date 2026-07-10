@@ -20,12 +20,53 @@ const EVENT = {
   created_at: "2026-07-10T00:00:00Z",
 };
 
+const CLAIM_CONTEXT = {
+  claim: {
+    id: "0198f4de-0114-7000-8000-000000000004",
+    namespace: "conversation_draft",
+    project_id: null,
+    conversation_id: "0198f4de-0114-7000-8000-000000000002",
+    task_id: "0198f4de-0114-7000-8000-000000000003",
+    version_id: null,
+    device_id: null,
+    subject: "project",
+    predicate: "framework",
+    current_revision: 1,
+    conflict_set_id: null,
+    status: "active",
+    created_at: "2026-07-10T00:00:00Z",
+    updated_at: "2026-07-10T00:00:00Z",
+  },
+  current_revision: {
+    claim_id: "0198f4de-0114-7000-8000-000000000004",
+    revision: 1,
+    value: "React 19",
+    normalized_text: "react 19",
+    source_observation_ids: ["0198f4de-0114-7000-8000-000000000005"],
+    source_event_ids: ["0198f4de-0114-7000-8000-000000000001"],
+    authority: "explicit_user",
+    confidence: 1,
+    valid_from: null,
+    valid_to: null,
+    recorded_at: "2026-07-10T00:00:00Z",
+    actor: "user:core-client",
+    supersedes_revision: null,
+    resolved_claim_ids: [],
+  },
+};
+
 describe("CloudCoreTransport", () => {
   it("maps typed Core calls to authenticated REST requests", async () => {
     const requests: Request[] = [];
     const fetcher: typeof fetch = async (input, init) => {
       const request = new Request(input, init);
       requests.push(request);
+      if (request.url.includes("/v1/memory/observations?")) {
+        return Response.json({ items: [] });
+      }
+      if (request.url.includes("/v1/memory/claims/")) {
+        return Response.json(CLAIM_CONTEXT);
+      }
       return Response.json({ id: "result" });
     };
     const transport = new CloudCoreTransport({
@@ -46,11 +87,41 @@ describe("CloudCoreTransport", () => {
       sandbox_healthy: true,
       overrides: { "network.http": false },
     });
+    await transport.call("memory.observations.list", {
+      task_id: "task/1",
+      namespace: "conversation_draft",
+    });
+    await transport.call("memory.claims.get", {
+      task_id: "task/1",
+      claim_id: "claim/1",
+    });
+    await transport.call("memory.claims.supersede", {
+      task_id: "task-1",
+      claim_id: "claim/1",
+      expected_revision: 1,
+      source_observation_ids: ["observation-1"],
+      value: "React 19",
+      normalized_text: "react 19",
+      user_confirmed: true,
+      idempotency_key: "memory-supersede-1",
+    });
 
     expect(requests.map(({ method, url }) => [method, url])).toEqual([
       ["GET", "https://cloud.fairy.test/v1/projects/project%2Fa"],
       ["POST", "https://cloud.fairy.test/v1/approvals/approval-1/decision"],
       ["POST", "https://cloud.fairy.test/v1/capabilities"],
+      [
+        "GET",
+        "https://cloud.fairy.test/v1/memory/observations?task_id=task%2F1&namespace=conversation_draft",
+      ],
+      [
+        "GET",
+        "https://cloud.fairy.test/v1/memory/claims/claim%2F1?task_id=task%2F1",
+      ],
+      [
+        "POST",
+        "https://cloud.fairy.test/v1/memory/claims/claim%2F1/supersede",
+      ],
     ]);
     expect(requests[0]?.headers.get("Authorization")).toBe("Bearer access-token");
     expect(requests[0]?.headers.get("X-Fairy-Device-ID")).toBe("device-1");
@@ -111,6 +182,26 @@ describe("CloudCoreTransport", () => {
       status: 409,
       errorCode: "VERSION_CONFLICT",
       message: "stale revision",
+    });
+  });
+
+  it("rejects malformed memory envelopes before they reach the client", async () => {
+    const transport = new CloudCoreTransport({
+      baseUrl: "https://cloud.fairy.test",
+      accessToken: () => "token",
+      deviceId: "device-1",
+      fetch: async () => Response.json({ claim: { id: "not-a-uuid" } }),
+    });
+
+    await expect(
+      transport.call("memory.claims.get", {
+        task_id: "0198f4de-0114-7000-8000-000000000003",
+        claim_id: "0198f4de-0114-7000-8000-000000000004",
+      }),
+    ).rejects.toMatchObject({
+      name: "CloudCoreError",
+      status: 200,
+      errorCode: "INVALID_RESPONSE",
     });
   });
 });

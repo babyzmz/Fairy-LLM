@@ -69,6 +69,8 @@ class CommandLedger(Protocol):
         allowed_visibilities: set[EventVisibility] | None = None,
     ) -> list[EventEnvelope]: ...
 
+    def events_for_run(self, run_id: UUID) -> list[EventEnvelope]: ...
+
     def claim(
         self,
         run_id: UUID,

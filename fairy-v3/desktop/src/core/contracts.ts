@@ -12,6 +12,19 @@ export type Conversation = Schemas["ConversationModel"];
 export type ConversationCreateInput = Schemas["ConversationCreate"];
 export type EventEnvelope = Schemas["EventEnvelopeModel"];
 export type Health = Schemas["HealthModel"];
+export type MemoryClaim = Schemas["MemoryClaimModel"];
+export type MemoryClaimContext = Schemas["MemoryClaimContextModel"];
+export type MemoryClaimPage = Schemas["MemoryClaimPageModel"];
+export type MemoryClaimPromoteInput = Schemas["MemoryClaimPromoteInput"];
+export type MemoryClaimResolveInput = Schemas["MemoryClaimResolveInput"];
+export type MemoryClaimRevision = Schemas["MemoryClaimRevisionModel"];
+export type MemoryClaimSupersedeInput = Schemas["MemoryClaimSupersedeInput"];
+export type MemoryForgetInput = Schemas["MemoryForgetInput"];
+export type MemoryNamespace = Schemas["MemoryNamespace"];
+export type MemoryObservation = Schemas["MemoryObservationModel"];
+export type MemoryObservationPage = Schemas["MemoryObservationPageModel"];
+export type MemoryObserveInput = Schemas["MemoryObserveInput"];
+export type MemoryTombstone = Schemas["MemoryTombstoneModel"];
 export type PendingChangeset = Schemas["PendingChangesetModel"];
 export type Project = Schemas["ProjectModel"];
 export type ProjectContext = Schemas["ProjectContextModel"];
@@ -51,6 +64,35 @@ export interface CoreMethodMap {
   "versions.discard": { params: { task_id: string }; result: Task };
   "capabilities.get": { params: CapabilityRequest; result: CapabilityManifest };
   "events.subscribe": { params: { cursor: number }; result: EventBatch };
+  "memory.observations.create": {
+    params: MemoryObserveInput;
+    result: MemoryObservation;
+  };
+  "memory.observations.list": {
+    params: { task_id: string; namespace: MemoryNamespace };
+    result: MemoryObservationPage;
+  };
+  "memory.claims.promote": {
+    params: MemoryClaimPromoteInput;
+    result: MemoryClaimContext;
+  };
+  "memory.claims.get": {
+    params: { task_id: string; claim_id: string };
+    result: MemoryClaimContext;
+  };
+  "memory.claims.list": {
+    params: { task_id: string; namespace: MemoryNamespace };
+    result: MemoryClaimPage;
+  };
+  "memory.claims.supersede": {
+    params: MemoryClaimSupersedeInput;
+    result: MemoryClaimContext;
+  };
+  "memory.claims.resolve_conflict": {
+    params: MemoryClaimResolveInput;
+    result: MemoryClaimContext;
+  };
+  "memory.forget": { params: MemoryForgetInput; result: MemoryTombstone };
 }
 
 export type CoreMethodName = keyof CoreMethodMap;

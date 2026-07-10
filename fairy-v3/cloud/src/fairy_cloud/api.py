@@ -20,6 +20,19 @@ from fairy_core.contracts.models import (
     ConversationCreate,
     ConversationModel,
     HealthModel,
+    MemoryClaimContextModel,
+    MemoryClaimGetInput,
+    MemoryClaimPageModel,
+    MemoryClaimPromoteInput,
+    MemoryClaimQuery,
+    MemoryClaimResolveInput,
+    MemoryClaimSupersedeInput,
+    MemoryForgetInput,
+    MemoryObservationModel,
+    MemoryObservationPageModel,
+    MemoryObservationQuery,
+    MemoryObserveInput,
+    MemoryTombstoneModel,
     PendingChangesetModel,
     ProjectContextModel,
     ProjectCreate,
@@ -32,6 +45,7 @@ from fairy_core.contracts.models import (
     VersionModel,
 )
 from fairy_core.domain.errors import DomainError, IdempotencyConflictError, VersionConflictError
+from fairy_core.memory.models import MemoryNamespace
 from fairy_core.workspace.worker_transport import WorkerRpcError
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -309,6 +323,98 @@ def create_cloud_app(
             request.model_dump(mode="json"),
         )
 
+    @protected.post(
+        "/memory/observations",
+        operation_id="memory.observations.create",
+        response_model=MemoryObservationModel,
+    )
+    def create_memory_observation(request: MemoryObserveInput) -> dict[str, Any]:
+        return invoke("memory.observations.create", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/memory/observations",
+        operation_id="memory.observations.list",
+        response_model=MemoryObservationPageModel,
+    )
+    def list_memory_observations(
+        task_id: UUID,
+        namespace: MemoryNamespace,
+    ) -> dict[str, Any]:
+        request = MemoryObservationQuery(task_id=task_id, namespace=namespace)
+        return invoke("memory.observations.list", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/memory/claims/promote",
+        operation_id="memory.claims.promote",
+        response_model=MemoryClaimContextModel,
+    )
+    def promote_memory_claim(request: MemoryClaimPromoteInput) -> dict[str, Any]:
+        return invoke("memory.claims.promote", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/memory/claims",
+        operation_id="memory.claims.list",
+        response_model=MemoryClaimPageModel,
+    )
+    def list_memory_claims(
+        task_id: UUID,
+        namespace: MemoryNamespace,
+    ) -> dict[str, Any]:
+        request = MemoryClaimQuery(task_id=task_id, namespace=namespace)
+        return invoke("memory.claims.list", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/memory/claims/{claim_id}",
+        operation_id="memory.claims.get",
+        response_model=MemoryClaimContextModel,
+    )
+    def get_memory_claim(claim_id: UUID, task_id: UUID) -> dict[str, Any]:
+        request = MemoryClaimGetInput(task_id=task_id, claim_id=claim_id)
+        return invoke("memory.claims.get", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/memory/claims/{claim_id}/supersede",
+        operation_id="memory.claims.supersede",
+        response_model=MemoryClaimContextModel,
+    )
+    def supersede_memory_claim(
+        claim_id: UUID,
+        request: MemoryClaimSupersedeInput,
+    ) -> dict[str, Any]:
+        if request.claim_id != claim_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "claim id mismatch"},
+            )
+        return invoke("memory.claims.supersede", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/memory/claims/{claim_id}/resolve-conflict",
+        operation_id="memory.claims.resolve_conflict",
+        response_model=MemoryClaimContextModel,
+    )
+    def resolve_memory_conflict(
+        claim_id: UUID,
+        request: MemoryClaimResolveInput,
+    ) -> dict[str, Any]:
+        if request.claim_id != claim_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "claim id mismatch"},
+            )
+        return invoke(
+            "memory.claims.resolve_conflict",
+            request.model_dump(mode="json"),
+        )
+
+    @protected.post(
+        "/memory/forget",
+        operation_id="memory.forget",
+        response_model=MemoryTombstoneModel,
+    )
+    def forget_memory(request: MemoryForgetInput) -> dict[str, Any]:
+        return invoke("memory.forget", request.model_dump(mode="json"))
+
     @protected.post("/sync/projects", operation_id="sync.projects.register")
     async def register_synced_project(
         body: SyncProjectRegistration,
@@ -554,6 +660,10 @@ def _core_http_exception(error: Exception) -> HTTPException:
         status_code = {
             "APPROVAL_REQUIRED": 409,
             "IDEMPOTENCY_CONFLICT": 409,
+            "MEMORY_CONFLICT": 409,
+            "MEMORY_FORGOTTEN": 410,
+            "MEMORY_PROJECTION_STALE": 503,
+            "MEMORY_SNAPSHOT_TOO_LARGE": 413,
             "VERSION_CONFLICT": 409,
             "WORKER_INTERRUPTED": 503,
         }.get(error_code, 400)

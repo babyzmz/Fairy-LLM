@@ -740,6 +740,11 @@ class CoreApplication:
         with self._transaction() as (unit_of_work, _commands):
             return self._require_version(unit_of_work.state, version_id)
 
+    def scope_for_task(self, state: StateStore, task: Task) -> ScopeContract:
+        """Resolve a Task Scope from state already bound to the caller transaction."""
+
+        return self._context_for(state, task).scope
+
     def transition_task(self, task_id: UUID, status: TaskStatus) -> Task:
         with self._transaction() as (unit_of_work, _commands):
             task = self._require_task(unit_of_work.state, task_id)

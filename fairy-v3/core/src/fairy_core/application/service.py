@@ -8,6 +8,7 @@ from pydantic import BaseModel, ValidationError
 
 from fairy_core.application.core import CoreApplication
 from fairy_core.commanding import EventVisibility
+from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.contracts.methods import CORE_METHODS, EventSubscribeInput
 from fairy_core.contracts.models import (
@@ -15,6 +16,14 @@ from fairy_core.contracts.models import (
     CapabilityRequest,
     ChangesetProposal,
     ConversationCreate,
+    MemoryClaimGetInput,
+    MemoryClaimPromoteInput,
+    MemoryClaimQuery,
+    MemoryClaimResolveInput,
+    MemoryClaimSupersedeInput,
+    MemoryForgetInput,
+    MemoryObservationQuery,
+    MemoryObserveInput,
     ProjectCreate,
     ProjectIdInput,
     ProjectImport,
@@ -23,6 +32,8 @@ from fairy_core.contracts.models import (
     VersionAcceptInput,
     VersionIdInput,
 )
+from fairy_core.memory.application import MemoryApplication
+from fairy_core.memory.policy import MemoryPolicy
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 
 
@@ -53,6 +64,13 @@ class CoreService:
         self._application = application
         self._unit_of_work_factory = unit_of_work_factory
         self._registry = registry
+        self._memory_application = MemoryApplication(
+            unit_of_work_factory=unit_of_work_factory,
+            registry=registry,
+            command_policy=PolicyEngine(registry),
+            memory_policy=MemoryPolicy(),
+            scope_resolver=application.scope_for_task,
+        )
         self._finalizer = finalize(self, on_close) if on_close is not None else None
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
             "approvals.decide": self._decide_approval,
@@ -61,6 +79,14 @@ class CoreService:
             "conversations.create": self._create_conversation,
             "events.subscribe": self._subscribe_events,
             "health": self._health,
+            "memory.claims.get": self._get_memory_claim,
+            "memory.claims.list": self._list_memory_claims,
+            "memory.claims.promote": self._promote_memory_claim,
+            "memory.claims.resolve_conflict": self._resolve_memory_conflict,
+            "memory.claims.supersede": self._supersede_memory_claim,
+            "memory.forget": self._forget_memory,
+            "memory.observations.create": self._observe_memory,
+            "memory.observations.list": self._list_memory_observations,
             "projects.create": self._create_project,
             "projects.get": self._get_project,
             "projects.import": self._import_project,
@@ -104,6 +130,34 @@ class CoreService:
             name=validated.name,
             residency=validated.residency,
         )
+
+    def _observe_memory(self, request: BaseModel) -> Any:
+        return self._memory_application.observe(cast(MemoryObserveInput, request))
+
+    def _list_memory_observations(self, request: BaseModel) -> dict[str, Any]:
+        return {
+            "items": self._memory_application.list_observations(
+                cast(MemoryObservationQuery, request)
+            )
+        }
+
+    def _promote_memory_claim(self, request: BaseModel) -> Any:
+        return self._memory_application.promote_claim(cast(MemoryClaimPromoteInput, request))
+
+    def _get_memory_claim(self, request: BaseModel) -> Any:
+        return self._memory_application.get_claim(cast(MemoryClaimGetInput, request))
+
+    def _list_memory_claims(self, request: BaseModel) -> dict[str, Any]:
+        return {"items": self._memory_application.list_claims(cast(MemoryClaimQuery, request))}
+
+    def _supersede_memory_claim(self, request: BaseModel) -> Any:
+        return self._memory_application.supersede_claim(cast(MemoryClaimSupersedeInput, request))
+
+    def _resolve_memory_conflict(self, request: BaseModel) -> Any:
+        return self._memory_application.resolve_conflict(cast(MemoryClaimResolveInput, request))
+
+    def _forget_memory(self, request: BaseModel) -> Any:
+        return self._memory_application.forget(cast(MemoryForgetInput, request))
 
     def _import_project(self, request: BaseModel) -> Any:
         validated = cast(ProjectImport, request)

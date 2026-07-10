@@ -234,6 +234,95 @@ async def test_cloud_capability_request_preserves_advanced_overrides(app) -> Non
 
 
 @pytest.mark.asyncio
+async def test_memory_routes_are_task_scoped_and_share_core_contracts(app) -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=AUTH_HEADERS,
+    ) as client:
+        project = (
+            await client.post(
+                "/v1/projects",
+                json={"name": "Memory HTTP", "residency": "synced"},
+            )
+        ).json()
+        conversation_response = await client.post(
+            "/v1/conversations",
+            json={
+                "project_id": project["project"]["id"],
+                "workspace_type": "project_chat",
+            },
+        )
+        conversation_response.raise_for_status()
+        task_response = await client.post(
+            "/v1/tasks",
+            json={
+                "conversation_id": conversation_response.json()["id"],
+                "user_request": "Remember the framework",
+                "operation_mode": "continue_current_chat_draft",
+                "execution_target": "cloud",
+                "idempotency_key": "memory:http:task",
+            },
+        )
+        task_response.raise_for_status()
+        task_id = task_response.json()["task"]["id"]
+
+        forged = await client.post(
+            "/v1/memory/observations",
+            json={
+                "task_id": task_id,
+                "content": "The project uses React Aria.",
+                "idempotency_key": "memory:http:forged",
+                "project_id": project["project"]["id"],
+            },
+        )
+        observed = await client.post(
+            "/v1/memory/observations",
+            json={
+                "task_id": task_id,
+                "content": "The project uses React Aria.",
+                "idempotency_key": "memory:http:observe",
+            },
+        )
+        observed.raise_for_status()
+        observations = await client.get(
+            "/v1/memory/observations",
+            params={"task_id": task_id, "namespace": "conversation_draft"},
+        )
+        observations.raise_for_status()
+        promote_payload = {
+            "task_id": task_id,
+            "observation_id": observed.json()["id"],
+            "subject": "project",
+            "predicate": "accessibility_framework",
+            "value": "React Aria",
+            "normalized_text": "react aria",
+            "user_confirmed": False,
+            "idempotency_key": "memory:http:promote",
+        }
+        approval_required = await client.post(
+            "/v1/memory/claims/promote",
+            json=promote_payload,
+        )
+        promoted = await client.post(
+            "/v1/memory/claims/promote",
+            json={**promote_payload, "user_confirmed": True},
+        )
+        promoted.raise_for_status()
+        inspected = await client.get(
+            f"/v1/memory/claims/{promoted.json()['claim']['id']}",
+            params={"task_id": task_id},
+        )
+        inspected.raise_for_status()
+
+    assert forged.status_code == 422
+    assert observations.json()["items"] == [observed.json()]
+    assert approval_required.status_code == 409
+    assert approval_required.json()["detail"]["code"] == "APPROVAL_REQUIRED"
+    assert inspected.json()["current_revision"]["revision"] == 1
+
+
+@pytest.mark.asyncio
 async def test_authenticated_commands_resolve_an_isolated_tenant_core(tmp_path: Path) -> None:
     identities = {
         "token-a": RequestIdentity("user-a", "device-a", frozenset({"fairy.api"})),

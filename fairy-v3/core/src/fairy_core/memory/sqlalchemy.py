@@ -153,12 +153,17 @@ class SqlAlchemyMemoryRepository:
             self._verify_content_fingerprint(row, content_fingerprint, "Observation")
         return self._observation_from_row(row)
 
-    def get_observation(self, observation_id: UUID) -> MemoryObservation | None:
+    def get_observation(
+        self,
+        observation_id: UUID,
+        *,
+        include_forgotten: bool = False,
+    ) -> MemoryObservation | None:
         with self._session.read() as connection:
             row = self._observation_row(connection, observation_id)
         if row is None:
             return None
-        if row["status"] == ObservationStatus.FORGOTTEN.value:
+        if row["status"] == ObservationStatus.FORGOTTEN.value and not include_forgotten:
             raise MemoryForgottenError(f"memory Observation has been forgotten: {observation_id}")
         return self._observation_from_row(row)
 
@@ -235,12 +240,17 @@ class SqlAlchemyMemoryRepository:
             self._verify_content_fingerprint(row, content_fingerprint, "Claim")
         return self._claim_from_row(row)
 
-    def get_claim(self, claim_id: UUID) -> MemoryClaim | None:
+    def get_claim(
+        self,
+        claim_id: UUID,
+        *,
+        include_forgotten: bool = False,
+    ) -> MemoryClaim | None:
         with self._session.read() as connection:
             row = self._claim_row(connection, claim_id)
         if row is None:
             return None
-        if row["status"] == ClaimStatus.FORGOTTEN.value:
+        if row["status"] == ClaimStatus.FORGOTTEN.value and not include_forgotten:
             raise MemoryForgottenError(f"memory Claim has been forgotten: {claim_id}")
         return self._claim_from_row(row)
 

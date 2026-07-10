@@ -112,24 +112,9 @@ class MemoryPolicy:
                 else "MEMORY_SCOPE_VIOLATION",
                 reason="Observation is not promotable",
             )
-        if observation.sensitivity is MemorySensitivity.SECRET or _contains_secret(
-            observation.content
-        ):
-            return MemoryPolicyDecision(
-                False,
-                error_code="MEMORY_SECRET_BLOCKED",
-                reason="Memory contains secret-like material",
-                scan_result=MemoryScanResult.SECRET_BLOCKED,
-            )
-        if _contains_invisible_control(observation.content) or _contains_instruction(
-            observation.content
-        ):
-            return MemoryPolicyDecision(
-                False,
-                error_code="MEMORY_INJECTION_BLOCKED",
-                reason="Memory contains instruction-like or invisible control content",
-                scan_result=MemoryScanResult.INJECTION_BLOCKED,
-            )
+        scan = self.scan_content(observation.content, sensitivity=observation.sensitivity)
+        if not scan.allowed:
+            return scan
         if (
             target_namespace is MemoryNamespace.PROJECT_CANONICAL
             and observation.authority is MemoryAuthority.MODEL_SUGGESTION
@@ -140,6 +125,28 @@ class MemoryPolicy:
                 error_code="APPROVAL_REQUIRED",
                 reason="Project Canonical Memory requires explicit user approval",
                 scan_result=MemoryScanResult.CLEAN,
+            )
+        return scan
+
+    @staticmethod
+    def scan_content(
+        content: str,
+        *,
+        sensitivity: MemorySensitivity = MemorySensitivity.PRIVATE,
+    ) -> MemoryPolicyDecision:
+        if sensitivity is MemorySensitivity.SECRET or _contains_secret(content):
+            return MemoryPolicyDecision(
+                False,
+                error_code="MEMORY_SECRET_BLOCKED",
+                reason="Memory contains secret-like material",
+                scan_result=MemoryScanResult.SECRET_BLOCKED,
+            )
+        if _contains_invisible_control(content) or _contains_instruction(content):
+            return MemoryPolicyDecision(
+                False,
+                error_code="MEMORY_INJECTION_BLOCKED",
+                reason="Memory contains instruction-like or invisible control content",
+                scan_result=MemoryScanResult.INJECTION_BLOCKED,
             )
         return MemoryPolicyDecision(True, scan_result=MemoryScanResult.CLEAN)
 

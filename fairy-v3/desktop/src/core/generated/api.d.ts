@@ -106,6 +106,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/memory/claims": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Memory Claims */
+        get: operations["memory.claims.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/claims/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Promote Memory Claim */
+        post: operations["memory.claims.promote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/claims/{claim_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Memory Claim */
+        get: operations["memory.claims.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/claims/{claim_id}/resolve-conflict": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve Memory Conflict */
+        post: operations["memory.claims.resolve_conflict"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/claims/{claim_id}/supersede": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Supersede Memory Claim */
+        post: operations["memory.claims.supersede"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/forget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Forget Memory */
+        post: operations["memory.forget"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Memory Observations */
+        get: operations["memory.observations.list"];
+        put?: never;
+        /** Create Memory Observation */
+        post: operations["memory.observations.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects": {
         parameters: {
             query?: never;
@@ -530,6 +650,11 @@ export interface components {
              */
             version_id: string;
         };
+        /**
+         * ClaimStatus
+         * @enum {string}
+         */
+        ClaimStatus: "candidate" | "active" | "conflicted" | "superseded" | "expired" | "rejected" | "forgotten";
         /** ConversationCreate */
         ConversationCreate: {
             /** Project Id */
@@ -640,6 +765,342 @@ export interface components {
             /** Status */
             status: string;
         };
+        /**
+         * MemoryAuthority
+         * @enum {string}
+         */
+        MemoryAuthority: "deterministic_core" | "explicit_user" | "accepted_version" | "model_suggestion";
+        /** MemoryClaimContextModel */
+        MemoryClaimContextModel: {
+            claim: components["schemas"]["MemoryClaimModel"];
+            current_revision: components["schemas"]["MemoryClaimRevisionModel"];
+        };
+        /** MemoryClaimModel */
+        MemoryClaimModel: {
+            /** Conflict Set Id */
+            conflict_set_id: string | null;
+            /** Conversation Id */
+            conversation_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Current Revision */
+            current_revision: number;
+            /** Device Id */
+            device_id: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            namespace: components["schemas"]["MemoryNamespace"];
+            /** Predicate */
+            predicate: string;
+            /** Project Id */
+            project_id: string | null;
+            status: components["schemas"]["ClaimStatus"];
+            /** Subject */
+            subject: string;
+            /** Task Id */
+            task_id: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version Id */
+            version_id: string | null;
+        };
+        /** MemoryClaimPageModel */
+        MemoryClaimPageModel: {
+            /** Items */
+            items: components["schemas"]["MemoryClaimContextModel"][];
+        };
+        /** MemoryClaimPromoteInput */
+        MemoryClaimPromoteInput: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Normalized Text */
+            normalized_text: string;
+            /**
+             * Observation Id
+             * Format: uuid
+             */
+            observation_id: string;
+            /** Predicate */
+            predicate: string;
+            /** Subject */
+            subject: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+            /** Valid From */
+            valid_from?: string | null;
+            /** Valid To */
+            valid_to?: string | null;
+            /** Value */
+            value: string | number | boolean | unknown[] | {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** MemoryClaimResolveInput */
+        MemoryClaimResolveInput: {
+            /**
+             * Claim Id
+             * Format: uuid
+             */
+            claim_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Normalized Text */
+            normalized_text: string;
+            /** Resolved Claim Ids */
+            resolved_claim_ids: string[];
+            /** Source Observation Ids */
+            source_observation_ids: string[];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+            /** Valid From */
+            valid_from?: string | null;
+            /** Valid To */
+            valid_to?: string | null;
+            /** Value */
+            value: string | number | boolean | unknown[] | {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** MemoryClaimRevisionModel */
+        MemoryClaimRevisionModel: {
+            /** Actor */
+            actor: string;
+            authority: components["schemas"]["MemoryAuthority"];
+            /**
+             * Claim Id
+             * Format: uuid
+             */
+            claim_id: string;
+            /** Confidence */
+            confidence: number;
+            /** Normalized Text */
+            normalized_text: string;
+            /**
+             * Recorded At
+             * Format: date-time
+             */
+            recorded_at: string;
+            /** Resolved Claim Ids */
+            resolved_claim_ids: string[];
+            /** Revision */
+            revision: number;
+            /** Source Event Ids */
+            source_event_ids: string[];
+            /** Source Observation Ids */
+            source_observation_ids: string[];
+            /** Supersedes Revision */
+            supersedes_revision: number | null;
+            /** Valid From */
+            valid_from: string | null;
+            /** Valid To */
+            valid_to: string | null;
+            /** Value */
+            value: string | number | boolean | unknown[] | {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** MemoryClaimSupersedeInput */
+        MemoryClaimSupersedeInput: {
+            /**
+             * Claim Id
+             * Format: uuid
+             */
+            claim_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Normalized Text */
+            normalized_text: string;
+            /** Source Observation Ids */
+            source_observation_ids: string[];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+            /** Valid From */
+            valid_from?: string | null;
+            /** Valid To */
+            valid_to?: string | null;
+            /** Value */
+            value: string | number | boolean | unknown[] | {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** MemoryForgetInput */
+        MemoryForgetInput: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+            target_kind: components["schemas"]["MemoryForgetTargetModel"];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+        };
+        /**
+         * MemoryForgetTargetModel
+         * @enum {string}
+         */
+        MemoryForgetTargetModel: "observation" | "claim";
+        /**
+         * MemoryNamespace
+         * @enum {string}
+         */
+        MemoryNamespace: "project_canonical" | "conversation_draft" | "user_profile" | "device_local" | "task_episode";
+        /** MemoryObservationModel */
+        MemoryObservationModel: {
+            /** Actor */
+            actor: string;
+            authority: components["schemas"]["MemoryAuthority"];
+            /** Confidence */
+            confidence: number;
+            /** Content */
+            content: string;
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Project Id */
+            project_id: string | null;
+            proposed_namespace: components["schemas"]["MemoryNamespace"];
+            scan_result: components["schemas"]["MemoryScanResult"];
+            /** Scope Digest */
+            scope_digest: string;
+            sensitivity: components["schemas"]["MemorySensitivity"];
+            /** Source Cursor */
+            source_cursor: number;
+            /**
+             * Source Event Id
+             * Format: uuid
+             */
+            source_event_id: string;
+            source_type: components["schemas"]["MemorySourceType"];
+            status: components["schemas"]["ObservationStatus"];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Version Id */
+            version_id: string | null;
+        };
+        /** MemoryObservationPageModel */
+        MemoryObservationPageModel: {
+            /** Items */
+            items: components["schemas"]["MemoryObservationModel"][];
+        };
+        /** MemoryObserveInput */
+        MemoryObserveInput: {
+            /** Content */
+            content: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /**
+         * MemoryScanResult
+         * @enum {string}
+         */
+        MemoryScanResult: "unchecked" | "clean" | "injection_blocked" | "secret_blocked";
+        /**
+         * MemorySensitivity
+         * @enum {string}
+         */
+        MemorySensitivity: "public" | "private" | "secret";
+        /**
+         * MemorySourceType
+         * @enum {string}
+         */
+        MemorySourceType: "user_message" | "core_event" | "command_result" | "accepted_artifact" | "explicit_user_action" | "model_suggestion";
+        /**
+         * MemoryTargetKind
+         * @enum {string}
+         */
+        MemoryTargetKind: "observation" | "claim" | "episode" | "snapshot";
+        /** MemoryTombstoneModel */
+        MemoryTombstoneModel: {
+            /** Actor */
+            actor: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Source Event Id
+             * Format: uuid
+             */
+            source_event_id: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+            target_kind: components["schemas"]["MemoryTargetKind"];
+        };
+        /**
+         * ObservationStatus
+         * @enum {string}
+         */
+        ObservationStatus: "pending" | "accepted" | "rejected" | "promoted" | "forgotten";
         /**
          * OperationMode
          * @enum {string}
@@ -1126,6 +1587,288 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthModel"];
+                };
+            };
+        };
+    };
+    "memory.claims.list": {
+        parameters: {
+            query: {
+                task_id: string;
+                namespace: components["schemas"]["MemoryNamespace"];
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryClaimPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.claims.promote": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryClaimPromoteInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryClaimContextModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.claims.get": {
+        parameters: {
+            query: {
+                task_id: string;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                claim_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryClaimContextModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.claims.resolve_conflict": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                claim_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryClaimResolveInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryClaimContextModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.claims.supersede": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                claim_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryClaimSupersedeInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryClaimContextModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.forget": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryForgetInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryTombstoneModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.observations.list": {
+        parameters: {
+            query: {
+                task_id: string;
+                namespace: components["schemas"]["MemoryNamespace"];
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryObservationPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.observations.create": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryObserveInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryObservationModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

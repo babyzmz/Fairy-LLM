@@ -359,6 +359,22 @@ class SqlAlchemyCommandLedger:
             rows = connection.execute(statement).mappings().all()
         return [self._event_from_row(row) for row in rows]
 
+    def events_for_run(self, run_id: UUID) -> list[EventEnvelope]:
+        with self._session.read() as connection:
+            rows = (
+                connection.execute(
+                    select(domain_events)
+                    .where(
+                        domain_events.c.tenant_id == self._tenant_id,
+                        domain_events.c.run_id == str(run_id),
+                    )
+                    .order_by(domain_events.c.cursor)
+                )
+                .mappings()
+                .all()
+            )
+        return [self._event_from_row(row) for row in rows]
+
     def claim(
         self,
         run_id: UUID,
