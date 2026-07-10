@@ -32,6 +32,7 @@ from fairy_core.domain.models import (
 )
 from fairy_core.persistence.session import SqlAlchemySession
 from fairy_core.persistence.tenant import normalize_tenant_id
+from fairy_core.storage.execution_store import ExecutionStateStoreMixin
 from fairy_core.storage.schema import (
     approvals,
     changesets,
@@ -53,7 +54,7 @@ def _datetime(value: datetime | str) -> datetime:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
-class SqlAlchemyStateStore:
+class SqlAlchemyStateStore(ExecutionStateStoreMixin):
     """Tenant-scoped Core state persisted through a caller-owned SQLAlchemy engine."""
 
     def __init__(

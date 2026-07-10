@@ -10,11 +10,13 @@ from sqlalchemy import (
     DateTime,
     ForeignKeyConstraint,
     Index,
+    Integer,
     MetaData,
     PrimaryKeyConstraint,
     String,
     Table,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.engine import Dialect
 from sqlalchemy.types import TypeDecorator
@@ -262,6 +264,197 @@ checkpoints = Table(
     ),
 )
 
+runtime_sessions = Table(
+    "core_runtime_sessions",
+    state_metadata,
+    _tenant_id(),
+    _id(),
+    Column("project_id", String(ID_LENGTH)),
+    Column("conversation_id", String(ID_LENGTH), nullable=False),
+    Column("task_id", String(ID_LENGTH), nullable=False),
+    Column("version_id", String(ID_LENGTH)),
+    Column("project_root", String(4096), nullable=False),
+    Column("execution_target", String(32), nullable=False),
+    Column("kind", String(32), nullable=False),
+    Column("executor", String(128), nullable=False),
+    Column("executor_handle", String(512)),
+    Column("port", Integer),
+    Column("status", String(32), nullable=False),
+    Column("health", String(32), nullable=False),
+    Column("error_code", String(128)),
+    Column("idempotency_key", String(512), nullable=False),
+    Column("revision", BigInteger, nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_runtime_sessions"),
+    UniqueConstraint(
+        "tenant_id",
+        "idempotency_key",
+        name="uq_core_runtime_sessions_tenant_idempotency",
+    ),
+    CheckConstraint(
+        "(executor_handle IS NULL AND port IS NULL) OR "
+        "(executor_handle IS NOT NULL AND port BETWEEN 1 AND 65535)",
+        name="ck_core_runtime_sessions_handle_port",
+    ),
+    CheckConstraint(
+        "execution_target IN ('local', 'cloud')",
+        name="ck_core_runtime_sessions_execution_target",
+    ),
+    CheckConstraint(
+        "status IN ('created', 'starting', 'running', 'stopping', 'stopped', "
+        "'failed', 'interrupted')",
+        name="ck_core_runtime_sessions_status",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "project_id"],
+        [projects.c.tenant_id, projects.c.id],
+        name="fk_core_runtime_sessions_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_runtime_sessions_conversation",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "task_id"],
+        [tasks.c.tenant_id, tasks.c.id],
+        name="fk_core_runtime_sessions_task",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "version_id"],
+        [versions.c.tenant_id, versions.c.id],
+        name="fk_core_runtime_sessions_version",
+        ondelete="CASCADE",
+    ),
+)
+
+preview_sessions = Table(
+    "core_preview_sessions",
+    state_metadata,
+    _tenant_id(),
+    _id(),
+    Column("project_id", String(ID_LENGTH)),
+    Column("conversation_id", String(ID_LENGTH), nullable=False),
+    Column("task_id", String(ID_LENGTH), nullable=False),
+    Column("version_id", String(ID_LENGTH)),
+    Column("runtime_id", String(ID_LENGTH), nullable=False),
+    Column("project_root", String(4096), nullable=False),
+    Column("execution_target", String(32), nullable=False),
+    Column("url", String(4096)),
+    Column("visibility", String(32), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("health", String(32), nullable=False),
+    Column("error_code", String(128)),
+    Column("idempotency_key", String(512), nullable=False),
+    Column("revision", BigInteger, nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_preview_sessions"),
+    UniqueConstraint(
+        "tenant_id",
+        "idempotency_key",
+        name="uq_core_preview_sessions_tenant_idempotency",
+    ),
+    CheckConstraint(
+        "(status IN ('ready', 'stopping') AND url IS NOT NULL) OR "
+        "(status IN ('created', 'starting', 'stopped', 'failed') AND url IS NULL) OR "
+        "status = 'interrupted'",
+        name="ck_core_preview_sessions_active_url",
+    ),
+    CheckConstraint(
+        "execution_target IN ('local', 'cloud')",
+        name="ck_core_preview_sessions_execution_target",
+    ),
+    CheckConstraint(
+        "status IN ('created', 'starting', 'ready', 'stopping', 'stopped', "
+        "'failed', 'interrupted')",
+        name="ck_core_preview_sessions_status",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "project_id"],
+        [projects.c.tenant_id, projects.c.id],
+        name="fk_core_preview_sessions_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_preview_sessions_conversation",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "task_id"],
+        [tasks.c.tenant_id, tasks.c.id],
+        name="fk_core_preview_sessions_task",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "version_id"],
+        [versions.c.tenant_id, versions.c.id],
+        name="fk_core_preview_sessions_version",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "runtime_id"],
+        [runtime_sessions.c.tenant_id, runtime_sessions.c.id],
+        name="fk_core_preview_sessions_runtime",
+        ondelete="CASCADE",
+    ),
+)
+
+artifacts = Table(
+    "core_artifacts",
+    state_metadata,
+    _tenant_id(),
+    _id(),
+    Column("project_id", String(ID_LENGTH)),
+    Column("conversation_id", String(ID_LENGTH), nullable=False),
+    Column("task_id", String(ID_LENGTH), nullable=False),
+    Column("version_id", String(ID_LENGTH)),
+    Column("artifact_type", String(32), nullable=False),
+    Column("visibility", String(32), nullable=False),
+    Column("storage_location", String(4096), nullable=False),
+    Column("media_type", String(255), nullable=False),
+    Column("byte_length", BigInteger, nullable=False),
+    Column("content_hash", String(64), nullable=False),
+    Column("metadata", JSON, nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_artifacts"),
+    CheckConstraint("byte_length >= 0", name="ck_core_artifacts_byte_length"),
+    CheckConstraint(
+        "length(content_hash) = 64 AND content_hash = lower(content_hash)",
+        name="ck_core_artifacts_content_hash",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "project_id"],
+        [projects.c.tenant_id, projects.c.id],
+        name="fk_core_artifacts_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_artifacts_conversation",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "task_id"],
+        [tasks.c.tenant_id, tasks.c.id],
+        name="fk_core_artifacts_task",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "version_id"],
+        [versions.c.tenant_id, versions.c.id],
+        name="fk_core_artifacts_version",
+        ondelete="CASCADE",
+    ),
+)
+
 Index("ix_core_projects_tenant_updated", projects.c.tenant_id, projects.c.updated_at)
 Index("ix_core_conversations_tenant_project", conversations.c.tenant_id, conversations.c.project_id)
 Index("ix_core_versions_tenant_project", versions.c.tenant_id, versions.c.project_id)
@@ -269,3 +462,29 @@ Index("ix_core_tasks_tenant_status", tasks.c.tenant_id, tasks.c.status, tasks.c.
 Index("ix_core_changesets_tenant_task", changesets.c.tenant_id, changesets.c.task_id)
 Index("ix_core_approvals_tenant_task", approvals.c.tenant_id, approvals.c.task_id)
 Index("ix_core_checkpoints_tenant_task", checkpoints.c.tenant_id, checkpoints.c.task_id)
+Index(
+    "ix_core_runtime_sessions_tenant_task",
+    runtime_sessions.c.tenant_id,
+    runtime_sessions.c.task_id,
+    runtime_sessions.c.created_at,
+)
+Index(
+    "ix_core_preview_sessions_tenant_conversation",
+    preview_sessions.c.tenant_id,
+    preview_sessions.c.conversation_id,
+    preview_sessions.c.created_at,
+)
+Index(
+    "uq_core_preview_sessions_active_task",
+    preview_sessions.c.tenant_id,
+    preview_sessions.c.task_id,
+    unique=True,
+    sqlite_where=text("status IN ('created', 'starting', 'ready', 'stopping')"),
+    postgresql_where=text("status IN ('created', 'starting', 'ready', 'stopping')"),
+)
+Index(
+    "ix_core_artifacts_tenant_task",
+    artifacts.c.tenant_id,
+    artifacts.c.task_id,
+    artifacts.c.created_at,
+)

@@ -9,13 +9,24 @@ import pytest
 from sqlalchemy import create_engine, create_mock_engine
 from sqlalchemy.pool import StaticPool
 
-from fairy_core.domain.errors import VersionConflictError
+from fairy_core.domain.errors import (
+    IdempotencyConflictError,
+    InvalidTransitionError,
+    VersionConflictError,
+)
 from fairy_core.domain.execution import (
     Approval,
     ApprovalDecision,
+    Artifact,
+    ArtifactType,
+    ArtifactVisibility,
     Changeset,
     ChangesetStatus,
     Checkpoint,
+    PreviewSession,
+    PreviewVisibility,
+    RuntimeKind,
+    RuntimeSession,
 )
 from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import (
@@ -23,6 +34,7 @@ from fairy_core.domain.models import (
     OperationMode,
     Project,
     ProjectResidency,
+    ScopeContract,
     Task,
     Version,
     VersionVisibility,
@@ -382,3 +394,220 @@ def test_execution_records_survive_restart_with_explicit_ownership(tmp_path: Pat
     assert restarted.find_changeset_by_idempotency_key("changeset:state") == changeset
     assert restarted.get_approval(approval.id) == approval
     assert restarted.get_checkpoint(checkpoint.id) == checkpoint
+
+
+def test_runtime_preview_and_artifact_round_trip_after_restart(tmp_path: Path) -> None:
+    database_path = tmp_path / "state.db"
+    store = SqliteStateStore(database_path)
+    scope = _save_runtime_graph(store, tmp_path)
+    runtime = RuntimeSession.create(
+        scope=scope,
+        kind=RuntimeKind.STATIC_SITE,
+        executor="rust_local_worker",
+        idempotency_key="runtime:round-trip",
+    )
+    assert store.append_runtime(runtime) == runtime
+    runtime.begin_start()
+    assert store.save_runtime(runtime, expected_revision=0) == runtime
+    runtime.mark_running(executor_handle="static:round-trip", port=43125)
+    assert store.save_runtime(runtime, expected_revision=1) == runtime
+
+    preview = PreviewSession.create(
+        scope=scope,
+        runtime_id=runtime.id,
+        visibility=PreviewVisibility.CHAT_DRAFT,
+        idempotency_key="preview:round-trip",
+    )
+    store.append_preview(preview)
+    preview.begin_start()
+    store.save_preview(preview, expected_revision=0)
+    preview.mark_ready("http://127.0.0.1:43125/round-trip/")
+    store.save_preview(preview, expected_revision=1)
+    artifact = Artifact.create(
+        project_id=scope.project_id,
+        conversation_id=scope.conversation_id,
+        task_id=scope.task_id,
+        version_id=scope.target_version_id,
+        artifact_type=ArtifactType.PREVIEW_MANIFEST,
+        visibility=ArtifactVisibility.CONVERSATION,
+        storage_location="previews/round-trip.json",
+        media_type="application/json",
+        byte_length=73,
+        content_hash="a" * 64,
+        metadata={"entry": "index.html", "assets": ["app.js"]},
+    )
+    assert store.append_artifact(artifact) == artifact
+    store.close()
+
+    restarted = SqliteStateStore(database_path)
+
+    assert restarted.get_runtime(runtime.id) == runtime
+    assert restarted.find_runtime_by_idempotency_key("runtime:round-trip") == runtime
+    assert restarted.runtimes_for_task(scope.task_id) == [runtime]
+    assert restarted.get_preview(preview.id) == preview
+    assert restarted.find_preview_by_idempotency_key("preview:round-trip") == preview
+    assert restarted.preview_for_task(scope.task_id) == preview
+    assert restarted.previews_for_conversation(scope.conversation_id) == [preview]
+    assert restarted.get_artifact(artifact.id) == artifact
+    assert restarted.artifacts_for_task(scope.task_id) == [artifact]
+    assert restarted.get_artifact(artifact.id).metadata["assets"] == ("app.js",)
+
+
+def test_runtime_and_preview_updates_use_revision_compare_and_swap(tmp_path: Path) -> None:
+    store = SqliteStateStore(tmp_path / "state.db")
+    scope = _save_runtime_graph(store, tmp_path)
+    runtime = RuntimeSession.create(
+        scope=scope,
+        kind=RuntimeKind.STATIC_SITE,
+        executor="rust_local_worker",
+        idempotency_key="runtime:cas",
+    )
+    store.append_runtime(runtime)
+    stale_runtime = replace(runtime)
+    runtime.begin_start()
+    stale_runtime.begin_start()
+    store.save_runtime(runtime, expected_revision=0)
+    with pytest.raises(VersionConflictError):
+        store.save_runtime(stale_runtime, expected_revision=0)
+
+    preview = PreviewSession.create(
+        scope=scope,
+        runtime_id=runtime.id,
+        visibility=PreviewVisibility.CHAT_DRAFT,
+        idempotency_key="preview:cas",
+    )
+    store.append_preview(preview)
+    stale_preview = replace(preview)
+    preview.begin_start()
+    stale_preview.begin_start()
+    store.save_preview(preview, expected_revision=0)
+    with pytest.raises(VersionConflictError):
+        store.save_preview(stale_preview, expected_revision=0)
+
+
+def test_runtime_preview_idempotency_and_active_preview_are_enforced(tmp_path: Path) -> None:
+    store = SqliteStateStore(tmp_path / "state.db")
+    scope = _save_runtime_graph(store, tmp_path)
+    runtime = RuntimeSession.create(
+        scope=scope,
+        kind=RuntimeKind.STATIC_SITE,
+        executor="rust_local_worker",
+        idempotency_key="runtime:idempotent",
+    )
+    assert store.append_runtime(runtime) == runtime
+    runtime_replay = RuntimeSession.create(
+        scope=scope,
+        kind=RuntimeKind.STATIC_SITE,
+        executor="rust_local_worker",
+        idempotency_key="runtime:idempotent",
+    )
+    assert store.append_runtime(runtime_replay) == runtime
+    runtime_conflict = RuntimeSession.create(
+        scope=scope,
+        kind=RuntimeKind.WSL_PROJECT,
+        executor="wsl_worker",
+        idempotency_key="runtime:idempotent",
+    )
+    with pytest.raises(IdempotencyConflictError):
+        store.append_runtime(runtime_conflict)
+
+    preview = PreviewSession.create(
+        scope=scope,
+        runtime_id=runtime.id,
+        visibility=PreviewVisibility.CHAT_DRAFT,
+        idempotency_key="preview:idempotent",
+    )
+    assert store.append_preview(preview) == preview
+    preview_replay = PreviewSession.create(
+        scope=scope,
+        runtime_id=runtime.id,
+        visibility=PreviewVisibility.CHAT_DRAFT,
+        idempotency_key="preview:idempotent",
+    )
+    assert store.append_preview(preview_replay) == preview
+
+    second_preview = PreviewSession.create(
+        scope=scope,
+        runtime_id=runtime.id,
+        visibility=PreviewVisibility.PRIVATE,
+        idempotency_key="preview:second-active",
+    )
+    with pytest.raises(InvalidTransitionError):
+        store.append_preview(second_preview)
+
+    preview.begin_start()
+    store.save_preview(preview, expected_revision=0)
+    preview.mark_failed("PREVIEW_FAILED")
+    store.save_preview(preview, expected_revision=1)
+    assert store.append_preview(second_preview) == second_preview
+    assert store.preview_for_task(scope.task_id) == second_preview
+    assert store.preview_for_task(scope.task_id, include_terminal=True) == second_preview
+
+
+def test_artifact_insert_is_immutable_and_idempotent(tmp_path: Path) -> None:
+    store = SqliteStateStore(tmp_path / "state.db")
+    scope = _save_runtime_graph(store, tmp_path)
+    artifact = Artifact.create(
+        project_id=scope.project_id,
+        conversation_id=scope.conversation_id,
+        task_id=scope.task_id,
+        version_id=scope.target_version_id,
+        artifact_type=ArtifactType.LOG,
+        visibility=ArtifactVisibility.PRIVATE,
+        storage_location="logs/runtime.txt",
+        media_type="text/plain",
+        byte_length=12,
+        content_hash="b" * 64,
+        metadata={},
+    )
+
+    assert store.append_artifact(artifact) == artifact
+    assert store.append_artifact(artifact) == artifact
+    with pytest.raises(IdempotencyConflictError):
+        store.append_artifact(replace(artifact, content_hash="c" * 64))
+
+
+def _save_runtime_graph(store: SqliteStateStore, tmp_path: Path) -> ScopeContract:
+    project = Project.create(name="Runtime", residency=ProjectResidency.LOCAL_ONLY)
+    conversation = Conversation.create(
+        project_id=project.id,
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+        base_version_id=None,
+    )
+    task = Task.create(
+        project_id=project.id,
+        conversation_id=conversation.id,
+        user_request="Preview the project",
+        operation_mode=OperationMode.CONTINUE_CURRENT_DRAFT,
+        base_version_id=None,
+        execution_target="local",
+    )
+    version = Version.create(
+        project_id=project.id,
+        source_conversation_id=conversation.id,
+        source_task_id=task.id,
+        parent_version_id=None,
+        project_root=tmp_path / "versions" / str(task.id),
+        visibility=VersionVisibility.CHAT_DRAFT,
+    )
+    task.bind_target_version(version.id)
+    store.save_project(project)
+    store.save_conversation(conversation)
+    store.save_task(task, idempotency_key=f"task:{task.id}")
+    store.save_version(version)
+    return ScopeContract.create(
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+        project_id=project.id,
+        conversation_id=conversation.id,
+        task_id=task.id,
+        operation_mode=OperationMode.CONTINUE_CURRENT_DRAFT,
+        base_version_id=version.id,
+        target_version_id=version.id,
+        project_root=version.project_root,
+        allowed_write_paths=(version.project_root,),
+        forbidden_write_paths=(),
+        execution_target="local",
+        network_policy="off",
+        memory_read_scope=("project_canonical",),
+        memory_write_scope=("conversation_draft",),
+    )

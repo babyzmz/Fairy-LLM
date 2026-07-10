@@ -46,6 +46,9 @@ def test_outbox_claim_uses_postgres_skip_locked_without_external_broker() -> Non
     }
     assert {
         "core_projects",
+        "core_runtime_sessions",
+        "core_preview_sessions",
+        "core_artifacts",
         "command_runs",
         "domain_events",
         "outbox",
@@ -115,6 +118,9 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "pk_core_changesets",
         "pk_core_approvals",
         "pk_core_checkpoints",
+        "pk_core_runtime_sessions",
+        "pk_core_preview_sessions",
+        "pk_core_artifacts",
         "pk_command_runs",
         "pk_task_event_sequences",
         "pk_domain_events",
@@ -149,6 +155,8 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "fk_memory_snapshot_items_snapshot",
         "fk_memory_access_log_snapshot",
         "ck_core_tasks_memory_snapshot_binding",
+        "ck_core_runtime_sessions_handle_port",
+        "ck_core_preview_sessions_active_url",
         "ck_memory_snapshots_status",
     } <= constraint_names
     assert "fk_domain_events_run" not in constraint_names
@@ -158,7 +166,10 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         for table in metadata.tables.values()
         for index in table.indexes
     }
-    assert "uq_memory_search_documents_fts_rowid" in index_names
+    assert {
+        "uq_memory_search_documents_fts_rowid",
+        "uq_core_preview_sessions_active_task",
+    } <= index_names
 
 
 def test_active_version_statement_uses_revision_compare_and_swap() -> None:

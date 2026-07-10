@@ -5,6 +5,9 @@ import sys
 import tomllib
 from pathlib import Path
 
+from fairy_core.storage.ports import StateStore
+from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
+
 V3_ROOT = Path(__file__).parents[2]
 
 
@@ -62,3 +65,25 @@ def test_boundary_gate_rejects_core_cloud_cycles_and_cloud_local_adapters(
     assert "Core cannot import Cloud adapters" in result.stdout
     assert "Cloud cannot compose through Core transports" in result.stdout
     assert "Cloud cannot use local SQLite adapters" in result.stdout
+
+
+def test_state_store_protocol_and_sqlalchemy_adapter_expose_runtime_contract() -> None:
+    required_methods = {
+        "append_runtime",
+        "save_runtime",
+        "get_runtime",
+        "find_runtime_by_idempotency_key",
+        "runtimes_for_task",
+        "append_preview",
+        "save_preview",
+        "get_preview",
+        "find_preview_by_idempotency_key",
+        "preview_for_task",
+        "previews_for_conversation",
+        "append_artifact",
+        "get_artifact",
+        "artifacts_for_task",
+    }
+
+    assert required_methods <= set(StateStore.__dict__)
+    assert all(hasattr(SqlAlchemyStateStore, method) for method in required_methods)

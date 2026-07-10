@@ -3,7 +3,14 @@ from __future__ import annotations
 from typing import Protocol
 from uuid import UUID
 
-from fairy_core.domain.execution import Approval, Changeset, Checkpoint
+from fairy_core.domain.execution import (
+    Approval,
+    Artifact,
+    Changeset,
+    Checkpoint,
+    PreviewSession,
+    RuntimeSession,
+)
 from fairy_core.domain.models import Conversation, Project, Task, Version
 
 
@@ -43,6 +50,49 @@ class StateStore(Protocol):
     def save_checkpoint(self, checkpoint: Checkpoint) -> None: ...
 
     def get_checkpoint(self, checkpoint_id: UUID) -> Checkpoint | None: ...
+
+    def append_runtime(self, runtime: RuntimeSession) -> RuntimeSession: ...
+
+    def save_runtime(
+        self,
+        runtime: RuntimeSession,
+        *,
+        expected_revision: int,
+    ) -> RuntimeSession: ...
+
+    def get_runtime(self, runtime_id: UUID) -> RuntimeSession | None: ...
+
+    def find_runtime_by_idempotency_key(self, key: str) -> RuntimeSession | None: ...
+
+    def runtimes_for_task(self, task_id: UUID) -> list[RuntimeSession]: ...
+
+    def append_preview(self, preview: PreviewSession) -> PreviewSession: ...
+
+    def save_preview(
+        self,
+        preview: PreviewSession,
+        *,
+        expected_revision: int,
+    ) -> PreviewSession: ...
+
+    def get_preview(self, preview_id: UUID) -> PreviewSession | None: ...
+
+    def find_preview_by_idempotency_key(self, key: str) -> PreviewSession | None: ...
+
+    def preview_for_task(
+        self,
+        task_id: UUID,
+        *,
+        include_terminal: bool = False,
+    ) -> PreviewSession | None: ...
+
+    def previews_for_conversation(self, conversation_id: UUID) -> list[PreviewSession]: ...
+
+    def append_artifact(self, artifact: Artifact) -> Artifact: ...
+
+    def get_artifact(self, artifact_id: UUID) -> Artifact | None: ...
+
+    def artifacts_for_task(self, task_id: UUID) -> list[Artifact]: ...
 
     def accept_version(
         self,

@@ -616,6 +616,32 @@ class Artifact:
     metadata: Mapping[str, Any]
     created_at: datetime
 
+    def __post_init__(self) -> None:
+        location = _required_text(self.storage_location, "storage_location")
+        normalized_media_type = _required_text(self.media_type, "media_type")
+        if "/" not in normalized_media_type:
+            raise ValueError("media_type must be a valid type/subtype")
+        if self.byte_length < 0:
+            raise ValueError("byte_length cannot be negative")
+        if _SHA256_PATTERN.fullmatch(self.content_hash) is None:
+            raise ValueError("content_hash must be a lowercase SHA-256 hex digest")
+        try:
+            normalized_metadata = json.loads(
+                json.dumps(
+                    dict(self.metadata),
+                    ensure_ascii=True,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError("metadata must be JSON-compatible") from error
+        _validate_timestamps(self.created_at, self.created_at)
+        object.__setattr__(self, "storage_location", location)
+        object.__setattr__(self, "media_type", normalized_media_type)
+        object.__setattr__(self, "metadata", _freeze_json(normalized_metadata))
+
     @classmethod
     def create(
         cls,
@@ -632,26 +658,6 @@ class Artifact:
         content_hash: str,
         metadata: Mapping[str, Any],
     ) -> Artifact:
-        location = _required_text(storage_location, "storage_location")
-        normalized_media_type = _required_text(media_type, "media_type")
-        if "/" not in normalized_media_type:
-            raise ValueError("media_type must be a valid type/subtype")
-        if byte_length < 0:
-            raise ValueError("byte_length cannot be negative")
-        if _SHA256_PATTERN.fullmatch(content_hash) is None:
-            raise ValueError("content_hash must be a lowercase SHA-256 hex digest")
-        try:
-            normalized_metadata = json.loads(
-                json.dumps(
-                    dict(metadata),
-                    ensure_ascii=True,
-                    allow_nan=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-            )
-        except (TypeError, ValueError) as error:
-            raise ValueError("metadata must be JSON-compatible") from error
         return cls(
             id=new_id(),
             project_id=project_id,
@@ -660,13 +666,17 @@ class Artifact:
             version_id=version_id,
             artifact_type=artifact_type,
             visibility=visibility,
-            storage_location=location,
-            media_type=normalized_media_type,
+            storage_location=storage_location,
+            media_type=media_type,
             byte_length=byte_length,
             content_hash=content_hash,
-            metadata=_freeze_json(normalized_metadata),
+            metadata=metadata,
             created_at=_now(),
         )
+
+    @classmethod
+    def restore(cls, **values: Any) -> Artifact:
+        return cls(**values)
 
 
 def _required_text(value: str, field_name: str) -> str:

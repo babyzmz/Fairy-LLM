@@ -21,8 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260711_0006"]
-    assert scripts.get_revision("20260711_0006").down_revision == "20260711_0005"
+    assert scripts.get_heads() == ["20260711_0007"]
+    assert scripts.get_revision("20260711_0007").down_revision == "20260711_0006"
 
 
 def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
@@ -41,6 +41,9 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_CHANGESETS",
         "CORE_APPROVALS",
         "CORE_CHECKPOINTS",
+        "CORE_RUNTIME_SESSIONS",
+        "CORE_PREVIEW_SESSIONS",
+        "CORE_ARTIFACTS",
         "COMMAND_RUNS",
         "TASK_EVENT_SEQUENCES",
         "MEMORY_OBSERVATIONS",
@@ -77,6 +80,30 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
     assert "CK_MEMORY_SNAPSHOTS_STATUS" in ddl
     assert "ALTER TABLE MEMORY_SEARCH_DOCUMENTS ADD COLUMN FTS_ROWID" in ddl
     assert "UQ_MEMORY_SEARCH_DOCUMENTS_FTS_ROWID" in ddl
+    assert "UQ_CORE_RUNTIME_SESSIONS_TENANT_IDEMPOTENCY" in ddl
+    assert "UQ_CORE_PREVIEW_SESSIONS_TENANT_IDEMPOTENCY" in ddl
+    assert "UQ_CORE_PREVIEW_SESSIONS_ACTIVE_TASK" in ddl
+    assert "CK_CORE_RUNTIME_SESSIONS_HANDLE_PORT" in ddl
+    assert "CK_CORE_PREVIEW_SESSIONS_ACTIVE_URL" in ddl
+    for table_name in (
+        "CORE_RUNTIME_SESSIONS",
+        "CORE_PREVIEW_SESSIONS",
+        "CORE_ARTIFACTS",
+    ):
+        assert f'CREATE POLICY "TENANT_ISOLATION_{table_name}"' in ddl
+
+
+def test_runtime_preview_migration_has_reversible_ddl() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260711_0007:20260711_0006", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_ARTIFACTS"' in ddl
+    assert "DROP TABLE CORE_ARTIFACTS" in ddl
+    assert "DROP TABLE CORE_PREVIEW_SESSIONS" in ddl
+    assert "DROP TABLE CORE_RUNTIME_SESSIONS" in ddl
 
 
 def test_compose_uses_supported_brokerless_development_services() -> None:
