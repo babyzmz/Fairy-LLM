@@ -17,8 +17,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260710_0003"]
-    assert scripts.get_revision("20260710_0003").down_revision == "20260710_0002"
+    assert scripts.get_heads() == ["20260710_0004"]
+    assert scripts.get_revision("20260710_0004").down_revision == "20260710_0003"
 
 
 def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
@@ -57,6 +57,10 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
     assert "CONSTRAINT FK_DOMAIN_EVENTS_RUN" not in ddl
     assert "DROP TABLE CLOUD_PROJECTS" in ddl
     assert "CREATE UNIQUE INDEX UQ_MEMORY_CLAIM_REVISIONS_CURRENT" in ddl
+    assert "CREATE FUNCTION FAIRY_ENQUEUE_DOMAIN_EVENT" in ddl
+    assert "CREATE TRIGGER TRG_DOMAIN_EVENT_OUTBOX" in ddl
+    assert "ON CONFLICT (TENANT_ID, EVENT_ID) DO NOTHING" in ddl
+    assert "SECURITY DEFINER" not in ddl
 
 
 def test_compose_uses_supported_brokerless_development_services() -> None:
@@ -152,3 +156,30 @@ def test_exported_openapi_uses_public_rpc_operation_ids() -> None:
 
     assert "projects.create" in operation_ids
     assert "events.subscribe" in operation_ids
+
+
+def test_full_verification_script_covers_every_release_gate() -> None:
+    script_path = CLOUD_ROOT.parent / "scripts" / "test-all.ps1"
+    script = script_path.read_text(encoding="utf-8")
+
+    for required_text in (
+        "check_boundaries.py",
+        "ruff format --check",
+        "ruff check",
+        "pytest",
+        "alembic",
+        "upgrade head --sql",
+        "downgrade head:base --sql",
+        "cargo fmt --check",
+        "cargo clippy",
+        "cargo test",
+        "npm test -- --run",
+        "npm run build",
+        "generate-contracts.ps1",
+        "git diff --exit-code",
+        "docker version",
+        "docker compose",
+        "integration",
+        "PostgreSQL/S3 integration tests skipped",
+    ):
+        assert required_text in script

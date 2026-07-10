@@ -41,11 +41,26 @@ cloud client exist. Local JSON-RPC and Cloud REST now invoke the same
 transport-independent CoreService; Cloud Core state uses the canonical
 tenant-scoped PostgreSQL Unit of Work, while `FAIRY_CORE_DATA_DIR` holds only
 managed workspace files. Canonical Hermes Observations, Claims, immutable
-revisions, and tombstones now share the same SQLite/PostgreSQL Unit of Work;
-public Memory commands, Snapshot/FTS retrieval, broader recovery tests, and
-final product workflows remain under active implementation.
+revisions, and tombstones now share the same SQLite/PostgreSQL Unit of Work.
+Governed Memory commands are exposed through the shared Core contract, and
+PostgreSQL enqueues every canonical domain event through a transaction-local
+Outbox trigger. Property, crash-recovery, fence, contract, and production SSE
+gates cover the delivered persistence slice. Snapshot/FTS retrieval, Episodes,
+pgvector ranking, multi-device memory controls, and final product workflows
+remain separate implementation slices.
 
-Run the legacy-dependency boundary gate with:
+Run every locally available release gate with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-all.ps1
+```
+
+The command runs Core and Cloud lint/tests, offline Alembic DDL, Rust checks,
+Desktop tests/build, contract regeneration, and repository boundary checks.
+When Docker is available it also runs the real PostgreSQL/S3 integration
+profile; otherwise it reports those integration tests as explicitly skipped.
+
+Run only the dependency and layer boundary gate with:
 
 ```powershell
 uv run --project core python scripts/check_boundaries.py .

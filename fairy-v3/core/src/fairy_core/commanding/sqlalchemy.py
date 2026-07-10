@@ -395,17 +395,31 @@ class SqlAlchemyCommandLedger:
             if row is None:
                 raise KeyError(f"command run not found: {run_id}")
             current = CommandStatus(row["status"])
-            if current is not CommandStatus.QUEUED:
+            current_lease_until = _datetime(row["lease_until"])
+            reclaiming = (
+                current is CommandStatus.RUNNING
+                and current_lease_until is not None
+                and current_lease_until <= now
+            )
+            if current is not CommandStatus.QUEUED and not reclaiming:
                 raise InvalidTransitionError(f"cannot claim CommandRun from {current}")
             previous_fence = int(row["lease_fence"])
+            predicates = [
+                command_runs.c.tenant_id == self._tenant_id,
+                command_runs.c.id == str(run_id),
+                command_runs.c.status == current.value,
+                command_runs.c.lease_fence == previous_fence,
+            ]
+            if reclaiming:
+                predicates.extend(
+                    [
+                        command_runs.c.lease_until.is_not(None),
+                        command_runs.c.lease_until <= now,
+                    ]
+                )
             result = connection.execute(
                 update(command_runs)
-                .where(
-                    command_runs.c.tenant_id == self._tenant_id,
-                    command_runs.c.id == str(run_id),
-                    command_runs.c.status == CommandStatus.QUEUED.value,
-                    command_runs.c.lease_fence == previous_fence,
-                )
+                .where(*predicates)
                 .values(
                     status=CommandStatus.RUNNING.value,
                     lease_owner=normalized_worker,
@@ -421,9 +435,13 @@ class SqlAlchemyCommandLedger:
             self._append_event(
                 connection,
                 run=updated,
-                event_type="command.running",
+                event_type="command.reclaimed" if reclaiming else "command.running",
                 visibility=EventVisibility.USER,
-                message="Command running",
+                message=(
+                    "Command reclaimed after worker interruption"
+                    if reclaiming
+                    else "Command running"
+                ),
                 payload={
                     "status": CommandStatus.RUNNING.value,
                     "lease_fence": previous_fence + 1,

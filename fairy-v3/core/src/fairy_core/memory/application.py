@@ -23,6 +23,7 @@ from fairy_core.contracts.models import (
     MemoryObserveInput,
 )
 from fairy_core.domain.errors import (
+    InvalidTransitionError,
     MemoryConflictError,
     MemoryForgottenError,
     MemoryInjectionBlockedError,
@@ -467,8 +468,13 @@ class MemoryApplication:
             if not approval_confirmed:
                 raise ApprovalRequiredError(dispatch.reason or "explicit approval required")
             run = bus.decide_approval(run.id, approved=True)
-        if run.status is CommandStatus.QUEUED:
-            return _PreparedCommand(bus.start(run.id), True)
+        if run.status in {CommandStatus.QUEUED, CommandStatus.RUNNING}:
+            try:
+                return _PreparedCommand(bus.start(run.id), True)
+            except InvalidTransitionError as error:
+                raise MemoryConflictError(
+                    "memory command is already running with an active lease"
+                ) from error
         raise MemoryConflictError(f"memory command cannot execute from {run.status}")
 
     @staticmethod

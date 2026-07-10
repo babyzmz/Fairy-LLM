@@ -22,6 +22,17 @@ FORBIDDEN_PYTHON_ROOTS = {
     "legacy_surface",
     "skills",
 }
+FORBIDDEN_LAYER_IMPORTS = {
+    Path("core/src"): (
+        ("fairy_cloud", "Core cannot import Cloud adapters"),
+    ),
+    Path("cloud/src"): (
+        ("fairy_core.transports", "Cloud cannot compose through Core transports"),
+        ("fairy_core.commanding.sqlite", "Cloud cannot use local SQLite adapters"),
+        ("fairy_core.persistence.sqlite", "Cloud cannot use local SQLite adapters"),
+        ("fairy_core.storage.sqlite", "Cloud cannot use local SQLite adapters"),
+    ),
+}
 SCRIPT_SPECIFIER = re.compile(
     r"(?:\bfrom\s+|\bimport\s*\(|\brequire\s*\()\s*['\"]([^'\"]+)['\"]"
 )
@@ -64,6 +75,9 @@ def _check_python(path: Path, root: Path) -> list[Violation]:
                 violations.append(
                     Violation(path, node.lineno, f"forbidden legacy Python import: {module}")
                 )
+            layer_message = _forbidden_layer_message(path, module, root)
+            if layer_message is not None:
+                violations.append(Violation(path, node.lineno, f"{layer_message}: {module}"))
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
@@ -79,6 +93,17 @@ def _check_python(path: Path, root: Path) -> list[Violation]:
                     Violation(path, getattr(node, "lineno", 1), f"legacy path escape: {value}")
                 )
     return violations
+
+
+def _forbidden_layer_message(path: Path, module: str, root: Path) -> str | None:
+    relative_path = path.relative_to(root)
+    for source_root, rules in FORBIDDEN_LAYER_IMPORTS.items():
+        if not relative_path.is_relative_to(source_root):
+            continue
+        for prefix, message in rules:
+            if module == prefix or module.startswith(f"{prefix}."):
+                return message
+    return None
 
 
 def _line_number(source: str, offset: int) -> int:
