@@ -176,3 +176,25 @@ def test_jsonrpc_exposes_complete_local_project_loop_and_resumable_events(tmp_pa
     assert all(event["conversation_id"] for event in events["items"])
     assert all(event["task_id"] for event in events["items"])
     assert all(event["visibility"] != "internal" for event in events["items"])
+
+
+def test_public_method_manifest_is_stable() -> None:
+    assert JsonRpcDispatcher.method_names() == frozenset(
+        {
+            "approvals.decide",
+            "capabilities.get",
+            "changesets.propose",
+            "conversations.create",
+            "events.subscribe",
+            "health",
+            "projects.create",
+            "projects.get",
+            "projects.import",
+            "tasks.create",
+            "tasks.get",
+            "tasks.review",
+            "versions.accept",
+            "versions.discard",
+            "versions.get",
+        }
+    )

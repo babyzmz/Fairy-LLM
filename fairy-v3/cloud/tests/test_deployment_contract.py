@@ -6,6 +6,8 @@ import yaml
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
+from fairy_cloud.openapi import build_openapi_document
+
 CLOUD_ROOT = Path(__file__).parents[1]
 
 
@@ -57,3 +59,16 @@ def test_cloud_image_is_pinned_and_runs_as_non_root() -> None:
     assert "ghcr.io/astral-sh/uv:0.11.28-python3.13-trixie-slim" in dockerfile
     assert "USER 10001:10001" in dockerfile
     assert "uv sync --locked --no-dev --no-editable" in dockerfile
+
+
+def test_exported_openapi_uses_public_rpc_operation_ids() -> None:
+    document = build_openapi_document()
+    operation_ids = {
+        operation["operationId"]
+        for path in document["paths"].values()
+        for operation in path.values()
+        if isinstance(operation, dict) and "operationId" in operation
+    }
+
+    assert "projects.create" in operation_ids
+    assert "events.subscribe" in operation_ids

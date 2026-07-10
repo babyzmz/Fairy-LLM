@@ -4,11 +4,13 @@ import json
 from pathlib import Path
 
 import pytest
+from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.transports.stdio import build_local_dispatcher
 from httpx import ASGITransport, AsyncClient
 
 from fairy_cloud.api import create_cloud_app
 from fairy_cloud.auth import RequestIdentity, StaticTokenAuthenticator
+from fairy_cloud.dispatchers import TenantDispatcherRegistry
 
 AUTH_HEADERS = {
     "Authorization": "Bearer test-token",
@@ -106,6 +108,14 @@ def test_openapi_declares_native_typed_sse(app) -> None:
     assert "text/event-stream" in event_response["content"]
     assert "HTTPBearer" in schema["components"]["securitySchemes"]
 
+    operation_ids = {
+        operation["operationId"]
+        for path in schema["paths"].values()
+        for operation in path.values()
+        if isinstance(operation, dict) and "operationId" in operation
+    }
+    assert JsonRpcDispatcher.method_names() <= operation_ids
+
 
 @pytest.mark.asyncio
 async def test_commands_and_event_stream_fail_closed_without_identity(app) -> None:
@@ -123,23 +133,37 @@ async def test_commands_and_event_stream_fail_closed_without_identity(app) -> No
 
 
 @pytest.mark.asyncio
+async def test_cloud_capability_request_preserves_advanced_overrides(app) -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=AUTH_HEADERS,
+    ) as client:
+        response = await client.post(
+            "/v1/capabilities",
+            json={
+                "profile": "standard",
+                "sandbox_healthy": False,
+                "overrides": {"preview.start": False},
+            },
+        )
+
+    response.raise_for_status()
+    assert response.json()["operations"]["preview.start"] is False
+
+
+@pytest.mark.asyncio
 async def test_authenticated_commands_resolve_an_isolated_tenant_core(tmp_path: Path) -> None:
     identities = {
         "token-a": RequestIdentity("user-a", "device-a", frozenset({"fairy.api"})),
         "token-b": RequestIdentity("user-b", "device-b", frozenset({"fairy.api"})),
     }
 
-    class TenantDispatcher:
-        def __init__(self, user_id: str) -> None:
-            self.user_id = user_id
-
-        def dispatch(self, _request):
-            return {"jsonrpc": "2.0", "id": 1, "result": {"tenant": self.user_id}}
-
+    registry = TenantDispatcherRegistry(root=tmp_path / "tenant-cores")
     app = create_cloud_app(
         build_local_dispatcher(tmp_path / "system"),
         authenticator=StaticTokenAuthenticator(identities),
-        dispatcher_resolver=lambda identity: TenantDispatcher(identity.user_id),
+        dispatcher_resolver=registry.for_identity,
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response_a = await client.post(
@@ -153,8 +177,20 @@ async def test_authenticated_commands_resolve_an_isolated_tenant_core(tmp_path: 
             json={"name": "B", "residency": "synced"},
         )
 
-    assert response_a.json() == {"tenant": "user-a"}
-    assert response_b.json() == {"tenant": "user-b"}
+    response_a.raise_for_status()
+    response_b.raise_for_status()
+    project_a = response_a.json()["project"]["id"]
+    project_b = response_b.json()["project"]["id"]
+    dispatcher_a = registry.for_identity(identities["token-a"])
+    own_project = dispatcher_a.dispatch(
+        {"jsonrpc": "2.0", "id": 1, "method": "projects.get", "params": {"project_id": project_a}}
+    )
+    other_project = dispatcher_a.dispatch(
+        {"jsonrpc": "2.0", "id": 2, "method": "projects.get", "params": {"project_id": project_b}}
+    )
+
+    assert own_project["result"]["id"] == project_a
+    assert other_project["error"]["data"]["error_code"] == "NOT_FOUND"
 
 
 def _parse_sse(payload: str) -> list[dict[str, object]]:

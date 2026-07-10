@@ -34,7 +34,13 @@ describe("TauriCoreTransport", () => {
     });
     const transport = new TauriCoreTransport(invoke);
 
-    const request = transport.call("tasks.create", {});
+    const request = transport.call("tasks.create", {
+      conversation_id: "0198f4de-0114-7000-8000-000000000001",
+      execution_target: "local",
+      idempotency_key: "task-1",
+      operation_mode: "answer",
+      user_request: "Answer",
+    });
 
     await expect(request).rejects.toBeInstanceOf(CoreRpcError);
     await expect(request).rejects.toMatchObject({

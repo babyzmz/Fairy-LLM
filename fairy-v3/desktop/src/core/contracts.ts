@@ -1,0 +1,65 @@
+import type { components, operations } from "./generated/api";
+
+type Schemas = components["schemas"];
+
+export type ApprovalDecisionInput = Schemas["ApprovalDecisionInput"];
+export type CapabilityManifest = Schemas["CapabilityManifestModel"];
+export type CapabilityRequest = Schemas["CapabilityRequest"];
+export type Changeset = Schemas["ChangesetModel"];
+export type ChangesetProposal = Schemas["ChangesetProposal"];
+export type Checkpoint = Schemas["CheckpointModel"];
+export type Conversation = Schemas["ConversationModel"];
+export type ConversationCreateInput = Schemas["ConversationCreate"];
+export type EventEnvelope = Schemas["EventEnvelopeModel"];
+export type Health = Schemas["HealthModel"];
+export type PendingChangeset = Schemas["PendingChangesetModel"];
+export type Project = Schemas["ProjectModel"];
+export type ProjectContext = Schemas["ProjectContextModel"];
+export type ProjectCreateInput = Schemas["ProjectCreate"];
+export type ProjectImportInput = Schemas["ProjectImport"];
+export type Task = Schemas["TaskModel"];
+export type TaskContext = Schemas["TaskContextModel"];
+export type TaskCreateInput = Schemas["TaskCreate"];
+export type Version = Schemas["VersionModel"];
+export type VersionAcceptInput = Schemas["VersionAcceptInput"];
+
+export interface EventBatch {
+  items: EventEnvelope[];
+  next_cursor: number;
+}
+
+export interface EventSubscriptionOptions {
+  signal?: AbortSignal;
+  pollIntervalMs?: number;
+}
+
+type EmptyParams = Record<string, never>;
+
+export interface CoreMethodMap {
+  health: { params: EmptyParams; result: Health };
+  "projects.create": { params: ProjectCreateInput; result: ProjectContext };
+  "projects.import": { params: ProjectImportInput; result: ProjectContext };
+  "projects.get": { params: { project_id: string }; result: Project };
+  "conversations.create": { params: ConversationCreateInput; result: Conversation };
+  "tasks.create": { params: TaskCreateInput; result: TaskContext };
+  "tasks.get": { params: { task_id: string }; result: Task };
+  "tasks.review": { params: { task_id: string }; result: Checkpoint };
+  "changesets.propose": { params: ChangesetProposal; result: PendingChangeset };
+  "approvals.decide": { params: ApprovalDecisionInput; result: Changeset };
+  "versions.get": { params: { version_id: string }; result: Version };
+  "versions.accept": { params: VersionAcceptInput; result: Project };
+  "versions.discard": { params: { task_id: string }; result: Task };
+  "capabilities.get": { params: CapabilityRequest; result: CapabilityManifest };
+  "events.subscribe": { params: { cursor: number }; result: EventBatch };
+}
+
+export type CoreMethodName = keyof CoreMethodMap;
+
+type GeneratedRpcMethod = Exclude<keyof operations, "cloud.ready" | `sync.${string}`>;
+type CoreMethodContractCoverage = Exclude<GeneratedRpcMethod, CoreMethodName> extends never
+  ? Exclude<CoreMethodName, GeneratedRpcMethod> extends never
+    ? true
+    : never
+  : never;
+
+export const CORE_METHOD_CONTRACT_COMPLETE: CoreMethodContractCoverage = true;

@@ -1,0 +1,14 @@
+{
+  "name": "fairy-contract-generator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "openapi-typescript ../../contracts/openapi.json -o ../../desktop/src/core/generated/api.d.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}
+

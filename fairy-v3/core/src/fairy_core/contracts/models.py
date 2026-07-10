@@ -8,11 +8,24 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from fairy_core.domain.models import OperationMode, ProjectResidency, WorkspaceType
+from fairy_core.commanding.types import PermissionProfile
+from fairy_core.domain.execution import ApprovalDecision, ChangesetStatus
+from fairy_core.domain.models import (
+    OperationMode,
+    ProjectResidency,
+    TaskStatus,
+    VersionVisibility,
+    WorkspaceType,
+)
 
 
 class ContractModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, use_enum_values=False)
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        from_attributes=True,
+        use_enum_values=False,
+    )
 
 
 class ExecutionTarget(StrEnum):
@@ -89,6 +102,140 @@ class VersionAcceptInput(TaskIdInput):
     user_confirmed: bool
 
 
+class CapabilityRequest(ContractModel):
+    profile: PermissionProfile = PermissionProfile.STANDARD
+    sandbox_healthy: bool = False
+    overrides: dict[str, bool] = Field(default_factory=dict)
+
+
+class ProjectModel(ContractModel):
+    id: UUID
+    name: str
+    residency: ProjectResidency
+    active_version_id: UUID | None
+    active_preview_id: UUID | None
+    revision: int = Field(ge=0)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConversationModel(ContractModel):
+    id: UUID
+    project_id: UUID | None
+    workspace_type: WorkspaceType
+    base_version_id: UUID | None
+    active_draft_version_id: UUID | None
+    active_task_id: UUID | None
+    active_preview_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskModel(ContractModel):
+    id: UUID
+    project_id: UUID | None
+    conversation_id: UUID
+    user_request: str
+    operation_mode: OperationMode
+    base_version_id: UUID | None
+    execution_target: ExecutionTarget
+    target_version_id: UUID | None
+    status: TaskStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+class VersionModel(ContractModel):
+    id: UUID
+    project_id: UUID
+    source_conversation_id: UUID | None
+    source_task_id: UUID | None
+    parent_version_id: UUID | None
+    project_root: Path
+    visibility: VersionVisibility
+    created_at: datetime
+
+
+class ScopeContractModel(ContractModel):
+    workspace_type: WorkspaceType
+    project_id: UUID | None
+    conversation_id: UUID
+    task_id: UUID
+    operation_mode: OperationMode
+    base_version_id: UUID | None
+    target_version_id: UUID | None
+    project_root: Path
+    allowed_write_paths: tuple[Path, ...]
+    forbidden_write_paths: tuple[Path, ...]
+    execution_target: ExecutionTarget
+    network_policy: str
+    memory_read_scope: tuple[str, ...]
+    memory_write_scope: tuple[str, ...]
+    scope_digest: str
+
+
+class ChangesetModel(ContractModel):
+    id: UUID
+    project_id: UUID
+    conversation_id: UUID
+    task_id: UUID
+    version_id: UUID
+    files: tuple[str, ...]
+    patches: tuple[str, ...]
+    reason: str
+    risk_level: str
+    idempotency_key: str
+    status: ChangesetStatus
+    approval_decision: ApprovalDecision
+    created_at: datetime
+    updated_at: datetime
+
+
+class ApprovalModel(ContractModel):
+    id: UUID
+    task_id: UUID
+    command_run_id: UUID
+    requested_by: str
+    reason: str
+    changeset_id: UUID | None
+    decision: ApprovalDecision
+    decided_by: str | None
+    created_at: datetime
+    decided_at: datetime | None
+
+
+class CheckpointModel(ContractModel):
+    id: UUID
+    task_id: UUID
+    version_id: UUID
+    changed_files: tuple[str, ...]
+    command_run_ids: tuple[UUID, ...]
+    preview_artifact_id: UUID | None
+    created_at: datetime
+
+
+class ProjectContextModel(ContractModel):
+    project: ProjectModel
+    initial_version: VersionModel
+
+
+class TaskContextModel(ContractModel):
+    task: TaskModel
+    target_version: VersionModel | None
+    scope: ScopeContractModel
+
+
+class PendingChangesetModel(ContractModel):
+    changeset: ChangesetModel
+    approval: ApprovalModel
+
+
+class HealthModel(ContractModel):
+    status: str
+    service: str
+    protocol: str
+
+
 class FileMutation(ContractModel):
     path: str = Field(min_length=1, max_length=1_024)
     content: str = Field(max_length=5_000_000)
@@ -144,4 +291,5 @@ class CapabilityManifestModel(ContractModel):
     profile: PermissionProfileModel
     operations: dict[str, bool]
     sandbox_healthy: bool
+    command_metadata: list[dict[str, Any]] = Field(default_factory=list)
     schema_version: int = 1

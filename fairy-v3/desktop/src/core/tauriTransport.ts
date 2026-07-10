@@ -1,4 +1,4 @@
-import type { CoreTransport } from "./client";
+import type { CoreMethodMap, CoreMethodName, CoreTransport } from "./client";
 
 export type InvokeFunction = <T>(
   command: string,
@@ -45,15 +45,21 @@ export class TauriCoreTransport implements CoreTransport {
 
   constructor(private readonly invoke: InvokeFunction) {}
 
-  async call<T>(method: string, params: unknown): Promise<T> {
-    const response = await this.invoke<JsonRpcResponse<T>>("core_rpc", {
-      request: {
-        jsonrpc: "2.0",
-        id: ++this.requestId,
-        method,
-        params,
+  async call<M extends CoreMethodName>(
+    method: M,
+    params: CoreMethodMap[M]["params"],
+  ): Promise<CoreMethodMap[M]["result"]> {
+    const response = await this.invoke<JsonRpcResponse<CoreMethodMap[M]["result"]>>(
+      "core_rpc",
+      {
+        request: {
+          jsonrpc: "2.0",
+          id: ++this.requestId,
+          method,
+          params,
+        },
       },
-    });
+    );
     if ("error" in response) {
       throw new CoreRpcError(response.error);
     }

@@ -5,15 +5,26 @@ from itertools import count
 from typing import Annotated, Any
 from uuid import UUID
 
-from fairy_core.commanding.types import PermissionProfile
 from fairy_core.contracts.models import (
     ApprovalDecisionInput,
+    CapabilityManifestModel,
+    CapabilityRequest,
+    ChangesetModel,
     ChangesetProposal,
+    CheckpointModel,
     ConversationCreate,
+    ConversationModel,
+    HealthModel,
+    PendingChangesetModel,
+    ProjectContextModel,
     ProjectCreate,
     ProjectImport,
+    ProjectModel,
+    TaskContextModel,
     TaskCreate,
+    TaskModel,
     VersionAcceptInput,
+    VersionModel,
 )
 from fairy_core.domain.errors import VersionConflictError
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
@@ -150,17 +161,21 @@ def create_cloud_app(
             )
         return object_store
 
-    @app.get("/v1/health")
+    @app.get("/v1/health", operation_id="health", response_model=HealthModel)
     def health() -> dict[str, Any]:
         return rpc("health", {})
 
-    @app.get("/v1/ready")
+    @app.get("/v1/ready", operation_id="cloud.ready")
     async def ready() -> dict[str, Any]:
         if readiness is None:
             return {"status": "ready"}
         return await readiness()
 
-    @protected.post("/projects")
+    @protected.post(
+        "/projects",
+        operation_id="projects.create",
+        response_model=ProjectContextModel,
+    )
     async def create_project(body: ProjectCreate, request: Request) -> dict[str, Any]:
         result = rpc("projects.create", body.model_dump(mode="json"))
         if sync_store is not None:
@@ -172,7 +187,11 @@ def create_cloud_app(
             )
         return result
 
-    @protected.post("/projects/import")
+    @protected.post(
+        "/projects/import",
+        operation_id="projects.import",
+        response_model=ProjectContextModel,
+    )
     async def import_project(body: ProjectImport, request: Request) -> dict[str, Any]:
         result = rpc("projects.import", body.model_dump(mode="json"))
         if sync_store is not None:
@@ -184,19 +203,43 @@ def create_cloud_app(
             )
         return result
 
-    @protected.post("/conversations")
+    @protected.get(
+        "/projects/{project_id}",
+        operation_id="projects.get",
+        response_model=ProjectModel,
+    )
+    def get_project(project_id: UUID) -> dict[str, Any]:
+        return rpc("projects.get", {"project_id": str(project_id)})
+
+    @protected.post(
+        "/conversations",
+        operation_id="conversations.create",
+        response_model=ConversationModel,
+    )
     def create_conversation(request: ConversationCreate) -> dict[str, Any]:
         return rpc("conversations.create", request.model_dump(mode="json"))
 
-    @protected.post("/tasks")
+    @protected.post("/tasks", operation_id="tasks.create", response_model=TaskContextModel)
     def create_task(request: TaskCreate) -> dict[str, Any]:
         return rpc("tasks.create", request.model_dump(mode="json"))
 
-    @protected.post("/changesets")
+    @protected.get("/tasks/{task_id}", operation_id="tasks.get", response_model=TaskModel)
+    def get_task(task_id: UUID) -> dict[str, Any]:
+        return rpc("tasks.get", {"task_id": str(task_id)})
+
+    @protected.post(
+        "/changesets",
+        operation_id="changesets.propose",
+        response_model=PendingChangesetModel,
+    )
     def propose_changeset(request: ChangesetProposal) -> dict[str, Any]:
         return rpc("changesets.propose", request.model_dump(mode="json"))
 
-    @protected.post("/approvals/{approval_id}/decision")
+    @protected.post(
+        "/approvals/{approval_id}/decision",
+        operation_id="approvals.decide",
+        response_model=ChangesetModel,
+    )
     def decide_approval(
         approval_id: UUID,
         request: ApprovalDecisionInput,
@@ -208,11 +251,19 @@ def create_cloud_app(
             )
         return rpc("approvals.decide", request.model_dump(mode="json"))
 
-    @protected.post("/tasks/{task_id}/review")
+    @protected.post(
+        "/tasks/{task_id}/review",
+        operation_id="tasks.review",
+        response_model=CheckpointModel,
+    )
     def review_task(task_id: UUID) -> dict[str, Any]:
         return rpc("tasks.review", {"task_id": str(task_id)})
 
-    @protected.post("/tasks/{task_id}/accept-version")
+    @protected.post(
+        "/tasks/{task_id}/accept-version",
+        operation_id="versions.accept",
+        response_model=ProjectModel,
+    )
     def accept_version(task_id: UUID, request: VersionAcceptInput) -> dict[str, Any]:
         if request.task_id != task_id:
             raise HTTPException(
@@ -221,21 +272,36 @@ def create_cloud_app(
             )
         return rpc("versions.accept", request.model_dump(mode="json"))
 
-    @protected.delete("/tasks/{task_id}/version")
+    @protected.delete(
+        "/tasks/{task_id}/version",
+        operation_id="versions.discard",
+        response_model=TaskModel,
+    )
     def discard_version(task_id: UUID) -> dict[str, Any]:
         return rpc("versions.discard", {"task_id": str(task_id)})
 
-    @protected.get("/capabilities")
+    @protected.get(
+        "/versions/{version_id}",
+        operation_id="versions.get",
+        response_model=VersionModel,
+    )
+    def get_version(version_id: UUID) -> dict[str, Any]:
+        return rpc("versions.get", {"version_id": str(version_id)})
+
+    @protected.post(
+        "/capabilities",
+        operation_id="capabilities.get",
+        response_model=CapabilityManifestModel,
+    )
     def capabilities(
-        profile: Annotated[PermissionProfile, Query()] = PermissionProfile.STANDARD,
-        sandbox_healthy: Annotated[bool, Query()] = False,
+        request: CapabilityRequest,
     ) -> dict[str, Any]:
         return rpc(
             "capabilities.get",
-            {"profile": profile.value, "sandbox_healthy": sandbox_healthy},
+            request.model_dump(mode="json"),
         )
 
-    @protected.post("/sync/projects")
+    @protected.post("/sync/projects", operation_id="sync.projects.register")
     async def register_synced_project(
         body: SyncProjectRegistration,
         request: Request,
@@ -254,7 +320,7 @@ def create_cloud_app(
             "active_version_id": state.active_version_id,
         }
 
-    @protected.post("/sync/events")
+    @protected.post("/sync/events", operation_id="sync.events.upload")
     async def upload_sync_events(body: SyncEventBatch, request: Request) -> dict[str, Any]:
         identity = identity_for(request)
         store = configured_sync_store()
@@ -280,7 +346,10 @@ def create_cloud_app(
             "next_cursor": max(item["cursor"] for item in accepted),
         }
 
-    @protected.put("/sync/projects/{project_id}/versions/{version_id}/snapshot")
+    @protected.put(
+        "/sync/projects/{project_id}/versions/{version_id}/snapshot",
+        operation_id="sync.versions.uploadSnapshot",
+    )
     async def upload_version_snapshot(
         project_id: UUID,
         version_id: UUID,
@@ -320,7 +389,10 @@ def create_cloud_app(
             "size": location.size,
         }
 
-    @protected.post("/sync/projects/{project_id}/versions/{version_id}/promote")
+    @protected.post(
+        "/sync/projects/{project_id}/versions/{version_id}/promote",
+        operation_id="sync.versions.promote",
+    )
     async def promote_synced_version(
         project_id: UUID,
         version_id: UUID,
@@ -373,7 +445,11 @@ def create_cloud_app(
             "revision": state.revision,
         }
 
-    @protected.get("/events", response_class=EventSourceResponse)
+    @protected.get(
+        "/events",
+        response_class=EventSourceResponse,
+        operation_id="events.subscribe",
+    )
     async def events(
         request: Request,
         cursor: Annotated[int, Query(ge=0)] = 0,

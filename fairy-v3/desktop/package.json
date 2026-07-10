@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1430",
     "build": "tsc --noEmit && vite build",
+    "generate:contracts": "npm --prefix ../tools/contracts run generate",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",

@@ -13,9 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from fairy_core.application.core import CoreApplication
 from fairy_core.commanding.ledger import EventVisibility, SqliteCommandLedger
 from fairy_core.commanding.registry import ToolRegistry
-from fairy_core.commanding.types import PermissionProfile
 from fairy_core.contracts.models import (
     ApprovalDecisionInput,
+    CapabilityRequest,
     ChangesetProposal,
     ConversationCreate,
     ProjectCreate,
@@ -29,15 +29,29 @@ from fairy_core.contracts.models import (
 from fairy_core.domain.errors import DomainError
 from fairy_core.workspace.worker_transport import WorkerRpcError
 
+_PUBLIC_METHOD_NAMES = frozenset(
+    {
+        "approvals.decide",
+        "capabilities.get",
+        "changesets.propose",
+        "conversations.create",
+        "events.subscribe",
+        "health",
+        "projects.create",
+        "projects.get",
+        "projects.import",
+        "tasks.create",
+        "tasks.get",
+        "tasks.review",
+        "versions.accept",
+        "versions.discard",
+        "versions.get",
+    }
+)
+
 
 class _Params(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-
-class _CapabilityParams(_Params):
-    profile: PermissionProfile
-    sandbox_healthy: bool
-    overrides: dict[str, bool] = Field(default_factory=dict)
 
 
 class _EventSubscribeParams(_Params):
@@ -72,6 +86,12 @@ class JsonRpcDispatcher:
             "capabilities.get": self._get_capabilities,
             "events.subscribe": self._subscribe_events,
         }
+        if self._methods.keys() != _PUBLIC_METHOD_NAMES:
+            raise RuntimeError("JSON-RPC handlers do not match the public method contract")
+
+    @classmethod
+    def method_names(cls) -> frozenset[str]:
+        return _PUBLIC_METHOD_NAMES
 
     def dispatch(self, request: dict[str, Any]) -> dict[str, Any]:
         request_id = request.get("id")
@@ -214,7 +234,7 @@ class JsonRpcDispatcher:
         return self._application.discard_task_version(validated.task_id)
 
     def _get_capabilities(self, params: dict[str, Any]) -> Any:
-        validated = _CapabilityParams.model_validate(params)
+        validated = CapabilityRequest.model_validate(params)
         return {
             "profile": validated.profile,
             "operations": self._registry.capability_manifest(
