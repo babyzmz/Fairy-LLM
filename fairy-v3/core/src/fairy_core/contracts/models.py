@@ -370,6 +370,29 @@ class MemoryClaimQuery(ContractModel):
     namespace: MemoryNamespace
 
 
+class MemorySearchInput(ContractModel):
+    task_id: UUID
+    query: str = Field(min_length=1, max_length=10_000)
+    limit: int = Field(default=20, ge=1, le=100)
+
+    @field_validator("query")
+    @classmethod
+    def require_nonblank_query(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("memory search query is required")
+        return normalized
+
+
+class MemorySnapshotGetInput(ContractModel):
+    task_id: UUID
+    snapshot_id: UUID
+
+
+class MemoryProjectionHealthInput(ContractModel):
+    task_id: UUID
+
+
 class _MemoryClaimValueInput(ContractModel):
     task_id: UUID
     value: JsonValue
@@ -530,6 +553,10 @@ class MemorySearchHitModel(ContractModel):
     exact_match: bool
 
 
+class MemorySearchPageModel(ContractModel):
+    items: tuple[MemorySearchHitModel, ...]
+
+
 class MemorySnapshotItemModel(ContractModel):
     ordinal: int = Field(ge=0)
     source_kind: MemorySourceKind
@@ -608,11 +635,18 @@ class MemoryProjectionHealthModel(ContractModel):
     state: ProjectionState
     source_watermark_cursor: int = Field(ge=0)
     projected_watermark_cursor: int = Field(ge=0)
+    lag: int = Field(ge=0)
     last_error_code: str | None = Field(default=None, min_length=1, max_length=128)
     updated_at: datetime
 
     @model_validator(mode="after")
     def require_consistent_ready_state(self) -> MemoryProjectionHealthModel:
+        expected_lag = max(
+            0,
+            self.source_watermark_cursor - self.projected_watermark_cursor,
+        )
+        if self.lag != expected_lag:
+            raise ValueError("projection lag does not match its watermarks")
         if self.state is ProjectionState.READY:
             if self.projected_watermark_cursor < self.source_watermark_cursor:
                 raise ValueError("READY projection cannot trail source")

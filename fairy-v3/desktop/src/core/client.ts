@@ -13,6 +13,7 @@ import type {
   MemoryForgetInput,
   MemoryNamespace,
   MemoryObserveInput,
+  MemorySearchInput,
   ProjectCreateInput,
   ProjectImportInput,
   TaskCreateInput,
@@ -99,6 +100,18 @@ export class CoreClient {
         this.transport.call("memory.claims.supersede", input),
       resolveConflict: (input: MemoryClaimResolveInput) =>
         this.transport.call("memory.claims.resolve_conflict", input),
+    },
+    search: (input: MemorySearchInput) => this.transport.call("memory.search", input),
+    snapshots: {
+      get: (taskId: string, snapshotId: string) =>
+        this.transport.call("memory.snapshots.get", {
+          task_id: taskId,
+          snapshot_id: snapshotId,
+        }),
+    },
+    projection: {
+      health: (taskId: string) =>
+        this.transport.call("memory.projection.health", { task_id: taskId }),
     },
     forget: (input: MemoryForgetInput) => this.transport.call("memory.forget", input),
   };

@@ -226,6 +226,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/memory/projection/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Memory Projection Health */
+        get: operations["memory.projection.health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search Memory */
+        get: operations["memory.search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/snapshots/{snapshot_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Memory Snapshot */
+        get: operations["memory.snapshots.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects": {
         parameters: {
             query?: never;
@@ -1048,16 +1099,178 @@ export interface components {
              */
             task_id: string;
         };
+        /** MemoryProjectionHealthModel */
+        MemoryProjectionHealthModel: {
+            /** Generation */
+            generation: number;
+            /** Lag */
+            lag: number;
+            /** Last Error Code */
+            last_error_code?: string | null;
+            /** Projected Watermark Cursor */
+            projected_watermark_cursor: number;
+            /** Source Watermark Cursor */
+            source_watermark_cursor: number;
+            state: components["schemas"]["ProjectionState"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /**
          * MemoryScanResult
          * @enum {string}
          */
         MemoryScanResult: "unchecked" | "clean" | "injection_blocked" | "secret_blocked";
+        /** MemorySearchDocumentModel */
+        MemorySearchDocumentModel: {
+            /** Content Hash */
+            content_hash: string;
+            /** Conversation Id */
+            conversation_id: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Language */
+            language: string;
+            namespace: components["schemas"]["MemoryNamespace"] | null;
+            /** Normalized Text */
+            normalized_text: string;
+            /** Project Id */
+            project_id: string | null;
+            /** Projection Generation */
+            projection_generation: number;
+            /** Source Cursor */
+            source_cursor: number;
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            source_kind: components["schemas"]["MemorySourceKind"];
+            /** Source Revision */
+            source_revision?: number | null;
+            /** Task Id */
+            task_id: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version Id */
+            version_id: string | null;
+        };
+        /** MemorySearchHitModel */
+        MemorySearchHitModel: {
+            document: components["schemas"]["MemorySearchDocumentModel"];
+            /** Exact Match */
+            exact_match: boolean;
+            /** Lexical Score */
+            lexical_score: number;
+        };
+        /** MemorySearchPageModel */
+        MemorySearchPageModel: {
+            /** Items */
+            items: components["schemas"]["MemorySearchHitModel"][];
+        };
+        /**
+         * MemorySelectionReason
+         * @enum {string}
+         */
+        MemorySelectionReason: "exact_canonical" | "canonical" | "exact_profile" | "user_profile" | "conversation_draft" | "lexical_history" | "relational_fallback" | "conflict_disclosure";
         /**
          * MemorySensitivity
          * @enum {string}
          */
         MemorySensitivity: "public" | "private" | "secret";
+        /** MemorySnapshotItemModel */
+        MemorySnapshotItemModel: {
+            authority: components["schemas"]["MemoryAuthority"];
+            namespace: components["schemas"]["MemoryNamespace"] | null;
+            /** Ordinal */
+            ordinal: number;
+            /** Rendered Text */
+            rendered_text: string;
+            /** Rendered Text Hash */
+            rendered_text_hash: string;
+            /** Score Components */
+            score_components: {
+                [key: string]: number;
+            };
+            selection_reason: components["schemas"]["MemorySelectionReason"];
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            source_kind: components["schemas"]["MemorySourceKind"];
+            /** Source Revision */
+            source_revision?: number | null;
+            /** Token Count */
+            token_count: number;
+        };
+        /** MemorySnapshotModel */
+        MemorySnapshotModel: {
+            /** Base Version Id */
+            base_version_id: string | null;
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Degraded Reason */
+            degraded_reason?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Items */
+            items: components["schemas"]["MemorySnapshotItemModel"][];
+            /** Policy Version */
+            policy_version: string;
+            /** Project Id */
+            project_id: string | null;
+            /** Projection Generation */
+            projection_generation: number;
+            projection_state: components["schemas"]["ProjectionState"];
+            /** Projection Watermark Cursor */
+            projection_watermark_cursor: number;
+            /** Snapshot Version */
+            snapshot_version: number;
+            /** Source Watermark Cursor */
+            source_watermark_cursor: number;
+            status: components["schemas"]["MemorySnapshotStatus"];
+            /** Target Version Id */
+            target_version_id: string | null;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Token Count */
+            token_count: number;
+        };
+        /**
+         * MemorySnapshotStatus
+         * @enum {string}
+         */
+        MemorySnapshotStatus: "ready" | "degraded";
+        /**
+         * MemorySourceKind
+         * @enum {string}
+         */
+        MemorySourceKind: "claim_revision" | "observation" | "domain_event";
         /**
          * MemorySourceType
          * @enum {string}
@@ -1175,6 +1388,11 @@ export interface components {
          * @enum {string}
          */
         ProjectResidency: "local_only" | "synced";
+        /**
+         * ProjectionState
+         * @enum {string}
+         */
+        ProjectionState: "ready" | "stale" | "unavailable" | "failed";
         /** ScopeContractModel */
         ScopeContractModel: {
             /** Allowed Write Paths */
@@ -1868,6 +2086,109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemoryObservationModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.projection.health": {
+        parameters: {
+            query: {
+                task_id: string;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryProjectionHealthModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.search": {
+        parameters: {
+            query: {
+                task_id: string;
+                query: string;
+                limit?: number;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySearchPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.snapshots.get": {
+        parameters: {
+            query: {
+                task_id: string;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                snapshot_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySnapshotModel"];
                 };
             };
             /** @description Validation Error */

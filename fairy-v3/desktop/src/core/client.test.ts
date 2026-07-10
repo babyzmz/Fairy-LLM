@@ -131,6 +131,9 @@ describe("CoreClient", () => {
       user_confirmed: true,
       idempotency_key: "memory-forget-1",
     });
+    await client.memory.search({ task_id: id, query: "memory", limit: 10 });
+    await client.memory.snapshots.get(id, id);
+    await client.memory.projection.health(id);
 
     expect(transport.requests.map(({ method }) => method)).toEqual([
       "health",
@@ -155,6 +158,9 @@ describe("CoreClient", () => {
       "memory.claims.supersede",
       "memory.claims.resolve_conflict",
       "memory.forget",
+      "memory.search",
+      "memory.snapshots.get",
+      "memory.projection.health",
     ]);
     expect(transport.requests[3]?.params).toEqual({ project_id: id });
     expect(transport.requests[7]?.params).toEqual({ task_id: id });

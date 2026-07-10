@@ -13,6 +13,9 @@ from fairy_core.contracts.models import (
     MemoryForgetInput,
     MemoryObservationQuery,
     MemoryObserveInput,
+    MemoryProjectionHealthInput,
+    MemorySearchInput,
+    MemorySnapshotGetInput,
 )
 from fairy_core.domain.ids import new_id
 from fairy_core.memory.models import MemoryNamespace
@@ -125,3 +128,34 @@ def test_memory_query_contracts_are_task_scoped() -> None:
     assert supersede.expected_revision == 1
     assert resolve.resolved_claim_ids == (claim_id,)
     assert forget.target_kind == "claim"
+
+
+@pytest.mark.parametrize("limit", [0, 101])
+def test_memory_search_contract_enforces_query_and_limit_bounds(limit: int) -> None:
+    with pytest.raises(ValidationError):
+        MemorySearchInput(task_id=new_id(), query="memory", limit=limit)
+
+    with pytest.raises(ValidationError):
+        MemorySearchInput(task_id=new_id(), query="   ", limit=10)
+
+    with pytest.raises(ValidationError):
+        MemorySearchInput(task_id=new_id(), query="x" * 10_001, limit=10)
+
+
+def test_memory_retrieval_contracts_accept_only_core_resolved_scope_fields() -> None:
+    task_id = new_id()
+    snapshot_id = new_id()
+    search = MemorySearchInput(task_id=task_id, query="compact navigation", limit=25)
+    snapshot = MemorySnapshotGetInput(task_id=task_id, snapshot_id=snapshot_id)
+    health = MemoryProjectionHealthInput(task_id=task_id)
+
+    assert set(search.model_dump()) == {"task_id", "query", "limit"}
+    assert set(snapshot.model_dump()) == {"task_id", "snapshot_id"}
+    assert set(health.model_dump()) == {"task_id"}
+    for model, payload in (
+        (MemorySearchInput, search.model_dump(mode="json")),
+        (MemorySnapshotGetInput, snapshot.model_dump(mode="json")),
+        (MemoryProjectionHealthInput, health.model_dump(mode="json")),
+    ):
+        with pytest.raises(ValidationError):
+            model.model_validate({**payload, "project_id": str(new_id())})

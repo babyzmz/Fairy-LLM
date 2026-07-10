@@ -24,6 +24,9 @@ from fairy_core.contracts.models import (
     MemoryForgetInput,
     MemoryObservationQuery,
     MemoryObserveInput,
+    MemoryProjectionHealthInput,
+    MemorySearchInput,
+    MemorySnapshotGetInput,
     ProjectCreate,
     ProjectIdInput,
     ProjectImport,
@@ -32,6 +35,7 @@ from fairy_core.contracts.models import (
     VersionAcceptInput,
     VersionIdInput,
 )
+from fairy_core.domain.errors import MemoryScopeViolationError
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -87,6 +91,9 @@ class CoreService:
             "memory.forget": self._forget_memory,
             "memory.observations.create": self._observe_memory,
             "memory.observations.list": self._list_memory_observations,
+            "memory.projection.health": self._memory_projection_health,
+            "memory.search": self._search_memory,
+            "memory.snapshots.get": self._get_memory_snapshot,
             "projects.create": self._create_project,
             "projects.get": self._get_project,
             "projects.import": self._import_project,
@@ -158,6 +165,66 @@ class CoreService:
 
     def _forget_memory(self, request: BaseModel) -> Any:
         return self._memory_application.forget(cast(MemoryForgetInput, request))
+
+    def _search_memory(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(MemorySearchInput, request)
+        with self._unit_of_work_factory() as unit_of_work:
+            task = unit_of_work.state.get_task(validated.task_id)
+            if task is None:
+                raise KeyError(f"task not found: {validated.task_id}")
+            scope = self._application.scope_for_task(unit_of_work.state, task)
+            hits = unit_of_work.memory_search.search(
+                scope=scope,
+                query=validated.query,
+                generation=1,
+                limit=validated.limit,
+            )
+        return {"items": hits}
+
+    def _get_memory_snapshot(self, request: BaseModel) -> Any:
+        validated = cast(MemorySnapshotGetInput, request)
+        with self._unit_of_work_factory() as unit_of_work:
+            task = unit_of_work.state.get_task(validated.task_id)
+            if task is None:
+                raise KeyError(f"task not found: {validated.task_id}")
+            if task.memory_snapshot_id != validated.snapshot_id:
+                raise MemoryScopeViolationError(
+                    "Snapshot is not bound to the requested Task"
+                )
+            snapshot = unit_of_work.snapshots.get(
+                validated.snapshot_id,
+                task_id=validated.task_id,
+            )
+            if snapshot is None:
+                raise MemoryScopeViolationError(
+                    "Task-bound Snapshot is unavailable"
+                )
+            return snapshot
+
+    def _memory_projection_health(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(MemoryProjectionHealthInput, request)
+        with self._unit_of_work_factory() as unit_of_work:
+            task = unit_of_work.state.get_task(validated.task_id)
+            if task is None:
+                raise KeyError(f"task not found: {validated.task_id}")
+            self._application.scope_for_task(unit_of_work.state, task)
+            source_watermark_cursor = unit_of_work.commands.current_cursor()
+            health = unit_of_work.memory_search.health(
+                generation=1,
+                source_watermark_cursor=source_watermark_cursor,
+            )
+        return {
+            "generation": health.generation,
+            "state": health.state,
+            "source_watermark_cursor": health.source_watermark_cursor,
+            "projected_watermark_cursor": health.projected_watermark_cursor,
+            "lag": max(
+                0,
+                health.source_watermark_cursor - health.projected_watermark_cursor,
+            ),
+            "last_error_code": health.last_error_code,
+            "updated_at": health.updated_at,
+        }
 
     def _import_project(self, request: BaseModel) -> Any:
         validated = cast(ProjectImport, request)

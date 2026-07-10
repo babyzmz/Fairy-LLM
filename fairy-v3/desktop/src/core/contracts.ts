@@ -24,6 +24,11 @@ export type MemoryNamespace = Schemas["MemoryNamespace"];
 export type MemoryObservation = Schemas["MemoryObservationModel"];
 export type MemoryObservationPage = Schemas["MemoryObservationPageModel"];
 export type MemoryObserveInput = Schemas["MemoryObserveInput"];
+export type MemoryProjectionHealth = Schemas["MemoryProjectionHealthModel"];
+export type MemorySearchHit = Schemas["MemorySearchHitModel"];
+export type MemorySearchInput = operations["memory.search"]["parameters"]["query"];
+export type MemorySearchPage = Schemas["MemorySearchPageModel"];
+export type MemorySnapshot = Schemas["MemorySnapshotModel"];
 export type MemoryTombstone = Schemas["MemoryTombstoneModel"];
 export type PendingChangeset = Schemas["PendingChangesetModel"];
 export type Project = Schemas["ProjectModel"];
@@ -93,6 +98,15 @@ export interface CoreMethodMap {
     result: MemoryClaimContext;
   };
   "memory.forget": { params: MemoryForgetInput; result: MemoryTombstone };
+  "memory.search": { params: MemorySearchInput; result: MemorySearchPage };
+  "memory.snapshots.get": {
+    params: { task_id: string; snapshot_id: string };
+    result: MemorySnapshot;
+  };
+  "memory.projection.health": {
+    params: { task_id: string };
+    result: MemoryProjectionHealth;
+  };
 }
 
 export type CoreMethodName = keyof CoreMethodMap;

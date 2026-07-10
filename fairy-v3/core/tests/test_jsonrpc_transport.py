@@ -100,6 +100,83 @@ def test_jsonrpc_task_create_rejects_client_scope_injection(tmp_path: Path) -> N
     assert response["error"]["data"]["error_code"] == "INVALID_PARAMS"
 
 
+def test_jsonrpc_exposes_task_scoped_memory_retrieval(tmp_path: Path) -> None:
+    dispatcher = _dispatcher(tmp_path)
+    project = _call(
+        dispatcher,
+        1,
+        "projects.create",
+        {"name": "Memory retrieval", "residency": "local_only"},
+    )["result"]
+    conversation = _call(
+        dispatcher,
+        2,
+        "conversations.create",
+        {
+            "project_id": project["project"]["id"],
+            "workspace_type": "project_chat",
+        },
+    )["result"]
+    task = _call(
+        dispatcher,
+        3,
+        "tasks.create",
+        {
+            "conversation_id": conversation["id"],
+            "user_request": "inspect memory",
+            "operation_mode": "continue_current_chat_draft",
+            "execution_target": "local",
+            "idempotency_key": "rpc:memory-retrieval",
+        },
+    )["result"]
+    task_id = task["task"]["id"]
+    snapshot_id = task["task"]["memory_snapshot_id"]
+
+    search = _call(
+        dispatcher,
+        4,
+        "memory.search",
+        {"task_id": task_id, "query": "memory", "limit": 10},
+    )
+    snapshot = _call(
+        dispatcher,
+        5,
+        "memory.snapshots.get",
+        {"task_id": task_id, "snapshot_id": snapshot_id},
+    )
+    health = _call(
+        dispatcher,
+        6,
+        "memory.projection.health",
+        {"task_id": task_id},
+    )
+    forged = _call(
+        dispatcher,
+        7,
+        "memory.snapshots.get",
+        {
+            "task_id": task_id,
+            "snapshot_id": "018f0f7c-1234-7000-8000-000000000099",
+        },
+    )
+    invalid_limit = _call(
+        dispatcher,
+        8,
+        "memory.search",
+        {"task_id": task_id, "query": "memory", "limit": 101},
+    )
+
+    assert search["result"] == {"items": []}
+    assert snapshot["result"]["id"] == snapshot_id
+    assert [item["ordinal"] for item in snapshot["result"]["items"]] == list(
+        range(len(snapshot["result"]["items"]))
+    )
+    assert health["result"]["lag"] >= 0
+    assert health["result"]["state"] in {"ready", "stale", "unavailable", "failed"}
+    assert forged["error"]["data"]["error_code"] == "MEMORY_SCOPE_VIOLATION"
+    assert invalid_limit["error"]["data"]["error_code"] == "INVALID_PARAMS"
+
+
 def test_jsonrpc_unknown_method_uses_standard_error(tmp_path: Path) -> None:
     response = _call(_dispatcher(tmp_path), 9, "shell.execute", {})
 
@@ -215,6 +292,9 @@ def test_public_method_manifest_is_stable() -> None:
             "memory.forget",
             "memory.observations.create",
             "memory.observations.list",
+            "memory.projection.health",
+            "memory.search",
+            "memory.snapshots.get",
             "projects.create",
             "projects.get",
             "projects.import",

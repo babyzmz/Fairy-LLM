@@ -323,6 +323,82 @@ async def test_memory_routes_are_task_scoped_and_share_core_contracts(app) -> No
 
 
 @pytest.mark.asyncio
+async def test_memory_retrieval_routes_share_task_scoped_core_contracts(app) -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=AUTH_HEADERS,
+    ) as client:
+        project = (
+            await client.post(
+                "/v1/projects",
+                json={"name": "Memory retrieval", "residency": "synced"},
+            )
+        ).json()
+        conversation = (
+            await client.post(
+                "/v1/conversations",
+                json={
+                    "project_id": project["project"]["id"],
+                    "workspace_type": "project_chat",
+                },
+            )
+        ).json()
+        task_response = await client.post(
+            "/v1/tasks",
+            json={
+                "conversation_id": conversation["id"],
+                "user_request": "inspect memory",
+                "operation_mode": "continue_current_chat_draft",
+                "execution_target": "cloud",
+                "idempotency_key": "memory:retrieval:http:task",
+            },
+        )
+        task_response.raise_for_status()
+        task = task_response.json()["task"]
+
+        search = await client.get(
+            "/v1/memory/search",
+            params={"task_id": task["id"], "query": "memory", "limit": 10},
+        )
+        snapshot = await client.get(
+            f"/v1/memory/snapshots/{task['memory_snapshot_id']}",
+            params={"task_id": task["id"]},
+        )
+        health = await client.get(
+            "/v1/memory/projection/health",
+            params={"task_id": task["id"]},
+        )
+        invalid_limit = await client.get(
+            "/v1/memory/search",
+            params={"task_id": task["id"], "query": "memory", "limit": 101},
+        )
+        injected_scope = await client.get(
+            "/v1/memory/search",
+            params={
+                "task_id": task["id"],
+                "query": "memory",
+                "project_id": project["project"]["id"],
+            },
+        )
+        forged = await client.get(
+            "/v1/memory/snapshots/018f0f7c-1234-7000-8000-000000000099",
+            params={"task_id": task["id"]},
+        )
+
+    search.raise_for_status()
+    snapshot.raise_for_status()
+    health.raise_for_status()
+    assert search.json() == {"items": []}
+    assert snapshot.json()["id"] == task["memory_snapshot_id"]
+    assert health.json()["lag"] >= 0
+    assert invalid_limit.status_code == 422
+    assert injected_scope.status_code == 422
+    assert forged.status_code == 409
+    assert forged.json()["detail"]["code"] == "MEMORY_SCOPE_VIOLATION"
+
+
+@pytest.mark.asyncio
 async def test_authenticated_commands_resolve_an_isolated_tenant_core(tmp_path: Path) -> None:
     identities = {
         "token-a": RequestIdentity("user-a", "device-a", frozenset({"fairy.api"})),

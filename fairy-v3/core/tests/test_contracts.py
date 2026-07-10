@@ -158,6 +158,7 @@ def test_projection_health_contract_requires_bounded_watermarks() -> None:
         state=ProjectionState.STALE,
         source_watermark_cursor=9,
         projected_watermark_cursor=7,
+        lag=2,
         last_error_code="MEMORY_PROJECTION_STALE",
         updated_at=datetime.now(UTC),
     )

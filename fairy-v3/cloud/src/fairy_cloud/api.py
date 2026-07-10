@@ -32,6 +32,12 @@ from fairy_core.contracts.models import (
     MemoryObservationPageModel,
     MemoryObservationQuery,
     MemoryObserveInput,
+    MemoryProjectionHealthInput,
+    MemoryProjectionHealthModel,
+    MemorySearchInput,
+    MemorySearchPageModel,
+    MemorySnapshotGetInput,
+    MemorySnapshotModel,
     MemoryTombstoneModel,
     PendingChangesetModel,
     ProjectContextModel,
@@ -415,6 +421,41 @@ def create_cloud_app(
     def forget_memory(request: MemoryForgetInput) -> dict[str, Any]:
         return invoke("memory.forget", request.model_dump(mode="json"))
 
+    @protected.get(
+        "/memory/search",
+        operation_id="memory.search",
+        response_model=MemorySearchPageModel,
+    )
+    def search_memory(
+        request: Annotated[MemorySearchInput, Query()],
+    ) -> dict[str, Any]:
+        return invoke("memory.search", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/memory/snapshots/{snapshot_id}",
+        operation_id="memory.snapshots.get",
+        response_model=MemorySnapshotModel,
+    )
+    def get_memory_snapshot(
+        snapshot_id: UUID,
+        request: Annotated[MemoryProjectionHealthInput, Query()],
+    ) -> dict[str, Any]:
+        payload = MemorySnapshotGetInput(
+            task_id=request.task_id,
+            snapshot_id=snapshot_id,
+        )
+        return invoke("memory.snapshots.get", payload.model_dump(mode="json"))
+
+    @protected.get(
+        "/memory/projection/health",
+        operation_id="memory.projection.health",
+        response_model=MemoryProjectionHealthModel,
+    )
+    def get_memory_projection_health(
+        request: Annotated[MemoryProjectionHealthInput, Query()],
+    ) -> dict[str, Any]:
+        return invoke("memory.projection.health", request.model_dump(mode="json"))
+
     @protected.post("/sync/projects", operation_id="sync.projects.register")
     async def register_synced_project(
         body: SyncProjectRegistration,
@@ -663,6 +704,7 @@ def _core_http_exception(error: Exception) -> HTTPException:
             "MEMORY_CONFLICT": 409,
             "MEMORY_FORGOTTEN": 410,
             "MEMORY_PROJECTION_STALE": 503,
+            "MEMORY_SCOPE_VIOLATION": 409,
             "MEMORY_SNAPSHOT_TOO_LARGE": 413,
             "VERSION_CONFLICT": 409,
             "WORKER_INTERRUPTED": 503,

@@ -84,6 +84,19 @@ const routes = {
       params,
     ),
   "memory.forget": (params) => post("/v1/memory/forget", params),
+  "memory.search": (params) =>
+    get(
+      `/v1/memory/search?task_id=${stringParameter(params, "task_id")}` +
+        `&query=${stringParameter(params, "query")}` +
+        `&limit=${memorySearchLimit(params)}`,
+    ),
+  "memory.snapshots.get": (params) =>
+    get(
+      `/v1/memory/snapshots/${pathParameter(params, "snapshot_id")}` +
+        `?task_id=${stringParameter(params, "task_id")}`,
+    ),
+  "memory.projection.health": (params) =>
+    get(`/v1/memory/projection/health?task_id=${stringParameter(params, "task_id")}`),
   "events.subscribe": (params) =>
     get(`/v1/events?cursor=${integerParameter(params, "cursor")}&follow=false`),
 } satisfies Record<CoreMethodName, RouteBuilder>;
@@ -247,6 +260,14 @@ function stringParameter(params: RuntimeParams, name: string): string {
     throw new TypeError(`Core parameter ${name} must be a non-empty string`);
   }
   return encodeURIComponent(value);
+}
+
+function memorySearchLimit(params: RuntimeParams): number {
+  const value = params.limit ?? 20;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 100) {
+    throw new TypeError("Core parameter limit must be an integer between 1 and 100");
+  }
+  return value;
 }
 
 function validateCoreResult(method: CoreMethodName, payload: unknown): unknown {

@@ -1594,6 +1594,62 @@
         "title": "MemoryObserveInput",
         "type": "object"
       },
+      "MemoryProjectionHealthModel": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "lag": {
+            "minimum": 0.0,
+            "title": "Lag",
+            "type": "integer"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "projected_watermark_cursor": {
+            "minimum": 0.0,
+            "title": "Projected Watermark Cursor",
+            "type": "integer"
+          },
+          "source_watermark_cursor": {
+            "minimum": 0.0,
+            "title": "Source Watermark Cursor",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ProjectionState"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generation",
+          "state",
+          "source_watermark_cursor",
+          "projected_watermark_cursor",
+          "lag",
+          "updated_at"
+        ],
+        "title": "MemoryProjectionHealthModel",
+        "type": "object"
+      },
       "MemoryScanResult": {
         "enum": [
           "unchecked",
@@ -1604,6 +1660,200 @@
         "title": "MemoryScanResult",
         "type": "string"
       },
+      "MemorySearchDocumentModel": {
+        "additionalProperties": false,
+        "properties": {
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "language": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Language",
+            "type": "string"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryNamespace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "normalized_text": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Normalized Text",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "projection_generation": {
+            "minimum": 1.0,
+            "title": "Projection Generation",
+            "type": "integer"
+          },
+          "source_cursor": {
+            "minimum": 1.0,
+            "title": "Source Cursor",
+            "type": "integer"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_kind": {
+            "$ref": "#/components/schemas/MemorySourceKind"
+          },
+          "source_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Revision"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          }
+        },
+        "required": [
+          "id",
+          "source_kind",
+          "source_id",
+          "namespace",
+          "project_id",
+          "conversation_id",
+          "task_id",
+          "version_id",
+          "language",
+          "normalized_text",
+          "content_hash",
+          "source_cursor",
+          "projection_generation",
+          "updated_at"
+        ],
+        "title": "MemorySearchDocumentModel",
+        "type": "object"
+      },
+      "MemorySearchHitModel": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/MemorySearchDocumentModel"
+          },
+          "exact_match": {
+            "title": "Exact Match",
+            "type": "boolean"
+          },
+          "lexical_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Lexical Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "document",
+          "lexical_score",
+          "exact_match"
+        ],
+        "title": "MemorySearchHitModel",
+        "type": "object"
+      },
+      "MemorySearchPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemorySearchHitModel"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "MemorySearchPageModel",
+        "type": "object"
+      },
+      "MemorySelectionReason": {
+        "enum": [
+          "exact_canonical",
+          "canonical",
+          "exact_profile",
+          "user_profile",
+          "conversation_draft",
+          "lexical_history",
+          "relational_fallback",
+          "conflict_disclosure"
+        ],
+        "title": "MemorySelectionReason",
+        "type": "string"
+      },
       "MemorySensitivity": {
         "enum": [
           "public",
@@ -1611,6 +1861,252 @@
           "secret"
         ],
         "title": "MemorySensitivity",
+        "type": "string"
+      },
+      "MemorySnapshotItemModel": {
+        "additionalProperties": false,
+        "properties": {
+          "authority": {
+            "$ref": "#/components/schemas/MemoryAuthority"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemoryNamespace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ordinal": {
+            "minimum": 0.0,
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "rendered_text": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Rendered Text",
+            "type": "string"
+          },
+          "rendered_text_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Rendered Text Hash",
+            "type": "string"
+          },
+          "score_components": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Score Components",
+            "type": "object"
+          },
+          "selection_reason": {
+            "$ref": "#/components/schemas/MemorySelectionReason"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_kind": {
+            "$ref": "#/components/schemas/MemorySourceKind"
+          },
+          "source_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Revision"
+          },
+          "token_count": {
+            "maximum": 3000.0,
+            "minimum": 1.0,
+            "title": "Token Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ordinal",
+          "source_kind",
+          "source_id",
+          "namespace",
+          "selection_reason",
+          "authority",
+          "score_components",
+          "rendered_text",
+          "rendered_text_hash",
+          "token_count"
+        ],
+        "title": "MemorySnapshotItemModel",
+        "type": "object"
+      },
+      "MemorySnapshotModel": {
+        "additionalProperties": false,
+        "properties": {
+          "base_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Version Id"
+          },
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "degraded_reason": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degraded Reason"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MemorySnapshotItemModel"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "policy_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "projection_generation": {
+            "minimum": 1.0,
+            "title": "Projection Generation",
+            "type": "integer"
+          },
+          "projection_state": {
+            "$ref": "#/components/schemas/ProjectionState"
+          },
+          "projection_watermark_cursor": {
+            "minimum": 0.0,
+            "title": "Projection Watermark Cursor",
+            "type": "integer"
+          },
+          "snapshot_version": {
+            "minimum": 1.0,
+            "title": "Snapshot Version",
+            "type": "integer"
+          },
+          "source_watermark_cursor": {
+            "minimum": 0.0,
+            "title": "Source Watermark Cursor",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MemorySnapshotStatus"
+          },
+          "target_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Version Id"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "token_count": {
+            "maximum": 3000.0,
+            "minimum": 0.0,
+            "title": "Token Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "conversation_id",
+          "task_id",
+          "base_version_id",
+          "target_version_id",
+          "snapshot_version",
+          "policy_version",
+          "source_watermark_cursor",
+          "projection_generation",
+          "projection_watermark_cursor",
+          "projection_state",
+          "status",
+          "content_hash",
+          "token_count",
+          "items",
+          "created_at"
+        ],
+        "title": "MemorySnapshotModel",
+        "type": "object"
+      },
+      "MemorySnapshotStatus": {
+        "enum": [
+          "ready",
+          "degraded"
+        ],
+        "title": "MemorySnapshotStatus",
+        "type": "string"
+      },
+      "MemorySourceKind": {
+        "enum": [
+          "claim_revision",
+          "observation",
+          "domain_event"
+        ],
+        "title": "MemorySourceKind",
         "type": "string"
       },
       "MemorySourceType": {
@@ -1874,6 +2370,16 @@
           "synced"
         ],
         "title": "ProjectResidency",
+        "type": "string"
+      },
+      "ProjectionState": {
+        "enum": [
+          "ready",
+          "stale",
+          "unavailable",
+          "failed"
+        ],
+        "title": "ProjectionState",
         "type": "string"
       },
       "ScopeContractModel": {
@@ -3428,6 +3934,222 @@
           }
         ],
         "summary": "Create Memory Observation"
+      }
+    },
+    "/v1/memory/projection/health": {
+      "get": {
+        "operationId": "memory.projection.health",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryProjectionHealthModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Memory Projection Health"
+      }
+    },
+    "/v1/memory/search": {
+      "get": {
+        "operationId": "memory.search",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "required": true,
+            "schema": {
+              "maxLength": 10000,
+              "minLength": 1,
+              "title": "Query",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemorySearchPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Memory"
+      }
+    },
+    "/v1/memory/snapshots/{snapshot_id}": {
+      "get": {
+        "operationId": "memory.snapshots.get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshot_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Snapshot Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemorySnapshotModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Memory Snapshot"
       }
     },
     "/v1/projects": {
