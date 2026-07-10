@@ -22,3 +22,31 @@ class ScopeViolationError(DomainError):
     def __init__(self, message: str, *, code: str = "PATH_OUT_OF_SCOPE") -> None:
         super().__init__(message)
         self.code = code
+
+
+class MemoryScopeViolationError(DomainError):
+    code = "MEMORY_SCOPE_VIOLATION"
+
+
+class MemoryConflictError(DomainError):
+    code = "MEMORY_CONFLICT"
+
+
+class MemoryInjectionBlockedError(DomainError):
+    code = "MEMORY_INJECTION_BLOCKED"
+
+
+class MemorySecretBlockedError(DomainError):
+    code = "MEMORY_SECRET_BLOCKED"
+
+
+class MemoryProjectionStaleError(DomainError):
+    code = "MEMORY_PROJECTION_STALE"
+
+
+class MemorySnapshotTooLargeError(DomainError):
+    code = "MEMORY_SNAPSHOT_TOO_LARGE"
+
+
+class MemoryForgottenError(DomainError):
+    code = "MEMORY_FORGOTTEN"
