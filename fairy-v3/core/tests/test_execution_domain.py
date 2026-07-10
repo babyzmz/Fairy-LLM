@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -9,17 +10,25 @@ from fairy_core.domain.execution import (
     Approval,
     ApprovalDecision,
     Artifact,
+    ArtifactType,
     ArtifactVisibility,
     Changeset,
     ChangesetStatus,
     Checkpoint,
     MemoryEntry,
     MemoryScope,
+    PreviewHealth,
     PreviewSession,
+    PreviewStatus,
+    PreviewVisibility,
+    RuntimeHealth,
+    RuntimeKind,
     RuntimeSession,
+    RuntimeStatus,
     Workspace,
 )
 from fairy_core.domain.ids import new_id
+from fairy_core.domain.models import OperationMode, ScopeContract, WorkspaceType
 
 
 def _scope_ids() -> dict[str, object]:
@@ -29,6 +38,26 @@ def _scope_ids() -> dict[str, object]:
         "task_id": new_id(),
         "version_id": new_id(),
     }
+
+
+def _scope(tmp_path: Path) -> ScopeContract:
+    ids = _scope_ids()
+    return ScopeContract.create(
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+        project_id=ids["project_id"],
+        conversation_id=ids["conversation_id"],
+        task_id=ids["task_id"],
+        operation_mode=OperationMode.CONTINUE_CURRENT_DRAFT,
+        base_version_id=ids["version_id"],
+        target_version_id=ids["version_id"],
+        project_root=tmp_path,
+        allowed_write_paths=(tmp_path,),
+        forbidden_write_paths=(),
+        execution_target="local",
+        network_policy="off",
+        memory_read_scope=("project_canonical",),
+        memory_write_scope=("conversation_draft",),
+    )
 
 
 def test_workspace_separates_editable_and_reference_files(tmp_path: Path) -> None:
@@ -70,34 +99,81 @@ def test_changeset_cannot_apply_before_approval() -> None:
 
 
 def test_runtime_and_preview_bind_all_scope_ids(tmp_path: Path) -> None:
-    ids = _scope_ids()
+    scope = _scope(tmp_path)
     runtime = RuntimeSession.create(
-        **ids,
-        project_root=tmp_path,
-        execution_target="local",
-        process_selectors=("npm:dev",),
-        ports=(1420,),
+        scope=scope,
+        kind=RuntimeKind.STATIC_SITE,
+        executor="rust_local_worker",
+        idempotency_key="runtime:domain",
     )
+    runtime.begin_start()
+    runtime.mark_running(executor_handle="static:preview-domain", port=1420)
     preview = PreviewSession.create(
-        **ids,
+        scope=scope,
         runtime_id=runtime.id,
-        project_root=tmp_path,
-        url="http://127.0.0.1:1420",
-        visibility="chat_draft",
+        visibility=PreviewVisibility.CHAT_DRAFT,
+        idempotency_key="preview:domain",
     )
+    preview.begin_start()
+    preview.mark_ready("http://127.0.0.1:1420/preview-domain/")
 
     assert preview.runtime_id == runtime.id
     assert preview.task_id == runtime.task_id
     assert preview.version_id == runtime.version_id
+    assert runtime.status is RuntimeStatus.RUNNING
+    assert runtime.health is RuntimeHealth.HEALTHY
+    assert preview.status is PreviewStatus.READY
+    assert preview.health is PreviewHealth.HEALTHY
+
+    with pytest.raises(FrozenInstanceError):
+        runtime.project_id = new_id()  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        runtime.project_root = tmp_path / "rebound"  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        preview.runtime_id = new_id()  # type: ignore[misc]
+
+
+def test_runtime_and_preview_reject_invalid_failure_without_mutation(tmp_path: Path) -> None:
+    scope = _scope(tmp_path)
+    runtime = RuntimeSession.create(
+        scope=scope,
+        kind=RuntimeKind.STATIC_SITE,
+        executor="rust_local_worker",
+        idempotency_key="runtime:failure-atomicity",
+    )
+    runtime.begin_start()
+    runtime.mark_running(executor_handle="static:failure-atomicity", port=1420)
+    preview = PreviewSession.create(
+        scope=scope,
+        runtime_id=runtime.id,
+        visibility=PreviewVisibility.CHAT_DRAFT,
+        idempotency_key="preview:failure-atomicity",
+    )
+    preview.begin_start()
+
+    runtime_revision = runtime.revision
+    preview_revision = preview.revision
+    with pytest.raises(ValueError):
+        runtime.mark_failed(" ")
+    with pytest.raises(ValueError):
+        preview.mark_interrupted("")
+
+    assert runtime.status is RuntimeStatus.RUNNING
+    assert runtime.revision == runtime_revision
+    assert preview.status is PreviewStatus.STARTING
+    assert preview.revision == preview_revision
 
 
 def test_artifact_checkpoint_and_memory_keep_ownership() -> None:
     ids = _scope_ids()
     artifact = Artifact.create(
         **ids,
-        artifact_type="report",
+        artifact_type=ArtifactType.REPORT,
         visibility=ArtifactVisibility.CONVERSATION,
         storage_location="objects/report.json",
+        media_type="application/json",
+        byte_length=17,
+        content_hash="a" * 64,
         metadata={"title": "Review"},
     )
     checkpoint = Checkpoint.create(

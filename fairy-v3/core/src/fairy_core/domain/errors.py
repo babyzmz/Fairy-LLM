@@ -24,6 +24,10 @@ class ScopeViolationError(DomainError):
         self.code = code
 
 
+class PreviewScopeViolationError(DomainError):
+    code = "SCOPE_MISMATCH"
+
+
 class MemoryScopeViolationError(DomainError):
     code = "MEMORY_SCOPE_VIOLATION"
 
