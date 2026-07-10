@@ -156,10 +156,7 @@ def test_snapshot_failure_rolls_back_task_intent_and_retry_binds_once(
         failing.create_task(request)
 
     with factory() as unit_of_work:
-        assert (
-            unit_of_work.state.find_task_by_idempotency_key(request.idempotency_key)
-            is None
-        )
+        assert unit_of_work.state.find_task_by_idempotency_key(request.idempotency_key) is None
         persisted_conversation = unit_of_work.state.get_conversation(conversation.id)
         assert persisted_conversation is not None
         assert persisted_conversation.active_task_id is None

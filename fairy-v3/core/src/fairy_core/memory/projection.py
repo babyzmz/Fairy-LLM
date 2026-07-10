@@ -147,9 +147,7 @@ class LexicalProjectionRefresher:
         ):
             return None
         typed_observations = [
-            observation
-            for observation in source_observations
-            if observation is not None
+            observation for observation in source_observations if observation is not None
         ]
         source_cursor = max(observation.source_cursor for observation in typed_observations)
         project_id, conversation_id, task_id, version_id = self._projection_scope(
@@ -169,9 +167,7 @@ class LexicalProjectionRefresher:
             task_id=task_id,
             version_id=version_id,
             language="und",
-            normalized_text=(
-                f"{claim.subject} {claim.predicate} {revision.normalized_text}"
-            ),
+            normalized_text=(f"{claim.subject} {claim.predicate} {revision.normalized_text}"),
             source_cursor=source_cursor,
             projection_generation=generation,
         )

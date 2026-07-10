@@ -325,9 +325,7 @@ def test_retrieval_requires_accepted_clean_non_secret_observation(tmp_path: Path
     )
 
     assert policy.is_observation_retrievable(clean)
-    assert not policy.is_observation_retrievable(
-        replace(clean, status=ObservationStatus.PENDING)
-    )
+    assert not policy.is_observation_retrievable(replace(clean, status=ObservationStatus.PENDING))
     assert not policy.is_observation_retrievable(
         replace(clean, sensitivity=MemorySensitivity.SECRET)
     )

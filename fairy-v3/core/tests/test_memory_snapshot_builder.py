@@ -111,8 +111,7 @@ class FakeMemoryRepository:
             values = [
                 observation
                 for observation in values
-                if observation.status
-                in {ObservationStatus.ACCEPTED, ObservationStatus.PROMOTED}
+                if observation.status in {ObservationStatus.ACCEPTED, ObservationStatus.PROMOTED}
                 and observation.scan_result is MemoryScanResult.CLEAN
                 and observation.sensitivity is not MemorySensitivity.SECRET
             ]
@@ -239,16 +238,13 @@ def _claim(
         namespace=namespace,
         project_id=(scope.project_id if namespace is MemoryNamespace.PROJECT_CANONICAL else None),
         conversation_id=(
-            scope.conversation_id
-            if namespace is MemoryNamespace.CONVERSATION_DRAFT
-            else None
+            scope.conversation_id if namespace is MemoryNamespace.CONVERSATION_DRAFT else None
         ),
         task_id=(scope.task_id if namespace is MemoryNamespace.TASK_EPISODE else None),
         version_id=(
             scope.target_version_id
             if bind_version
-            and namespace
-            in {MemoryNamespace.PROJECT_CANONICAL, MemoryNamespace.CONVERSATION_DRAFT}
+            and namespace in {MemoryNamespace.PROJECT_CANONICAL, MemoryNamespace.CONVERSATION_DRAFT}
             else None
         ),
         subject=subject,
@@ -288,21 +284,14 @@ def _document(
         source_id=source_id,
         source_revision=source_revision,
         namespace=namespace,
-        project_id=(
-            scope.project_id
-            if namespace is not MemoryNamespace.USER_PROFILE
-            else None
-        ),
+        project_id=(scope.project_id if namespace is not MemoryNamespace.USER_PROFILE else None),
         conversation_id=(
-            scope.conversation_id
-            if namespace is MemoryNamespace.CONVERSATION_DRAFT
-            else None
+            scope.conversation_id if namespace is MemoryNamespace.CONVERSATION_DRAFT else None
         ),
         task_id=(scope.task_id if namespace is MemoryNamespace.TASK_EPISODE else None),
         version_id=(
             scope.target_version_id
-            if namespace
-            in {MemoryNamespace.PROJECT_CANONICAL, MemoryNamespace.CONVERSATION_DRAFT}
+            if namespace in {MemoryNamespace.PROJECT_CANONICAL, MemoryNamespace.CONVERSATION_DRAFT}
             else None
         ),
         language="und",
@@ -324,9 +313,7 @@ def _health(
         source_watermark_cursor=source_cursor,
         projected_watermark_cursor=projected_cursor,
         last_error_code=(
-            None
-            if state is ProjectionState.READY
-            else f"PROJECTION_{state.value.upper()}"
+            None if state is ProjectionState.READY else f"PROJECTION_{state.value.upper()}"
         ),
         updated_at=NOW,
     )
@@ -562,9 +549,7 @@ def test_live_conflict_alternatives_are_reserved_and_disclosed(tmp_path: Path) -
     ).build(scope=scope, query="uv package manager", source_watermark_cursor=50)
 
     conflict_items = [
-        item
-        for item in snapshot.items
-        if item.source_id in {first[0].id, second[0].id}
+        item for item in snapshot.items if item.source_id in {first[0].id, second[0].id}
     ]
     assert len(conflict_items) == 2
     assert all("CONFLICT" in item.rendered_text for item in conflict_items)

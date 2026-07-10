@@ -188,17 +188,13 @@ class CoreService:
             if task is None:
                 raise KeyError(f"task not found: {validated.task_id}")
             if task.memory_snapshot_id != validated.snapshot_id:
-                raise MemoryScopeViolationError(
-                    "Snapshot is not bound to the requested Task"
-                )
+                raise MemoryScopeViolationError("Snapshot is not bound to the requested Task")
             snapshot = unit_of_work.snapshots.get(
                 validated.snapshot_id,
                 task_id=validated.task_id,
             )
             if snapshot is None:
-                raise MemoryScopeViolationError(
-                    "Task-bound Snapshot is unavailable"
-                )
+                raise MemoryScopeViolationError("Task-bound Snapshot is unavailable")
             return snapshot
 
     def _memory_projection_health(self, request: BaseModel) -> dict[str, Any]:

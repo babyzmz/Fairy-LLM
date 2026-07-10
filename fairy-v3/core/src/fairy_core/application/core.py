@@ -88,9 +88,7 @@ class CoreApplication:
         self._workspaces = workspace_provisioner
         self._registry = registry
         self._policy = policy
-        self._snapshot_builder_factory = (
-            snapshot_builder_factory or self._default_snapshot_builder
-        )
+        self._snapshot_builder_factory = snapshot_builder_factory or self._default_snapshot_builder
 
     def create_project(
         self,

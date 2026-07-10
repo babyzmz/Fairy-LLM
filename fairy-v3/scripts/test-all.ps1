@@ -101,7 +101,12 @@ Invoke-Step "Contracts: git diff --exit-code" $Root "git" @(
     "desktop/src/core/generated/api.d.ts"
 )
 
-if (-not $SkipDocker -and (Test-DockerAvailable)) {
+$DockerAvailable = $false
+if (-not $SkipDocker) {
+    $DockerAvailable = Test-DockerAvailable
+}
+
+if ($DockerAvailable) {
     $ComposeArguments = @(
         "compose",
         "--project-name",
@@ -112,7 +117,7 @@ if (-not $SkipDocker -and (Test-DockerAvailable)) {
         "test"
     )
     try {
-        Invoke-Step "Docker: docker compose integration" $Root "docker" (
+        Invoke-Step "Docker: docker compose integration (PostgreSQL 18.4, S3, RLS, memory retrieval)" $Root "docker" (
             $ComposeArguments + @("run", "--build", "--rm", "integration")
         )
     }
@@ -124,8 +129,11 @@ if (-not $SkipDocker -and (Test-DockerAvailable)) {
         }
     }
 }
+elseif ($SkipDocker) {
+    Write-Host "`nDocker explicitly disabled with -SkipDocker: PostgreSQL/S3 integration tests skipped; memory retrieval integration was not executed."
+}
 else {
-    Write-Host "`nDocker disabled or unavailable: PostgreSQL/S3 integration tests skipped."
+    Write-Host "`nDocker CLI or daemon unavailable: real PostgreSQL/S3 integration tests skipped; memory retrieval integration was not executed."
 }
 
 Write-Host "`nAll available Fairy V3 verification gates passed."

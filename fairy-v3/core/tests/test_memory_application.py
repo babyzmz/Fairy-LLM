@@ -111,8 +111,7 @@ def test_memory_tools_have_exact_command_policy_metadata() -> None:
     assert all(
         definitions[name].approval_policy is ApprovalPolicy.ALWAYS
         for name in definitions
-        if name
-        not in {"memory.observe", "memory.projection.refresh", "memory.snapshot.build"}
+        if name not in {"memory.observe", "memory.projection.refresh", "memory.snapshot.build"}
     )
     assert not definitions["memory.projection.refresh"].model_visible
     assert not definitions["memory.snapshot.build"].model_visible
@@ -155,10 +154,13 @@ def test_memory_commit_refreshes_projection_without_mutating_bound_snapshot(
         limit=10,
     )
     assert [hit.document.source_id for hit in hits] == [observation.id]
-    assert search.health(
-        generation=1,
-        source_watermark_cursor=ledger.current_cursor(),
-    ).state is ProjectionState.READY
+    assert (
+        search.health(
+            generation=1,
+            source_watermark_cursor=ledger.current_cursor(),
+        ).state
+        is ProjectionState.READY
+    )
     unchanged = snapshots.get_for_task(task.task.id)
     assert unchanged is not None
     assert unchanged.id == original_snapshot.id

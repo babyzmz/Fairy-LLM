@@ -507,9 +507,7 @@ class MemoryApplication:
                         scope=scope,
                         payload={
                             "source_run_id": str(source_run_id),
-                            "source_watermark_cursor": (
-                                unit_of_work.commands.current_cursor()
-                            ),
+                            "source_watermark_cursor": (unit_of_work.commands.current_cursor()),
                         },
                         idempotency_key=f"memory-projection:{source_run_id}",
                     ),

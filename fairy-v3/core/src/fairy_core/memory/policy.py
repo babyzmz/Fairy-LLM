@@ -150,8 +150,7 @@ class MemoryPolicy:
             return False
         if namespace is MemoryNamespace.PROJECT_CANONICAL:
             return (
-                scope.workspace_type is WorkspaceType.PROJECT_CHAT
-                and scope.project_id is not None
+                scope.workspace_type is WorkspaceType.PROJECT_CHAT and scope.project_id is not None
             )
         return namespace is not MemoryNamespace.DEVICE_LOCAL
 
@@ -178,9 +177,8 @@ class MemoryPolicy:
     ) -> bool:
         if at.tzinfo is None or at.utcoffset() is None:
             raise ValueError("Memory retrieval time must be timezone-aware")
-        return (
-            (revision.valid_from is None or revision.valid_from <= at)
-            and (revision.valid_to is None or revision.valid_to > at)
+        return (revision.valid_from is None or revision.valid_from <= at) and (
+            revision.valid_to is None or revision.valid_to > at
         )
 
     @staticmethod

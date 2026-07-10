@@ -46,6 +46,24 @@ and independently verified worker attestations/results.
     clients cannot supply authority or `scope_digest`.
 12. Insert Outbox records from the canonical Event Ledger in the same database
     transaction. The trigger uses caller rights so tenant RLS remains active.
+13. Treat lexical and future semantic indexes as disposable, untrusted
+    projections. Resolve every hit back to tenant-scoped canonical rows and
+    re-check namespace, Project, Conversation, Task, Version provenance,
+    expiry, tombstones, sensitivity, and scan state before model use.
+14. Bind exactly one immutable Memory Snapshot ID/hash to each Task. Build and
+    persist the Snapshot in the same transaction as Task binding; later memory
+    writes or projection refreshes cannot replace or mutate that context.
+15. Tokenize search text in Core, quote terms, and bind the resulting query as
+    a SQL parameter. Never concatenate user FTS syntax. SQLite FTS5 and
+    PostgreSQL `websearch_to_tsquery` remain inside dialect adapters.
+16. Escape and label every selected memory source as data. Reject secret-like,
+    instruction-like, bidi/control, expired, rejected, and forgotten material.
+    A stale or failed projection must produce an explicit degraded Snapshot
+    from bounded relational fallback, never fabricated scores or silent reuse.
+17. Require `task_id` on every public retrieval request. Core resolves tenant,
+    Project, Conversation, Version, generation, and the Task-bound Snapshot;
+    clients cannot supply or override those fields. PostgreSQL FORCE RLS and
+    local tenant predicates are both covered by same-ID isolation tests.
 
 ## Security error contract
 

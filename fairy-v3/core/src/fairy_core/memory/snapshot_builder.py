@@ -190,9 +190,7 @@ class DeterministicMemorySnapshotBuilder:
             for ordinal, candidate in enumerate(ordered)
         )
         status = (
-            MemorySnapshotStatus.READY
-            if degraded_reason is None
-            else MemorySnapshotStatus.DEGRADED
+            MemorySnapshotStatus.READY if degraded_reason is None else MemorySnapshotStatus.DEGRADED
         )
         return MemorySnapshot.create(
             project_id=scope.project_id,
@@ -255,9 +253,7 @@ class DeterministicMemorySnapshotBuilder:
             )
             return stale, "MEMORY_PROJECTION_STALE"
         if health.state is not ProjectionState.READY:
-            reason = health.last_error_code or (
-                f"MEMORY_PROJECTION_{health.state.value.upper()}"
-            )
+            reason = health.last_error_code or (f"MEMORY_PROJECTION_{health.state.value.upper()}")
             return health, reason
         return health, None
 
@@ -268,9 +264,7 @@ class DeterministicMemorySnapshotBuilder:
         scope: ScopeContract,
         source_watermark_cursor: int,
     ) -> dict[tuple[MemorySourceKind, UUID, int | None], MemorySearchHit]:
-        normalized: dict[
-            tuple[MemorySourceKind, UUID, int | None], MemorySearchHit
-        ] = {}
+        normalized: dict[tuple[MemorySourceKind, UUID, int | None], MemorySearchHit] = {}
         for hit in sorted(hits, key=self._hit_input_key):
             document = hit.document
             if not self._document_is_in_scope(
@@ -313,11 +307,7 @@ class DeterministicMemorySnapshotBuilder:
                     continue
                 revisions = self._memory.revisions_for_claim(claim.id)
                 revision = next(
-                    (
-                        value
-                        for value in revisions
-                        if value.revision == claim.current_revision
-                    ),
+                    (value for value in revisions if value.revision == claim.current_revision),
                     None,
                 )
                 if revision is None or not self._policy.is_revision_current(revision, at=at):
@@ -338,9 +328,7 @@ class DeterministicMemorySnapshotBuilder:
                 source_cursor = max(
                     observation.source_cursor for observation in source_observations
                 )
-                hit = hits.get(
-                    (MemorySourceKind.CLAIM_REVISION, claim.id, revision.revision)
-                )
+                hit = hits.get((MemorySourceKind.CLAIM_REVISION, claim.id, revision.revision))
                 lexical_score = hit.lexical_score if hit is not None else 0.0
                 exact_match = (
                     hit.exact_match if hit is not None else False
@@ -349,8 +337,7 @@ class DeterministicMemorySnapshotBuilder:
                     f"{claim.subject} {claim.predicate} {revision.normalized_text}",
                 )
                 conflict = (
-                    claim.status is ClaimStatus.CONFLICTED
-                    or claim.conflict_set_id is not None
+                    claim.status is ClaimStatus.CONFLICTED or claim.conflict_set_id is not None
                 )
                 reason = self._claim_reason(
                     namespace=namespace,
@@ -515,10 +502,7 @@ class DeterministicMemorySnapshotBuilder:
             rendered_text=rendered,
             source_cursor=observation.source_cursor,
             source_watermark_cursor=source_watermark_cursor,
-            exact_match=(
-                exact_match
-                or self._is_exact_query_match(query, observation.content)
-            ),
+            exact_match=(exact_match or self._is_exact_query_match(query, observation.content)),
             lexical_score=lexical_score,
             confidence=observation.confidence,
             conflict_set_id=None,
@@ -577,9 +561,7 @@ class DeterministicMemorySnapshotBuilder:
         )
 
     def _select_candidates(self, candidates: Iterable[_Candidate]) -> list[_Candidate]:
-        deduplicated: dict[
-            tuple[MemorySourceKind, UUID, int | None], _Candidate
-        ] = {}
+        deduplicated: dict[tuple[MemorySourceKind, UUID, int | None], _Candidate] = {}
         for candidate in sorted(candidates, key=self._rank_key):
             deduplicated.setdefault(candidate.key, candidate)
         values = list(deduplicated.values())

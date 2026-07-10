@@ -40,6 +40,7 @@ async def _run_rls_scenario(dsn: str) -> None:
     tenant_b = f"tenant-b-{suffix}"
     project_id = f"project-{suffix}"
     event_id = str(uuid4())
+    memory_document_id = f"memory-document-{suffix}"
     engine = create_async_engine(dsn)
     try:
         async with engine.begin() as admin:
@@ -69,6 +70,8 @@ async def _run_rls_scenario(dsn: str) -> None:
                 subject_id=f"user-a-{suffix}",
                 project_id=project_id,
                 event_id=event_id,
+                memory_document_id=memory_document_id,
+                memory_text="alpha tenant memory",
             )
             await _insert_tenant_project_event(
                 connection_b,
@@ -76,6 +79,8 @@ async def _run_rls_scenario(dsn: str) -> None:
                 subject_id=f"user-b-{suffix}",
                 project_id=project_id,
                 event_id=event_id,
+                memory_document_id=memory_document_id,
+                memory_text="beta tenant memory",
             )
 
             projects_a = (
@@ -136,8 +141,35 @@ async def _run_rls_scenario(dsn: str) -> None:
             )
             assert events_a == [tenant_a]
             assert events_b == [tenant_b]
+
+            memory_a = (
+                await connection_a.execute(
+                    text(
+                        "SELECT tenant_id, normalized_text "
+                        "FROM memory_search_documents WHERE id = :document_id"
+                    ),
+                    {"document_id": memory_document_id},
+                )
+            ).one()
+            memory_b = (
+                await connection_b.execute(
+                    text(
+                        "SELECT tenant_id, normalized_text "
+                        "FROM memory_search_documents WHERE id = :document_id"
+                    ),
+                    {"document_id": memory_document_id},
+                )
+            ).one()
+            assert tuple(memory_a) == (tenant_a, "alpha tenant memory")
+            assert tuple(memory_b) == (tenant_b, "beta tenant memory")
     finally:
         async with engine.begin() as admin:
+            await admin.execute(
+                text(
+                    "DELETE FROM memory_search_documents WHERE tenant_id IN (:tenant_a, :tenant_b)"
+                ),
+                {"tenant_a": tenant_a, "tenant_b": tenant_b},
+            )
             await admin.execute(
                 text("DELETE FROM domain_events WHERE tenant_id IN (:tenant_a, :tenant_b)"),
                 {"tenant_a": tenant_a, "tenant_b": tenant_b},
@@ -175,6 +207,8 @@ async def _insert_tenant_project_event(
     subject_id: str,
     project_id: str,
     event_id: str,
+    memory_document_id: str,
+    memory_text: str,
 ) -> None:
     await connection.execute(
         text(
@@ -214,5 +248,28 @@ async def _insert_tenant_project_event(
             "event_id": event_id,
             "subject_id": subject_id,
             "project_id": project_id,
+        },
+    )
+    await connection.execute(
+        text(
+            """
+            INSERT INTO memory_search_documents (
+                tenant_id, id, source_kind, source_id, source_revision,
+                namespace, project_id, language, normalized_text, content_hash,
+                source_cursor, projection_generation, updated_at
+            ) VALUES (
+                :tenant_id, :document_id, 'domain_event', :event_id, 0,
+                'project_canonical', :project_id, 'und', :memory_text, :content_hash,
+                1, 1, now()
+            )
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "document_id": memory_document_id,
+            "event_id": event_id,
+            "project_id": project_id,
+            "memory_text": memory_text,
+            "content_hash": "0" * 64,
         },
     )
