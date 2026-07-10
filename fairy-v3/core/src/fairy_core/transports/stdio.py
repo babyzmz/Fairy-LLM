@@ -13,7 +13,7 @@ from fairy_core.commanding.bus import CommandBus
 from fairy_core.commanding.ledger import SqliteCommandLedger
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
-from fairy_core.storage.state_store import SqliteStateStore
+from fairy_core.storage import SqliteStateStore
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
 from fairy_core.workspace.rust_worker import RustWorkspaceProvisioner

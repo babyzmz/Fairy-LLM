@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 
 from fairy_core.domain.errors import VersionConflictError
 from fairy_core.domain.execution import (
@@ -23,7 +26,67 @@ from fairy_core.domain.models import (
     VersionVisibility,
     WorkspaceType,
 )
-from fairy_core.storage.state_store import SqliteStateStore
+from fairy_core.storage import SqlAlchemyStateStore, SqliteStateStore
+
+
+def test_sqlalchemy_state_store_isolates_tenants_and_idempotency_keys(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    tenant_a = SqlAlchemyStateStore(
+        engine,
+        tenant_id="tenant-a",
+        initialize_schema=True,
+    )
+    tenant_b = SqlAlchemyStateStore(engine, tenant_id="tenant-b")
+    project_a = Project.create(name="Project A", residency=ProjectResidency.SYNCED)
+    project_b = replace(project_a, name="Project B")
+    conversation_a = Conversation.create(
+        project_id=project_a.id,
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+        base_version_id=None,
+    )
+    conversation_b = Conversation.create(
+        project_id=project_b.id,
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+        base_version_id=None,
+    )
+    task_a = Task.create(
+        project_id=project_a.id,
+        conversation_id=conversation_a.id,
+        user_request="Tenant A",
+        operation_mode=OperationMode.CREATE_NEW_VERSION,
+        base_version_id=None,
+        execution_target="cloud",
+    )
+    task_b = Task.create(
+        project_id=project_b.id,
+        conversation_id=conversation_b.id,
+        user_request="Tenant B",
+        operation_mode=OperationMode.CREATE_NEW_VERSION,
+        base_version_id=None,
+        execution_target="cloud",
+    )
+
+    tenant_a.save_project(project_a)
+    tenant_a.save_conversation(conversation_a)
+    tenant_a.save_task(task_a, idempotency_key="device:request-1")
+
+    assert tenant_b.get_project(project_a.id) is None
+    assert tenant_b.find_task_by_idempotency_key("device:request-1") is None
+
+    tenant_b.save_project(project_b)
+    tenant_b.save_conversation(conversation_b)
+    tenant_b.save_task(task_b, idempotency_key="device:request-1")
+
+    assert tenant_a.get_project(project_a.id).name == "Project A"
+    assert tenant_b.get_project(project_b.id).name == "Project B"
+    assert tenant_a.find_task_by_idempotency_key("device:request-1") == task_a
+    assert tenant_b.find_task_by_idempotency_key("device:request-1") == task_b
 
 
 def test_state_store_recovers_project_graph_after_restart(tmp_path: Path) -> None:

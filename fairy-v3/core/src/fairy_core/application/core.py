@@ -32,7 +32,7 @@ from fairy_core.domain.models import (
     VersionVisibility,
     WorkspaceType,
 )
-from fairy_core.storage.state_store import SqliteStateStore
+from fairy_core.storage import StateStore
 from fairy_core.workspace.ports import WorkspaceProvisioner
 
 T = TypeVar("T")
@@ -61,7 +61,7 @@ class CoreApplication:
     def __init__(
         self,
         *,
-        state_store: SqliteStateStore,
+        state_store: StateStore,
         workspace_provisioner: WorkspaceProvisioner,
         command_bus: CommandBus,
     ) -> None:

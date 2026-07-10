@@ -22,7 +22,7 @@ from fairy_core.domain.models import (
     VersionVisibility,
     WorkspaceType,
 )
-from fairy_core.storage.state_store import SqliteStateStore
+from fairy_core.storage import SqliteStateStore
 
 
 class FakeWorkspace:
