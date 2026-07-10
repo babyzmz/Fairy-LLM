@@ -23,9 +23,13 @@ fairy-v3/
 |- cloud/      Cloud API/worker composition and deployment files
 |- resources/  Provenanced character, icon, and voice assets
 |- scripts/    Contract generation and repository boundary checks
-|- tests/      Cross-transport, security, recovery, and end-to-end tests
-`- docs/       Architecture, threat model, ADRs, and operating documentation
+|- docs/       Architecture, threat model, ADRs, and operating documentation
+`- tools/      Isolated contract generators and developer tooling
 ```
+
+Tests stay with the package that owns the behavior: `core/tests`,
+`cloud/tests`, `desktop/src/**/*.test.ts(x)`, and `desktop/e2e`. This keeps
+fixtures and runtime dependencies inside their actual boundary.
 
 The implementation is intentionally independent. Legacy character assets,
 voice assets, doctrine, and black-box behavior may be used as references only.

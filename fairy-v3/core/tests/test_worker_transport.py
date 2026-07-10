@@ -33,6 +33,33 @@ for line in sys.stdin:
     assert second == {"method": "workspace.diff"}
 
 
+def test_subprocess_transport_does_not_inherit_host_secrets(monkeypatch) -> None:
+    monkeypatch.setenv("FAIRY_TEST_HOST_SECRET", "must-not-leak")
+    script = """
+import json, os, sys
+for line in sys.stdin:
+    request = json.loads(line)
+    print(json.dumps({
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": {
+            "allowed": os.environ.get("FAIRY_ALLOWED"),
+            "secret": os.environ.get("FAIRY_TEST_HOST_SECRET"),
+        },
+    }), flush=True)
+"""
+    transport = SubprocessWorkerTransport(
+        program=sys.executable,
+        args=("-u", "-c", script),
+        environment={"FAIRY_ALLOWED": "yes"},
+    )
+
+    result = transport.call("environment.inspect", {})
+    transport.close()
+
+    assert result == {"allowed": "yes", "secret": None}
+
+
 def test_subprocess_transport_surfaces_typed_worker_errors() -> None:
     script = """
 import json, sys

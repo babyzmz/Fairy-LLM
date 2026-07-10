@@ -11,7 +11,7 @@ from fairy_cloud.sync.fingerprints import canonical_payload_fingerprint
 from fairy_cloud.sync.models import ProjectRevisionState, SyncedEvent
 
 
-class MemorySyncStore:
+class InMemorySyncStore:
     """Deterministic contract adapter used without external infrastructure."""
 
     def __init__(self) -> None:
@@ -256,3 +256,6 @@ class MemorySyncStore:
         if task_id is not None and task_sequence is not None:
             self._task_sequences[(user_id, task_id, task_sequence)] = event_id
         return cursor
+
+
+__all__ = ["InMemorySyncStore"]

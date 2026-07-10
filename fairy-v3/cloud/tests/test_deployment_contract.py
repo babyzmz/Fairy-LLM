@@ -87,6 +87,11 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
         for name in {"api", "object-store", "oidc", "postgres", "worker"}
     )
     assert services["api"]["build"]["target"] == "runtime"
+    assert services["worker"]["command"] == [
+        "python",
+        "-m",
+        "fairy_cloud.workers.outbox",
+    ]
     assert services["worker"]["read_only"] is True
     assert services["worker"]["cap_drop"] == ["ALL"]
     assert services["migrate"]["depends_on"]["postgres"]["condition"] == "service_healthy"
@@ -164,6 +169,7 @@ def test_full_verification_script_covers_every_release_gate() -> None:
 
     for required_text in (
         "check_boundaries.py",
+        "uv lock --check",
         "ruff format --check",
         "ruff check",
         "pytest",

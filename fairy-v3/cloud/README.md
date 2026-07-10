@@ -14,8 +14,8 @@ brokerless stack:
 docker compose up --build -d --wait
 ```
 
-The stack contains separate migration, API, and Worker containers. API and
-Worker run as UID/GID 10001 with read-only root filesystems, all Linux
+The stack contains separate migration, API, and Outbox Worker containers. API
+and Outbox Worker run as UID/GID 10001 with read-only root filesystems, all Linux
 capabilities dropped, no host filesystem mounts, and no Docker socket. The
 stateful dependencies are PostgreSQL 18.4, SeaweedFS 4.39 as local S3, and
 `mock-oauth2-server` 4.0.0 for Authorization Code + PKCE testing.
@@ -38,6 +38,13 @@ state in Cloud composition.
 
 The identity service is development-only. Production accepts compatible
 PostgreSQL 18, S3, and OIDC providers and requires HTTPS.
+
+Every insert into the canonical `domain_events` ledger is copied into Outbox
+by a PostgreSQL trigger in the same transaction. The worker entry point is
+`fairy_cloud.workers.outbox`; `fairy_cloud.worker` is a temporary compatibility
+re-export. This worker publishes durable events only. The future non-root OCI
+project-execution Worker is a separate component and is not part of this
+persistence milestone.
 
 Apply the cloud schema only through Alembic:
 

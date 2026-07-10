@@ -158,7 +158,7 @@ services:
     build:
       <<: *cloud-build
       target: runtime
-    command: ["python", "-m", "fairy_cloud.worker"]
+    command: ["python", "-m", "fairy_cloud.workers.outbox"]
     environment:
       <<: *cloud-environment
       FAIRY_POSTGRES_DSN: postgresql+asyncpg://fairy_worker:${FAIRY_WORKER_POSTGRES_PASSWORD:-fairy-worker-dev-only}@postgres:5432/fairy

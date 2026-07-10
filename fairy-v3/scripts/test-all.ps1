@@ -50,6 +50,7 @@ Invoke-Step "Boundaries: check_boundaries.py" $Root $Uv @(
     "run", "--project", "core", "python", "scripts/check_boundaries.py", "."
 )
 
+Invoke-Step "Core: uv lock --check" $CoreRoot $Uv @("lock", "--check")
 Invoke-Step "Core: ruff format --check" $CoreRoot $Uv @(
     "run", "ruff", "format", "--check", "src", "tests"
 )
@@ -58,6 +59,7 @@ Invoke-Step "Core: ruff check" $CoreRoot $Uv @(
 )
 Invoke-Step "Core: pytest" $CoreRoot $Uv @("run", "pytest")
 
+Invoke-Step "Cloud: uv lock --check" $CloudRoot $Uv @("lock", "--check")
 Invoke-Step "Cloud: ruff format --check" $CloudRoot $Uv @(
     "run", "ruff", "format", "--check", "src", "tests"
 )

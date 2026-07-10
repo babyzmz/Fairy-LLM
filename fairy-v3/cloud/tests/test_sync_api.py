@@ -13,7 +13,7 @@ from httpx import ASGITransport, AsyncClient
 from fairy_cloud.api import create_cloud_app
 from fairy_cloud.auth import RequestIdentity, StaticTokenAuthenticator
 from fairy_cloud.storage.objects import S3ObjectStore
-from fairy_cloud.sync.memory import MemorySyncStore
+from fairy_cloud.sync.in_memory import InMemorySyncStore
 
 AUTH_HEADERS = {
     "Authorization": "Bearer sync-token",
@@ -48,7 +48,7 @@ def sync_app(tmp_path: Path):
         device_id="device-a",
         scopes=frozenset({"fairy.api"}),
     )
-    sync_store = MemorySyncStore()
+    sync_store = InMemorySyncStore()
     app = create_cloud_app(
         build_local_service(tmp_path / "sync-core"),
         authenticator=StaticTokenAuthenticator({"sync-token": identity}),
@@ -97,7 +97,7 @@ async def test_uploaded_events_are_identity_bound_and_resumable(sync_app) -> Non
 
 @pytest.mark.asyncio
 async def test_memory_sync_store_scopes_same_ids_by_tenant() -> None:
-    store = MemorySyncStore()
+    store = InMemorySyncStore()
     await store.register_project(project_id="shared-project", user_id="user-a")
     await store.register_project(project_id="shared-project", user_id="user-b")
 

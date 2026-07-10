@@ -27,6 +27,8 @@ Preview, Artifact, Checkpoint, and Memory state.
 9. Internal reasoning is never represented as a user-visible event.
 10. A missing sandbox disables run.sandboxed; it never falls back to a host
     shell.
+11. Canonical memory is relational, versioned, scoped, and command-driven;
+    retrieval projections can never create or overwrite a Claim.
 
 ## Components
 
@@ -42,28 +44,35 @@ traffic uses HTTPS and resumable SSE through the same client interface.
 The Python Core is a modular application with domain, application, ports, and
 adapters boundaries. The domain and application layers do not depend on
 FastAPI, SQLite, PostgreSQL, Tauri, S3, model providers, or operating-system
-APIs.
+APIs. The Core package itself depends only on Pydantic and SQLAlchemy; server,
+migration, and cloud-provider dependencies stay in Cloud.
 
 ### Workers
 
-The Rust local worker handles scoped file and process operations. Generic
-model-directed shell execution is available only through the dedicated WSL2
-FairySandbox provider. The cloud worker executes in a non-root OCI sandbox.
+The Rust local worker currently handles scoped Git workspace and file
+operations. Generic model-directed shell execution will be available only
+through the dedicated WSL2 FairySandbox provider; it must remain disabled until
+that provider is healthy. Cloud currently ships a brokerless Outbox Worker at
+`fairy_cloud.workers.outbox`. The future non-root OCI execution Worker is a
+separate approved slice and must not be confused with the Outbox publisher.
 
 ### Storage and synchronization
 
 SQLite stores local state and projections. PostgreSQL stores cloud state,
-leases, ledger events, and the transactional outbox. Both adapters implement
-the same tenant-scoped StateStore, CommandLedger, and UnitOfWork ports. Cloud
-tables use a shared schema with explicit tenant predicates and PostgreSQL row
-level security. Production schemas are changed only through Alembic.
+leases, ledger events, Hermes memory, and the transactional outbox. Both
+adapters implement the same tenant-scoped StateStore, CommandLedger,
+MemoryRepository, and UnitOfWork ports. Cloud tables use a shared schema with
+explicit tenant predicates and PostgreSQL row level security. Production
+schemas are changed only through Alembic.
 
 There is one authoritative Project row for revision and Active Version state,
 and one authoritative Event Ledger for Core commands, synchronization, SSE,
 and outbox delivery. Transport adapters never maintain a second revision or
 event cursor. Durable intent is committed before external execution; final
 state, command completion, domain events, and outbox records commit together
-after the idempotent operation returns.
+after the idempotent operation returns. PostgreSQL owns the Event-to-Outbox
+handoff through an invoker-rights `AFTER INSERT` trigger, so Core and sync API
+events cannot bypass the same-transaction Outbox invariant.
 
 S3-compatible storage holds immutable version snapshots, artifacts, logs, and
 preview captures. Devices synchronize domain events and version manifests by
@@ -73,6 +82,20 @@ An imported project is copied into Fairy-managed storage and initialized as an
 internal Git repository. Each Task receives an isolated worktree. Accepting a
 Version changes project.active_version_id with an optimistic project revision
 check; it never silently overwrites the original imported directory.
+
+### Hermes memory
+
+Hermes stores immutable Observations, scoped Claims, append-only Claim
+revisions, and Tombstones as canonical relational data. Conversation Draft
+Memory is isolated by Conversation. Project Canonical Memory is project-scoped
+and requires explicit confirmation for promotion. Every mutation crosses the
+Command Bus, uses a Core-injected Scope, and emits a typed durable event without
+placing Claim values in user-visible event payloads.
+
+Snapshot building, full-text retrieval, Episodes, pgvector ranking, and
+multi-device memory controls are deferred slices. They are rebuildable or
+derived layers over canonical Observations and Claims; neither RAG nor an
+embedding index is a memory authority.
 
 ## Permission model
 

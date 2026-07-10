@@ -12,6 +12,8 @@ existing web-access expectations. They are reference behavior only and are not
 part of the Fairy V3 test gate.
 
 V3 tests run from fairy-v3 and must remain independent from legacy modules.
+This baseline is frozen evidence, not a recurring gate: `scripts/test-all.ps1`
+does not import, install, or execute the legacy application.
 
 The completed legacy task reviews are normalized in
 [legacy-intake.md](legacy-intake.md). That inventory is the only approved

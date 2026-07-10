@@ -7,6 +7,10 @@ records behind one tenant-scoped `MemoryRepository`. SQLite and PostgreSQL
 share the SQLAlchemy adapter and participate in the same `CoreUnitOfWork` as
 project state and the Command Ledger.
 
+Core runtime dependencies are intentionally limited to Pydantic and
+SQLAlchemy. FastAPI, Alembic, asyncpg, object storage, and server processes
+belong to Cloud; local JSON-RPC uses the Python standard library.
+
 ```powershell
 C:\Python313\Scripts\uv.exe sync --dev
 C:\Python313\Scripts\uv.exe run pytest

@@ -9,6 +9,18 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol, TextIO
 
+_INHERITED_WORKER_ENVIRONMENT = (
+    "LANG",
+    "LC_ALL",
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "WINDIR",
+)
+
 
 class WorkerRpcError(RuntimeError):
     def __init__(
@@ -40,7 +52,7 @@ class SubprocessWorkerTransport:
         self._process = subprocess.Popen(
             [program, *args],
             cwd=current_directory,
-            env={**os.environ, **environment},
+            env=_worker_environment(environment),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -127,3 +139,21 @@ class SubprocessWorkerTransport:
     def _interrupted_message(self) -> str:
         detail = self._stderr[-1] if self._stderr else "no worker diagnostics"
         return f"worker interrupted: {detail}"
+
+
+def _worker_environment(overrides: Mapping[str, str]) -> dict[str, str]:
+    environment = {
+        name: os.environ[name] for name in _INHERITED_WORKER_ENVIRONMENT if name in os.environ
+    }
+    environment.update(overrides)
+    environment.update(
+        {
+            "GCM_INTERACTIVE": "Never",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        }
+    )
+    return environment

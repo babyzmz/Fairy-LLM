@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from fairy_cloud.storage.postgres import OutboxItem
-from fairy_cloud.worker import OutboxWorker
+from fairy_cloud.worker import OutboxWorker as CompatibilityOutboxWorker
+from fairy_cloud.workers.outbox import OutboxWorker
 
 
 class FakeOutboxStore:
@@ -27,6 +30,31 @@ class FakeOutboxStore:
         del owner_id
         self.published.extend(item.id for item in items)
         return len(items)
+
+
+def test_legacy_worker_module_is_a_compatibility_reexport() -> None:
+    assert CompatibilityOutboxWorker is OutboxWorker
+
+
+def test_outbox_worker_module_entrypoint_has_no_eager_import_warning() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-W",
+            "error",
+            "-c",
+            (
+                "import asyncio, runpy; "
+                "asyncio.run=lambda coro: coro.close(); "
+                "runpy.run_module('fairy_cloud.workers.outbox', run_name='__main__')"
+            ),
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.asyncio

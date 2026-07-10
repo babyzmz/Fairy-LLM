@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-07-10
+- Updated: 2026-07-11
 
 ## Context
 
@@ -28,18 +29,20 @@ Do not use schema-per-tenant. Shared workers need to claim work across tenants,
 events need a global cursor, and duplicating migrations and connection pools
 would add operational risk without improving the application boundary.
 
-Define synchronous `StateStore`, `CommandLedger`, and `CoreUnitOfWork` ports in
-Core. Local SQLite and cloud PostgreSQL implement the same contracts. A Unit of
-Work owns one database connection and transaction for related state, command,
-event, and outbox mutations. Cloud uses a synchronous psycopg SQLAlchemy engine
-for the synchronous Core; the existing async engine remains for async-only API
-and worker paths until those paths are consolidated.
+Define synchronous `StateStore`, `CommandLedger`, `MemoryRepository`, and
+`CoreUnitOfWork` ports in Core. Local SQLite and cloud PostgreSQL implement the
+same contracts. A Unit of Work owns one database connection and transaction for
+related state, command, event, and canonical memory mutations. Cloud uses a
+synchronous psycopg SQLAlchemy engine for the synchronous Core; the existing
+async engine remains for async-only API and Outbox Worker paths.
 
 Use one canonical Project table for `revision` and `active_version_id`. Remove
 the separate cloud project authority. Use one canonical Event Ledger with a
 global identity cursor; Core command events and synchronized device events are
 written there. The outbox is written in the same transaction as each publishable
-event.
+event. PostgreSQL enforces this for every producer with an invoker-rights
+`AFTER INSERT` trigger from `domain_events` to `outbox`. The sync adapter still
+verifies the resulting immutable Outbox payload fingerprint on replay.
 
 Do not keep a transaction open across a file, network, sandbox, or object-store
 operation. The Core first commits durable command intent and a fenced lease. It
@@ -66,8 +69,13 @@ be discarded when explicitly documented.
 - Project promotion, Core command events, SSE, and sync conflict handling share
   one transactionally consistent authority.
 - PostgreSQL migrations require tenant composite keys, foreign keys, RLS
-  policies, command leases, sequence allocation, and outbox fencing.
+  policies, command leases, sequence allocation, outbox fencing, and the
+  Event-to-Outbox trigger.
 - Local and PostgreSQL implementations must pass one state/ledger contract
   suite plus real two-connection concurrency and crash-recovery tests.
+- Hermes Observations, Claims, revisions, and Tombstones share the same tenant
+  transaction and cannot be replaced by FTS or vector projections.
+- The event publisher is named `fairy_cloud.workers.outbox`; the future OCI
+  execution Worker remains a separate responsibility.
 - The implementation is more explicit, but removes process-local cloud state,
   silent idempotency mismatches, and dual cursor reconciliation.

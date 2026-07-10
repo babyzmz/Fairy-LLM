@@ -50,18 +50,26 @@ behavior, but it must not import or transplant legacy implementation modules.
 
 ```text
 fairy-v3/
-  core/                    Domain, application services, ports, adapters
-  cloud/                   Cloud composition, auth, sync, workers, migrations
-  desktop/                 Tauri host and React renderer
+  core/
+    src/fairy_core/        Domain, application services, ports, adapters
+    tests/                 Core contracts, security, recovery, SQLite
+  cloud/
+    src/fairy_cloud/       REST/SSE, auth, sync, storage, Outbox Worker
+    migrations/            PostgreSQL schema authority
+    tests/integration/     Real PostgreSQL and S3 gates
+  desktop/
+    src/                   React app and shared CoreClient transports
+    src-tauri/             Tauri host, Core bridge, Rust local worker
+    e2e/                   Desktop workflow tests
   contracts/               Generated public API artifacts only
   resources/               Provenanced character, icon, and voice media
-  tests/
-    acceptance/            Rewritten legacy black-box behavior
-    contract/              Local/cloud transport parity
-    e2e/                   Desktop workflows
-  tools/                   Isolated generators and developer tooling
+  scripts/                 Boundary, contract, and full verification gates
+  tools/contracts/         Isolated OpenAPI TypeScript generator
   docs/                    Current architecture, ADRs, plans, and intake
 ```
+
+Tests remain package-owned until a genuinely cross-package executable suite
+exists. Empty future-facing directory trees are not kept as placeholders.
 
 Within the desktop renderer, Presence owns one domain boundary. Its avatar,
 reply bubble, projections, and hooks must not be split between generic
