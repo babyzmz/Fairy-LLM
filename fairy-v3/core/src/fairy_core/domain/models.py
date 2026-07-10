@@ -60,30 +60,54 @@ class TaskStatus(StrEnum):
 
 _TASK_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
     TaskStatus.CREATED: frozenset({TaskStatus.RESOLVING_SCOPE}),
-    TaskStatus.RESOLVING_SCOPE: frozenset({TaskStatus.BUILDING_WORKSPACE, TaskStatus.FAILED}),
-    TaskStatus.BUILDING_WORKSPACE: frozenset({TaskStatus.PLANNING, TaskStatus.FAILED}),
+    TaskStatus.RESOLVING_SCOPE: frozenset(
+        {TaskStatus.BUILDING_WORKSPACE, TaskStatus.REJECTED, TaskStatus.FAILED}
+    ),
+    TaskStatus.BUILDING_WORKSPACE: frozenset(
+        {TaskStatus.PLANNING, TaskStatus.REJECTED, TaskStatus.FAILED}
+    ),
     TaskStatus.PLANNING: frozenset(
-        {TaskStatus.AWAITING_APPROVAL, TaskStatus.EXECUTING, TaskStatus.FAILED}
+        {
+            TaskStatus.AWAITING_APPROVAL,
+            TaskStatus.EXECUTING,
+            TaskStatus.REJECTED,
+            TaskStatus.FAILED,
+        }
     ),
     TaskStatus.AWAITING_APPROVAL: frozenset(
         {TaskStatus.EXECUTING, TaskStatus.REJECTED, TaskStatus.FAILED}
     ),
     TaskStatus.EXECUTING: frozenset(
-        {TaskStatus.INSTALLING, TaskStatus.PREVIEWING, TaskStatus.REVIEWING, TaskStatus.FAILED}
+        {
+            TaskStatus.INSTALLING,
+            TaskStatus.PREVIEWING,
+            TaskStatus.REVIEWING,
+            TaskStatus.REJECTED,
+            TaskStatus.FAILED,
+        }
     ),
     TaskStatus.INSTALLING: frozenset(
-        {TaskStatus.PREVIEWING, TaskStatus.REVIEWING, TaskStatus.REPAIRING, TaskStatus.FAILED}
+        {
+            TaskStatus.PREVIEWING,
+            TaskStatus.REVIEWING,
+            TaskStatus.REPAIRING,
+            TaskStatus.REJECTED,
+            TaskStatus.FAILED,
+        }
     ),
     TaskStatus.PREVIEWING: frozenset(
-        {TaskStatus.REVIEWING, TaskStatus.REPAIRING, TaskStatus.FAILED}
+        {TaskStatus.REVIEWING, TaskStatus.REPAIRING, TaskStatus.REJECTED, TaskStatus.FAILED}
     ),
-    TaskStatus.REVIEWING: frozenset({TaskStatus.READY, TaskStatus.REPAIRING, TaskStatus.FAILED}),
+    TaskStatus.REVIEWING: frozenset(
+        {TaskStatus.READY, TaskStatus.REPAIRING, TaskStatus.REJECTED, TaskStatus.FAILED}
+    ),
     TaskStatus.REPAIRING: frozenset(
         {
             TaskStatus.EXECUTING,
             TaskStatus.INSTALLING,
             TaskStatus.PREVIEWING,
             TaskStatus.REVIEWING,
+            TaskStatus.REJECTED,
             TaskStatus.FAILED,
         }
     ),

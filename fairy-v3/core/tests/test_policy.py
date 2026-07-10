@@ -124,3 +124,24 @@ def test_explicit_disable_override_removes_capability() -> None:
 
     assert decision.allowed is False
     assert decision.error_code == "CAPABILITY_NOT_AVAILABLE"
+
+
+def test_internal_workspace_commands_share_registry_but_are_not_model_tools() -> None:
+    registry = build_default_registry()
+
+    standard = registry.capability_manifest(
+        profile=PermissionProfile.STANDARD,
+        sandbox_healthy=False,
+    )
+    observe = registry.capability_manifest(
+        profile=PermissionProfile.OBSERVE,
+        sandbox_healthy=False,
+    )
+    agent_names = {definition.name for definition in registry.agent_definitions()}
+    metadata = {item["name"]: item for item in registry.frontend_metadata()}
+
+    assert standard["workspace.fork"] is True
+    assert observe["workspace.fork"] is False
+    assert "workspace.fork" not in agent_names
+    assert metadata["workspace.fork"]["side_effect"] == "write"
+    assert metadata["workspace.fork"]["model_visible"] is False

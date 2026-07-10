@@ -120,3 +120,55 @@ def test_unavailable_capability_is_rejected_without_creating_run(tmp_path: Path)
     assert result.error_code == "CAPABILITY_NOT_AVAILABLE"
     assert result.run is None
     assert ledger.events_after(cursor=0) == []
+
+
+def test_bus_records_synchronous_executor_lifecycle(tmp_path: Path) -> None:
+    bus, ledger = _bus(tmp_path)
+    submitted = bus.submit(
+        CommandRequest(
+            tool_name="review.test",
+            actor="core",
+            scope=_scope(tmp_path),
+            payload={"suite": "focused"},
+            idempotency_key="request:review",
+        ),
+        profile=PermissionProfile.STANDARD,
+        capability_overrides={},
+        sandbox_healthy=False,
+    )
+
+    running = bus.start(submitted.run.id)
+    succeeded = bus.complete(running.id, output={"passed": 12})
+
+    assert running.status is CommandStatus.RUNNING
+    assert succeeded.status is CommandStatus.SUCCEEDED
+    events = ledger.events_after(cursor=0)
+    assert [event.event_type for event in events][-2:] == [
+        "command.output",
+        "command.succeeded",
+    ]
+    assert events[-2].payload == {"passed": 12}
+
+
+def test_bus_records_executor_failure_without_exposing_exception_details(tmp_path: Path) -> None:
+    bus, ledger = _bus(tmp_path)
+    submitted = bus.submit(
+        CommandRequest(
+            tool_name="review.test",
+            actor="core",
+            scope=_scope(tmp_path),
+            payload={},
+            idempotency_key="request:review-failed",
+        ),
+        profile=PermissionProfile.STANDARD,
+        capability_overrides={},
+        sandbox_healthy=False,
+    )
+
+    bus.start(submitted.run.id)
+    failed = bus.fail(submitted.run.id, error_code="WORKER_INTERRUPTED")
+
+    assert failed.status is CommandStatus.FAILED
+    failure_event = ledger.events_after(cursor=0)[-2]
+    assert failure_event.event_type == "command.failure"
+    assert failure_event.payload == {"error_code": "WORKER_INTERRUPTED"}

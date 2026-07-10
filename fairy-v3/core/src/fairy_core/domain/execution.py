@@ -98,6 +98,7 @@ class Changeset:
     patches: tuple[str, ...]
     reason: str
     risk_level: str
+    idempotency_key: str
     status: ChangesetStatus = ChangesetStatus.PROPOSED
     approval_decision: ApprovalDecision = ApprovalDecision.PENDING
     created_at: datetime = field(default_factory=_now)
@@ -115,9 +116,12 @@ class Changeset:
         patches: tuple[str, ...],
         reason: str,
         risk_level: str,
+        idempotency_key: str,
     ) -> Changeset:
         if not files or len(files) != len(patches):
             raise ValueError("changeset requires one patch per file")
+        if not idempotency_key.strip():
+            raise ValueError("changeset idempotency_key is required")
         return cls(
             id=new_id(),
             project_id=project_id,
@@ -128,6 +132,7 @@ class Changeset:
             patches=patches,
             reason=reason.strip(),
             risk_level=risk_level,
+            idempotency_key=idempotency_key.strip(),
         )
 
     def record_approval(self, decision: ApprovalDecision) -> None:
@@ -159,6 +164,7 @@ class Approval:
     command_run_id: UUID
     requested_by: str
     reason: str
+    changeset_id: UUID | None = None
     decision: ApprovalDecision = ApprovalDecision.PENDING
     decided_by: str | None = None
     created_at: datetime = field(default_factory=_now)
@@ -172,6 +178,7 @@ class Approval:
         command_run_id: UUID,
         requested_by: str,
         reason: str,
+        changeset_id: UUID | None = None,
     ) -> Approval:
         return cls(
             id=new_id(),
@@ -179,6 +186,7 @@ class Approval:
             command_run_id=command_run_id,
             requested_by=requested_by,
             reason=reason,
+            changeset_id=changeset_id,
         )
 
     def decide(self, *, decision: ApprovalDecision, decided_by: str) -> None:

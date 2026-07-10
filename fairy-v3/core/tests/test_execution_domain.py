@@ -55,6 +55,7 @@ def test_changeset_cannot_apply_before_approval() -> None:
         patches=("@@ -1 +1 @@",),
         reason="Add pricing section",
         risk_level="medium",
+        idempotency_key="changeset:domain",
     )
 
     with pytest.raises(InvalidTransitionError):
@@ -120,9 +121,11 @@ def test_artifact_checkpoint_and_memory_keep_ownership() -> None:
 
 
 def test_approval_records_actor_and_decision() -> None:
+    changeset_id = new_id()
     approval = Approval.create(
         task_id=new_id(),
         command_run_id=new_id(),
+        changeset_id=changeset_id,
         requested_by="agent",
         reason="Write two files",
     )
@@ -130,6 +133,7 @@ def test_approval_records_actor_and_decision() -> None:
     approval.decide(decision=ApprovalDecision.APPROVED, decided_by="user")
 
     assert approval.decision is ApprovalDecision.APPROVED
+    assert approval.changeset_id == changeset_id
     assert approval.decided_by == "user"
     with pytest.raises(InvalidTransitionError):
         approval.decide(decision=ApprovalDecision.REJECTED, decided_by="user")

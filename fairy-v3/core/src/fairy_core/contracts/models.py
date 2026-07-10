@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fairy_core.domain.models import OperationMode
 
@@ -48,6 +48,33 @@ class TaskCreate(ContractModel):
     user_request: str = Field(min_length=1, max_length=100_000)
     operation_mode: OperationMode
     execution_target: ExecutionTarget
+    idempotency_key: str = Field(min_length=1, max_length=255)
+
+
+class FileMutation(ContractModel):
+    path: str = Field(min_length=1, max_length=1_024)
+    content: str = Field(max_length=5_000_000)
+
+    @field_validator("path")
+    @classmethod
+    def require_project_relative_path(cls, value: str) -> str:
+        normalized = value.strip()
+        parts = normalized.split("/")
+        if (
+            not normalized
+            or normalized.startswith(("/", "\\"))
+            or "\\" in normalized
+            or ":" in normalized
+            or any(part in {"", ".", ".."} for part in parts)
+        ):
+            raise ValueError("path must be a normalized project-relative path")
+        return normalized
+
+
+class ChangesetProposal(ContractModel):
+    task_id: UUID
+    files: tuple[FileMutation, ...] = Field(min_length=1, max_length=1_000)
+    reason: str = Field(min_length=1, max_length=10_000)
     idempotency_key: str = Field(min_length=1, max_length=255)
 
 

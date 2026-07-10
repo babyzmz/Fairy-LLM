@@ -1,0 +1,31 @@
+[workspace]
+members = ["crates/core-bridge", "crates/local-worker"]
+resolver = "2"
+
+[package]
+name = "fairy-desktop-v3"
+version = "0.1.0"
+description = "Windows-first desktop shell for Fairy V3"
+authors = ["Fairy"]
+edition = "2021"
+autobins = false
+
+[[bin]]
+name = "fairy"
+path = "src/main.rs"
+
+[lib]
+name = "fairy_desktop_v3"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+fairy-core-bridge = { path = "crates/core-bridge" }
+fairy-local-worker = { path = "crates/local-worker" }
+serde_json = "1"
+tauri = { version = "=2.11.5", features = [] }
+
+[dev-dependencies]
+tempfile = "3"

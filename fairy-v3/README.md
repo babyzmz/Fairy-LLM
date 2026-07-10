@@ -27,3 +27,11 @@ fairy-v3/
 
 The implementation is intentionally independent. Legacy character assets,
 voice assets, doctrine, and black-box behavior may be used as references only.
+
+## Current milestone
+
+The local vertical slice is executable: Tauri supervises Python Core, Core
+dispatches scoped workspace operations to the Rust worker, and the durable
+ledger covers import, worktree creation, Changeset approval, review,
+checkpoint, accept, discard, capabilities, and resumable events. Cloud and
+assistant capability packages remain separate milestones.

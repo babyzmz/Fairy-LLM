@@ -5,6 +5,14 @@ from pathlib import Path
 import pytest
 
 from fairy_core.domain.errors import VersionConflictError
+from fairy_core.domain.execution import (
+    Approval,
+    ApprovalDecision,
+    Changeset,
+    ChangesetStatus,
+    Checkpoint,
+)
+from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import (
     Conversation,
     OperationMode,
@@ -132,3 +140,50 @@ def test_new_project_conversation_never_inherits_another_draft(tmp_path: Path) -
     assert recovered.base_version_id == base.id
     assert recovered.active_draft_version_id is None
     assert recovered.active_preview_id is None
+
+
+def test_execution_records_survive_restart_with_explicit_ownership(tmp_path: Path) -> None:
+    database_path = tmp_path / "state.db"
+    store = SqliteStateStore(database_path)
+    project_id = new_id()
+    conversation_id = new_id()
+    task_id = new_id()
+    version_id = new_id()
+    changeset = Changeset.create(
+        project_id=project_id,
+        conversation_id=conversation_id,
+        task_id=task_id,
+        version_id=version_id,
+        files=("README.md",),
+        patches=("updated",),
+        reason="Update readme",
+        risk_level="medium",
+        idempotency_key="changeset:state",
+    )
+    changeset.transition_to(ChangesetStatus.AWAITING_APPROVAL)
+    approval = Approval.create(
+        task_id=task_id,
+        command_run_id=new_id(),
+        changeset_id=changeset.id,
+        requested_by="agent",
+        reason="Write README.md",
+    )
+    approval.decide(decision=ApprovalDecision.APPROVED, decided_by="user")
+    checkpoint = Checkpoint.create(
+        task_id=task_id,
+        version_id=version_id,
+        changed_files=("README.md",),
+        command_run_ids=(approval.command_run_id,),
+        preview_artifact_id=None,
+    )
+
+    store.save_changeset(changeset)
+    store.save_approval(approval)
+    store.save_checkpoint(checkpoint)
+    store.close()
+    restarted = SqliteStateStore(database_path)
+
+    assert restarted.get_changeset(changeset.id) == changeset
+    assert restarted.find_changeset_by_idempotency_key("changeset:state") == changeset
+    assert restarted.get_approval(approval.id) == approval
+    assert restarted.get_checkpoint(checkpoint.id) == checkpoint

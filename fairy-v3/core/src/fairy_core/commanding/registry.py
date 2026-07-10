@@ -36,6 +36,7 @@ class ToolDefinition:
     executor: str
     requires_sandbox: bool = False
     idempotent: bool = False
+    model_visible: bool = True
 
 
 class ToolRegistry:
@@ -54,6 +55,25 @@ class ToolRegistry:
 
     def definitions(self) -> tuple[ToolDefinition, ...]:
         return tuple(self._definitions.values())
+
+    def agent_definitions(self) -> tuple[ToolDefinition, ...]:
+        return tuple(
+            definition for definition in self._definitions.values() if definition.model_visible
+        )
+
+    def frontend_metadata(self) -> tuple[dict[str, object], ...]:
+        return tuple(
+            {
+                "name": definition.name,
+                "side_effect": definition.side_effect.value,
+                "risk_level": definition.risk_level.value,
+                "approval_policy": definition.approval_policy.value,
+                "requires_sandbox": definition.requires_sandbox,
+                "idempotent": definition.idempotent,
+                "model_visible": definition.model_visible,
+            }
+            for definition in self._definitions.values()
+        )
 
     def capability_manifest(
         self,
@@ -83,6 +103,7 @@ def _tool(
     *,
     sandbox: bool = False,
     idempotent: bool = False,
+    model_visible: bool = True,
 ) -> ToolDefinition:
     return ToolDefinition(
         name=name,
@@ -93,6 +114,7 @@ def _tool(
         executor=executor,
         requires_sandbox=sandbox,
         idempotent=idempotent,
+        model_visible=model_visible,
     )
 
 
@@ -101,6 +123,86 @@ def build_default_registry() -> ToolRegistry:
     active_profiles = frozenset({PermissionProfile.STANDARD, PermissionProfile.AUTONOMOUS})
     autonomous = frozenset({PermissionProfile.AUTONOMOUS})
     definitions = [
+        _tool(
+            "workspace.create_empty",
+            SideEffect.WRITE,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "rust_workspace_worker",
+            idempotent=True,
+            model_visible=False,
+        ),
+        _tool(
+            "workspace.import",
+            SideEffect.WRITE,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "rust_workspace_worker",
+            idempotent=True,
+            model_visible=False,
+        ),
+        _tool(
+            "workspace.fork",
+            SideEffect.WRITE,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "rust_workspace_worker",
+            idempotent=True,
+            model_visible=False,
+        ),
+        _tool(
+            "workspace.create_scratch",
+            SideEffect.WRITE,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "rust_workspace_worker",
+            idempotent=True,
+            model_visible=False,
+        ),
+        _tool(
+            "workspace.write_text",
+            SideEffect.WRITE,
+            RiskLevel.MEDIUM,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "rust_workspace_worker",
+            idempotent=True,
+            model_visible=False,
+        ),
+        _tool(
+            "workspace.diff",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "rust_workspace_worker",
+            idempotent=True,
+            model_visible=False,
+        ),
+        _tool(
+            "workspace.checkpoint",
+            SideEffect.WRITE,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "rust_workspace_worker",
+            idempotent=True,
+            model_visible=False,
+        ),
+        _tool(
+            "workspace.discard",
+            SideEffect.WRITE,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "rust_workspace_worker",
+            idempotent=True,
+            model_visible=False,
+        ),
         _tool(
             "project.read",
             SideEffect.READ,

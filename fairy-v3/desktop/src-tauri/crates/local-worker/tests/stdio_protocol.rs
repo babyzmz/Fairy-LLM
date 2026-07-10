@@ -1,0 +1,172 @@
+use std::fs;
+
+use fairy_local_worker::{dispatch_request, WorkspaceManager};
+use serde_json::json;
+use tempfile::tempdir;
+
+#[test]
+fn protocol_imports_forks_writes_and_checkpoints_a_scoped_version() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    fs::create_dir_all(&source).expect("source dir");
+    fs::write(source.join("README.md"), "base").expect("source file");
+    let manager = WorkspaceManager::new(temp.path().join("managed"));
+
+    let imported = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "workspace.import",
+            "params": {
+                "source": source,
+                "project_id": "project-1",
+                "version_id": "version-base"
+            }
+        }),
+    );
+    let forked = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "workspace.fork",
+            "params": {
+                "project_id": "project-1",
+                "parent_version_id": "version-base",
+                "version_id": "version-draft"
+            }
+        }),
+    );
+    let written = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "workspace.write_text",
+            "params": {
+                "project_id": "project-1",
+                "version_id": "version-draft",
+                "relative_path": "README.md",
+                "content": "draft"
+            }
+        }),
+    );
+    let diff = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "workspace.diff",
+            "params": {"project_id": "project-1", "version_id": "version-draft"}
+        }),
+    );
+    let checkpoint = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "workspace.checkpoint",
+            "params": {
+                "project_id": "project-1",
+                "version_id": "version-draft",
+                "message": "Task complete"
+            }
+        }),
+    );
+    assert!(imported["result"]["root"]
+        .as_str()
+        .unwrap()
+        .ends_with("version-base"));
+    assert!(forked["result"]["root"]
+        .as_str()
+        .unwrap()
+        .ends_with("version-draft"));
+    assert!(written["result"]["path"]
+        .as_str()
+        .unwrap()
+        .ends_with("README.md"));
+    assert_eq!(checkpoint["result"]["commit"].as_str().unwrap().len(), 40);
+    assert!(diff["result"]["diff"]
+        .as_str()
+        .unwrap()
+        .contains("README.md"));
+
+    let discarded = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "workspace.discard",
+            "params": {"project_id": "project-1", "version_id": "version-draft"}
+        }),
+    );
+    assert_eq!(discarded["result"]["discarded"], true);
+}
+
+#[test]
+fn protocol_maps_path_escape_to_standard_error_code() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    fs::create_dir_all(&source).expect("source dir");
+    fs::write(source.join("README.md"), "base").expect("source file");
+    let manager = WorkspaceManager::new(temp.path().join("managed"));
+    manager
+        .import_project(&source, "project-1", "version-base")
+        .expect("import project");
+
+    let response = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "workspace.write_text",
+            "params": {
+                "project_id": "project-1",
+                "version_id": "version-base",
+                "relative_path": "../secret.txt",
+                "content": "blocked"
+            }
+        }),
+    );
+
+    assert_eq!(response["error"]["data"]["error_code"], "PATH_OUT_OF_SCOPE");
+}
+
+#[test]
+fn protocol_creates_empty_projects_and_conversation_scratch() {
+    let temp = tempdir().expect("tempdir");
+    let manager = WorkspaceManager::new(temp.path().join("managed"));
+
+    let project = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "workspace.create_empty",
+            "params": {"project_id": "project-1", "version_id": "version-base"}
+        }),
+    );
+    let scratch = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "workspace.create_scratch",
+            "params": {"conversation_id": "conversation-1", "task_id": "task-1"}
+        }),
+    );
+
+    assert!(project["result"]["root"]
+        .as_str()
+        .unwrap()
+        .ends_with("version-base"));
+    assert!(scratch["result"]["root"]
+        .as_str()
+        .unwrap()
+        .ends_with("task-1"));
+    assert!(temp
+        .path()
+        .join("managed/scratch/conversation-1/task-1")
+        .is_dir());
+}

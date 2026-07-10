@@ -64,6 +64,10 @@ tools/python310/
 /artifacts/
 /reports/
 /.browser-runtime/
+/output/
+**/output/playwright/
+**/test-results/
+**/.playwright-cli/
 
 # Local config / secrets
 config/local_secrets.json
@@ -133,6 +137,8 @@ config/system_state.json
 
 # rust / tauri
 .cargo/
+target/
+**/src-tauri/gen/schemas/
 fairy-desktop/vendor/
 fairy-desktop/src-tauri/target/
 

@@ -106,7 +106,10 @@ class EventEnvelope:
     id: UUID
     cursor: int
     run_id: UUID
+    project_id: UUID | None
+    conversation_id: UUID
     task_id: UUID
+    version_id: UUID | None
     task_sequence: int
     event_type: str
     visibility: EventVisibility
@@ -153,7 +156,10 @@ class SqliteCommandLedger:
                 cursor INTEGER PRIMARY KEY AUTOINCREMENT,
                 id TEXT NOT NULL UNIQUE,
                 run_id TEXT NOT NULL,
+                project_id TEXT,
+                conversation_id TEXT NOT NULL,
                 task_id TEXT NOT NULL,
+                version_id TEXT,
                 task_sequence INTEGER NOT NULL,
                 event_type TEXT NOT NULL,
                 visibility TEXT NOT NULL,
@@ -375,6 +381,13 @@ class SqliteCommandLedger:
         message: str,
         payload: dict[str, Any],
     ) -> EventEnvelope:
+        run = self._connection.execute(
+            "SELECT project_id, conversation_id, scope_json FROM command_runs WHERE id = ?",
+            (str(run_id),),
+        ).fetchone()
+        if run is None:
+            raise KeyError(f"command run not found: {run_id}")
+        scope = json.loads(run["scope_json"])
         row = self._connection.execute(
             """
             SELECT COALESCE(MAX(task_sequence), 0) + 1 AS next_sequence
@@ -389,14 +402,18 @@ class SqliteCommandLedger:
         cursor = self._connection.execute(
             """
             INSERT INTO command_events (
-                id, run_id, task_id, task_sequence, event_type, visibility,
-                message, payload_json, schema_version, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, run_id, project_id, conversation_id, task_id, version_id,
+                task_sequence, event_type, visibility, message, payload_json,
+                schema_version, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(event_id),
                 str(run_id),
+                run["project_id"],
+                run["conversation_id"],
                 str(task_id),
+                scope.get("target_version_id"),
                 sequence,
                 event_type,
                 visibility.value,
@@ -411,7 +428,10 @@ class SqliteCommandLedger:
             id=event_id,
             cursor=int(cursor),
             run_id=run_id,
+            project_id=UUID(run["project_id"]) if run["project_id"] else None,
+            conversation_id=UUID(run["conversation_id"]),
             task_id=task_id,
+            version_id=UUID(scope["target_version_id"]) if scope.get("target_version_id") else None,
             task_sequence=sequence,
             event_type=event_type,
             visibility=visibility,
@@ -466,7 +486,10 @@ class SqliteCommandLedger:
             id=UUID(row["id"]),
             cursor=int(row["cursor"]),
             run_id=UUID(row["run_id"]),
+            project_id=UUID(row["project_id"]) if row["project_id"] else None,
+            conversation_id=UUID(row["conversation_id"]),
             task_id=UUID(row["task_id"]),
+            version_id=UUID(row["version_id"]) if row["version_id"] else None,
             task_sequence=int(row["task_sequence"]),
             event_type=row["event_type"],
             visibility=EventVisibility(row["visibility"]),

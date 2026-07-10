@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from fairy_core.commanding.ledger import CommandRun, CommandStatus, SqliteCommandLedger
+from fairy_core.commanding.ledger import (
+    CommandRun,
+    CommandStatus,
+    EventVisibility,
+    SqliteCommandLedger,
+)
 from fairy_core.commanding.policy import PermissionProfile, PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.domain.models import ScopeContract
@@ -93,3 +98,26 @@ class CommandBus:
     def decide_approval(self, run_id: UUID, *, approved: bool) -> CommandRun:
         status = CommandStatus.QUEUED if approved else CommandStatus.REJECTED
         return self._ledger.transition(run_id, status)
+
+    def start(self, run_id: UUID) -> CommandRun:
+        return self._ledger.transition(run_id, CommandStatus.RUNNING)
+
+    def complete(self, run_id: UUID, *, output: dict[str, Any]) -> CommandRun:
+        self._ledger.append_event(
+            run_id=run_id,
+            event_type="command.output",
+            visibility=EventVisibility.DEVELOPER,
+            message="Command produced output",
+            payload=output,
+        )
+        return self._ledger.transition(run_id, CommandStatus.SUCCEEDED)
+
+    def fail(self, run_id: UUID, *, error_code: str) -> CommandRun:
+        self._ledger.append_event(
+            run_id=run_id,
+            event_type="command.failure",
+            visibility=EventVisibility.USER,
+            message="Command failed",
+            payload={"error_code": error_code},
+        )
+        return self._ledger.transition(run_id, CommandStatus.FAILED)
