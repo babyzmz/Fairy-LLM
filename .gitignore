@@ -17,6 +17,7 @@ _tmp*
 .idea/
 .vscode/
 .claude/
+.worktrees/
 *.code-workspace
 
 # Python
