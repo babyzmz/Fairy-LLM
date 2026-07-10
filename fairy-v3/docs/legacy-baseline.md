@@ -12,3 +12,7 @@ existing web-access expectations. They are reference behavior only and are not
 part of the Fairy V3 test gate.
 
 V3 tests run from fairy-v3 and must remain independent from legacy modules.
+
+The completed legacy task reviews are normalized in
+[legacy-intake.md](legacy-intake.md). That inventory is the only approved
+source for bringing legacy assets or black-box behavior into V3.

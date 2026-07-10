@@ -21,6 +21,8 @@ fairy-v3/
 |- desktop/    React/Tauri shell and the Rust local worker
 |- contracts/  Generated OpenAPI, JSON Schema, TypeScript, and Rust contracts
 |- cloud/      Cloud API/worker composition and deployment files
+|- resources/  Provenanced character, icon, and voice assets
+|- scripts/    Contract generation and repository boundary checks
 |- tests/      Cross-transport, security, recovery, and end-to-end tests
 `- docs/       Architecture, threat model, ADRs, and operating documentation
 ```
@@ -33,5 +35,14 @@ voice assets, doctrine, and black-box behavior may be used as references only.
 The local vertical slice is executable: Tauri supervises Python Core, Core
 dispatches scoped workspace operations to the Rust worker, and the durable
 ledger covers import, worktree creation, Changeset approval, review,
-checkpoint, accept, discard, capabilities, and resumable events. Cloud and
-assistant capability packages remain separate milestones.
+checkpoint, accept, discard, capabilities, and resumable events. The Docker
+cloud environment, OIDC, PostgreSQL sync/outbox, S3 snapshots, and generated
+cloud client exist. Cloud Core state is being moved from the temporary local
+composition to the canonical PostgreSQL Unit of Work before the cloud
+milestone is considered complete.
+
+Run the legacy-dependency boundary gate with:
+
+```powershell
+uv run --project core python scripts/check_boundaries.py .
+```

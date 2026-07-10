@@ -53,10 +53,21 @@ FairySandbox provider. The cloud worker executes in a non-root OCI sandbox.
 ### Storage and synchronization
 
 SQLite stores local state and projections. PostgreSQL stores cloud state,
-leases, ledger events, and the transactional outbox. S3-compatible storage
-holds immutable version snapshots, artifacts, logs, and preview captures.
-Devices synchronize domain events and version manifests by cursor; databases
-are never mirrored.
+leases, ledger events, and the transactional outbox. Both adapters implement
+the same tenant-scoped StateStore, CommandLedger, and UnitOfWork ports. Cloud
+tables use a shared schema with explicit tenant predicates and PostgreSQL row
+level security. Production schemas are changed only through Alembic.
+
+There is one authoritative Project row for revision and Active Version state,
+and one authoritative Event Ledger for Core commands, synchronization, SSE,
+and outbox delivery. Transport adapters never maintain a second revision or
+event cursor. Durable intent is committed before external execution; final
+state, command completion, domain events, and outbox records commit together
+after the idempotent operation returns.
+
+S3-compatible storage holds immutable version snapshots, artifacts, logs, and
+preview captures. Devices synchronize domain events and version manifests by
+cursor; databases are never mirrored.
 
 An imported project is copied into Fairy-managed storage and initialized as an
 internal Git repository. Each Task receives an isolated worktree. Accepting a
