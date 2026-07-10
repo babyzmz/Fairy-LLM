@@ -1,0 +1,1 @@
+"""Fairy Core application services."""
