@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Table, select, update
+from sqlalchemy import Table, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.engine import Engine, RowMapping
+from sqlalchemy.engine import Connection, Engine, RowMapping
 
-from fairy_core.domain.errors import VersionConflictError
+from fairy_core.domain.errors import InvalidTransitionError, VersionConflictError
 from fairy_core.domain.execution import (
     Approval,
     ApprovalDecision,
@@ -30,8 +30,9 @@ from fairy_core.domain.models import (
     VersionVisibility,
     WorkspaceType,
 )
+from fairy_core.persistence.session import SqlAlchemySession
+from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.storage.schema import (
-    TENANT_ID_LENGTH,
     approvals,
     changesets,
     checkpoints,
@@ -57,34 +58,29 @@ class SqlAlchemyStateStore:
 
     def __init__(
         self,
-        engine: Engine,
+        bind: Engine | Connection,
         *,
         tenant_id: str,
         initialize_schema: bool = False,
         owns_engine: bool = False,
     ) -> None:
-        normalized_tenant = tenant_id.strip()
-        if not normalized_tenant:
-            raise ValueError("tenant_id must not be empty")
-        if len(normalized_tenant) > TENANT_ID_LENGTH:
-            raise ValueError(f"tenant_id must not exceed {TENANT_ID_LENGTH} characters")
-        if engine.dialect.name not in {"postgresql", "sqlite"}:
-            raise ValueError(f"unsupported state-store dialect: {engine.dialect.name}")
-        if initialize_schema and engine.dialect.name != "sqlite":
+        normalized_tenant = normalize_tenant_id(tenant_id)
+        dialect_name = bind.dialect.name
+        if dialect_name not in {"postgresql", "sqlite"}:
+            raise ValueError(f"unsupported state-store dialect: {dialect_name}")
+        if initialize_schema and dialect_name != "sqlite":
             raise ValueError("PostgreSQL schemas must be initialized through Alembic")
-        self._engine = engine
         self._tenant_id = normalized_tenant
-        self._owns_engine = owns_engine
+        self._session = SqlAlchemySession(bind, owns_engine=owns_engine)
         if initialize_schema:
-            state_metadata.create_all(engine)
+            state_metadata.create_all(bind)
 
     @property
     def tenant_id(self) -> str:
         return self._tenant_id
 
     def close(self) -> None:
-        if self._owns_engine:
-            self._engine.dispose()
+        self._session.close()
 
     def save_project(self, project: Project) -> None:
         self._upsert(
@@ -107,18 +103,7 @@ class SqlAlchemyStateStore:
 
     def get_project(self, project_id: UUID) -> Project | None:
         row = self._get_by_id(projects, project_id)
-        if row is None:
-            return None
-        return Project(
-            id=UUID(row["id"]),
-            name=row["name"],
-            residency=ProjectResidency(row["residency"]),
-            active_version_id=_uuid(row["active_version_id"]),
-            active_preview_id=_uuid(row["active_preview_id"]),
-            revision=int(row["revision"]),
-            created_at=_datetime(row["created_at"]),
-            updated_at=_datetime(row["updated_at"]),
-        )
+        return self._project_from_row(row) if row is not None else None
 
     def save_conversation(self, conversation: Conversation) -> None:
         self._upsert(
@@ -198,7 +183,7 @@ class SqlAlchemyStateStore:
 
     def save_task(self, task: Task, *, idempotency_key: str | None = None) -> None:
         if idempotency_key is None:
-            with self._engine.connect() as connection:
+            with self._session.read() as connection:
                 existing = connection.execute(
                     select(tasks.c.idempotency_key).where(
                         tasks.c.tenant_id == self._tenant_id,
@@ -276,7 +261,7 @@ class SqlAlchemyStateStore:
         return self._changeset_from_row(row) if row is not None else None
 
     def changesets_for_task(self, task_id: UUID) -> list[Changeset]:
-        with self._engine.connect() as connection:
+        with self._session.read() as connection:
             rows = (
                 connection.execute(
                     select(changesets)
@@ -358,7 +343,7 @@ class SqlAlchemyStateStore:
         version_id: UUID,
         expected_revision: int,
     ) -> Project:
-        with self._engine.begin() as connection:
+        with self._session.write() as connection:
             version_row = connection.execute(
                 select(versions.c.project_id).where(
                     versions.c.tenant_id == self._tenant_id,
@@ -400,6 +385,66 @@ class SqlAlchemyStateStore:
         assert accepted is not None
         return accepted
 
+    def reserve_version_discard(
+        self,
+        *,
+        project_id: UUID,
+        version_id: UUID,
+        expected_revision: int,
+    ) -> Project:
+        now = datetime.now(UTC)
+        with self._session.write() as connection:
+            version_row = connection.execute(
+                select(versions.c.project_id).where(
+                    versions.c.tenant_id == self._tenant_id,
+                    versions.c.id == str(version_id),
+                )
+            ).first()
+            if version_row is None or version_row.project_id != str(project_id):
+                raise KeyError(f"version does not belong to project: {version_id}")
+            current = (
+                connection.execute(
+                    select(projects).where(
+                        projects.c.tenant_id == self._tenant_id,
+                        projects.c.id == str(project_id),
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if current is None:
+                raise KeyError(f"project not found: {project_id}")
+            if current["active_version_id"] == str(version_id):
+                raise InvalidTransitionError("the Active Version cannot be discarded")
+            result = connection.execute(
+                update(projects)
+                .where(
+                    projects.c.tenant_id == self._tenant_id,
+                    projects.c.id == str(project_id),
+                    projects.c.revision == expected_revision,
+                    or_(
+                        projects.c.active_version_id.is_(None),
+                        projects.c.active_version_id != str(version_id),
+                    ),
+                )
+                .values(revision=expected_revision + 1, updated_at=now)
+            )
+            if result.rowcount != 1:
+                raise VersionConflictError(
+                    f"expected project revision {expected_revision}, current revision has changed"
+                )
+            updated = (
+                connection.execute(
+                    select(projects).where(
+                        projects.c.tenant_id == self._tenant_id,
+                        projects.c.id == str(project_id),
+                    )
+                )
+                .mappings()
+                .one()
+            )
+        return self._project_from_row(updated)
+
     def _get_by_id(self, table: Table, identifier: UUID) -> RowMapping | None:
         return self._first(
             select(table).where(
@@ -409,7 +454,7 @@ class SqlAlchemyStateStore:
         )
 
     def _first(self, statement: Any) -> RowMapping | None:
-        with self._engine.connect() as connection:
+        with self._session.read() as connection:
             return connection.execute(statement).mappings().first()
 
     def _upsert(self, table: Table, values: dict[str, object]) -> None:
@@ -417,20 +462,33 @@ class SqlAlchemyStateStore:
         updates = {
             key: value for key, value in scoped_values.items() if key not in {"tenant_id", "id"}
         }
-        if self._engine.dialect.name == "postgresql":
+        if self._session.dialect_name == "postgresql":
             statement = postgresql_insert(table).values(**scoped_values)
             statement = statement.on_conflict_do_update(
                 index_elements=[table.c.tenant_id, table.c.id],
                 set_=updates,
             )
-        elif self._engine.dialect.name == "sqlite":
+        elif self._session.dialect_name == "sqlite":
             statement = sqlite_insert(table).values(**scoped_values)
             statement = statement.on_conflict_do_update(
                 index_elements=[table.c.tenant_id, table.c.id],
                 set_=updates,
             )
-        with self._engine.begin() as connection:
+        with self._session.write() as connection:
             connection.execute(statement)
+
+    @staticmethod
+    def _project_from_row(row: Mapping[str, Any]) -> Project:
+        return Project(
+            id=UUID(row["id"]),
+            name=row["name"],
+            residency=ProjectResidency(row["residency"]),
+            active_version_id=_uuid(row["active_version_id"]),
+            active_preview_id=_uuid(row["active_preview_id"]),
+            revision=int(row["revision"]),
+            created_at=_datetime(row["created_at"]),
+            updated_at=_datetime(row["updated_at"]),
+        )
 
     @staticmethod
     def _task_from_row(row: Mapping[str, Any]) -> Task:

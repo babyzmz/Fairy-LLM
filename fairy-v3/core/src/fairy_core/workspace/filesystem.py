@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+import threading
 from pathlib import Path
 from uuid import UUID
 
 from fairy_core.security.path_guard import PathGuard
+from fairy_core.workspace.file_transaction import (
+    FileChangesetTransaction,
+    atomic_write_scoped,
+)
 
 
 class FileSystemWorkspaceProvisioner:
@@ -14,6 +19,8 @@ class FileSystemWorkspaceProvisioner:
     def __init__(self, managed_root: Path) -> None:
         self.managed_root = managed_root.resolve(strict=False)
         self.managed_root.mkdir(parents=True, exist_ok=True)
+        self._locks_guard = threading.Lock()
+        self._version_locks: dict[tuple[str, str], threading.RLock] = {}
 
     def project_versions_root(self, project_id: UUID | str) -> Path:
         return self.managed_root / "projects" / str(project_id) / "versions"
@@ -68,21 +75,95 @@ class FileSystemWorkspaceProvisioner:
         relative_path: str,
         content: str,
     ) -> Path:
-        root = self.version_path(project_id, version_id).resolve(strict=True)
-        target = PathGuard(
-            project_root=root,
-            allowed_roots=(root,),
-            forbidden_roots=(),
-        ).validate_write(relative_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        return target
+        with self._version_lock(project_id, version_id):
+            root = self.version_path(project_id, version_id).resolve(strict=True)
+            guard = PathGuard(
+                project_root=root,
+                allowed_roots=(root,),
+                forbidden_roots=(),
+            )
+            staging_root = (
+                self.managed_root / ".transactions" / "single-writes" / str(threading.get_ident())
+            )
+            try:
+                return atomic_write_scoped(
+                    guard=guard,
+                    relative_path=relative_path,
+                    content=content.encode("utf-8"),
+                    staging_root=staging_root,
+                )
+            finally:
+                shutil.rmtree(staging_root, ignore_errors=True)
+
+    def apply_changeset(
+        self,
+        *,
+        project_id: UUID | str,
+        version_id: UUID | str,
+        mutations: tuple[tuple[str, str], ...],
+    ) -> tuple[Path, ...]:
+        lock = self._version_lock(project_id, version_id)
+        with lock:
+            root = self.version_path(project_id, version_id).resolve(strict=True)
+            guard = PathGuard(
+                project_root=root,
+                allowed_roots=(root,),
+                forbidden_roots=(),
+            )
+            transaction_root = (
+                self.managed_root
+                / ".transactions"
+                / "changesets"
+                / str(project_id)
+                / str(version_id)
+                / "current"
+            )
+            FileChangesetTransaction.recover(transaction_root, guard=guard)
+            transaction = FileChangesetTransaction.prepare(
+                transaction_root,
+                guard=guard,
+                relative_paths=tuple(path for path, _content in mutations),
+            )
+            try:
+                written = tuple(
+                    self.write_text(
+                        project_id=project_id,
+                        version_id=version_id,
+                        relative_path=path,
+                        content=content,
+                    )
+                    for path, content in mutations
+                )
+                transaction.mark_applied()
+            except BaseException as error:
+                try:
+                    transaction.rollback()
+                except Exception as rollback_error:
+                    raise RuntimeError(
+                        f"changeset write and rollback both failed: {rollback_error}"
+                    ) from error
+                transaction.cleanup(ignore_errors=True)
+                raise
+            transaction.cleanup(ignore_errors=True)
+            return written
+
+    def _version_lock(
+        self,
+        project_id: UUID | str,
+        version_id: UUID | str,
+    ) -> threading.RLock:
+        key = str(project_id), str(version_id)
+        with self._locks_guard:
+            return self._version_locks.setdefault(key, threading.RLock())
 
     def diff(self, *, project_id: UUID | str, version_id: UUID | str) -> str:
-        root = self.version_path(project_id, version_id).resolve(strict=True)
-        return "\n".join(
-            path.relative_to(root).as_posix() for path in sorted(root.rglob("*")) if path.is_file()
-        )
+        with self._version_lock(project_id, version_id):
+            root = self.version_path(project_id, version_id).resolve(strict=True)
+            return "\n".join(
+                path.relative_to(root).as_posix()
+                for path in sorted(root.rglob("*"))
+                if path.is_file()
+            )
 
     def checkpoint(
         self,
@@ -91,14 +172,15 @@ class FileSystemWorkspaceProvisioner:
         version_id: UUID | str,
         message: str,
     ) -> str:
-        root = self.version_path(project_id, version_id).resolve(strict=True)
-        digest = hashlib.sha1(usedforsecurity=False)
-        digest.update(message.encode("utf-8"))
-        for path in sorted(root.rglob("*")):
-            if path.is_file():
-                digest.update(path.relative_to(root).as_posix().encode("utf-8"))
-                digest.update(path.read_bytes())
-        return digest.hexdigest()
+        with self._version_lock(project_id, version_id):
+            root = self.version_path(project_id, version_id).resolve(strict=True)
+            digest = hashlib.sha1(usedforsecurity=False)
+            digest.update(message.encode("utf-8"))
+            for path in sorted(root.rglob("*")):
+                if path.is_file():
+                    digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+                    digest.update(path.read_bytes())
+            return digest.hexdigest()
 
     def discard_version(
         self,
@@ -106,6 +188,7 @@ class FileSystemWorkspaceProvisioner:
         project_id: UUID | str,
         version_id: UUID | str,
     ) -> None:
-        target = self.version_path(project_id, version_id)
-        if target.exists():
-            shutil.rmtree(target)
+        with self._version_lock(project_id, version_id):
+            target = self.version_path(project_id, version_id)
+            if target.exists():
+                shutil.rmtree(target)

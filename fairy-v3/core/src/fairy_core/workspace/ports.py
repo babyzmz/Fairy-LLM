@@ -39,6 +39,14 @@ class WorkspaceProvisioner(Protocol):
         content: str,
     ) -> Path: ...
 
+    def apply_changeset(
+        self,
+        *,
+        project_id: WorkspaceId,
+        version_id: WorkspaceId,
+        mutations: tuple[tuple[str, str], ...],
+    ) -> tuple[Path, ...]: ...
+
     def diff(self, *, project_id: WorkspaceId, version_id: WorkspaceId) -> str: ...
 
     def checkpoint(

@@ -134,6 +134,90 @@ fn protocol_maps_path_escape_to_standard_error_code() {
 }
 
 #[test]
+fn changeset_validates_every_path_before_writing_any_file() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    fs::create_dir_all(&source).expect("source dir");
+    fs::write(source.join("README.md"), "base").expect("source file");
+    let manager = WorkspaceManager::new(temp.path().join("managed"));
+    let workspace = manager
+        .import_project(&source, "project-1", "version-base")
+        .expect("import project");
+
+    let response = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "workspace.apply_changeset",
+            "params": {
+                "project_id": "project-1",
+                "version_id": "version-base",
+                "mutations": [
+                    {"relative_path": "README.md", "content": "draft"},
+                    {"relative_path": "../secret.txt", "content": "blocked"}
+                ]
+            }
+        }),
+    );
+
+    assert_eq!(response["error"]["data"]["error_code"], "PATH_OUT_OF_SCOPE");
+    assert_eq!(
+        fs::read_to_string(workspace.root.join("README.md")).expect("read file"),
+        "base"
+    );
+}
+
+#[test]
+fn changeset_recovers_a_prepared_journal_before_the_next_request() {
+    let temp = tempdir().expect("tempdir");
+    let managed = temp.path().join("managed");
+    let source = temp.path().join("source");
+    fs::create_dir_all(&source).expect("source dir");
+    fs::write(source.join("README.md"), "base").expect("source file");
+    let manager = WorkspaceManager::new(&managed);
+    let workspace = manager
+        .import_project(&source, "project-1", "version-base")
+        .expect("import project");
+    let transaction = managed.join(".transactions/changesets/project-1/version-base/current");
+    fs::create_dir_all(transaction.join("backups")).expect("backup dir");
+    fs::write(transaction.join("backups/0.bin"), "base").expect("backup");
+    fs::write(
+        transaction.join("manifest.json"),
+        serde_json::to_vec(&json!({
+            "schema_version": 1,
+            "entries": [{"relative_path": "README.md", "existed": true}]
+        }))
+        .expect("manifest json"),
+    )
+    .expect("manifest");
+    fs::write(workspace.root.join("README.md"), "partial").expect("partial write");
+
+    let response = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "workspace.apply_changeset",
+            "params": {
+                "project_id": "project-1",
+                "version_id": "version-base",
+                "mutations": [
+                    {"relative_path": "../secret.txt", "content": "blocked"}
+                ]
+            }
+        }),
+    );
+
+    assert_eq!(response["error"]["data"]["error_code"], "PATH_OUT_OF_SCOPE");
+    assert_eq!(
+        fs::read_to_string(workspace.root.join("README.md")).expect("read file"),
+        "base"
+    );
+    assert!(!transaction.exists());
+}
+
+#[test]
 fn protocol_creates_empty_projects_and_conversation_scratch() {
     let temp = tempdir().expect("tempdir");
     let manager = WorkspaceManager::new(temp.path().join("managed"));

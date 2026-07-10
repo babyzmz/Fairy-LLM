@@ -52,4 +52,12 @@ class StateStore(Protocol):
         expected_revision: int,
     ) -> Project: ...
 
+    def reserve_version_discard(
+        self,
+        *,
+        project_id: UUID,
+        version_id: UUID,
+        expected_revision: int,
+    ) -> Project: ...
+
     def close(self) -> None: ...

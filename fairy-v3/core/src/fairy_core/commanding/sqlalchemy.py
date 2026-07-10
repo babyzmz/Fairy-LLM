@@ -33,7 +33,8 @@ from fairy_core.domain.errors import (
 )
 from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import ScopeContract
-from fairy_core.storage.schema import TENANT_ID_LENGTH
+from fairy_core.persistence.session import SqlAlchemySession
+from fairy_core.persistence.tenant import normalize_tenant_id
 
 
 def _now() -> datetime:
@@ -75,34 +76,29 @@ class SqlAlchemyCommandLedger:
 
     def __init__(
         self,
-        engine: Engine,
+        bind: Engine | Connection,
         *,
         tenant_id: str,
         initialize_schema: bool = False,
         owns_engine: bool = False,
     ) -> None:
-        normalized_tenant = tenant_id.strip()
-        if not normalized_tenant:
-            raise ValueError("tenant_id must not be empty")
-        if len(normalized_tenant) > TENANT_ID_LENGTH:
-            raise ValueError(f"tenant_id must not exceed {TENANT_ID_LENGTH} characters")
-        if engine.dialect.name not in {"postgresql", "sqlite"}:
-            raise ValueError(f"unsupported command-ledger dialect: {engine.dialect.name}")
-        if initialize_schema and engine.dialect.name != "sqlite":
+        normalized_tenant = normalize_tenant_id(tenant_id)
+        dialect_name = bind.dialect.name
+        if dialect_name not in {"postgresql", "sqlite"}:
+            raise ValueError(f"unsupported command-ledger dialect: {dialect_name}")
+        if initialize_schema and dialect_name != "sqlite":
             raise ValueError("PostgreSQL schemas must be initialized through Alembic")
-        self._engine = engine
         self._tenant_id = normalized_tenant
-        self._owns_engine = owns_engine
+        self._session = SqlAlchemySession(bind, owns_engine=owns_engine)
         if initialize_schema:
-            command_metadata.create_all(engine)
+            command_metadata.create_all(bind)
 
     @property
     def tenant_id(self) -> str:
         return self._tenant_id
 
     def close(self) -> None:
-        if self._owns_engine:
-            self._engine.dispose()
+        self._session.close()
 
     def create_run(
         self,
@@ -147,7 +143,7 @@ class SqlAlchemyCommandLedger:
         statement = statement.on_conflict_do_nothing(
             index_elements=[command_runs.c.tenant_id, command_runs.c.idempotency_key]
         )
-        with self._engine.begin() as connection:
+        with self._session.write() as connection:
             inserted_id = connection.execute(
                 statement.returning(command_runs.c.id)
             ).scalar_one_or_none()
@@ -172,7 +168,7 @@ class SqlAlchemyCommandLedger:
         return self._run_from_row(row)
 
     def get_run(self, run_id: UUID) -> CommandRun | None:
-        with self._engine.connect() as connection:
+        with self._session.read() as connection:
             row = self._run_by_id(connection, run_id)
         return self._run_from_row(row) if row is not None else None
 
@@ -187,7 +183,7 @@ class SqlAlchemyCommandLedger:
         if status is CommandStatus.RUNNING:
             raise InvalidTransitionError("use claim() to enter the running state")
         now = _now()
-        with self._engine.begin() as connection:
+        with self._session.write() as connection:
             row = self._run_by_id(connection, run_id, for_update=True)
             if row is None:
                 raise KeyError(f"command run not found: {run_id}")
@@ -239,7 +235,7 @@ class SqlAlchemyCommandLedger:
         lease_owner: str | None = None,
         lease_fence: int | None = None,
     ) -> EventEnvelope:
-        with self._engine.begin() as connection:
+        with self._session.write() as connection:
             run = self._run_by_id(connection, run_id, for_update=True)
             if run is None:
                 raise KeyError(f"command run not found: {run_id}")
@@ -288,7 +284,7 @@ class SqlAlchemyCommandLedger:
         if status not in {CommandStatus.SUCCEEDED, CommandStatus.FAILED}:
             raise ValueError("finish status must be succeeded or failed")
         now = _now()
-        with self._engine.begin() as connection:
+        with self._session.write() as connection:
             row = self._run_by_id(connection, run_id, for_update=True)
             if row is None:
                 raise KeyError(f"command run not found: {run_id}")
@@ -359,7 +355,7 @@ class SqlAlchemyCommandLedger:
                 )
             )
         statement = statement.order_by(domain_events.c.cursor)
-        with self._engine.connect() as connection:
+        with self._session.read() as connection:
             rows = connection.execute(statement).mappings().all()
         return [self._event_from_row(row) for row in rows]
 
@@ -378,7 +374,7 @@ class SqlAlchemyCommandLedger:
         assert normalized_lease_until is not None
         if normalized_lease_until <= now:
             raise ValueError("lease_until must be in the future")
-        with self._engine.begin() as connection:
+        with self._session.write() as connection:
             row = self._run_by_id(connection, run_id, for_update=True)
             if row is None:
                 raise KeyError(f"command run not found: {run_id}")
@@ -423,7 +419,7 @@ class SqlAlchemyCommandLedger:
         now = _now()
         if lease_until <= now:
             raise ValueError("lease_until must be in the future")
-        with self._engine.begin() as connection:
+        with self._session.write() as connection:
             statement = (
                 select(command_runs)
                 .where(
@@ -440,7 +436,7 @@ class SqlAlchemyCommandLedger:
                 .order_by(command_runs.c.created_at, command_runs.c.id)
                 .limit(1)
             )
-            if self._engine.dialect.name == "postgresql":
+            if self._session.dialect_name == "postgresql":
                 statement = statement.with_for_update(skip_locked=True)
             row = connection.execute(statement).mappings().first()
             if row is None:
@@ -570,7 +566,7 @@ class SqlAlchemyCommandLedger:
     def _insert(self, table: Any):
         return (
             postgresql_insert(table)
-            if self._engine.dialect.name == "postgresql"
+            if self._session.dialect_name == "postgresql"
             else sqlite_insert(table)
         )
 
@@ -610,7 +606,7 @@ class SqlAlchemyCommandLedger:
             command_runs.c.tenant_id == self._tenant_id,
             command_runs.c.id == str(run_id),
         )
-        if for_update and self._engine.dialect.name == "postgresql":
+        if for_update and self._session.dialect_name == "postgresql":
             statement = statement.with_for_update()
         return connection.execute(statement).mappings().first()
 

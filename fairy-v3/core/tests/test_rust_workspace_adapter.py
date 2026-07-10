@@ -35,6 +35,16 @@ class RecordingTransport:
             return {"discarded": True}
         if method == "workspace.write_text":
             return {"path": str(root / str(params["relative_path"]))}
+        if method == "workspace.apply_changeset":
+            mutations = params["mutations"]
+            assert isinstance(mutations, list)
+            return {
+                "paths": [
+                    str(root / str(mutation["relative_path"]))
+                    for mutation in mutations
+                    if isinstance(mutation, dict)
+                ]
+            }
         return {"root": str(root)}
 
 
@@ -56,6 +66,11 @@ def test_adapter_maps_project_lifecycle_to_worker_protocol(tmp_path: Path) -> No
         relative_path="README.md",
         content="draft",
     )
+    batch = adapter.apply_changeset(
+        project_id="project-1",
+        version_id="version-draft",
+        mutations=(("one.txt", "one"), ("two.txt", "two")),
+    )
     diff = adapter.diff(project_id="project-1", version_id="version-draft")
     commit = adapter.checkpoint(
         project_id="project-1",
@@ -67,12 +82,14 @@ def test_adapter_maps_project_lifecycle_to_worker_protocol(tmp_path: Path) -> No
     assert imported.name == "version-base"
     assert draft.name == "version-draft"
     assert written.name == "README.md"
+    assert [path.name for path in batch] == ["one.txt", "two.txt"]
     assert diff == "M README.md"
     assert commit == "a" * 40
     assert [method for method, _params in transport.calls] == [
         "workspace.import",
         "workspace.fork",
         "workspace.write_text",
+        "workspace.apply_changeset",
         "workspace.diff",
         "workspace.checkpoint",
         "workspace.discard",

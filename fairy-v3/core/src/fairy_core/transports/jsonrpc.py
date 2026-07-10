@@ -7,6 +7,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 from uuid import UUID
+from weakref import finalize
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -65,10 +66,12 @@ class JsonRpcDispatcher:
         *,
         ledger: CommandLedger,
         registry: ToolRegistry,
+        on_close: Callable[[], None] | None = None,
     ) -> None:
         self._application = application
         self._ledger = ledger
         self._registry = registry
+        self._finalizer = finalize(self, on_close) if on_close is not None else None
         self._methods: dict[str, Callable[[dict[str, Any]], Any]] = {
             "health": self._health,
             "projects.create": self._create_project,
@@ -88,6 +91,10 @@ class JsonRpcDispatcher:
         }
         if self._methods.keys() != _PUBLIC_METHOD_NAMES:
             raise RuntimeError("JSON-RPC handlers do not match the public method contract")
+
+    def close(self) -> None:
+        if self._finalizer is not None:
+            self._finalizer()
 
     @classmethod
     def method_names(cls) -> frozenset[str]:

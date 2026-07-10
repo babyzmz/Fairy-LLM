@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from sqlalchemy.engine import Engine
+
+from fairy_core.commanding.schema import command_metadata
+from fairy_core.commanding.sqlite_migrations import (
+    migrate_pre_tenant_ledger,
+    prepare_pre_tenant_schema,
+)
+from fairy_core.persistence.sqlite_split_migration import import_split_sqlite_databases
+from fairy_core.persistence.tenant import normalize_tenant_id
+from fairy_core.storage.schema import state_metadata
+from fairy_core.storage.sqlite_engine import create_sqlite_engine
+from fairy_core.storage.sqlite_migrations import migrate_pre_tenant_schema
+
+
+def create_sqlite_core_engine(
+    path: Path,
+    *,
+    tenant_id: str = "local",
+    legacy_state_path: Path | None = None,
+    legacy_ledger_path: Path | None = None,
+) -> Engine:
+    tenant_id = normalize_tenant_id(tenant_id)
+    engine = create_sqlite_engine(path)
+    try:
+        prepare_pre_tenant_schema(engine)
+        state_metadata.create_all(engine)
+        command_metadata.create_all(engine)
+        migrate_pre_tenant_schema(engine, tenant_id=tenant_id)
+        migrate_pre_tenant_ledger(engine, tenant_id=tenant_id)
+        import_split_sqlite_databases(
+            engine,
+            destination_path=path,
+            state_path=legacy_state_path,
+            ledger_path=legacy_ledger_path,
+            tenant_id=tenant_id,
+        )
+    except BaseException:
+        engine.dispose()
+        raise
+    return engine

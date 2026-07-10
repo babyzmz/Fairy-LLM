@@ -16,7 +16,8 @@ from sqlalchemy import (
 from sqlalchemy.engine import Dialect
 from sqlalchemy.types import TypeDecorator
 
-TENANT_ID_LENGTH = 128
+from fairy_core.persistence.tenant import TENANT_ID_LENGTH
+
 ID_LENGTH = 36
 
 state_metadata = MetaData()

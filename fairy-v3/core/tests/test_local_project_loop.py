@@ -5,8 +5,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fairy_core.application.core import CoreApplication
-from fairy_core.commanding.bus import CommandBus
-from fairy_core.commanding.ledger import SqliteCommandLedger
+from fairy_core.commanding import SqlAlchemyCommandLedger
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.contracts.models import (
@@ -22,7 +21,8 @@ from fairy_core.domain.models import (
     VersionVisibility,
     WorkspaceType,
 )
-from fairy_core.storage import SqliteStateStore
+from fairy_core.persistence import SqlAlchemyUnitOfWorkFactory
+from fairy_core.persistence.sqlite import create_sqlite_core_engine
 
 
 class FakeWorkspace:
@@ -78,6 +78,23 @@ class FakeWorkspace:
         target.write_text(content, encoding="utf-8")
         return target
 
+    def apply_changeset(
+        self,
+        *,
+        project_id: UUID | str,
+        version_id: UUID | str,
+        mutations: tuple[tuple[str, str], ...],
+    ) -> tuple[Path, ...]:
+        return tuple(
+            self.write_text(
+                project_id=project_id,
+                version_id=version_id,
+                relative_path=path,
+                content=content,
+            )
+            for path, content in mutations
+        )
+
     def diff(self, *, project_id: UUID | str, version_id: UUID | str) -> str:
         return "M README.md"
 
@@ -94,18 +111,19 @@ class FakeWorkspace:
         shutil.rmtree(self.version_path(project_id, version_id))
 
 
-def _application(tmp_path: Path) -> tuple[CoreApplication, SqliteCommandLedger]:
+def _application(tmp_path: Path) -> tuple[CoreApplication, SqlAlchemyCommandLedger]:
+    engine = create_sqlite_core_engine(tmp_path / "core.db")
     registry = build_default_registry()
-    ledger = SqliteCommandLedger(tmp_path / "ledger.db")
+    ledger = SqlAlchemyCommandLedger(engine, tenant_id="local")
     return (
         CoreApplication(
-            state_store=SqliteStateStore(tmp_path / "state.db"),
-            workspace_provisioner=FakeWorkspace(tmp_path / "managed"),
-            command_bus=CommandBus(
-                registry=registry,
-                policy=PolicyEngine(registry),
-                ledger=ledger,
+            unit_of_work_factory=SqlAlchemyUnitOfWorkFactory(
+                engine,
+                tenant_id="local",
             ),
+            workspace_provisioner=FakeWorkspace(tmp_path / "managed"),
+            registry=registry,
+            policy=PolicyEngine(registry),
         ),
         ledger,
     )

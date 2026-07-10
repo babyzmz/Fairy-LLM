@@ -78,6 +78,28 @@ class RustWorkspaceProvisioner:
         )
         return self._result_path(result, "path")
 
+    def apply_changeset(
+        self,
+        *,
+        project_id: WorkspaceId,
+        version_id: WorkspaceId,
+        mutations: tuple[tuple[str, str], ...],
+    ) -> tuple[Path, ...]:
+        result = self._transport.call(
+            "workspace.apply_changeset",
+            {
+                "project_id": str(project_id),
+                "version_id": str(version_id),
+                "mutations": [
+                    {"relative_path": path, "content": content} for path, content in mutations
+                ],
+            },
+        )
+        paths = result.get("paths")
+        if not isinstance(paths, list):
+            raise RuntimeError("worker result is missing paths")
+        return tuple(self._value_path(path, "paths") for path in paths)
+
     def diff(self, *, project_id: WorkspaceId, version_id: WorkspaceId) -> str:
         result = self._transport.call(
             "workspace.diff",
@@ -111,6 +133,10 @@ class RustWorkspaceProvisioner:
     @staticmethod
     def _result_path(result: dict[str, object], key: str) -> Path:
         value = result.get(key)
+        return RustWorkspaceProvisioner._value_path(value, key)
+
+    @staticmethod
+    def _value_path(value: object, key: str) -> Path:
         if not isinstance(value, str) or not value:
             raise RuntimeError(f"worker result is missing {key}")
         return Path(value).resolve(strict=False)
