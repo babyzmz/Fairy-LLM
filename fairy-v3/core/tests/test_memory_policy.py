@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,12 @@ from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import OperationMode, ScopeContract, WorkspaceType
 from fairy_core.memory.models import (
     MemoryAuthority,
+    MemoryClaimRevision,
     MemoryNamespace,
     MemoryObservation,
+    MemoryScanResult,
     MemorySensitivity,
+    ObservationStatus,
 )
 from fairy_core.memory.policy import MemoryPolicy
 
@@ -309,3 +313,54 @@ def test_instruction_like_memory_is_blocked(tmp_path: Path, content: str) -> Non
     )
 
     assert decision.error_code == "MEMORY_INJECTION_BLOCKED"
+
+
+def test_retrieval_requires_accepted_clean_non_secret_observation(tmp_path: Path) -> None:
+    scope = _scope(tmp_path)
+    policy = MemoryPolicy()
+    clean = replace(
+        _observation(scope),
+        status=ObservationStatus.ACCEPTED,
+        scan_result=MemoryScanResult.CLEAN,
+    )
+
+    assert policy.is_observation_retrievable(clean)
+    assert not policy.is_observation_retrievable(
+        replace(clean, status=ObservationStatus.PENDING)
+    )
+    assert not policy.is_observation_retrievable(
+        replace(clean, sensitivity=MemorySensitivity.SECRET)
+    )
+    assert not policy.is_observation_retrievable(
+        replace(clean, scan_result=MemoryScanResult.INJECTION_BLOCKED)
+    )
+
+
+def test_revision_validity_uses_injected_snapshot_time() -> None:
+    now = datetime(2026, 7, 11, 8, 0, tzinfo=UTC)
+    revision = MemoryClaimRevision.create(
+        claim_id=new_id(),
+        revision=1,
+        value="current",
+        normalized_text="current",
+        source_observation_ids=(new_id(),),
+        source_event_ids=(new_id(),),
+        authority=MemoryAuthority.EXPLICIT_USER,
+        confidence=1.0,
+        actor="user:test",
+        valid_from=now - timedelta(minutes=1),
+        valid_to=now + timedelta(minutes=1),
+    )
+
+    policy = MemoryPolicy()
+    assert policy.is_revision_current(revision, at=now)
+    assert not policy.is_revision_current(revision, at=now + timedelta(minutes=1))
+
+
+def test_current_conversation_alias_can_read_conversation_draft(tmp_path: Path) -> None:
+    scope = _scope(tmp_path, writable=("current_conversation",))
+
+    assert MemoryPolicy().can_read_namespace(
+        MemoryNamespace.CONVERSATION_DRAFT,
+        scope,
+    )

@@ -30,12 +30,21 @@ from fairy_core.memory.retrieval_models import (
     MemorySourceKind,
     ProjectionState,
 )
+from fairy_core.memory.snapshot_builder import (
+    DEFAULT_SNAPSHOT_TOKEN_BUDGET,
+    HARD_SNAPSHOT_TOKEN_CEILING,
+    DeterministicMemorySnapshotBuilder,
+    Utf8ByteTokenCounter,
+)
 
 __all__ = [
     "CLAIM_TRANSITIONS",
+    "DEFAULT_SNAPSHOT_TOKEN_BUDGET",
+    "HARD_SNAPSHOT_TOKEN_CEILING",
     "MEMORY_AUTHORITY_PRECEDENCE",
     "MEMORY_NAMESPACE_PRECEDENCE",
     "ClaimStatus",
+    "DeterministicMemorySnapshotBuilder",
     "MemoryAuthority",
     "MemoryClaim",
     "MemoryClaimRevision",
@@ -58,4 +67,5 @@ __all__ = [
     "MemoryTombstone",
     "ObservationStatus",
     "ProjectionState",
+    "Utf8ByteTokenCounter",
 ]

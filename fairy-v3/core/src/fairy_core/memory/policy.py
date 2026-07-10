@@ -5,11 +5,13 @@ import re
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from types import MappingProxyType
 
 from fairy_core.domain.models import ScopeContract, WorkspaceType
 from fairy_core.memory.models import (
     MemoryAuthority,
+    MemoryClaimRevision,
     MemoryNamespace,
     MemoryObservation,
     MemoryScanResult,
@@ -58,6 +60,20 @@ _WRITE_SCOPE_ALIASES: dict[MemoryNamespace, frozenset[str]] = {
     MemoryNamespace.PROJECT_CANONICAL: frozenset({"project_canonical"}),
     MemoryNamespace.CONVERSATION_DRAFT: frozenset(
         {"conversation_draft", "current_conversation_draft"}
+    ),
+    MemoryNamespace.USER_PROFILE: frozenset({"user_profile", "personal"}),
+    MemoryNamespace.DEVICE_LOCAL: frozenset({"device_local"}),
+    MemoryNamespace.TASK_EPISODE: frozenset({"task_episode", "failure_lesson"}),
+}
+
+_READ_SCOPE_ALIASES: dict[MemoryNamespace, frozenset[str]] = {
+    MemoryNamespace.PROJECT_CANONICAL: frozenset({"project_canonical"}),
+    MemoryNamespace.CONVERSATION_DRAFT: frozenset(
+        {
+            "conversation_draft",
+            "current_conversation",
+            "current_conversation_draft",
+        }
     ),
     MemoryNamespace.USER_PROFILE: frozenset({"user_profile", "personal"}),
     MemoryNamespace.DEVICE_LOCAL: frozenset({"device_local"}),
@@ -127,6 +143,45 @@ class MemoryPolicy:
                 scan_result=MemoryScanResult.CLEAN,
             )
         return scan
+
+    @staticmethod
+    def can_read_namespace(namespace: MemoryNamespace, scope: ScopeContract) -> bool:
+        if not _READ_SCOPE_ALIASES[namespace].intersection(scope.memory_read_scope):
+            return False
+        if namespace is MemoryNamespace.PROJECT_CANONICAL:
+            return (
+                scope.workspace_type is WorkspaceType.PROJECT_CHAT
+                and scope.project_id is not None
+            )
+        return namespace is not MemoryNamespace.DEVICE_LOCAL
+
+    def is_observation_retrievable(self, observation: MemoryObservation) -> bool:
+        if observation.status not in {
+            ObservationStatus.ACCEPTED,
+            ObservationStatus.PROMOTED,
+        }:
+            return False
+        if observation.sensitivity is MemorySensitivity.SECRET:
+            return False
+        if observation.scan_result is not MemoryScanResult.CLEAN:
+            return False
+        return self.scan_content(
+            observation.content,
+            sensitivity=observation.sensitivity,
+        ).allowed
+
+    @staticmethod
+    def is_revision_current(
+        revision: MemoryClaimRevision,
+        *,
+        at: datetime,
+    ) -> bool:
+        if at.tzinfo is None or at.utcoffset() is None:
+            raise ValueError("Memory retrieval time must be timezone-aware")
+        return (
+            (revision.valid_from is None or revision.valid_from <= at)
+            and (revision.valid_to is None or revision.valid_to > at)
+        )
 
     @staticmethod
     def scan_content(

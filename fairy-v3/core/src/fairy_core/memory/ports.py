@@ -94,6 +94,9 @@ class MemoryRepository(Protocol):
         project_id: UUID | None = None,
         conversation_id: UUID | None = None,
         task_id: UUID | None = None,
+        limit: int | None = None,
+        newest_first: bool = False,
+        retrievable_only: bool = False,
     ) -> list[MemoryObservation]: ...
 
 

@@ -31,6 +31,7 @@ from fairy_core.memory.models import (
     MemoryNamespace,
 )
 from fairy_core.memory.policy import MemoryPolicy
+from fairy_core.memory.snapshot_builder import Utf8ByteTokenCounter
 from fairy_core.persistence import SqlAlchemyUnitOfWorkFactory
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
@@ -50,6 +51,15 @@ _JSON_VALUES = st.recursive(
     ),
     max_leaves=20,
 )
+
+
+@given(st.text(max_size=1_000))
+def test_utf8_counter_is_deterministic_and_never_below_character_count(value: str) -> None:
+    counter = Utf8ByteTokenCounter()
+
+    assert counter.count(value) == counter.count(value)
+    assert counter.count(value) == len(value.encode("utf-8"))
+    assert counter.count(value) >= len(value)
 
 
 @given(_JSON_VALUES)

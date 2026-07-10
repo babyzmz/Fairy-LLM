@@ -174,7 +174,12 @@ class SqlAlchemyMemoryRepository:
         project_id: UUID | None = None,
         conversation_id: UUID | None = None,
         task_id: UUID | None = None,
+        limit: int | None = None,
+        newest_first: bool = False,
+        retrievable_only: bool = False,
     ) -> list[MemoryObservation]:
+        if limit is not None and not 1 <= limit <= 1_000:
+            raise ValueError("Observation read limit must be between 1 and 1,000")
         self._validate_read_scope(
             namespace=namespace,
             project_id=project_id,
@@ -187,6 +192,14 @@ class SqlAlchemyMemoryRepository:
             memory_observations.c.proposed_namespace == namespace.value,
             memory_observations.c.status.in_(_VISIBLE_OBSERVATION_STATUSES),
         )
+        if retrievable_only:
+            statement = statement.where(
+                memory_observations.c.status.in_(
+                    (ObservationStatus.ACCEPTED.value, ObservationStatus.PROMOTED.value)
+                ),
+                memory_observations.c.scan_result == MemoryScanResult.CLEAN.value,
+                memory_observations.c.sensitivity != MemorySensitivity.SECRET.value,
+            )
         statement = self._scope_statement(
             statement,
             memory_observations,
@@ -196,9 +209,18 @@ class SqlAlchemyMemoryRepository:
             device_id=None,
         )
         with self._session.read() as connection:
-            rows = connection.execute(
-                statement.order_by(memory_observations.c.source_cursor, memory_observations.c.id)
-            ).mappings()
+            order = (
+                (
+                    memory_observations.c.source_cursor.desc(),
+                    memory_observations.c.id.desc(),
+                )
+                if newest_first
+                else (memory_observations.c.source_cursor, memory_observations.c.id)
+            )
+            statement = statement.order_by(*order)
+            if limit is not None:
+                statement = statement.limit(limit)
+            rows = connection.execute(statement).mappings()
             return [self._observation_from_row(row) for row in rows]
 
     def create_claim(
@@ -500,7 +522,11 @@ class SqlAlchemyMemoryRepository:
         )
         with self._session.read() as connection:
             rows = connection.execute(
-                statement.order_by(memory_claims.c.subject, memory_claims.c.predicate)
+                statement.order_by(
+                    memory_claims.c.subject,
+                    memory_claims.c.predicate,
+                    memory_claims.c.id,
+                )
             ).mappings()
             return [self._claim_from_row(row) for row in rows]
 

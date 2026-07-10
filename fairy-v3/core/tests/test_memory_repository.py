@@ -4,6 +4,7 @@ import hashlib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlalchemy import create_engine, func, select
@@ -23,9 +24,11 @@ from fairy_core.memory.models import (
     MemoryClaimRevision,
     MemoryNamespace,
     MemoryObservation,
+    MemoryScanResult,
     MemorySensitivity,
     MemoryTargetKind,
     MemoryTombstone,
+    ObservationStatus,
     memory_content_hash,
 )
 from fairy_core.memory.schema import memory_claim_revisions, memory_metadata
@@ -195,6 +198,44 @@ def test_observation_replay_is_idempotent_and_detects_changed_content(
             ),
             request_fingerprint=fingerprint,
         )
+
+
+def test_bounded_retrieval_filters_unsafe_statuses_before_limit(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    scope, event = _seed_scope_and_event(engine, "tenant-a", tmp_path, "bounded-read")
+    repository = SqlAlchemyMemoryRepository(engine, tenant_id="tenant-a")
+    base = _observation(scope, event)
+    accepted = replace(
+        base,
+        id=UUID(int=1),
+        status=ObservationStatus.ACCEPTED,
+        scan_result=MemoryScanResult.CLEAN,
+    )
+    pending = replace(base, id=UUID(int=2))
+    secret = replace(
+        base,
+        id=UUID(int=3),
+        status=ObservationStatus.ACCEPTED,
+        sensitivity=MemorySensitivity.SECRET,
+        scan_result=MemoryScanResult.SECRET_BLOCKED,
+    )
+    for index, observation in enumerate((accepted, pending, secret)):
+        repository.append_observation(
+            observation,
+            request_fingerprint=_fingerprint(f"bounded-read:{index}"),
+        )
+
+    values = repository.observations_for_scope(
+        namespace=MemoryNamespace.PROJECT_CANONICAL,
+        project_id=scope.project_id,
+        limit=1,
+        newest_first=True,
+        retrievable_only=True,
+    )
+
+    assert [observation.id for observation in values] == [accepted.id]
 
 
 def test_observation_rejects_forged_source_cursor(
