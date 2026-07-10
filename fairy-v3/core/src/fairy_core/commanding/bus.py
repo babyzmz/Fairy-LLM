@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -12,7 +13,10 @@ from fairy_core.commanding import (
 )
 from fairy_core.commanding.policy import PermissionProfile, PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
+from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import ScopeContract
+
+_DEFAULT_LEASE_DURATION = timedelta(minutes=5)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,25 +103,53 @@ class CommandBus:
         status = CommandStatus.QUEUED if approved else CommandStatus.REJECTED
         return self._ledger.transition(run_id, status)
 
-    def start(self, run_id: UUID) -> CommandRun:
-        return self._ledger.transition(run_id, CommandStatus.RUNNING)
+    def start(
+        self,
+        run_id: UUID,
+        *,
+        worker_id: str | None = None,
+        lease_until: datetime | None = None,
+    ) -> CommandRun:
+        return self._ledger.claim(
+            run_id,
+            worker_id=worker_id or f"core:{new_id()}",
+            lease_until=lease_until or datetime.now(UTC) + _DEFAULT_LEASE_DURATION,
+        )
 
-    def complete(self, run_id: UUID, *, output: dict[str, Any]) -> CommandRun:
-        self._ledger.append_event(
-            run_id=run_id,
+    def complete(
+        self,
+        run_id: UUID,
+        *,
+        output: dict[str, Any],
+        lease_owner: str | None = None,
+        lease_fence: int | None = None,
+    ) -> CommandRun:
+        return self._ledger.finish(
+            run_id,
+            status=CommandStatus.SUCCEEDED,
             event_type="command.output",
             visibility=EventVisibility.DEVELOPER,
             message="Command produced output",
             payload=output,
+            lease_owner=lease_owner,
+            lease_fence=lease_fence,
         )
-        return self._ledger.transition(run_id, CommandStatus.SUCCEEDED)
 
-    def fail(self, run_id: UUID, *, error_code: str) -> CommandRun:
-        self._ledger.append_event(
-            run_id=run_id,
+    def fail(
+        self,
+        run_id: UUID,
+        *,
+        error_code: str,
+        lease_owner: str | None = None,
+        lease_fence: int | None = None,
+    ) -> CommandRun:
+        return self._ledger.finish(
+            run_id,
+            status=CommandStatus.FAILED,
             event_type="command.failure",
             visibility=EventVisibility.USER,
             message="Command failed",
             payload={"error_code": error_code},
+            lease_owner=lease_owner,
+            lease_fence=lease_fence,
         )
-        return self._ledger.transition(run_id, CommandStatus.FAILED)

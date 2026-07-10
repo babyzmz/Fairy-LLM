@@ -28,7 +28,14 @@ class CommandLedger(Protocol):
 
     def get_run(self, run_id: UUID) -> CommandRun | None: ...
 
-    def transition(self, run_id: UUID, status: CommandStatus) -> CommandRun: ...
+    def transition(
+        self,
+        run_id: UUID,
+        status: CommandStatus,
+        *,
+        lease_owner: str | None = None,
+        lease_fence: int | None = None,
+    ) -> CommandRun: ...
 
     def append_event(
         self,
@@ -38,7 +45,22 @@ class CommandLedger(Protocol):
         visibility: EventVisibility,
         message: str,
         payload: dict[str, Any],
+        lease_owner: str | None = None,
+        lease_fence: int | None = None,
     ) -> EventEnvelope: ...
+
+    def finish(
+        self,
+        run_id: UUID,
+        *,
+        status: CommandStatus,
+        event_type: str,
+        visibility: EventVisibility,
+        message: str,
+        payload: dict[str, Any],
+        lease_owner: str | None = None,
+        lease_fence: int | None = None,
+    ) -> CommandRun: ...
 
     def events_after(
         self,
@@ -46,6 +68,14 @@ class CommandLedger(Protocol):
         cursor: int,
         allowed_visibilities: set[EventVisibility] | None = None,
     ) -> list[EventEnvelope]: ...
+
+    def claim(
+        self,
+        run_id: UUID,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> CommandRun: ...
 
     def claim_next(self, *, worker_id: str, lease_until: datetime) -> CommandRun | None: ...
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import inspect, text
@@ -139,6 +139,6 @@ def migrate_pre_tenant_schema(engine: Engine, *, tenant_id: str) -> None:
             ),
             {
                 "revision": _PRE_TENANT_REVISION,
-                "applied_at": datetime.now().astimezone().isoformat(),
+                "applied_at": datetime.now(UTC).isoformat(),
             },
         )

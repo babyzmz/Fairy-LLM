@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import inspect, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection, Engine
 
+from fairy_core.commanding.models import CommandStatus, EventVisibility
 from fairy_core.commanding.registry import RiskLevel
 from fairy_core.commanding.schema import command_runs, domain_events, task_event_sequences
 from fairy_core.commanding.sqlalchemy import command_request_fingerprint
+from fairy_core.domain.ids import new_id
 
 _LEGACY_RUNS = "legacy_command_runs_pre_tenant"
 _PRE_TENANT_REVISION = "20260710_pre_tenant_ledger"
@@ -66,6 +68,7 @@ def migrate_pre_tenant_ledger(engine: Engine, *, tenant_id: str) -> None:
 
         legacy_runs = _load_rows(connection, _LEGACY_RUNS)
         runs_by_id: dict[str, dict[str, Any]] = {}
+        interrupted_runs: list[dict[str, Any]] = []
         for row in legacy_runs:
             scope = json.loads(row["scope_json"])
             scope["scope_digest"] = row["scope_digest"]
@@ -77,6 +80,16 @@ def migrate_pre_tenant_ledger(engine: Engine, *, tenant_id: str) -> None:
                 input_payload=input_payload,
                 risk_level=RiskLevel(row["risk_level"]),
             )
+            status = CommandStatus(row["status"])
+            lease_owner = row["lease_owner"]
+            lease_until = datetime.fromisoformat(row["lease_until"]) if row["lease_until"] else None
+            missing_worker_lease = status is CommandStatus.RUNNING and (
+                not lease_owner or lease_until is None
+            )
+            if missing_worker_lease:
+                status = CommandStatus.INTERRUPTED
+                lease_owner = None
+                lease_until = None
             values = {
                 "tenant_id": tenant_id,
                 "id": row["id"],
@@ -89,18 +102,16 @@ def migrate_pre_tenant_ledger(engine: Engine, *, tenant_id: str) -> None:
                 "task_id": row["task_id"],
                 "input": input_payload,
                 "risk_level": row["risk_level"],
-                "status": row["status"],
+                "status": status.value,
                 "idempotency_key": row["idempotency_key"],
                 "request_fingerprint": fingerprint,
-                "lease_owner": row["lease_owner"],
-                "lease_until": (
-                    datetime.fromisoformat(row["lease_until"]) if row["lease_until"] else None
-                ),
-                "lease_fence": 1 if row["lease_owner"] else 0,
+                "lease_owner": lease_owner,
+                "lease_until": lease_until,
+                "lease_fence": 1 if lease_owner else 0,
                 "created_at": datetime.fromisoformat(row["created_at"]),
                 "updated_at": datetime.fromisoformat(row["updated_at"]),
             }
-            connection.execute(
+            result = connection.execute(
                 sqlite_insert(command_runs)
                 .values(**values)
                 .on_conflict_do_nothing(
@@ -108,6 +119,8 @@ def migrate_pre_tenant_ledger(engine: Engine, *, tenant_id: str) -> None:
                 )
             )
             runs_by_id[row["id"]] = values
+            if missing_worker_lease and result.rowcount == 1:
+                interrupted_runs.append(values)
 
         if "command_events" in tables:
             for row in _load_rows(connection, "command_events"):
@@ -164,7 +177,60 @@ def migrate_pre_tenant_ledger(engine: Engine, *, tenant_id: str) -> None:
                         set_={"last_sequence": int(row["last_sequence"])},
                     )
                 )
+        for run in interrupted_runs:
+            _append_interrupted_migration_event(connection, tenant_id=tenant_id, run=run)
         _record_migration(connection)
+
+
+def _append_interrupted_migration_event(
+    connection: Connection,
+    *,
+    tenant_id: str,
+    run: dict[str, Any],
+) -> None:
+    sequence_statement = (
+        sqlite_insert(task_event_sequences)
+        .values(
+            tenant_id=tenant_id,
+            task_id=run["task_id"],
+            last_sequence=1,
+        )
+        .on_conflict_do_update(
+            index_elements=[
+                task_event_sequences.c.tenant_id,
+                task_event_sequences.c.task_id,
+            ],
+            set_={"last_sequence": task_event_sequences.c.last_sequence + 1},
+        )
+    )
+    sequence = int(
+        connection.execute(
+            sequence_statement.returning(task_event_sequences.c.last_sequence)
+        ).scalar_one()
+    )
+    connection.execute(
+        sqlite_insert(domain_events).values(
+            tenant_id=tenant_id,
+            event_id=str(new_id()),
+            run_id=run["id"],
+            user_id=run["actor"],
+            device_id="core-migration",
+            project_id=run["project_id"],
+            conversation_id=run["conversation_id"],
+            task_id=run["task_id"],
+            version_id=run["scope"].get("target_version_id"),
+            task_sequence=sequence,
+            schema_version=1,
+            event_type="command.interrupted",
+            visibility=EventVisibility.USER.value,
+            message="Command interrupted during local database migration",
+            payload={
+                "reason": "missing_worker_lease",
+                "status": CommandStatus.INTERRUPTED.value,
+            },
+            created_at=datetime.now(UTC),
+        )
+    )
 
 
 def _record_migration(connection: Connection) -> None:
@@ -177,6 +243,6 @@ def _record_migration(connection: Connection) -> None:
         ),
         {
             "revision": _PRE_TENANT_REVISION,
-            "applied_at": datetime.now().astimezone().isoformat(),
+            "applied_at": datetime.now(UTC).isoformat(),
         },
     )

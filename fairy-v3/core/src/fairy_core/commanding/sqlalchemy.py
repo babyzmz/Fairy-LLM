@@ -26,7 +26,11 @@ from fairy_core.commanding.schema import (
     domain_events,
     task_event_sequences,
 )
-from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
+from fairy_core.domain.errors import (
+    IdempotencyConflictError,
+    InvalidTransitionError,
+    WorkerFenceError,
+)
 from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import ScopeContract
 from fairy_core.storage.schema import TENANT_ID_LENGTH
@@ -172,7 +176,17 @@ class SqlAlchemyCommandLedger:
             row = self._run_by_id(connection, run_id)
         return self._run_from_row(row) if row is not None else None
 
-    def transition(self, run_id: UUID, status: CommandStatus) -> CommandRun:
+    def transition(
+        self,
+        run_id: UUID,
+        status: CommandStatus,
+        *,
+        lease_owner: str | None = None,
+        lease_fence: int | None = None,
+    ) -> CommandRun:
+        if status is CommandStatus.RUNNING:
+            raise InvalidTransitionError("use claim() to enter the running state")
+        now = _now()
         with self._engine.begin() as connection:
             row = self._run_by_id(connection, run_id, for_update=True)
             if row is None:
@@ -182,16 +196,25 @@ class SqlAlchemyCommandLedger:
                 raise InvalidTransitionError(
                     f"cannot transition CommandRun from {current} to {status}"
                 )
+            lease_predicates = self._lease_predicates(
+                row,
+                lease_owner=lease_owner,
+                lease_fence=lease_fence,
+                now=now,
+            )
             result = connection.execute(
                 update(command_runs)
                 .where(
                     command_runs.c.tenant_id == self._tenant_id,
                     command_runs.c.id == str(run_id),
                     command_runs.c.status == current.value,
+                    *lease_predicates,
                 )
-                .values(status=status.value, updated_at=_now())
+                .values(status=status.value, updated_at=now)
             )
             if result.rowcount != 1:
+                if row["lease_owner"] is not None:
+                    raise WorkerFenceError("worker lease changed or expired")
                 raise InvalidTransitionError("command status changed concurrently")
             updated = self._run_by_id(connection, run_id)
             assert updated is not None
@@ -213,11 +236,34 @@ class SqlAlchemyCommandLedger:
         visibility: EventVisibility,
         message: str,
         payload: dict[str, Any],
+        lease_owner: str | None = None,
+        lease_fence: int | None = None,
     ) -> EventEnvelope:
         with self._engine.begin() as connection:
-            run = self._run_by_id(connection, run_id)
+            run = self._run_by_id(connection, run_id, for_update=True)
             if run is None:
                 raise KeyError(f"command run not found: {run_id}")
+            lease_predicates = self._lease_predicates(
+                run,
+                lease_owner=lease_owner,
+                lease_fence=lease_fence,
+                now=_now(),
+            )
+            if lease_predicates:
+                result = connection.execute(
+                    update(command_runs)
+                    .where(
+                        command_runs.c.tenant_id == self._tenant_id,
+                        command_runs.c.id == str(run_id),
+                        command_runs.c.status == CommandStatus.RUNNING.value,
+                        *lease_predicates,
+                    )
+                    .values(lease_fence=lease_fence)
+                )
+                if result.rowcount != 1:
+                    raise WorkerFenceError("worker lease changed or expired")
+                run = self._run_by_id(connection, run_id)
+                assert run is not None
             return self._append_event(
                 connection,
                 run=run,
@@ -226,6 +272,70 @@ class SqlAlchemyCommandLedger:
                 message=message,
                 payload=payload,
             )
+
+    def finish(
+        self,
+        run_id: UUID,
+        *,
+        status: CommandStatus,
+        event_type: str,
+        visibility: EventVisibility,
+        message: str,
+        payload: dict[str, Any],
+        lease_owner: str | None = None,
+        lease_fence: int | None = None,
+    ) -> CommandRun:
+        if status not in {CommandStatus.SUCCEEDED, CommandStatus.FAILED}:
+            raise ValueError("finish status must be succeeded or failed")
+        now = _now()
+        with self._engine.begin() as connection:
+            row = self._run_by_id(connection, run_id, for_update=True)
+            if row is None:
+                raise KeyError(f"command run not found: {run_id}")
+            current = CommandStatus(row["status"])
+            if status not in COMMAND_TRANSITIONS[current]:
+                raise InvalidTransitionError(
+                    f"cannot transition CommandRun from {current} to {status}"
+                )
+            lease_predicates = self._lease_predicates(
+                row,
+                lease_owner=lease_owner,
+                lease_fence=lease_fence,
+                now=now,
+            )
+            result = connection.execute(
+                update(command_runs)
+                .where(
+                    command_runs.c.tenant_id == self._tenant_id,
+                    command_runs.c.id == str(run_id),
+                    command_runs.c.status == current.value,
+                    *lease_predicates,
+                )
+                .values(status=status.value, updated_at=now)
+            )
+            if result.rowcount != 1:
+                if row["lease_owner"] is not None:
+                    raise WorkerFenceError("worker lease changed or expired")
+                raise InvalidTransitionError("command status changed concurrently")
+            updated = self._run_by_id(connection, run_id)
+            assert updated is not None
+            self._append_event(
+                connection,
+                run=updated,
+                event_type=event_type,
+                visibility=visibility,
+                message=message,
+                payload=payload,
+            )
+            self._append_event(
+                connection,
+                run=updated,
+                event_type=f"command.{status.value}",
+                visibility=EventVisibility.USER,
+                message=f"Command {status.value}",
+                payload={"status": status.value},
+            )
+        return self._run_from_row(updated)
 
     def events_after(
         self,
@@ -252,6 +362,62 @@ class SqlAlchemyCommandLedger:
         with self._engine.connect() as connection:
             rows = connection.execute(statement).mappings().all()
         return [self._event_from_row(row) for row in rows]
+
+    def claim(
+        self,
+        run_id: UUID,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> CommandRun:
+        normalized_worker = worker_id.strip()
+        if not normalized_worker:
+            raise ValueError("worker_id must not be empty")
+        now = _now()
+        normalized_lease_until = _datetime(lease_until)
+        assert normalized_lease_until is not None
+        if normalized_lease_until <= now:
+            raise ValueError("lease_until must be in the future")
+        with self._engine.begin() as connection:
+            row = self._run_by_id(connection, run_id, for_update=True)
+            if row is None:
+                raise KeyError(f"command run not found: {run_id}")
+            current = CommandStatus(row["status"])
+            if current is not CommandStatus.QUEUED:
+                raise InvalidTransitionError(f"cannot claim CommandRun from {current}")
+            previous_fence = int(row["lease_fence"])
+            result = connection.execute(
+                update(command_runs)
+                .where(
+                    command_runs.c.tenant_id == self._tenant_id,
+                    command_runs.c.id == str(run_id),
+                    command_runs.c.status == CommandStatus.QUEUED.value,
+                    command_runs.c.lease_fence == previous_fence,
+                )
+                .values(
+                    status=CommandStatus.RUNNING.value,
+                    lease_owner=normalized_worker,
+                    lease_until=normalized_lease_until,
+                    lease_fence=previous_fence + 1,
+                    updated_at=now,
+                )
+            )
+            if result.rowcount != 1:
+                raise InvalidTransitionError("command claim changed concurrently")
+            updated = self._run_by_id(connection, run_id)
+            assert updated is not None
+            self._append_event(
+                connection,
+                run=updated,
+                event_type="command.running",
+                visibility=EventVisibility.USER,
+                message="Command running",
+                payload={
+                    "status": CommandStatus.RUNNING.value,
+                    "lease_fence": previous_fence + 1,
+                },
+            )
+        return self._run_from_row(updated)
 
     def claim_next(self, *, worker_id: str, lease_until: datetime) -> CommandRun | None:
         now = _now()
@@ -407,6 +573,31 @@ class SqlAlchemyCommandLedger:
             if self._engine.dialect.name == "postgresql"
             else sqlite_insert(table)
         )
+
+    @staticmethod
+    def _lease_predicates(
+        row: Mapping[str, Any],
+        *,
+        lease_owner: str | None,
+        lease_fence: int | None,
+        now: datetime,
+    ) -> list[Any]:
+        current_owner = row["lease_owner"]
+        if current_owner is None:
+            if lease_owner is not None or lease_fence is not None:
+                raise WorkerFenceError("command run has no active worker lease")
+            return []
+        if lease_owner != current_owner or lease_fence != int(row["lease_fence"]):
+            raise WorkerFenceError("worker lease owner or fence does not match")
+        lease_until = _datetime(row["lease_until"])
+        if lease_until is None or lease_until <= now:
+            raise WorkerFenceError("worker lease expired")
+        return [
+            command_runs.c.lease_owner == lease_owner,
+            command_runs.c.lease_fence == lease_fence,
+            command_runs.c.lease_until.is_not(None),
+            command_runs.c.lease_until > now,
+        ]
 
     def _run_by_id(
         self,

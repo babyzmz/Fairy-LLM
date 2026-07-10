@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 from fairy_core.commanding.bus import CommandBus, CommandRequest
 from fairy_core.commanding.ledger import CommandStatus, SqliteCommandLedger
 from fairy_core.commanding.policy import PermissionProfile, PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
+from fairy_core.domain.errors import DomainError
 from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import OperationMode, ScopeContract, WorkspaceType
 
@@ -138,7 +143,12 @@ def test_bus_records_synchronous_executor_lifecycle(tmp_path: Path) -> None:
     )
 
     running = bus.start(submitted.run.id)
-    succeeded = bus.complete(running.id, output={"passed": 12})
+    succeeded = bus.complete(
+        running.id,
+        output={"passed": 12},
+        lease_owner=running.lease_owner,
+        lease_fence=running.lease_fence,
+    )
 
     assert running.status is CommandStatus.RUNNING
     assert succeeded.status is CommandStatus.SUCCEEDED
@@ -165,10 +175,98 @@ def test_bus_records_executor_failure_without_exposing_exception_details(tmp_pat
         sandbox_healthy=False,
     )
 
-    bus.start(submitted.run.id)
-    failed = bus.fail(submitted.run.id, error_code="WORKER_INTERRUPTED")
+    running = bus.start(submitted.run.id)
+    failed = bus.fail(
+        submitted.run.id,
+        error_code="WORKER_INTERRUPTED",
+        lease_owner=running.lease_owner,
+        lease_fence=running.lease_fence,
+    )
 
     assert failed.status is CommandStatus.FAILED
     failure_event = ledger.events_after(cursor=0)[-2]
     assert failure_event.event_type == "command.failure"
     assert failure_event.payload == {"error_code": "WORKER_INTERRUPTED"}
+
+
+def test_stale_worker_cannot_complete_a_reclaimed_run(tmp_path: Path) -> None:
+    bus, ledger = _bus(tmp_path)
+    submitted = bus.submit(
+        CommandRequest(
+            tool_name="review.test",
+            actor="core",
+            scope=_scope(tmp_path),
+            payload={},
+            idempotency_key="request:stale-worker",
+        ),
+        profile=PermissionProfile.STANDARD,
+        capability_overrides={},
+        sandbox_healthy=False,
+    )
+    first_claim = ledger.claim_next(
+        worker_id="worker-a",
+        lease_until=datetime.now(UTC) + timedelta(milliseconds=5),
+    )
+    time.sleep(0.02)
+    second_claim = ledger.claim_next(
+        worker_id="worker-b",
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    assert first_claim is not None
+    assert second_claim is not None
+    events_before_stale_completion = ledger.events_after(cursor=0)
+
+    with pytest.raises(DomainError) as error:
+        bus.complete(
+            submitted.run.id,
+            output={"passed": 12},
+            lease_owner="worker-a",
+            lease_fence=first_claim.lease_fence,
+        )
+
+    assert error.value.code == "WORKER_INTERRUPTED"
+    assert ledger.get_run(submitted.run.id).status is CommandStatus.RUNNING
+    assert ledger.events_after(cursor=0) == events_before_stale_completion
+
+    succeeded = bus.complete(
+        submitted.run.id,
+        output={"passed": 12},
+        lease_owner="worker-b",
+        lease_fence=second_claim.lease_fence,
+    )
+    assert succeeded.status is CommandStatus.SUCCEEDED
+
+
+def test_bus_start_claims_a_recoverable_worker_lease(tmp_path: Path) -> None:
+    bus, ledger = _bus(tmp_path)
+    submitted = bus.submit(
+        CommandRequest(
+            tool_name="review.test",
+            actor="core",
+            scope=_scope(tmp_path),
+            payload={},
+            idempotency_key="request:recoverable-start",
+        ),
+        profile=PermissionProfile.STANDARD,
+        capability_overrides={},
+        sandbox_healthy=False,
+    )
+
+    running = bus.start(
+        submitted.run.id,
+        worker_id="core-a",
+        lease_until=datetime.now(UTC) + timedelta(milliseconds=5),
+    )
+    time.sleep(0.02)
+    reclaimed = ledger.claim_next(
+        worker_id="core-b",
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+
+    assert running.status is CommandStatus.RUNNING
+    assert running.lease_owner == "core-a"
+    assert running.lease_fence == 1
+    assert reclaimed is not None
+    assert reclaimed.id == running.id
+    assert reclaimed.lease_owner == "core-b"
+    assert reclaimed.lease_fence == running.lease_fence + 1

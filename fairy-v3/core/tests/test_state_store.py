@@ -69,8 +69,13 @@ def test_sqlite_state_store_migrates_the_pre_tenant_v3_schema(tmp_path: Path) ->
         )
 
     store = SqliteStateStore(database_path)
+    with sqlite3.connect(database_path) as connection:
+        applied_at = connection.execute("SELECT applied_at FROM core_local_migrations").fetchone()[
+            0
+        ]
 
     assert store.get_project(project.id) == project
+    assert datetime.fromisoformat(applied_at).utcoffset() == timedelta(0)
 
 
 def test_sqlite_state_store_preserves_non_utc_datetime_instants(tmp_path: Path) -> None:

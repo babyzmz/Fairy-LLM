@@ -360,7 +360,7 @@ class CoreApplication:
             return changeset
 
         self._commands.decide_approval(approval.command_run_id, approved=True)
-        self._commands.start(approval.command_run_id)
+        running = self._commands.start(approval.command_run_id)
         changeset.transition_to(ChangesetStatus.APPLYING)
         task.transition_to(TaskStatus.EXECUTING)
         self._state.save_approval(approval)
@@ -380,6 +380,8 @@ class CoreApplication:
             self._commands.fail(
                 approval.command_run_id,
                 error_code=str(getattr(error, "error_code", "WORKER_INTERRUPTED")),
+                lease_owner=running.lease_owner,
+                lease_fence=running.lease_fence,
             )
             changeset.transition_to(ChangesetStatus.FAILED)
             task.transition_to(TaskStatus.FAILED)
@@ -389,6 +391,8 @@ class CoreApplication:
         self._commands.complete(
             approval.command_run_id,
             output={"changed_files": [str(path) for path in written]},
+            lease_owner=running.lease_owner,
+            lease_fence=running.lease_fence,
         )
         changeset.transition_to(ChangesetStatus.APPLIED)
         self._state.save_changeset(changeset)
@@ -547,7 +551,7 @@ class CoreApplication:
         if not dispatch.accepted or not dispatch.requires_approval or dispatch.run is None:
             raise RuntimeError(dispatch.error_code or "Version promotion command was rejected")
         run = self._commands.decide_approval(dispatch.run.id, approved=True)
-        self._commands.start(run.id)
+        running = self._commands.start(run.id)
         try:
             project = self._state.accept_version(
                 project_id=task.project_id,
@@ -569,11 +573,15 @@ class CoreApplication:
             self._commands.fail(
                 run.id,
                 error_code=str(getattr(error, "code", "WORKER_INTERRUPTED")),
+                lease_owner=running.lease_owner,
+                lease_fence=running.lease_fence,
             )
             raise
         self._commands.complete(
             run.id,
             output={"project_revision": project.revision, "version_id": str(version.id)},
+            lease_owner=running.lease_owner,
+            lease_fence=running.lease_fence,
         )
         return project
 
@@ -645,14 +653,21 @@ class CoreApplication:
         run = dispatch.run
         if run.status is not CommandStatus.QUEUED:
             raise RuntimeError(f"command cannot execute from {run.status}")
-        self._commands.start(run.id)
+        running = self._commands.start(run.id)
         try:
             result = operation()
         except Exception as error:
             self._commands.fail(
                 run.id,
                 error_code=str(getattr(error, "error_code", "WORKER_INTERRUPTED")),
+                lease_owner=running.lease_owner,
+                lease_fence=running.lease_fence,
             )
             raise
-        self._commands.complete(run.id, output=output(result))
+        self._commands.complete(
+            run.id,
+            output=output(result),
+            lease_owner=running.lease_owner,
+            lease_fence=running.lease_fence,
+        )
         return result

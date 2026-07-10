@@ -17,7 +17,11 @@ from fairy_core.commanding.ledger import (
     SqliteCommandLedger,
 )
 from fairy_core.commanding.registry import RiskLevel
-from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
+from fairy_core.domain.errors import (
+    IdempotencyConflictError,
+    InvalidTransitionError,
+    WorkerFenceError,
+)
 from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import OperationMode, ScopeContract, WorkspaceType
 
@@ -124,7 +128,7 @@ def test_sqlite_ledger_migrates_pre_tenant_v3_runs_and_events(tmp_path: Path) ->
                 str(scope.task_id),
                 json.dumps({"query": "entrypoints"}, sort_keys=True),
                 RiskLevel.LOW.value,
-                CommandStatus.CREATED.value,
+                CommandStatus.RUNNING.value,
                 "legacy-key",
                 None,
                 None,
@@ -161,6 +165,10 @@ def test_sqlite_ledger_migrates_pre_tenant_v3_runs_and_events(tmp_path: Path) ->
     ledger = SqliteCommandLedger(path)
     migrated = ledger.get_run(run_id)
     migrated_events = ledger.events_after(cursor=0)
+    with sqlite3.connect(path) as connection:
+        applied_at = connection.execute("SELECT applied_at FROM core_local_migrations").fetchone()[
+            0
+        ]
     appended = ledger.append_event(
         run_id=run_id,
         event_type="command.queued",
@@ -171,10 +179,19 @@ def test_sqlite_ledger_migrates_pre_tenant_v3_runs_and_events(tmp_path: Path) ->
 
     assert migrated is not None
     assert migrated.input_payload == {"query": "entrypoints"}
-    assert [event.cursor for event in migrated_events] == [7]
-    assert [event.task_sequence for event in migrated_events] == [3]
-    assert appended.cursor == 8
-    assert appended.task_sequence == 4
+    assert migrated.status is CommandStatus.INTERRUPTED
+    assert migrated.lease_owner is None
+    assert migrated.lease_until is None
+    assert [event.cursor for event in migrated_events] == [7, 8]
+    assert [event.task_sequence for event in migrated_events] == [3, 4]
+    assert migrated_events[-1].event_type == "command.interrupted"
+    assert migrated_events[-1].payload == {
+        "reason": "missing_worker_lease",
+        "status": CommandStatus.INTERRUPTED.value,
+    }
+    assert appended.cursor == 9
+    assert appended.task_sequence == 5
+    assert datetime.fromisoformat(applied_at).utcoffset() == timedelta(0)
 
 
 def test_ledger_recovers_run_and_events_after_restart(tmp_path: Path) -> None:
@@ -309,6 +326,24 @@ def test_command_run_rejects_invalid_transition(tmp_path: Path) -> None:
         ledger.transition(run.id, CommandStatus.SUCCEEDED)
 
 
+def test_running_transition_requires_a_worker_lease(tmp_path: Path) -> None:
+    ledger = SqliteCommandLedger(tmp_path / "ledger.db")
+    run = ledger.create_run(
+        command_name="review.test",
+        actor="core",
+        scope=_scope(tmp_path),
+        input_payload={},
+        risk_level=RiskLevel.LOW,
+        idempotency_key="running-requires-lease",
+    )
+    queued = ledger.transition(run.id, CommandStatus.QUEUED)
+
+    with pytest.raises(InvalidTransitionError, match="claim"):
+        ledger.transition(queued.id, CommandStatus.RUNNING)
+
+    assert ledger.get_run(run.id).status is CommandStatus.QUEUED
+
+
 def test_event_visibility_filters_internal_events(tmp_path: Path) -> None:
     ledger = SqliteCommandLedger(tmp_path / "ledger.db")
     run = ledger.create_run(
@@ -387,3 +422,94 @@ def test_expired_worker_lease_is_reclaimed_with_a_higher_fence(tmp_path: Path) -
     assert second_claim.id == first_claim.id
     assert second_claim.lease_owner == "worker-b"
     assert second_claim.lease_fence == first_claim.lease_fence + 1
+
+
+def test_stale_worker_cannot_append_an_event_after_reclaim(tmp_path: Path) -> None:
+    ledger = SqliteCommandLedger(tmp_path / "ledger.db")
+    run = ledger.create_run(
+        command_name="review.test",
+        actor="core",
+        scope=_scope(tmp_path),
+        input_payload={},
+        risk_level=RiskLevel.LOW,
+        idempotency_key="stale-event",
+    )
+    ledger.transition(run.id, CommandStatus.QUEUED)
+    first_claim = ledger.claim_next(
+        worker_id="worker-a",
+        lease_until=datetime.now(UTC) + timedelta(milliseconds=5),
+    )
+    time.sleep(0.02)
+    second_claim = ledger.claim_next(
+        worker_id="worker-b",
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    assert first_claim is not None
+    assert second_claim is not None
+    events_before_stale_append = ledger.events_after(cursor=0)
+
+    with pytest.raises(WorkerFenceError):
+        ledger.append_event(
+            run_id=run.id,
+            event_type="command.output",
+            visibility=EventVisibility.DEVELOPER,
+            message="stale output",
+            payload={},
+            lease_owner="worker-a",
+            lease_fence=first_claim.lease_fence,
+        )
+
+    assert ledger.events_after(cursor=0) == events_before_stale_append
+    current_event = ledger.append_event(
+        run_id=run.id,
+        event_type="command.progress",
+        visibility=EventVisibility.USER,
+        message="current progress",
+        payload={"percent": 50},
+        lease_owner="worker-b",
+        lease_fence=second_claim.lease_fence,
+    )
+    assert current_event.payload == {"percent": 50}
+
+
+def test_stale_worker_cannot_transition_after_reclaim(tmp_path: Path) -> None:
+    ledger = SqliteCommandLedger(tmp_path / "ledger.db")
+    run = ledger.create_run(
+        command_name="review.test",
+        actor="core",
+        scope=_scope(tmp_path),
+        input_payload={},
+        risk_level=RiskLevel.LOW,
+        idempotency_key="stale-transition",
+    )
+    ledger.transition(run.id, CommandStatus.QUEUED)
+    first_claim = ledger.claim_next(
+        worker_id="worker-a",
+        lease_until=datetime.now(UTC) + timedelta(milliseconds=5),
+    )
+    time.sleep(0.02)
+    second_claim = ledger.claim_next(
+        worker_id="worker-b",
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    assert first_claim is not None
+    assert second_claim is not None
+    events_before_stale_transition = ledger.events_after(cursor=0)
+
+    with pytest.raises(WorkerFenceError):
+        ledger.transition(
+            run.id,
+            CommandStatus.SUCCEEDED,
+            lease_owner="worker-a",
+            lease_fence=first_claim.lease_fence,
+        )
+
+    assert ledger.get_run(run.id).status is CommandStatus.RUNNING
+    assert ledger.events_after(cursor=0) == events_before_stale_transition
+    succeeded = ledger.transition(
+        run.id,
+        CommandStatus.SUCCEEDED,
+        lease_owner="worker-b",
+        lease_fence=second_claim.lease_fence,
+    )
+    assert succeeded.status is CommandStatus.SUCCEEDED
