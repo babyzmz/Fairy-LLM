@@ -37,7 +37,11 @@ from fairy_core.domain.models import (
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.models import ClaimStatus, MemoryNamespace
 from fairy_core.memory.policy import MemoryPolicy
+from fairy_core.memory.projection import LexicalProjectionRefresher
+from fairy_core.memory.retrieval_models import MemorySnapshotStatus, ProjectionState
 from fairy_core.memory.schema import memory_claims
+from fairy_core.memory.search_sqlalchemy import SqlAlchemyMemorySearchIndex
+from fairy_core.memory.snapshot_sqlalchemy import SqlAlchemyMemorySnapshotRepository
 from fairy_core.persistence import SqlAlchemyUnitOfWorkFactory
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
@@ -97,6 +101,8 @@ def test_memory_tools_have_exact_command_policy_metadata() -> None:
         "memory.claim.supersede",
         "memory.claim.resolve_conflict",
         "memory.forget",
+        "memory.projection.refresh",
+        "memory.snapshot.build",
     }
     assert definitions["memory.observe"].side_effect is SideEffect.WRITE
     assert definitions["memory.observe"].risk_level is RiskLevel.LOW
@@ -105,8 +111,128 @@ def test_memory_tools_have_exact_command_policy_metadata() -> None:
     assert all(
         definitions[name].approval_policy is ApprovalPolicy.ALWAYS
         for name in definitions
-        if name != "memory.observe"
+        if name
+        not in {"memory.observe", "memory.projection.refresh", "memory.snapshot.build"}
     )
+    assert not definitions["memory.projection.refresh"].model_visible
+    assert not definitions["memory.snapshot.build"].model_visible
+
+
+def test_memory_commit_refreshes_projection_without_mutating_bound_snapshot(
+    tmp_path: Path,
+) -> None:
+    engine, core, memory = _applications(tmp_path)
+    task = _task(core, suffix="projection-refresh")
+    snapshots = SqlAlchemyMemorySnapshotRepository(engine, tenant_id="local")
+    original_snapshot = snapshots.get_for_task(task.task.id)
+    assert original_snapshot is not None
+    request = MemoryObserveInput(
+        task_id=task.task.id,
+        content="Use compact navigation in this conversation.",
+        idempotency_key="memory:projection-refresh:observe",
+    )
+
+    observation = memory.observe(request)
+    replay = memory.observe(request)
+
+    ledger = SqlAlchemyCommandLedger(engine, tenant_id="local")
+    created = [
+        event
+        for event in ledger.events_after(cursor=0)
+        if event.event_type == "command.created"
+        and event.payload.get("command_name") == "memory.projection.refresh"
+    ]
+    assert replay.id == observation.id
+    assert len(created) == 1
+    refresh_run = ledger.get_run(created[0].run_id)
+    assert refresh_run is not None
+    assert refresh_run.status.value == "succeeded"
+    search = SqlAlchemyMemorySearchIndex(engine, tenant_id="local")
+    hits = search.search(
+        scope=task.scope,
+        query="compact navigation",
+        generation=1,
+        limit=10,
+    )
+    assert [hit.document.source_id for hit in hits] == [observation.id]
+    assert search.health(
+        generation=1,
+        source_watermark_cursor=ledger.current_cursor(),
+    ).state is ProjectionState.READY
+    unchanged = snapshots.get_for_task(task.task.id)
+    assert unchanged is not None
+    assert unchanged.id == original_snapshot.id
+    assert unchanged.content_hash == original_snapshot.content_hash
+
+    next_task = core.create_task(
+        TaskCreate(
+            conversation_id=task.task.conversation_id,
+            user_request="compact navigation",
+            operation_mode=OperationMode.CONTINUE_CURRENT_DRAFT,
+            execution_target=ExecutionTarget.LOCAL,
+            idempotency_key="memory:projection-refresh:next-task",
+        )
+    )
+    next_snapshot = snapshots.get_for_task(next_task.task.id)
+    assert next_snapshot is not None
+    assert next_snapshot.id != original_snapshot.id
+    assert observation.id in {item.source_id for item in next_snapshot.items}
+
+
+def test_projection_failure_preserves_canonical_commit_and_degrades_next_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine, core, memory = _applications(tmp_path)
+    task = _task(core, suffix="projection-failure")
+
+    def fail_refresh(self, generation: int = 1):
+        del self, generation
+        raise RuntimeError("projection unavailable")
+
+    monkeypatch.setattr(LexicalProjectionRefresher, "refresh", fail_refresh)
+    observation = memory.observe(
+        MemoryObserveInput(
+            task_id=task.task.id,
+            content="Use compact navigation in this conversation.",
+            idempotency_key="memory:projection-failure:observe",
+        )
+    )
+
+    listed = memory.list_observations(
+        MemoryObservationQuery(
+            task_id=task.task.id,
+            namespace=MemoryNamespace.CONVERSATION_DRAFT,
+        )
+    )
+    assert [item.id for item in listed] == [observation.id]
+    ledger = SqlAlchemyCommandLedger(engine, tenant_id="local")
+    refresh_runs = [
+        ledger.get_run(event.run_id)
+        for event in ledger.events_after(cursor=0)
+        if event.event_type == "command.created"
+        and event.payload.get("command_name") == "memory.projection.refresh"
+    ]
+    assert len(refresh_runs) == 1
+    assert refresh_runs[0] is not None
+    assert refresh_runs[0].status.value == "failed"
+
+    next_task = core.create_task(
+        TaskCreate(
+            conversation_id=task.task.conversation_id,
+            user_request="compact navigation",
+            operation_mode=OperationMode.CONTINUE_CURRENT_DRAFT,
+            execution_target=ExecutionTarget.LOCAL,
+            idempotency_key="memory:projection-failure:next-task",
+        )
+    )
+    snapshot = SqlAlchemyMemorySnapshotRepository(
+        engine,
+        tenant_id="local",
+    ).get_for_task(next_task.task.id)
+    assert snapshot is not None
+    assert snapshot.status is MemorySnapshotStatus.DEGRADED
+    assert observation.id in {item.source_id for item in snapshot.items}
 
 
 def test_observe_promote_supersede_resolve_and_forget_are_command_driven(

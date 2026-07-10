@@ -208,6 +208,7 @@ def test_preview_first_project_loop_keeps_draft_isolated_until_accept(tmp_path: 
     ]
     assert command_names == [
         "workspace.import",
+        "memory.snapshot.build",
         "workspace.fork",
         "edit.apply_changeset",
         "workspace.diff",

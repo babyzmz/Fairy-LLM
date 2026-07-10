@@ -116,6 +116,70 @@ def recovery_stack(tmp_path: Path) -> _RecoveryStack:
     )
 
 
+def test_snapshot_failure_rolls_back_task_intent_and_retry_binds_once(
+    tmp_path: Path,
+) -> None:
+    class FailingSnapshotBuilder:
+        @staticmethod
+        def build(**_values):
+            raise RuntimeError("snapshot crash")
+
+    engine = create_sqlite_core_engine(tmp_path / "snapshot-recovery.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
+    registry = build_default_registry()
+    policy = PolicyEngine(registry)
+    workspace = FileSystemWorkspaceProvisioner(tmp_path / "snapshot-managed")
+    failing = CoreApplication(
+        unit_of_work_factory=factory,
+        workspace_provisioner=workspace,
+        registry=registry,
+        policy=policy,
+        snapshot_builder_factory=lambda _unit_of_work: FailingSnapshotBuilder(),
+    )
+    project = failing.create_project(
+        name="Snapshot recovery",
+        residency=ProjectResidency.LOCAL_ONLY,
+    )
+    conversation = failing.create_conversation(
+        project_id=project.project.id,
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+    )
+    request = TaskCreate(
+        conversation_id=conversation.id,
+        user_request="Recover snapshot binding",
+        operation_mode=OperationMode.CONTINUE_CURRENT_DRAFT,
+        execution_target=ExecutionTarget.LOCAL,
+        idempotency_key="snapshot:recovery:task",
+    )
+
+    with pytest.raises(RuntimeError, match="snapshot crash"):
+        failing.create_task(request)
+
+    with factory() as unit_of_work:
+        assert (
+            unit_of_work.state.find_task_by_idempotency_key(request.idempotency_key)
+            is None
+        )
+        persisted_conversation = unit_of_work.state.get_conversation(conversation.id)
+        assert persisted_conversation is not None
+        assert persisted_conversation.active_task_id is None
+        assert persisted_conversation.active_draft_version_id is None
+
+    recovered = CoreApplication(
+        unit_of_work_factory=factory,
+        workspace_provisioner=workspace,
+        registry=registry,
+        policy=policy,
+    ).create_task(request)
+
+    assert recovered.task.memory_snapshot_id is not None
+    assert recovered.scope.memory_snapshot_id == recovered.task.memory_snapshot_id
+    with factory() as unit_of_work:
+        snapshot = unit_of_work.snapshots.get_for_task(recovered.task.id)
+        assert snapshot is not None
+        assert snapshot.id == recovered.task.memory_snapshot_id
+
+
 def test_expired_memory_command_is_reclaimed_without_duplicate_effects(
     recovery_stack: _RecoveryStack,
 ) -> None:
@@ -285,4 +349,6 @@ def _conversation_draft_scope(scope: ScopeContract) -> ScopeContract:
         network_policy=scope.network_policy,
         memory_read_scope=scope.memory_read_scope,
         memory_write_scope=(MemoryNamespace.CONVERSATION_DRAFT.value,),
+        memory_snapshot_id=scope.memory_snapshot_id,
+        memory_snapshot_hash=scope.memory_snapshot_hash,
     )

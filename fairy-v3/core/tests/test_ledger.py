@@ -24,6 +24,7 @@ from fairy_core.domain.errors import (
 )
 from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import OperationMode, ScopeContract, WorkspaceType
+from fairy_core.persistence.sqlite import create_sqlite_core_engine
 
 
 def _scope(tmp_path: Path) -> ScopeContract:
@@ -268,6 +269,26 @@ def test_ledger_persists_memory_snapshot_binding_in_scope(tmp_path: Path) -> Non
         )
     assert stored_scope["memory_snapshot_id"] == str(snapshot_id)
     assert stored_scope["memory_snapshot_hash"] == snapshot_hash
+
+
+def test_current_cursor_reads_zero_and_latest_tenant_event(tmp_path: Path) -> None:
+    engine = create_sqlite_core_engine(tmp_path / "cursor.db")
+    ledger = SqlAlchemyCommandLedger(engine, tenant_id="local")
+
+    assert ledger.current_cursor() == 0
+
+    scope = _scope(tmp_path)
+    run = ledger.create_run(
+        command_name="workspace.diff",
+        actor="core",
+        scope=scope,
+        input_payload={},
+        risk_level=RiskLevel.LOW,
+        idempotency_key="cursor:run",
+    )
+    latest = ledger.events_for_run(run.id)[-1].cursor
+
+    assert ledger.current_cursor() == latest
 
 
 def test_idempotency_key_returns_existing_run_without_duplicate_event(tmp_path: Path) -> None:

@@ -99,6 +99,10 @@ def test_project_task_creation_builds_isolated_version_and_scope(tmp_path: Path)
     assert task_context.scope.task_id == task_context.task.id
     assert task_context.scope.target_version_id == task_context.target_version.id
     assert task_context.scope.allowed_write_paths == (task_context.target_version.project_root,)
+    assert task_context.task.memory_snapshot_id is not None
+    assert task_context.task.memory_snapshot_hash is not None
+    assert task_context.scope.memory_snapshot_id == task_context.task.memory_snapshot_id
+    assert task_context.scope.memory_snapshot_hash == task_context.task.memory_snapshot_hash
 
 
 def test_task_create_is_idempotent_and_does_not_fork_twice(tmp_path: Path) -> None:
@@ -121,6 +125,8 @@ def test_task_create_is_idempotent_and_does_not_fork_twice(tmp_path: Path) -> No
 
     assert second.task.id == first.task.id
     assert second.target_version.id == first.target_version.id
+    assert second.task.memory_snapshot_id == first.task.memory_snapshot_id
+    assert second.task.memory_snapshot_hash == first.task.memory_snapshot_hash
     assert second.scope.scope_digest == first.scope.scope_digest
 
 
@@ -425,7 +431,20 @@ def test_project_and_task_workspace_side_effects_are_durable_commands(tmp_path: 
         for event in ledger.events_after(cursor=0)
         if event.event_type == "command.created"
     ]
-    assert command_names == ["workspace.import", "workspace.fork"]
+    assert command_names == [
+        "workspace.import",
+        "memory.snapshot.build",
+        "workspace.fork",
+    ]
+    fork_created = next(
+        event
+        for event in ledger.events_after(cursor=0)
+        if event.event_type == "command.created"
+        and event.payload.get("command_name") == "workspace.fork"
+    )
+    fork_run = ledger.get_run(fork_created.run_id)
+    assert fork_run is not None
+    assert fork_run.scope_digest == task.scope.scope_digest
     assert (source / "README.md").read_text(encoding="utf-8") == "original"
     assert (project.initial_version.project_root / "README.md").read_text(
         encoding="utf-8"

@@ -19,6 +19,7 @@ from fairy_core.memory.policy import (
     MemoryPolicy,
     MemoryPolicyDecision,
 )
+from fairy_core.memory.projection import LexicalProjectionRefresher
 from fairy_core.memory.retrieval_models import (
     MemoryProjectionHealth,
     MemorySearchDocument,
@@ -45,6 +46,7 @@ __all__ = [
     "MEMORY_NAMESPACE_PRECEDENCE",
     "ClaimStatus",
     "DeterministicMemorySnapshotBuilder",
+    "LexicalProjectionRefresher",
     "MemoryAuthority",
     "MemoryClaim",
     "MemoryClaimRevision",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+import hashlib
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +37,8 @@ from fairy_core.domain.models import (
     VersionVisibility,
     WorkspaceType,
 )
+from fairy_core.memory.retrieval_ports import MemorySnapshotBuilder
+from fairy_core.memory.snapshot_builder import DeterministicMemorySnapshotBuilder
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
 from fairy_core.storage import StateStore
 from fairy_core.workspace.ports import WorkspaceProvisioner
@@ -68,6 +71,9 @@ class _TaskIntent:
     running: CommandRun
 
 
+SnapshotBuilderFactory = Callable[[CoreUnitOfWork], MemorySnapshotBuilder]
+
+
 class CoreApplication:
     def __init__(
         self,
@@ -76,11 +82,15 @@ class CoreApplication:
         workspace_provisioner: WorkspaceProvisioner,
         registry: ToolRegistry,
         policy: PolicyEngine,
+        snapshot_builder_factory: SnapshotBuilderFactory | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._workspaces = workspace_provisioner
         self._registry = registry
         self._policy = policy
+        self._snapshot_builder_factory = (
+            snapshot_builder_factory or self._default_snapshot_builder
+        )
 
     def create_project(
         self,
@@ -348,7 +358,6 @@ class CoreApplication:
 
                 task.transition_to(TaskStatus.RESOLVING_SCOPE)
                 conversation.active_task_id = task.id
-                context = self._build_context(task, conversation, target_version)
                 if target_version is not None:
                     unit_of_work.state.save_version(target_version)
                     tool_name = "workspace.fork"
@@ -368,6 +377,42 @@ class CoreApplication:
                     idempotency_key=idempotency_key,
                 )
                 unit_of_work.state.save_conversation(conversation)
+                unbound_context = self._build_context(task, conversation, target_version)
+                source_watermark_cursor = unit_of_work.commands.current_cursor()
+                snapshot_running = self._start_command(
+                    commands,
+                    tool_name="memory.snapshot.build",
+                    scope=unbound_context.scope,
+                    payload={
+                        "task_id": str(task.id),
+                        "source_watermark_cursor": source_watermark_cursor,
+                    },
+                    idempotency_key=f"{idempotency_key}:memory-snapshot",
+                )
+                snapshot = self._snapshot_builder_factory(unit_of_work).build(
+                    scope=unbound_context.scope,
+                    query=task.user_request,
+                    source_watermark_cursor=source_watermark_cursor,
+                )
+                persisted_snapshot = unit_of_work.snapshots.append(
+                    snapshot,
+                    request_fingerprint=self._snapshot_request_fingerprint(task.id),
+                )
+                task.bind_memory_snapshot(
+                    persisted_snapshot.id,
+                    persisted_snapshot.content_hash,
+                )
+                unit_of_work.state.save_task(task)
+                commands.complete(
+                    snapshot_running.id,
+                    output={
+                        "snapshot_id": str(persisted_snapshot.id),
+                        "content_hash": persisted_snapshot.content_hash,
+                    },
+                    lease_owner=snapshot_running.lease_owner,
+                    lease_fence=snapshot_running.lease_fence,
+                )
+                context = self._build_context(task, conversation, target_version)
                 running = self._start_command(
                     commands,
                     tool_name=tool_name,
@@ -861,14 +906,20 @@ class CoreApplication:
     ) -> TaskContext:
         if target_version is not None:
             root = target_version.project_root
-            read_scope = ("project_canonical", "current_conversation", "current_version")
+            read_scope = (
+                "project_canonical",
+                "current_conversation",
+                "user_profile",
+                "task_episode",
+                "current_version",
+            )
             network_policy = "project_safe"
         else:
             root = self._workspaces.scratch_path(
                 conversation.id,
                 task.id,
             ).resolve(strict=False)
-            read_scope = ("current_conversation",)
+            read_scope = ("current_conversation", "user_profile", "task_episode")
             network_policy = "open_web_safe"
         scope = ScopeContract.create(
             workspace_type=conversation.workspace_type,
@@ -885,6 +936,8 @@ class CoreApplication:
             network_policy=network_policy,
             memory_read_scope=read_scope,
             memory_write_scope=("current_conversation_draft",),
+            memory_snapshot_id=task.memory_snapshot_id,
+            memory_snapshot_hash=task.memory_snapshot_hash,
         )
         return TaskContext(task=task, target_version=target_version, scope=scope)
 
@@ -928,6 +981,19 @@ class CoreApplication:
             policy=self._policy,
             ledger=ledger,
         )
+
+    @staticmethod
+    def _default_snapshot_builder(
+        unit_of_work: CoreUnitOfWork,
+    ) -> MemorySnapshotBuilder:
+        return DeterministicMemorySnapshotBuilder(
+            memory_repository=unit_of_work.memory,
+            search_index=unit_of_work.memory_search,
+        )
+
+    @staticmethod
+    def _snapshot_request_fingerprint(task_id: UUID) -> str:
+        return hashlib.sha256(f"task:{task_id}:memory-snapshot:v1".encode()).hexdigest()
 
     @staticmethod
     def _require_project(state: StateStore, project_id: UUID) -> Project:

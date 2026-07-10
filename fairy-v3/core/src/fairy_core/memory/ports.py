@@ -99,5 +99,9 @@ class MemoryRepository(Protocol):
         retrievable_only: bool = False,
     ) -> list[MemoryObservation]: ...
 
+    def claims_for_projection(self) -> list[MemoryClaim]: ...
+
+    def observations_for_projection(self) -> list[MemoryObservation]: ...
+
 
 __all__ = ["MemoryRepository"]

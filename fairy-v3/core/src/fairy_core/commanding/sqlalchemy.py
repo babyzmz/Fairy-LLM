@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection, Engine, RowMapping
@@ -374,6 +374,15 @@ class SqlAlchemyCommandLedger:
                 .all()
             )
         return [self._event_from_row(row) for row in rows]
+
+    def current_cursor(self) -> int:
+        with self._session.read() as connection:
+            value = connection.execute(
+                select(func.coalesce(func.max(domain_events.c.cursor), 0)).where(
+                    domain_events.c.tenant_id == self._tenant_id
+                )
+            ).scalar_one()
+        return int(value)
 
     def claim(
         self,

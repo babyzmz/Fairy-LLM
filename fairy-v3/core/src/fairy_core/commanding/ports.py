@@ -71,6 +71,8 @@ class CommandLedger(Protocol):
 
     def events_for_run(self, run_id: UUID) -> list[EventEnvelope]: ...
 
+    def current_cursor(self) -> int: ...
+
     def claim(
         self,
         run_id: UUID,

@@ -44,6 +44,7 @@ from fairy_core.memory.models import (
     ObservationStatus,
 )
 from fairy_core.memory.policy import MemoryPolicy, MemoryPolicyDecision
+from fairy_core.memory.projection import LexicalProjectionRefresher
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
 from fairy_core.storage.ports import StateStore
 
@@ -145,7 +146,9 @@ class MemoryApplication:
                     },
                 )
             unit_of_work.commit()
-            return persisted
+            source_run_id = command.run.id
+        self._refresh_projection_after_commit(request.task_id, source_run_id)
+        return persisted
 
     def list_observations(
         self,
@@ -233,7 +236,9 @@ class MemoryApplication:
                     },
                 )
             unit_of_work.commit()
-            return context
+            source_run_id = command.run.id
+        self._refresh_projection_after_commit(request.task_id, source_run_id)
+        return context
 
     def get_claim(self, request: MemoryClaimGetInput) -> MemoryClaimContext:
         with self._unit_of_work_factory() as unit_of_work:
@@ -311,7 +316,9 @@ class MemoryApplication:
                     },
                 )
             unit_of_work.commit()
-            return context
+            source_run_id = command.run.id
+        self._refresh_projection_after_commit(request.task_id, source_run_id)
+        return context
 
     def resolve_conflict(
         self,
@@ -373,7 +380,9 @@ class MemoryApplication:
                     },
                 )
             unit_of_work.commit()
-            return context
+            source_run_id = command.run.id
+        self._refresh_projection_after_commit(request.task_id, source_run_id)
+        return context
 
     def forget(self, request: MemoryForgetInput) -> MemoryTombstone:
         self._require_confirmation(request.user_confirmed)
@@ -430,7 +439,123 @@ class MemoryApplication:
                     },
                 )
             unit_of_work.commit()
-            return persisted
+            source_run_id = command.run.id
+        self._refresh_projection_after_commit(request.task_id, source_run_id)
+        return persisted
+
+    def _refresh_projection_after_commit(
+        self,
+        task_id: UUID,
+        source_run_id: UUID,
+    ) -> None:
+        running = self._start_projection_refresh(task_id, source_run_id)
+        if running is None:
+            return
+        try:
+            with self._unit_of_work_factory() as unit_of_work:
+                persisted = unit_of_work.commands.get_run(running.id)
+                if persisted is None or persisted.status is CommandStatus.SUCCEEDED:
+                    return
+                if persisted.status is not CommandStatus.RUNNING:
+                    return
+                refresher = LexicalProjectionRefresher(
+                    memory_repository=unit_of_work.memory,
+                    projection_writer=unit_of_work.memory_projections,
+                    command_ledger=unit_of_work.commands,
+                    memory_policy=self._memory_policy,
+                )
+                health = refresher.refresh()
+                bus = CommandBus(
+                    registry=self._registry,
+                    policy=self._command_policy,
+                    ledger=unit_of_work.commands,
+                )
+                bus.complete(
+                    persisted.id,
+                    output={
+                        "generation": health.generation,
+                        "projected_watermark_cursor": health.projected_watermark_cursor,
+                    },
+                    lease_owner=persisted.lease_owner,
+                    lease_fence=persisted.lease_fence,
+                )
+                unit_of_work.memory_projections.advance_checkpoint(
+                    generation=health.generation,
+                    source_watermark_cursor=unit_of_work.commands.current_cursor(),
+                )
+                unit_of_work.commit()
+        except Exception as error:
+            self._fail_projection_refresh(running, error)
+
+    def _start_projection_refresh(
+        self,
+        task_id: UUID,
+        source_run_id: UUID,
+    ) -> CommandRun | None:
+        try:
+            with self._unit_of_work_factory() as unit_of_work:
+                _task, scope = self._task_scope(unit_of_work, task_id)
+                bus = CommandBus(
+                    registry=self._registry,
+                    policy=self._command_policy,
+                    ledger=unit_of_work.commands,
+                )
+                dispatch = bus.submit(
+                    CommandRequest(
+                        tool_name="memory.projection.refresh",
+                        actor="core",
+                        scope=scope,
+                        payload={
+                            "source_run_id": str(source_run_id),
+                            "source_watermark_cursor": (
+                                unit_of_work.commands.current_cursor()
+                            ),
+                        },
+                        idempotency_key=f"memory-projection:{source_run_id}",
+                    ),
+                    profile=PermissionProfile.STANDARD,
+                    capability_overrides={},
+                    sandbox_healthy=False,
+                )
+                if dispatch.run is None or not dispatch.accepted:
+                    return None
+                if dispatch.run.status is CommandStatus.SUCCEEDED:
+                    return None
+                try:
+                    running = bus.start(dispatch.run.id)
+                except InvalidTransitionError:
+                    return None
+                unit_of_work.commit()
+                return running
+        except Exception:
+            return None
+
+    def _fail_projection_refresh(
+        self,
+        running: CommandRun,
+        error: Exception,
+    ) -> None:
+        try:
+            with self._unit_of_work_factory() as unit_of_work:
+                persisted = unit_of_work.commands.get_run(running.id)
+                if persisted is None or persisted.status is not CommandStatus.RUNNING:
+                    return
+                bus = CommandBus(
+                    registry=self._registry,
+                    policy=self._command_policy,
+                    ledger=unit_of_work.commands,
+                )
+                bus.fail(
+                    persisted.id,
+                    error_code=str(
+                        getattr(error, "code", getattr(error, "error_code", "WORKER_INTERRUPTED"))
+                    ),
+                    lease_owner=persisted.lease_owner,
+                    lease_fence=persisted.lease_fence,
+                )
+                unit_of_work.commit()
+        except Exception:
+            return
 
     def _prepare_command(
         self,
@@ -527,6 +652,8 @@ class MemoryApplication:
             network_policy=scope.network_policy,
             memory_read_scope=scope.memory_read_scope,
             memory_write_scope=(namespace.value,),
+            memory_snapshot_id=scope.memory_snapshot_id,
+            memory_snapshot_hash=scope.memory_snapshot_hash,
         )
 
     def _require_observation_scope(

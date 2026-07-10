@@ -223,6 +223,22 @@ class SqlAlchemyMemoryRepository:
             rows = connection.execute(statement).mappings()
             return [self._observation_from_row(row) for row in rows]
 
+    def observations_for_projection(self) -> list[MemoryObservation]:
+        with self._session.read() as connection:
+            rows = (
+                connection.execute(
+                    select(memory_observations)
+                    .where(memory_observations.c.tenant_id == self._tenant_id)
+                    .order_by(
+                        memory_observations.c.source_cursor,
+                        memory_observations.c.id,
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [self._observation_from_row(row) for row in rows]
+
     def create_claim(
         self,
         claim: MemoryClaim,
@@ -529,6 +545,19 @@ class SqlAlchemyMemoryRepository:
                 )
             ).mappings()
             return [self._claim_from_row(row) for row in rows]
+
+    def claims_for_projection(self) -> list[MemoryClaim]:
+        with self._session.read() as connection:
+            rows = (
+                connection.execute(
+                    select(memory_claims)
+                    .where(memory_claims.c.tenant_id == self._tenant_id)
+                    .order_by(memory_claims.c.id)
+                )
+                .mappings()
+                .all()
+            )
+        return [self._claim_from_row(row) for row in rows]
 
     def _append_revision(
         self,
