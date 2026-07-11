@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
+
+from fairy_core.workspace.models import ProjectIndex, TaskWorkspace
 
 WorkspaceId = UUID | str
 
@@ -63,3 +65,31 @@ class WorkspaceProvisioner(Protocol):
         project_id: WorkspaceId,
         version_id: WorkspaceId,
     ) -> None: ...
+
+
+class WorkspaceRepository(Protocol):
+    def bind_once(
+        self,
+        *,
+        task_id: WorkspaceId,
+        project_id: WorkspaceId | None,
+        conversation_id: WorkspaceId,
+        version_id: WorkspaceId | None,
+        root: Path,
+        editable_files: tuple[str, ...],
+        reference_files: tuple[str, ...],
+        constraints: dict[str, Any],
+    ) -> TaskWorkspace: ...
+
+    def get(self, task_id: WorkspaceId) -> TaskWorkspace | None: ...
+
+
+class ProjectIndexRepository(Protocol):
+    def get(self, version_id: WorkspaceId) -> ProjectIndex | None: ...
+
+    def replace_generation(
+        self,
+        index: ProjectIndex,
+        *,
+        expected_generation: int,
+    ) -> ProjectIndex: ...

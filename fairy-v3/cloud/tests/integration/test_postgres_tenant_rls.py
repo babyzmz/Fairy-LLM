@@ -305,6 +305,46 @@ async def _run_rls_scenario(dsn: str) -> None:
             assert tuple(artifact_a) == (tenant_a, "alpha")
             assert tuple(artifact_b) == (tenant_b, "beta")
 
+            workspace_a = (
+                await connection_a.execute(
+                    text(
+                        "SELECT tenant_id, root FROM core_task_workspaces WHERE task_id = :task_id"
+                    ),
+                    {"task_id": task_id},
+                )
+            ).one()
+            workspace_b = (
+                await connection_b.execute(
+                    text(
+                        "SELECT tenant_id, root FROM core_task_workspaces WHERE task_id = :task_id"
+                    ),
+                    {"task_id": task_id},
+                )
+            ).one()
+            assert tuple(workspace_a) == (tenant_a, f"/fairy/{tenant_a}/{version_id}")
+            assert tuple(workspace_b) == (tenant_b, f"/fairy/{tenant_b}/{version_id}")
+
+            index_a = (
+                await connection_a.execute(
+                    text(
+                        "SELECT tenant_id, source_hash FROM core_project_indexes "
+                        "WHERE version_id = :version_id"
+                    ),
+                    {"version_id": version_id},
+                )
+            ).one()
+            index_b = (
+                await connection_b.execute(
+                    text(
+                        "SELECT tenant_id, source_hash FROM core_project_indexes "
+                        "WHERE version_id = :version_id"
+                    ),
+                    {"version_id": version_id},
+                )
+            ).one()
+            assert tuple(index_a) == (tenant_a, "a" * 64)
+            assert tuple(index_b) == (tenant_b, "b" * 64)
+
             updated_runtime = await connection_a.execute(
                 text(
                     "UPDATE core_runtime_sessions SET revision = revision + 1 "
@@ -328,6 +368,8 @@ async def _run_rls_scenario(dsn: str) -> None:
                 "core_runtime_sessions",
                 "memory_search_documents",
                 "domain_events",
+                "core_project_indexes",
+                "core_task_workspaces",
                 "core_tasks",
                 "core_versions",
                 "core_conversations",
@@ -481,6 +523,47 @@ async def _insert_tenant_project_event(
             "project_root": f"/fairy/{tenant_id}/{version_id}",
             "executor": f"worker-{marker}",
             "executor_handle": f"static:{marker}",
+        },
+    )
+    await connection.execute(
+        text(
+            """
+            INSERT INTO core_task_workspaces (
+                tenant_id, task_id, project_id, conversation_id, version_id,
+                root, editable_files, reference_files, constraints, generation,
+                created_at
+            ) VALUES (
+                :tenant_id, :task_id, :project_id, :conversation_id, :version_id,
+                :project_root, '["**/*"]', '[]', '{}', 1, now()
+            )
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "task_id": task_id,
+            "project_id": project_id,
+            "conversation_id": conversation_id,
+            "version_id": version_id,
+            "project_root": f"/fairy/{tenant_id}/{version_id}",
+        },
+    )
+    await connection.execute(
+        text(
+            """
+            INSERT INTO core_project_indexes (
+                tenant_id, version_id, project_id, generation, source_hash,
+                files, created_at, updated_at
+            ) VALUES (
+                :tenant_id, :version_id, :project_id, 1, :source_hash,
+                '[]', now(), now()
+            )
+            """
+        ),
+        {
+            "tenant_id": tenant_id,
+            "version_id": version_id,
+            "project_id": project_id,
+            "source_hash": ("a" if marker == "alpha" else "b") * 64,
         },
     )
     await connection.execute(

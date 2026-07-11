@@ -168,21 +168,23 @@ Commit: `feat(v3): resume approved assistant tools`
 - `ProjectIndexRepository.replace_generation()` stores a deterministic file inventory, manifest/config summaries, imports, exports, symbols, and source hash per Version.
 - `ProjectToolExecutor` handles `project.read`, `artifact.list`, `artifact.read`, `edit.propose_changeset`, and `preview.status` with strict generated schemas and exact Scope ownership.
 
-- [ ] **Step 1: Write failing Workspace/index and adversarial read tests**
+- [x] **Step 1: Write failing Workspace/index and adversarial read tests**
 
 Cover cross-tenant/cross-Version reads, junction/symlink replacement, binary/oversized files, ignored secrets, stale index generation, deterministic incremental refresh, and Task binding rollback.
 
-- [ ] **Step 2: Run tests and verify missing repository/tool adapter failures**
+- [x] **Step 2: Run tests and verify missing repository/tool adapter failures**
 
-- [ ] **Step 3: Persist Workspace and Project Index during Task creation and after Changeset apply**
+- [x] **Step 3: Persist Workspace and Project Index during Task creation and after Changeset apply**
 
 Use structured parsers for JSON/TOML/Python and a bounded lexer for supported TypeScript/Rust declarations. Unknown formats remain inventory-only rather than receiving guessed semantics.
 
-- [ ] **Step 4: Implement project/artifact/Changeset tools through the existing CommandRun**
+- [x] **Step 4: Implement project/artifact/Changeset tools through the existing CommandRun**
 
 `edit.propose_changeset` creates the governed Changeset and approval but does not apply files. Tool payload Scope fields are discarded.
 
-- [ ] **Step 5: Verify migration, Core tools, local project loop, and commit**
+- [x] **Step 5: Verify migration, Core tools, local project loop, and commit**
+
+Verification on 2026-07-11: `scripts/test-all.ps1 -SkipDocker` exited 0 with Core 452, Capabilities 103, Cloud 62, Vitest 68, and Playwright 18 tests passing. Deterministic Workspace/Index, scoped project tools, adversarial path reads, Changeset reindexing, Ruff, boundaries, offline Alembic upgrade/downgrade, Rust fmt/clippy/tests, build, contracts, and performance gates passed; Core readiness was 800.4 ms and initial renderer gzip was 131.1 KiB. Real PostgreSQL RLS and WSL gates were unavailable and explicitly skipped.
 
 Commit: `feat(v3): add scoped project execution tools`
 

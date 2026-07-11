@@ -202,6 +202,95 @@ tasks = Table(
     ),
 )
 
+task_workspaces = Table(
+    "core_task_workspaces",
+    state_metadata,
+    _tenant_id(),
+    Column("task_id", String(ID_LENGTH), primary_key=True),
+    Column("project_id", String(ID_LENGTH)),
+    Column("conversation_id", String(ID_LENGTH), nullable=False),
+    Column("version_id", String(ID_LENGTH)),
+    Column("root", String(4096), nullable=False),
+    Column("editable_files", JSON, nullable=False),
+    Column("reference_files", JSON, nullable=False),
+    Column("constraints", JSON, nullable=False),
+    Column("generation", BigInteger, nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "task_id", name="pk_core_task_workspaces"),
+    CheckConstraint("generation > 0", name="ck_core_task_workspaces_generation"),
+    CheckConstraint(
+        "(project_id IS NULL AND version_id IS NULL) OR "
+        "(project_id IS NOT NULL AND version_id IS NOT NULL)",
+        name="ck_core_task_workspaces_project_version",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "task_id"],
+        [tasks.c.tenant_id, tasks.c.id],
+        name="fk_core_task_workspaces_task",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "project_id"],
+        [projects.c.tenant_id, projects.c.id],
+        name="fk_core_task_workspaces_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_task_workspaces_conversation",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "version_id"],
+        [versions.c.tenant_id, versions.c.id],
+        name="fk_core_task_workspaces_version",
+        ondelete="CASCADE",
+    ),
+)
+
+project_indexes = Table(
+    "core_project_indexes",
+    state_metadata,
+    _tenant_id(),
+    Column("version_id", String(ID_LENGTH), primary_key=True),
+    Column("project_id", String(ID_LENGTH), nullable=False),
+    Column("generation", BigInteger, nullable=False),
+    Column("source_hash", String(64), nullable=False),
+    Column("files", JSON, nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "version_id", name="pk_core_project_indexes"),
+    CheckConstraint("generation > 0", name="ck_core_project_indexes_generation"),
+    CheckConstraint(
+        "length(source_hash) = 64 AND source_hash = lower(source_hash)",
+        name="ck_core_project_indexes_source_hash",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "version_id"],
+        [versions.c.tenant_id, versions.c.id],
+        name="fk_core_project_indexes_version",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "project_id"],
+        [projects.c.tenant_id, projects.c.id],
+        name="fk_core_project_indexes_project",
+        ondelete="CASCADE",
+    ),
+)
+
+Index(
+    "ix_core_task_workspaces_tenant_version",
+    task_workspaces.c.tenant_id,
+    task_workspaces.c.version_id,
+)
+Index(
+    "ix_core_project_indexes_tenant_project",
+    project_indexes.c.tenant_id,
+    project_indexes.c.project_id,
+)
+
 assistant_turns = Table(
     "core_assistant_turns",
     state_metadata,

@@ -193,3 +193,53 @@ def test_model_tool_manifest_uses_the_same_effective_policy() -> None:
     assert "run.sandboxed" not in standard
     assert "run.sandboxed" in autonomous
     assert "web.search" not in autonomous
+
+
+def test_core_application_commands_cannot_bypass_persisted_observe_policy(
+    tmp_path: Path,
+) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        project = service.invoke(
+            "projects.create",
+            {"name": "Policy project", "residency": "local_only"},
+        )
+        conversation = service.invoke(
+            "conversations.create",
+            {
+                "project_id": project["project"]["id"],
+                "workspace_type": "project_chat",
+            },
+        )
+        task = service.invoke(
+            "tasks.create",
+            {
+                "conversation_id": conversation["id"],
+                "user_request": "Prepare a governed edit",
+                "operation_mode": "continue_current_chat_draft",
+                "execution_target": "local",
+                "idempotency_key": "policy:task",
+            },
+        )["task"]
+        service.invoke(
+            "permissions.update",
+            {
+                "profile": "observe",
+                "capability_overrides": {},
+                "expected_revision": 0,
+                "idempotency_key": "policy:observe",
+            },
+        )
+
+        with pytest.raises(RuntimeError, match="CAPABILITY_NOT_AVAILABLE"):
+            service.invoke(
+                "changesets.propose",
+                {
+                    "task_id": task["id"],
+                    "files": [{"path": "README.md", "content": "blocked"}],
+                    "reason": "Observe must remain read-only",
+                    "idempotency_key": "policy:blocked-changeset",
+                },
+            )
+    finally:
+        service.close()

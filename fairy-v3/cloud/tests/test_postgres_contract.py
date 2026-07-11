@@ -53,6 +53,8 @@ def test_outbox_claim_uses_postgres_skip_locked_without_external_broker() -> Non
         "core_assistant_message_sequences",
         "core_assistant_messages",
         "core_assistant_tool_invocations",
+        "core_task_workspaces",
+        "core_project_indexes",
         "core_research_evidence",
         "core_documents",
         "core_document_revisions",
@@ -133,6 +135,8 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "pk_core_assistant_message_sequences",
         "pk_core_assistant_messages",
         "pk_core_assistant_tool_invocations",
+        "pk_core_task_workspaces",
+        "pk_core_project_indexes",
         "pk_core_research_evidence",
         "pk_core_documents",
         "pk_core_document_revisions",
@@ -151,6 +155,9 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "fk_core_changesets_task",
         "fk_core_approvals_changeset",
         "fk_core_approvals_tool_invocation",
+        "fk_core_task_workspaces_task",
+        "fk_core_task_workspaces_version",
+        "fk_core_project_indexes_version",
         "fk_core_checkpoints_version",
         "uq_domain_events_tenant_event",
         "uq_outbox_tenant_event",
@@ -198,6 +205,8 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "ix_core_research_evidence_tenant_artifact",
         "uq_core_document_chunks_fts_rowid",
         "ix_core_document_chunks_tenant_document",
+        "ix_core_task_workspaces_tenant_version",
+        "ix_core_project_indexes_tenant_project",
     } <= index_names
 
 

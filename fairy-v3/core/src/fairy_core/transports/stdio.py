@@ -15,7 +15,7 @@ from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
-from fairy_core.commanding.settings import SandboxHealthProvider
+from fairy_core.commanding.settings import ExecutionPolicyResolver, SandboxHealthProvider
 from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.data_directory_lock import DataDirectoryLock
@@ -92,11 +92,13 @@ def build_local_service(
         )
         resources.callback(engine.dispose)
         unit_of_work_factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
+        execution_policy = ExecutionPolicyResolver(sandbox_health_provider)
         application = CoreApplication(
             unit_of_work_factory=unit_of_work_factory,
             workspace_provisioner=workspace_provisioner,
             registry=registry,
             policy=PolicyEngine(registry),
+            execution_policy=execution_policy,
         )
         runtime_application = RuntimeApplication(
             unit_of_work_factory=unit_of_work_factory,

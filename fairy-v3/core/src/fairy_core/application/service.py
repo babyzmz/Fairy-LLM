@@ -104,6 +104,7 @@ from fairy_core.system_actions.application import (
 from fairy_core.system_actions.models import SystemActionRequest
 from fairy_core.voice.application import VoiceApplication
 from fairy_core.voice.registry import VoiceRegistry
+from fairy_core.workspace.tools import ProjectToolExecutor
 
 
 class CoreMethodNotFoundError(LookupError):
@@ -212,6 +213,11 @@ class CoreService:
                 worker=system_action_worker,
                 delegate=effective_tool_executor,
             )
+        effective_tool_executor = ProjectToolExecutor(
+            application=application,
+            unit_of_work_factory=unit_of_work_factory,
+            delegate=effective_tool_executor,
+        )
         self._tool_executor = effective_tool_executor
         self._assistant_application = AssistantApplication(
             unit_of_work_factory=unit_of_work_factory,

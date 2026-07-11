@@ -396,6 +396,110 @@ def _system_action_definitions(
     ]
 
 
+def _project_definitions(
+    all_profiles: frozenset[PermissionProfile],
+    active_profiles: frozenset[PermissionProfile],
+) -> list[ToolDefinition]:
+    return [
+        _tool(
+            "project.read",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "project_tools",
+            idempotent=True,
+            description="Read bounded UTF-8 source from the Task-bound managed Version.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "minLength": 1, "maxLength": 1_024},
+                    "start_line": {"type": "integer", "minimum": 1, "maximum": 1_000_000},
+                    "end_line": {"type": "integer", "minimum": 1, "maximum": 1_000_000},
+                },
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        ),
+        _tool(
+            "artifact.list",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "project_tools",
+            idempotent=True,
+            description="List user-visible Artifacts owned by the current Task.",
+            input_schema={"type": "object", "additionalProperties": False},
+        ),
+        _tool(
+            "artifact.read",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "project_tools",
+            idempotent=True,
+            description="Read one bounded Artifact owned by the current Task Scope.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "artifact_id": {"type": "string", "format": "uuid"},
+                },
+                "required": ["artifact_id"],
+                "additionalProperties": False,
+            },
+        ),
+        _tool(
+            "preview.status",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "project_tools",
+            idempotent=True,
+            description="Read the latest durable Runtime and Preview status for this Task.",
+            input_schema={"type": "object", "additionalProperties": False},
+        ),
+        _tool(
+            "edit.propose_changeset",
+            SideEffect.WRITE,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "project_tools",
+            idempotent=True,
+            description="Create a governed Changeset proposal without applying project files.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "files": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 1_024,
+                                },
+                                "content": {"type": "string", "maxLength": 1_000_000},
+                            },
+                            "required": ["path", "content"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "reason": {"type": "string", "minLength": 1, "maxLength": 10_000},
+                },
+                "required": ["files", "reason"],
+                "additionalProperties": False,
+            },
+        ),
+    ]
+
+
 def build_default_registry() -> ToolRegistry:
     all_profiles = frozenset(PermissionProfile)
     active_profiles = frozenset({PermissionProfile.STANDARD, PermissionProfile.AUTONOMOUS})
@@ -491,33 +595,7 @@ def build_default_registry() -> ToolRegistry:
             idempotent=True,
             model_visible=False,
         ),
-        _tool(
-            "project.read",
-            SideEffect.READ,
-            RiskLevel.LOW,
-            ApprovalPolicy.NEVER,
-            all_profiles,
-            "project_reader",
-            idempotent=True,
-        ),
-        _tool(
-            "artifact.list",
-            SideEffect.READ,
-            RiskLevel.LOW,
-            ApprovalPolicy.NEVER,
-            all_profiles,
-            "artifact_store",
-            idempotent=True,
-        ),
-        _tool(
-            "artifact.read",
-            SideEffect.READ,
-            RiskLevel.LOW,
-            ApprovalPolicy.NEVER,
-            all_profiles,
-            "artifact_store",
-            idempotent=True,
-        ),
+        *_project_definitions(all_profiles, active_profiles),
         _tool(
             "web.search",
             SideEffect.READ,
@@ -728,24 +806,6 @@ def build_default_registry() -> ToolRegistry:
             "memory_snapshot_builder",
             idempotent=True,
             model_visible=False,
-        ),
-        _tool(
-            "preview.status",
-            SideEffect.READ,
-            RiskLevel.LOW,
-            ApprovalPolicy.NEVER,
-            all_profiles,
-            "preview_worker",
-            idempotent=True,
-        ),
-        _tool(
-            "edit.propose_changeset",
-            SideEffect.NONE,
-            RiskLevel.LOW,
-            ApprovalPolicy.NEVER,
-            active_profiles,
-            "changeset_orchestrator",
-            idempotent=True,
         ),
         _tool(
             "edit.apply_changeset",

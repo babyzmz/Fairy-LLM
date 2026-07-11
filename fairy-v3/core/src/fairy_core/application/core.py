@@ -11,11 +11,12 @@ from sqlalchemy.exc import IntegrityError
 
 from fairy_core.application.approval import ApprovalApplication
 from fairy_core.application.errors import ApprovalRequiredError
+from fairy_core.application.scope import build_task_scope
 from fairy_core.commanding import CommandLedger, CommandRun, CommandStatus
 from fairy_core.commanding.bus import CommandBus, CommandRequest
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
-from fairy_core.commanding.types import PermissionProfile
+from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.contracts.models import ChangesetProposal, TaskCreate
 from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
 from fairy_core.domain.execution import (
@@ -42,6 +43,7 @@ from fairy_core.memory.retrieval_ports import MemorySnapshotBuilder
 from fairy_core.memory.snapshot_builder import DeterministicMemorySnapshotBuilder
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
 from fairy_core.storage import StateStore
+from fairy_core.workspace.index import ProjectIndexer
 from fairy_core.workspace.ports import WorkspaceProvisioner
 
 
@@ -84,11 +86,15 @@ class CoreApplication:
         registry: ToolRegistry,
         policy: PolicyEngine,
         snapshot_builder_factory: SnapshotBuilderFactory | None = None,
+        project_indexer: ProjectIndexer | None = None,
+        execution_policy: ExecutionPolicyResolver | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._workspaces = workspace_provisioner
         self._registry = registry
         self._policy = policy
+        self._project_indexer = project_indexer or ProjectIndexer()
+        self._execution_policy = execution_policy or ExecutionPolicyResolver()
         self._approvals = ApprovalApplication(
             unit_of_work_factory=unit_of_work_factory,
         )
@@ -151,6 +157,7 @@ class CoreApplication:
                 idempotency_key=f"project:{project.id}:initialize",
             )
             running = self._start_command(
+                unit_of_work,
                 commands,
                 tool_name=tool_name,
                 scope=scope,
@@ -164,6 +171,12 @@ class CoreApplication:
                 project.id,
                 version_id,
                 source=source,
+            )
+            initial_index = self._project_indexer.build(
+                project_id=project.id,
+                version_id=version_id,
+                root=root,
+                generation=1,
             )
         except Exception as error:
             with self._transaction() as (unit_of_work, commands):
@@ -207,6 +220,20 @@ class CoreApplication:
                 persisted_task.transition_to(status)
             persisted_conversation.base_version_id = version.id
             unit_of_work.state.save_version(version)
+            unit_of_work.workspaces.bind_once(
+                task_id=persisted_task.id,
+                project_id=persisted_project.id,
+                conversation_id=persisted_conversation.id,
+                version_id=version.id,
+                root=root,
+                editable_files=("*", "**/*"),
+                reference_files=(),
+                constraints={"max_read_bytes": 1_000_000},
+            )
+            unit_of_work.project_indexes.replace_generation(
+                initial_index,
+                expected_generation=0,
+            )
             unit_of_work.state.save_project(persisted_project)
             unit_of_work.state.save_task(persisted_task)
             unit_of_work.state.save_conversation(persisted_conversation)
@@ -264,6 +291,16 @@ class CoreApplication:
                 )
             else:
                 root = self._workspaces.create_scratch(conversation.id, task.id)
+            project_index = (
+                self._project_indexer.build(
+                    project_id=task.project_id,
+                    version_id=target_version.id,
+                    root=root,
+                    generation=1,
+                )
+                if target_version is not None and task.project_id is not None
+                else None
+            )
         except Exception as error:
             with self._transaction() as (unit_of_work, commands):
                 failed_task = self._require_task(unit_of_work.state, task.id)
@@ -292,6 +329,21 @@ class CoreApplication:
             if persisted_target is not None:
                 persisted_target.project_root = root.resolve(strict=False)
                 unit_of_work.state.save_version(persisted_target)
+            unit_of_work.workspaces.bind_once(
+                task_id=persisted_task.id,
+                project_id=persisted_task.project_id,
+                conversation_id=persisted_conversation.id,
+                version_id=(persisted_target.id if persisted_target is not None else None),
+                root=root,
+                editable_files=("*", "**/*"),
+                reference_files=(),
+                constraints={"max_read_bytes": 1_000_000},
+            )
+            if project_index is not None:
+                unit_of_work.project_indexes.replace_generation(
+                    project_index,
+                    expected_generation=0,
+                )
             persisted_task.transition_to(TaskStatus.BUILDING_WORKSPACE)
             persisted_task.transition_to(TaskStatus.PLANNING)
             unit_of_work.state.save_task(persisted_task)
@@ -382,6 +434,7 @@ class CoreApplication:
                 unbound_context = self._build_context(task, conversation, target_version)
                 source_watermark_cursor = unit_of_work.commands.current_cursor()
                 snapshot_running = self._start_command(
+                    unit_of_work,
                     commands,
                     tool_name="memory.snapshot.build",
                     scope=unbound_context.scope,
@@ -416,6 +469,7 @@ class CoreApplication:
                 )
                 context = self._build_context(task, conversation, target_version)
                 running = self._start_command(
+                    unit_of_work,
                     commands,
                     tool_name=tool_name,
                     scope=context.scope,
@@ -470,8 +524,10 @@ class CoreApplication:
                     raise RuntimeError("changeset approval is missing")
                 return PendingChangeset(changeset=existing, approval=approval)
             task = self._require_task(unit_of_work.state, request.task_id)
-            if task.status is not TaskStatus.PLANNING:
-                raise InvalidTransitionError("Task must be planning before proposing a Changeset")
+            if task.status not in {TaskStatus.PLANNING, TaskStatus.EXECUTING}:
+                raise InvalidTransitionError(
+                    "Task must be planning or executing before proposing a Changeset"
+                )
             if task.project_id is None or task.target_version_id is None:
                 raise ValueError("scratch tasks cannot apply project Changesets")
             context = self._context_for(unit_of_work.state, task)
@@ -486,6 +542,10 @@ class CoreApplication:
                 risk_level="medium",
                 idempotency_key=idempotency_key,
             )
+            policy = self._execution_policy.resolve(
+                unit_of_work.execution_settings,
+                execution_target=context.scope.execution_target,
+            )
             dispatch = commands.submit(
                 CommandRequest(
                     tool_name="edit.apply_changeset",
@@ -494,9 +554,9 @@ class CoreApplication:
                     payload={"files": list(changeset.files), "reason": changeset.reason},
                     idempotency_key=f"{idempotency_key}:apply",
                 ),
-                profile=PermissionProfile.STANDARD,
-                capability_overrides={},
-                sandbox_healthy=False,
+                profile=policy.profile,
+                capability_overrides=dict(policy.capability_overrides),
+                sandbox_healthy=policy.sandbox_healthy,
             )
             if not dispatch.accepted or not dispatch.requires_approval or dispatch.run is None:
                 raise RuntimeError(dispatch.error_code or "Changeset approval command was rejected")
@@ -557,6 +617,18 @@ class CoreApplication:
                 version_id=changeset.version_id,
                 mutations=tuple(zip(changeset.files, changeset.patches, strict=True)),
             )
+            with self._unit_of_work_factory() as unit_of_work:
+                current_index = unit_of_work.project_indexes.get(changeset.version_id)
+            current_generation = current_index.generation if current_index is not None else 0
+            refreshed_index = self._project_indexer.build(
+                project_id=changeset.project_id,
+                version_id=changeset.version_id,
+                root=self._workspaces.version_path(
+                    changeset.project_id,
+                    changeset.version_id,
+                ),
+                generation=current_generation + 1,
+            )
         except Exception as error:
             with self._transaction() as (unit_of_work, commands):
                 failed_changeset = self._require_changeset(
@@ -587,6 +659,10 @@ class CoreApplication:
             )
             applied.transition_to(ChangesetStatus.APPLIED)
             unit_of_work.state.save_changeset(applied)
+            unit_of_work.project_indexes.replace_generation(
+                refreshed_index,
+                expected_generation=current_generation,
+            )
             unit_of_work.commit()
         return applied
 
@@ -617,6 +693,7 @@ class CoreApplication:
             unit_of_work.state.save_task(task)
             context = self._context_for(unit_of_work.state, task)
             diff_running = self._start_command(
+                unit_of_work,
                 commands,
                 tool_name="workspace.diff",
                 scope=context.scope,
@@ -655,6 +732,7 @@ class CoreApplication:
                 lease_fence=diff_running.lease_fence,
             )
             checkpoint_running = self._start_command(
+                unit_of_work,
                 commands,
                 tool_name="workspace.checkpoint",
                 scope=context.scope,
@@ -757,6 +835,7 @@ class CoreApplication:
             unit_of_work.state.save_task(task)
             unit_of_work.state.save_conversation(conversation)
             running = self._start_command(
+                unit_of_work,
                 commands,
                 tool_name="workspace.discard",
                 scope=context.scope,
@@ -837,6 +916,10 @@ class CoreApplication:
             if task.project_id is None or task.target_version_id is None:
                 raise ValueError("scratch tasks do not have promotable versions")
             context = self._context_for(unit_of_work.state, task)
+            policy = self._execution_policy.resolve(
+                unit_of_work.execution_settings,
+                execution_target=context.scope.execution_target,
+            )
             dispatch = commands.submit(
                 CommandRequest(
                     tool_name="project.accept_version",
@@ -848,9 +931,9 @@ class CoreApplication:
                     },
                     idempotency_key=(f"task:{task.id}:accept:revision:{expected_project_revision}"),
                 ),
-                profile=PermissionProfile.STANDARD,
-                capability_overrides={},
-                sandbox_healthy=False,
+                profile=policy.profile,
+                capability_overrides=dict(policy.capability_overrides),
+                sandbox_healthy=policy.sandbox_healthy,
             )
             if not dispatch.accepted or not dispatch.requires_approval or dispatch.run is None:
                 raise RuntimeError(dispatch.error_code or "Version promotion command was rejected")
@@ -949,45 +1032,17 @@ class CoreApplication:
         conversation: Conversation,
         target_version: Version | None,
     ) -> TaskContext:
-        if target_version is not None:
-            root = target_version.project_root
-            read_scope = (
-                "project_canonical",
-                "current_conversation",
-                "user_profile",
-                "task_episode",
-                "current_version",
-            )
-            network_policy = "project_safe"
-        else:
-            root = self._workspaces.scratch_path(
-                conversation.id,
-                task.id,
-            ).resolve(strict=False)
-            read_scope = ("current_conversation", "user_profile", "task_episode")
-            network_policy = "open_web_safe"
-        scope = ScopeContract.create(
-            workspace_type=conversation.workspace_type,
-            project_id=task.project_id,
-            conversation_id=conversation.id,
-            task_id=task.id,
-            operation_mode=task.operation_mode,
-            base_version_id=task.base_version_id,
-            target_version_id=task.target_version_id,
-            project_root=root,
-            allowed_write_paths=(root,),
-            forbidden_write_paths=(),
-            execution_target=task.execution_target,
-            network_policy=network_policy,
-            memory_read_scope=read_scope,
-            memory_write_scope=("current_conversation_draft",),
-            memory_snapshot_id=task.memory_snapshot_id,
-            memory_snapshot_hash=task.memory_snapshot_hash,
+        scope = build_task_scope(
+            task=task,
+            conversation=conversation,
+            target_version=target_version,
+            workspaces=self._workspaces,
         )
         return TaskContext(task=task, target_version=target_version, scope=scope)
 
     def _start_command(
         self,
+        unit_of_work: CoreUnitOfWork,
         commands: CommandBus,
         *,
         tool_name: str,
@@ -995,6 +1050,10 @@ class CoreApplication:
         payload: dict[str, object],
         idempotency_key: str,
     ) -> CommandRun:
+        policy = self._execution_policy.resolve(
+            unit_of_work.execution_settings,
+            execution_target=scope.execution_target,
+        )
         dispatch = commands.submit(
             CommandRequest(
                 tool_name=tool_name,
@@ -1003,9 +1062,9 @@ class CoreApplication:
                 payload=payload,
                 idempotency_key=idempotency_key,
             ),
-            profile=PermissionProfile.STANDARD,
-            capability_overrides={},
-            sandbox_healthy=False,
+            profile=policy.profile,
+            capability_overrides=dict(policy.capability_overrides),
+            sandbox_healthy=policy.sandbox_healthy,
         )
         if not dispatch.accepted or dispatch.run is None:
             raise RuntimeError(dispatch.error_code or "command was rejected")

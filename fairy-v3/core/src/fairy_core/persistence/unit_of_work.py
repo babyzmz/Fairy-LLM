@@ -30,6 +30,11 @@ from fairy_core.memory.sqlalchemy import SqlAlchemyMemoryRepository
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.storage.ports import StateStore
 from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
+from fairy_core.workspace.ports import ProjectIndexRepository, WorkspaceRepository
+from fairy_core.workspace.repository import (
+    SqlAlchemyProjectIndexRepository,
+    SqlAlchemyWorkspaceRepository,
+)
 
 
 class CoreUnitOfWork(Protocol):
@@ -43,6 +48,8 @@ class CoreUnitOfWork(Protocol):
     memory_projections: MemoryProjectionWriter
     documents: DocumentRepository
     document_search: DocumentSearchIndex
+    workspaces: WorkspaceRepository
+    project_indexes: ProjectIndexRepository
 
     def __enter__(self) -> Self: ...
 
@@ -109,6 +116,14 @@ class SqlAlchemyUnitOfWork:
                 tenant_id=self._tenant_id,
             )
             self.document_search = SqlAlchemyDocumentSearchIndex(
+                connection,
+                tenant_id=self._tenant_id,
+            )
+            self.workspaces = SqlAlchemyWorkspaceRepository(
+                connection,
+                tenant_id=self._tenant_id,
+            )
+            self.project_indexes = SqlAlchemyProjectIndexRepository(
                 connection,
                 tenant_id=self._tenant_id,
             )

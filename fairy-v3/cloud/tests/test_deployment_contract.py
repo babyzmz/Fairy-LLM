@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260711_0012"]
+    assert scripts.get_heads() == ["20260711_0013"]
+    assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
     assert scripts.get_revision("20260711_0012").down_revision == "20260711_0011"
     assert scripts.get_revision("20260711_0009").down_revision == "20260711_0008"
 
@@ -41,6 +42,8 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_CONVERSATIONS",
         "CORE_VERSIONS",
         "CORE_TASKS",
+        "CORE_TASK_WORKSPACES",
+        "CORE_PROJECT_INDEXES",
         "CORE_CHANGESETS",
         "CORE_APPROVALS",
         "CORE_CHECKPOINTS",
@@ -108,6 +111,8 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_RESEARCH_EVIDENCE",
         "CORE_EXECUTION_SETTINGS",
         "CORE_EXECUTION_SETTING_UPDATES",
+        "CORE_TASK_WORKSPACES",
+        "CORE_PROJECT_INDEXES",
     ):
         assert f'CREATE POLICY "TENANT_ISOLATION_{table_name}"' in ddl
 
@@ -136,6 +141,19 @@ def test_generic_approval_migration_has_reversible_ddl() -> None:
     assert "DROP COLUMN TOOL_INVOCATION_ID" in ddl
     assert "DROP COLUMN PROVIDER_CALL_ID" in ddl
     assert "DROP COLUMN MODEL_ROUND" in ddl
+
+
+def test_workspace_index_migration_has_reversible_ddl() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260711_0013:20260711_0012", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_PROJECT_INDEXES"' in ddl
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_TASK_WORKSPACES"' in ddl
+    assert "DROP TABLE CORE_PROJECT_INDEXES" in ddl
+    assert "DROP TABLE CORE_TASK_WORKSPACES" in ddl
 
 
 def test_research_evidence_migration_has_reversible_ddl() -> None:

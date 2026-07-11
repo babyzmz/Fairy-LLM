@@ -611,7 +611,13 @@ class AssistantApplication:
             self._cancel_running_tool(invocation, running)
             raise
         except Exception as error:
-            error_code = str(getattr(error, "error_code", "CAPABILITY_NOT_AVAILABLE"))
+            error_code = str(
+                getattr(
+                    error,
+                    "error_code",
+                    getattr(error, "code", "CAPABILITY_NOT_AVAILABLE"),
+                )
+            )
             with self._unit_of_work_factory() as unit_of_work:
                 expected_status = invocation.status
                 invocation.fail(error_code=error_code)
