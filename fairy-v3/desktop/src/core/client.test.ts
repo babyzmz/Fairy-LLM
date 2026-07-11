@@ -80,7 +80,7 @@ describe("CoreClient", () => {
       reason: "Update copy",
       idempotency_key: "changeset-1",
     });
-    await client.approvals.decide({ approval_id: id, approved: true, decided_by: "user" });
+    await client.approvals.decide({ approval_id: id, approved: true });
     await client.approvals.list({ task_id: id });
     await client.versions.get(id);
     await client.versions.list({ project_id: id });

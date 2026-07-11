@@ -92,3 +92,39 @@ test("provider settings stay inside the narrow workspace and expose no secret", 
   expect(bounds.right).toBeLessThanOrEqual(bounds.width);
   expect(bounds.bottom).toBeLessThanOrEqual(bounds.height);
 });
+
+test("approved assistant tools resume the durable turn exactly once", async ({ page }) => {
+  await page.setViewportSize({ width: 880, height: 680 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Chat" }).click();
+
+  const composer = page.getByLabel("Message Fairy");
+  await composer.fill("Request a governed notification");
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  const approval = page.getByRole("group", { name: "Pending approval" });
+  await expect(approval).toContainText("Allow Fairy to send a notification");
+  await expect(page.getByText("Approval required", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Approve" }).click();
+
+  await expect(page.getByText("Notification completed after approval")).toBeVisible();
+  await expect(approval).not.toBeVisible();
+
+  const calls = await page.evaluate(() =>
+    (
+      window as unknown as {
+        __FAIRY_FIXTURE_CALLS__: Array<{
+          method: string;
+          params: Record<string, unknown>;
+        }>;
+      }
+    ).__FAIRY_FIXTURE_CALLS__,
+  );
+  const decisions = calls.filter((call) => call.method === "approvals.decide");
+  expect(decisions).toHaveLength(1);
+  expect(decisions[0]?.params).toEqual({
+    approval_id: "0198f4de-0114-7000-8000-000000000017",
+    approved: true,
+  });
+  expect(calls.filter((call) => call.method === "assistant.turns.run")).toHaveLength(2);
+});

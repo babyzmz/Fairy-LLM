@@ -319,7 +319,7 @@ def test_jsonrpc_exposes_complete_local_project_loop_and_resumable_events(tmp_pa
         dispatcher,
         5,
         "approvals.decide",
-        {"approval_id": pending["approval"]["id"], "approved": True, "decided_by": "user"},
+        {"approval_id": pending["approval"]["id"], "approved": True},
     )["result"]
     checkpoint = _call(
         dispatcher,
@@ -346,7 +346,8 @@ def test_jsonrpc_exposes_complete_local_project_loop_and_resumable_events(tmp_pa
     events = _call(dispatcher, 9, "events.subscribe", {"cursor": 0})["result"]
 
     assert base["project_root"] != task_context["target_version"]["project_root"]
-    assert applied["status"] == "applied"
+    assert applied["approval"]["decision"] == "approved"
+    assert applied["changeset"]["status"] == "applied"
     assert checkpoint["changed_files"] == ["README.md"]
     assert accepted["active_version_id"] == task_context["target_version"]["id"]
     assert capabilities["operations"]["workspace.fork"] is True

@@ -28,10 +28,9 @@ from fairy_core.commanding.settings import (
     ExecutionPolicyResolver,
     SandboxHealthProvider,
 )
+from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
 from fairy_core.contracts.methods import CORE_METHODS, EventSubscribeInput
 from fairy_core.contracts.models import (
-    ApprovalDecisionInput,
-    ApprovalListInput,
     ArtifactIdInput,
     ArtifactListInput,
     AssistantTurnCancelInput,
@@ -660,11 +659,24 @@ class CoreService:
 
     def _decide_approval(self, request: BaseModel) -> Any:
         validated = cast(ApprovalDecisionInput, request)
-        return self._application.decide_approval(
-            approval_id=validated.approval_id,
-            approved=validated.approved,
-            decided_by=validated.decided_by,
-        )
+        approval = self._application.get_approval(validated.approval_id)
+        changeset = None
+        if approval.changeset_id is not None:
+            changeset = self._application.decide_approval(
+                approval_id=validated.approval_id,
+                approved=validated.approved,
+                decided_by="user",
+            )
+        else:
+            self._application.record_approval_decision(
+                approval_id=validated.approval_id,
+                approved=validated.approved,
+                decided_by="user",
+            )
+        return {
+            "approval": self._application.get_approval(validated.approval_id),
+            "changeset": changeset,
+        }
 
     def _get_version(self, request: BaseModel) -> Any:
         return self._application.get_version(cast(VersionIdInput, request).version_id)

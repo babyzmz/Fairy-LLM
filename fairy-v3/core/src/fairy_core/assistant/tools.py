@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
-from fairy_core.commanding.registry import ApprovalPolicy, ToolDefinition, ToolRegistry
+from fairy_core.commanding.registry import ToolDefinition, ToolRegistry
 from fairy_core.commanding.types import PermissionProfile
 from fairy_core.domain.models import ScopeContract
 from fairy_core.providers import ModelTool
@@ -125,8 +125,7 @@ def model_tools(
             input_schema=definition.input_schema,
         )
         for definition in registry.agent_definitions()
-        if definition.approval_policy is ApprovalPolicy.NEVER
-        and manifest.get(definition.name, False)
+        if manifest.get(definition.name, False)
     )
     return (direct_answer, *registered)
 

@@ -55,6 +55,7 @@ export interface WorkspaceModel {
   tasks: Task[];
   versions: Version[];
   approvals: Approval[];
+  chatApprovals: Approval[];
   events: EventEnvelope[];
   presenceEvents: EventEnvelope[];
   messages: Message[];
@@ -144,6 +145,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const eventCursor = useRef(readEventCursor());
   const [actionError, setActionError] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
+  const [chatTaskId, setChatTaskId] = useState<string | null>(null);
 
   const healthQuery = useQuery({
     queryKey: [...workspaceKey, "health"],
@@ -251,6 +253,13 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
   const approvals = approvalsQuery.data?.items ?? [];
+  const chatApprovalsQuery = useQuery({
+    queryKey: [...workspaceKey, "chat-approvals", chatTaskId],
+    queryFn: () => client.approvals.list({ task_id: requireId(chatTaskId) }),
+    enabled: chatTaskId !== null,
+    retry: false,
+  });
+  const chatApprovals = chatApprovalsQuery.data?.items ?? [];
   const previewQuery = useQuery({
     queryKey: [...workspaceKey, "preview", selectedConversation?.id],
     queryFn: () =>
@@ -286,6 +295,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     profileId: selectedProfileId,
     operationMode: "answer",
     events: allEvents,
+    onTaskCreated: setChatTaskId,
     onSettled: invalidateWorkspace,
   });
   const projectAssistant = useAssistantTurn({
@@ -406,16 +416,22 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           }),
         );
         setChatConversationSelection(conversation.id);
+        setChatTaskId(null);
         chatAssistant.reset();
       },
       async decideApproval(approvalId: string, approved: boolean) {
-        await runAction(() =>
+        const result = await runAction(() =>
           client.approvals.decide({
             approval_id: approvalId,
             approved,
-            decided_by: "desktop-user",
           }),
         );
+        if (result.approval.tool_invocation_id === null) return;
+        if (result.approval.task_id === chatAssistant.turn?.task_id) {
+          await chatAssistant.resume();
+        } else if (result.approval.task_id === projectAssistant.turn?.task_id) {
+          await projectAssistant.resume();
+        }
       },
       async startPreview() {
         if (selectedTask === null) throw new Error("Task is unavailable");
@@ -470,6 +486,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       chatAssistant,
       client,
       previewQuery.data?.preview,
+      projectAssistant,
       runAction,
       selectedProject,
       selectedTask,
@@ -489,6 +506,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     messagesQuery.error,
     versionsQuery.error,
     approvalsQuery.error,
+    chatApprovalsQuery.error,
     previewQuery.error,
     runtimeHealthQuery.error,
     permissionsQuery.error,
@@ -529,6 +547,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     tasks,
     versions,
     approvals,
+    chatApprovals,
     events: allEvents.filter(
       (event) => event.task_id === selectedTask?.id && event.visibility === "user",
     ),
@@ -581,8 +600,10 @@ function selectedItem<T extends { id: string }>(items: T[], selectedId: string |
   return items.find((item) => item.id === selectedId) ?? items.at(-1) ?? null;
 }
 
-function requireId(value: string | undefined): string {
-  if (value === undefined) throw new Error("Workspace scope is unavailable");
+function requireId(value: string | null | undefined): string {
+  if (value === undefined || value === null) {
+    throw new Error("Workspace scope is unavailable");
+  }
   return value;
 }
 

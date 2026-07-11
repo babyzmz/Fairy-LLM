@@ -16,6 +16,7 @@ from fairy_core.domain.models import ScopeContract, Task
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _MAX_MESSAGE_LENGTH = 1_000_000
 _MAX_SUMMARY_LENGTH = 16_000
+_MAX_TOOL_CONTENT_LENGTH = 32_000
 
 
 def _now() -> datetime:
@@ -258,7 +259,9 @@ class ToolInvocation:
     id: UUID
     turn_id: UUID
     task_id: UUID
+    model_round: int
     sequence: int
+    provider_call_id: str
     tool_name: str
     scope_digest: str
     argument_hash: str
@@ -266,6 +269,7 @@ class ToolInvocation:
     command_run_id: UUID | None = None
     status: ToolInvocationStatus = ToolInvocationStatus.CREATED
     public_summary: str | None = None
+    model_content: str | None = None
     artifact_ids: tuple[UUID, ...] = ()
     error_code: str | None = None
     created_at: datetime = field(default_factory=_now)
@@ -276,17 +280,26 @@ class ToolInvocation:
         cls,
         *,
         turn: AssistantTurn,
+        model_round: int,
         sequence: int,
+        provider_call_id: str,
         tool_name: str,
         scope_digest: str,
         arguments: dict[str, Any],
     ) -> ToolInvocation:
+        if isinstance(model_round, bool) or model_round < 1:
+            raise ValueError("tool invocation model_round must be positive")
         if isinstance(sequence, bool) or sequence < 1:
             raise ValueError("tool invocation sequence must be positive")
         if scope_digest != turn.scope_digest:
             raise ValueError("Scope does not match the Assistant Turn")
         _require_digest(scope_digest, "scope_digest")
         normalized_name = _required_text(tool_name, "tool_name", maximum=255)
+        normalized_call_id = _required_text(
+            provider_call_id,
+            "provider_call_id",
+            maximum=255,
+        )
         try:
             canonical_arguments = json.dumps(
                 arguments,
@@ -310,7 +323,9 @@ class ToolInvocation:
             id=new_id(),
             turn_id=turn.id,
             task_id=turn.task_id,
+            model_round=model_round,
             sequence=sequence,
+            provider_call_id=normalized_call_id,
             tool_name=normalized_name,
             scope_digest=scope_digest,
             argument_hash=hashlib.sha256(canonical).hexdigest(),
@@ -330,11 +345,18 @@ class ToolInvocation:
         self,
         *,
         public_summary: str,
+        model_content: str,
         artifact_ids: tuple[UUID, ...] = (),
     ) -> None:
         summary = _required_text(public_summary, "public_summary", maximum=_MAX_SUMMARY_LENGTH)
+        content = _required_text(
+            model_content,
+            "model_content",
+            maximum=_MAX_TOOL_CONTENT_LENGTH,
+        )
         self._transition_to(ToolInvocationStatus.COMPLETED)
         self.public_summary = summary
+        self.model_content = content
         self.artifact_ids = tuple(artifact_ids)
 
     def fail(self, *, error_code: str) -> None:
@@ -342,10 +364,16 @@ class ToolInvocation:
         self._transition_to(ToolInvocationStatus.FAILED)
         self.error_code = normalized
 
-    def reject(self, *, error_code: str) -> None:
+    def reject(self, *, error_code: str, model_content: str | None = None) -> None:
         normalized = _required_text(error_code, "error_code", maximum=128)
+        content = model_content or f"Tool execution was rejected ({normalized})."
         self._transition_to(ToolInvocationStatus.REJECTED)
         self.error_code = normalized
+        self.model_content = _required_text(
+            content,
+            "model_content",
+            maximum=_MAX_TOOL_CONTENT_LENGTH,
+        )
 
     def cancel(self) -> None:
         self._transition_to(ToolInvocationStatus.CANCELLED)

@@ -173,6 +173,7 @@ class Approval:
     requested_by: str
     reason: str
     changeset_id: UUID | None = None
+    tool_invocation_id: UUID | None = None
     decision: ApprovalDecision = ApprovalDecision.PENDING
     decided_by: str | None = None
     created_at: datetime = field(default_factory=_now)
@@ -187,7 +188,10 @@ class Approval:
         requested_by: str,
         reason: str,
         changeset_id: UUID | None = None,
+        tool_invocation_id: UUID | None = None,
     ) -> Approval:
+        if changeset_id is not None and tool_invocation_id is not None:
+            raise ValueError("approval cannot link both a Changeset and Tool Invocation")
         return cls(
             id=new_id(),
             task_id=task_id,
@@ -195,6 +199,7 @@ class Approval:
             requested_by=requested_by,
             reason=reason,
             changeset_id=changeset_id,
+            tool_invocation_id=tool_invocation_id,
         )
 
     def decide(self, *, decision: ApprovalDecision, decided_by: str) -> None:

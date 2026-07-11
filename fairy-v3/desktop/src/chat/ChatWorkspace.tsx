@@ -1,7 +1,8 @@
-import { MessageSquarePlus, RotateCcw } from "lucide-react";
+import { AlertTriangle, Check, MessageSquarePlus, RotateCcw, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type {
+  Approval,
   AssistantTurn,
   Message,
   ProviderHealth,
@@ -18,10 +19,12 @@ export interface ChatWorkspaceProps {
   messages: Message[];
   streamedText: string;
   turn: AssistantTurn | null;
+  approvals: Approval[];
   providers: ProviderProfile[];
   providerHealth: ProviderHealth[];
   selectedProfileId: string | null;
   isBusy: boolean;
+  isActing: boolean;
   offline: boolean;
   developerMode: boolean;
   error: string | null;
@@ -37,6 +40,7 @@ export interface ChatWorkspaceProps {
   ): Promise<void>;
   onCancel(): Promise<void>;
   onRetry(): Promise<void>;
+  onDecision(approvalId: string, approved: boolean): Promise<void>;
 }
 
 export function ChatWorkspace(props: ChatWorkspaceProps) {
@@ -53,12 +57,15 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     (!selectedProvider.credential_required || selectedProvider.credential_configured) &&
     selectedHealth?.status !== "unavailable";
   const retryAvailable = ["failed", "cancelled"].includes(props.turn?.status ?? "");
+  const pendingApproval =
+    props.approvals.find((approval) => approval.decision === "pending") ?? null;
   const statusLabel = useMemo(() => {
     if (!providerAvailable) return "Provider unavailable";
     if (props.offline) return "Core offline";
+    if (pendingApproval !== null) return "Approval required";
     if (props.isBusy) return "Fairy is working";
     return "Ready";
-  }, [props.isBusy, props.offline, providerAvailable]);
+  }, [pendingApproval, props.isBusy, props.offline, providerAvailable]);
 
   const submit = async (
     value: string,
@@ -177,6 +184,39 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           </button>
         </div>
       ) : null}
+      {pendingApproval !== null ? (
+        <div
+          className="approval-block chat-approval-block"
+          role="group"
+          aria-label="Pending approval"
+        >
+          <div>
+            <span className="eyebrow">
+              <AlertTriangle size={12} /> APPROVAL REQUIRED
+            </span>
+            <strong>{pendingApproval.reason}</strong>
+            <p>{pendingApproval.requested_by}</p>
+          </div>
+          <div className="approval-actions">
+            <button
+              className="secondary-command"
+              type="button"
+              disabled={props.isActing || props.isBusy}
+              onClick={() => settle(props.onDecision(pendingApproval.id, false))}
+            >
+              <X size={14} /> Reject
+            </button>
+            <button
+              className="primary-command"
+              type="button"
+              disabled={props.isActing || props.isBusy}
+              onClick={() => settle(props.onDecision(pendingApproval.id, true))}
+            >
+              <Check size={14} /> Approve
+            </button>
+          </div>
+        </div>
+      ) : null}
       <Composer
         disabled={props.offline || !providerAvailable || !props.conversationAvailable}
         isBusy={props.isBusy}
@@ -186,4 +226,8 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       />
     </section>
   );
+}
+
+function settle(operation: Promise<void>): void {
+  void operation.catch(() => undefined);
 }

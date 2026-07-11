@@ -191,6 +191,7 @@ describe("App", () => {
       requested_by: "agent",
       reason: "Apply the scoped Changeset",
       changeset_id: "0198f4de-0114-7000-8000-000000000009",
+      tool_invocation_id: null,
       decision: "pending",
       decided_by: null,
       created_at: timestamp,
@@ -212,7 +213,6 @@ describe("App", () => {
     expect(decide).toHaveBeenCalledWith({
       approval_id: pending.id,
       approved: true,
-      decided_by: "desktop-user",
     });
   });
 

@@ -213,3 +213,15 @@ def test_approval_records_actor_and_decision() -> None:
     assert approval.decided_by == "user"
     with pytest.raises(InvalidTransitionError):
         approval.decide(decision=ApprovalDecision.REJECTED, decided_by="user")
+
+
+def test_approval_links_at_most_one_optional_subject() -> None:
+    with pytest.raises(ValueError, match="both"):
+        Approval.create(
+            task_id=new_id(),
+            command_run_id=new_id(),
+            changeset_id=new_id(),
+            tool_invocation_id=new_id(),
+            requested_by="assistant",
+            reason="Ambiguous subject",
+        )

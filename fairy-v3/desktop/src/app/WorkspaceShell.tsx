@@ -132,10 +132,12 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             messages={model.messages}
             streamedText={model.chatStreamedText}
             turn={model.chatTurn}
+            approvals={model.chatApprovals}
             providers={model.providers}
             providerHealth={model.providerHealth}
             selectedProfileId={model.selectedProfileId}
             isBusy={model.chatBusy}
+            isActing={model.isActing}
             offline={false}
             developerMode={model.developerMode}
             error={model.chatError}
@@ -147,6 +149,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             onSend={model.sendChatMessage}
             onCancel={model.cancelChatTurn}
             onRetry={model.retryChatTurn}
+            onDecision={model.decideApproval}
           />
         ) : model.state === "ready" ? (
           <section className="project-workspace" aria-label="Project workspace">

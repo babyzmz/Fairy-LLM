@@ -21,6 +21,7 @@ from fairy_core.storage.schema import (
 
 _PRE_TENANT_REVISION = "20260710_pre_tenant_state"
 _SNAPSHOT_BINDING_REVISION = "20260711_task_snapshot_binding"
+_GENERIC_APPROVAL_REVISION = "20260711_generic_approval"
 
 
 def _datetime(value: str | None) -> datetime | None:
@@ -182,6 +183,91 @@ def migrate_task_snapshot_binding(engine: Engine) -> None:
             ),
             {
                 "revision": _SNAPSHOT_BINDING_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_generic_approval(engine: Engine) -> None:
+    """Add durable Assistant approval bindings to an existing local V3 database."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS core_local_migrations (
+                revision TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _GENERIC_APPROVAL_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        if "core_assistant_tool_invocations" in tables:
+            columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("core_assistant_tool_invocations")
+            }
+            if "model_round" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE core_assistant_tool_invocations "
+                    "ADD COLUMN model_round BIGINT NOT NULL DEFAULT 1"
+                )
+            if "provider_call_id" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE core_assistant_tool_invocations "
+                    "ADD COLUMN provider_call_id VARCHAR(255)"
+                )
+                connection.exec_driver_sql(
+                    "UPDATE core_assistant_tool_invocations "
+                    "SET provider_call_id = 'legacy-' || id "
+                    "WHERE provider_call_id IS NULL"
+                )
+            if "model_content" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE core_assistant_tool_invocations ADD COLUMN model_content TEXT"
+                )
+                connection.exec_driver_sql(
+                    "UPDATE core_assistant_tool_invocations "
+                    "SET model_content = public_summary "
+                    "WHERE model_content IS NULL AND public_summary IS NOT NULL"
+                )
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "uq_core_assistant_tool_invocations_turn_provider_call "
+                "ON core_assistant_tool_invocations "
+                "(tenant_id, turn_id, provider_call_id)"
+            )
+        if "core_approvals" in tables:
+            columns = {
+                column["name"] for column in inspect(connection).get_columns("core_approvals")
+            }
+            if "tool_invocation_id" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE core_approvals ADD COLUMN tool_invocation_id VARCHAR(36)"
+                )
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_core_approvals_tenant_command_run "
+                "ON core_approvals (tenant_id, command_run_id)"
+            )
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "uq_core_approvals_tenant_tool_invocation "
+                "ON core_approvals (tenant_id, tool_invocation_id) "
+                "WHERE tool_invocation_id IS NOT NULL"
+            )
+        connection.execute(
+            text(
+                """
+                INSERT INTO core_local_migrations (revision, applied_at)
+                VALUES (:revision, :applied_at)
+                """
+            ),
+            {
+                "revision": _GENERIC_APPROVAL_REVISION,
                 "applied_at": datetime.now(UTC).isoformat(),
             },
         )

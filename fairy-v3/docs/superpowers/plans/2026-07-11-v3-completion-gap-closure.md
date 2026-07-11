@@ -122,23 +122,25 @@ Commit: `feat(v3): make execution policy core owned`
 - `ApprovalApplication.decide()` transitions the linked CommandRun using compare-and-swap and never executes an effect itself.
 - `AssistantApplication.run()` resumes an approved queued ToolInvocation exactly once and represents rejection as a bounded tool result before continuing the Turn.
 
-- [ ] **Step 1: Write failing approval and crash-recovery tests**
+- [x] **Step 1: Write failing approval and crash-recovery tests**
 
 Cover standard-profile approval creation, list visibility, approve/reject, duplicate decisions, crash after decision/before execution, expired lease reclaim, no duplicate tool effect, and resuming a Turn from a second Core instance.
 
-- [ ] **Step 2: Run focused tests and verify the current Changeset-only approval path fails**
+- [x] **Step 2: Run focused tests and verify the current Changeset-only approval path fails**
 
 Run: `uv run --project core pytest tests/assistant/test_approval_resume.py -q`
 
-- [ ] **Step 3: Implement generic approval persistence and resumable execution**
+- [x] **Step 3: Implement generic approval persistence and resumable execution**
 
 Keep provider streams and tool execution outside database transactions. The approved CommandRun must be started with its current fence before invoking the adapter.
 
-- [ ] **Step 4: Wire the Desktop approval card and event-driven Turn resume**
+- [x] **Step 4: Wire the Desktop approval card and event-driven Turn resume**
 
 The renderer submits only approval ID and decision. It reloads the durable Turn/Message state after the Core event and never fabricates completion.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
+
+Verification on 2026-07-11: `scripts/test-all.ps1 -SkipDocker` exited 0 with Core 441, Capabilities 103, Cloud 61, Vitest 68, and Playwright 18 tests passing. Ruff, repository boundaries, offline Alembic upgrade/downgrade, Rust fmt/clippy/tests, production build, generated-contract drift, and performance gates passed; Core readiness was 836.1 ms and the initial renderer was 131.1 KiB gzip. Real WSL and Docker/PostgreSQL/S3 gates were unavailable and explicitly skipped.
 
 Commit: `feat(v3): resume approved assistant tools`
 

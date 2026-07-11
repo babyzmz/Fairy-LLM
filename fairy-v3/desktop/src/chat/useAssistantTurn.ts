@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   AssistantTurn,
@@ -37,6 +37,7 @@ interface AssistantTurnState {
     images?: PendingImageAttachment[],
   ): Promise<void>;
   cancel(): Promise<void>;
+  resume(): Promise<void>;
   retry(): Promise<void>;
   reset(): void;
 }
@@ -66,6 +67,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
   const [error, setError] = useState<string | null>(null);
   const operationRef = useRef(0);
   const busyRef = useRef(false);
+  const approvalEventCursorRef = useRef(0);
 
   const settle = useCallback(async () => {
     await options.onSettled?.();
@@ -158,6 +160,42 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     }
   }, [options.client.assistant.turns, settle, turn]);
 
+  const resume = useCallback(async () => {
+    if (turn === null || turn.status !== "waiting_for_tool" || busyRef.current) return;
+    const operation = ++operationRef.current;
+    busyRef.current = true;
+    setIsBusy(true);
+    setError(null);
+    try {
+      const completed = await options.client.assistant.turns.run(turn.id);
+      if (operation === operationRef.current) setTurn(completed);
+    } catch (caught) {
+      if (operation === operationRef.current) setError(errorMessage(caught));
+      throw caught;
+    } finally {
+      if (operation === operationRef.current) {
+        busyRef.current = false;
+        setIsBusy(false);
+        await settle();
+      }
+    }
+  }, [options.client.assistant.turns, settle, turn]);
+
+  useEffect(() => {
+    if (turn?.status !== "waiting_for_tool" || busyRef.current) return;
+    const decision = [...options.events]
+      .reverse()
+      .find(
+        (event) =>
+          event.event_type === "approval.decided" &&
+          event.task_id === turn.task_id &&
+          event.cursor > approvalEventCursorRef.current,
+      );
+    if (decision === undefined) return;
+    approvalEventCursorRef.current = decision.cursor;
+    void resume().catch(() => undefined);
+  }, [options.events, resume, turn]);
+
   const retry = useCallback(async () => {
     if (turn === null || !isTerminal(turn)) {
       throw new Error("Only a terminal assistant turn can be retried");
@@ -201,7 +239,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     [options.events, turn?.id],
   );
 
-  return { turn, isBusy, error, streamedText, send, cancel, retry, reset };
+  return { turn, isBusy, error, streamedText, send, cancel, resume, retry, reset };
 }
 
 export function assistantDeltaText(

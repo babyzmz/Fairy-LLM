@@ -414,6 +414,11 @@ h2 {
   font-size: 11px;
 }
 
+.chat-approval-block {
+  flex: 0 0 auto;
+  margin: 0 14px 8px;
+}
+
 .approval-actions,
 .version-decision-bar > div,
 .preview-actions {

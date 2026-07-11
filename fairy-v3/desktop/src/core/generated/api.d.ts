@@ -1013,8 +1013,11 @@ export interface components {
             approval_id: string;
             /** Approved */
             approved: boolean;
-            /** Decided By */
-            decided_by: string;
+        };
+        /** ApprovalDecisionResultModel */
+        ApprovalDecisionResultModel: {
+            approval: components["schemas"]["ApprovalModel"];
+            changeset: components["schemas"]["ChangesetModel"] | null;
         };
         /** ApprovalModel */
         ApprovalModel: {
@@ -1049,6 +1052,8 @@ export interface components {
              * Format: uuid
              */
             task_id: string;
+            /** Tool Invocation Id */
+            tool_invocation_id: string | null;
         };
         /** ApprovalPageModel */
         ApprovalPageModel: {
@@ -3096,7 +3101,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ChangesetModel"];
+                    "application/json": components["schemas"]["ApprovalDecisionResultModel"];
                 };
             };
             /** @description Validation Error */

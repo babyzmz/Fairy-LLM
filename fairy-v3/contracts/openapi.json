@@ -21,20 +21,37 @@
           "approved": {
             "title": "Approved",
             "type": "boolean"
-          },
-          "decided_by": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Decided By",
-            "type": "string"
           }
         },
         "required": [
           "approval_id",
-          "approved",
-          "decided_by"
+          "approved"
         ],
         "title": "ApprovalDecisionInput",
+        "type": "object"
+      },
+      "ApprovalDecisionResultModel": {
+        "additionalProperties": false,
+        "properties": {
+          "approval": {
+            "$ref": "#/components/schemas/ApprovalModel"
+          },
+          "changeset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChangesetModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "approval",
+          "changeset"
+        ],
+        "title": "ApprovalDecisionResultModel",
         "type": "object"
       },
       "ApprovalModel": {
@@ -105,6 +122,18 @@
             "format": "uuid",
             "title": "Task Id",
             "type": "string"
+          },
+          "tool_invocation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Invocation Id"
           }
         },
         "required": [
@@ -114,6 +143,7 @@
           "requested_by",
           "reason",
           "changeset_id",
+          "tool_invocation_id",
           "decision",
           "decided_by",
           "created_at",
@@ -5671,7 +5701,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChangesetModel"
+                  "$ref": "#/components/schemas/ApprovalDecisionResultModel"
                 }
               }
             },

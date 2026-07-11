@@ -184,7 +184,6 @@ describe("CloudCoreTransport", () => {
     await transport.call("approvals.decide", {
       approval_id: "approval-1",
       approved: true,
-      decided_by: "user",
     });
     await transport.call("capabilities.get", {});
     await transport.call("permissions.get", {});

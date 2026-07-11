@@ -9,10 +9,10 @@ from fairy_core.application.service import (
     CoreResponseValidationError,
     CoreService,
 )
+from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
 from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.contracts.models import (
-    ApprovalDecisionInput,
-    ApprovalListInput,
+    ApprovalDecisionResultModel,
     ApprovalPageModel,
     ArtifactListInput,
     ArtifactModel,
@@ -23,7 +23,6 @@ from fairy_core.contracts.models import (
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
     CapabilityManifestModel,
-    ChangesetModel,
     ChangesetProposal,
     CheckpointModel,
     ConversationCreate,
@@ -548,7 +547,7 @@ def create_cloud_app(
     @protected.post(
         "/approvals/{approval_id}/decision",
         operation_id="approvals.decide",
-        response_model=ChangesetModel,
+        response_model=ApprovalDecisionResultModel,
     )
     def decide_approval(
         approval_id: UUID,

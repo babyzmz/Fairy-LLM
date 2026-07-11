@@ -6,9 +6,9 @@ from types import MappingProxyType
 
 from pydantic import BaseModel, Field
 
+from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
 from fairy_core.contracts.models import (
-    ApprovalDecisionInput,
-    ApprovalListInput,
+    ApprovalDecisionResultModel,
     ApprovalPageModel,
     ArtifactIdInput,
     ArtifactListInput,
@@ -22,7 +22,6 @@ from fairy_core.contracts.models import (
     AssistantTurnRunInput,
     CapabilityManifestModel,
     CapabilityRequest,
-    ChangesetModel,
     ChangesetProposal,
     CheckpointModel,
     ContractModel,
@@ -130,7 +129,7 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
         "approvals.decide": CoreMethod(
             "approvals.decide",
             ApprovalDecisionInput,
-            ChangesetModel,
+            ApprovalDecisionResultModel,
         ),
         "approvals.list": CoreMethod(
             "approvals.list",

@@ -196,6 +196,51 @@ describe("useAssistantTurn", () => {
     expect(result.current.streamedText).toBe("One response");
     expect(result.current.isBusy).toBe(true);
   });
+
+  it("resumes a waiting turn after the durable approval event", async () => {
+    const waiting = assistantTurn({ status: "waiting_for_tool" });
+    const completed = assistantTurn({
+      status: "completed",
+      completed_at: "2026-07-11T00:00:04Z",
+    });
+    const runTurn = vi
+      .fn<AssistantTurnClient["assistant"]["turns"]["run"]>()
+      .mockResolvedValueOnce(waiting)
+      .mockResolvedValueOnce(completed);
+    const client = assistantClient({
+      createTask: async () => ({ task: { id: taskId } }) as never,
+      createTurn: async () => assistantTurn(),
+      runTurn,
+    });
+    const { result, rerender } = renderHook(
+      ({ events }: { events: EventEnvelope[] }) =>
+        useAssistantTurn({
+          client,
+          conversationId,
+          profileId: "openrouter-free",
+          operationMode: "answer",
+          events,
+        }),
+      { initialProps: { events: [] as EventEnvelope[] } },
+    );
+
+    await act(async () => result.current.send("Notify me", []));
+    expect(result.current.turn?.status).toBe("waiting_for_tool");
+
+    rerender({
+      events: [
+        {
+          ...deltaEvent("approval-event", 7, turnId, 1, 1, ""),
+          event_type: "approval.decided",
+          message: "Approval decision recorded",
+          payload: { approval_id: "approval-1", decision: "approved" },
+        },
+      ],
+    });
+
+    await waitFor(() => expect(result.current.turn).toEqual(completed));
+    expect(runTurn).toHaveBeenCalledTimes(2);
+  });
 });
 
 interface ClientOverrides {

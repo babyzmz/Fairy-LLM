@@ -114,7 +114,9 @@ def test_repository_persists_turn_messages_and_tool_invocations(tmp_path: Path) 
     )
     invocation = ToolInvocation.create(
         turn=turn,
+        model_round=1,
         sequence=1,
+        provider_call_id="call-time",
         tool_name="info.time",
         scope_digest=turn.scope_digest,
         arguments={"timezone": "Australia/Sydney"},
@@ -226,7 +228,9 @@ def test_repository_constraints_reject_duplicate_sequences_and_keys(tmp_path: Pa
 
     invocation = ToolInvocation.create(
         turn=turn,
+        model_round=1,
         sequence=1,
+        provider_call_id="call-time",
         tool_name="info.time",
         scope_digest=turn.scope_digest,
         arguments={"timezone": "UTC"},
@@ -452,7 +456,9 @@ def test_tool_invocation_first_write_cannot_upsert_immutable_binding(tmp_path: P
     turn = _turn(task, scope, key="turn:tool-immutable")
     invocation = ToolInvocation.create(
         turn=turn,
+        model_round=1,
         sequence=1,
+        provider_call_id="call-time",
         tool_name="info.time",
         scope_digest=turn.scope_digest,
         arguments={"timezone": "UTC"},

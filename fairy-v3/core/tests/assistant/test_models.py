@@ -205,14 +205,18 @@ def test_tool_invocation_hash_is_canonical_and_transitions_are_guarded() -> None
     turn = _turn()
     first = ToolInvocation.create(
         turn=turn,
+        model_round=1,
         sequence=1,
+        provider_call_id="call-1",
         tool_name="info.weather",
         scope_digest=turn.scope_digest,
         arguments={"units": "metric", "place": "Sydney"},
     )
     second = ToolInvocation.create(
         turn=turn,
+        model_round=1,
         sequence=2,
+        provider_call_id="call-2",
         tool_name="info.weather",
         scope_digest=turn.scope_digest,
         arguments={"place": "Sydney", "units": "metric"},
@@ -221,7 +225,11 @@ def test_tool_invocation_hash_is_canonical_and_transitions_are_guarded() -> None
     assert first.argument_hash == second.argument_hash
     first.queue(command_run_id=UUID(int=9))
     first.start()
-    first.complete(public_summary="Sydney: 21 C", artifact_ids=(UUID(int=10),))
+    first.complete(
+        public_summary="Sydney: 21 C",
+        model_content="Sydney: 21 C",
+        artifact_ids=(UUID(int=10),),
+    )
     assert first.status is ToolInvocationStatus.COMPLETED
     assert first.public_summary == "Sydney: 21 C"
     assert first.artifact_ids == (UUID(int=10),)
@@ -235,7 +243,9 @@ def test_tool_invocation_rejects_model_scope_and_non_json_arguments() -> None:
     with pytest.raises(ValueError, match="Scope"):
         ToolInvocation.create(
             turn=turn,
+            model_round=1,
             sequence=1,
+            provider_call_id="call-scope",
             tool_name="info.weather",
             scope_digest="b" * 64,
             arguments={"place": "Sydney"},
@@ -243,7 +253,9 @@ def test_tool_invocation_rejects_model_scope_and_non_json_arguments() -> None:
     with pytest.raises(ValueError, match="JSON"):
         ToolInvocation.create(
             turn=turn,
+            model_round=1,
             sequence=1,
+            provider_call_id="call-json",
             tool_name="info.weather",
             scope_digest=turn.scope_digest,
             arguments={"bad": {1, 2}},

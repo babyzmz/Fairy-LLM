@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fairy_core.assistant.context import AssistantContextBuilder
@@ -27,8 +28,9 @@ from fairy_core.assistant.tools import (
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.bus import CommandBus, CommandRequest
 from fairy_core.commanding.policy import PolicyEngine
-from fairy_core.commanding.registry import ApprovalPolicy, ToolRegistry
+from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
+from fairy_core.domain.execution import Approval
 from fairy_core.domain.models import TaskStatus
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -128,9 +130,16 @@ class AssistantApplication:
         tool_count = self._tool_count(turn_id)
         current_run: CommandRun | None = None
         chunk_index = 0
+        model_round_start = 1
         ephemeral_context: list[ModelMessage] = []
         try:
-            for model_round in range(1, _MAX_MODEL_ROUNDS + 1):
+            if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
+                if self._resume_pending_tool(turn_id, cancellation):
+                    return self._get_turn(turn_id)
+                self._resume_after_tools(turn_id)
+                ephemeral_context.extend(self._durable_tool_context(turn_id))
+                model_round_start = self._next_model_round(turn_id)
+            for model_round in range(model_round_start, _MAX_MODEL_ROUNDS + 1):
                 cancellation.raise_if_cancelled()
                 turn, current_run = self._start_model_round(turn_id, model_round)
                 profile = self._providers.profile(turn.profile_id)
@@ -233,6 +242,7 @@ class AssistantApplication:
                         waiting, tool_message = self._execute_candidate(
                             turn_id=turn_id,
                             candidate=candidate,
+                            model_round=model_round,
                             sequence=tool_count,
                             cancellation=cancellation,
                         )
@@ -439,6 +449,7 @@ class AssistantApplication:
         *,
         turn_id: UUID,
         candidate: _Candidate,
+        model_round: int,
         sequence: int,
         cancellation: CancellationToken,
     ) -> tuple[bool, Message | None]:
@@ -454,11 +465,7 @@ class AssistantApplication:
             )
             return False, message
         definition = self._registry.get(candidate.name)
-        if (
-            definition is None
-            or not definition.model_visible
-            or definition.approval_policy is not ApprovalPolicy.NEVER
-        ):
+        if definition is None or not definition.model_visible:
             message = self._append_tool_message(
                 turn_id=turn_id,
                 tool_name=candidate.name,
@@ -486,7 +493,9 @@ class AssistantApplication:
             scope = self._scope_resolver(unit_of_work.state, task)
             invocation = ToolInvocation.create(
                 turn=turn,
+                model_round=model_round,
                 sequence=sequence,
+                provider_call_id=candidate.call_id,
                 tool_name=definition.name,
                 scope_digest=scope.scope_digest,
                 arguments=arguments,
@@ -515,13 +524,26 @@ class AssistantApplication:
                     sandbox_healthy=policy.sandbox_healthy,
                 )
                 if not dispatch.accepted or dispatch.run is None:
-                    invocation.reject(error_code=dispatch.error_code or "TOOL_REJECTED")
+                    invocation.reject(
+                        error_code=dispatch.error_code or "TOOL_REJECTED",
+                    )
                     unit_of_work.assistant.save_tool_invocation(invocation)
                     unit_of_work.commit()
                     running = None
                 elif dispatch.requires_approval:
                     invocation.queue(command_run_id=dispatch.run.id)
                     unit_of_work.assistant.save_tool_invocation(invocation)
+                    approval = Approval.create(
+                        task_id=turn.task_id,
+                        command_run_id=dispatch.run.id,
+                        tool_invocation_id=invocation.id,
+                        requested_by="assistant",
+                        reason=f"Run {definition.description}",
+                    )
+                    unit_of_work.state.save_approval(approval)
+                    if task.status is TaskStatus.EXECUTING:
+                        task.transition_to(TaskStatus.AWAITING_APPROVAL)
+                        unit_of_work.state.save_task(task)
                     unit_of_work.commit()
                     return True, None
                 else:
@@ -549,6 +571,27 @@ class AssistantApplication:
             )
             return False, message
 
+        return False, self._execute_running_tool(
+            turn_id=turn_id,
+            invocation=invocation,
+            running=running,
+            definition=definition,
+            scope=scope,
+            arguments=arguments,
+            cancellation=cancellation,
+        )
+
+    def _execute_running_tool(
+        self,
+        *,
+        turn_id: UUID,
+        invocation: ToolInvocation,
+        running: CommandRun,
+        definition,
+        scope,
+        arguments: dict[str, object],
+        cancellation: CancellationToken,
+    ) -> Message:
         try:
             cancellation.raise_if_cancelled()
             self._ensure_turn_waiting_for_tool(turn_id)
@@ -586,12 +629,12 @@ class AssistantApplication:
                     unit_of_work,
                     turn_id=turn_id,
                     tool_name=definition.name,
-                    tool_call_id=candidate.call_id,
+                    tool_call_id=invocation.provider_call_id,
                     content=f"Tool execution failed ({error_code}).",
                     rejected=True,
                 )
                 unit_of_work.commit()
-            return False, message
+            return message
 
         with self._unit_of_work_factory() as unit_of_work:
             persisted_turn = _require_turn(unit_of_work, turn_id)
@@ -605,6 +648,7 @@ class AssistantApplication:
             expected_status = invocation.status
             invocation.complete(
                 public_summary=result.public_summary,
+                model_content=result.model_content,
                 artifact_ids=result.artifact_ids,
             )
             unit_of_work.assistant.update_tool_invocation(
@@ -615,6 +659,7 @@ class AssistantApplication:
                 running.id,
                 output={
                     "public_summary": result.public_summary,
+                    "model_content": result.model_content,
                     "artifact_ids": [str(value) for value in result.artifact_ids],
                 },
                 lease_owner=running.lease_owner,
@@ -624,12 +669,183 @@ class AssistantApplication:
                 unit_of_work,
                 turn_id=turn_id,
                 tool_name=definition.name,
-                tool_call_id=candidate.call_id,
+                tool_call_id=invocation.provider_call_id,
                 content=result.model_content,
                 rejected=False,
             )
             unit_of_work.commit()
-        return False, message
+        return message
+
+    def _resume_pending_tool(
+        self,
+        turn_id: UUID,
+        cancellation: CancellationToken,
+    ) -> bool:
+        cancellation.raise_if_cancelled()
+        with self._unit_of_work_factory() as unit_of_work:
+            turn = _require_turn(unit_of_work, turn_id)
+            if turn.status is not AssistantTurnStatus.WAITING_FOR_TOOL:
+                raise ValueError("Assistant Turn is not waiting for a tool")
+            pending = [
+                invocation
+                for invocation in unit_of_work.assistant.list_tool_invocations(turn_id)
+                if invocation.status in {ToolInvocationStatus.QUEUED, ToolInvocationStatus.RUNNING}
+            ]
+            if not pending:
+                return False
+            if len(pending) != 1:
+                raise RuntimeError("Assistant Turn has multiple pending Tool Invocations")
+            invocation = pending[0]
+            if invocation.command_run_id is None:
+                raise RuntimeError("pending Tool Invocation has no CommandRun")
+            command = unit_of_work.commands.get_run(invocation.command_run_id)
+            if command is None:
+                raise RuntimeError("pending Tool Invocation CommandRun is missing")
+            definition = self._registry.get(invocation.tool_name)
+            if definition is None:
+                raise RuntimeError("pending Tool Invocation definition is missing")
+            task = _require_task(unit_of_work, turn.task_id)
+            scope = self._scope_resolver(unit_of_work.state, task)
+
+            if command.status is CommandStatus.WAITING_APPROVAL:
+                return True
+            if command.status is CommandStatus.REJECTED:
+                expected_status = invocation.status
+                invocation.reject(
+                    error_code="USER_REJECTED",
+                    model_content="The user rejected this tool execution.",
+                )
+                unit_of_work.assistant.update_tool_invocation(
+                    invocation,
+                    expected_status=expected_status,
+                )
+                self._append_tool_message_in_unit(
+                    unit_of_work,
+                    turn_id=turn_id,
+                    tool_name=invocation.tool_name,
+                    tool_call_id=invocation.provider_call_id,
+                    content=invocation.model_content or "The user rejected this tool execution.",
+                    rejected=True,
+                )
+                unit_of_work.commit()
+                return False
+            bus = self._command_bus(unit_of_work.commands)
+            if command.status is CommandStatus.QUEUED:
+                running = bus.start(command.id)
+            elif command.status is CommandStatus.RUNNING:
+                if command.lease_until is None or command.lease_until > datetime.now(UTC):
+                    return True
+                running = bus.start(command.id)
+            else:
+                expected_status = invocation.status
+                invocation.reject(
+                    error_code=(
+                        "WORKER_INTERRUPTED"
+                        if command.status is CommandStatus.INTERRUPTED
+                        else "TOOL_REJECTED"
+                    ),
+                    model_content=(
+                        f"Tool execution ended before completion ({command.status.value})."
+                    ),
+                )
+                unit_of_work.assistant.update_tool_invocation(
+                    invocation,
+                    expected_status=expected_status,
+                )
+                self._append_tool_message_in_unit(
+                    unit_of_work,
+                    turn_id=turn_id,
+                    tool_name=invocation.tool_name,
+                    tool_call_id=invocation.provider_call_id,
+                    content=invocation.model_content or "Tool execution did not complete.",
+                    rejected=True,
+                )
+                unit_of_work.commit()
+                return False
+
+            if invocation.status is ToolInvocationStatus.QUEUED:
+                expected_status = invocation.status
+                invocation.start()
+                unit_of_work.assistant.update_tool_invocation(
+                    invocation,
+                    expected_status=expected_status,
+                )
+            unit_of_work.commit()
+
+        self._execute_running_tool(
+            turn_id=turn_id,
+            invocation=invocation,
+            running=running,
+            definition=definition,
+            scope=scope,
+            arguments=invocation.arguments,
+            cancellation=cancellation,
+        )
+        return False
+
+    def _durable_tool_context(self, turn_id: UUID) -> tuple[ModelMessage, ...]:
+        with self._unit_of_work_factory() as unit_of_work:
+            invocations = unit_of_work.assistant.list_tool_invocations(turn_id)
+        terminal = tuple(
+            invocation
+            for invocation in invocations
+            if invocation.status
+            in {
+                ToolInvocationStatus.COMPLETED,
+                ToolInvocationStatus.FAILED,
+                ToolInvocationStatus.REJECTED,
+            }
+        )
+        messages: list[ModelMessage] = []
+        rounds = sorted({invocation.model_round for invocation in terminal})
+        for model_round in rounds:
+            grouped = tuple(
+                invocation for invocation in terminal if invocation.model_round == model_round
+            )
+            messages.append(
+                ModelMessage.create(
+                    role=ModelRole.ASSISTANT,
+                    content="",
+                    tool_calls=tuple(
+                        ModelToolCall.create(
+                            tool_call_id=invocation.provider_call_id,
+                            name=invocation.tool_name,
+                            arguments=json.dumps(
+                                invocation.arguments,
+                                ensure_ascii=True,
+                                allow_nan=False,
+                                separators=(",", ":"),
+                                sort_keys=True,
+                            ),
+                        )
+                        for invocation in grouped
+                    ),
+                )
+            )
+            for invocation in grouped:
+                rejected = invocation.status is not ToolInvocationStatus.COMPLETED
+                content = invocation.model_content or (
+                    f"Tool execution failed ({invocation.error_code or 'TOOL_REJECTED'})."
+                )
+                messages.append(
+                    ModelMessage.create(
+                        role=ModelRole.TOOL,
+                        content=tool_message_content(
+                            tool_name=invocation.tool_name,
+                            tool_call_id=invocation.provider_call_id,
+                            content=content,
+                            rejected=rejected,
+                        ),
+                        name=invocation.tool_name,
+                        tool_call_id=invocation.provider_call_id,
+                    )
+                )
+        return tuple(messages)
+
+    def _next_model_round(self, turn_id: UUID) -> int:
+        with self._unit_of_work_factory() as unit_of_work:
+            invocations = unit_of_work.assistant.list_tool_invocations(turn_id)
+        return max((invocation.model_round for invocation in invocations), default=0) + 1
 
     def _cancel_running_tool(
         self,

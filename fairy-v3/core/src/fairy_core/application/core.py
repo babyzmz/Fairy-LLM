@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 
+from fairy_core.application.approval import ApprovalApplication
 from fairy_core.application.errors import ApprovalRequiredError
 from fairy_core.commanding import CommandLedger, CommandRun, CommandStatus
 from fairy_core.commanding.bus import CommandBus, CommandRequest
@@ -19,7 +20,6 @@ from fairy_core.contracts.models import ChangesetProposal, TaskCreate
 from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
 from fairy_core.domain.execution import (
     Approval,
-    ApprovalDecision,
     Changeset,
     ChangesetStatus,
     Checkpoint,
@@ -89,6 +89,9 @@ class CoreApplication:
         self._workspaces = workspace_provisioner
         self._registry = registry
         self._policy = policy
+        self._approvals = ApprovalApplication(
+            unit_of_work_factory=unit_of_work_factory,
+        )
         self._snapshot_builder_factory = snapshot_builder_factory or self._default_snapshot_builder
 
     def create_project(
@@ -519,37 +522,31 @@ class CoreApplication:
         approved: bool,
         decided_by: str,
     ) -> Changeset:
+        approval = self.record_approval_decision(
+            approval_id=approval_id,
+            approved=approved,
+            decided_by=decided_by,
+        )
+        if approval.changeset_id is None:
+            raise ValueError("approval is not associated with a Changeset")
         with self._transaction() as (unit_of_work, commands):
-            approval = self._require_approval(unit_of_work.state, approval_id)
-            if approval.changeset_id is None:
-                raise ValueError("approval is not associated with a Changeset")
             changeset = self._require_changeset(
                 unit_of_work.state,
                 approval.changeset_id,
             )
-            decision = ApprovalDecision.APPROVED if approved else ApprovalDecision.REJECTED
-            if approval.decision is not ApprovalDecision.PENDING:
-                if approval.decision is decision:
-                    return changeset
-                raise InvalidTransitionError("approval has already been decided differently")
-            task = self._require_task(unit_of_work.state, approval.task_id)
-            approval.decide(decision=decision, decided_by=decided_by)
-            changeset.record_approval(decision)
-            if not approved:
-                commands.decide_approval(approval.command_run_id, approved=False)
-                changeset.transition_to(ChangesetStatus.REJECTED)
-                task.transition_to(TaskStatus.REJECTED)
-                unit_of_work.state.save_approval(approval)
-                unit_of_work.state.save_changeset(changeset)
-                unit_of_work.state.save_task(task)
-                unit_of_work.commit()
+            if not approved or changeset.status in {
+                ChangesetStatus.APPLIED,
+                ChangesetStatus.APPLYING,
+            }:
                 return changeset
-
-            commands.decide_approval(approval.command_run_id, approved=True)
+            if changeset.status is not ChangesetStatus.AWAITING_APPROVAL:
+                raise InvalidTransitionError(
+                    f"approved Changeset cannot resume from {changeset.status.value}"
+                )
+            task = self._require_task(unit_of_work.state, approval.task_id)
             running = commands.start(approval.command_run_id)
             changeset.transition_to(ChangesetStatus.APPLYING)
             task.transition_to(TaskStatus.EXECUTING)
-            unit_of_work.state.save_approval(approval)
             unit_of_work.state.save_changeset(changeset)
             unit_of_work.state.save_task(task)
             unit_of_work.commit()
@@ -592,6 +589,22 @@ class CoreApplication:
             unit_of_work.state.save_changeset(applied)
             unit_of_work.commit()
         return applied
+
+    def get_approval(self, approval_id: UUID) -> Approval:
+        return self._approvals.get(approval_id)
+
+    def record_approval_decision(
+        self,
+        *,
+        approval_id: UUID,
+        approved: bool,
+        decided_by: str,
+    ) -> Approval:
+        return self._approvals.decide(
+            approval_id=approval_id,
+            approved=approved,
+            decided_by=decided_by,
+        )
 
     def review_task(self, task_id: UUID) -> Checkpoint:
         with self._transaction() as (unit_of_work, commands):

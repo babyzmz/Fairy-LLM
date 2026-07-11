@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Table, insert, select, update
+from sqlalchemy import Table, and_, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection, Engine, RowMapping
@@ -223,7 +223,9 @@ class SqlAlchemyAssistantRepository:
             "id": str(invocation.id),
             "turn_id": str(invocation.turn_id),
             "task_id": str(invocation.task_id),
+            "model_round": invocation.model_round,
             "sequence": invocation.sequence,
+            "provider_call_id": invocation.provider_call_id,
             "tool_name": invocation.tool_name,
             "scope_digest": invocation.scope_digest,
             "argument_hash": invocation.argument_hash,
@@ -233,6 +235,7 @@ class SqlAlchemyAssistantRepository:
             ),
             "status": invocation.status.value,
             "public_summary": invocation.public_summary,
+            "model_content": invocation.model_content,
             "artifact_ids": [str(value) for value in invocation.artifact_ids],
             "error_code": invocation.error_code,
             "created_at": invocation.created_at,
@@ -255,7 +258,9 @@ class SqlAlchemyAssistantRepository:
                     assistant_tool_invocations.c.id == str(invocation.id),
                     assistant_tool_invocations.c.turn_id == str(invocation.turn_id),
                     assistant_tool_invocations.c.task_id == str(invocation.task_id),
+                    assistant_tool_invocations.c.model_round == invocation.model_round,
                     assistant_tool_invocations.c.sequence == invocation.sequence,
+                    assistant_tool_invocations.c.provider_call_id == invocation.provider_call_id,
                     assistant_tool_invocations.c.tool_name == invocation.tool_name,
                     assistant_tool_invocations.c.scope_digest == invocation.scope_digest,
                     assistant_tool_invocations.c.argument_hash == invocation.argument_hash,
@@ -267,6 +272,7 @@ class SqlAlchemyAssistantRepository:
                     ),
                     status=invocation.status.value,
                     public_summary=invocation.public_summary,
+                    model_content=invocation.model_content,
                     artifact_ids=[str(value) for value in invocation.artifact_ids],
                     error_code=invocation.error_code,
                     updated_at=invocation.updated_at,
@@ -274,6 +280,15 @@ class SqlAlchemyAssistantRepository:
             )
         if result.rowcount != 1:
             raise InvalidTransitionError("Tool Invocation changed concurrently")
+
+    def get_tool_invocation(self, invocation_id: UUID) -> ToolInvocation | None:
+        row = self._first(
+            select(assistant_tool_invocations).where(
+                assistant_tool_invocations.c.tenant_id == self._tenant_id,
+                assistant_tool_invocations.c.id == str(invocation_id),
+            )
+        )
+        return self._tool_from_row(row) if row is not None else None
 
     def list_tool_invocations(self, turn_id: UUID) -> tuple[ToolInvocation, ...]:
         with self._session.read() as connection:
@@ -297,22 +312,6 @@ class SqlAlchemyAssistantRepository:
     def live_turn_ids(self) -> tuple[UUID, ...]:
         now = datetime.now(UTC)
         with self._session.read() as connection:
-            runs = (
-                connection.execute(
-                    select(
-                        command_runs.c.id,
-                        command_runs.c.command_name,
-                        command_runs.c.input,
-                    ).where(
-                        command_runs.c.tenant_id == self._tenant_id,
-                        command_runs.c.status == CommandStatus.RUNNING.value,
-                        command_runs.c.lease_until.is_not(None),
-                        command_runs.c.lease_until > now,
-                    )
-                )
-                .mappings()
-                .all()
-            )
             invocation_rows = (
                 connection.execute(
                     select(
@@ -321,7 +320,36 @@ class SqlAlchemyAssistantRepository:
                     ).where(
                         assistant_tool_invocations.c.tenant_id == self._tenant_id,
                         assistant_tool_invocations.c.command_run_id.is_not(None),
-                        assistant_tool_invocations.c.status == ToolInvocationStatus.RUNNING.value,
+                        assistant_tool_invocations.c.status.in_(
+                            (
+                                ToolInvocationStatus.QUEUED.value,
+                                ToolInvocationStatus.RUNNING.value,
+                            )
+                        ),
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            linked_run_ids = tuple(str(row["command_run_id"]) for row in invocation_rows)
+            run_predicates = [
+                and_(
+                    command_runs.c.status == CommandStatus.RUNNING.value,
+                    command_runs.c.lease_until.is_not(None),
+                    command_runs.c.lease_until > now,
+                )
+            ]
+            if linked_run_ids:
+                run_predicates.append(command_runs.c.id.in_(linked_run_ids))
+            runs = (
+                connection.execute(
+                    select(
+                        command_runs.c.id,
+                        command_runs.c.command_name,
+                        command_runs.c.input,
+                    ).where(
+                        command_runs.c.tenant_id == self._tenant_id,
+                        or_(*run_predicates),
                     )
                 )
                 .mappings()
@@ -459,7 +487,9 @@ class SqlAlchemyAssistantRepository:
             id=UUID(row["id"]),
             turn_id=UUID(row["turn_id"]),
             task_id=UUID(row["task_id"]),
+            model_round=int(row["model_round"]),
             sequence=int(row["sequence"]),
+            provider_call_id=row["provider_call_id"],
             tool_name=row["tool_name"],
             scope_digest=row["scope_digest"],
             argument_hash=row["argument_hash"],
@@ -467,6 +497,7 @@ class SqlAlchemyAssistantRepository:
             command_run_id=UUID(row["command_run_id"]) if row["command_run_id"] else None,
             status=ToolInvocationStatus(row["status"]),
             public_summary=row["public_summary"],
+            model_content=row["model_content"],
             artifact_ids=tuple(UUID(value) for value in row["artifact_ids"]),
             error_code=row["error_code"],
             created_at=_datetime(row["created_at"]),

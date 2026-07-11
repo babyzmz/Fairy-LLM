@@ -21,8 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260711_0011"]
-    assert scripts.get_revision("20260711_0011").down_revision == "20260711_0010"
+    assert scripts.get_heads() == ["20260711_0012"]
+    assert scripts.get_revision("20260711_0012").down_revision == "20260711_0011"
     assert scripts.get_revision("20260711_0009").down_revision == "20260711_0008"
 
 
@@ -93,6 +93,10 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
     assert "UQ_CORE_PREVIEW_SESSIONS_ACTIVE_TASK" in ddl
     assert "CK_CORE_RUNTIME_SESSIONS_HANDLE_PORT" in ddl
     assert "CK_CORE_PREVIEW_SESSIONS_ACTIVE_URL" in ddl
+    assert "UQ_CORE_APPROVALS_TENANT_COMMAND_RUN" in ddl
+    assert "UQ_CORE_APPROVALS_TENANT_TOOL_INVOCATION" in ddl
+    assert "UQ_CORE_ASSISTANT_TOOL_INVOCATIONS_TURN_PROVIDER_CALL" in ddl
+    assert "FK_CORE_APPROVALS_TOOL_INVOCATION" in ddl
     for table_name in (
         "CORE_RUNTIME_SESSIONS",
         "CORE_PREVIEW_SESSIONS",
@@ -119,6 +123,19 @@ def test_execution_settings_migration_has_reversible_ddl() -> None:
     assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_EXECUTION_SETTING_UPDATES"' in ddl
     assert "DROP TABLE CORE_EXECUTION_SETTING_UPDATES" in ddl
     assert "DROP TABLE CORE_EXECUTION_SETTINGS" in ddl
+
+
+def test_generic_approval_migration_has_reversible_ddl() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260711_0012:20260711_0011", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert "DROP CONSTRAINT FK_CORE_APPROVALS_TOOL_INVOCATION" in ddl
+    assert "DROP COLUMN TOOL_INVOCATION_ID" in ddl
+    assert "DROP COLUMN PROVIDER_CALL_ID" in ddl
+    assert "DROP COLUMN MODEL_ROUND" in ddl
 
 
 def test_research_evidence_migration_has_reversible_ddl() -> None:

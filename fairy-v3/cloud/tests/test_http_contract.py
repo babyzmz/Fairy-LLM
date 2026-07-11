@@ -459,7 +459,6 @@ async def test_rest_exposes_collection_runtime_preview_and_artifact_contracts(
             json={
                 "approval_id": approval["id"],
                 "approved": True,
-                "decided_by": "user",
             },
         )
         tasks = await client.get("/v1/tasks", params={"conversation_id": conversation_id})

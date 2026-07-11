@@ -103,6 +103,10 @@ async function installCoreFixture(page: Page) {
         scratchTask: "0198f4de-0114-7000-8000-000000000011",
         turn: "0198f4de-0114-7000-8000-000000000012",
         message: "0198f4de-0114-7000-8000-000000000013",
+        commandRun: "0198f4de-0114-7000-8000-000000000015",
+        toolInvocation: "0198f4de-0114-7000-8000-000000000016",
+        approval: "0198f4de-0114-7000-8000-000000000017",
+        resumedMessage: "0198f4de-0114-7000-8000-000000000018",
       };
       const timestamp = "2026-07-11T00:00:00Z";
       const project = {
@@ -196,6 +200,30 @@ async function installCoreFixture(page: Page) {
         content: "Scratch chat is durable",
         created_at: timestamp,
       };
+      const resumedMessage = {
+        ...scratchMessage,
+        id: id.resumedMessage,
+        sequence: 2,
+        content: "Notification completed after approval",
+      };
+      const waitingTurn = {
+        ...completedTurn,
+        status: "waiting_for_tool",
+        completed_at: null,
+      };
+      const pendingApproval = {
+        id: id.approval,
+        task_id: id.scratchTask,
+        command_run_id: id.commandRun,
+        changeset_id: null,
+        tool_invocation_id: id.toolInvocation,
+        requested_by: "assistant:system.notify",
+        reason: "Allow Fairy to send a notification",
+        decision: "pending",
+        decided_by: null,
+        decided_at: null,
+        created_at: timestamp,
+      };
       const version = {
         id: id.version,
         project_id: id.project,
@@ -262,6 +290,10 @@ async function installCoreFixture(page: Page) {
         created_at: timestamp,
       };
       const events = [event];
+      let approvalScenario = false;
+      let approvalVisible = false;
+      let approvalDecision: "pending" | "approved" | "rejected" = "pending";
+      let messages = [scratchMessage];
       fixtureWindow.__FAIRY_PUSH_EVENT__ = (message) => {
         const startedAt = performance.now();
         const cursor = (events.at(-1)?.cursor ?? 0) + 1;
@@ -435,6 +467,85 @@ async function installCoreFixture(page: Page) {
                   frames: 2,
                   content_hash: voiceWavHash,
                 }
+              : request.method === "tasks.create"
+                ? (() => {
+                    const userRequest = String(request.params.user_request ?? "");
+                    approvalScenario = userRequest === "Request a governed notification";
+                    approvalVisible = false;
+                    approvalDecision = "pending";
+                    messages = [scratchMessage];
+                    return { task: { ...scratchTask, user_request: userRequest } };
+                  })()
+              : request.method === "assistant.turns.create"
+                ? { ...completedTurn, status: "created", completed_at: null }
+              : request.method === "assistant.turns.run"
+                ? (() => {
+                    if (!approvalScenario) return completedTurn;
+                    if (approvalDecision === "pending") {
+                      approvalVisible = true;
+                      return waitingTurn;
+                    }
+                    if (!messages.some((message) => message.id === resumedMessage.id)) {
+                      messages = [...messages, resumedMessage];
+                    }
+                    return completedTurn;
+                  })()
+              : request.method === "messages.list"
+                ? { items: messages, next_cursor: null }
+              : request.method === "approvals.list"
+                ? {
+                    items:
+                      approvalVisible && request.params.task_id === id.scratchTask
+                        ? [
+                            {
+                              ...pendingApproval,
+                              decision: approvalDecision,
+                              decided_by:
+                                approvalDecision === "pending" ? null : "user",
+                              decided_at:
+                                approvalDecision === "pending" ? null : timestamp,
+                            },
+                          ]
+                        : [],
+                    next_cursor: null,
+                  }
+              : request.method === "approvals.decide"
+                ? (() => {
+                    if (request.params.approval_id !== id.approval) {
+                      throw new Error("Approval is unavailable");
+                    }
+                    if ("decided_by" in request.params) {
+                      throw new Error("Renderer cannot choose decided_by");
+                    }
+                    approvalDecision = request.params.approved ? "approved" : "rejected";
+                    const cursor = (events.at(-1)?.cursor ?? 0) + 1;
+                    events.push({
+                      ...event,
+                      id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
+                      cursor,
+                      run_id: id.commandRun,
+                      project_id: null,
+                      conversation_id: id.scratchConversation,
+                      task_id: id.scratchTask,
+                      version_id: null,
+                      task_sequence: cursor,
+                      event_type: "approval.decided",
+                      message: `Approval ${approvalDecision}`,
+                      payload: {
+                        approval_id: id.approval,
+                        decision: approvalDecision,
+                      },
+                    });
+                    return {
+                      approval: {
+                        ...pendingApproval,
+                        decision: approvalDecision,
+                        decided_by: "user",
+                        decided_at: timestamp,
+                      },
+                      changeset: null,
+                    };
+                  })()
               : request.method === "permissions.get"
                 ? permissions
               : request.method === "permissions.update"

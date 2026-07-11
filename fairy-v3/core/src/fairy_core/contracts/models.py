@@ -128,16 +128,6 @@ class VersionListInput(CollectionPageInput):
     task_id: UUID | None = None
 
 
-class ApprovalListInput(VersionListInput):
-    pass
-
-
-class ApprovalDecisionInput(ContractModel):
-    approval_id: UUID
-    approved: bool
-    decided_by: str = Field(min_length=1, max_length=255)
-
-
 class TaskIdInput(ContractModel):
     task_id: UUID
 
@@ -748,10 +738,16 @@ class ApprovalModel(ContractModel):
     requested_by: str
     reason: str
     changeset_id: UUID | None
+    tool_invocation_id: UUID | None
     decision: ApprovalDecision
     decided_by: str | None
     created_at: datetime
     decided_at: datetime | None
+
+
+class ApprovalDecisionResultModel(ContractModel):
+    approval: ApprovalModel
+    changeset: ChangesetModel | None
 
 
 class ProjectPageModel(ContractModel):

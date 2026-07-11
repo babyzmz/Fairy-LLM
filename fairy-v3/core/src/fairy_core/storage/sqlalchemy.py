@@ -267,6 +267,9 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
                 "task_id": str(approval.task_id),
                 "command_run_id": str(approval.command_run_id),
                 "changeset_id": str(approval.changeset_id) if approval.changeset_id else None,
+                "tool_invocation_id": (
+                    str(approval.tool_invocation_id) if approval.tool_invocation_id else None
+                ),
                 "requested_by": approval.requested_by,
                 "reason": approval.reason,
                 "decision": approval.decision.value,
@@ -275,6 +278,35 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
                 "decided_at": approval.decided_at,
             },
         )
+
+    def update_approval(
+        self,
+        approval: Approval,
+        *,
+        expected_decision: ApprovalDecision,
+    ) -> None:
+        with self._session.write() as connection:
+            result = connection.execute(
+                update(approvals)
+                .where(
+                    approvals.c.tenant_id == self._tenant_id,
+                    approvals.c.id == str(approval.id),
+                    approvals.c.task_id == str(approval.task_id),
+                    approvals.c.command_run_id == str(approval.command_run_id),
+                    approvals.c.changeset_id
+                    == (str(approval.changeset_id) if approval.changeset_id else None),
+                    approvals.c.tool_invocation_id
+                    == (str(approval.tool_invocation_id) if approval.tool_invocation_id else None),
+                    approvals.c.decision == expected_decision.value,
+                )
+                .values(
+                    decision=approval.decision.value,
+                    decided_by=approval.decided_by,
+                    decided_at=approval.decided_at,
+                )
+            )
+        if result.rowcount != 1:
+            raise InvalidTransitionError("Approval changed concurrently")
 
     def get_approval(self, approval_id: UUID) -> Approval | None:
         row = self._get_by_id(approvals, approval_id)
@@ -285,6 +317,27 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
             select(approvals).where(
                 approvals.c.tenant_id == self._tenant_id,
                 approvals.c.changeset_id == str(changeset_id),
+            )
+        )
+        return self._approval_from_row(row) if row is not None else None
+
+    def find_approval_by_tool_invocation_id(
+        self,
+        tool_invocation_id: UUID,
+    ) -> Approval | None:
+        row = self._first(
+            select(approvals).where(
+                approvals.c.tenant_id == self._tenant_id,
+                approvals.c.tool_invocation_id == str(tool_invocation_id),
+            )
+        )
+        return self._approval_from_row(row) if row is not None else None
+
+    def find_approval_by_command_run_id(self, command_run_id: UUID) -> Approval | None:
+        row = self._first(
+            select(approvals).where(
+                approvals.c.tenant_id == self._tenant_id,
+                approvals.c.command_run_id == str(command_run_id),
             )
         )
         return self._approval_from_row(row) if row is not None else None
@@ -544,6 +597,7 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
             task_id=UUID(row["task_id"]),
             command_run_id=UUID(row["command_run_id"]),
             changeset_id=_uuid(row["changeset_id"]),
+            tool_invocation_id=_uuid(row["tool_invocation_id"]),
             requested_by=row["requested_by"],
             reason=row["reason"],
             decision=ApprovalDecision(row["decision"]),

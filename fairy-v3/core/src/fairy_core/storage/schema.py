@@ -349,7 +349,9 @@ assistant_tool_invocations = Table(
     _id(),
     Column("turn_id", String(ID_LENGTH), nullable=False),
     Column("task_id", String(ID_LENGTH), nullable=False),
+    Column("model_round", BigInteger, nullable=False),
     Column("sequence", BigInteger, nullable=False),
+    Column("provider_call_id", String(255), nullable=False),
     Column("tool_name", String(255), nullable=False),
     Column("scope_digest", String(64), nullable=False),
     Column("argument_hash", String(64), nullable=False),
@@ -357,6 +359,7 @@ assistant_tool_invocations = Table(
     Column("command_run_id", String(ID_LENGTH)),
     Column("status", String(32), nullable=False),
     Column("public_summary", String),
+    Column("model_content", String),
     Column("artifact_ids", JSON, nullable=False),
     Column("error_code", String(128)),
     Column("created_at", UTCDateTime(), nullable=False),
@@ -374,6 +377,13 @@ assistant_tool_invocations = Table(
         "argument_hash",
         name="uq_core_assistant_tool_invocations_turn_arguments",
     ),
+    UniqueConstraint(
+        "tenant_id",
+        "turn_id",
+        "provider_call_id",
+        name="uq_core_assistant_tool_invocations_turn_provider_call",
+    ),
+    CheckConstraint("model_round > 0", name="ck_core_assistant_tool_invocations_model_round"),
     CheckConstraint("sequence > 0", name="ck_core_assistant_tool_invocations_sequence"),
     CheckConstraint(
         "status IN ('created', 'queued', 'running', 'completed', 'failed', "
@@ -453,6 +463,7 @@ approvals = Table(
     Column("task_id", String(ID_LENGTH), nullable=False),
     Column("command_run_id", String(ID_LENGTH), nullable=False),
     Column("changeset_id", String(ID_LENGTH)),
+    Column("tool_invocation_id", String(ID_LENGTH)),
     Column("requested_by", String(128), nullable=False),
     Column("reason", String, nullable=False),
     Column("decision", String(32), nullable=False),
@@ -460,6 +471,20 @@ approvals = Table(
     Column("created_at", UTCDateTime(), nullable=False),
     Column("decided_at", UTCDateTime()),
     PrimaryKeyConstraint("tenant_id", "id", name="pk_core_approvals"),
+    UniqueConstraint(
+        "tenant_id",
+        "command_run_id",
+        name="uq_core_approvals_tenant_command_run",
+    ),
+    UniqueConstraint(
+        "tenant_id",
+        "tool_invocation_id",
+        name="uq_core_approvals_tenant_tool_invocation",
+    ),
+    CheckConstraint(
+        "changeset_id IS NULL OR tool_invocation_id IS NULL",
+        name="ck_core_approvals_single_subject",
+    ),
     ForeignKeyConstraint(
         ["tenant_id", "task_id"],
         [tasks.c.tenant_id, tasks.c.id],
@@ -470,6 +495,12 @@ approvals = Table(
         ["tenant_id", "changeset_id"],
         [changesets.c.tenant_id, changesets.c.id],
         name="fk_core_approvals_changeset",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "tool_invocation_id"],
+        [assistant_tool_invocations.c.tenant_id, assistant_tool_invocations.c.id],
+        name="fk_core_approvals_tool_invocation",
         ondelete="CASCADE",
     ),
 )

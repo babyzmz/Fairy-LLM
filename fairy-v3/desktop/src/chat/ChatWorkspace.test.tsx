@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  Approval,
   AssistantTurn,
   Message,
   ProviderHealth,
@@ -76,6 +77,33 @@ describe("ChatWorkspace", () => {
     expect(composer).toBeDisabled();
     expect(screen.getByText("Provider unavailable")).toBeVisible();
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  });
+
+  it("renders a durable tool approval and submits only its decision", async () => {
+    const user = userEvent.setup();
+    const pending: Approval = {
+      id: "0198f4de-0114-7000-8000-000000000041",
+      task_id: TURN.task_id,
+      command_run_id: "0198f4de-0114-7000-8000-000000000042",
+      changeset_id: null,
+      tool_invocation_id: "0198f4de-0114-7000-8000-000000000043",
+      requested_by: "assistant",
+      reason: "Run show a notification",
+      decision: "pending",
+      decided_by: null,
+      created_at: "2026-07-11T00:00:00Z",
+      decided_at: null,
+    };
+    const props = workspaceProps({
+      turn: { ...TURN, status: "waiting_for_tool", completed_at: null },
+      approvals: [pending],
+    });
+    render(<ChatWorkspace {...props} />);
+
+    expect(screen.getByText("Approval required")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(props.onDecision).toHaveBeenCalledWith(pending.id, true);
   });
 });
 
@@ -157,12 +185,14 @@ function workspaceProps(
     messages: MESSAGES,
     streamedText: "",
     turn: TURN,
+    approvals: [],
     providers: PROVIDERS,
     providerHealth: providerAvailable
       ? HEALTH
       : [{ ...HEALTH[0], status: "unavailable", error_code: "PROVIDER_UNAVAILABLE" }],
     selectedProfileId: "openrouter-free",
     isBusy: false,
+    isActing: false,
     offline: false,
     developerMode: false,
     error: null,
@@ -174,6 +204,7 @@ function workspaceProps(
     onSend: vi.fn(async () => undefined),
     onCancel: vi.fn(async () => undefined),
     onRetry: vi.fn(async () => undefined),
+    onDecision: vi.fn(async () => undefined),
     ...props,
   };
 }

@@ -57,6 +57,7 @@ function workspaceModel(): WorkspaceModel {
     tasks: [],
     versions: [],
     approvals: [],
+    chatApprovals: [],
     events: [],
     presenceEvents: [],
     messages: [],

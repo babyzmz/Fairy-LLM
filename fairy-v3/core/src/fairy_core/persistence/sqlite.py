@@ -17,6 +17,7 @@ from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.storage.schema import state_metadata
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
 from fairy_core.storage.sqlite_migrations import (
+    migrate_generic_approval,
     migrate_pre_tenant_schema,
     migrate_task_snapshot_binding,
 )
@@ -36,6 +37,7 @@ def create_sqlite_core_engine(
         state_metadata.create_all(engine)
         initialize_document_sqlite_fts(engine)
         migrate_task_snapshot_binding(engine)
+        migrate_generic_approval(engine)
         command_metadata.create_all(engine)
         memory_metadata.create_all(engine)
         initialize_sqlite_fts(engine)

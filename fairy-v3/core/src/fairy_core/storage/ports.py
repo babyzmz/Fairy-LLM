@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fairy_core.domain.execution import (
     Approval,
+    ApprovalDecision,
     Artifact,
     Changeset,
     Checkpoint,
@@ -74,6 +75,13 @@ class StateStore(Protocol):
 
     def save_approval(self, approval: Approval) -> None: ...
 
+    def update_approval(
+        self,
+        approval: Approval,
+        *,
+        expected_decision: ApprovalDecision,
+    ) -> None: ...
+
     def get_approval(self, approval_id: UUID) -> Approval | None: ...
 
     def list_approvals(
@@ -87,6 +95,13 @@ class StateStore(Protocol):
     ) -> StatePage[Approval]: ...
 
     def find_approval_by_changeset_id(self, changeset_id: UUID) -> Approval | None: ...
+
+    def find_approval_by_tool_invocation_id(
+        self,
+        tool_invocation_id: UUID,
+    ) -> Approval | None: ...
+
+    def find_approval_by_command_run_id(self, command_run_id: UUID) -> Approval | None: ...
 
     def save_checkpoint(self, checkpoint: Checkpoint) -> None: ...
 

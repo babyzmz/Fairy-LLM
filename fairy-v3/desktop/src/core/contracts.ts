@@ -3,6 +3,7 @@ import type { components, operations } from "./generated/api";
 type Schemas = components["schemas"];
 
 export type ApprovalDecisionInput = Schemas["ApprovalDecisionInput"];
+export type ApprovalDecisionResult = Schemas["ApprovalDecisionResultModel"];
 export type Approval = Schemas["ApprovalModel"];
 export type ApprovalListInput = NonNullable<
   operations["approvals.list"]["parameters"]["query"]
@@ -150,7 +151,7 @@ export interface CoreMethodMap {
   "tasks.list": { params: TaskListInput; result: TaskPage };
   "tasks.review": { params: { task_id: string }; result: Checkpoint };
   "changesets.propose": { params: ChangesetProposal; result: PendingChangeset };
-  "approvals.decide": { params: ApprovalDecisionInput; result: Changeset };
+  "approvals.decide": { params: ApprovalDecisionInput; result: ApprovalDecisionResult };
   "approvals.list": { params: ApprovalListInput; result: ApprovalPage };
   "versions.get": { params: { version_id: string }; result: Version };
   "versions.list": { params: VersionListInput; result: VersionPage };
