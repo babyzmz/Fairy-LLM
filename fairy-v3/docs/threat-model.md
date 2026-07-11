@@ -64,6 +64,36 @@ and independently verified worker attestations/results.
     Project, Conversation, Version, generation, and the Task-bound Snapshot;
     clients cannot supply or override those fields. PostgreSQL FORCE RLS and
     local tenant predicates are both covered by same-ID isolation tests.
+18. Permit only the Rust Worker's read-only static Preview server on the
+    Windows host. It binds exact IPv4 loopback on an ephemeral port, serves one
+    canonical managed Version, accepts only GET and HEAD, caps request-target
+    size, disables directory listing and caching of HTML, and applies CSP,
+    referrer, and MIME-sniffing controls. It never starts a project process,
+    interpreter, package manager, or host shell.
+19. Treat Runtime executor metadata as untrusted. Validate exact loopback host,
+    port, URL, Preview identity, managed root, and executor handle before
+    durable state advances. Recovery probes must return the exact requested
+    handle; rebinding fails with `SCOPE_MISMATCH` and an interrupted Runtime.
+20. Serialize lifecycle operations inside one Core instance and put a unique
+    instance identity in every start/stop lease owner. A different Core
+    instance cannot probe or complete that operation until its durable lease
+    expires and is fenced; same-key replay cannot dispatch a second server.
+21. Enforce one active Preview per tenant and Task in PostgreSQL with a partial
+    unique index, while Runtime and Preview revisions use compare-and-swap.
+    Runtime, Preview, Artifact, Event, and Outbox rows remain tenant-scoped and
+    are covered by forced-RLS same-ID tests.
+
+## Environment verification
+
+Static Preview is not a general execution sandbox. Dynamic project execution
+through WSL2 or cloud OCI remains unavailable until its dedicated executor is
+implemented and healthy; it never falls back to Windows process execution.
+
+The default verification run reports WSL as skipped. `-RequireWslSandbox`
+requires a real `FairySandbox` WSL2 attestation and the real Rust static
+Preview lifecycle test. PostgreSQL 18, RLS, recovery, and S3 claims are made
+only when the Docker integration profile actually runs; generated DDL or
+SQLite tests are not reported as PostgreSQL execution.
 
 ## Security error contract
 

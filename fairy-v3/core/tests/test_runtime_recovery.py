@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -9,11 +11,15 @@ from sqlalchemy import update
 from fairy_core.application.runtime import (
     PreviewStartRequest,
     PreviewStopRequest,
+    RuntimeApplication,
 )
 from fairy_core.commanding import CommandStatus, EventVisibility
+from fairy_core.commanding.policy import PolicyEngine
+from fairy_core.commanding.registry import build_default_registry
 from fairy_core.commanding.schema import command_runs
 from fairy_core.domain.execution import PreviewStatus, RuntimeStatus
 from fairy_core.domain.models import TaskStatus
+from fairy_core.runtime.models import ExecutorRuntimeState, RuntimeProbeResult
 from tests.runtime_support import build_runtime_stack
 
 
@@ -166,3 +172,95 @@ def test_stop_replay_recovers_pending_stop_without_second_dispatch(tmp_path: Pat
 
     assert stopped.status is PreviewStatus.STOPPED
     assert len(stack.executor.stop_calls) == 1
+
+
+def test_concurrent_start_replay_waits_for_one_external_dispatch(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    request = PreviewStartRequest(
+        task_id=stack.task.task.id,
+        idempotency_key="preview:concurrent-start",
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    probe_attempted = threading.Event()
+    original_start = stack.executor.start_static
+    original_probe = stack.executor.probe
+
+    def blocking_start(runtime_request):
+        entered.set()
+        assert release.wait(timeout=10)
+        return original_start(runtime_request)
+
+    def tracking_probe(executor_handle):
+        probe_attempted.set()
+        return original_probe(executor_handle)
+
+    stack.executor.start_static = blocking_start  # type: ignore[method-assign]
+    stack.executor.probe = tracking_probe  # type: ignore[method-assign]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(stack.runtime.start_preview, request)
+        assert entered.wait(timeout=10)
+        second = executor.submit(stack.runtime.start_preview, request)
+        assert not probe_attempted.wait(timeout=0.25)
+        assert not second.done()
+        release.set()
+        contexts = (first.result(timeout=20), second.result(timeout=20))
+
+    assert contexts[0].preview.id == contexts[1].preview.id
+    assert contexts[0].preview.status is PreviewStatus.READY
+    assert contexts[1].preview.status is PreviewStatus.READY
+    assert len(stack.executor.start_calls) == 1
+
+
+def test_peer_runtime_does_not_recover_another_live_lease(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    request = PreviewStartRequest(
+        task_id=stack.task.task.id,
+        idempotency_key="preview:peer-live-lease",
+    )
+    stack.runtime._prepare_start(request)
+    registry = build_default_registry()
+    peer = RuntimeApplication(
+        unit_of_work_factory=stack.factory,
+        executor=stack.executor,
+        registry=registry,
+        policy=PolicyEngine(registry),
+        scope_resolver=stack.core.scope_for_task,
+    )
+
+    recovered = peer.recover_interrupted()
+
+    assert recovered == ()
+    assert stack.executor.probe_calls == []
+    with stack.factory() as unit_of_work:
+        runtime = unit_of_work.state.runtimes_for_task(stack.task.task.id)[-1]
+    assert runtime.status is RuntimeStatus.STARTING
+
+
+def test_recovery_rejects_probe_handle_rebinding(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    stack.executor.crash_after_start = True
+    request = PreviewStartRequest(
+        task_id=stack.task.task.id,
+        idempotency_key="preview:forged-probe-handle",
+    )
+    with pytest.raises(SystemExit):
+        stack.runtime.start_preview(request)
+
+    expected_handle = next(iter(stack.executor.probes))
+    current = stack.executor.probes[expected_handle]
+    assert isinstance(current, RuntimeProbeResult)
+    stack.executor.probes[expected_handle] = RuntimeProbeResult(
+        executor_handle="static:0198f4de-0114-7000-8000-000000000099",
+        state=ExecutorRuntimeState.RUNNING,
+        host=current.host,
+        port=current.port,
+        url=current.url,
+    )
+
+    recovered = stack.runtime.recover_interrupted()
+
+    assert recovered[-1].status is PreviewStatus.INTERRUPTED
+    with stack.factory() as unit_of_work:
+        runtime = unit_of_work.state.runtimes_for_task(stack.task.task.id)[-1]
+    assert runtime.status is RuntimeStatus.INTERRUPTED

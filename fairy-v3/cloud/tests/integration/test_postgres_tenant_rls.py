@@ -204,6 +204,27 @@ async def _run_rls_scenario(dsn: str) -> None:
             assert tuple(runtime_a) == (tenant_a, "worker-alpha")
             assert tuple(runtime_b) == (tenant_b, "worker-beta")
 
+            preview_a = (
+                await connection_a.execute(
+                    text(
+                        "SELECT tenant_id, runtime_id FROM core_preview_sessions "
+                        "WHERE id = :preview_id"
+                    ),
+                    {"preview_id": preview_id},
+                )
+            ).one()
+            preview_b = (
+                await connection_b.execute(
+                    text(
+                        "SELECT tenant_id, runtime_id FROM core_preview_sessions "
+                        "WHERE id = :preview_id"
+                    ),
+                    {"preview_id": preview_id},
+                )
+            ).one()
+            assert tuple(preview_a) == (tenant_a, runtime_id)
+            assert tuple(preview_b) == (tenant_b, runtime_id)
+
             artifact_a = (
                 await connection_a.execute(
                     text(

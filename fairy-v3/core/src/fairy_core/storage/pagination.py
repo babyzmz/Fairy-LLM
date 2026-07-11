@@ -13,6 +13,7 @@ from uuid import UUID
 _CURSOR_VERSION = 1
 _MAX_CURSOR_LENGTH = 2_048
 
+
 @dataclass(frozen=True, slots=True)
 class StatePage[T]:
     items: tuple[T, ...]

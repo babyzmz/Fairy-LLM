@@ -183,9 +183,7 @@ def test_preview_resolver_never_uses_project_wide_newest_fallback(tmp_path: Path
     current = stack.runtime.resolve_preview(
         PreviewResolveRequest(conversation_id=stack.task.task.conversation_id)
     )
-    unrelated = stack.runtime.resolve_preview(
-        PreviewResolveRequest(conversation_id=other.id)
-    )
+    unrelated = stack.runtime.resolve_preview(PreviewResolveRequest(conversation_id=other.id))
 
     assert current is not None and current.preview.id == context.preview.id
     assert unrelated is None

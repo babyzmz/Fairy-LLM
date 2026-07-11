@@ -230,5 +230,13 @@ def test_full_verification_script_covers_every_release_gate() -> None:
         "docker compose",
         "integration",
         "PostgreSQL/S3 integration tests skipped",
+        "RequireWslSandbox",
+        "WslSandboxHealthProbe",
+        "FairySandbox attestation",
+        "preview_recovery",
+        "WSL sandbox verification skipped",
+        "runtime Preview integration was not executed",
+        '"clippy", "--workspace"',
+        '"test", "--workspace"',
     ):
         assert required_text in script

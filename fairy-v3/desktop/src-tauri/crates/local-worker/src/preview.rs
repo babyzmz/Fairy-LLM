@@ -15,6 +15,7 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use crate::{validate_identifier, WorkerError};
 
 const LOOPBACK_HOST: &str = "127.0.0.1";
+const MAX_REQUEST_TARGET_BYTES: usize = 8 * 1024;
 const SERVER_POLL_INTERVAL: Duration = Duration::from_millis(25);
 #[cfg(windows)]
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
@@ -241,6 +242,10 @@ impl StaticPreviewManager {
 }
 
 fn serve_request(request: Request, root: &Path, entry_path: &str, preview_id: &str) {
+    if request.url().len() > MAX_REQUEST_TARGET_BYTES {
+        respond_empty(request, StatusCode(414));
+        return;
+    }
     if !matches!(request.method(), Method::Get | Method::Head) {
         let mut response = Response::empty(StatusCode(405));
         response.add_header(header("Allow", "GET, HEAD"));

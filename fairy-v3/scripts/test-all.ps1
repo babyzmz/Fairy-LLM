@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$SkipDocker
+    [switch]$SkipDocker,
+    [switch]$RequireWslSandbox
 )
 
 Set-StrictMode -Version Latest
@@ -76,13 +77,42 @@ Invoke-Step "Cloud: alembic downgrade head:base --sql" $CloudRoot $Uv @(
     "run", "alembic", "downgrade", "head:base", "--sql"
 )
 
-Invoke-Step "Rust: cargo fmt --check" $RustRoot "cargo" @("fmt", "--check")
+Invoke-Step "Rust: cargo fmt --check" $RustRoot "cargo" @(
+    "fmt", "--all", "--", "--check"
+)
 Invoke-Step "Rust: cargo clippy" $RustRoot "cargo" @(
-    "clippy", "--all-targets", "--all-features", "--", "-D", "warnings"
+    "clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"
 )
 Invoke-Step "Rust: cargo test" $RustRoot "cargo" @(
-    "test", "--all-targets", "--all-features"
+    "test", "--workspace", "--all-targets", "--all-features"
 )
+
+if ($RequireWslSandbox) {
+    $WslProbeScript = @'
+import json
+from fairy_core.runtime.wsl_health import WslSandboxHealthProbe
+
+health = WslSandboxHealthProbe().health()
+print(json.dumps({
+    "available": health.available,
+    "executor": health.executor,
+    "version": health.version,
+    "error_code": health.error_code,
+    "diagnostics": list(health.diagnostics),
+}, sort_keys=True))
+raise SystemExit(0 if health.available else 1)
+'@
+    Invoke-Step "WSL: FairySandbox attestation" $CoreRoot $Uv @(
+        "run", "python", "-c", $WslProbeScript
+    )
+    Invoke-Step "WSL-required Runtime: static Preview start/status/stop" $RustRoot "cargo" @(
+        "test", "-p", "fairy-local-worker", "--test", "preview_recovery"
+    )
+    Write-Host "`nFairySandbox attestation and the real local static Preview lifecycle passed."
+}
+else {
+    Write-Host "`nWSL sandbox verification skipped; pass -RequireWslSandbox to require a real FairySandbox attestation and static Preview lifecycle gate."
+}
 
 Invoke-Step "Desktop: npm test -- --run" $DesktopRoot "npm" @("test", "--", "--run")
 Invoke-Step "Desktop: npm run build" $DesktopRoot "npm" @("run", "build")
@@ -117,7 +147,7 @@ if ($DockerAvailable) {
         "test"
     )
     try {
-        Invoke-Step "Docker: docker compose integration (PostgreSQL 18.4, S3, RLS, memory retrieval)" $Root "docker" (
+        Invoke-Step "Docker: docker compose integration (PostgreSQL 18.4, S3, RLS, memory retrieval, runtime Preview)" $Root "docker" (
             $ComposeArguments + @("run", "--build", "--rm", "integration")
         )
     }
@@ -130,10 +160,10 @@ if ($DockerAvailable) {
     }
 }
 elseif ($SkipDocker) {
-    Write-Host "`nDocker explicitly disabled with -SkipDocker: PostgreSQL/S3 integration tests skipped; memory retrieval integration was not executed."
+    Write-Host "`nDocker explicitly disabled with -SkipDocker: PostgreSQL/S3 integration tests skipped; memory retrieval and runtime Preview integration was not executed."
 }
 else {
-    Write-Host "`nDocker CLI or daemon unavailable: real PostgreSQL/S3 integration tests skipped; memory retrieval integration was not executed."
+    Write-Host "`nDocker CLI or daemon unavailable: real PostgreSQL/S3 integration tests skipped; memory retrieval and runtime Preview integration was not executed."
 }
 
 Write-Host "`nAll available Fairy V3 verification gates passed."

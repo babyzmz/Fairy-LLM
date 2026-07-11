@@ -6,7 +6,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import UUID
+from threading import RLock
+from uuid import UUID, uuid4
 
 from fairy_core.commanding import (
     CommandLedger,
@@ -111,8 +112,14 @@ class RuntimeApplication:
         self._registry = registry
         self._policy = policy
         self._scope_resolver = scope_resolver
+        self._instance_id = uuid4().hex
+        self._operation_lock = RLock()
 
     def start_preview(self, request: PreviewStartRequest) -> PreviewContext:
+        with self._operation_lock:
+            return self._start_preview(request)
+
+    def _start_preview(self, request: PreviewStartRequest) -> PreviewContext:
         intent_or_replay = self._prepare_start(request)
         if isinstance(intent_or_replay, PreviewContext):
             if (
@@ -120,6 +127,11 @@ class RuntimeApplication:
                 and intent_or_replay.runtime.status
                 in {RuntimeStatus.STARTING, RuntimeStatus.RUNNING}
             ):
+                if self._recovery_blocked_by_live_lease(
+                    intent_or_replay.runtime,
+                    "preview.start",
+                ):
+                    return intent_or_replay
                 self._recover_start(
                     intent_or_replay.runtime,
                     intent_or_replay.preview,
@@ -145,6 +157,10 @@ class RuntimeApplication:
         return self._finish_start(intent, result)
 
     def stop_preview(self, request: PreviewStopRequest) -> PreviewSession:
+        with self._operation_lock:
+            return self._stop_preview(request)
+
+    def _stop_preview(self, request: PreviewStopRequest) -> PreviewSession:
         with self._transaction() as (unit_of_work, _commands):
             pending = self._require_preview(unit_of_work.state, request.preview_id)
             pending_runtime = self._require_runtime(
@@ -155,6 +171,11 @@ class RuntimeApplication:
             pending.status is PreviewStatus.STOPPING
             and pending_runtime.status is RuntimeStatus.STOPPING
         ):
+            if self._recovery_blocked_by_live_lease(
+                pending_runtime,
+                "preview.stop",
+            ):
+                return pending
             return self._recover_stop(pending_runtime, pending)
         intent_or_replay = self._prepare_stop(request)
         if isinstance(intent_or_replay, PreviewSession):
@@ -235,6 +256,10 @@ class RuntimeApplication:
         )
 
     def recover_interrupted(self) -> tuple[PreviewSession, ...]:
+        with self._operation_lock:
+            return self._recover_interrupted()
+
+    def _recover_interrupted(self) -> tuple[PreviewSession, ...]:
         with self._transaction() as (unit_of_work, _commands):
             candidates = tuple(unit_of_work.state.recoverable_runtimes())
         recovered: list[PreviewSession] = []
@@ -253,8 +278,12 @@ class RuntimeApplication:
                     continue
 
             if runtime.status in {RuntimeStatus.STARTING, RuntimeStatus.RUNNING}:
+                if self._recovery_blocked_by_live_lease(runtime, "preview.start"):
+                    continue
                 recovered.append(self._recover_start(runtime, preview))
             elif runtime.status is RuntimeStatus.STOPPING:
+                if self._recovery_blocked_by_live_lease(runtime, "preview.stop"):
+                    continue
                 recovered.append(self._recover_stop(runtime, preview))
         return tuple(recovered)
 
@@ -548,6 +577,16 @@ class RuntimeApplication:
                 "preview.start",
                 RuntimeExecutorError("Runtime did not survive start"),
             )
+        if probe.executor_handle != handle:
+            return self._mark_recovery_interrupted(
+                runtime.id,
+                preview.id,
+                "preview.start",
+                RuntimeExecutorError(
+                    "Runtime probe rebound the executor handle",
+                    error_code="SCOPE_MISMATCH",
+                ),
+            )
         assert probe.port is not None and probe.url is not None
         command = self._recovery_command(runtime, "preview.start")
         return self._finish_recovered_start(runtime.id, preview.id, probe, command)
@@ -722,6 +761,31 @@ class RuntimeApplication:
             return commands.start(run.id, worker_id=expected_worker)
         return None
 
+    def _recovery_blocked_by_live_lease(
+        self,
+        runtime: RuntimeSession,
+        command_name: str,
+    ) -> bool:
+        with self._transaction() as (unit_of_work, _commands):
+            run = self._active_recovery_command(
+                unit_of_work.commands,
+                runtime,
+                command_name,
+            )
+        if (
+            run is None
+            or run.status is not CommandStatus.RUNNING
+            or run.lease_until is None
+            or run.lease_until <= datetime.now(UTC)
+        ):
+            return False
+        expected_owner = (
+            self._start_worker_id(runtime.id)
+            if command_name == "preview.start"
+            else self._stop_worker_id(runtime.id)
+        )
+        return run.lease_owner != expected_owner
+
     @staticmethod
     def _active_recovery_command(
         ledger: CommandLedger,
@@ -854,13 +918,11 @@ class RuntimeApplication:
                 project.active_preview_id = None
                 state.save_project(project)
 
-    @staticmethod
-    def _start_worker_id(runtime_id: UUID) -> str:
-        return f"runtime:{runtime_id}"
+    def _start_worker_id(self, runtime_id: UUID) -> str:
+        return f"runtime:{runtime_id}:{self._instance_id}"
 
-    @staticmethod
-    def _stop_worker_id(runtime_id: UUID) -> str:
-        return f"runtime:{runtime_id}:stop"
+    def _stop_worker_id(self, runtime_id: UUID) -> str:
+        return f"runtime:{runtime_id}:{self._instance_id}:stop"
 
     @contextmanager
     def _transaction(self) -> Iterator[tuple[CoreUnitOfWork, CommandBus]]:

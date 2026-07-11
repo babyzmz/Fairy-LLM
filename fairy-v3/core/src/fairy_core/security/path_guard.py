@@ -76,7 +76,9 @@ class PathGuard:
             raise ScopeViolationError("path contains NUL")
         if lowered.startswith(("\\\\", "\\\\?\\", "\\\\.\\")):
             raise ScopeViolationError("UNC and device paths are not allowed")
-        _drive, tail = ntpath.splitdrive(normalized)
+        drive, tail = ntpath.splitdrive(normalized)
+        if drive:
+            raise ScopeViolationError("drive-qualified paths are not allowed")
         if ":" in tail:
             raise ScopeViolationError("alternate data streams are not allowed")
 
