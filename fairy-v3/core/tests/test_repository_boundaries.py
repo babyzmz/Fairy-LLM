@@ -69,6 +69,11 @@ def test_boundary_gate_rejects_core_cloud_cycles_and_cloud_local_adapters(
 
 def test_state_store_protocol_and_sqlalchemy_adapter_expose_runtime_contract() -> None:
     required_methods = {
+        "list_projects",
+        "list_conversations",
+        "list_tasks",
+        "list_versions",
+        "list_approvals",
         "append_runtime",
         "save_runtime",
         "get_runtime",

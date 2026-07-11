@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 
 from fairy_core.contracts.models import (
     ApprovalDecisionInput,
+    ApprovalListInput,
+    ApprovalPageModel,
     CapabilityManifestModel,
     CapabilityRequest,
     ChangesetModel,
@@ -15,7 +17,10 @@ from fairy_core.contracts.models import (
     CheckpointModel,
     ContractModel,
     ConversationCreate,
+    ConversationIdInput,
+    ConversationListInput,
     ConversationModel,
+    ConversationPageModel,
     EventEnvelopeModel,
     HealthModel,
     MemoryClaimContextModel,
@@ -42,14 +47,20 @@ from fairy_core.contracts.models import (
     ProjectCreate,
     ProjectIdInput,
     ProjectImport,
+    ProjectListInput,
     ProjectModel,
+    ProjectPageModel,
     TaskContextModel,
     TaskCreate,
     TaskIdInput,
+    TaskListInput,
     TaskModel,
+    TaskPageModel,
     VersionAcceptInput,
     VersionIdInput,
+    VersionListInput,
     VersionModel,
+    VersionPageModel,
 )
 
 
@@ -80,6 +91,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             ApprovalDecisionInput,
             ChangesetModel,
         ),
+        "approvals.list": CoreMethod(
+            "approvals.list",
+            ApprovalListInput,
+            ApprovalPageModel,
+        ),
         "capabilities.get": CoreMethod(
             "capabilities.get",
             CapabilityRequest,
@@ -94,6 +110,16 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "conversations.create",
             ConversationCreate,
             ConversationModel,
+        ),
+        "conversations.get": CoreMethod(
+            "conversations.get",
+            ConversationIdInput,
+            ConversationModel,
+        ),
+        "conversations.list": CoreMethod(
+            "conversations.list",
+            ConversationListInput,
+            ConversationPageModel,
         ),
         "events.subscribe": CoreMethod(
             "events.subscribe",
@@ -167,8 +193,14 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             ProjectImport,
             ProjectContextModel,
         ),
+        "projects.list": CoreMethod(
+            "projects.list",
+            ProjectListInput,
+            ProjectPageModel,
+        ),
         "tasks.create": CoreMethod("tasks.create", TaskCreate, TaskContextModel),
         "tasks.get": CoreMethod("tasks.get", TaskIdInput, TaskModel),
+        "tasks.list": CoreMethod("tasks.list", TaskListInput, TaskPageModel),
         "tasks.review": CoreMethod("tasks.review", TaskIdInput, CheckpointModel),
         "versions.accept": CoreMethod(
             "versions.accept",
@@ -177,6 +209,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
         ),
         "versions.discard": CoreMethod("versions.discard", TaskIdInput, TaskModel),
         "versions.get": CoreMethod("versions.get", VersionIdInput, VersionModel),
+        "versions.list": CoreMethod(
+            "versions.list",
+            VersionListInput,
+            VersionPageModel,
+        ),
     }
 )
 

@@ -108,6 +108,41 @@ class ConversationCreate(ContractModel):
     workspace_type: WorkspaceType
 
 
+class CollectionPageInput(ContractModel):
+    limit: int = Field(default=50, ge=1, le=100)
+    cursor: str | None = Field(default=None, min_length=1, max_length=2_048)
+
+    @field_validator("cursor")
+    @classmethod
+    def require_nonblank_cursor(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("cursor must not be blank")
+        return value
+
+
+class ProjectListInput(CollectionPageInput):
+    pass
+
+
+class ConversationListInput(CollectionPageInput):
+    project_id: UUID | None = None
+
+
+class TaskListInput(CollectionPageInput):
+    project_id: UUID | None = None
+    conversation_id: UUID | None = None
+
+
+class VersionListInput(CollectionPageInput):
+    project_id: UUID | None = None
+    conversation_id: UUID | None = None
+    task_id: UUID | None = None
+
+
+class ApprovalListInput(VersionListInput):
+    pass
+
+
 class ApprovalDecisionInput(ContractModel):
     approval_id: UUID
     approved: bool
@@ -120,6 +155,10 @@ class TaskIdInput(ContractModel):
 
 class ProjectIdInput(ContractModel):
     project_id: UUID
+
+
+class ConversationIdInput(ContractModel):
+    conversation_id: UUID
 
 
 class VersionIdInput(ContractModel):
@@ -251,6 +290,31 @@ class ApprovalModel(ContractModel):
     decided_by: str | None
     created_at: datetime
     decided_at: datetime | None
+
+
+class ProjectPageModel(ContractModel):
+    items: tuple[ProjectModel, ...]
+    next_cursor: str | None
+
+
+class ConversationPageModel(ContractModel):
+    items: tuple[ConversationModel, ...]
+    next_cursor: str | None
+
+
+class TaskPageModel(ContractModel):
+    items: tuple[TaskModel, ...]
+    next_cursor: str | None
+
+
+class VersionPageModel(ContractModel):
+    items: tuple[VersionModel, ...]
+    next_cursor: str | None
+
+
+class ApprovalPageModel(ContractModel):
+    items: tuple[ApprovalModel, ...]
+    next_cursor: str | None
 
 
 class CheckpointModel(ContractModel):

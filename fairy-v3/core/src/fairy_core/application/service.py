@@ -13,9 +13,12 @@ from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.contracts.methods import CORE_METHODS, EventSubscribeInput
 from fairy_core.contracts.models import (
     ApprovalDecisionInput,
+    ApprovalListInput,
     CapabilityRequest,
     ChangesetProposal,
     ConversationCreate,
+    ConversationIdInput,
+    ConversationListInput,
     MemoryClaimGetInput,
     MemoryClaimPromoteInput,
     MemoryClaimQuery,
@@ -30,10 +33,13 @@ from fairy_core.contracts.models import (
     ProjectCreate,
     ProjectIdInput,
     ProjectImport,
+    ProjectListInput,
     TaskCreate,
     TaskIdInput,
+    TaskListInput,
     VersionAcceptInput,
     VersionIdInput,
+    VersionListInput,
 )
 from fairy_core.domain.errors import MemoryScopeViolationError
 from fairy_core.memory.application import MemoryApplication
@@ -78,9 +84,12 @@ class CoreService:
         self._finalizer = finalize(self, on_close) if on_close is not None else None
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
             "approvals.decide": self._decide_approval,
+            "approvals.list": self._list_approvals,
             "capabilities.get": self._get_capabilities,
             "changesets.propose": self._propose_changeset,
             "conversations.create": self._create_conversation,
+            "conversations.get": self._get_conversation,
+            "conversations.list": self._list_conversations,
             "events.subscribe": self._subscribe_events,
             "health": self._health,
             "memory.claims.get": self._get_memory_claim,
@@ -97,12 +106,15 @@ class CoreService:
             "projects.create": self._create_project,
             "projects.get": self._get_project,
             "projects.import": self._import_project,
+            "projects.list": self._list_projects,
             "tasks.create": self._create_task,
             "tasks.get": self._get_task,
+            "tasks.list": self._list_tasks,
             "tasks.review": self._review_task,
             "versions.accept": self._accept_version,
             "versions.discard": self._discard_version,
             "versions.get": self._get_version,
+            "versions.list": self._list_versions,
         }
         if self._handlers.keys() != CORE_METHODS.keys():
             raise RuntimeError("Core service handlers do not match the public method catalog")
@@ -234,6 +246,14 @@ class CoreService:
         validated = cast(ProjectIdInput, request)
         return self._application.get_project(validated.project_id)
 
+    def _list_projects(self, request: BaseModel) -> Any:
+        validated = cast(ProjectListInput, request)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.state.list_projects(
+                limit=validated.limit,
+                cursor=validated.cursor,
+            )
+
     def _create_conversation(self, request: BaseModel) -> Any:
         validated = cast(ConversationCreate, request)
         return self._application.create_conversation(
@@ -241,11 +261,38 @@ class CoreService:
             workspace_type=validated.workspace_type,
         )
 
+    def _get_conversation(self, request: BaseModel) -> Any:
+        validated = cast(ConversationIdInput, request)
+        with self._unit_of_work_factory() as unit_of_work:
+            conversation = unit_of_work.state.get_conversation(validated.conversation_id)
+        if conversation is None:
+            raise KeyError(f"conversation not found: {validated.conversation_id}")
+        return conversation
+
+    def _list_conversations(self, request: BaseModel) -> Any:
+        validated = cast(ConversationListInput, request)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.state.list_conversations(
+                project_id=validated.project_id,
+                limit=validated.limit,
+                cursor=validated.cursor,
+            )
+
     def _create_task(self, request: BaseModel) -> Any:
         return self._application.create_task(cast(TaskCreate, request))
 
     def _get_task(self, request: BaseModel) -> Any:
         return self._application.get_task(cast(TaskIdInput, request).task_id)
+
+    def _list_tasks(self, request: BaseModel) -> Any:
+        validated = cast(TaskListInput, request)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.state.list_tasks(
+                project_id=validated.project_id,
+                conversation_id=validated.conversation_id,
+                limit=validated.limit,
+                cursor=validated.cursor,
+            )
 
     def _review_task(self, request: BaseModel) -> Any:
         return self._application.review_task(cast(TaskIdInput, request).task_id)
@@ -263,6 +310,28 @@ class CoreService:
 
     def _get_version(self, request: BaseModel) -> Any:
         return self._application.get_version(cast(VersionIdInput, request).version_id)
+
+    def _list_versions(self, request: BaseModel) -> Any:
+        validated = cast(VersionListInput, request)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.state.list_versions(
+                project_id=validated.project_id,
+                conversation_id=validated.conversation_id,
+                task_id=validated.task_id,
+                limit=validated.limit,
+                cursor=validated.cursor,
+            )
+
+    def _list_approvals(self, request: BaseModel) -> Any:
+        validated = cast(ApprovalListInput, request)
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.state.list_approvals(
+                project_id=validated.project_id,
+                conversation_id=validated.conversation_id,
+                task_id=validated.task_id,
+                limit=validated.limit,
+                cursor=validated.cursor,
+            )
 
     def _accept_version(self, request: BaseModel) -> Any:
         validated = cast(VersionAcceptInput, request)

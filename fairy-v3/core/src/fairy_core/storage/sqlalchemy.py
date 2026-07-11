@@ -32,6 +32,7 @@ from fairy_core.domain.models import (
 )
 from fairy_core.persistence.session import SqlAlchemySession
 from fairy_core.persistence.tenant import normalize_tenant_id
+from fairy_core.storage.collection_store import CollectionStateStoreMixin
 from fairy_core.storage.execution_store import ExecutionStateStoreMixin
 from fairy_core.storage.schema import (
     approvals,
@@ -54,7 +55,7 @@ def _datetime(value: datetime | str) -> datetime:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
-class SqlAlchemyStateStore(ExecutionStateStoreMixin):
+class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
     """Tenant-scoped Core state persisted through a caller-owned SQLAlchemy engine."""
 
     def __init__(
@@ -134,19 +135,7 @@ class SqlAlchemyStateStore(ExecutionStateStoreMixin):
 
     def get_conversation(self, conversation_id: UUID) -> Conversation | None:
         row = self._get_by_id(conversations, conversation_id)
-        if row is None:
-            return None
-        return Conversation(
-            id=UUID(row["id"]),
-            project_id=_uuid(row["project_id"]),
-            workspace_type=WorkspaceType(row["workspace_type"]),
-            base_version_id=_uuid(row["base_version_id"]),
-            active_draft_version_id=_uuid(row["active_draft_version_id"]),
-            active_task_id=_uuid(row["active_task_id"]),
-            active_preview_id=_uuid(row["active_preview_id"]),
-            created_at=_datetime(row["created_at"]),
-            updated_at=_datetime(row["updated_at"]),
-        )
+        return self._conversation_from_row(row) if row is not None else None
 
     def save_version(self, version: Version) -> None:
         self._upsert(
@@ -169,18 +158,7 @@ class SqlAlchemyStateStore(ExecutionStateStoreMixin):
 
     def get_version(self, version_id: UUID) -> Version | None:
         row = self._get_by_id(versions, version_id)
-        if row is None:
-            return None
-        return Version(
-            id=UUID(row["id"]),
-            project_id=UUID(row["project_id"]),
-            source_conversation_id=_uuid(row["source_conversation_id"]),
-            source_task_id=_uuid(row["source_task_id"]),
-            parent_version_id=_uuid(row["parent_version_id"]),
-            project_root=Path(row["project_root"]),
-            visibility=VersionVisibility(row["visibility"]),
-            created_at=_datetime(row["created_at"]),
-        )
+        return self._version_from_row(row) if row is not None else None
 
     def save_task(self, task: Task, *, idempotency_key: str | None = None) -> None:
         if idempotency_key is None:
@@ -493,6 +471,33 @@ class SqlAlchemyStateStore(ExecutionStateStoreMixin):
             revision=int(row["revision"]),
             created_at=_datetime(row["created_at"]),
             updated_at=_datetime(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _conversation_from_row(row: Mapping[str, Any]) -> Conversation:
+        return Conversation(
+            id=UUID(row["id"]),
+            project_id=_uuid(row["project_id"]),
+            workspace_type=WorkspaceType(row["workspace_type"]),
+            base_version_id=_uuid(row["base_version_id"]),
+            active_draft_version_id=_uuid(row["active_draft_version_id"]),
+            active_task_id=_uuid(row["active_task_id"]),
+            active_preview_id=_uuid(row["active_preview_id"]),
+            created_at=_datetime(row["created_at"]),
+            updated_at=_datetime(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _version_from_row(row: Mapping[str, Any]) -> Version:
+        return Version(
+            id=UUID(row["id"]),
+            project_id=UUID(row["project_id"]),
+            source_conversation_id=_uuid(row["source_conversation_id"]),
+            source_task_id=_uuid(row["source_task_id"]),
+            parent_version_id=_uuid(row["parent_version_id"]),
+            project_root=Path(row["project_root"]),
+            visibility=VersionVisibility(row["visibility"]),
+            created_at=_datetime(row["created_at"]),
         )
 
     @staticmethod

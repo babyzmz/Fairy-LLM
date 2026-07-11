@@ -12,6 +12,7 @@ from fairy_core.domain.execution import (
     RuntimeSession,
 )
 from fairy_core.domain.models import Conversation, Project, Task, Version
+from fairy_core.storage.pagination import StatePage
 
 
 class StateStore(Protocol):
@@ -19,17 +20,46 @@ class StateStore(Protocol):
 
     def get_project(self, project_id: UUID) -> Project | None: ...
 
+    def list_projects(self, *, limit: int, cursor: str | None) -> StatePage[Project]: ...
+
     def save_conversation(self, conversation: Conversation) -> None: ...
 
     def get_conversation(self, conversation_id: UUID) -> Conversation | None: ...
+
+    def list_conversations(
+        self,
+        *,
+        project_id: UUID | None,
+        limit: int,
+        cursor: str | None,
+    ) -> StatePage[Conversation]: ...
 
     def save_version(self, version: Version) -> None: ...
 
     def get_version(self, version_id: UUID) -> Version | None: ...
 
+    def list_versions(
+        self,
+        *,
+        project_id: UUID | None,
+        conversation_id: UUID | None,
+        task_id: UUID | None,
+        limit: int,
+        cursor: str | None,
+    ) -> StatePage[Version]: ...
+
     def save_task(self, task: Task, *, idempotency_key: str | None = None) -> None: ...
 
     def get_task(self, task_id: UUID) -> Task | None: ...
+
+    def list_tasks(
+        self,
+        *,
+        project_id: UUID | None,
+        conversation_id: UUID | None,
+        limit: int,
+        cursor: str | None,
+    ) -> StatePage[Task]: ...
 
     def find_task_by_idempotency_key(self, idempotency_key: str) -> Task | None: ...
 
@@ -44,6 +74,16 @@ class StateStore(Protocol):
     def save_approval(self, approval: Approval) -> None: ...
 
     def get_approval(self, approval_id: UUID) -> Approval | None: ...
+
+    def list_approvals(
+        self,
+        *,
+        project_id: UUID | None,
+        conversation_id: UUID | None,
+        task_id: UUID | None,
+        limit: int,
+        cursor: str | None,
+    ) -> StatePage[Approval]: ...
 
     def find_approval_by_changeset_id(self, changeset_id: UUID) -> Approval | None: ...
 

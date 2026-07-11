@@ -279,9 +279,12 @@ def test_public_method_manifest_is_stable() -> None:
     assert JsonRpcDispatcher.method_names() == frozenset(
         {
             "approvals.decide",
+            "approvals.list",
             "capabilities.get",
             "changesets.propose",
             "conversations.create",
+            "conversations.get",
+            "conversations.list",
             "events.subscribe",
             "health",
             "memory.claims.get",
@@ -298,11 +301,14 @@ def test_public_method_manifest_is_stable() -> None:
             "projects.create",
             "projects.get",
             "projects.import",
+            "projects.list",
             "tasks.create",
             "tasks.get",
+            "tasks.list",
             "tasks.review",
             "versions.accept",
             "versions.discard",
             "versions.get",
+            "versions.list",
         }
     )

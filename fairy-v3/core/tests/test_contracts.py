@@ -16,8 +16,10 @@ from fairy_core.contracts.models import (
     MemorySnapshotItemModel,
     MemorySnapshotModel,
     PermissionProfileModel,
+    ProjectListInput,
     ScopeContractModel,
     TaskCreate,
+    TaskListInput,
     TaskModel,
 )
 from fairy_core.domain.ids import new_id
@@ -104,6 +106,28 @@ def test_permission_profile_contract_matches_core_profiles() -> None:
         PermissionProfileModel.STANDARD,
         PermissionProfileModel.AUTONOMOUS,
     }
+
+
+def test_collection_inputs_bound_limits_and_owning_scope() -> None:
+    project_id = new_id()
+    conversation_id = new_id()
+
+    assert ProjectListInput().limit == 50
+    assert TaskListInput(
+        project_id=project_id,
+        conversation_id=conversation_id,
+        limit=100,
+    ).model_dump(exclude_none=True) == {
+        "project_id": project_id,
+        "conversation_id": conversation_id,
+        "limit": 100,
+    }
+    with pytest.raises(ValidationError):
+        ProjectListInput(limit=0)
+    with pytest.raises(ValidationError):
+        ProjectListInput(limit=101)
+    with pytest.raises(ValidationError):
+        ProjectListInput(cursor="")
 
 
 def test_memory_snapshot_contract_rejects_tampered_hashes_and_non_finite_scores() -> None:
