@@ -1,6 +1,10 @@
 import { Paperclip, Send, Square, X } from "lucide-react";
 import { useRef, useState } from "react";
 
+import {
+  CaptureControl,
+  type PendingImageAttachment,
+} from "../perception/CaptureControl";
 import { VoiceRecordControl } from "../voice/VoiceController";
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -9,27 +13,43 @@ const ACCEPTED_DOCUMENTS = ".txt,.md,.markdown,.html,.htm,.pdf,.docx";
 interface ComposerProps {
   disabled: boolean;
   isBusy: boolean;
-  onSubmit(value: string, files: File[]): Promise<void>;
+  visionAvailable: boolean;
+  onSubmit(
+    value: string,
+    files: File[],
+    images: PendingImageAttachment[],
+  ): Promise<void>;
   onStop(): Promise<void>;
 }
 
-export function Composer({ disabled, isBusy, onSubmit, onStop }: ComposerProps) {
+export function Composer({
+  disabled,
+  isBusy,
+  visionAvailable,
+  onSubmit,
+  onStop,
+}: ComposerProps) {
   const [value, setValue] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [capture, setCapture] = useState<PendingImageAttachment | null>(null);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const effectiveBusy = isBusy || isSubmitting;
-  const canSubmit = !disabled && !effectiveBusy && (value.trim().length > 0 || files.length > 0);
+  const canSubmit =
+    !disabled &&
+    !effectiveBusy &&
+    (value.trim().length > 0 || files.length > 0 || capture !== null);
 
   const submit = async () => {
     if (!canSubmit) return;
     setIsSubmitting(true);
     try {
-      await onSubmit(value.trim(), files);
+      await onSubmit(value.trim(), files, capture === null ? [] : [capture]);
       setValue("");
       setFiles([]);
+      setCapture(null);
       setAttachmentError(null);
       inputRef.current?.focus();
     } finally {
@@ -98,6 +118,12 @@ export function Composer({ disabled, isBusy, onSubmit, onStop }: ComposerProps) 
         >
           <Paperclip size={17} />
         </button>
+        <CaptureControl
+          disabled={disabled || effectiveBusy}
+          visionAvailable={visionAvailable}
+          value={capture}
+          onChange={setCapture}
+        />
         <label className="composer-field chat-composer-field">
           <span className="sr-only">Message Fairy</span>
           <textarea

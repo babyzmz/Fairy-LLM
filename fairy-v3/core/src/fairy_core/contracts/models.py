@@ -57,6 +57,7 @@ from fairy_core.memory.retrieval_models import (
     MemorySourceKind,
     ProjectionState,
 )
+from fairy_core.perception import ImagePersistence
 from fairy_core.providers.models import (
     ProviderCapability,
     ProviderHealthStatus,
@@ -242,10 +243,25 @@ class AssistantTurnIdInput(ContractModel):
     turn_id: UUID
 
 
+class ImageAttachmentInput(ContractModel):
+    media_type: Literal["image/png"]
+    png_base64: str = Field(min_length=1, max_length=28_000_000)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    width: int = Field(ge=1, le=16_384)
+    height: int = Field(ge=1, le=16_384)
+    source_label: str = Field(min_length=1, max_length=255)
+    captured_at_ms: int = Field(ge=0, le=100_000_000_000_000)
+    persistence: ImagePersistence
+
+
 class AssistantTurnCreateInput(ContractModel):
     task_id: UUID
     profile_id: str = Field(min_length=1, max_length=255)
     idempotency_key: str = Field(min_length=1, max_length=512)
+    image_attachments: tuple[ImageAttachmentInput, ...] = Field(
+        default_factory=tuple,
+        max_length=4,
+    )
 
 
 class AssistantTurnCancelInput(AssistantTurnIdInput):

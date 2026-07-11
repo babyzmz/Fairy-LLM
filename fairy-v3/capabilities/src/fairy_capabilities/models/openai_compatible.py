@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Iterator, Mapping
 from typing import Any
@@ -212,7 +213,23 @@ class OpenAICompatibleProvider:
     def _request_payload(self, request: ModelRequest) -> dict[str, Any]:
         messages: list[dict[str, Any]] = []
         for message in request.messages:
-            value = {"role": _openai_role(message.role), "content": message.content}
+            content: str | list[dict[str, Any]] = message.content
+            if message.images:
+                content = [{"type": "text", "text": message.content}]
+                content.extend(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": (
+                                f"data:{image.media_type};base64,"
+                                f"{base64.b64encode(image.data).decode('ascii')}"
+                            ),
+                            "detail": "auto",
+                        },
+                    }
+                    for image in message.images
+                )
+            value = {"role": _openai_role(message.role), "content": content}
             if message.name is not None:
                 value["name"] = message.name
             if message.tool_call_id is not None:

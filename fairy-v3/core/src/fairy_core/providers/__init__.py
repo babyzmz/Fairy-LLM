@@ -1,6 +1,7 @@
 from fairy_core.providers.models import (
     ModelDelta,
     ModelDeltaKind,
+    ModelImage,
     ModelMessage,
     ModelRequest,
     ModelRole,
@@ -28,6 +29,7 @@ __all__ = [
     "CancellationToken",
     "ModelDelta",
     "ModelDeltaKind",
+    "ModelImage",
     "ModelMessage",
     "ModelProvider",
     "ModelRequest",

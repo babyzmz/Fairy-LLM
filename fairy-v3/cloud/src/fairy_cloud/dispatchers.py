@@ -15,6 +15,7 @@ from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.service import CoreService
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
+from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.runtime.unavailable import UnavailableRuntimeExecutor
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
@@ -72,6 +73,7 @@ def build_postgres_core_service(
             registry=registry,
             provider_registry=providers,
             voice_registry=voice,
+            image_attachment_store=ImageAttachmentStore(workspace_root / "perception"),
             tool_executor=capabilities.executor,
             research_fetch_port=capabilities.web.fetch_port,
             document_parser=(CompositeDocumentParser() if object_store is not None else None),

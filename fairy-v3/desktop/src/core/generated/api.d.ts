@@ -1092,6 +1092,8 @@ export interface components {
         AssistantTurnCreateInput: {
             /** Idempotency Key */
             idempotency_key: string;
+            /** Image Attachments */
+            image_attachments?: components["schemas"]["ImageAttachmentInput"][];
             /** Profile Id */
             profile_id: string;
             /**
@@ -1586,6 +1588,32 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** ImageAttachmentInput */
+        ImageAttachmentInput: {
+            /** Captured At Ms */
+            captured_at_ms: number;
+            /** Content Hash */
+            content_hash: string;
+            /** Height */
+            height: number;
+            /**
+             * Media Type
+             * @constant
+             */
+            media_type: "image/png";
+            persistence: components["schemas"]["ImagePersistence"];
+            /** Png Base64 */
+            png_base64: string;
+            /** Source Label */
+            source_label: string;
+            /** Width */
+            width: number;
+        };
+        /**
+         * ImagePersistence
+         * @enum {string}
+         */
+        ImagePersistence: "ephemeral" | "conversation";
         /** ManagedDocumentModel */
         ManagedDocumentModel: {
             /** Byte Length */

@@ -25,7 +25,7 @@ describe("ChatWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() =>
-      expect(props.onSend).toHaveBeenCalledWith("What is the weather today?", []),
+      expect(props.onSend).toHaveBeenCalledWith("What is the weather today?", [], []),
     );
     expect(screen.getByLabelText("Message Fairy")).toHaveFocus();
   });

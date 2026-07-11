@@ -6,6 +6,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID
 
 
 class ProviderKind(StrEnum):
@@ -156,12 +157,61 @@ class ModelToolCall:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelImage:
+    task_id: UUID
+    media_type: str
+    data: memoryview
+    content_hash: str
+    width: int
+    height: int
+    label: str
+    untrusted_data: bool
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        task_id: UUID,
+        media_type: str,
+        data: memoryview,
+        content_hash: str,
+        width: int,
+        height: int,
+        label: str,
+        untrusted_data: bool,
+    ) -> ModelImage:
+        if media_type != "image/png":
+            raise ValueError("model image media type must be image/png")
+        if data.nbytes < 1 or data.nbytes > 20 * 1024 * 1024:
+            raise ValueError("model image data exceeds the byte limit")
+        if len(content_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in content_hash
+        ):
+            raise ValueError("model image hash is invalid")
+        if width < 1 or height < 1 or width * height > 33_177_600:
+            raise ValueError("model image dimensions exceed the pixel limit")
+        if label != "untrusted_screen_content" or untrusted_data is not True:
+            raise ValueError("model images must be labelled as untrusted screen content")
+        return cls(
+            task_id=task_id,
+            media_type=media_type,
+            data=data,
+            content_hash=content_hash,
+            width=width,
+            height=height,
+            label=label,
+            untrusted_data=True,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ModelMessage:
     role: ModelRole
     content: str
     name: str | None = None
     tool_call_id: str | None = None
     tool_calls: tuple[ModelToolCall, ...] = ()
+    images: tuple[ModelImage, ...] = ()
 
     @classmethod
     def create(
@@ -172,15 +222,24 @@ class ModelMessage:
         name: str | None = None,
         tool_call_id: str | None = None,
         tool_calls: tuple[ModelToolCall, ...] = (),
+        images: tuple[ModelImage, ...] = (),
     ) -> ModelMessage:
         normalized = content.strip()
         normalized_calls = tuple(tool_calls)
-        if not normalized and not (ModelRole(role) is ModelRole.ASSISTANT and normalized_calls):
+        normalized_images = tuple(images)
+        if not normalized and not (
+            (ModelRole(role) is ModelRole.ASSISTANT and normalized_calls)
+            or (ModelRole(role) is ModelRole.USER and normalized_images)
+        ):
             raise ValueError("message content is required")
         if len(normalized) > 1_000_000:
             raise ValueError("message content is too large")
         if normalized_calls and ModelRole(role) is not ModelRole.ASSISTANT:
             raise ValueError("only assistant messages can contain tool_calls")
+        if normalized_images and ModelRole(role) is not ModelRole.USER:
+            raise ValueError("only user messages can contain images")
+        if len(normalized_images) > 4:
+            raise ValueError("a model message can contain at most four images")
         normalized_tool_call_id = _optional_text(
             tool_call_id,
             "tool_call_id",
@@ -194,6 +253,7 @@ class ModelMessage:
             name=_optional_text(name, "name", maximum=128),
             tool_call_id=normalized_tool_call_id,
             tool_calls=normalized_calls,
+            images=normalized_images,
         )
 
 
@@ -250,6 +310,10 @@ class ModelRequest:
             raise ValueError("model request capabilities must include text")
         if tools and ProviderCapability.TOOLS not in capabilities:
             raise ValueError("model request with tools requires tools capability")
+        if any(message.images for message in messages) and (
+            ProviderCapability.VISION not in capabilities
+        ):
+            raise ValueError("model request with images requires vision capability")
         if isinstance(max_output_tokens, bool) or not 1 <= max_output_tokens <= 131_072:
             raise ValueError("max_output_tokens is outside the supported range")
         return cls(

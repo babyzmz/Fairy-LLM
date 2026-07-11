@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from collections.abc import Callable, Mapping
 from threading import RLock
 from typing import Any, cast
@@ -77,11 +79,16 @@ from fairy_core.contracts.models import (
 )
 from fairy_core.documents.application import DocumentApplication, DocumentToolExecutor
 from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
-from fairy_core.domain.errors import InvalidTransitionError, MemoryScopeViolationError
+from fairy_core.domain.errors import (
+    CapabilityUnavailableError,
+    InvalidTransitionError,
+    MemoryScopeViolationError,
+)
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
+from fairy_core.perception import ImageAttachment, ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
-from fairy_core.providers import CancellationToken, ProviderRegistry
+from fairy_core.providers import CancellationToken, ProviderCapability, ProviderRegistry
 from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
 from fairy_core.research.ports import FetchPort
 from fairy_core.runtime.models import RuntimeExecutorError
@@ -113,6 +120,7 @@ class CoreService:
         registry: ToolRegistry,
         provider_registry: ProviderRegistry | None = None,
         voice_registry: VoiceRegistry | None = None,
+        image_attachment_store: ImageAttachmentStore | None = None,
         tool_executor: ToolExecutor | None = None,
         research_fetch_port: FetchPort | None = None,
         document_parser: DocumentParser | None = None,
@@ -129,6 +137,7 @@ class CoreService:
             unit_of_work_factory=unit_of_work_factory,
             registry=self._voice_registry,
         )
+        self._image_attachments = image_attachment_store or ImageAttachmentStore()
         self._turn_cancellations: dict[UUID, CancellationToken] = {}
         self._turn_cancellation_lock = RLock()
         self._runtime_application = runtime_application
@@ -175,6 +184,7 @@ class CoreService:
             scope_resolver=application.scope_for_task,
             registry=registry,
             providers=self._provider_registry,
+            image_attachments=self._image_attachments,
             tool_executor=effective_tool_executor,
         )
         self._finalizer = finalize(self, on_close) if on_close is not None else None
@@ -243,6 +253,7 @@ class CoreService:
             for cancellation in self._turn_cancellations.values():
                 cancellation.cancel()
             self._turn_cancellations.clear()
+        self._image_attachments.close()
         self._provider_registry.close()
         self._voice_registry.close()
         if self._tool_executor is not None:
@@ -316,11 +327,56 @@ class CoreService:
 
     def _create_assistant_turn(self, request: BaseModel) -> Any:
         validated = cast(AssistantTurnCreateInput, request)
-        return self._assistant_ledger.create_turn(
-            task_id=validated.task_id,
-            profile_id=validated.profile_id,
-            idempotency_key=validated.idempotency_key,
-        )
+        attachments = self._build_image_attachments(validated)
+        try:
+            if attachments:
+                profile = self._provider_registry.profile(validated.profile_id)
+                if ProviderCapability.VISION not in profile.capabilities:
+                    raise CapabilityUnavailableError(
+                        f"provider profile {profile.id!r} lacks vision capability"
+                    )
+                self._image_attachments.prepare(attachments)
+            turn = self._assistant_ledger.create_turn(
+                task_id=validated.task_id,
+                profile_id=validated.profile_id,
+                idempotency_key=validated.idempotency_key,
+            )
+            self._image_attachments.register(turn.id, attachments)
+            return turn
+        except BaseException:
+            for attachment in attachments:
+                attachment.zero()
+            raise
+
+    @staticmethod
+    def _build_image_attachments(
+        request: AssistantTurnCreateInput,
+    ) -> tuple[ImageAttachment, ...]:
+        attachments: list[ImageAttachment] = []
+        try:
+            for value in request.image_attachments:
+                try:
+                    png = base64.b64decode(value.png_base64, validate=True)
+                except (binascii.Error, ValueError) as error:
+                    raise ValueError("screen attachment must use canonical base64") from error
+                attachments.append(
+                    ImageAttachment.create(
+                        task_id=request.task_id,
+                        media_type=value.media_type,
+                        png=png,
+                        content_hash=value.content_hash,
+                        width=value.width,
+                        height=value.height,
+                        source_label=value.source_label,
+                        captured_at_ms=value.captured_at_ms,
+                        persistence=value.persistence,
+                    )
+                )
+            return tuple(attachments)
+        except BaseException:
+            for attachment in attachments:
+                attachment.zero()
+            raise
 
     def _get_assistant_turn(self, request: BaseModel) -> Any:
         return self._assistant_ledger.get_turn(cast(AssistantTurnIdInput, request).turn_id)
@@ -333,16 +389,19 @@ class CoreService:
             if cancellation is not None:
                 cancellation.cancel()
         try:
-            return self._assistant_ledger.cancel_turn(
+            cancelled = self._assistant_ledger.cancel_turn(
                 turn_id=validated.turn_id,
                 expected_cancellation_revision=validated.expected_cancellation_revision,
             )
+            self._image_attachments.release(validated.turn_id)
+            return cancelled
         except InvalidTransitionError:
             if not was_running:
                 raise
             persisted = self._assistant_ledger.get_turn(validated.turn_id)
             if persisted.status is not AssistantTurnStatus.CANCELLED:
                 raise
+            self._image_attachments.release(validated.turn_id)
             return persisted
 
     def _run_assistant_turn(self, request: BaseModel) -> Any:

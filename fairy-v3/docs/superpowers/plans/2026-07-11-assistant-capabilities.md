@@ -362,13 +362,25 @@ not discoverable on this machine.
 - Tauri `capture_surface(CaptureRequest) -> CaptureResult` is authorized only for `main` and returns bounded PNG data, dimensions, source label, and timestamp.
 - Core `ImageAttachment` binds Task ID, media hash, dimensions, explicit persistence choice, and untrusted-data label.
 
-- [ ] Write failing Rust tests for window authorization, invalid display/window IDs, pixel/byte bounds, and denial from Presence/Guide.
-- [ ] Implement user-triggered display/window enumeration and capture with no pointer, keyboard, click, or process API.
-- [ ] Write failing Core tests for vision-capability negotiation, Task/Scope binding, ephemeral image cleanup, attachment hash mismatch, and screen-text injection labelling.
-- [ ] Implement multimodal request attachment assembly and zero ephemeral buffers after provider completion/cancellation.
-- [ ] Add capture controls with a visible source preview, explicit attach/discard action, and no background watcher.
-- [ ] Run Cargo fmt/clippy/tests, Core tests, Vitest, Playwright, and Windows build.
-- [ ] Commit with `feat(v3): add user-triggered screen perception`.
+- [x] Write failing Rust tests for window authorization, invalid display/window IDs, pixel/byte bounds, and denial from Presence/Guide.
+- [x] Implement user-triggered display/window enumeration and capture with no pointer, keyboard, click, or process API.
+- [x] Write failing Core tests for vision-capability negotiation, Task/Scope binding, ephemeral image cleanup, attachment hash mismatch, and screen-text injection labelling.
+- [x] Implement multimodal request attachment assembly and zero ephemeral buffers after provider completion/cancellation.
+- [x] Add capture controls with a visible source preview, explicit attach/discard action, and no background watcher.
+- [x] Run Cargo fmt/clippy/tests, Core tests, Vitest, Playwright, and Windows build.
+- [x] Commit with `feat(v3): add user-triggered screen perception`.
+
+Task 37 verification: the complete available gate passed with 414 Core tests,
+100 capability-adapter tests, 55 cloud unit tests, the full Rust workspace, 49
+Vitest tests, and 10 Playwright workflows. Main-window-only Tauri commands use
+bounded display/window IDs and `xcap` 0.9.6; structural tests reject process,
+input-control, and recording APIs. Core revalidates PNG structure, dimensions,
+hash, Task identity, provider Vision support, and the untrusted-data label, then
+zeros owned buffers after completion or cancellation. The 640x700 capture-preview
+review found no clipping or control overlap after the responsive offset fix.
+Generated contracts remained stable and the desktop entry bundle was 114.92 KB
+gzip. Docker/PostgreSQL, S3, and WSL verification remained explicitly skipped
+because those runtimes were not discoverable on this machine.
 
 ### Task 38: Presence, Pet, and Guide Windows
 

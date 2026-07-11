@@ -23,6 +23,7 @@ class ScriptedProvider:
         rounds: list[tuple[ModelDelta, ...]],
         *,
         cancel_after_first_delta: bool = False,
+        capabilities: frozenset[ProviderCapability] | None = None,
     ) -> None:
         self.profile = ProviderProfile.create(
             profile_id="scripted",
@@ -30,7 +31,8 @@ class ScriptedProvider:
             kind=ProviderKind.OPENAI_COMPATIBLE,
             base_url="https://models.example.test/v1",
             model_id="scripted-model",
-            capabilities=frozenset({ProviderCapability.TEXT, ProviderCapability.TOOLS}),
+            capabilities=capabilities
+            or frozenset({ProviderCapability.TEXT, ProviderCapability.TOOLS}),
             credential_ref=None,
             fallback_profile_id=None,
             timeout_seconds=30,
@@ -39,6 +41,7 @@ class ScriptedProvider:
         self.credential_configured = True
         self.rounds = rounds
         self.requests: list[ModelRequest] = []
+        self.observed_image_bytes: list[bytes] = []
         self.cancel_after_first_delta = cancel_after_first_delta
 
     def health(self) -> ProviderHealth:
@@ -55,6 +58,9 @@ class ScriptedProvider:
         cancellation: CancellationToken,
     ) -> Iterator[ModelDelta]:
         self.requests.append(request)
+        self.observed_image_bytes.extend(
+            bytes(image.data) for message in request.messages for image in message.images
+        )
         scripted = self.rounds.pop(0)
         for index, delta in enumerate(scripted):
             yield delta

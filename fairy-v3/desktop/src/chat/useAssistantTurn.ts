@@ -6,6 +6,7 @@ import type {
   EventEnvelope,
   TaskCreateInput,
 } from "../core/client";
+import type { PendingImageAttachment } from "../perception/CaptureControl";
 
 export interface AssistantTurnClient {
   tasks: Pick<CoreClient["tasks"], "create">;
@@ -30,7 +31,11 @@ interface AssistantTurnState {
   isBusy: boolean;
   error: string | null;
   streamedText: string;
-  send(value: string, files: File[]): Promise<void>;
+  send(
+    value: string,
+    files: File[],
+    images?: PendingImageAttachment[],
+  ): Promise<void>;
   cancel(): Promise<void>;
   retry(): Promise<void>;
   reset(): void;
@@ -67,7 +72,11 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
   }, [options]);
 
   const send = useCallback(
-    async (value: string, files: File[]) => {
+    async (
+      value: string,
+      files: File[],
+      images: PendingImageAttachment[] = [],
+    ) => {
       if (busyRef.current) throw new Error("An assistant turn is already running");
       const conversationId = required(options.conversationId, "Conversation is unavailable");
       const profileId = required(options.profileId, "Model provider is unavailable");
@@ -100,6 +109,16 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
           task_id: taskContext.task.id,
           profile_id: profileId,
           idempotency_key: idempotencyKey("assistant"),
+          image_attachments: images.map((image) => ({
+            media_type: image.media_type,
+            png_base64: image.png_base64,
+            content_hash: image.content_hash,
+            width: image.width,
+            height: image.height,
+            source_label: image.source_label,
+            captured_at_ms: image.captured_at_ms,
+            persistence: image.persistence,
+          })),
         });
         if (operation !== operationRef.current) return;
         setTurn(created);

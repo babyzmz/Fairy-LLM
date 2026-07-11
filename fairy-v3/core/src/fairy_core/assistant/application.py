@@ -30,6 +30,7 @@ from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ApprovalPolicy, ToolRegistry
 from fairy_core.commanding.types import PermissionProfile
 from fairy_core.domain.models import TaskStatus
+from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.providers import (
     CancellationToken,
@@ -89,6 +90,7 @@ class AssistantApplication:
         scope_resolver,
         registry: ToolRegistry,
         providers: ProviderRegistry,
+        image_attachments: ImageAttachmentStore,
         tool_executor: ToolExecutor | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
@@ -96,11 +98,13 @@ class AssistantApplication:
         self._registry = registry
         self._policy = PolicyEngine(registry)
         self._providers = providers
+        self._image_attachments = image_attachments
         self._tool_executor = tool_executor or UnavailableToolExecutor()
         self._context = AssistantContextBuilder(
             unit_of_work_factory=unit_of_work_factory,
             registry=registry,
             scope_resolver=scope_resolver,
+            image_attachments=image_attachments,
         )
 
     def run_turn(
@@ -114,6 +118,7 @@ class AssistantApplication:
             AssistantTurnStatus.CANCELLED,
             AssistantTurnStatus.FAILED,
         }:
+            self._image_attachments.release(turn_id)
             return turn
         all_text: list[str] = []
         usage: dict[str, int] = {}
@@ -286,6 +291,20 @@ class AssistantApplication:
                 error_code="ASSISTANT_INTERNAL_ERROR",
             )
             raise
+        finally:
+            self._release_terminal_images(turn_id)
+
+    def _release_terminal_images(self, turn_id: UUID) -> None:
+        try:
+            turn = self._get_turn(turn_id)
+        except KeyError:
+            return
+        if turn.status in {
+            AssistantTurnStatus.COMPLETED,
+            AssistantTurnStatus.CANCELLED,
+            AssistantTurnStatus.FAILED,
+        }:
+            self._image_attachments.release(turn_id)
 
     def _start_model_round(
         self,

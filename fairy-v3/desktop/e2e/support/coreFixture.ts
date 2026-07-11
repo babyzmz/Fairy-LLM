@@ -5,6 +5,11 @@ export const PREVIEW_URL = "http://127.0.0.1:43125/";
 const VOICE_WAV = pcmWav();
 const VOICE_WAV_BASE64 = Buffer.from(VOICE_WAV).toString("base64");
 const VOICE_WAV_HASH = createHash("sha256").update(VOICE_WAV).digest("hex");
+const CAPTURE_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const CAPTURE_PNG_HASH = createHash("sha256")
+  .update(Buffer.from(CAPTURE_PNG_BASE64, "base64"))
+  .digest("hex");
 
 export async function installWorkspaceFixture(page: Page) {
   await installCoreFixture(page);
@@ -18,7 +23,13 @@ export async function installWorkspaceFixture(page: Page) {
 
 async function installCoreFixture(page: Page) {
   await page.addInitScript(
-    ({ previewUrl, voiceWavBase64, voiceWavHash }) => {
+    ({
+      previewUrl,
+      voiceWavBase64,
+      voiceWavHash,
+      capturePngBase64,
+      capturePngHash,
+    }) => {
       const fixtureWindow = window as unknown as {
         __FAIRY_FIXTURE_CALLS__: Array<{
           method: string;
@@ -285,7 +296,7 @@ async function installCoreFixture(page: Page) {
               kind: "openai_compatible",
               base_url: "https://openrouter.ai/api/v1",
               model_id: "openrouter/free",
-              capabilities: ["text", "tools", "stt", "tts"],
+              capabilities: ["text", "tools", "vision", "stt", "tts"],
               credential_required: true,
               credential_configured: true,
               enabled: true,
@@ -327,7 +338,54 @@ async function installCoreFixture(page: Page) {
         };
       };
       tauriWindow.__TAURI_INTERNALS__ = {
-        async invoke(_command, args) {
+        async invoke(command, args) {
+          if (command === "list_capture_surfaces") {
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: "capture.list",
+              params: {},
+            });
+            return [
+              {
+                kind: "display",
+                source_id: "1",
+                label: "Primary display",
+                width: 1920,
+                height: 1080,
+                is_primary: true,
+              },
+              {
+                kind: "window",
+                source_id: "2",
+                label: "Game window",
+                width: 1,
+                height: 1,
+                is_primary: false,
+              },
+            ];
+          }
+          if (command === "capture_surface") {
+            const captureRequest = args.request as Record<string, unknown>;
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: "capture.surface",
+              params: captureRequest,
+            });
+            return {
+              kind: captureRequest.kind,
+              source_id: captureRequest.source_id,
+              source_label:
+                captureRequest.kind === "window" ? "Game window" : "Primary display",
+              media_type: "image/png",
+              png_base64: capturePngBase64,
+              width: captureRequest.kind === "window" ? 1 : 1920,
+              height: captureRequest.kind === "window" ? 1 : 1080,
+              byte_length: 68,
+              content_hash: capturePngHash,
+              captured_at_ms: 1_784_000_000_000,
+            };
+          }
+          if (command !== "core_rpc") {
+            throw new Error(`Unexpected Tauri command: ${command}`);
+          }
           const request = args.request as {
             id: number;
             method: string;
@@ -370,6 +428,8 @@ async function installCoreFixture(page: Page) {
       previewUrl: PREVIEW_URL,
       voiceWavBase64: VOICE_WAV_BASE64,
       voiceWavHash: VOICE_WAV_HASH,
+      capturePngBase64: CAPTURE_PNG_BASE64,
+      capturePngHash: CAPTURE_PNG_HASH,
     },
   );
 }

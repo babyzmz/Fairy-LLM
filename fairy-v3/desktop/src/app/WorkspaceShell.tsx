@@ -29,6 +29,10 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
   const [projectName, setProjectName] = useState("");
   const [importPath, setImportPath] = useState("");
   const providerAvailable = selectedProviderAvailable(model);
+  const visionAvailable =
+    model.providers
+      .find((provider) => provider.id === model.selectedProfileId)
+      ?.capabilities.includes("vision") ?? false;
 
   return (
     <div className="workspace-shell" data-workspace-state={model.state}>
@@ -174,6 +178,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
                 model.isActing
               }
               isBusy={model.projectBusy}
+              visionAvailable={visionAvailable}
               onSubmit={model.sendProjectMessage}
               onStop={model.cancelProjectTurn}
             />

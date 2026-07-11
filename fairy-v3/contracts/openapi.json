@@ -322,6 +322,14 @@
             "title": "Idempotency Key",
             "type": "string"
           },
+          "image_attachments": {
+            "items": {
+              "$ref": "#/components/schemas/ImageAttachmentInput"
+            },
+            "maxItems": 4,
+            "title": "Image Attachments",
+            "type": "array"
+          },
           "profile_id": {
             "maxLength": 255,
             "minLength": 1,
@@ -1520,6 +1528,74 @@
         ],
         "title": "HealthModel",
         "type": "object"
+      },
+      "ImageAttachmentInput": {
+        "additionalProperties": false,
+        "properties": {
+          "captured_at_ms": {
+            "maximum": 100000000000000.0,
+            "minimum": 0.0,
+            "title": "Captured At Ms",
+            "type": "integer"
+          },
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "height": {
+            "maximum": 16384.0,
+            "minimum": 1.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "media_type": {
+            "const": "image/png",
+            "title": "Media Type",
+            "type": "string"
+          },
+          "persistence": {
+            "$ref": "#/components/schemas/ImagePersistence"
+          },
+          "png_base64": {
+            "maxLength": 28000000,
+            "minLength": 1,
+            "title": "Png Base64",
+            "type": "string"
+          },
+          "source_label": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Source Label",
+            "type": "string"
+          },
+          "width": {
+            "maximum": 16384.0,
+            "minimum": 1.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "media_type",
+          "png_base64",
+          "content_hash",
+          "width",
+          "height",
+          "source_label",
+          "captured_at_ms",
+          "persistence"
+        ],
+        "title": "ImageAttachmentInput",
+        "type": "object"
+      },
+      "ImagePersistence": {
+        "enum": [
+          "ephemeral",
+          "conversation"
+        ],
+        "title": "ImagePersistence",
+        "type": "string"
       },
       "ManagedDocumentModel": {
         "additionalProperties": false,

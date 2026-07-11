@@ -6,6 +6,8 @@ use fairy_core_bridge::{CoreBridge, CoreBridgeError, CoreLaunchSpec};
 use serde_json::{json, Value};
 use tauri::{Manager, State, WebviewWindow};
 
+pub mod capture;
+
 #[derive(Debug)]
 pub struct WindowScopeError;
 
@@ -100,7 +102,11 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![core_rpc])
+        .invoke_handler(tauri::generate_handler![
+            core_rpc,
+            capture::list_capture_surfaces,
+            capture::capture_surface
+        ])
         .run(tauri::generate_context!())
         .expect("failed to run Fairy desktop");
 }

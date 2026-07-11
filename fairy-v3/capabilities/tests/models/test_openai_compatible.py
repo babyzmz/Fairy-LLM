@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from uuid import UUID
 
 import httpx
 import pytest
 from fairy_core.providers import (
     CancellationToken,
     ModelDeltaKind,
+    ModelImage,
     ModelMessage,
     ModelRequest,
     ModelRole,
@@ -24,14 +26,18 @@ from fairy_core.providers import (
 from fairy_capabilities.models.openai_compatible import OpenAICompatibleProvider
 
 
-def _profile(*, credential_ref: str | None = "primary") -> ProviderProfile:
+def _profile(
+    *,
+    credential_ref: str | None = "primary",
+    capabilities: frozenset[ProviderCapability] | None = None,
+) -> ProviderProfile:
     return ProviderProfile.create(
         profile_id="fixture",
         display_name="Fixture",
         kind=ProviderKind.LOCAL_OPENAI_COMPATIBLE,
         base_url="http://127.0.0.1:18080/v1",
         model_id="fixture-model",
-        capabilities=frozenset({ProviderCapability.TEXT, ProviderCapability.TOOLS}),
+        capabilities=capabilities or frozenset({ProviderCapability.TEXT, ProviderCapability.TOOLS}),
         credential_ref=credential_ref,
         fallback_profile_id=None,
         timeout_seconds=2,
@@ -216,6 +222,74 @@ def test_stream_serializes_structured_tool_protocol_for_follow_up_round() -> Non
 
     assert "".join(delta.text or "" for delta in deltas) == "It is 18 C"
     assert deltas[-1].kind is ModelDeltaKind.DONE
+
+
+def test_stream_serializes_task_bound_png_as_an_inline_multimodal_part() -> None:
+    png = bytearray(b"\x89PNG\r\n\x1a\nfixture")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["messages"] == [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Inspect this state"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;base64,iVBORw0KGgpmaXh0dXJl",
+                            "detail": "auto",
+                        },
+                    },
+                ],
+            }
+        ]
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_sse(
+                {"choices": [{"delta": {"content": "Visible"}}]},
+                {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+                "[DONE]",
+            ),
+        )
+
+    image = ModelImage.create(
+        task_id=UUID("0198f4de-0114-7000-8000-000000000003"),
+        media_type="image/png",
+        data=memoryview(png),
+        content_hash="a" * 64,
+        width=1,
+        height=1,
+        label="untrusted_screen_content",
+        untrusted_data=True,
+    )
+    request = ModelRequest.create(
+        profile_id="fixture",
+        messages=(
+            ModelMessage.create(
+                role=ModelRole.USER,
+                content="Inspect this state",
+                images=(image,),
+            ),
+        ),
+        tools=(),
+        required_capabilities=frozenset({ProviderCapability.TEXT, ProviderCapability.VISION}),
+        max_output_tokens=128,
+    )
+    provider = OpenAICompatibleProvider(
+        profile=_profile(
+            credential_ref=None,
+            capabilities=frozenset({ProviderCapability.TEXT, ProviderCapability.VISION}),
+        ),
+        secret=None,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    assert (
+        "".join(delta.text or "" for delta in provider.stream(request, CancellationToken()))
+        == "Visible"
+    )
 
 
 @pytest.mark.parametrize(

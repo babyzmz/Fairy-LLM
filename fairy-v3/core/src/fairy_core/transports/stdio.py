@@ -16,6 +16,7 @@ from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
+from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.data_directory_lock import DataDirectoryLock
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
@@ -38,6 +39,7 @@ def build_local_service(
     runtime_executor: RuntimeExecutor | None = None,
     provider_registry: ProviderRegistry | None = None,
     voice_registry: VoiceRegistry | None = None,
+    image_attachment_store: ImageAttachmentStore | None = None,
     tool_executor: ToolExecutor | None = None,
     research_fetch_port: FetchPort | None = None,
     document_parser: DocumentParser | None = None,
@@ -106,6 +108,11 @@ def build_local_service(
             registry=registry,
             provider_registry=provider_registry,
             voice_registry=voice_registry,
+            image_attachment_store=(
+                image_attachment_store
+                if image_attachment_store is not None
+                else ImageAttachmentStore(data_dir / "perception")
+            ),
             tool_executor=tool_executor,
             research_fetch_port=research_fetch_port,
             document_parser=document_parser,
@@ -125,6 +132,7 @@ def build_local_dispatcher(
     runtime_executor: RuntimeExecutor | None = None,
     provider_registry: ProviderRegistry | None = None,
     voice_registry: VoiceRegistry | None = None,
+    image_attachment_store: ImageAttachmentStore | None = None,
     tool_executor: ToolExecutor | None = None,
     research_fetch_port: FetchPort | None = None,
     document_parser: DocumentParser | None = None,
@@ -137,6 +145,7 @@ def build_local_dispatcher(
             runtime_executor=runtime_executor,
             provider_registry=provider_registry,
             voice_registry=voice_registry,
+            image_attachment_store=image_attachment_store,
             tool_executor=tool_executor,
             research_fetch_port=research_fetch_port,
             document_parser=document_parser,

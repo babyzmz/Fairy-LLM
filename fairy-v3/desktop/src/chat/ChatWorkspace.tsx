@@ -8,6 +8,7 @@ import type {
   ProviderProfile,
 } from "../core/client";
 import { ProviderSettings } from "../settings/ProviderSettings";
+import type { PendingImageAttachment } from "../perception/CaptureControl";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
 import { parseSlashCommand } from "./slashCommands";
@@ -29,7 +30,11 @@ export interface ChatWorkspaceProps {
   onNewConversation(): Promise<void>;
   onSwitchProject(): void;
   onPermissionChange(profile: "observe" | "standard" | "autonomous"): void;
-  onSend(value: string, files: File[]): Promise<void>;
+  onSend(
+    value: string,
+    files: File[],
+    images: PendingImageAttachment[],
+  ): Promise<void>;
   onCancel(): Promise<void>;
   onRetry(): Promise<void>;
 }
@@ -55,14 +60,22 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     return "Ready";
   }, [props.isBusy, props.offline, providerAvailable]);
 
-  const submit = async (value: string, files: File[]) => {
+  const submit = async (
+    value: string,
+    files: File[],
+    images: PendingImageAttachment[],
+  ) => {
     const command = parseSlashCommand(value);
     if (command === null) {
       setNotice(null);
-      await props.onSend(value || "Review the attached documents.", files);
+      await props.onSend(
+        value || "Review the attached documents and screen captures.",
+        files,
+        images,
+      );
       return;
     }
-    if (files.length > 0) {
+    if (files.length > 0 || images.length > 0) {
       setNotice("Slash commands cannot include attachments");
       return;
     }
@@ -167,6 +180,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       <Composer
         disabled={props.offline || !providerAvailable || !props.conversationAvailable}
         isBusy={props.isBusy}
+        visionAvailable={selectedProvider?.capabilities.includes("vision") ?? false}
         onSubmit={submit}
         onStop={props.onCancel}
       />

@@ -18,6 +18,7 @@ import type {
   Task,
   Version,
 } from "../core/client";
+import type { PendingImageAttachment } from "../perception/CaptureControl";
 
 export type WorkspaceMode = "project" | "chat";
 export type PermissionProfile = "observe" | "standard" | "autonomous";
@@ -85,8 +86,16 @@ export interface WorkspaceModel {
   importProject(name: string, sourcePath: string): Promise<void>;
   createChatConversation(): Promise<void>;
   createTask(userRequest: string): Promise<void>;
-  sendChatMessage(value: string, files: File[]): Promise<void>;
-  sendProjectMessage(value: string, files: File[]): Promise<void>;
+  sendChatMessage(
+    value: string,
+    files: File[],
+    images?: PendingImageAttachment[],
+  ): Promise<void>;
+  sendProjectMessage(
+    value: string,
+    files: File[],
+    images?: PendingImageAttachment[],
+  ): Promise<void>;
   cancelChatTurn(): Promise<void>;
   retryChatTurn(): Promise<void>;
   cancelProjectTurn(): Promise<void>;

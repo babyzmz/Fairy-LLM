@@ -39,6 +39,7 @@ def test_turn_create_input_rejects_every_client_scope_field() -> None:
         "task_id",
         "profile_id",
         "idempotency_key",
+        "image_attachments",
     }
 
     for forbidden in (

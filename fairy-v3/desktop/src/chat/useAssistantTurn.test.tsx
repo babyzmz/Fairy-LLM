@@ -51,7 +51,22 @@ describe("useAssistantTurn", () => {
       },
       createTurn: async (input) => {
         order.push("turn");
-        expect(input).toMatchObject({ task_id: taskId, profile_id: "openrouter-free" });
+        expect(input).toMatchObject({
+          task_id: taskId,
+          profile_id: "openrouter-free",
+          image_attachments: [
+            {
+              media_type: "image/png",
+              png_base64: "iVBORw0KGgo=",
+              content_hash: "a".repeat(64),
+              width: 1280,
+              height: 720,
+              source_label: "Game window",
+              captured_at_ms: 1_784_000_000_000,
+              persistence: "ephemeral",
+            },
+          ],
+        });
         return created;
       },
       runTurn: async () => {
@@ -74,9 +89,25 @@ describe("useAssistantTurn", () => {
     );
 
     await act(async () => {
-      await result.current.send("Read this", [
-        new File(["Fairy"], "notes.txt", { type: "text/plain" }),
-      ]);
+      await result.current.send(
+        "Read this",
+        [new File(["Fairy"], "notes.txt", { type: "text/plain" })],
+        [
+          {
+            kind: "window",
+            source_id: "2",
+            source_label: "Game window",
+            media_type: "image/png",
+            png_base64: "iVBORw0KGgo=",
+            width: 1280,
+            height: 720,
+            byte_length: 8,
+            content_hash: "a".repeat(64),
+            captured_at_ms: 1_784_000_000_000,
+            persistence: "ephemeral",
+          },
+        ],
+      );
     });
 
     expect(order).toEqual(["task", "document", "turn", "run"]);
