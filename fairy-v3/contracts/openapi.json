@@ -518,6 +518,17 @@
         "title": "AssistantTurnStatus",
         "type": "string"
       },
+      "AudioMediaType": {
+        "enum": [
+          "audio/webm",
+          "audio/wav",
+          "audio/mpeg",
+          "audio/mp4",
+          "audio/ogg"
+        ],
+        "title": "AudioMediaType",
+        "type": "string"
+      },
       "CapabilityManifestModel": {
         "additionalProperties": false,
         "properties": {
@@ -4554,6 +4565,40 @@
         "title": "TaskStatus",
         "type": "string"
       },
+      "TranscriptSegmentModel": {
+        "additionalProperties": false,
+        "properties": {
+          "end_seconds": {
+            "minimum": 0.0,
+            "title": "End Seconds",
+            "type": "number"
+          },
+          "index": {
+            "minimum": 0.0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "start_seconds": {
+            "minimum": 0.0,
+            "title": "Start Seconds",
+            "type": "number"
+          },
+          "text": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "text",
+          "start_seconds",
+          "end_seconds"
+        ],
+        "title": "TranscriptSegmentModel",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -4812,6 +4857,244 @@
         ],
         "title": "VersionVisibility",
         "type": "string"
+      },
+      "VoiceAudioModel": {
+        "additionalProperties": false,
+        "properties": {
+          "audio_base64": {
+            "maxLength": 28000000,
+            "minLength": 1,
+            "title": "Audio Base64",
+            "type": "string"
+          },
+          "channels": {
+            "maximum": 2.0,
+            "minimum": 1.0,
+            "title": "Channels",
+            "type": "integer"
+          },
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "end_offset": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000.0,
+            "title": "End Offset",
+            "type": "integer"
+          },
+          "frames": {
+            "minimum": 1.0,
+            "title": "Frames",
+            "type": "integer"
+          },
+          "media_type": {
+            "const": "audio/wav",
+            "title": "Media Type",
+            "type": "string"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "profile_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "sample_rate": {
+            "maximum": 48000.0,
+            "minimum": 8000.0,
+            "title": "Sample Rate",
+            "type": "integer"
+          },
+          "start_offset": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Start Offset",
+            "type": "integer"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "turn_id",
+          "message_id",
+          "profile_id",
+          "start_offset",
+          "end_offset",
+          "media_type",
+          "audio_base64",
+          "sample_rate",
+          "channels",
+          "frames",
+          "content_hash"
+        ],
+        "title": "VoiceAudioModel",
+        "type": "object"
+      },
+      "VoiceSynthesizeInput": {
+        "additionalProperties": false,
+        "properties": {
+          "end_offset": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000.0,
+            "title": "End Offset",
+            "type": "integer"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "profile_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "start_offset": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Start Offset",
+            "type": "integer"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "voice": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Voice",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "turn_id",
+          "message_id",
+          "profile_id",
+          "voice",
+          "start_offset",
+          "end_offset"
+        ],
+        "title": "VoiceSynthesizeInput",
+        "type": "object"
+      },
+      "VoiceTranscribeInput": {
+        "additionalProperties": false,
+        "properties": {
+          "audio_base64": {
+            "maxLength": 28000000,
+            "minLength": 1,
+            "title": "Audio Base64",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 71,
+                "minLength": 2,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "media_type": {
+            "$ref": "#/components/schemas/AudioMediaType"
+          },
+          "profile_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Profile Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "profile_id",
+          "media_type",
+          "audio_base64"
+        ],
+        "title": "VoiceTranscribeInput",
+        "type": "object"
+      },
+      "VoiceTranscriptModel": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 71,
+                "minLength": 2,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "profile_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptSegmentModel"
+            },
+            "title": "Segments",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "profile_id",
+          "text",
+          "segments"
+        ],
+        "title": "VoiceTranscriptModel",
+        "type": "object"
       },
       "WorkspaceType": {
         "enum": [
@@ -8894,6 +9177,128 @@
           }
         ],
         "summary": "Get Version"
+      }
+    },
+    "/v1/voice/speech": {
+      "post": {
+        "operationId": "voice.synthesize",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceSynthesizeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceAudioModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Synthesize Voice"
+      }
+    },
+    "/v1/voice/transcriptions": {
+      "post": {
+        "operationId": "voice.transcribe",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceTranscribeInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceTranscriptModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Transcribe Voice"
       }
     }
   }

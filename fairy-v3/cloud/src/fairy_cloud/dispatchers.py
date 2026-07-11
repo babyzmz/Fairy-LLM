@@ -7,6 +7,7 @@ from pathlib import Path
 from fairy_capabilities.composition import (
     build_capability_bundle,
     build_provider_registry,
+    build_voice_registry,
 )
 from fairy_capabilities.documents import CompositeDocumentParser
 from fairy_core.application.core import CoreApplication
@@ -54,8 +55,14 @@ def build_postgres_core_service(
     )
     providers = build_provider_registry()
     try:
+        voice = build_voice_registry()
+    except BaseException:
+        providers.close()
+        raise
+    try:
         capabilities = build_capability_bundle()
     except BaseException:
+        voice.close()
         providers.close()
         raise
     try:
@@ -64,6 +71,7 @@ def build_postgres_core_service(
             unit_of_work_factory=unit_of_work_factory,
             registry=registry,
             provider_registry=providers,
+            voice_registry=voice,
             tool_executor=capabilities.executor,
             research_fetch_port=capabilities.web.fetch_port,
             document_parser=(CompositeDocumentParser() if object_store is not None else None),
@@ -74,6 +82,7 @@ def build_postgres_core_service(
         )
     except BaseException:
         capabilities.executor.close()
+        voice.close()
         providers.close()
         raise
 

@@ -383,6 +383,14 @@ function createClient(
         retry: async () => completedTurn,
       },
     },
+    voice: {
+      transcribe: async () => {
+        throw new Error("not used");
+      },
+      synthesize: async () => {
+        throw new Error("not used");
+      },
+    },
     events: {
       subscribe: () => visibleEvents(),
     },

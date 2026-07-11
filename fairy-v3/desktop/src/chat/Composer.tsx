@@ -1,5 +1,7 @@
-import { Mic, Paperclip, Send, Square, X } from "lucide-react";
+import { Paperclip, Send, Square, X } from "lucide-react";
 import { useRef, useState } from "react";
+
+import { VoiceRecordControl } from "../voice/VoiceController";
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const ACCEPTED_DOCUMENTS = ".txt,.md,.markdown,.html,.htm,.pdf,.docx";
@@ -118,15 +120,12 @@ export function Composer({ disabled, isBusy, onSubmit, onStop }: ComposerProps) 
             }}
           />
         </label>
-        <button
-          className="icon-button voice-button"
-          type="button"
-          aria-label="Voice input"
-          title="Voice input"
-          disabled
-        >
-          <Mic size={17} />
-        </button>
+        <VoiceRecordControl
+          disabled={disabled || effectiveBusy}
+          onTranscript={(text) =>
+            setValue((current) => (current.trim() ? `${current.trimEnd()} ${text}` : text))
+          }
+        />
         {effectiveBusy ? (
           <button
             className="send-button stop-button"

@@ -6,7 +6,7 @@ import type {
   EventEnvelope,
   EventSubscriptionOptions,
 } from "./contracts";
-import type { CoreTransport } from "./client";
+import type { CoreCallOptions, CoreTransport } from "./client";
 import { parseMemoryResult } from "./memoryValidation";
 import { parseRuntimeResult } from "./runtimeValidation";
 
@@ -145,6 +145,8 @@ const routes = {
     ),
   "messages.list": (params) =>
     getWithQuery("/v1/messages", params, ["conversation_id", "limit", "cursor"]),
+  "voice.synthesize": (params) => post("/v1/voice/speech", params),
+  "voice.transcribe": (params) => post("/v1/voice/transcriptions", params),
   "memory.observations.create": (params) => post("/v1/memory/observations", params),
   "memory.observations.list": (params) =>
     get(
@@ -246,10 +248,12 @@ export class CloudCoreTransport implements CoreTransport {
   async call<M extends CoreMethodName>(
     method: M,
     params: CoreMethodMap[M]["params"],
+    options: CoreCallOptions = {},
   ): Promise<CoreMethodMap[M]["result"]> {
     const descriptor = routes[method](params as RuntimeParams);
     const response = await this.request(descriptor, {
       accept: method === "events.subscribe" ? "text/event-stream" : "application/json",
+      signal: options.signal,
     });
     await assertSuccessful(response);
 

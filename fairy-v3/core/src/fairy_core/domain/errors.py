@@ -18,6 +18,10 @@ class WorkerFenceError(DomainError):
     code = "WORKER_INTERRUPTED"
 
 
+class CapabilityUnavailableError(DomainError):
+    code = "CAPABILITY_NOT_AVAILABLE"
+
+
 class ScopeViolationError(DomainError):
     def __init__(self, message: str, *, code: str = "PATH_OUT_OF_SCOPE") -> None:
         super().__init__(message)

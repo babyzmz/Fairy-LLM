@@ -103,6 +103,10 @@ export type VersionListInput = NonNullable<
   operations["versions.list"]["parameters"]["query"]
 >;
 export type VersionPage = Schemas["VersionPageModel"];
+export type VoiceAudio = Schemas["VoiceAudioModel"];
+export type VoiceSynthesizeInput = Schemas["VoiceSynthesizeInput"];
+export type VoiceTranscript = Schemas["VoiceTranscriptModel"];
+export type VoiceTranscribeInput = Schemas["VoiceTranscribeInput"];
 
 export interface EventBatch {
   items: EventEnvelope[];
@@ -176,6 +180,8 @@ export interface CoreMethodMap {
     result: AssistantTurn;
   };
   "messages.list": { params: MessageListInput; result: MessagePage };
+  "voice.synthesize": { params: VoiceSynthesizeInput; result: VoiceAudio };
+  "voice.transcribe": { params: VoiceTranscribeInput; result: VoiceTranscript };
   "events.subscribe": { params: { cursor: number }; result: EventBatch };
   "memory.observations.create": {
     params: MemoryObserveInput;

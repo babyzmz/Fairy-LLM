@@ -2,6 +2,7 @@ import { Bot, CircleUserRound, LoaderCircle, Wrench } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 import type { AssistantTurn, Message } from "../core/client";
+import { VoiceSpeakControl } from "../voice/VoiceController";
 
 interface MessageListProps {
   messages: Message[];
@@ -49,6 +50,7 @@ export function MessageList({
             <div className="message-meta">
               <strong>{messageLabel(message.role)}</strong>
               <time dateTime={message.created_at}>{formatTime(message.created_at)}</time>
+              <VoiceSpeakControl message={message} />
             </div>
             <p>{message.content}</p>
             {developerMode ? (

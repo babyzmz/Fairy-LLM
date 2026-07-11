@@ -35,6 +35,12 @@ for (const viewport of [
     expect(bounds.documentWidth).toBeLessThanOrEqual(bounds.viewportWidth);
     expect(bounds.documentHeight).toBeLessThanOrEqual(bounds.viewportHeight);
     expect(bounds.composerBottom).toBeLessThanOrEqual(bounds.viewportHeight);
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
     await page.screenshot({
       path: testInfo.outputPath(`chat-${viewport.width}x${viewport.height}.png`),
       fullPage: true,

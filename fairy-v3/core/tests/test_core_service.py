@@ -291,5 +291,7 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "versions.discard",
         "versions.get",
         "versions.list",
+        "voice.synthesize",
+        "voice.transcribe",
     }
     assert all(method.name == name for name, method in CORE_METHODS.items())

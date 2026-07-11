@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -62,6 +62,7 @@ from fairy_core.providers.models import (
     ProviderHealthStatus,
     ProviderKind,
 )
+from fairy_core.voice import AudioMediaType
 
 JsonValue = str | int | float | bool | None | list[Any] | dict[str, Any]
 
@@ -299,6 +300,29 @@ class ProviderHealthInput(ContractModel):
     profile_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
+class VoiceTranscribeInput(ContractModel):
+    conversation_id: UUID
+    profile_id: str = Field(min_length=1, max_length=128)
+    media_type: AudioMediaType
+    audio_base64: str = Field(min_length=1, max_length=28_000_000)
+    language: str | None = Field(default=None, min_length=2, max_length=71)
+
+
+class VoiceSynthesizeInput(TaskIdInput):
+    turn_id: UUID
+    message_id: UUID
+    profile_id: str = Field(min_length=1, max_length=128)
+    voice: str = Field(min_length=1, max_length=64)
+    start_offset: int = Field(ge=0, le=100_000)
+    end_offset: int = Field(gt=0, le=100_000)
+
+    @model_validator(mode="after")
+    def require_non_empty_range(self) -> VoiceSynthesizeInput:
+        if self.end_offset <= self.start_offset:
+            raise ValueError("voice synthesis range must be non-empty")
+        return self
+
+
 class ProviderProfileModel(ContractModel):
     id: str = Field(min_length=1, max_length=128)
     display_name: str = Field(min_length=1, max_length=255)
@@ -326,6 +350,36 @@ class ProviderHealthModel(ContractModel):
 
 class ProviderHealthPageModel(ContractModel):
     items: tuple[ProviderHealthModel, ...]
+
+
+class TranscriptSegmentModel(ContractModel):
+    index: int = Field(ge=0)
+    text: str = Field(min_length=1, max_length=20_000)
+    start_seconds: float = Field(ge=0, allow_inf_nan=False)
+    end_seconds: float = Field(ge=0, allow_inf_nan=False)
+
+
+class VoiceTranscriptModel(ContractModel):
+    conversation_id: UUID
+    profile_id: str = Field(min_length=1, max_length=128)
+    text: str = Field(min_length=1, max_length=100_000)
+    language: str | None = Field(default=None, min_length=2, max_length=71)
+    segments: tuple[TranscriptSegmentModel, ...]
+
+
+class VoiceAudioModel(ContractModel):
+    task_id: UUID
+    turn_id: UUID
+    message_id: UUID
+    profile_id: str = Field(min_length=1, max_length=128)
+    start_offset: int = Field(ge=0, le=100_000)
+    end_offset: int = Field(gt=0, le=100_000)
+    media_type: Literal["audio/wav"]
+    audio_base64: str = Field(min_length=1, max_length=28_000_000)
+    sample_rate: int = Field(ge=8_000, le=48_000)
+    channels: int = Field(ge=1, le=2)
+    frames: int = Field(ge=1)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class ProjectModel(ContractModel):

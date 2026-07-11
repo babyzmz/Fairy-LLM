@@ -1,4 +1,9 @@
-import type { CoreMethodMap, CoreMethodName, CoreTransport } from "./client";
+import type {
+  CoreCallOptions,
+  CoreMethodMap,
+  CoreMethodName,
+  CoreTransport,
+} from "./client";
 import { parseMemoryResult } from "./memoryValidation";
 import { parseRuntimeResult } from "./runtimeValidation";
 
@@ -50,7 +55,9 @@ export class TauriCoreTransport implements CoreTransport {
   async call<M extends CoreMethodName>(
     method: M,
     params: CoreMethodMap[M]["params"],
+    options: CoreCallOptions = {},
   ): Promise<CoreMethodMap[M]["result"]> {
+    options.signal?.throwIfAborted();
     const response = await this.invoke<JsonRpcResponse<CoreMethodMap[M]["result"]>>(
       "core_rpc",
       {

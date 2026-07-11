@@ -137,6 +137,15 @@ class SqlAlchemyAssistantRepository:
         with self._session.write() as connection:
             connection.execute(insert(assistant_messages).values(**values))
 
+    def get_message(self, message_id: UUID) -> Message | None:
+        row = self._first(
+            select(assistant_messages).where(
+                assistant_messages.c.tenant_id == self._tenant_id,
+                assistant_messages.c.id == str(message_id),
+            )
+        )
+        return self._message_from_row(row) if row is not None else None
+
     def next_message_sequence(self, conversation_id: UUID) -> int:
         statement = self._insert(assistant_message_sequences).values(
             tenant_id=self._tenant_id,

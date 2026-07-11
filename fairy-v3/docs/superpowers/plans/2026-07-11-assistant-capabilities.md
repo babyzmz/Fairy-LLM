@@ -325,13 +325,22 @@ not discoverable on this machine.
 - `voice.synthesize` accepts a public assistant Message/Turn reference and returns base64 PCM WAV plus sample rate/channels/frames/hash.
 - `SentenceQueue.push(turnId, delta)` emits only complete sentence chunks; `cancel(turnId)` aborts fetch/playback and clears duplicates.
 
-- [ ] Write failing adapter tests for multipart transcription, WAV RIFF validation, wrong media type, upstream cancellation, size bounds, timeout, and unavailable profile.
-- [ ] Implement provider-neutral voice types and OpenAI-compatible audio adapter with no browser synthesis fallback.
-- [ ] Write failing queue tests for multilingual punctuation, abbreviations, final remainder, ordering, duplicate suppression, cancellation, and new-recording interruption.
-- [ ] Implement the sentence queue and controller using MediaRecorder and Audio playback of validated WAV blobs.
-- [ ] Add accessible record/stop/speak controls and explicit denied/unavailable device states.
-- [ ] Run Core contracts, capabilities voice tests, Vitest, Playwright, build, and boundary checks.
-- [ ] Commit with `feat(v3): add governed voice pipeline`.
+- [x] Write failing adapter tests for multipart transcription, WAV RIFF validation, wrong media type, upstream cancellation, size bounds, timeout, and unavailable profile.
+- [x] Implement provider-neutral voice types and OpenAI-compatible audio adapter with no browser synthesis fallback.
+- [x] Write failing queue tests for multilingual punctuation, abbreviations, final remainder, ordering, duplicate suppression, cancellation, and new-recording interruption.
+- [x] Implement the sentence queue and controller using MediaRecorder and Audio playback of validated WAV blobs.
+- [x] Add accessible record/stop/speak controls and explicit denied/unavailable device states.
+- [x] Run Core contracts, capabilities voice tests, Vitest, Playwright, build, and boundary checks.
+- [x] Commit with `feat(v3): add governed voice pipeline`.
+
+Task 36 verification: the complete available gate passed with 410 Core tests,
+99 capability-adapter tests, 55 cloud unit tests, the full Rust workspace, 47
+Vitest tests, and 9 Playwright workflows. TTS accepts only ledger-bound ranges
+from completed public assistant messages, validates RIFF PCM metadata and SHA-256
+before playback, and aborts cloud fetches on cancellation. Generated contracts
+remained stable and the desktop entry bundle was 113.05 KB gzip. Docker/PostgreSQL,
+S3, and WSL verification remained explicitly skipped because those runtimes were
+not discoverable on this machine.
 
 ### Task 37: Screen and Game Perception
 

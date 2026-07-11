@@ -1,6 +1,10 @@
 import type { Page } from "@playwright/test";
+import { createHash } from "node:crypto";
 
 export const PREVIEW_URL = "http://127.0.0.1:43125/";
+const VOICE_WAV = pcmWav();
+const VOICE_WAV_BASE64 = Buffer.from(VOICE_WAV).toString("base64");
+const VOICE_WAV_HASH = createHash("sha256").update(VOICE_WAV).digest("hex");
 
 export async function installWorkspaceFixture(page: Page) {
   await installCoreFixture(page);
@@ -14,7 +18,65 @@ export async function installWorkspaceFixture(page: Page) {
 
 async function installCoreFixture(page: Page) {
   await page.addInitScript(
-    ({ previewUrl }) => {
+    ({ previewUrl, voiceWavBase64, voiceWavHash }) => {
+      const fixtureWindow = window as unknown as {
+        __FAIRY_FIXTURE_CALLS__: Array<{
+          method: string;
+          params: Record<string, unknown>;
+        }>;
+      };
+      fixtureWindow.__FAIRY_FIXTURE_CALLS__ = [];
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: {
+          getUserMedia: async () => ({
+            getTracks: () => [{ stop() {} }],
+          }),
+        },
+      });
+      class FixtureMediaRecorder extends EventTarget {
+        readonly mimeType = "audio/webm;codecs=opus";
+        state = "inactive";
+
+        constructor(_stream: unknown) {
+          super();
+        }
+
+        start() {
+          this.state = "recording";
+        }
+
+        stop() {
+          if (this.state === "inactive") return;
+          this.state = "inactive";
+          const data = new Event("dataavailable");
+          Object.defineProperty(data, "data", {
+            value: new Blob(["fixture-recording"], { type: "audio/webm" }),
+          });
+          this.dispatchEvent(data);
+          queueMicrotask(() => this.dispatchEvent(new Event("stop")));
+        }
+      }
+      class FixtureAudio extends EventTarget {
+        constructor(_url: string) {
+          super();
+        }
+
+        play() {
+          window.setTimeout(() => this.dispatchEvent(new Event("ended")), 20);
+          return Promise.resolve();
+        }
+
+        pause() {}
+      }
+      Object.defineProperty(window, "MediaRecorder", {
+        configurable: true,
+        value: FixtureMediaRecorder,
+      });
+      Object.defineProperty(window, "Audio", {
+        configurable: true,
+        value: FixtureAudio,
+      });
       const id = {
         project: "0198f4de-0114-7000-8000-000000000001",
         conversation: "0198f4de-0114-7000-8000-000000000002",
@@ -223,7 +285,7 @@ async function installCoreFixture(page: Page) {
               kind: "openai_compatible",
               base_url: "https://openrouter.ai/api/v1",
               model_id: "openrouter/free",
-              capabilities: ["text", "tools"],
+              capabilities: ["text", "tools", "stt", "tts"],
               credential_required: true,
               credential_configured: true,
               enabled: true,
@@ -250,6 +312,13 @@ async function installCoreFixture(page: Page) {
         "assistant.turns.cancel": { ...completedTurn, status: "cancelled" },
         "assistant.turns.retry": { ...completedTurn, status: "created" },
         "conversations.create": scratchConversation,
+        "voice.transcribe": {
+          conversation_id: id.scratchConversation,
+          profile_id: "openrouter-free",
+          text: "Fixture voice transcript",
+          language: "en",
+          segments: [],
+        },
       };
 
       const tauriWindow = window as unknown as {
@@ -264,8 +333,27 @@ async function installCoreFixture(page: Page) {
             method: string;
             params: Record<string, unknown>;
           };
+          fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+            method: request.method,
+            params: request.params,
+          });
           const result =
-            request.method === "events.subscribe"
+            request.method === "voice.synthesize"
+              ? {
+                  task_id: request.params.task_id,
+                  turn_id: request.params.turn_id,
+                  message_id: request.params.message_id,
+                  profile_id: request.params.profile_id,
+                  start_offset: request.params.start_offset,
+                  end_offset: request.params.end_offset,
+                  media_type: "audio/wav",
+                  audio_base64: voiceWavBase64,
+                  sample_rate: 24_000,
+                  channels: 1,
+                  frames: 2,
+                  content_hash: voiceWavHash,
+                }
+              : request.method === "events.subscribe"
               ? {
                   items: request.params.cursor === 0 ? [event] : [],
                   next_cursor: 1,
@@ -278,6 +366,38 @@ async function installCoreFixture(page: Page) {
         },
       };
     },
-    { previewUrl: PREVIEW_URL },
+    {
+      previewUrl: PREVIEW_URL,
+      voiceWavBase64: VOICE_WAV_BASE64,
+      voiceWavHash: VOICE_WAV_HASH,
+    },
   );
+}
+
+function pcmWav(): Uint8Array {
+  const samples = new Uint8Array([0, 0, 1, 0]);
+  const bodyLength = 4 + 8 + 16 + 8 + samples.length;
+  const bytes = new Uint8Array(8 + bodyLength);
+  const view = new DataView(bytes.buffer);
+  writeAscii(bytes, 0, "RIFF");
+  view.setUint32(4, bodyLength, true);
+  writeAscii(bytes, 8, "WAVE");
+  writeAscii(bytes, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 24_000, true);
+  view.setUint32(28, 48_000, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(bytes, 36, "data");
+  view.setUint32(40, samples.length, true);
+  bytes.set(samples, 44);
+  return bytes;
+}
+
+function writeAscii(bytes: Uint8Array, offset: number, value: string): void {
+  for (let index = 0; index < value.length; index += 1) {
+    bytes[offset + index] = value.charCodeAt(index);
+  }
 }

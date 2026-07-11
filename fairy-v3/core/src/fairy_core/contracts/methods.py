@@ -95,6 +95,10 @@ from fairy_core.contracts.models import (
     VersionListInput,
     VersionModel,
     VersionPageModel,
+    VoiceAudioModel,
+    VoiceSynthesizeInput,
+    VoiceTranscribeInput,
+    VoiceTranscriptModel,
 )
 
 
@@ -352,6 +356,16 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "versions.list",
             VersionListInput,
             VersionPageModel,
+        ),
+        "voice.synthesize": CoreMethod(
+            "voice.synthesize",
+            VoiceSynthesizeInput,
+            VoiceAudioModel,
+        ),
+        "voice.transcribe": CoreMethod(
+            "voice.transcribe",
+            VoiceTranscribeInput,
+            VoiceTranscriptModel,
         ),
     }
 )

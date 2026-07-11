@@ -88,6 +88,10 @@ from fairy_core.contracts.models import (
     VersionListInput,
     VersionModel,
     VersionPageModel,
+    VoiceAudioModel,
+    VoiceSynthesizeInput,
+    VoiceTranscribeInput,
+    VoiceTranscriptModel,
 )
 from fairy_core.domain.errors import DomainError, IdempotencyConflictError, VersionConflictError
 from fairy_core.memory.models import MemoryNamespace
@@ -697,6 +701,22 @@ def create_cloud_app(
         )
 
     @protected.post(
+        "/voice/transcriptions",
+        operation_id="voice.transcribe",
+        response_model=VoiceTranscriptModel,
+    )
+    async def transcribe_voice(request: VoiceTranscribeInput) -> dict[str, Any]:
+        return await invoke_async("voice.transcribe", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/voice/speech",
+        operation_id="voice.synthesize",
+        response_model=VoiceAudioModel,
+    )
+    async def synthesize_voice(request: VoiceSynthesizeInput) -> dict[str, Any]:
+        return await invoke_async("voice.synthesize", request.model_dump(mode="json"))
+
+    @protected.post(
         "/memory/observations",
         operation_id="memory.observations.create",
         response_model=MemoryObservationModel,
@@ -1067,6 +1087,7 @@ def _core_http_exception(error: Exception) -> HTTPException:
         error_code = str(getattr(error, "code", "DOMAIN_ERROR"))
         status_code = {
             "APPROVAL_REQUIRED": 409,
+            "CAPABILITY_NOT_AVAILABLE": 503,
             "IDEMPOTENCY_CONFLICT": 409,
             "INVALID_STATE_TRANSITION": 409,
             "MEMORY_CONFLICT": 409,

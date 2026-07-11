@@ -11,6 +11,7 @@ from fairy_core.transports.stdio import build_local_service, process_stream
 from fairy_capabilities.composition import (
     build_capability_bundle,
     build_provider_registry,
+    build_voice_registry,
 )
 from fairy_capabilities.documents import CompositeDocumentParser, ManagedFileDocumentStore
 
@@ -23,8 +24,14 @@ def build_composed_local_dispatcher(
     configured = dict(os.environ if environment is None else environment)
     providers = build_provider_registry(configured)
     try:
+        voice = build_voice_registry(configured)
+    except BaseException:
+        providers.close()
+        raise
+    try:
         capabilities = build_capability_bundle(configured)
     except BaseException:
+        voice.close()
         providers.close()
         raise
     try:
@@ -32,6 +39,7 @@ def build_composed_local_dispatcher(
             data_dir,
             environment=configured,
             provider_registry=providers,
+            voice_registry=voice,
             tool_executor=capabilities.executor,
             research_fetch_port=capabilities.web.fetch_port,
             document_parser=CompositeDocumentParser(),
@@ -39,6 +47,7 @@ def build_composed_local_dispatcher(
         )
     except BaseException:
         capabilities.executor.close()
+        voice.close()
         providers.close()
         raise
     return JsonRpcDispatcher(service)

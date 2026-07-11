@@ -25,6 +25,7 @@ from fairy_core.runtime.ports import RuntimeExecutor
 from fairy_core.runtime.rust_worker import RustRuntimeExecutor
 from fairy_core.runtime.unavailable import UnavailableRuntimeExecutor
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
+from fairy_core.voice import VoiceRegistry
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
 from fairy_core.workspace.rust_worker import RustWorkspaceProvisioner
 from fairy_core.workspace.worker_transport import SubprocessWorkerTransport
@@ -36,6 +37,7 @@ def build_local_service(
     environment: Mapping[str, str] | None = None,
     runtime_executor: RuntimeExecutor | None = None,
     provider_registry: ProviderRegistry | None = None,
+    voice_registry: VoiceRegistry | None = None,
     tool_executor: ToolExecutor | None = None,
     research_fetch_port: FetchPort | None = None,
     document_parser: DocumentParser | None = None,
@@ -103,6 +105,7 @@ def build_local_service(
             unit_of_work_factory=unit_of_work_factory,
             registry=registry,
             provider_registry=provider_registry,
+            voice_registry=voice_registry,
             tool_executor=tool_executor,
             research_fetch_port=research_fetch_port,
             document_parser=document_parser,
@@ -121,6 +124,7 @@ def build_local_dispatcher(
     environment: Mapping[str, str] | None = None,
     runtime_executor: RuntimeExecutor | None = None,
     provider_registry: ProviderRegistry | None = None,
+    voice_registry: VoiceRegistry | None = None,
     tool_executor: ToolExecutor | None = None,
     research_fetch_port: FetchPort | None = None,
     document_parser: DocumentParser | None = None,
@@ -132,6 +136,7 @@ def build_local_dispatcher(
             environment=environment,
             runtime_executor=runtime_executor,
             provider_registry=provider_registry,
+            voice_registry=voice_registry,
             tool_executor=tool_executor,
             research_fetch_port=research_fetch_port,
             document_parser=document_parser,

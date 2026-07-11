@@ -72,6 +72,8 @@ from fairy_core.contracts.models import (
     VersionAcceptInput,
     VersionIdInput,
     VersionListInput,
+    VoiceSynthesizeInput,
+    VoiceTranscribeInput,
 )
 from fairy_core.documents.application import DocumentApplication, DocumentToolExecutor
 from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
@@ -83,6 +85,8 @@ from fairy_core.providers import CancellationToken, ProviderRegistry
 from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
 from fairy_core.research.ports import FetchPort
 from fairy_core.runtime.models import RuntimeExecutorError
+from fairy_core.voice.application import VoiceApplication
+from fairy_core.voice.registry import VoiceRegistry
 
 
 class CoreMethodNotFoundError(LookupError):
@@ -108,6 +112,7 @@ class CoreService:
         unit_of_work_factory: CoreUnitOfWorkFactory,
         registry: ToolRegistry,
         provider_registry: ProviderRegistry | None = None,
+        voice_registry: VoiceRegistry | None = None,
         tool_executor: ToolExecutor | None = None,
         research_fetch_port: FetchPort | None = None,
         document_parser: DocumentParser | None = None,
@@ -119,6 +124,11 @@ class CoreService:
         self._unit_of_work_factory = unit_of_work_factory
         self._registry = registry
         self._provider_registry = provider_registry or ProviderRegistry()
+        self._voice_registry = voice_registry or VoiceRegistry()
+        self._voice_application = VoiceApplication(
+            unit_of_work_factory=unit_of_work_factory,
+            registry=self._voice_registry,
+        )
         self._turn_cancellations: dict[UUID, CancellationToken] = {}
         self._turn_cancellation_lock = RLock()
         self._runtime_application = runtime_application
@@ -222,6 +232,8 @@ class CoreService:
             "versions.discard": self._discard_version,
             "versions.get": self._get_version,
             "versions.list": self._list_versions,
+            "voice.synthesize": self._synthesize_voice,
+            "voice.transcribe": self._transcribe_voice,
         }
         if self._handlers.keys() != CORE_METHODS.keys():
             raise RuntimeError("Core service handlers do not match the public method catalog")
@@ -232,6 +244,7 @@ class CoreService:
                 cancellation.cancel()
             self._turn_cancellations.clear()
         self._provider_registry.close()
+        self._voice_registry.close()
         if self._tool_executor is not None:
             close_tool_executor = getattr(self._tool_executor, "close", None)
             if callable(close_tool_executor):
@@ -287,6 +300,12 @@ class CoreService:
     def _provider_health(self, request: BaseModel) -> dict[str, Any]:
         validated = cast(ProviderHealthInput, request)
         return {"items": self._provider_registry.health(validated.profile_id)}
+
+    def _transcribe_voice(self, request: BaseModel) -> Any:
+        return self._voice_application.transcribe(cast(VoiceTranscribeInput, request))
+
+    def _synthesize_voice(self, request: BaseModel) -> Any:
+        return self._voice_application.synthesize(cast(VoiceSynthesizeInput, request))
 
     def _create_project(self, request: BaseModel) -> Any:
         validated = cast(ProjectCreate, request)

@@ -1,0 +1,87 @@
+import { expect, test, type Page } from "@playwright/test";
+
+import { installWorkspaceFixture } from "./support/coreFixture";
+
+test.beforeEach(async ({ page }) => {
+  await installWorkspaceFixture(page);
+  await page.setViewportSize({ width: 880, height: 680 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Chat" }).click();
+});
+
+test("records audio through Core and inserts the transcript into the composer", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Start recording" }).click();
+  await expect(page.getByRole("button", { name: "Stop recording" })).toBeVisible();
+  await page.getByRole("button", { name: "Stop recording" }).click();
+
+  await expect(page.getByLabel("Message Fairy")).toHaveValue("Fixture voice transcript");
+  const request = await voiceCall(page, "voice.transcribe");
+  expect(request.params).toMatchObject({
+    conversation_id: "0198f4de-0114-7000-8000-000000000010",
+    profile_id: "openrouter-free",
+    media_type: "audio/webm",
+  });
+  expect(request.params.audio_base64).toBe("Zml4dHVyZS1yZWNvcmRpbmc=");
+});
+
+test("speaks a durable assistant message through ledger-bound sentence ranges", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Speak message" }).click();
+
+  await expect
+    .poll(async () => (await voiceCalls(page, "voice.synthesize")).length)
+    .toBe(1);
+  const [request] = await voiceCalls(page, "voice.synthesize");
+  expect(request.params).toMatchObject({
+    task_id: "0198f4de-0114-7000-8000-000000000011",
+    turn_id: "0198f4de-0114-7000-8000-000000000012",
+    message_id: "0198f4de-0114-7000-8000-000000000013",
+    start_offset: 0,
+    end_offset: 23,
+  });
+  expect(request.params).not.toHaveProperty("text");
+});
+
+test("shows a denied microphone state without sending audio", async ({ page }) => {
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: async () => {
+          throw new DOMException("denied", "NotAllowedError");
+        },
+      },
+    });
+  });
+
+  await page.getByRole("button", { name: "Start recording" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("Microphone permission denied");
+  expect(await voiceCalls(page, "voice.transcribe")).toHaveLength(0);
+});
+
+interface FixtureCall {
+  method: string;
+  params: Record<string, unknown>;
+}
+
+async function voiceCall(page: Page, method: string): Promise<FixtureCall> {
+  await expect.poll(async () => (await voiceCalls(page, method)).length).toBeGreaterThan(0);
+  const result = (await voiceCalls(page, method))[0];
+  if (result === undefined) throw new Error(`Missing fixture call: ${method}`);
+  return result;
+}
+
+async function voiceCalls(page: Page, method: string): Promise<FixtureCall[]> {
+  return page.evaluate((targetMethod) => {
+    const fixtureWindow = window as unknown as {
+      __FAIRY_FIXTURE_CALLS__: FixtureCall[];
+    };
+    return fixtureWindow.__FAIRY_FIXTURE_CALLS__.filter(
+      (call) => call.method === targetMethod,
+    );
+  }, method);
+}

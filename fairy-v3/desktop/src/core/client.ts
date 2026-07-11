@@ -35,14 +35,21 @@ import type {
   TaskListInput,
   VersionAcceptInput,
   VersionListInput,
+  VoiceSynthesizeInput,
+  VoiceTranscribeInput,
 } from "./contracts";
 
 export type * from "./contracts";
+
+export interface CoreCallOptions {
+  signal?: AbortSignal;
+}
 
 export interface CoreTransport {
   call<M extends CoreMethodName>(
     method: M,
     params: CoreMethodMap[M]["params"],
+    options?: CoreCallOptions,
   ): Promise<CoreMethodMap[M]["result"]>;
 
   subscribeEvents?(
@@ -167,6 +174,13 @@ export class CoreClient {
 
   readonly messages = {
     list: (input: MessageListInput) => this.transport.call("messages.list", input),
+  };
+
+  readonly voice = {
+    transcribe: (input: VoiceTranscribeInput) =>
+      this.transport.call("voice.transcribe", input),
+    synthesize: (input: VoiceSynthesizeInput, signal?: AbortSignal) =>
+      this.transport.call("voice.synthesize", input, { signal }),
   };
 
   readonly memory = {

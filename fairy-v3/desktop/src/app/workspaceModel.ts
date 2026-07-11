@@ -34,6 +34,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   capabilities: Pick<CoreClient["capabilities"], "get">;
   providers: Pick<CoreClient["providers"], "list" | "health">;
   messages: Pick<CoreClient["messages"], "list">;
+  voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
   events: Pick<CoreClient["events"], "subscribe">;
 }
 

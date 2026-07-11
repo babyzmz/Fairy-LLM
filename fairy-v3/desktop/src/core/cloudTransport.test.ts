@@ -259,6 +259,22 @@ describe("CloudCoreTransport", () => {
       idempotency_key: "documents:delete",
       user_confirmed: true,
     });
+    await transport.call("voice.transcribe", {
+      conversation_id: "conversation-1",
+      profile_id: "voice",
+      media_type: "audio/webm",
+      audio_base64: "cmVjb3JkaW5n",
+      language: null,
+    });
+    await transport.call("voice.synthesize", {
+      task_id: "task-1",
+      turn_id: "turn-1",
+      message_id: "message-1",
+      profile_id: "voice",
+      voice: "alloy",
+      start_offset: 0,
+      end_offset: 6,
+    });
 
     expect(requests.map(({ method, url }) => [method, url])).toEqual([
       ["GET", "https://cloud.fairy.test/v1/projects/project%2Fa"],
@@ -318,6 +334,8 @@ describe("CloudCoreTransport", () => {
         "POST",
         "https://cloud.fairy.test/v1/documents/document%2F1/delete",
       ],
+      ["POST", "https://cloud.fairy.test/v1/voice/transcriptions"],
+      ["POST", "https://cloud.fairy.test/v1/voice/speech"],
     ]);
     expect(requests[0]?.headers.get("Authorization")).toBe("Bearer access-token");
     expect(requests[0]?.headers.get("X-Fairy-Device-ID")).toBe("device-1");
@@ -326,6 +344,7 @@ describe("CloudCoreTransport", () => {
     expect(requests[15]?.headers.get("Idempotency-Key")).toBe("turn:retry");
     expect(requests[16]?.headers.get("Idempotency-Key")).toBe("documents:import");
     expect(requests[20]?.headers.get("Idempotency-Key")).toBe("documents:delete");
+    await expect(requests[22]?.json()).resolves.not.toHaveProperty("text");
     await expect(requests[3]?.json()).resolves.toEqual({
       profile: "standard",
       sandbox_healthy: true,
@@ -393,6 +412,50 @@ describe("CloudCoreTransport", () => {
     expect(live.value).toEqual(EVENT);
     expect(requests).toHaveLength(2);
     expect(requests[1]?.headers.get("Last-Event-ID")).toBe("4");
+  });
+
+  it("forwards voice cancellation to the cloud fetch request", async () => {
+    let requestSignal: AbortSignal | null | undefined;
+    let markRequestStarted: (() => void) | undefined;
+    const requestStarted = new Promise<void>((resolve) => {
+      markRequestStarted = resolve;
+    });
+    const transport = new CloudCoreTransport({
+      baseUrl: "https://cloud.fairy.test",
+      accessToken: () => "token",
+      deviceId: "device-1",
+      fetch: async (_input, init) => {
+        requestSignal = init?.signal;
+        markRequestStarted?.();
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      },
+    });
+    const controller = new AbortController();
+    const pending = transport.call(
+      "voice.synthesize",
+      {
+        task_id: "task-1",
+        turn_id: "turn-1",
+        message_id: "message-1",
+        profile_id: "voice",
+        voice: "alloy",
+        start_offset: 0,
+        end_offset: 6,
+      },
+      { signal: controller.signal },
+    );
+
+    await requestStarted;
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(requestSignal?.aborted).toBe(true);
   });
 
   it("preserves stable cloud error codes", async () => {

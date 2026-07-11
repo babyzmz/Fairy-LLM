@@ -6,8 +6,9 @@ from dataclasses import dataclass
 
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.information import InformationCapabilityHealth
-from fairy_core.providers import ProviderRegistry
+from fairy_core.providers import ProviderCapability, ProviderRegistry
 from fairy_core.research.ports import FetchPort, SearchPort
+from fairy_core.voice import VoiceRegistry
 
 from fairy_capabilities.information.alpha_vantage import AlphaVantageAdapter
 from fairy_capabilities.information.frankfurter import FrankfurterAdapter
@@ -19,6 +20,7 @@ from fairy_capabilities.settings import (
     EnvironmentProviderSecretResolver,
     ProviderSettings,
 )
+from fairy_capabilities.voice import OpenAIAudioAdapter
 from fairy_capabilities.web.brave import BraveSearchAdapter
 from fairy_capabilities.web.fetch import SafeWebFetcher
 from fairy_capabilities.web.tools import WebToolExecutor
@@ -75,6 +77,35 @@ def build_provider_registry(
         for profile in settings.profiles
     )
     return ProviderRegistry(providers)
+
+
+def build_voice_registry(
+    environment: Mapping[str, str] | None = None,
+) -> VoiceRegistry:
+    configured = os.environ if environment is None else environment
+    settings = ProviderSettings.from_environment(configured)
+    resolver = EnvironmentProviderSecretResolver(
+        settings.secret_environment_names,
+        configured,
+    )
+    providers: list[OpenAIAudioAdapter] = []
+    try:
+        for profile in settings.profiles:
+            if not profile.capabilities & frozenset(
+                {ProviderCapability.STT, ProviderCapability.TTS}
+            ):
+                continue
+            providers.append(
+                OpenAIAudioAdapter(
+                    profile=profile,
+                    secret=resolver.try_resolve(profile.credential_ref),
+                )
+            )
+        return VoiceRegistry(providers)
+    except BaseException:
+        for provider in providers:
+            provider.close()
+        raise
 
 
 def build_web_capabilities(

@@ -1099,8 +1099,53 @@ h2 {
 }
 
 .composer-controls {
+  position: relative;
   min-width: 0;
   gap: 8px;
+}
+
+.voice-button.active {
+  border-color: #a95b54;
+  color: #ffd4d0;
+  background: #542c29;
+}
+
+.voice-control-status {
+  position: absolute;
+  z-index: 4;
+  right: 42px;
+  bottom: calc(100% + 8px);
+  max-width: min(280px, calc(100vw - 130px));
+  padding: 5px 7px;
+  border: 1px solid #66553b;
+  border-radius: 3px;
+  overflow: hidden;
+  color: #d8bd82;
+  background: #282117;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-speak-button {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: #79827d;
+  background: transparent;
+  cursor: pointer;
+}
+
+.message-speak-button:hover,
+.message-speak-button.active {
+  border-color: #4a514d;
+  color: #82dbd1;
+  background: #222624;
 }
 
 .chat-composer-field {

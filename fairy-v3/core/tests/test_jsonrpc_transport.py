@@ -395,5 +395,7 @@ def test_public_method_manifest_is_stable() -> None:
             "versions.discard",
             "versions.get",
             "versions.list",
+            "voice.synthesize",
+            "voice.transcribe",
         }
     )

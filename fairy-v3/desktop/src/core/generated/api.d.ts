@@ -926,6 +926,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/voice/speech": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Synthesize Voice */
+        post: operations["voice.synthesize"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/voice/transcriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transcribe Voice */
+        post: operations["voice.transcribe"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1143,6 +1177,11 @@ export interface components {
          * @enum {string}
          */
         AssistantTurnStatus: "created" | "running" | "waiting_for_tool" | "completed" | "cancelled" | "failed";
+        /**
+         * AudioMediaType
+         * @enum {string}
+         */
+        AudioMediaType: "audio/webm" | "audio/wav" | "audio/mpeg" | "audio/mp4" | "audio/ogg";
         /** CapabilityManifestModel */
         CapabilityManifestModel: {
             /** Command Metadata */
@@ -2596,6 +2635,17 @@ export interface components {
          * @enum {string}
          */
         TaskStatus: "created" | "resolving_scope" | "building_workspace" | "planning" | "awaiting_approval" | "executing" | "installing" | "previewing" | "reviewing" | "repairing" | "ready" | "accepted" | "rejected" | "archived" | "failed";
+        /** TranscriptSegmentModel */
+        TranscriptSegmentModel: {
+            /** End Seconds */
+            end_seconds: number;
+            /** Index */
+            index: number;
+            /** Start Seconds */
+            start_seconds: number;
+            /** Text */
+            text: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -2695,6 +2745,102 @@ export interface components {
          * @enum {string}
          */
         VersionVisibility: "chat_draft" | "project_candidate" | "project_active" | "archived" | "rejected";
+        /** VoiceAudioModel */
+        VoiceAudioModel: {
+            /** Audio Base64 */
+            audio_base64: string;
+            /** Channels */
+            channels: number;
+            /** Content Hash */
+            content_hash: string;
+            /** End Offset */
+            end_offset: number;
+            /** Frames */
+            frames: number;
+            /**
+             * Media Type
+             * @constant
+             */
+            media_type: "audio/wav";
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /** Profile Id */
+            profile_id: string;
+            /** Sample Rate */
+            sample_rate: number;
+            /** Start Offset */
+            start_offset: number;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+        };
+        /** VoiceSynthesizeInput */
+        VoiceSynthesizeInput: {
+            /** End Offset */
+            end_offset: number;
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /** Profile Id */
+            profile_id: string;
+            /** Start Offset */
+            start_offset: number;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+            /** Voice */
+            voice: string;
+        };
+        /** VoiceTranscribeInput */
+        VoiceTranscribeInput: {
+            /** Audio Base64 */
+            audio_base64: string;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /** Language */
+            language?: string | null;
+            media_type: components["schemas"]["AudioMediaType"];
+            /** Profile Id */
+            profile_id: string;
+        };
+        /** VoiceTranscriptModel */
+        VoiceTranscriptModel: {
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /** Language */
+            language?: string | null;
+            /** Profile Id */
+            profile_id: string;
+            /** Segments */
+            segments: components["schemas"]["TranscriptSegmentModel"][];
+            /** Text */
+            text: string;
+        };
         /**
          * WorkspaceType
          * @enum {string}
@@ -4700,6 +4846,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VersionModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "voice.synthesize": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoiceSynthesizeInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceAudioModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "voice.transcribe": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoiceTranscribeInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceTranscriptModel"];
                 };
             };
             /** @description Validation Error */
