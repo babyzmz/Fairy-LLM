@@ -1,6 +1,7 @@
 use std::fs;
+use std::io::Cursor;
 
-use fairy_local_worker::{dispatch_request, WorkspaceManager};
+use fairy_local_worker::{dispatch_request, process_stream, WorkspaceManager};
 use serde_json::json;
 use tempfile::tempdir;
 
@@ -253,4 +254,85 @@ fn protocol_creates_empty_projects_and_conversation_scratch() {
         .path()
         .join("managed/scratch/conversation-1/task-1")
         .is_dir());
+}
+
+#[test]
+fn preview_protocol_keeps_registry_for_the_entire_stdio_stream() {
+    let temp = tempdir().expect("tempdir");
+    let managed = temp.path().join("managed");
+    let root = managed.join("projects/project-1/versions/version-1");
+    fs::create_dir_all(&root).expect("version root");
+    fs::write(root.join("index.html"), "<h1>Preview</h1>").expect("index");
+    let manager = WorkspaceManager::new(&managed);
+    let input = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": 20,
+            "method": "preview.start_static",
+            "params": {
+                "preview_id": "preview-1",
+                "project_id": "project-1",
+                "version_id": "version-1",
+                "entry_path": "index.html"
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 21,
+            "method": "preview.status",
+            "params": {"preview_id": "preview-1"}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 22,
+            "method": "preview.start_static",
+            "params": {
+                "preview_id": "preview-1",
+                "project_id": "project-1",
+                "version_id": "another-version",
+                "entry_path": "index.html"
+            }
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 23,
+            "method": "preview.status",
+            "params": {"preview_id": "unknown-preview"}
+        }),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 24,
+            "method": "preview.stop",
+            "params": {"preview_id": "preview-1"}
+        }),
+    ]
+    .into_iter()
+    .map(|request| serde_json::to_string(&request).expect("json"))
+    .collect::<Vec<_>>()
+    .join("\n");
+    let mut output = Vec::new();
+
+    process_stream(&manager, Cursor::new(input), &mut output).expect("process stream");
+
+    let responses = String::from_utf8(output)
+        .expect("utf8")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("response"))
+        .collect::<Vec<_>>();
+    assert_eq!(responses[0]["result"]["host"], "127.0.0.1");
+    assert_eq!(responses[0]["result"]["state"], "running");
+    assert_eq!(responses[1]["result"]["state"], "running");
+    assert_eq!(
+        responses[1]["result"]["executor_handle"],
+        responses[0]["result"]["executor_handle"]
+    );
+    assert_eq!(
+        responses[2]["error"]["data"]["error_code"],
+        "SCOPE_MISMATCH"
+    );
+    assert_eq!(
+        responses[3]["error"]["data"]["error_code"],
+        "WORKER_INTERRUPTED"
+    );
+    assert_eq!(responses[4]["result"]["stopped"], true);
 }

@@ -1,3 +1,5 @@
+pub mod preview;
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -8,6 +10,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard};
 use thiserror::Error;
+
+use preview::{StaticPreviewManager, StaticPreviewRequest};
 
 #[derive(Debug, Error)]
 pub enum WorkerError {
@@ -28,6 +32,12 @@ pub enum WorkerError {
     ChangesetJournal(String),
     #[error("workspace operation lock is poisoned")]
     LockPoisoned,
+    #[error("Preview identity is already bound to another Scope: {0}")]
+    PreviewScopeMismatch(String),
+    #[error("Preview executor state is unavailable: {0}")]
+    PreviewUnavailable(String),
+    #[error("Preview server failed: {0}")]
+    PreviewServer(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -477,6 +487,11 @@ struct CheckpointParams {
     message: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct PreviewIdParams {
+    preview_id: String,
+}
+
 #[derive(Debug)]
 struct ProtocolError {
     rpc_code: i32,
@@ -488,12 +503,16 @@ impl From<WorkerError> for ProtocolError {
     fn from(error: WorkerError) -> Self {
         let error_code = match error {
             WorkerError::PathOutOfScope(_) => "PATH_OUT_OF_SCOPE",
-            WorkerError::InvalidIdentifier(_) => "SCOPE_MISMATCH",
+            WorkerError::InvalidIdentifier(_) | WorkerError::PreviewScopeMismatch(_) => {
+                "SCOPE_MISMATCH"
+            }
             WorkerError::Io(_)
             | WorkerError::Git(_)
             | WorkerError::ChangesetRollback { .. }
             | WorkerError::ChangesetJournal(_)
-            | WorkerError::LockPoisoned => "WORKER_INTERRUPTED",
+            | WorkerError::LockPoisoned
+            | WorkerError::PreviewUnavailable(_)
+            | WorkerError::PreviewServer(_) => "WORKER_INTERRUPTED",
         };
         Self {
             rpc_code: -32000,
@@ -503,7 +522,27 @@ impl From<WorkerError> for ProtocolError {
     }
 }
 
+#[derive(Clone)]
+pub struct LocalWorker {
+    workspace: WorkspaceManager,
+    previews: StaticPreviewManager,
+}
+
+impl LocalWorker {
+    pub fn new(workspace: WorkspaceManager) -> Self {
+        let previews = StaticPreviewManager::new(&workspace.managed_root);
+        Self {
+            workspace,
+            previews,
+        }
+    }
+}
+
 pub fn dispatch_request(manager: &WorkspaceManager, request: Value) -> Value {
+    dispatch_worker_request(&LocalWorker::new(manager.clone()), request)
+}
+
+pub fn dispatch_worker_request(worker: &LocalWorker, request: Value) -> Value {
     let parsed = serde_json::from_value::<WorkerRequest>(request);
     let request = match parsed {
         Ok(request) if request.jsonrpc == "2.0" => request,
@@ -529,7 +568,7 @@ pub fn dispatch_request(manager: &WorkspaceManager, request: Value) -> Value {
         }
     };
     let id = request.id.clone();
-    let result = execute_method(manager, &request.method, request.params);
+    let result = execute_method(worker, &request.method, request.params);
     match result {
         Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
         Err(error) => protocol_error(id, error),
@@ -541,9 +580,10 @@ pub fn process_stream(
     source: impl BufRead,
     mut destination: impl Write,
 ) -> Result<(), std::io::Error> {
+    let worker = LocalWorker::new(manager.clone());
     for line in source.lines() {
         let response = match serde_json::from_str::<Value>(&line?) {
-            Ok(request) => dispatch_request(manager, request),
+            Ok(request) => dispatch_worker_request(&worker, request),
             Err(error) => protocol_error(
                 Value::Null,
                 ProtocolError {
@@ -569,25 +609,30 @@ pub fn run_stdio(managed_root: impl AsRef<Path>) -> Result<(), WorkerError> {
 }
 
 fn execute_method(
-    manager: &WorkspaceManager,
+    worker: &LocalWorker,
     method: &str,
     params: Value,
 ) -> Result<Value, ProtocolError> {
     match method {
         "workspace.create_empty" => {
             let params: EmptyProjectParams = parse_params(params)?;
-            let workspace = manager.create_empty(&params.project_id, &params.version_id)?;
+            let workspace = worker
+                .workspace
+                .create_empty(&params.project_id, &params.version_id)?;
             Ok(json!({"root": workspace.root}))
         }
         "workspace.import" => {
             let params: ImportParams = parse_params(params)?;
-            let workspace =
-                manager.import_project(params.source, &params.project_id, &params.version_id)?;
+            let workspace = worker.workspace.import_project(
+                params.source,
+                &params.project_id,
+                &params.version_id,
+            )?;
             Ok(json!({"root": workspace.root}))
         }
         "workspace.fork" => {
             let params: ForkParams = parse_params(params)?;
-            let workspace = manager.fork_version(
+            let workspace = worker.workspace.fork_version(
                 &params.project_id,
                 &params.parent_version_id,
                 &params.version_id,
@@ -596,7 +641,7 @@ fn execute_method(
         }
         "workspace.write_text" => {
             let params: WriteTextParams = parse_params(params)?;
-            let path = manager.write_file(
+            let path = worker.workspace.write_file(
                 &params.project_id,
                 &params.version_id,
                 &params.relative_path,
@@ -606,7 +651,7 @@ fn execute_method(
         }
         "workspace.apply_changeset" => {
             let params: ApplyChangesetParams = parse_params(params)?;
-            let paths = manager.apply_changeset(
+            let paths = worker.workspace.apply_changeset(
                 &params.project_id,
                 &params.version_id,
                 &params.mutations,
@@ -615,24 +660,48 @@ fn execute_method(
         }
         "workspace.checkpoint" => {
             let params: CheckpointParams = parse_params(params)?;
-            let commit =
-                manager.checkpoint(&params.project_id, &params.version_id, &params.message)?;
+            let commit = worker.workspace.checkpoint(
+                &params.project_id,
+                &params.version_id,
+                &params.message,
+            )?;
             Ok(json!({"commit": commit}))
         }
         "workspace.create_scratch" => {
             let params: ScratchParams = parse_params(params)?;
-            let root = manager.create_scratch(&params.conversation_id, &params.task_id)?;
+            let root = worker
+                .workspace
+                .create_scratch(&params.conversation_id, &params.task_id)?;
             Ok(json!({"root": root}))
         }
         "workspace.diff" => {
             let params: VersionParams = parse_params(params)?;
-            let diff = manager.diff(&params.project_id, &params.version_id)?;
+            let diff = worker
+                .workspace
+                .diff(&params.project_id, &params.version_id)?;
             Ok(json!({"diff": diff}))
         }
         "workspace.discard" => {
             let params: VersionParams = parse_params(params)?;
-            manager.discard_version(&params.project_id, &params.version_id)?;
+            worker
+                .workspace
+                .discard_version(&params.project_id, &params.version_id)?;
             Ok(json!({"discarded": true}))
+        }
+        "preview.start_static" => {
+            let params: StaticPreviewRequest = parse_params(params)?;
+            let info = worker.previews.start_static(params)?;
+            Ok(serde_json::to_value(info).expect("serializable Preview info"))
+        }
+        "preview.status" => {
+            let params: PreviewIdParams = parse_params(params)?;
+            let info = worker.previews.status(&params.preview_id)?;
+            Ok(serde_json::to_value(info).expect("serializable Preview info"))
+        }
+        "preview.stop" => {
+            let params: PreviewIdParams = parse_params(params)?;
+            worker.previews.stop(&params.preview_id)?;
+            Ok(json!({"stopped": true}))
         }
         _ => Err(ProtocolError {
             rpc_code: -32601,
@@ -662,7 +731,7 @@ fn protocol_error(id: Value, error: ProtocolError) -> Value {
     })
 }
 
-fn validate_identifier(value: &str) -> Result<(), WorkerError> {
+pub(crate) fn validate_identifier(value: &str) -> Result<(), WorkerError> {
     if value.is_empty()
         || !value
             .bytes()
