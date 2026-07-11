@@ -12,6 +12,7 @@ from uuid import UUID
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.sandbox.models import (
     SandboxNetworkPolicy,
+    SandboxPurpose,
     SandboxRequest,
     SandboxResult,
     SandboxResultStatus,
@@ -64,6 +65,7 @@ class ExecutionJob:
     timeout_seconds: int
     output_limit_bytes: int
     network_policy: SandboxNetworkPolicy
+    purpose: SandboxPurpose
     workspace_archive: bytes
     archive_sha256: str
     status: ExecutionJobStatus
@@ -113,6 +115,7 @@ class ExecutionJob:
             timeout_seconds=request.timeout_seconds,
             output_limit_bytes=request.output_limit_bytes,
             network_policy=request.network_policy,
+            purpose=request.purpose,
             workspace_archive=request.workspace_archive,
             archive_sha256=request.archive_sha256,
             status=ExecutionJobStatus.QUEUED,
@@ -153,6 +156,7 @@ class ExecutionJob:
             output_limit_bytes=self.output_limit_bytes,
             network_policy=self.network_policy,
             workspace_archive=self.workspace_archive,
+            purpose=self.purpose,
         )
 
     def to_result(self) -> SandboxResult:

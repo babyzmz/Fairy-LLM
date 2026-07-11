@@ -92,6 +92,7 @@ _TASK_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
     ),
     TaskStatus.INSTALLING: frozenset(
         {
+            TaskStatus.EXECUTING,
             TaskStatus.PREVIEWING,
             TaskStatus.REVIEWING,
             TaskStatus.REPAIRING,

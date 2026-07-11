@@ -76,6 +76,7 @@ describe("PreviewPanel", () => {
         isActing={false}
         onStart={start}
         onStop={vi.fn(async () => undefined)}
+        onReview={vi.fn(async () => undefined)}
         onAccept={accept}
         onDiscard={discard}
       />,
@@ -92,6 +93,7 @@ describe("PreviewPanel", () => {
         isActing={false}
         onStart={start}
         onStop={vi.fn(async () => undefined)}
+        onReview={vi.fn(async () => undefined)}
         onAccept={accept}
         onDiscard={discard}
       />,
@@ -100,6 +102,28 @@ describe("PreviewPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(accept).toHaveBeenCalledTimes(1);
     expect(discard).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs governed Review before Version decisions become available", async () => {
+    const review = vi.fn(async () => undefined);
+    const context = readyContext();
+    render(
+      <PreviewPanel
+        task={context.task}
+        context={context}
+        runtimeHealth={null}
+        isActing={false}
+        onStart={vi.fn(async () => undefined)}
+        onStop={vi.fn(async () => undefined)}
+        onReview={review}
+        onAccept={vi.fn(async () => undefined)}
+        onDiscard={vi.fn(async () => undefined)}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Use this version" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(review).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -116,6 +140,7 @@ function panel(context: PreviewContext, stop = vi.fn(async () => undefined)) {
       isActing={false}
       onStart={vi.fn(async () => undefined)}
       onStop={stop}
+      onReview={vi.fn(async () => undefined)}
       onAccept={vi.fn(async () => undefined)}
       onDiscard={vi.fn(async () => undefined)}
     />

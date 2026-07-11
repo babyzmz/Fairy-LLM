@@ -814,6 +814,7 @@ def build_default_registry() -> ToolRegistry:
             ApprovalPolicy.PROFILE,
             active_profiles,
             "changeset_worker",
+            model_visible=False,
         ),
         _tool(
             "deps.install",
@@ -823,6 +824,11 @@ def build_default_registry() -> ToolRegistry:
             active_profiles,
             "dependency_worker",
             sandbox=True,
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
         ),
         _tool(
             "preview.start",
@@ -832,6 +838,7 @@ def build_default_registry() -> ToolRegistry:
             active_profiles,
             "preview_worker",
             idempotent=True,
+            model_visible=False,
         ),
         _tool(
             "preview.stop",
@@ -841,6 +848,7 @@ def build_default_registry() -> ToolRegistry:
             active_profiles,
             "preview_worker",
             idempotent=True,
+            model_visible=False,
         ),
         _tool(
             "review.typecheck",
@@ -851,6 +859,11 @@ def build_default_registry() -> ToolRegistry:
             "review_worker",
             sandbox=True,
             idempotent=True,
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
         ),
         _tool(
             "review.lint",
@@ -861,6 +874,11 @@ def build_default_registry() -> ToolRegistry:
             "review_worker",
             sandbox=True,
             idempotent=True,
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
         ),
         _tool(
             "review.test",
@@ -871,6 +889,11 @@ def build_default_registry() -> ToolRegistry:
             "review_worker",
             sandbox=True,
             idempotent=True,
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
         ),
         _tool(
             "review.build",
@@ -881,6 +904,11 @@ def build_default_registry() -> ToolRegistry:
             "review_worker",
             sandbox=True,
             idempotent=True,
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
         ),
         _tool(
             "review.health",
@@ -890,6 +918,7 @@ def build_default_registry() -> ToolRegistry:
             active_profiles,
             "review_worker",
             idempotent=True,
+            model_visible=False,
         ),
         _tool(
             "review.browser",
@@ -899,6 +928,7 @@ def build_default_registry() -> ToolRegistry:
             active_profiles,
             "review_worker",
             idempotent=True,
+            model_visible=False,
         ),
         _tool(
             "run.sandboxed",
@@ -958,6 +988,7 @@ def build_default_registry() -> ToolRegistry:
             ApprovalPolicy.ALWAYS,
             all_profiles,
             "version_manager",
+            model_visible=False,
         ),
     ]
     return ToolRegistry(definitions)

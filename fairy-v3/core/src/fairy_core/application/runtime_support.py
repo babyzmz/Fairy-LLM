@@ -11,8 +11,9 @@ from uuid import UUID, uuid4
 from fairy_core.application.runtime_contracts import PreviewContext
 from fairy_core.commanding import CommandLedger, CommandRun, CommandStatus
 from fairy_core.commanding.bus import CommandBus, CommandRequest
-from fairy_core.commanding.policy import PermissionProfile, PolicyEngine
+from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
+from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.execution import PreviewSession, PreviewStatus, RuntimeSession
 from fairy_core.domain.models import Conversation, Project, ScopeContract, Task
@@ -33,12 +34,14 @@ class RuntimeApplicationSupport:
         registry: ToolRegistry,
         policy: PolicyEngine,
         scope_resolver: ScopeResolver,
+        execution_policy: ExecutionPolicyResolver | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._executor = executor
         self._registry = registry
         self._policy = policy
         self._scope_resolver = scope_resolver
+        self._execution_policy = execution_policy or ExecutionPolicyResolver()
         self._instance_id = uuid4().hex
         self._operation_lock = RLock()
 
@@ -132,6 +135,7 @@ class RuntimeApplicationSupport:
 
     def _start_user_command(
         self,
+        unit_of_work: CoreUnitOfWork,
         commands: CommandBus,
         *,
         tool_name: str,
@@ -140,6 +144,10 @@ class RuntimeApplicationSupport:
         idempotency_key: str,
         worker_id: str,
     ) -> CommandRun:
+        effective_policy = self._execution_policy.resolve(
+            unit_of_work.execution_settings,
+            execution_target=scope.execution_target,
+        )
         dispatch = commands.submit(
             CommandRequest(
                 tool_name=tool_name,
@@ -148,9 +156,9 @@ class RuntimeApplicationSupport:
                 payload=payload,
                 idempotency_key=idempotency_key,
             ),
-            profile=PermissionProfile.STANDARD,
-            capability_overrides={},
-            sandbox_healthy=False,
+            profile=effective_policy.profile,
+            capability_overrides=dict(effective_policy.capability_overrides),
+            sandbox_healthy=effective_policy.sandbox_healthy,
         )
         if not dispatch.accepted or dispatch.run is None:
             raise RuntimeExecutorError(

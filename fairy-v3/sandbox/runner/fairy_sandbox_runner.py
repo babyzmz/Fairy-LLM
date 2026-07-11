@@ -82,6 +82,7 @@ class RunnerRequest:
     timeout_seconds: int
     output_limit_bytes: int
     network_policy: str
+    purpose: str
     archive_sha256: str
 
 
@@ -144,6 +145,17 @@ def parse_request_frame(frame: bytes) -> tuple[RunnerRequest, bytes]:
     network_policy = header.get("network_policy")
     if network_policy not in {"none", "public"}:
         raise RunnerProtocolError("network policy is invalid")
+    purpose = header.get("purpose")
+    if purpose not in {"raw", "dependency", "review"}:
+        raise RunnerProtocolError("purpose is invalid")
+    if purpose == "review" and network_policy != "none":
+        raise RunnerProtocolError("review purpose cannot request network access")
+    if purpose == "dependency" and project_id is None:
+        raise RunnerProtocolError("dependency purpose requires a Project Version")
+    if purpose == "raw" and network_policy == "public" and project_id is not None:
+        raise RunnerProtocolError(
+            "raw public network is limited to a scratch Workspace"
+        )
     return (
         RunnerRequest(
             job_id=job_id,
@@ -160,6 +172,7 @@ def parse_request_frame(frame: bytes) -> tuple[RunnerRequest, bytes]:
             timeout_seconds=timeout,
             output_limit_bytes=output_limit,
             network_policy=network_policy,
+            purpose=purpose,
             archive_sha256=archive_sha256,
         ),
         archive,

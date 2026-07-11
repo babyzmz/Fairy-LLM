@@ -210,3 +210,44 @@ def test_internal_workspace_commands_share_registry_but_are_not_model_tools() ->
     assert "workspace.fork" not in agent_names
     assert metadata["workspace.fork"]["side_effect"] == "write"
     assert metadata["workspace.fork"]["model_visible"] is False
+
+
+def test_project_execution_tools_use_closed_argument_schemas() -> None:
+    registry = build_default_registry()
+
+    for name in (
+        "deps.install",
+        "review.typecheck",
+        "review.lint",
+        "review.test",
+        "review.build",
+    ):
+        definition = registry.get(name)
+        assert definition is not None
+        assert dict(definition.input_schema) == {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        }
+
+
+def test_core_and_user_only_execution_commands_are_not_agent_tools() -> None:
+    registry = build_default_registry()
+    agent_names = {definition.name for definition in registry.agent_definitions()}
+
+    assert {
+        "deps.install",
+        "review.typecheck",
+        "review.lint",
+        "review.test",
+        "review.build",
+        "run.sandboxed",
+    } <= agent_names
+    assert {
+        "edit.apply_changeset",
+        "preview.start",
+        "preview.stop",
+        "review.health",
+        "review.browser",
+        "project.accept_version",
+    }.isdisjoint(agent_names)

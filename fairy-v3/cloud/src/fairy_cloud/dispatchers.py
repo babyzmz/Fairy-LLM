@@ -17,6 +17,7 @@ from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.service import CoreService
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
+from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.runtime.unavailable import UnavailableRuntimeExecutor
@@ -63,12 +64,14 @@ def build_postgres_core_service(
 ) -> CoreService:
     registry = build_default_registry()
     sandbox = build_cloud_sandbox(engine, tenant_id=tenant_id)
+    execution_policy = ExecutionPolicyResolver(sandbox.health)
     unit_of_work_factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id=tenant_id)
     application = CoreApplication(
         unit_of_work_factory=unit_of_work_factory,
         workspace_provisioner=FileSystemWorkspaceProvisioner(workspace_root),
         registry=registry,
         policy=PolicyEngine(registry),
+        execution_policy=execution_policy,
     )
     runtime_application = RuntimeApplication(
         unit_of_work_factory=unit_of_work_factory,
@@ -79,6 +82,7 @@ def build_postgres_core_service(
         registry=registry,
         policy=PolicyEngine(registry),
         scope_resolver=application.scope_for_task,
+        execution_policy=execution_policy,
     )
     providers = build_provider_registry()
     try:

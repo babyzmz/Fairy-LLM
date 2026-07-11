@@ -27,7 +27,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   health: CoreClient["health"];
   projects: Pick<CoreClient["projects"], "list" | "create" | "import">;
   conversations: Pick<CoreClient["conversations"], "list" | "create">;
-  tasks: Pick<CoreClient["tasks"], "list" | "create">;
+  tasks: Pick<CoreClient["tasks"], "list" | "create" | "review">;
   approvals: Pick<CoreClient["approvals"], "list" | "decide">;
   versions: Pick<CoreClient["versions"], "list" | "accept" | "discard">;
   runtimes: Pick<CoreClient["runtimes"], "health">;
@@ -105,6 +105,7 @@ export interface WorkspaceModel {
   decideApproval(approvalId: string, approved: boolean): Promise<void>;
   startPreview(): Promise<void>;
   stopPreview(): Promise<void>;
+  reviewTask(): Promise<void>;
   acceptVersion(): Promise<void>;
   discardVersion(): Promise<void>;
 }
@@ -452,6 +453,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           }),
         );
       },
+      async reviewTask() {
+        if (selectedTask === null) throw new Error("Task is unavailable");
+        await runAction(() => client.tasks.review(selectedTask.id));
+      },
       async acceptVersion() {
         if (selectedTask === null || selectedProject === null) {
           throw new Error("Version is unavailable");
@@ -591,6 +596,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     decideApproval: actions.decideApproval,
     startPreview: actions.startPreview,
     stopPreview: actions.stopPreview,
+    reviewTask: actions.reviewTask,
     acceptVersion: actions.acceptVersion,
     discardVersion: actions.discardVersion,
   };

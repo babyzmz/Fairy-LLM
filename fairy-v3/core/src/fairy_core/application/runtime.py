@@ -22,6 +22,7 @@ from fairy_core.domain.execution import (
     RuntimeStatus,
 )
 from fairy_core.domain.models import TaskStatus
+from fairy_core.runtime.artifacts import ensure_preview_manifest
 from fairy_core.runtime.models import (
     ExecutorRuntimeState,
     RuntimeExecutorError,
@@ -283,6 +284,7 @@ class RuntimeApplication(RuntimeApplicationSupport):
 
             scope = self._scope_resolver(state, task)
             command = self._start_user_command(
+                unit_of_work,
                 commands,
                 tool_name="preview.start",
                 scope=scope,
@@ -338,12 +340,23 @@ class RuntimeApplication(RuntimeApplicationSupport):
             state.save_preview(preview, expected_revision=preview_revision)
             state.save_task(task)
             state.save_conversation(conversation)
+            manifest = ensure_preview_manifest(
+                state,
+                runtime=runtime,
+                preview=preview,
+                url=result.url,
+                command_run_id=intent.command.id,
+            )
             unit_of_work.commands.append_event(
                 run_id=intent.command.id,
                 event_type="preview.ready",
                 visibility=EventVisibility.USER,
                 message="Preview ready",
-                payload={"preview_id": str(preview.id), "url": result.url},
+                payload={
+                    "preview_id": str(preview.id),
+                    "url": result.url,
+                    "artifact_id": str(manifest.id),
+                },
                 lease_owner=intent.command.lease_owner,
                 lease_fence=intent.command.lease_fence,
             )
@@ -412,6 +425,7 @@ class RuntimeApplication(RuntimeApplicationSupport):
             state.save_runtime(runtime, expected_revision=runtime_revision)
             state.save_preview(preview, expected_revision=preview_revision)
             command = self._start_user_command(
+                unit_of_work,
                 commands,
                 tool_name="preview.stop",
                 scope=scope,
@@ -549,13 +563,24 @@ class RuntimeApplication(RuntimeApplicationSupport):
             conversation = self._require_conversation(state, preview.conversation_id)
             conversation.active_preview_id = preview.id
             state.save_conversation(conversation)
+            manifest = ensure_preview_manifest(
+                state,
+                runtime=runtime,
+                preview=preview,
+                url=probe.url,
+                command_run_id=command.id if command is not None else None,
+            )
             if command is not None:
                 unit_of_work.commands.append_event(
                     run_id=command.id,
                     event_type="preview.ready",
                     visibility=EventVisibility.USER,
                     message="Preview recovered",
-                    payload={"preview_id": str(preview.id), "url": probe.url},
+                    payload={
+                        "preview_id": str(preview.id),
+                        "url": probe.url,
+                        "artifact_id": str(manifest.id),
+                    },
                     lease_owner=command.lease_owner,
                     lease_fence=command.lease_fence,
                 )

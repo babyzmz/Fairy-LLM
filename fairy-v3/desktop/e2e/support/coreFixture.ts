@@ -107,8 +107,13 @@ async function installCoreFixture(page: Page) {
         toolInvocation: "0198f4de-0114-7000-8000-000000000016",
         approval: "0198f4de-0114-7000-8000-000000000017",
         resumedMessage: "0198f4de-0114-7000-8000-000000000018",
+        checkpoint: "0198f4de-0114-7000-8000-000000000019",
       };
       const timestamp = "2026-07-11T00:00:00Z";
+      const initialTaskStatus =
+        new URLSearchParams(window.location.search).get("taskStatus") === "previewing"
+          ? "previewing"
+          : "ready";
       const project = {
         id: id.project,
         name: "Atlas Console",
@@ -141,7 +146,7 @@ async function installCoreFixture(page: Page) {
         target_version_id: id.version,
         memory_snapshot_id: null,
         memory_snapshot_hash: null,
-        status: "ready",
+        status: initialTaskStatus,
         created_at: timestamp,
         updated_at: timestamp,
       };
@@ -544,6 +549,32 @@ async function installCoreFixture(page: Page) {
                         decided_at: timestamp,
                       },
                       changeset: null,
+                    };
+                  })()
+              : request.method === "tasks.review"
+                ? (() => {
+                    if (request.params.task_id !== id.task) {
+                      throw new Error("Task is unavailable");
+                    }
+                    task.status = "ready";
+                    const cursor = (events.at(-1)?.cursor ?? 0) + 1;
+                    events.push({
+                      ...event,
+                      id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
+                      cursor,
+                      task_sequence: cursor,
+                      event_type: "task.reviewed",
+                      message: "Review complete",
+                      payload: { status: "ready", checkpoint_id: id.checkpoint },
+                    });
+                    return {
+                      id: id.checkpoint,
+                      task_id: id.task,
+                      version_id: id.version,
+                      changed_files: ["README.md"],
+                      command_run_ids: [id.commandRun],
+                      preview_artifact_id: null,
+                      created_at: timestamp,
                     };
                   })()
               : request.method === "permissions.get"

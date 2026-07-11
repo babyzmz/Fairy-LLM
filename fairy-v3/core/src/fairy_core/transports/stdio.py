@@ -117,6 +117,7 @@ def build_local_service(
             registry=registry,
             policy=PolicyEngine(registry),
             scope_resolver=application.scope_for_task,
+            execution_policy=execution_policy,
         )
         AssistantLedgerApplication(
             unit_of_work_factory=unit_of_work_factory,

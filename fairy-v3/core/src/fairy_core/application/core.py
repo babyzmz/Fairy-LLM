@@ -11,6 +11,8 @@ from sqlalchemy.exc import IntegrityError
 
 from fairy_core.application.approval import ApprovalApplication
 from fairy_core.application.errors import ApprovalRequiredError
+from fairy_core.application.recoverable_command import start_recoverable_core_command
+from fairy_core.application.review_evidence import collect_checkpoint_evidence
 from fairy_core.application.scope import build_task_scope
 from fairy_core.commanding import CommandLedger, CommandRun, CommandStatus
 from fairy_core.commanding.bus import CommandBus, CommandRequest
@@ -524,12 +526,18 @@ class CoreApplication:
                     raise RuntimeError("changeset approval is missing")
                 return PendingChangeset(changeset=existing, approval=approval)
             task = self._require_task(unit_of_work.state, request.task_id)
-            if task.status not in {TaskStatus.PLANNING, TaskStatus.EXECUTING}:
+            if task.status not in {
+                TaskStatus.PLANNING,
+                TaskStatus.EXECUTING,
+                TaskStatus.REPAIRING,
+            }:
                 raise InvalidTransitionError(
                     "Task must be planning or executing before proposing a Changeset"
                 )
             if task.project_id is None or task.target_version_id is None:
                 raise ValueError("scratch tasks cannot apply project Changesets")
+            if task.status is TaskStatus.REPAIRING:
+                task.transition_to(TaskStatus.EXECUTING)
             context = self._context_for(unit_of_work.state, task)
             changeset = Changeset.create(
                 project_id=task.project_id,
@@ -685,16 +693,24 @@ class CoreApplication:
     def review_task(self, task_id: UUID) -> Checkpoint:
         with self._transaction() as (unit_of_work, commands):
             task = self._require_task(unit_of_work.state, task_id)
-            if task.status not in {TaskStatus.EXECUTING, TaskStatus.PREVIEWING}:
-                raise InvalidTransitionError("Task must be executing or previewing before review")
+            if task.status not in {
+                TaskStatus.EXECUTING,
+                TaskStatus.PREVIEWING,
+                TaskStatus.REVIEWING,
+            }:
+                raise InvalidTransitionError(
+                    "Task must be executing, previewing, or reviewing before checkpoint"
+                )
             if task.project_id is None or task.target_version_id is None:
                 raise ValueError("scratch tasks do not produce project checkpoints")
-            task.transition_to(TaskStatus.REVIEWING)
+            if task.status is not TaskStatus.REVIEWING:
+                task.transition_to(TaskStatus.REVIEWING)
             unit_of_work.state.save_task(task)
             context = self._context_for(unit_of_work.state, task)
-            diff_running = self._start_command(
+            diff_running = start_recoverable_core_command(
                 unit_of_work,
                 commands,
+                execution_policy=self._execution_policy,
                 tool_name="workspace.diff",
                 scope=context.scope,
                 payload={
@@ -705,35 +721,39 @@ class CoreApplication:
             )
             unit_of_work.commit()
 
-        try:
-            diff = self._workspaces.diff(
-                project_id=task.project_id,
-                version_id=task.target_version_id,
-            )
-        except Exception as error:
-            with self._transaction() as (unit_of_work, commands):
-                failed_task = self._require_task(unit_of_work.state, task.id)
-                commands.fail(
+        diff = ""
+        if diff_running.status is not CommandStatus.SUCCEEDED:
+            try:
+                diff = self._workspaces.diff(
+                    project_id=task.project_id,
+                    version_id=task.target_version_id,
+                )
+            except Exception as error:
+                with self._transaction() as (unit_of_work, commands):
+                    failed_task = self._require_task(unit_of_work.state, task.id)
+                    commands.fail(
+                        diff_running.id,
+                        error_code=str(getattr(error, "error_code", "WORKER_INTERRUPTED")),
+                        lease_owner=diff_running.lease_owner,
+                        lease_fence=diff_running.lease_fence,
+                    )
+                    failed_task.transition_to(TaskStatus.FAILED)
+                    unit_of_work.state.save_task(failed_task)
+                    unit_of_work.commit()
+                raise
+
+        with self._transaction() as (unit_of_work, commands):
+            if diff_running.status is not CommandStatus.SUCCEEDED:
+                commands.complete(
                     diff_running.id,
-                    error_code=str(getattr(error, "error_code", "WORKER_INTERRUPTED")),
+                    output={"has_changes": bool(diff), "bytes": len(diff)},
                     lease_owner=diff_running.lease_owner,
                     lease_fence=diff_running.lease_fence,
                 )
-                failed_task.transition_to(TaskStatus.FAILED)
-                unit_of_work.state.save_task(failed_task)
-                unit_of_work.commit()
-            raise
-
-        with self._transaction() as (unit_of_work, commands):
-            commands.complete(
-                diff_running.id,
-                output={"has_changes": bool(diff), "bytes": len(diff)},
-                lease_owner=diff_running.lease_owner,
-                lease_fence=diff_running.lease_fence,
-            )
-            checkpoint_running = self._start_command(
+            checkpoint_running = start_recoverable_core_command(
                 unit_of_work,
                 commands,
+                execution_policy=self._execution_policy,
                 tool_name="workspace.checkpoint",
                 scope=context.scope,
                 payload={
@@ -767,19 +787,18 @@ class CoreApplication:
         with self._transaction() as (unit_of_work, commands):
             persisted_task = self._require_task(unit_of_work.state, task.id)
             changesets = unit_of_work.state.changesets_for_task(task.id)
-            changed_files = tuple(dict.fromkeys(path for item in changesets for path in item.files))
-            approvals = [
-                approval
-                for item in changesets
-                if (approval := unit_of_work.state.find_approval_by_changeset_id(item.id))
-                is not None
-            ]
+            evidence = collect_checkpoint_evidence(
+                state=unit_of_work.state,
+                project_indexes=unit_of_work.project_indexes,
+                task=persisted_task,
+                changesets=changesets,
+            )
             checkpoint = Checkpoint.create(
                 task_id=persisted_task.id,
                 version_id=persisted_task.target_version_id,
-                changed_files=changed_files,
-                command_run_ids=tuple(approval.command_run_id for approval in approvals),
-                preview_artifact_id=None,
+                changed_files=evidence.changed_files,
+                command_run_ids=evidence.command_run_ids,
+                preview_artifact_id=evidence.preview_artifact_id,
             )
             unit_of_work.state.save_checkpoint(checkpoint)
             persisted_task.transition_to(TaskStatus.READY)

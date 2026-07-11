@@ -19,6 +19,7 @@ from typing import Protocol
 from fairy_core.domain.errors import WorkerFenceError
 from fairy_core.sandbox.models import (
     SandboxNetworkPolicy,
+    SandboxPurpose,
     SandboxRequest,
     SandboxResult,
     SandboxResultStatus,
@@ -131,7 +132,10 @@ class ExecutionWorker:
         cycle: WorkerCycle,
     ) -> WorkerCycle:
         request = claim.job.to_request()
-        if request.network_policy is SandboxNetworkPolicy.PUBLIC:
+        if (
+            request.network_policy is SandboxNetworkPolicy.PUBLIC
+            and request.purpose is not SandboxPurpose.DEPENDENCY
+        ):
             await self._store.mark_interrupted(claim)
             return _replace_cycle(cycle, claimed=1, interrupted=cycle.interrupted + 1)
         try:

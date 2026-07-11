@@ -87,6 +87,10 @@ from fairy_core.domain.errors import (
     InvalidTransitionError,
     MemoryScopeViolationError,
 )
+from fairy_core.execution.application import (
+    ProjectExecutionApplication,
+    ProjectExecutionToolExecutor,
+)
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
 from fairy_core.perception import ImageAttachment, ImageAttachmentStore
@@ -163,6 +167,18 @@ class CoreService:
         self._runtime_application = runtime_application
         self._default_execution_target = default_execution_target
         self._execution_policy = ExecutionPolicyResolver(sandbox_health_provider)
+        self._project_execution_application = (
+            ProjectExecutionApplication(
+                unit_of_work_factory=unit_of_work_factory,
+                sandbox_executor=sandbox_executor,
+                registry=registry,
+                policy=PolicyEngine(registry),
+                execution_policy=self._execution_policy,
+                scope_resolver=application.scope_for_task,
+            )
+            if sandbox_executor is not None
+            else None
+        )
         self._system_action_application = (
             SystemActionApplication(
                 unit_of_work_factory=unit_of_work_factory,
@@ -222,6 +238,11 @@ class CoreService:
             unit_of_work_factory=unit_of_work_factory,
             delegate=effective_tool_executor,
         )
+        if self._project_execution_application is not None:
+            effective_tool_executor = ProjectExecutionToolExecutor(
+                application=self._project_execution_application,
+                delegate=effective_tool_executor,
+            )
         if sandbox_executor is not None:
             effective_tool_executor = SandboxToolExecutor(
                 executor=sandbox_executor,
@@ -689,7 +710,10 @@ class CoreService:
             )
 
     def _review_task(self, request: BaseModel) -> Any:
-        return self._application.review_task(cast(TaskIdInput, request).task_id)
+        task_id = cast(TaskIdInput, request).task_id
+        if self._project_execution_application is not None:
+            self._project_execution_application.run_review_suite(task_id)
+        return self._application.review_task(task_id)
 
     def _propose_changeset(self, request: BaseModel) -> Any:
         return self._application.propose_changeset(cast(ChangesetProposal, request))

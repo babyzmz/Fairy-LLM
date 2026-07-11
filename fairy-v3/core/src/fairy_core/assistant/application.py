@@ -1001,7 +1001,7 @@ class AssistantApplication:
                 expected_status=expected_status,
                 expected_cancellation_revision=expected_revision,
             )
-            if task.status is TaskStatus.EXECUTING:
+            if task.project_id is None and task.status is TaskStatus.EXECUTING:
                 task.transition_to(TaskStatus.REVIEWING)
                 task.transition_to(TaskStatus.READY)
                 unit_of_work.state.save_task(task)

@@ -15,6 +15,7 @@ from fairy_core.domain.errors import IdempotencyConflictError, WorkerFenceError
 from fairy_core.runtime.models import RuntimeExecutorHealth
 from fairy_core.sandbox.models import (
     SandboxNetworkPolicy,
+    SandboxPurpose,
     SandboxRequest,
     SandboxResult,
     SandboxResultStatus,
@@ -36,7 +37,11 @@ from fairy_cloud.execution.repository import (
 from fairy_cloud.workers.execution import ExecutionWorker, decode_sandbox_result
 
 
-def _request(*, network: SandboxNetworkPolicy = SandboxNetworkPolicy.NONE) -> SandboxRequest:
+def _request(
+    *,
+    network: SandboxNetworkPolicy = SandboxNetworkPolicy.NONE,
+    purpose: SandboxPurpose = SandboxPurpose.RAW,
+) -> SandboxRequest:
     return SandboxRequest.create(
         job_id=uuid4(),
         project_id=uuid4(),
@@ -53,6 +58,7 @@ def _request(*, network: SandboxNetworkPolicy = SandboxNetworkPolicy.NONE) -> Sa
         output_limit_bytes=65_536,
         network_policy=network,
         workspace_archive=b"PK\x03\x04cloud-fixture",
+        purpose=purpose,
     )
 
 
@@ -182,6 +188,20 @@ def test_cloud_executor_fails_closed_for_public_raw_network_before_enqueue() -> 
 
     assert captured.value.error_code == "SECRET_EGRESS_BLOCKED"
     assert store.enqueued == []
+
+
+def test_cloud_executor_allows_core_owned_dependency_registry_egress() -> None:
+    store = SyncStore()
+    executor = CloudSandboxExecutor(store=store, poll_seconds=0, wait_grace_seconds=1)
+    request = _request(
+        network=SandboxNetworkPolicy.PUBLIC,
+        purpose=SandboxPurpose.DEPENDENCY,
+    )
+
+    result = executor.execute(request)
+
+    assert result.status is SandboxResultStatus.COMPLETED
+    assert store.enqueued == [request]
 
 
 def test_cloud_executor_health_comes_from_a_recent_matching_worker() -> None:
@@ -496,6 +516,23 @@ async def test_worker_rejects_public_network_even_if_queue_data_bypasses_api() -
     assert runner.requests == []
     assert "spawned" not in store.calls
     assert "interrupted" in store.calls
+
+
+@pytest.mark.asyncio
+async def test_worker_allows_public_network_only_for_dependency_purpose() -> None:
+    request = _request(
+        network=SandboxNetworkPolicy.PUBLIC,
+        purpose=SandboxPurpose.DEPENDENCY,
+    )
+    job = ExecutionJob.create(tenant_id="tenant-a", request=request)
+    store = AsyncStore([_claim(job)])
+    runner = Runner()
+    worker = ExecutionWorker(store=store, runner=runner, owner_id="execution-a")
+
+    cycle = await worker.run_once()
+
+    assert cycle.completed == 1
+    assert runner.requests == [request]
 
 
 def _runner_result(request: SandboxRequest) -> dict[str, object]:

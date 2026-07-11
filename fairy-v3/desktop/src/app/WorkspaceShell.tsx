@@ -170,6 +170,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
                 isActing={model.isActing}
                 onStart={model.startPreview}
                 onStop={model.stopPreview}
+                onReview={model.reviewTask}
                 onAccept={model.acceptVersion}
                 onDiscard={model.discardVersion}
               />

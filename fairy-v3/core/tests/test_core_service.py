@@ -187,10 +187,13 @@ def test_core_service_exposes_runtime_preview_and_artifact_contracts(tmp_path: P
         )["preview"]["id"]
         == preview_id
     )
-    assert service.invoke(
+    listed = service.invoke(
         "artifacts.list",
         {"task_id": str(stack.task.task.id)},
-    )["items"] == [service.invoke("artifacts.read", {"artifact_id": str(artifact.id)})]
+    )["items"]
+    assert {item["id"] for item in listed} >= {str(artifact.id)}
+    assert any(item["metadata"].get("preview_id") == preview_id for item in listed)
+    assert service.invoke("artifacts.read", {"artifact_id": str(artifact.id)}) in listed
     stopped = service.invoke(
         "previews.stop",
         {

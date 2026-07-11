@@ -6,7 +6,12 @@ from uuid import UUID
 
 from fairy_core.domain.errors import IdempotencyConflictError
 from fairy_core.runtime.models import RuntimeExecutorHealth
-from fairy_core.sandbox.models import SandboxNetworkPolicy, SandboxRequest, SandboxResult
+from fairy_core.sandbox.models import (
+    SandboxNetworkPolicy,
+    SandboxPurpose,
+    SandboxRequest,
+    SandboxResult,
+)
 
 from fairy_cloud.execution.models import (
     ExecutionJob,
@@ -66,7 +71,10 @@ class CloudSandboxExecutor:
             )
 
     def execute(self, request: SandboxRequest) -> SandboxResult:
-        if request.network_policy is SandboxNetworkPolicy.PUBLIC:
+        if (
+            request.network_policy is SandboxNetworkPolicy.PUBLIC
+            and request.purpose is not SandboxPurpose.DEPENDENCY
+        ):
             raise SecretEgressBlockedError(
                 "SECRET_EGRESS_BLOCKED: raw cloud Sandbox network is disabled"
             )

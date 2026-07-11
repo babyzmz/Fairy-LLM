@@ -10,6 +10,7 @@ from fairy_core.domain.errors import IdempotencyConflictError, WorkerFenceError
 from fairy_core.runtime.models import RuntimeExecutorHealth
 from fairy_core.sandbox.models import (
     SandboxNetworkPolicy,
+    SandboxPurpose,
     SandboxRequest,
     SandboxResult,
     SandboxResultStatus,
@@ -527,6 +528,7 @@ def _job_values(job: ExecutionJob) -> dict[str, object]:
         "timeout_seconds": job.timeout_seconds,
         "output_limit_bytes": job.output_limit_bytes,
         "network_policy": job.network_policy.value,
+        "purpose": job.purpose.value,
         "workspace_archive": job.workspace_archive,
         "archive_sha256": job.archive_sha256,
         "archive_byte_length": len(job.workspace_archive),
@@ -558,6 +560,7 @@ def _job_from_row(row: Mapping[str, object]) -> ExecutionJob:
         timeout_seconds=int(row["timeout_seconds"]),
         output_limit_bytes=int(row["output_limit_bytes"]),
         network_policy=SandboxNetworkPolicy(str(row["network_policy"])),
+        purpose=SandboxPurpose(str(row["purpose"])),
         workspace_archive=bytes(row["workspace_archive"]),
         archive_sha256=str(row["archive_sha256"]),
         status=ExecutionJobStatus(str(row["status"])),

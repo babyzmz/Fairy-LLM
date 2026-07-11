@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  ClipboardCheck,
   Code2,
   ExternalLink,
   LoaderCircle,
@@ -19,6 +20,7 @@ interface PreviewPanelProps {
   isActing: boolean;
   onStart(): Promise<void>;
   onStop(): Promise<void>;
+  onReview(): Promise<void>;
   onAccept(): Promise<void>;
   onDiscard(): Promise<void>;
 }
@@ -30,6 +32,7 @@ export function PreviewPanel({
   isActing,
   onStart,
   onStop,
+  onReview,
   onAccept,
   onDiscard,
 }: PreviewPanelProps) {
@@ -45,6 +48,8 @@ export function PreviewPanel({
   const canStop =
     preview !== null && ["ready", "stopping", "interrupted"].includes(preview.status);
   const canDecide = task?.status === "ready";
+  const canReview =
+    task !== null && task !== undefined && ["executing", "previewing"].includes(task.status);
 
   return (
     <section className="preview-pane" aria-labelledby="preview-heading">
@@ -113,6 +118,17 @@ export function PreviewPanel({
       <div className="version-decision-bar">
         <span>{decisionLabel(task, preview?.status ?? null)}</span>
         <div>
+          {!canDecide ? (
+            <button
+              className="primary-command"
+              type="button"
+              disabled={!canReview || isActing}
+              onClick={() => settle(onReview())}
+            >
+              <ClipboardCheck size={15} />
+              Review
+            </button>
+          ) : null}
           <button
             className="secondary-command"
             type="button"

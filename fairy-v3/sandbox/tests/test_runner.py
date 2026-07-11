@@ -65,6 +65,7 @@ def _frame(
         "timeout_seconds": 10,
         "output_limit_bytes": 4096,
         "network_policy": "none",
+        "purpose": "raw",
         "archive_byte_length": len(archive),
         "archive_sha256": hashlib.sha256(archive).hexdigest(),
     }
@@ -96,6 +97,7 @@ def test_runner_parses_a_bounded_structured_request() -> None:
         ({"output_limit_bytes": 1}, "output"),
         ({"scope_digest": "not-a-digest"}, "scope"),
         ({"network_policy": "host"}, "network"),
+        ({"purpose": "forged"}, "purpose"),
     ),
 )
 def test_runner_revalidates_untrusted_request_headers(
@@ -391,3 +393,32 @@ def test_public_network_binds_only_minimum_resolution_and_tls_configuration() ->
     assert "/etc/ssl" in command
     assert "/mnt" not in command
     assert ("--ro-bind", "/", "/") not in triples
+
+
+def test_public_network_is_bound_to_a_core_owned_execution_purpose() -> None:
+    runner = _load_runner()
+    archive = _archive()
+
+    with pytest.raises(runner.RunnerProtocolError, match="review.*network"):
+        runner.parse_request_frame(
+            _frame(archive, purpose="review", network_policy="public")
+        )
+    with pytest.raises(runner.RunnerProtocolError, match="dependency.*Project"):
+        runner.parse_request_frame(
+            _frame(
+                archive,
+                project_id=None,
+                version_id=None,
+                purpose="dependency",
+                network_policy="public",
+            )
+        )
+    with pytest.raises(runner.RunnerProtocolError, match="raw.*scratch"):
+        runner.parse_request_frame(
+            _frame(archive, purpose="raw", network_policy="public")
+        )
+
+    dependency, _decoded = runner.parse_request_frame(
+        _frame(archive, purpose="dependency", network_policy="public")
+    )
+    assert dependency.purpose == "dependency"

@@ -10,8 +10,14 @@ from fairy_core.application.runtime import (
     PreviewStopRequest,
 )
 from fairy_core.commanding import EventVisibility
+from fairy_core.commanding.policy import PermissionProfile
 from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
-from fairy_core.domain.execution import PreviewStatus, PreviewVisibility, RuntimeStatus
+from fairy_core.domain.execution import (
+    ArtifactType,
+    PreviewStatus,
+    PreviewVisibility,
+    RuntimeStatus,
+)
 from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import TaskStatus, WorkspaceType
 from fairy_core.runtime.models import RuntimeExecutorError
@@ -38,12 +44,23 @@ def test_static_preview_start_replay_stop_and_visible_events(tmp_path: Path) -> 
     assert health.runtime.id == context.runtime.id
     with stack.factory() as unit_of_work:
         conversation = unit_of_work.state.get_conversation(stack.task.task.conversation_id)
+        artifacts = unit_of_work.state.artifacts_for_task(stack.task.task.id)
         events = unit_of_work.commands.events_after(
             cursor=0,
             allowed_visibilities={EventVisibility.USER},
         )
     assert conversation is not None
     assert conversation.active_preview_id == context.preview.id
+    manifests = [
+        artifact
+        for artifact in artifacts
+        if artifact.artifact_type is ArtifactType.PREVIEW_MANIFEST
+    ]
+    assert len(manifests) == 1
+    assert manifests[0].metadata["preview_id"] == str(context.preview.id)
+    assert manifests[0].metadata["runtime_id"] == str(context.runtime.id)
+    assert manifests[0].metadata["entry_path"] == "index.html"
+    assert manifests[0].metadata["url"] == context.preview.url
     assert {event.event_type for event in events} >= {
         "preview.starting",
         "preview.ready",
@@ -65,6 +82,30 @@ def test_static_preview_start_replay_stop_and_visible_events(tmp_path: Path) -> 
     assert stopped.status is PreviewStatus.STOPPED
     assert stop_replay.status is PreviewStatus.STOPPED
     assert len(stack.executor.stop_calls) == 1
+
+
+def test_preview_start_uses_persisted_execution_policy(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    with stack.factory() as unit_of_work:
+        current = unit_of_work.execution_settings.get()
+        unit_of_work.execution_settings.update(
+            profile=PermissionProfile.OBSERVE,
+            capability_overrides={},
+            expected_revision=current.revision,
+            idempotency_key="runtime:policy:observe",
+        )
+        unit_of_work.commit()
+
+    with pytest.raises(RuntimeExecutorError) as captured:
+        stack.runtime.start_preview(
+            PreviewStartRequest(
+                task_id=stack.task.task.id,
+                idempotency_key="preview:observe:rejected",
+            )
+        )
+
+    assert captured.value.error_code == "CAPABILITY_NOT_AVAILABLE"
+    assert stack.executor.start_calls == []
 
 
 def test_preview_start_failure_persists_typed_failure_without_ready_state(
@@ -124,7 +165,16 @@ def test_ready_preview_is_promoted_on_accept_without_restart(tmp_path: Path) -> 
             idempotency_key="preview:accept",
         )
     )
-    stack.core.review_task(stack.task.task.id)
+    checkpoint = stack.core.review_task(stack.task.task.id)
+
+    with stack.factory() as unit_of_work:
+        manifests = [
+            artifact
+            for artifact in unit_of_work.state.artifacts_for_task(stack.task.task.id)
+            if artifact.artifact_type is ArtifactType.PREVIEW_MANIFEST
+        ]
+    assert len(manifests) == 1
+    assert checkpoint.preview_artifact_id == manifests[0].id
 
     project = stack.core.accept_task_version(
         task_id=stack.task.task.id,

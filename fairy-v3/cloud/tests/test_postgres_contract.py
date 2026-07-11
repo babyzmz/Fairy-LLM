@@ -82,6 +82,7 @@ def test_outbox_claim_uses_postgres_skip_locked_without_external_broker() -> Non
     assert {"tenant_id", "lease_fence"} <= {
         column.name for column in cloud_metadata.tables["outbox"].c
     }
+    assert "purpose" in cloud_metadata.tables["execution_jobs"].c
     claim_index = next(
         index
         for index in cloud_metadata.tables["outbox"].indexes

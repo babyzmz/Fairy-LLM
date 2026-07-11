@@ -317,6 +317,9 @@ function createClient(
     tasks: {
       list: async () => ({ items: [task], next_cursor: null }),
       create: options.createTask ?? (async () => { throw new Error("not used"); }),
+      review: async () => {
+        throw new Error("not used");
+      },
     },
     approvals: {
       list: async () => ({ items: options.approvals ?? [], next_cursor: null }),

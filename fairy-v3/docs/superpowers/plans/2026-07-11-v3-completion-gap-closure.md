@@ -277,46 +277,95 @@ Commit: `feat(v3): add cloud oci execution worker`
 
 ---
 
-### Task 46: Complete Dependency, Review, Runtime, and Preview Orchestration
+### Task 46: Complete Dependency, Review, and Static Preview Orchestration
 
 **Files:**
 - Create: `core/src/fairy_core/execution/templates.py`
 - Create: `core/src/fairy_core/execution/application.py`
+- Create: `core/src/fairy_core/application/review_evidence.py`
+- Create: `core/src/fairy_core/runtime/artifacts.py`
 - Create: `core/tests/execution/test_templates.py`
 - Create: `core/tests/execution/test_project_closure.py`
 - Modify: `core/src/fairy_core/commanding/registry.py`
 - Modify: `core/src/fairy_core/application/runtime.py`
 - Modify: `core/src/fairy_core/application/core.py`
 - Modify: `core/src/fairy_core/application/service.py`
-- Modify: `desktop/src/app/TaskTimeline.tsx`
+- Modify: `cloud/src/fairy_cloud/execution/*`
+- Modify: `cloud/migrations/versions/20260711_0015_execution_purpose.py`
+- Modify: `sandbox/runner/fairy_sandbox_runner.py`
 - Modify: `desktop/src/app/PreviewPanel.tsx`
+- Modify: `desktop/src/app/workspaceModel.ts`
 - Modify: `desktop/e2e/workspace-layout.spec.ts`
 
 **Interfaces:**
-- `ProjectExecutionApplication.install_dependencies/review/start_runtime/repair/checkpoint` selects Core-owned templates from detected manifests; it never accepts a shell string.
+- `ProjectExecutionApplication` selects Core-owned dependency and Review templates from detected manifests; it never accepts a shell string.
 - Supported dependency templates are npm, pnpm, yarn, uv, pip, and Cargo with exact cwd and lockfile policy.
-- Review templates implement typecheck, lint, test, build, health, and browser checks and persist structured results as Artifacts.
-- Dynamic Preview endpoint comes only from a fenced WSL/OCI Runtime and is resolved by Conversation/Task/Version; static Preview remains available independently.
+- Review templates implement typecheck, lint, test, and build and persist structured results as generation-bound Artifacts.
+- Dependency network access is bound to the Core-owned `dependency` Sandbox purpose in the request, standalone Runner, cloud job row, worker, and database constraints.
+- Static Preview persists a canonical manifest Artifact, is resolved by Conversation/Task/Version, and is linked from the final Checkpoint.
+- Model tools have closed schemas; Core/user-only commands and absent health/browser executors are not model-visible.
 
-- [ ] **Step 1: Write failing template and complete-loop tests**
+- [x] **Step 1: Write failing template and complete-loop tests**
 
 Cover unknown manager, lockfile conflict, command injection in package scripts, dependency failure, review/repair retry, runtime crash/recovery, endpoint rebinding, static fallback, and accept/discard invariants.
 
-- [ ] **Step 2: Implement typed templates and orchestration state machine**
+- [x] **Step 2: Implement typed templates and orchestration state machine**
 
-- [ ] **Step 3: Wire strict ToolDefinitions and Assistant adapters**
+- [x] **Step 3: Wire strict ToolDefinitions and Assistant adapters**
 
 Replace all permissive `additionalProperties: true` project execution schemas. Remove ghost tools whose executor is absent.
 
-- [ ] **Step 4: Run local and Cloud project closure tests and Desktop workflows**
+- [x] **Step 4: Run local and Cloud project closure tests and Desktop workflows**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
+
+Verification on 2026-07-11: `scripts/test-all.ps1 -SkipDocker` exited 0 with Sandbox Runner 27 passed/1 Windows-only POSIX process-group check skipped, Core 511, Capabilities 104, Cloud 84 unit tests/22 Docker integration tests deselected, Vitest 69, and Playwright 19 tests passing. Ruff format/check, source boundaries, offline Alembic upgrade and full downgrade through head `20260711_0015`, Rust fmt/clippy/tests, desktop build, generated-contract drift, and performance gates passed; Core readiness was 815.8 ms and initial renderer gzip was 131.3 KiB. Real Docker/PostgreSQL/S3/OCI and WSL attestation were not executed and are not reported as passed.
 
 Commit: `feat(v3): complete project execution closure`
 
 ---
 
-### Task 47: Persist Desktop Permission UX and Generated Command Metadata
+### Task 47: Build Fenced Dynamic WSL/OCI Runtime and Runtime Review
+
+**Files:**
+- Create: `core/src/fairy_core/runtime/templates.py`
+- Create: `core/src/fairy_core/runtime/supervisor.py`
+- Create: `core/tests/runtime/test_dynamic_templates.py`
+- Create: `core/tests/runtime/test_dynamic_lifecycle.py`
+- Create: `cloud/src/fairy_cloud/runtime/*`
+- Create: `cloud/migrations/versions/*_runtime_leases.py`
+- Create: `cloud/tests/integration/test_postgres_dynamic_runtime.py`
+- Modify: `core/src/fairy_core/runtime/models.py`
+- Modify: `core/src/fairy_core/runtime/ports.py`
+- Modify: `core/src/fairy_core/application/runtime.py`
+- Modify: `core/src/fairy_core/execution/application.py`
+- Modify: `core/src/fairy_core/transports/stdio.py`
+- Modify: `cloud/src/fairy_cloud/dispatchers.py`
+- Modify: `deploy/compose.yaml`
+- Modify: `docs/threat-model.md`
+
+**Interfaces:**
+- `RuntimeTemplate` selects a fixed argv and working directory from immutable manifests; model input never supplies a command, host, port, URL, or process environment.
+- Local WSL and cloud OCI Runtime supervisors own a durable lease and fence, isolate a Version archive, expose only an attested endpoint, and support start/probe/stop/recovery without reusing one-shot Command Sandbox jobs as daemons.
+- Cloud Preview URLs are opaque HTTPS proxy routes bound to tenant, Conversation, Task, Version, Runtime, lease fence, and expiry; direct worker endpoints are never sent to the renderer.
+- Runtime health and browser checks produce typed `REPORT`/`SCREENSHOT` Artifacts and join the Checkpoint only when they match the current workspace generation and Preview manifest.
+- `UnavailableRuntimeExecutor` remains fail-closed unless the corresponding supervisor and route are actually configured and healthy.
+
+- [ ] **Step 1: Write failing local/cloud lifecycle, endpoint, recovery, and security tests**
+
+- [ ] **Step 2: Implement typed dynamic templates and fenced Runtime supervisors**
+
+- [ ] **Step 3: Implement cloud Runtime leases, proxy routing, health, and browser Review**
+
+- [ ] **Step 4: Run local fake/real WSL gates and cloud fake/real Docker gates truthfully**
+
+- [ ] **Step 5: Commit**
+
+Commit: `feat(v3): add fenced dynamic project runtimes`
+
+---
+
+### Task 48: Persist Desktop Permission UX and Generated Command Metadata
 
 **Files:**
 - Modify: `desktop/src/app/workspaceModel.ts`
@@ -345,7 +394,43 @@ Commit: `feat(v3): connect governed execution controls`
 
 ---
 
-### Task 48: Requirement-by-requirement Acceptance, Cleanup, and Truthful Release Evidence
+### Task 49: Add Governed Skills and MCP Extension Runtime
+
+**Files:**
+- Create: `core/src/fairy_core/skills/*`
+- Create: `core/src/fairy_core/mcp/*`
+- Create: `core/tests/skills/*`
+- Create: `core/tests/mcp/*`
+- Create: `cloud/src/fairy_cloud/mcp/*`
+- Modify: `core/src/fairy_core/commanding/registry.py`
+- Modify: `core/src/fairy_core/application/service.py`
+- Modify: `core/src/fairy_core/assistant/application.py`
+- Modify: `desktop/src/settings/*`
+- Modify: `docs/architecture.md`
+- Modify: `docs/threat-model.md`
+
+**Interfaces:**
+- Versioned `SkillManifest` packages declare instructions, input contracts, required capabilities, compatible MCP servers, and provenance; Skills do not execute processes, hold project state, or bypass Core policy.
+- MCP servers use explicit trust configuration and standards-current local/cloud transports. Imported tools are namespaced, schema-sanitized, size-bounded, and materialized as `ToolDefinition` records before Agent exposure.
+- Every MCP call flows through Scope injection, Capability Manifest, Policy Matrix, Approval, CommandRun/Event, cancellation, idempotency, and Artifact output handling. Model-supplied Scope identity, path, endpoint, credential, and capability fields are rejected.
+- Server credentials and transport details remain outside model context. Disconnects, restarts, schema drift, duplicate responses, and uncertain side effects recover fail-closed from the durable ledger.
+- Fairy Skills are product capabilities and remain isolated from Codex's local skill system.
+
+- [ ] **Step 1: Verify the current official MCP specification and write Architecture/Threat ADRs**
+
+- [ ] **Step 2: Write failing Skill manifest, MCP lifecycle, policy, and malicious-server tests**
+
+- [ ] **Step 3: Implement local and cloud governed adapters plus desktop settings**
+
+- [ ] **Step 4: Run contract, disconnect/recovery, scope-injection, and permission matrices**
+
+- [ ] **Step 5: Commit**
+
+Commit: `feat(v3): add governed skills and mcp extensions`
+
+---
+
+### Task 50: Requirement-by-requirement Acceptance, Cleanup, and Truthful Release Evidence
 
 **Files:**
 - Create: `docs/completion-audit.md`
@@ -385,7 +470,7 @@ Commit: `chore(v3): close full architecture acceptance`
 
 ## Self-review Record
 
-- **Spec coverage:** Task 41 covers Core-owned device/Cloud permissions and capability generation; Task 42 covers generic approval and durable resume; Task 43 covers persisted Workspace, Project Index, project reads, Artifact ownership, and governed Changesets; Tasks 44-45 cover actual local/cloud execution; Task 46 covers dependencies, Review, Runtime, Preview, repair, and checkpoint; Task 47 covers the desktop control surface; Task 48 covers all original contracts, non-Legacy capability acceptance, cleanup, performance, and environment truth.
-- **Known contradiction being removed:** The current Cloud composition uses `UnavailableRuntimeExecutor`, local Assistant execution hardcodes standard policy and unhealthy sandbox, and several model-visible project tools have no executor. Existing green tests do not prove those requirements.
+- **Spec coverage:** Task 41 covers Core-owned device/Cloud permissions and capability generation; Task 42 covers generic approval and durable resume; Task 43 covers persisted Workspace, Project Index, project reads, Artifact ownership, and governed Changesets; Tasks 44-45 cover actual local/cloud command execution; Task 46 covers dependencies, executable Review, repair, static Preview evidence, and checkpoint; Task 47 covers dynamic Runtime and runtime/browser Review; Task 48 covers the desktop control surface; Task 49 covers governed Skills/MCP extensibility; Task 50 covers all original contracts, non-Legacy capability acceptance, cleanup, performance, and environment truth.
+- **Known contradiction being removed:** Cloud dynamic Runtime remains `UnavailableRuntimeExecutor` and no Skills/MCP product runtime exists; both stay explicitly pending in Tasks 47 and 49. Task 46 removed hardcoded Runtime command policy and model-visible ghost tools instead of treating green static tests as proof of those pending capabilities.
 - **Type consistency:** `EffectiveExecutionPolicy` feeds both model exposure and Command Bus policy; `SandboxRequest` is Core-injected and is consumed by WSL and Cloud executors; generic Approval links one CommandRun; Task Workspace/Project Index precede project tool execution.
 - **Placeholder scan:** No implementation step uses TBD, TODO, implement-later, or an unspecified executor. Environment-dependent tests have exact commands and explicit skip semantics.

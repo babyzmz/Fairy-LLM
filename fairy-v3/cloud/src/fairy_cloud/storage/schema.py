@@ -128,6 +128,7 @@ execution_jobs = Table(
     Column("timeout_seconds", Integer, nullable=False),
     Column("output_limit_bytes", Integer, nullable=False),
     Column("network_policy", String(16), nullable=False),
+    Column("purpose", String(32), nullable=False),
     Column("workspace_archive", LargeBinary, nullable=False),
     Column("archive_sha256", String(64), nullable=False),
     Column("archive_byte_length", BigInteger, nullable=False),
@@ -198,8 +199,12 @@ execution_jobs = Table(
         name="ck_execution_jobs_hashes",
     ),
     CheckConstraint(
-        "network_policy = 'none'",
+        "(network_policy = 'none') OR (network_policy = 'public' AND purpose = 'dependency')",
         name="ck_execution_jobs_network_policy",
+    ),
+    CheckConstraint(
+        "purpose IN ('raw','dependency','review')",
+        name="ck_execution_jobs_purpose",
     ),
     CheckConstraint(
         "(status IN ('claimed','running','result_recorded')) = "

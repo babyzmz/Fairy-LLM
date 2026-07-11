@@ -99,6 +99,7 @@ function workspaceModel(): WorkspaceModel {
     decideApproval: vi.fn(async () => undefined),
     startPreview: vi.fn(async () => undefined),
     stopPreview: vi.fn(async () => undefined),
+    reviewTask: vi.fn(async () => undefined),
     acceptVersion: vi.fn(async () => undefined),
     discardVersion: vi.fn(async () => undefined),
   };

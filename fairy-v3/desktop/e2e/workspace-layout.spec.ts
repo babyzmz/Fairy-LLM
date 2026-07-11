@@ -67,6 +67,27 @@ test("narrow workspace remains usable and reduced motion disables repeated HUD m
   expect(motion.iterations).toBe("1");
 });
 
+test("governed Review promotes a previewing Task before Version acceptance", async ({
+  page,
+}) => {
+  await page.goto("/?taskStatus=previewing");
+
+  const accept = page.getByRole("button", { name: "Use this version" });
+  await expect(accept).toBeDisabled();
+  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(accept).toBeEnabled();
+
+  const calls = await page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __FAIRY_FIXTURE_CALLS__: Array<{ method: string }>;
+        }
+      ).__FAIRY_FIXTURE_CALLS__,
+  );
+  expect(calls.some((call) => call.method === "tasks.review")).toBe(true);
+});
+
 async function measureLayout(page: Page) {
   return page.evaluate(() => ({
     viewportWidth: window.innerWidth,

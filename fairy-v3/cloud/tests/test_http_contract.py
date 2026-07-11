@@ -527,7 +527,11 @@ async def test_rest_exposes_collection_runtime_preview_and_artifact_contracts(
     assert runtime_health.json()["executor"]["available"] is True
     assert fetched_preview.json()["preview"]["id"] == preview["id"]
     assert resolved_preview.json()["preview"]["id"] == preview["id"]
-    assert artifacts.json() == {"items": []}
+    artifact_items = artifacts.json()["items"]
+    assert len(artifact_items) == 1
+    assert artifact_items[0]["artifact_type"] == "preview_manifest"
+    assert artifact_items[0]["task_id"] == task_id
+    assert artifact_items[0]["metadata"]["preview_id"] == preview["id"]
     assert missing_artifact.status_code == 404
     assert stopped.json()["status"] == "stopped"
 

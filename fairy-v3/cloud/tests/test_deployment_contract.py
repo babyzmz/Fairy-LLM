@@ -21,8 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260711_0014"]
-    assert scripts.get_revision("20260711_0014").down_revision == "20260711_0013"
+    assert scripts.get_heads() == ["20260711_0015"]
+    assert scripts.get_revision("20260711_0015").down_revision == "20260711_0014"
     assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
     assert scripts.get_revision("20260711_0012").down_revision == "20260711_0011"
     assert scripts.get_revision("20260711_0009").down_revision == "20260711_0008"
@@ -170,6 +170,17 @@ def test_execution_job_migration_has_reversible_fenced_queue_ddl() -> None:
     assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_EXECUTION_JOBS"' in ddl
     assert "DROP TABLE EXECUTION_WORKERS" in ddl
     assert "DROP TABLE EXECUTION_JOBS" in ddl
+
+
+def test_execution_purpose_migration_is_reversible_and_fail_closed() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260711_0015:20260711_0014", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert "DROP CONSTRAINT CK_EXECUTION_JOBS_NETWORK_POLICY" in ddl
+    assert "DROP COLUMN PURPOSE" in ddl
 
 
 def test_research_evidence_migration_has_reversible_ddl() -> None:

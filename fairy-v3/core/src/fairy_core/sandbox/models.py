@@ -43,6 +43,12 @@ class SandboxNetworkPolicy(StrEnum):
     PUBLIC = "public"
 
 
+class SandboxPurpose(StrEnum):
+    RAW = "raw"
+    DEPENDENCY = "dependency"
+    REVIEW = "review"
+
+
 class SandboxResultStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
@@ -66,6 +72,7 @@ class SandboxRequest:
     timeout_seconds: int
     output_limit_bytes: int
     network_policy: SandboxNetworkPolicy
+    purpose: SandboxPurpose
     workspace_archive: bytes
     archive_sha256: str
 
@@ -88,6 +95,7 @@ class SandboxRequest:
         output_limit_bytes: int,
         network_policy: SandboxNetworkPolicy,
         workspace_archive: bytes,
+        purpose: SandboxPurpose = SandboxPurpose.RAW,
     ) -> SandboxRequest:
         if (project_id is None) != (version_id is None):
             raise ValueError("project_id and version_id must both be present or absent")
@@ -109,6 +117,13 @@ class SandboxRequest:
             raise ValueError("output_limit_bytes must be between 1024 and 1048576")
         if not isinstance(network_policy, SandboxNetworkPolicy):
             raise ValueError("network_policy must be a SandboxNetworkPolicy")
+        if not isinstance(purpose, SandboxPurpose):
+            raise ValueError("purpose must be a SandboxPurpose")
+        if network_policy is SandboxNetworkPolicy.PUBLIC and purpose not in {
+            SandboxPurpose.RAW,
+            SandboxPurpose.DEPENDENCY,
+        }:
+            raise ValueError("public network is incompatible with the Sandbox purpose")
         archive = bytes(workspace_archive)
         if not archive or len(archive) > _MAX_ARCHIVE_BYTES:
             raise ValueError("workspace archive is empty or exceeds 128 MiB")
@@ -127,6 +142,7 @@ class SandboxRequest:
             timeout_seconds=timeout_seconds,
             output_limit_bytes=output_limit_bytes,
             network_policy=network_policy,
+            purpose=purpose,
             workspace_archive=archive,
             archive_sha256=hashlib.sha256(archive).hexdigest(),
         )
@@ -148,6 +164,7 @@ class SandboxRequest:
             "timeout_seconds": self.timeout_seconds,
             "output_limit_bytes": self.output_limit_bytes,
             "network_policy": self.network_policy.value,
+            "purpose": self.purpose.value,
             "archive_byte_length": len(self.workspace_archive),
             "archive_sha256": self.archive_sha256,
         }
@@ -311,6 +328,7 @@ def _validate_environment(environment: Mapping[str, str]) -> dict[str, str]:
 
 __all__ = [
     "SandboxNetworkPolicy",
+    "SandboxPurpose",
     "SandboxRequest",
     "SandboxResult",
     "SandboxResultStatus",
