@@ -1,41 +1,16 @@
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { WorkspaceShell } from "./WorkspaceShell";
-
-export interface CoreHealthClient {
-  health(): Promise<{ status: string }>;
-}
+import { type WorkspaceClient, useWorkspaceModel } from "./workspaceModel";
 
 interface AppProps {
-  client: CoreHealthClient;
+  client: WorkspaceClient;
 }
 
 function Workspace({ client }: AppProps) {
-  const health = useQuery({
-    queryKey: ["core", "health"],
-    queryFn: () => client.health(),
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-  const coreStatus = health.isPending
-    ? "Core starting"
-    : health.isError
-      ? "Core offline"
-      : "Core ready";
-
-  return (
-    <WorkspaceShell
-      context={{
-        project: "Fairy V3",
-        conversation: "Homepage revision",
-        version: "Current draft",
-        executionTarget: "Local",
-        permission: "Standard",
-        syncStatus: coreStatus,
-      }}
-    />
-  );
+  const model = useWorkspaceModel(client);
+  return <WorkspaceShell model={model} />;
 }
 
 export function App({ client }: AppProps) {
@@ -43,7 +18,11 @@ export function App({ client }: AppProps) {
     () =>
       new QueryClient({
         defaultOptions: {
-          queries: { staleTime: 5_000 },
+          queries: {
+            staleTime: 5_000,
+            retry: false,
+            refetchOnWindowFocus: false,
+          },
         },
       }),
   );
