@@ -21,8 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260711_0007"]
-    assert scripts.get_revision("20260711_0007").down_revision == "20260711_0006"
+    assert scripts.get_heads() == ["20260711_0008"]
+    assert scripts.get_revision("20260711_0008").down_revision == "20260711_0007"
 
 
 def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
@@ -44,6 +44,10 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_RUNTIME_SESSIONS",
         "CORE_PREVIEW_SESSIONS",
         "CORE_ARTIFACTS",
+        "CORE_ASSISTANT_TURNS",
+        "CORE_ASSISTANT_MESSAGE_SEQUENCES",
+        "CORE_ASSISTANT_MESSAGES",
+        "CORE_ASSISTANT_TOOL_INVOCATIONS",
         "COMMAND_RUNS",
         "TASK_EVENT_SEQUENCES",
         "MEMORY_OBSERVATIONS",
@@ -89,8 +93,28 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_RUNTIME_SESSIONS",
         "CORE_PREVIEW_SESSIONS",
         "CORE_ARTIFACTS",
+        "CORE_ASSISTANT_TURNS",
+        "CORE_ASSISTANT_MESSAGE_SEQUENCES",
+        "CORE_ASSISTANT_MESSAGES",
+        "CORE_ASSISTANT_TOOL_INVOCATIONS",
     ):
         assert f'CREATE POLICY "TENANT_ISOLATION_{table_name}"' in ddl
+
+
+def test_assistant_ledger_migration_has_reversible_ddl() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260711_0008:20260711_0007", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_ASSISTANT_TOOL_INVOCATIONS"' in ddl
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_ASSISTANT_MESSAGES"' in ddl
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_ASSISTANT_TURNS"' in ddl
+    assert "DROP TABLE CORE_ASSISTANT_TOOL_INVOCATIONS" in ddl
+    assert "DROP TABLE CORE_ASSISTANT_MESSAGES" in ddl
+    assert "DROP TABLE CORE_ASSISTANT_MESSAGE_SEQUENCES" in ddl
+    assert "DROP TABLE CORE_ASSISTANT_TURNS" in ddl
 
 
 def test_runtime_preview_migration_has_reversible_ddl() -> None:

@@ -208,6 +208,82 @@ async def test_rest_runs_the_same_project_contract_as_local_jsonrpc(app) -> None
 
 
 @pytest.mark.asyncio
+async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(app) -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=AUTH_HEADERS,
+    ) as client:
+        conversation_response = await client.post(
+            "/v1/conversations",
+            json={"project_id": None, "workspace_type": "chat_scratch"},
+        )
+        conversation_response.raise_for_status()
+        conversation_id = conversation_response.json()["id"]
+        task_response = await client.post(
+            "/v1/tasks",
+            json={
+                "conversation_id": conversation_id,
+                "user_request": "Explain Fairy",
+                "operation_mode": "answer",
+                "execution_target": "cloud",
+                "idempotency_key": "http:assistant:task",
+            },
+        )
+        task_response.raise_for_status()
+        task = task_response.json()["task"]
+        body = {
+            "task_id": task["id"],
+            "profile_id": "cloud-default",
+            "idempotency_key": "http:assistant:turn",
+        }
+
+        missing_header = await client.post("/v1/assistant/turns", json=body)
+        mismatched_header = await client.post(
+            "/v1/assistant/turns",
+            headers={"Idempotency-Key": "different"},
+            json=body,
+        )
+        created_response = await client.post(
+            "/v1/assistant/turns",
+            headers={"Idempotency-Key": body["idempotency_key"]},
+            json=body,
+        )
+        created_response.raise_for_status()
+        created = created_response.json()
+        fetched = await client.get(f"/v1/assistant/turns/{created['id']}")
+        messages = await client.get(
+            "/v1/messages",
+            params={"conversation_id": conversation_id},
+        )
+        cancelled = await client.post(
+            f"/v1/assistant/turns/{created['id']}/cancel",
+            json={
+                "turn_id": created["id"],
+                "expected_cancellation_revision": 0,
+            },
+        )
+        stale_cancel = await client.post(
+            f"/v1/assistant/turns/{created['id']}/cancel",
+            json={
+                "turn_id": created["id"],
+                "expected_cancellation_revision": 0,
+            },
+        )
+
+    assert missing_header.status_code == 422
+    assert mismatched_header.status_code == 409
+    assert mismatched_header.json()["detail"]["code"] == "SCOPE_MISMATCH"
+    assert fetched.json() == created
+    assert [(item["role"], item["content"]) for item in messages.json()["items"]] == [
+        ("user", "Explain Fairy")
+    ]
+    assert cancelled.json()["status"] == "cancelled"
+    assert stale_cancel.status_code == 409
+    assert stale_cancel.json()["detail"]["code"] == "INVALID_STATE_TRANSITION"
+
+
+@pytest.mark.asyncio
 async def test_rest_exposes_collection_runtime_preview_and_artifact_contracts(
     tmp_path: Path,
 ) -> None:

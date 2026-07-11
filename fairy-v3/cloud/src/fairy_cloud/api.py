@@ -17,6 +17,9 @@ from fairy_core.contracts.models import (
     ArtifactListInput,
     ArtifactModel,
     ArtifactPageModel,
+    AssistantTurnCancelInput,
+    AssistantTurnCreateInput,
+    AssistantTurnModel,
     CapabilityManifestModel,
     CapabilityRequest,
     ChangesetModel,
@@ -46,6 +49,8 @@ from fairy_core.contracts.models import (
     MemorySnapshotGetInput,
     MemorySnapshotModel,
     MemoryTombstoneModel,
+    MessageListInput,
+    MessagePageModel,
     PendingChangesetModel,
     PreviewContextModel,
     PreviewModel,
@@ -307,6 +312,56 @@ def create_cloud_app(
     )
     def get_conversation(conversation_id: UUID) -> dict[str, Any]:
         return invoke("conversations.get", {"conversation_id": str(conversation_id)})
+
+    @protected.get(
+        "/messages",
+        operation_id="messages.list",
+        response_model=MessagePageModel,
+    )
+    def list_messages(request: Annotated[MessageListInput, Query()]) -> dict[str, Any]:
+        return invoke(
+            "messages.list",
+            request.model_dump(mode="json", exclude_none=True),
+        )
+
+    @protected.post(
+        "/assistant/turns",
+        operation_id="assistant.turns.create",
+        response_model=AssistantTurnModel,
+    )
+    def create_assistant_turn(
+        request: AssistantTurnCreateInput,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=512),
+        ],
+    ) -> dict[str, Any]:
+        require_idempotency_match(request.idempotency_key, idempotency_key)
+        return invoke("assistant.turns.create", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/assistant/turns/{turn_id}",
+        operation_id="assistant.turns.get",
+        response_model=AssistantTurnModel,
+    )
+    def get_assistant_turn(turn_id: UUID) -> dict[str, Any]:
+        return invoke("assistant.turns.get", {"turn_id": str(turn_id)})
+
+    @protected.post(
+        "/assistant/turns/{turn_id}/cancel",
+        operation_id="assistant.turns.cancel",
+        response_model=AssistantTurnModel,
+    )
+    def cancel_assistant_turn(
+        turn_id: UUID,
+        request: AssistantTurnCancelInput,
+    ) -> dict[str, Any]:
+        if request.turn_id != turn_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "turn id mismatch"},
+            )
+        return invoke("assistant.turns.cancel", request.model_dump(mode="json"))
 
     @protected.get(
         "/tasks",
@@ -875,6 +930,7 @@ def _core_http_exception(error: Exception) -> HTTPException:
         status_code = {
             "APPROVAL_REQUIRED": 409,
             "IDEMPOTENCY_CONFLICT": 409,
+            "INVALID_STATE_TRANSITION": 409,
             "MEMORY_CONFLICT": 409,
             "MEMORY_FORGOTTEN": 410,
             "MEMORY_PROJECTION_STALE": 503,

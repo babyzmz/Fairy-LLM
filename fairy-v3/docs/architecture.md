@@ -34,6 +34,10 @@ Preview, Artifact, Checkpoint, and Memory state.
 13. Runtime start/stop intent is durable and fenced; executor metadata cannot
     rebind Scope, endpoint, or handle during recovery.
 14. Host static Preview is read-only file serving, not project execution.
+15. Assistant Messages, Turns, and Tool Invocations are tenant-scoped durable
+    Core records; renderer state and provider streams are never conversation
+    authority.
+16. Public Message queries exclude internal provider and orchestration data.
 
 ## Components
 
@@ -144,6 +148,20 @@ and stable error code. Canonical writes remain committed independently.
 Episodes, pgvector semantic expansion, parallel projection generations,
 asynchronous rebuild workers, and multi-device memory controls remain later
 slices; neither RAG nor an embedding index is a memory authority.
+
+### Assistant ledger
+
+Every assistant request binds an existing Task and its Core-generated Scope
+and immutable Hermes Snapshot before creating a Turn. Message sequence
+allocation is atomic per Conversation. Turn creation is idempotent across Core
+instances, cancellation is compare-and-swap fenced, and orphaned active Turns
+become explicit `WORKER_INTERRUPTED` failures during local Core recovery.
+
+Messages are append-only. Tool Invocations have stable argument hashes and
+unique per-Turn sequence/hash constraints. Public `messages.list` exposes only
+user and developer visibility; internal prompts and orchestration records do
+not cross the public contract. Model/provider execution is composed in the
+following capability milestone and cannot be inferred from a stored Turn.
 
 ## Permission model
 

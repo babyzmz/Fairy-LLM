@@ -13,6 +13,7 @@ from fairy_core.application.runtime import (
     PreviewStopRequest,
     RuntimeApplication,
 )
+from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.commanding import EventVisibility
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
@@ -22,6 +23,9 @@ from fairy_core.contracts.models import (
     ApprovalListInput,
     ArtifactIdInput,
     ArtifactListInput,
+    AssistantTurnCancelInput,
+    AssistantTurnCreateInput,
+    AssistantTurnIdInput,
     CapabilityRequest,
     ChangesetProposal,
     ConversationCreate,
@@ -38,6 +42,7 @@ from fairy_core.contracts.models import (
     MemoryProjectionHealthInput,
     MemorySearchInput,
     MemorySnapshotGetInput,
+    MessageListInput,
     PreviewIdInput,
     PreviewResolveInput,
     PreviewStartInput,
@@ -98,12 +103,19 @@ class CoreService:
             memory_policy=MemoryPolicy(),
             scope_resolver=application.scope_for_task,
         )
+        self._assistant_ledger = AssistantLedgerApplication(
+            unit_of_work_factory=unit_of_work_factory,
+            scope_resolver=application.scope_for_task,
+        )
         self._finalizer = finalize(self, on_close) if on_close is not None else None
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
             "approvals.decide": self._decide_approval,
             "approvals.list": self._list_approvals,
             "artifacts.list": self._list_artifacts,
             "artifacts.read": self._read_artifact,
+            "assistant.turns.cancel": self._cancel_assistant_turn,
+            "assistant.turns.create": self._create_assistant_turn,
+            "assistant.turns.get": self._get_assistant_turn,
             "capabilities.get": self._get_capabilities,
             "changesets.propose": self._propose_changeset,
             "conversations.create": self._create_conversation,
@@ -122,6 +134,7 @@ class CoreService:
             "memory.projection.health": self._memory_projection_health,
             "memory.search": self._search_memory,
             "memory.snapshots.get": self._get_memory_snapshot,
+            "messages.list": self._list_messages,
             "projects.create": self._create_project,
             "projects.get": self._get_project,
             "projects.import": self._import_project,
@@ -173,6 +186,32 @@ class CoreService:
         return self._application.create_project(
             name=validated.name,
             residency=validated.residency,
+        )
+
+    def _create_assistant_turn(self, request: BaseModel) -> Any:
+        validated = cast(AssistantTurnCreateInput, request)
+        return self._assistant_ledger.create_turn(
+            task_id=validated.task_id,
+            profile_id=validated.profile_id,
+            idempotency_key=validated.idempotency_key,
+        )
+
+    def _get_assistant_turn(self, request: BaseModel) -> Any:
+        return self._assistant_ledger.get_turn(cast(AssistantTurnIdInput, request).turn_id)
+
+    def _cancel_assistant_turn(self, request: BaseModel) -> Any:
+        validated = cast(AssistantTurnCancelInput, request)
+        return self._assistant_ledger.cancel_turn(
+            turn_id=validated.turn_id,
+            expected_cancellation_revision=validated.expected_cancellation_revision,
+        )
+
+    def _list_messages(self, request: BaseModel) -> Any:
+        validated = cast(MessageListInput, request)
+        return self._assistant_ledger.list_messages(
+            conversation_id=validated.conversation_id,
+            limit=validated.limit,
+            cursor=validated.cursor,
         )
 
     def _observe_memory(self, request: BaseModel) -> Any:

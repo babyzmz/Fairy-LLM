@@ -6,6 +6,8 @@ from typing import Protocol, Self
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine, Transaction
 
+from fairy_core.assistant.ports import AssistantRepository
+from fairy_core.assistant.repository import SqlAlchemyAssistantRepository
 from fairy_core.commanding.ports import CommandLedger
 from fairy_core.commanding.sqlalchemy import SqlAlchemyCommandLedger
 from fairy_core.memory.ports import MemoryRepository
@@ -27,6 +29,7 @@ from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
 
 class CoreUnitOfWork(Protocol):
     state: StateStore
+    assistant: AssistantRepository
     commands: CommandLedger
     memory: MemoryRepository
     snapshots: MemorySnapshotRepository
@@ -71,6 +74,10 @@ class SqlAlchemyUnitOfWork:
                     {"tenant_id": self._tenant_id},
                 )
             self.state = SqlAlchemyStateStore(connection, tenant_id=self._tenant_id)
+            self.assistant = SqlAlchemyAssistantRepository(
+                connection,
+                tenant_id=self._tenant_id,
+            )
             self.commands = SqlAlchemyCommandLedger(connection, tenant_id=self._tenant_id)
             self.memory = SqlAlchemyMemoryRepository(connection, tenant_id=self._tenant_id)
             self.snapshots = SqlAlchemyMemorySnapshotRepository(

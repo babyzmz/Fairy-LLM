@@ -159,6 +159,199 @@ tasks = Table(
     ),
 )
 
+assistant_turns = Table(
+    "core_assistant_turns",
+    state_metadata,
+    _tenant_id(),
+    _id(),
+    Column("conversation_id", String(ID_LENGTH), nullable=False),
+    Column("task_id", String(ID_LENGTH), nullable=False),
+    Column("profile_id", String(255), nullable=False),
+    Column("scope_digest", String(64), nullable=False),
+    Column("memory_snapshot_id", String(ID_LENGTH), nullable=False),
+    Column("memory_snapshot_hash", String(64), nullable=False),
+    Column("idempotency_key", String(512), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("cancellation_revision", BigInteger, nullable=False),
+    Column("usage", JSON, nullable=False),
+    Column("error_code", String(128)),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    Column("started_at", UTCDateTime()),
+    Column("completed_at", UTCDateTime()),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_assistant_turns"),
+    UniqueConstraint(
+        "tenant_id",
+        "idempotency_key",
+        name="uq_core_assistant_turns_tenant_idempotency",
+    ),
+    UniqueConstraint(
+        "tenant_id",
+        "id",
+        "conversation_id",
+        "task_id",
+        name="uq_core_assistant_turns_scope",
+    ),
+    UniqueConstraint(
+        "tenant_id",
+        "id",
+        "task_id",
+        name="uq_core_assistant_turns_task_scope",
+    ),
+    CheckConstraint(
+        "status IN ('created', 'running', 'waiting_for_tool', 'completed', 'cancelled', 'failed')",
+        name="ck_core_assistant_turns_status",
+    ),
+    CheckConstraint(
+        "cancellation_revision >= 0",
+        name="ck_core_assistant_turns_cancellation_revision",
+    ),
+    CheckConstraint(
+        "length(scope_digest) = 64 AND scope_digest = lower(scope_digest)",
+        name="ck_core_assistant_turns_scope_digest",
+    ),
+    CheckConstraint(
+        "length(memory_snapshot_hash) = 64 AND memory_snapshot_hash = lower(memory_snapshot_hash)",
+        name="ck_core_assistant_turns_memory_snapshot_hash",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_assistant_turns_conversation",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "task_id"],
+        [tasks.c.tenant_id, tasks.c.id],
+        name="fk_core_assistant_turns_task",
+    ),
+)
+
+assistant_message_sequences = Table(
+    "core_assistant_message_sequences",
+    state_metadata,
+    _tenant_id(),
+    Column("conversation_id", String(ID_LENGTH), primary_key=True),
+    Column("last_sequence", BigInteger, nullable=False),
+    PrimaryKeyConstraint(
+        "tenant_id",
+        "conversation_id",
+        name="pk_core_assistant_message_sequences",
+    ),
+    CheckConstraint(
+        "last_sequence > 0",
+        name="ck_core_assistant_message_sequences_positive",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_assistant_message_sequences_conversation",
+    ),
+)
+
+assistant_messages = Table(
+    "core_assistant_messages",
+    state_metadata,
+    _tenant_id(),
+    _id(),
+    Column("conversation_id", String(ID_LENGTH), nullable=False),
+    Column("task_id", String(ID_LENGTH), nullable=False),
+    Column("turn_id", String(ID_LENGTH)),
+    Column("sequence", BigInteger, nullable=False),
+    Column("role", String(32), nullable=False),
+    Column("visibility", String(32), nullable=False),
+    Column("content", String, nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_assistant_messages"),
+    UniqueConstraint(
+        "tenant_id",
+        "conversation_id",
+        "sequence",
+        name="uq_core_assistant_messages_conversation_sequence",
+    ),
+    CheckConstraint("sequence > 0", name="ck_core_assistant_messages_sequence"),
+    CheckConstraint(
+        "role IN ('user', 'assistant', 'tool', 'system_notice')",
+        name="ck_core_assistant_messages_role",
+    ),
+    CheckConstraint(
+        "visibility IN ('user', 'developer', 'internal')",
+        name="ck_core_assistant_messages_visibility",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_assistant_messages_conversation",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "task_id"],
+        [tasks.c.tenant_id, tasks.c.id],
+        name="fk_core_assistant_messages_task",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "turn_id", "conversation_id", "task_id"],
+        [
+            assistant_turns.c.tenant_id,
+            assistant_turns.c.id,
+            assistant_turns.c.conversation_id,
+            assistant_turns.c.task_id,
+        ],
+        name="fk_core_assistant_messages_turn_scope",
+    ),
+)
+
+assistant_tool_invocations = Table(
+    "core_assistant_tool_invocations",
+    state_metadata,
+    _tenant_id(),
+    _id(),
+    Column("turn_id", String(ID_LENGTH), nullable=False),
+    Column("task_id", String(ID_LENGTH), nullable=False),
+    Column("sequence", BigInteger, nullable=False),
+    Column("tool_name", String(255), nullable=False),
+    Column("scope_digest", String(64), nullable=False),
+    Column("argument_hash", String(64), nullable=False),
+    Column("arguments", JSON, nullable=False),
+    Column("command_run_id", String(ID_LENGTH)),
+    Column("status", String(32), nullable=False),
+    Column("public_summary", String),
+    Column("artifact_ids", JSON, nullable=False),
+    Column("error_code", String(128)),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_assistant_tool_invocations"),
+    UniqueConstraint(
+        "tenant_id",
+        "turn_id",
+        "sequence",
+        name="uq_core_assistant_tool_invocations_turn_sequence",
+    ),
+    UniqueConstraint(
+        "tenant_id",
+        "turn_id",
+        "argument_hash",
+        name="uq_core_assistant_tool_invocations_turn_arguments",
+    ),
+    CheckConstraint("sequence > 0", name="ck_core_assistant_tool_invocations_sequence"),
+    CheckConstraint(
+        "status IN ('created', 'queued', 'running', 'completed', 'failed', "
+        "'rejected', 'cancelled')",
+        name="ck_core_assistant_tool_invocations_status",
+    ),
+    CheckConstraint(
+        "length(scope_digest) = 64 AND scope_digest = lower(scope_digest)",
+        name="ck_core_assistant_tool_invocations_scope_digest",
+    ),
+    CheckConstraint(
+        "length(argument_hash) = 64 AND argument_hash = lower(argument_hash)",
+        name="ck_core_assistant_tool_invocations_argument_hash",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "turn_id", "task_id"],
+        [assistant_turns.c.tenant_id, assistant_turns.c.id, assistant_turns.c.task_id],
+        name="fk_core_assistant_tool_invocations_turn_task",
+    ),
+)
+
 changesets = Table(
     "core_changesets",
     state_metadata,
@@ -459,6 +652,24 @@ Index("ix_core_projects_tenant_updated", projects.c.tenant_id, projects.c.update
 Index("ix_core_conversations_tenant_project", conversations.c.tenant_id, conversations.c.project_id)
 Index("ix_core_versions_tenant_project", versions.c.tenant_id, versions.c.project_id)
 Index("ix_core_tasks_tenant_status", tasks.c.tenant_id, tasks.c.status, tasks.c.created_at)
+Index(
+    "ix_core_assistant_turns_tenant_task",
+    assistant_turns.c.tenant_id,
+    assistant_turns.c.task_id,
+    assistant_turns.c.created_at,
+)
+Index(
+    "ix_core_assistant_messages_tenant_conversation",
+    assistant_messages.c.tenant_id,
+    assistant_messages.c.conversation_id,
+    assistant_messages.c.sequence,
+)
+Index(
+    "ix_core_assistant_tool_invocations_tenant_turn",
+    assistant_tool_invocations.c.tenant_id,
+    assistant_tool_invocations.c.turn_id,
+    assistant_tool_invocations.c.sequence,
+)
 Index("ix_core_changesets_tenant_task", changesets.c.tenant_id, changesets.c.task_id)
 Index("ix_core_approvals_tenant_task", approvals.c.tenant_id, approvals.c.task_id)
 Index("ix_core_checkpoints_tenant_task", checkpoints.c.tenant_id, checkpoints.c.task_id)

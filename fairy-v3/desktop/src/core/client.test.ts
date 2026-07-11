@@ -148,6 +148,17 @@ describe("CoreClient", () => {
     await client.memory.search({ task_id: id, query: "memory", limit: 10 });
     await client.memory.snapshots.get(id, id);
     await client.memory.projection.health(id);
+    await client.assistant.turns.create({
+      task_id: id,
+      profile_id: "local-default",
+      idempotency_key: "turn-1",
+    });
+    await client.assistant.turns.get(id);
+    await client.assistant.turns.cancel({
+      turn_id: id,
+      expected_cancellation_revision: 0,
+    });
+    await client.messages.list({ conversation_id: id, limit: 20 });
 
     expect(transport.requests.map(({ method }) => method)).toEqual([
       "health",
@@ -189,6 +200,10 @@ describe("CoreClient", () => {
       "memory.search",
       "memory.snapshots.get",
       "memory.projection.health",
+      "assistant.turns.create",
+      "assistant.turns.get",
+      "assistant.turns.cancel",
+      "messages.list",
     ]);
     expect(transport.requests[3]?.params).toEqual({ project_id: id });
     expect(transport.requests[11]?.params).toEqual({ task_id: id });

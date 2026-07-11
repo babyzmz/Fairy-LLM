@@ -36,6 +36,12 @@ pgvector semantic expansion are not part of the delivered lexical slice.
 `FAIRY_CORE_DATA_DIR` contains tenant workspace files only and never SQLite
 state in Cloud composition.
 
+Assistant Messages, Turns, Tool Invocations, and Message sequence rows use the
+same PostgreSQL tenant key and forced RLS. Alembic revision `20260711_0008`
+adds those tables. Local JSON-RPC and Cloud REST expose the same create/get/
+cancel/list contracts; Turn creation requires an idempotency key and cannot
+accept client Scope or Memory bindings.
+
 - API readiness: `http://127.0.0.1:8088/v1/ready`
 - S3 endpoint: `http://127.0.0.1:8333`
 - OIDC debugger: `http://host.docker.internal:8090/fairy/debugger`

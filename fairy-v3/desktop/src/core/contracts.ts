@@ -10,6 +10,9 @@ export type ApprovalListInput = NonNullable<
 export type ApprovalPage = Schemas["ApprovalPageModel"];
 export type Artifact = Schemas["ArtifactModel"];
 export type ArtifactPage = Schemas["ArtifactPageModel"];
+export type AssistantTurn = Schemas["AssistantTurnModel"];
+export type AssistantTurnCancelInput = Schemas["AssistantTurnCancelInput"];
+export type AssistantTurnCreateInput = Schemas["AssistantTurnCreateInput"];
 export type CapabilityManifest = Schemas["CapabilityManifestModel"];
 export type CapabilityRequest = Schemas["CapabilityRequest"];
 export type Changeset = Schemas["ChangesetModel"];
@@ -41,6 +44,11 @@ export type MemorySearchInput = operations["memory.search"]["parameters"]["query
 export type MemorySearchPage = Schemas["MemorySearchPageModel"];
 export type MemorySnapshot = Schemas["MemorySnapshotModel"];
 export type MemoryTombstone = Schemas["MemoryTombstoneModel"];
+export type Message = Schemas["MessageModel"];
+export type MessageListInput = NonNullable<
+  operations["messages.list"]["parameters"]["query"]
+>;
+export type MessagePage = Schemas["MessagePageModel"];
 export type PendingChangeset = Schemas["PendingChangesetModel"];
 export type Project = Schemas["ProjectModel"];
 export type ProjectContext = Schemas["ProjectContextModel"];
@@ -116,6 +124,16 @@ export interface CoreMethodMap {
   "previews.stop": { params: PreviewStopInput; result: Preview };
   "artifacts.list": { params: { task_id: string }; result: ArtifactPage };
   "artifacts.read": { params: { artifact_id: string }; result: Artifact };
+  "assistant.turns.create": {
+    params: AssistantTurnCreateInput;
+    result: AssistantTurn;
+  };
+  "assistant.turns.get": { params: { turn_id: string }; result: AssistantTurn };
+  "assistant.turns.cancel": {
+    params: AssistantTurnCancelInput;
+    result: AssistantTurn;
+  };
+  "messages.list": { params: MessageListInput; result: MessagePage };
   "events.subscribe": { params: { cursor: number }; result: EventBatch };
   "memory.observations.create": {
     params: MemoryObserveInput;

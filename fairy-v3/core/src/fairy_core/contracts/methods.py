@@ -14,6 +14,10 @@ from fairy_core.contracts.models import (
     ArtifactListInput,
     ArtifactModel,
     ArtifactPageModel,
+    AssistantTurnCancelInput,
+    AssistantTurnCreateInput,
+    AssistantTurnIdInput,
+    AssistantTurnModel,
     CapabilityManifestModel,
     CapabilityRequest,
     ChangesetModel,
@@ -46,6 +50,8 @@ from fairy_core.contracts.models import (
     MemorySnapshotGetInput,
     MemorySnapshotModel,
     MemoryTombstoneModel,
+    MessageListInput,
+    MessagePageModel,
     PendingChangesetModel,
     PreviewContextModel,
     PreviewIdInput,
@@ -120,6 +126,21 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "artifacts.read",
             ArtifactIdInput,
             ArtifactModel,
+        ),
+        "assistant.turns.cancel": CoreMethod(
+            "assistant.turns.cancel",
+            AssistantTurnCancelInput,
+            AssistantTurnModel,
+        ),
+        "assistant.turns.create": CoreMethod(
+            "assistant.turns.create",
+            AssistantTurnCreateInput,
+            AssistantTurnModel,
+        ),
+        "assistant.turns.get": CoreMethod(
+            "assistant.turns.get",
+            AssistantTurnIdInput,
+            AssistantTurnModel,
         ),
         "capabilities.get": CoreMethod(
             "capabilities.get",
@@ -206,6 +227,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "memory.snapshots.get",
             MemorySnapshotGetInput,
             MemorySnapshotModel,
+        ),
+        "messages.list": CoreMethod(
+            "messages.list",
+            MessageListInput,
+            MessagePageModel,
         ),
         "projects.create": CoreMethod(
             "projects.create",

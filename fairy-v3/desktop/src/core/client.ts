@@ -1,6 +1,8 @@
 import type {
   ApprovalDecisionInput,
   ApprovalListInput,
+  AssistantTurnCancelInput,
+  AssistantTurnCreateInput,
   CapabilityRequest,
   ChangesetProposal,
   ConversationCreateInput,
@@ -16,6 +18,7 @@ import type {
   MemoryNamespace,
   MemoryObserveInput,
   MemorySearchInput,
+  MessageListInput,
   ProjectCreateInput,
   ProjectImportInput,
   ProjectListInput,
@@ -112,6 +115,21 @@ export class CoreClient {
       this.transport.call("artifacts.list", { task_id: taskId }),
     read: (artifactId: string) =>
       this.transport.call("artifacts.read", { artifact_id: artifactId }),
+  };
+
+  readonly assistant = {
+    turns: {
+      create: (input: AssistantTurnCreateInput) =>
+        this.transport.call("assistant.turns.create", input),
+      get: (turnId: string) =>
+        this.transport.call("assistant.turns.get", { turn_id: turnId }),
+      cancel: (input: AssistantTurnCancelInput) =>
+        this.transport.call("assistant.turns.cancel", input),
+    },
+  };
+
+  readonly messages = {
+    list: (input: MessageListInput) => this.transport.call("messages.list", input),
   };
 
   readonly memory = {

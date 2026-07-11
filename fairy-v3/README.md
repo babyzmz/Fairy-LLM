@@ -64,6 +64,13 @@ lease fencing, recovery, Preview resolution, and accept/discard invariants.
 React now renders the persisted Task Timeline and sandboxed Preview iframe
 through CoreClient; production sample state has been removed.
 
+The next durable product slice is also in place: Task-bound Assistant Messages,
+Turns, Tool Invocations, and per-Conversation sequence allocation share the
+SQLite/PostgreSQL Unit of Work. Turn creation is idempotent, cancellation and
+recovery are fenced, public Message pages exclude internal records, and local
+JSON-RPC, Cloud REST, OpenAPI, and CoreClient expose one generated contract.
+This ledger does not yet call a model; provider execution is the next slice.
+
 Episodes, pgvector expansion, asynchronous projection rebuild workers,
 multi-device memory controls, dynamic WSL/OCI project execution, and remaining
 product capability workflows remain separate implementation slices. They stay

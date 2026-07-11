@@ -106,6 +106,17 @@ const routes = {
     getWithQuery("/v1/artifacts", params, ["task_id"]),
   "artifacts.read": (params) =>
     get(`/v1/artifacts/${pathParameter(params, "artifact_id")}`),
+  "assistant.turns.create": (params) =>
+    postWithIdempotency("/v1/assistant/turns", params),
+  "assistant.turns.get": (params) =>
+    get(`/v1/assistant/turns/${pathParameter(params, "turn_id")}`),
+  "assistant.turns.cancel": (params) =>
+    post(
+      `/v1/assistant/turns/${pathParameter(params, "turn_id")}/cancel`,
+      params,
+    ),
+  "messages.list": (params) =>
+    getWithQuery("/v1/messages", params, ["conversation_id", "limit", "cursor"]),
   "memory.observations.create": (params) => post("/v1/memory/observations", params),
   "memory.observations.list": (params) =>
     get(

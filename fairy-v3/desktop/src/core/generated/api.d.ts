@@ -72,6 +72,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/assistant/turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Assistant Turn */
+        post: operations["assistant.turns.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assistant/turns/{turn_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Assistant Turn */
+        get: operations["assistant.turns.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/assistant/turns/{turn_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Assistant Turn */
+        post: operations["assistant.turns.cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/capabilities": {
         parameters: {
             query?: never;
@@ -338,6 +389,23 @@ export interface paths {
         };
         /** Get Memory Snapshot */
         get: operations["memory.snapshots.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Messages */
+        get: operations["messages.list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -823,6 +891,87 @@ export interface components {
          * @enum {string}
          */
         ArtifactVisibility: "conversation" | "project" | "private";
+        /** AssistantTurnCancelInput */
+        AssistantTurnCancelInput: {
+            /** Expected Cancellation Revision */
+            expected_cancellation_revision: number;
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+        };
+        /** AssistantTurnCreateInput */
+        AssistantTurnCreateInput: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Profile Id */
+            profile_id: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /** AssistantTurnModel */
+        AssistantTurnModel: {
+            /** Cancellation Revision */
+            cancellation_revision: number;
+            /** Completed At */
+            completed_at: string | null;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error Code */
+            error_code: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Memory Snapshot Hash */
+            memory_snapshot_hash: string;
+            /**
+             * Memory Snapshot Id
+             * Format: uuid
+             */
+            memory_snapshot_id: string;
+            /** Profile Id */
+            profile_id: string;
+            /** Scope Digest */
+            scope_digest: string;
+            /** Started At */
+            started_at: string | null;
+            status: components["schemas"]["AssistantTurnStatus"];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Usage */
+            usage: {
+                [key: string]: number;
+            };
+        };
+        /**
+         * AssistantTurnStatus
+         * @enum {string}
+         */
+        AssistantTurnStatus: "created" | "running" | "waiting_for_tool" | "completed" | "cancelled" | "failed";
         /** CapabilityManifestModel */
         CapabilityManifestModel: {
             /** Command Metadata */
@@ -1569,6 +1718,49 @@ export interface components {
             target_id: string;
             target_kind: components["schemas"]["MemoryTargetKind"];
         };
+        /** MessageModel */
+        MessageModel: {
+            /** Content */
+            content: string;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            role: components["schemas"]["MessageRole"];
+            /** Sequence */
+            sequence: number;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Turn Id */
+            turn_id: string | null;
+            visibility: components["schemas"]["PublicMessageVisibilityModel"];
+        };
+        /** MessagePageModel */
+        MessagePageModel: {
+            /** Items */
+            items: components["schemas"]["MessageModel"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * MessageRole
+         * @enum {string}
+         */
+        MessageRole: "user" | "assistant" | "tool" | "system_notice";
         /**
          * ObservationStatus
          * @enum {string}
@@ -1757,6 +1949,11 @@ export interface components {
          * @enum {string}
          */
         ProjectionState: "ready" | "stale" | "unavailable" | "failed";
+        /**
+         * PublicMessageVisibilityModel
+         * @enum {string}
+         */
+        PublicMessageVisibilityModel: "user" | "developer";
         /** RuntimeExecutorHealthModel */
         RuntimeExecutorHealthModel: {
             /** Available */
@@ -2212,6 +2409,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArtifactModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "assistant.turns.create": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantTurnCreateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantTurnModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "assistant.turns.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantTurnModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "assistant.turns.cancel": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantTurnCancelInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantTurnModel"];
                 };
             };
             /** @description Validation Error */
@@ -2825,6 +3128,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemorySnapshotModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "messages.list": {
+        parameters: {
+            query: {
+                limit?: number;
+                cursor?: string | null;
+                conversation_id: string;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessagePageModel"];
                 };
             };
             /** @description Validation Error */

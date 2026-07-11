@@ -12,6 +12,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
 
+from fairy_core.assistant.models import (
+    AssistantTurnStatus,
+    MessageRole,
+)
 from fairy_core.commanding.types import PermissionProfile
 from fairy_core.domain.execution import (
     ApprovalDecision,
@@ -76,6 +80,11 @@ class EventVisibilityModel(StrEnum):
     USER = "user"
     DEVELOPER = "developer"
     INTERNAL = "internal"
+
+
+class PublicMessageVisibilityModel(StrEnum):
+    USER = "user"
+    DEVELOPER = "developer"
 
 
 class ErrorCode(StrEnum):
@@ -187,6 +196,24 @@ class PreviewIdInput(ContractModel):
 
 class ArtifactIdInput(ContractModel):
     artifact_id: UUID
+
+
+class AssistantTurnIdInput(ContractModel):
+    turn_id: UUID
+
+
+class AssistantTurnCreateInput(ContractModel):
+    task_id: UUID
+    profile_id: str = Field(min_length=1, max_length=255)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class AssistantTurnCancelInput(AssistantTurnIdInput):
+    expected_cancellation_revision: int = Field(ge=0)
+
+
+class MessageListInput(CollectionPageInput):
+    conversation_id: UUID
 
 
 class RuntimeHealthInput(TaskIdInput):
@@ -398,6 +425,49 @@ class ArtifactModel(ContractModel):
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     metadata: dict[str, Any]
     created_at: datetime
+
+
+class MessageModel(ContractModel):
+    id: UUID
+    conversation_id: UUID
+    task_id: UUID
+    turn_id: UUID | None
+    sequence: int = Field(ge=1)
+    role: MessageRole
+    visibility: PublicMessageVisibilityModel
+    content: str = Field(min_length=1, max_length=1_000_000)
+    created_at: datetime
+
+
+class MessagePageModel(ContractModel):
+    items: tuple[MessageModel, ...]
+    next_cursor: str | None
+
+
+class AssistantTurnModel(ContractModel):
+    id: UUID
+    conversation_id: UUID
+    task_id: UUID
+    profile_id: str = Field(min_length=1, max_length=255)
+    scope_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    memory_snapshot_id: UUID
+    memory_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    idempotency_key: str = Field(min_length=1, max_length=512)
+    status: AssistantTurnStatus
+    cancellation_revision: int = Field(ge=0)
+    usage: dict[str, int]
+    error_code: str | None
+    created_at: datetime
+    updated_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+
+    @field_validator("usage")
+    @classmethod
+    def require_non_negative_usage(cls, value: dict[str, int]) -> dict[str, int]:
+        if any(isinstance(count, bool) or count < 0 for count in value.values()):
+            raise ValueError("usage values must be non-negative integers")
+        return value
 
 
 class RuntimeExecutorHealthModel(ContractModel):

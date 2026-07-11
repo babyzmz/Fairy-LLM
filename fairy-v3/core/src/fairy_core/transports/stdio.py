@@ -11,6 +11,7 @@ from typing import TextIO
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.service import CoreService
+from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.persistence.data_directory_lock import DataDirectoryLock
@@ -84,6 +85,10 @@ def build_local_service(
             policy=PolicyEngine(registry),
             scope_resolver=application.scope_for_task,
         )
+        AssistantLedgerApplication(
+            unit_of_work_factory=unit_of_work_factory,
+            scope_resolver=application.scope_for_task,
+        ).recover_orphaned_turns()
         return CoreService(
             application,
             unit_of_work_factory=unit_of_work_factory,

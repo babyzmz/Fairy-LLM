@@ -27,6 +27,13 @@ and persistence lookups. Runtime executor output is untrusted and must match
 the durable Runtime handle and exact loopback endpoint before Preview state can
 advance. A different Core instance cannot recover a live lease before expiry.
 
+Assistant state uses the same tenant-scoped Unit of Work. Immutable Messages,
+fenced Assistant Turns, Tool Invocations, and per-Conversation sequence rows
+are persisted in SQLite/PostgreSQL with Task, Scope digest, and Hermes Snapshot
+bindings. Public Message pages exclude internal records. The Assistant Ledger
+does not import or call a model provider; provider execution remains behind
+Core ports and external composition.
+
 The local static executor is read-only. Dynamic WSL and cloud OCI execution
 remain unavailable until dedicated executors satisfy their health and
 attestation contracts; Core never substitutes a host shell.

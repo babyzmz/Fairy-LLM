@@ -29,18 +29,21 @@
 - Create: `core/src/fairy_core/assistant/models.py`
 - Create: `core/src/fairy_core/assistant/ports.py`
 - Create: `core/src/fairy_core/assistant/repository.py`
+- Create: `core/src/fairy_core/assistant/ledger.py`
 - Create: `core/src/fairy_core/assistant/__init__.py`
 - Modify: `core/src/fairy_core/storage/schema.py`
 - Modify: `core/src/fairy_core/persistence/unit_of_work.py`
-- Modify: `core/src/fairy_core/persistence/sqlite.py`
 - Modify: `core/src/fairy_core/contracts/models.py`
 - Modify: `core/src/fairy_core/contracts/methods.py`
 - Modify: `core/src/fairy_core/application/service.py`
-- Modify: `cloud/src/fairy_cloud/storage/schema.py`
+- Modify: `cloud/src/fairy_cloud/api.py`
 - Create: `cloud/migrations/versions/20260711_0008_assistant_ledger.py`
+- Modify: `desktop/src/core/contracts.ts`
+- Modify: `desktop/src/core/client.ts`
+- Modify: `desktop/src/core/cloudTransport.ts`
 - Test: `core/tests/assistant/test_models.py`
 - Test: `core/tests/assistant/test_repository_contract.py`
-- Test: `core/tests/contracts/test_assistant_methods.py`
+- Test: `core/tests/assistant/test_contracts.py`
 - Test: `cloud/tests/integration/test_assistant_rls.py`
 
 **Interfaces:**
@@ -48,16 +51,20 @@
 - Produces public methods `messages.list`, `assistant.turns.create`, `assistant.turns.get`, and `assistant.turns.cancel`.
 - `AssistantTurn.create(task, profile_id, scope)` copies `scope_digest`, Memory Snapshot ID/hash, and never accepts these fields from transport input.
 
-- [ ] Write model tests proving immutable Message ordering, legal Turn transitions, terminal cancellation, Tool Invocation sequence uniqueness, and canonical argument hashing.
-- [ ] Run `uv run --project core pytest tests/assistant/test_models.py -q` and confirm failures are caused by missing assistant types.
-- [ ] Implement the domain models and transition guards with UUIDv7 IDs and UTC timestamps.
-- [ ] Write repository contract tests for append/list/get, idempotent Turn creation, Conversation isolation, and recovery of orphaned running Turns as `WORKER_INTERRUPTED`.
-- [ ] Run the repository tests and confirm the missing tables/repository fail before implementing SQLAlchemy rows and adapters.
-- [ ] Add SQLite and PostgreSQL tables with tenant/Conversation/Task foreign keys, unique sequence constraints, RLS policy inclusion, and no cascade that could erase ledger history.
-- [ ] Add request/response models and the four public Core methods; verify generated OpenAPI rejects client-provided Scope or Memory IDs.
-- [ ] Run `uv run --project core pytest tests/assistant tests/contracts/test_assistant_methods.py -q` and `uv run --project cloud pytest -m "not integration" -q`.
-- [ ] Run offline Alembic upgrade/downgrade and contract generation.
-- [ ] Commit with `feat(v3): add durable assistant ledger`.
+- [x] Write model tests proving immutable Message ordering, legal Turn transitions, terminal cancellation, Tool Invocation sequence uniqueness, and canonical argument hashing.
+- [x] Run `uv run --project core pytest tests/assistant/test_models.py -q` and confirm failures are caused by missing assistant types.
+- [x] Implement the domain models and transition guards with UUIDv7 IDs and UTC timestamps.
+- [x] Write repository contract tests for append/list/get, idempotent Turn creation, Conversation isolation, and recovery of orphaned running Turns as `WORKER_INTERRUPTED`.
+- [x] Run the repository tests and confirm the missing tables/repository fail before implementing SQLAlchemy rows and adapters.
+- [x] Add SQLite and PostgreSQL tables with tenant/Conversation/Task foreign keys, unique sequence constraints, RLS policy inclusion, and no cascade that could erase ledger history.
+- [x] Add request/response models and the four public Core methods; verify generated OpenAPI rejects client-provided Scope or Memory IDs.
+- [x] Run `uv run pytest tests/assistant -q` and `uv run --project cloud pytest -m "not integration" -q`.
+- [x] Run offline Alembic upgrade/downgrade and contract generation.
+- [x] Commit with `feat(v3): add durable assistant ledger`.
+
+Verification note: the full local gate passed with Docker explicitly skipped.
+The real PostgreSQL/RLS test is collected in the Compose integration profile;
+it was not executed because this machine has no discoverable Docker CLI.
 
 ### Task 30: Provider Profiles, Streaming, Cancellation, and Secret Boundary
 
