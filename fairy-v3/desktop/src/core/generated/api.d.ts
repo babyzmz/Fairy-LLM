@@ -164,10 +164,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
         /** Capabilities */
-        post: operations["capabilities.get"];
+        get: operations["capabilities.get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -526,6 +526,24 @@ export interface paths {
         /** List Messages */
         get: operations["messages.list"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Permissions */
+        get: operations["permissions.get"];
+        /** Update Permissions */
+        put: operations["permissions.update"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1220,20 +1238,6 @@ export interface components {
              */
             schema_version: number;
         };
-        /** CapabilityRequest */
-        CapabilityRequest: {
-            /** Overrides */
-            overrides?: {
-                [key: string]: boolean;
-            };
-            /** @default standard */
-            profile: components["schemas"]["PermissionProfile"];
-            /**
-             * Sandbox Healthy
-             * @default false
-             */
-            sandbox_healthy: boolean;
-        };
         /** ChangesetModel */
         ChangesetModel: {
             approval_decision: components["schemas"]["ApprovalDecision"];
@@ -1594,6 +1598,33 @@ export interface components {
          * @enum {string}
          */
         EventVisibilityModel: "user" | "developer" | "internal";
+        /** ExecutionSettingsModel */
+        ExecutionSettingsModel: {
+            /** Capability Overrides */
+            capability_overrides: {
+                [key: string]: boolean;
+            };
+            profile: components["schemas"]["PermissionProfile"];
+            /** Revision */
+            revision: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** ExecutionSettingsUpdateInput */
+        ExecutionSettingsUpdateInput: {
+            /** Capability Overrides */
+            capability_overrides?: {
+                [key: string]: boolean;
+            };
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            profile: components["schemas"]["PermissionProfile"];
+        };
         /**
          * ExecutionTarget
          * @enum {string}
@@ -2697,13 +2728,8 @@ export interface components {
         SystemActionRequest: {
             /** Action */
             action: components["schemas"]["OpenUrlAction"] | components["schemas"]["RevealPathAction"] | components["schemas"]["CopyTextAction"] | components["schemas"]["NotifyAction"] | components["schemas"]["OpenSettingsAction"];
-            /** Capability Overrides */
-            capability_overrides?: {
-                [key: string]: boolean;
-            };
             /** Idempotency Key */
             idempotency_key: string;
-            profile: components["schemas"]["PermissionProfile"];
             /**
              * Task Id
              * Format: uuid
@@ -3340,11 +3366,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CapabilityRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -4144,6 +4166,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessagePageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "permissions.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionSettingsModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "permissions.update": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExecutionSettingsUpdateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionSettingsModel"];
                 };
             };
             /** @description Validation Error */

@@ -96,7 +96,6 @@ describe("CoreClient", () => {
       task_id: id,
       action: { type: "open_url", url: "https://example.com" },
       idempotency_key: "system-action-1",
-      profile: "standard",
       user_confirmed: true,
     });
     await client.previews.start({ task_id: id, idempotency_key: "preview-start-1" });
@@ -123,10 +122,13 @@ describe("CoreClient", () => {
       idempotency_key: "document-delete-1",
       user_confirmed: true,
     });
-    await client.capabilities.get({
+    await client.capabilities.get();
+    await client.permissions.get();
+    await client.permissions.update({
       profile: "standard",
-      sandbox_healthy: true,
-      overrides: { "network.http": false },
+      capability_overrides: { "web.search": false },
+      expected_revision: 0,
+      idempotency_key: "permissions:client:standard",
     });
     await client.providers.list();
     await client.providers.health("openrouter-free");
@@ -232,6 +234,8 @@ describe("CoreClient", () => {
       "documents.search",
       "documents.delete",
       "capabilities.get",
+      "permissions.get",
+      "permissions.update",
       "providers.list",
       "providers.health",
       "memory.observations.create",

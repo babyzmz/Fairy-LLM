@@ -9,6 +9,10 @@ from fairy_core.application.core import CoreApplication
 from fairy_core.commanding import CommandStatus, EventVisibility
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ApprovalPolicy, build_default_registry
+from fairy_core.commanding.settings import (
+    ExecutionPolicyResolver,
+    StaticSandboxHealthProvider,
+)
 from fairy_core.commanding.types import PermissionProfile
 from fairy_core.contracts.models import ExecutionTarget, TaskCreate
 from fairy_core.domain.models import (
@@ -69,6 +73,7 @@ def applications(tmp_path: Path):
         unit_of_work_factory=factory,
         registry=registry,
         command_policy=PolicyEngine(registry),
+        execution_policy=ExecutionPolicyResolver(StaticSandboxHealthProvider({"local": False})),
         scope_resolver=core.scope_for_task,
         worker=worker,
     )
@@ -92,14 +97,25 @@ def applications(tmp_path: Path):
     return engine, factory, registry, task, actions, worker
 
 
-def request(task_id, action, *, confirmed=False, profile=PermissionProfile.STANDARD):
+def request(task_id, action, *, confirmed=False):
     return SystemActionRequest(
         task_id=task_id,
         action=action,
         idempotency_key="system-actions:one",
-        profile=profile,
         user_confirmed=confirmed,
     )
+
+
+def set_policy(factory, profile: PermissionProfile, overrides=None) -> None:
+    with factory() as unit_of_work:
+        current = unit_of_work.execution_settings.get()
+        unit_of_work.execution_settings.update(
+            profile=profile,
+            capability_overrides=overrides or {},
+            expected_revision=current.revision,
+            idempotency_key=f"test-policy:{current.revision}:{profile.value}",
+        )
+        unit_of_work.commit()
 
 
 def test_standard_profile_creates_one_approval_bound_command_then_replays(
@@ -150,24 +166,24 @@ def test_standard_profile_creates_one_approval_bound_command_then_replays(
 
 
 def test_autonomous_executes_but_observe_cannot_create_host_effects(tmp_path: Path) -> None:
-    engine, _factory, _registry, task, actions, worker = applications(tmp_path)
+    engine, factory, _registry, task, actions, worker = applications(tmp_path)
+    set_policy(factory, PermissionProfile.AUTONOMOUS)
     completed = actions.execute(
         request(
             task.id,
             CopyTextAction(type="copy_text", text="bounded clipboard text"),
-            profile=PermissionProfile.AUTONOMOUS,
         )
     )
     assert completed.status is CommandStatus.SUCCEEDED
     assert completed.requires_approval is False
     assert len(worker.calls) == 1
 
+    set_policy(factory, PermissionProfile.OBSERVE)
     with pytest.raises(SystemActionUnavailableError) as denied:
         actions.execute(
             request(
                 task.id,
                 OpenSettingsAction(type="open_settings", page=SystemSettings.DISPLAY),
-                profile=PermissionProfile.OBSERVE,
             )
         )
     assert denied.value.error_code == "CAPABILITY_NOT_AVAILABLE"
@@ -175,12 +191,17 @@ def test_autonomous_executes_but_observe_cannot_create_host_effects(tmp_path: Pa
 
 
 def test_advanced_capability_toggle_blocks_the_selected_host_action(tmp_path: Path) -> None:
-    engine, _factory, _registry, task, actions, worker = applications(tmp_path)
+    engine, factory, _registry, task, actions, worker = applications(tmp_path)
+    set_policy(
+        factory,
+        PermissionProfile.STANDARD,
+        {"system.open_url": False},
+    )
     blocked = request(
         task.id,
         OpenUrlAction(type="open_url", url="https://example.com"),
         confirmed=True,
-    ).model_copy(update={"capability_overrides": {"system.open_url": False}})
+    )
 
     with pytest.raises(SystemActionUnavailableError) as denied:
         actions.execute(blocked)

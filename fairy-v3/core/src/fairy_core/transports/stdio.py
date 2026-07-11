@@ -15,6 +15,7 @@ from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
+from fairy_core.commanding.settings import SandboxHealthProvider
 from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.data_directory_lock import DataDirectoryLock
@@ -47,6 +48,7 @@ def build_local_service(
     research_fetch_port: FetchPort | None = None,
     document_parser: DocumentParser | None = None,
     document_blob_store: DocumentBlobStore | None = None,
+    sandbox_health_provider: SandboxHealthProvider | None = None,
 ) -> CoreService:
     data_dir.mkdir(parents=True, exist_ok=True)
     resources = ExitStack()
@@ -124,6 +126,8 @@ def build_local_service(
             document_blob_store=document_blob_store,
             runtime_application=runtime_application,
             system_action_worker=system_action_worker,
+            sandbox_health_provider=sandbox_health_provider,
+            default_execution_target="local",
             on_close=resources.close,
         )
     except BaseException:
@@ -143,6 +147,7 @@ def build_local_dispatcher(
     research_fetch_port: FetchPort | None = None,
     document_parser: DocumentParser | None = None,
     document_blob_store: DocumentBlobStore | None = None,
+    sandbox_health_provider: SandboxHealthProvider | None = None,
 ) -> JsonRpcDispatcher:
     return JsonRpcDispatcher(
         build_local_service(
@@ -156,6 +161,7 @@ def build_local_dispatcher(
             research_fetch_port=research_fetch_port,
             document_parser=document_parser,
             document_blob_store=document_blob_store,
+            sandbox_health_provider=sandbox_health_provider,
         )
     )
 

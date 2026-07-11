@@ -28,7 +28,7 @@ from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.bus import CommandBus, CommandRequest
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ApprovalPolicy, ToolRegistry
-from fairy_core.commanding.types import PermissionProfile
+from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.domain.models import TaskStatus
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -92,6 +92,7 @@ class AssistantApplication:
         providers: ProviderRegistry,
         image_attachments: ImageAttachmentStore,
         tool_executor: ToolExecutor | None = None,
+        execution_policy: ExecutionPolicyResolver | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._scope_resolver = scope_resolver
@@ -100,11 +101,13 @@ class AssistantApplication:
         self._providers = providers
         self._image_attachments = image_attachments
         self._tool_executor = tool_executor or UnavailableToolExecutor()
+        self._execution_policy = execution_policy or ExecutionPolicyResolver()
         self._context = AssistantContextBuilder(
             unit_of_work_factory=unit_of_work_factory,
             registry=registry,
             scope_resolver=scope_resolver,
             image_attachments=image_attachments,
+            execution_policy=self._execution_policy,
         )
 
     def run_turn(
@@ -335,6 +338,10 @@ class AssistantApplication:
             elif turn.status is not AssistantTurnStatus.RUNNING:
                 raise ValueError(f"Assistant Turn cannot run from {turn.status.value}")
             bus = self._command_bus(unit_of_work.commands)
+            policy = self._execution_policy.resolve(
+                unit_of_work.execution_settings,
+                execution_target=scope.execution_target,
+            )
             dispatch = bus.submit(
                 CommandRequest(
                     tool_name="model.generate",
@@ -347,9 +354,9 @@ class AssistantApplication:
                     },
                     idempotency_key=f"assistant:{turn.id}:model:{model_round}",
                 ),
-                profile=PermissionProfile.STANDARD,
-                capability_overrides={},
-                sandbox_healthy=False,
+                profile=policy.profile,
+                capability_overrides=dict(policy.capability_overrides),
+                sandbox_healthy=policy.sandbox_healthy,
             )
             if not dispatch.accepted or dispatch.run is None:
                 raise ProviderUnavailableError(
@@ -491,6 +498,10 @@ class AssistantApplication:
             else:
                 duplicate = False
                 bus = self._command_bus(unit_of_work.commands)
+                policy = self._execution_policy.resolve(
+                    unit_of_work.execution_settings,
+                    execution_target=scope.execution_target,
+                )
                 dispatch = bus.submit(
                     CommandRequest(
                         tool_name=definition.name,
@@ -499,9 +510,9 @@ class AssistantApplication:
                         payload=arguments,
                         idempotency_key=(f"assistant:{turn.id}:tool:{invocation.argument_hash}"),
                     ),
-                    profile=PermissionProfile.STANDARD,
-                    capability_overrides={},
-                    sandbox_healthy=False,
+                    profile=policy.profile,
+                    capability_overrides=dict(policy.capability_overrides),
+                    sandbox_healthy=policy.sandbox_healthy,
                 )
                 if not dispatch.accepted or dispatch.run is None:
                     invocation.reject(error_code=dispatch.error_code or "TOOL_REJECTED")

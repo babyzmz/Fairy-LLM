@@ -23,7 +23,6 @@ from fairy_core.contracts.models import (
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
     CapabilityManifestModel,
-    CapabilityRequest,
     ChangesetModel,
     ChangesetProposal,
     CheckpointModel,
@@ -39,6 +38,8 @@ from fairy_core.contracts.models import (
     DocumentSearchInput,
     DocumentSearchPageModel,
     ErrorCode,
+    ExecutionSettingsModel,
+    ExecutionSettingsUpdateInput,
     HealthModel,
     MemoryClaimContextModel,
     MemoryClaimGetInput,
@@ -694,18 +695,36 @@ def create_cloud_app(
     def read_artifact(artifact_id: UUID) -> dict[str, Any]:
         return invoke("artifacts.read", {"artifact_id": str(artifact_id)})
 
-    @protected.post(
+    @protected.get(
         "/capabilities",
         operation_id="capabilities.get",
         response_model=CapabilityManifestModel,
     )
-    def capabilities(
-        request: CapabilityRequest,
+    def capabilities() -> dict[str, Any]:
+        return invoke("capabilities.get", {})
+
+    @protected.get(
+        "/permissions",
+        operation_id="permissions.get",
+        response_model=ExecutionSettingsModel,
+    )
+    def get_permissions() -> dict[str, Any]:
+        return invoke("permissions.get", {})
+
+    @protected.put(
+        "/permissions",
+        operation_id="permissions.update",
+        response_model=ExecutionSettingsModel,
+    )
+    def update_permissions(
+        request: ExecutionSettingsUpdateInput,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=512),
+        ],
     ) -> dict[str, Any]:
-        return invoke(
-            "capabilities.get",
-            request.model_dump(mode="json"),
-        )
+        require_idempotency_match(request.idempotency_key, idempotency_key)
+        return invoke("permissions.update", request.model_dump(mode="json"))
 
     @protected.get(
         "/providers",

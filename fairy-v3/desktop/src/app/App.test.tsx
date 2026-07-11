@@ -362,6 +362,20 @@ function createClient(
         schema_version: 1,
       }),
     },
+    permissions: {
+      get: async () => ({
+        profile: "standard",
+        capability_overrides: {},
+        revision: 0,
+        updated_at: "2026-07-11T00:00:00Z",
+      }),
+      update: async (input) => ({
+        profile: input.profile,
+        capability_overrides: input.capability_overrides ?? {},
+        revision: input.expected_revision + 1,
+        updated_at: "2026-07-11T00:00:01Z",
+      }),
+    },
     providers: {
       list: async () => ({ items: [provider] }),
       health: async () => ({ items: [providerHealth] }),

@@ -73,6 +73,48 @@ projects = Table(
     PrimaryKeyConstraint("tenant_id", "id", name="pk_core_projects"),
 )
 
+execution_settings = Table(
+    "core_execution_settings",
+    state_metadata,
+    _tenant_id(),
+    Column("profile", String(32), nullable=False),
+    Column("capability_overrides", JSON, nullable=False),
+    Column("revision", BigInteger, nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", name="pk_core_execution_settings"),
+    CheckConstraint(
+        "profile IN ('observe', 'standard', 'autonomous')",
+        name="ck_core_execution_settings_profile",
+    ),
+    CheckConstraint("revision >= 1", name="ck_core_execution_settings_revision"),
+)
+
+execution_setting_updates = Table(
+    "core_execution_setting_updates",
+    state_metadata,
+    _tenant_id(),
+    Column("idempotency_key", String(512), primary_key=True),
+    Column("request_fingerprint", String(64), nullable=False),
+    Column("profile", String(32), nullable=False),
+    Column("capability_overrides", JSON, nullable=False),
+    Column("expected_revision", BigInteger, nullable=False),
+    Column("result_revision", BigInteger, nullable=False),
+    Column("result_updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint(
+        "tenant_id",
+        "idempotency_key",
+        name="pk_core_execution_setting_updates",
+    ),
+    CheckConstraint(
+        "profile IN ('observe', 'standard', 'autonomous')",
+        name="ck_core_execution_setting_updates_profile",
+    ),
+    CheckConstraint(
+        "expected_revision >= 0 AND result_revision = expected_revision + 1",
+        name="ck_core_execution_setting_updates_revision",
+    ),
+)
+
 conversations = Table(
     "core_conversations",
     state_metadata,

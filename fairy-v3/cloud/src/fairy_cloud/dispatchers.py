@@ -83,6 +83,7 @@ def build_postgres_core_service(
                 object_store.document_blob_store(tenant_id) if object_store is not None else None
             ),
             runtime_application=runtime_application,
+            default_execution_target="cloud",
         )
     except BaseException:
         capabilities.executor.close()

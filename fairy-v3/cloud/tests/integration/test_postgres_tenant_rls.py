@@ -103,6 +103,65 @@ async def _run_rls_scenario(dsn: str) -> None:
                 marker="beta",
             )
 
+            await connection_a.execute(
+                text(
+                    "INSERT INTO core_execution_settings "
+                    "(tenant_id, profile, capability_overrides, revision, updated_at) "
+                    "VALUES (:tenant_id, 'autonomous', CAST(:overrides AS JSON), 1, now())"
+                ),
+                {"tenant_id": tenant_a, "overrides": '{"run.sandboxed": true}'},
+            )
+            await connection_b.execute(
+                text(
+                    "INSERT INTO core_execution_settings "
+                    "(tenant_id, profile, capability_overrides, revision, updated_at) "
+                    "VALUES (:tenant_id, 'observe', CAST(:overrides AS JSON), 1, now())"
+                ),
+                {"tenant_id": tenant_b, "overrides": '{"web.search": false}'},
+            )
+            for connection, tenant_id, profile in (
+                (connection_a, tenant_a, "autonomous"),
+                (connection_b, tenant_b, "observe"),
+            ):
+                await connection.execute(
+                    text(
+                        "INSERT INTO core_execution_setting_updates "
+                        "(tenant_id, idempotency_key, request_fingerprint, profile, "
+                        "capability_overrides, expected_revision, result_revision, "
+                        "result_updated_at) VALUES "
+                        "(:tenant_id, 'same-key', :fingerprint, :profile, "
+                        "CAST('{}' AS JSON), 0, 1, now())"
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "fingerprint": "a" * 64,
+                        "profile": profile,
+                    },
+                )
+
+            settings_a = (
+                await connection_a.execute(
+                    text("SELECT profile, revision FROM core_execution_settings")
+                )
+            ).one()
+            settings_b = (
+                await connection_b.execute(
+                    text("SELECT profile, revision FROM core_execution_settings")
+                )
+            ).one()
+            assert tuple(settings_a) == ("autonomous", 1)
+            assert tuple(settings_b) == ("observe", 1)
+            assert (
+                await connection_a.execute(
+                    text("SELECT profile FROM core_execution_setting_updates")
+                )
+            ).scalar_one() == "autonomous"
+            assert (
+                await connection_b.execute(
+                    text("SELECT profile FROM core_execution_setting_updates")
+                )
+            ).scalar_one() == "observe"
+
             projects_a = (
                 (
                     await connection_a.execute(

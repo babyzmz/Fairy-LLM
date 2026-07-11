@@ -4,7 +4,6 @@ import type {
   AssistantTurnCancelInput,
   AssistantTurnCreateInput,
   AssistantTurnRetryInput,
-  CapabilityRequest,
   ChangesetProposal,
   ConversationCreateInput,
   ConversationListInput,
@@ -16,6 +15,7 @@ import type {
   DocumentSearchInput,
   EventEnvelope,
   EventSubscriptionOptions,
+  ExecutionSettingsUpdateInput,
   MemoryClaimPromoteInput,
   MemoryClaimResolveInput,
   MemoryClaimSupersedeInput,
@@ -107,7 +107,13 @@ export class CoreClient {
   };
 
   readonly capabilities = {
-    get: (input: CapabilityRequest) => this.transport.call("capabilities.get", input),
+    get: () => this.transport.call("capabilities.get", {}),
+  };
+
+  readonly permissions = {
+    get: () => this.transport.call("permissions.get", {}),
+    update: (input: ExecutionSettingsUpdateInput) =>
+      this.transport.call("permissions.update", input),
   };
 
   readonly providers = {

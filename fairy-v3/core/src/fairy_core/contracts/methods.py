@@ -40,6 +40,8 @@ from fairy_core.contracts.models import (
     DocumentSearchInput,
     DocumentSearchPageModel,
     EventEnvelopeModel,
+    ExecutionSettingsModel,
+    ExecutionSettingsUpdateInput,
     HealthModel,
     MemoryClaimContextModel,
     MemoryClaimGetInput,
@@ -321,6 +323,16 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "previews.stop",
             PreviewStopInput,
             PreviewModel,
+        ),
+        "permissions.get": CoreMethod(
+            "permissions.get",
+            EmptyInput,
+            ExecutionSettingsModel,
+        ),
+        "permissions.update": CoreMethod(
+            "permissions.update",
+            ExecutionSettingsUpdateInput,
+            ExecutionSettingsModel,
         ),
         "providers.health": CoreMethod(
             "providers.health",

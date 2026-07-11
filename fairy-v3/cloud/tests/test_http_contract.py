@@ -611,23 +611,48 @@ async def test_provider_contracts_are_available_over_rest(app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cloud_capability_request_preserves_advanced_overrides(app) -> None:
+async def test_cloud_capabilities_use_revision_fenced_core_permissions(app) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
         headers=AUTH_HEADERS,
     ) as client:
-        response = await client.post(
-            "/v1/capabilities",
+        original = await client.get("/v1/permissions")
+        changed = await client.put(
+            "/v1/permissions",
+            headers={"Idempotency-Key": "permissions:http:autonomous"},
             json={
-                "profile": "standard",
-                "sandbox_healthy": False,
-                "overrides": {"preview.start": False},
+                "profile": "autonomous",
+                "capability_overrides": {"preview.start": False},
+                "expected_revision": 0,
+                "idempotency_key": "permissions:http:autonomous",
             },
         )
+        capabilities = await client.get("/v1/capabilities")
+        missing_key = await client.put(
+            "/v1/permissions",
+            json={
+                "profile": "observe",
+                "capability_overrides": {},
+                "expected_revision": 1,
+                "idempotency_key": "permissions:http:observe",
+            },
+        )
+        forged = await client.post(
+            "/v1/capabilities",
+            json={"profile": "autonomous", "sandbox_healthy": True},
+        )
 
-    response.raise_for_status()
-    assert response.json()["operations"]["preview.start"] is False
+    original.raise_for_status()
+    changed.raise_for_status()
+    capabilities.raise_for_status()
+    assert original.json()["profile"] == "standard"
+    assert changed.json()["revision"] == 1
+    assert capabilities.json()["profile"] == "autonomous"
+    assert capabilities.json()["sandbox_healthy"] is False
+    assert capabilities.json()["operations"]["preview.start"] is False
+    assert missing_key.status_code == 422
+    assert forged.status_code == 405
 
 
 @pytest.mark.asyncio

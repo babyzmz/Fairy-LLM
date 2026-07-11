@@ -29,10 +29,9 @@
 
 **Files:**
 - Create: `core/src/fairy_core/commanding/settings.py`
+- Create: `core/src/fairy_core/commanding/settings_sqlalchemy.py`
 - Create: `core/tests/test_execution_settings.py`
 - Modify: `core/src/fairy_core/storage/schema.py`
-- Modify: `core/src/fairy_core/storage/ports.py`
-- Modify: `core/src/fairy_core/storage/sqlalchemy.py`
 - Modify: `core/src/fairy_core/persistence/unit_of_work.py`
 - Modify: `core/src/fairy_core/contracts/models.py`
 - Modify: `core/src/fairy_core/contracts/methods.py`
@@ -42,16 +41,20 @@
 - Modify: `core/src/fairy_core/system_actions/models.py`
 - Modify: `core/src/fairy_core/system_actions/application.py`
 - Create: `cloud/migrations/versions/20260711_0011_execution_policy.py`
+- Modify: `cloud/src/fairy_cloud/api.py`
+- Modify: `cloud/src/fairy_cloud/dispatchers.py`
 - Modify: `desktop/src/core/client.ts`
+- Modify: `desktop/src/core/cloudTransport.ts`
+- Modify: `desktop/src/app/workspaceModel.ts`
 - Modify: generated contracts through `scripts/generate-contracts.ps1`
 
 **Interfaces:**
-- Produces `ExecutionSettings(profile, capability_overrides, revision, updated_at)` and `ExecutionSettingsRepository.get/update(expected_revision)`.
-- Produces `ExecutorHealthProvider.health_for(execution_target)`; the provider is injected by local or Cloud composition.
+- Produces `ExecutionSettings(profile, capability_overrides, revision, updated_at)` and `ExecutionSettingsRepository.get/update(expected_revision, idempotency_key)`.
+- Produces `SandboxHealthProvider.is_healthy(execution_target)`; the provider is injected by local or Cloud composition.
 - Produces `permissions.get` and `permissions.update`; `capabilities.get` accepts no client policy or health fields.
 - Produces `EffectiveExecutionPolicy` for Command Bus submission and model tool filtering.
 
-- [ ] **Step 1: Write failing storage and contract tests**
+- [x] **Step 1: Write failing storage and contract tests**
 
 ```python
 def test_settings_update_is_revision_fenced(service):
@@ -59,18 +62,19 @@ def test_settings_update_is_revision_fenced(service):
     changed = service.call(
         "permissions.update",
         {"profile": "autonomous", "capability_overrides": {"run.sandboxed": True},
-         "expected_revision": original["revision"]},
+         "expected_revision": original["revision"],
+         "idempotency_key": "permissions:0:autonomous"},
     )
     assert changed["revision"] == original["revision"] + 1
 ```
 
 Also assert tenant isolation, idempotent replay, stale revision conflict, unknown override rejection, local/Cloud separation, and that public capability requests reject `profile` and `sandbox_healthy`.
 
-- [ ] **Step 2: Run the focused tests and observe failures caused by missing settings contracts/repository**
+- [x] **Step 2: Run the focused tests and observe failures caused by missing settings contracts/repository**
 
 Run: `uv run --project core pytest tests/test_execution_settings.py tests/assistant/test_application.py tests/system_actions/test_application.py -q`
 
-- [ ] **Step 3: Implement durable settings and Core-owned effective policy**
+- [x] **Step 3: Implement durable settings and Core-owned effective policy**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -82,13 +86,15 @@ class EffectiveExecutionPolicy:
 
 Resolve this object inside Core immediately before model tool exposure and every Command Bus submission. Remove renderer/model authority over these values.
 
-- [ ] **Step 4: Add migration, regenerate contracts, and update CoreClient**
+- [x] **Step 4: Add migration, regenerate contracts, and update CoreClient**
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-contracts.ps1`
 
-- [ ] **Step 5: Run Task 41 verification and commit**
+- [x] **Step 5: Run Task 41 verification and commit**
 
 Run Core/Cloud unit tests, offline Alembic upgrade/downgrade, Desktop contract tests, Ruff, and boundary checks.
+
+Verification on 2026-07-11: `scripts/test-all.ps1` exited 0 with Core 437, Capabilities 101, Cloud 60, Vitest 66, and Playwright 17 tests passing. Offline Alembic upgrade/downgrade SQL, Rust fmt/clippy/tests, production build, performance budgets, generated-contract drift, Ruff, and boundary checks passed. Real WSL and Docker/PostgreSQL/S3 gates were unavailable and explicitly skipped.
 
 Commit: `feat(v3): make execution policy core owned`
 

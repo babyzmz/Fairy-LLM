@@ -20,7 +20,7 @@ export interface CloudCoreTransportOptions {
 }
 
 interface RequestDescriptor {
-  method: "DELETE" | "GET" | "POST";
+  method: "DELETE" | "GET" | "POST" | "PUT";
   path: string;
   body?: unknown;
   idempotencyKey?: string;
@@ -86,7 +86,9 @@ const routes = {
     method: "DELETE",
     path: `/v1/tasks/${pathParameter(params, "task_id")}/version`,
   }),
-  "capabilities.get": (params) => post("/v1/capabilities", params),
+  "capabilities.get": () => get("/v1/capabilities"),
+  "permissions.get": () => get("/v1/permissions"),
+  "permissions.update": (params) => putWithIdempotency("/v1/permissions", params),
   "providers.list": () => get("/v1/providers"),
   "providers.health": (params) =>
     getWithQuery("/v1/providers/health", params, ["profile_id"]),
@@ -350,6 +352,15 @@ function get(path: string): RequestDescriptor {
 
 function post(path: string, body?: unknown): RequestDescriptor {
   return { method: "POST", path, body };
+}
+
+function putWithIdempotency(path: string, params: RuntimeParams): RequestDescriptor {
+  return {
+    method: "PUT",
+    path,
+    body: params,
+    idempotencyKey: rawStringParameter(params, "idempotency_key"),
+  };
 }
 
 function postWithIdempotency(path: string, params: RuntimeParams): RequestDescriptor {

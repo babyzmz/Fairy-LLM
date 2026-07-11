@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from fairy_core.commanding.registry import ApprovalPolicy, ToolDefinition, ToolRegistry
+from fairy_core.commanding.types import PermissionProfile
 from fairy_core.domain.models import ScopeContract
 from fairy_core.providers import ModelTool
 
@@ -95,7 +96,13 @@ class UnavailableToolExecutor:
         raise ToolExecutionUnavailableError(f"tool executor is unavailable: {definition.executor}")
 
 
-def model_tools(registry: ToolRegistry) -> tuple[ModelTool, ...]:
+def model_tools(
+    registry: ToolRegistry,
+    *,
+    profile: PermissionProfile,
+    sandbox_healthy: bool,
+    overrides: Mapping[str, bool],
+) -> tuple[ModelTool, ...]:
     direct_answer = ModelTool.create(
         name=DIRECT_ANSWER_TOOL_NAME,
         description="Return the final answer without invoking a capability.",
@@ -106,6 +113,11 @@ def model_tools(registry: ToolRegistry) -> tuple[ModelTool, ...]:
             "additionalProperties": False,
         },
     )
+    manifest = registry.capability_manifest(
+        profile=profile,
+        sandbox_healthy=sandbox_healthy,
+        overrides=dict(overrides),
+    )
     registered = tuple(
         ModelTool.create(
             name=definition.name,
@@ -114,6 +126,7 @@ def model_tools(registry: ToolRegistry) -> tuple[ModelTool, ...]:
         )
         for definition in registry.agent_definitions()
         if definition.approval_policy is ApprovalPolicy.NEVER
+        and manifest.get(definition.name, False)
     )
     return (direct_answer, *registered)
 

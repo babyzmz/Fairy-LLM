@@ -11,6 +11,7 @@ from fairy_core.assistant.models import (
 )
 from fairy_core.assistant.tools import model_tools
 from fairy_core.commanding.registry import ToolRegistry
+from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.domain.models import ScopeContract, Task
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -41,11 +42,13 @@ class AssistantContextBuilder:
         registry: ToolRegistry,
         scope_resolver,
         image_attachments: ImageAttachmentStore,
+        execution_policy: ExecutionPolicyResolver,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._registry = registry
         self._scope_resolver = scope_resolver
         self._image_attachments = image_attachments
+        self._execution_policy = execution_policy
 
     def build(
         self,
@@ -75,6 +78,10 @@ class AssistantContextBuilder:
                 )
                 if message.role is not MessageRole.TOOL
             )
+            policy = self._execution_policy.resolve(
+                unit_of_work.execution_settings,
+                execution_target=scope.execution_target,
+            )
 
         attachments = self._image_attachments.for_turn(turn.id)
         if attachments and ProviderCapability.VISION not in provider_capabilities:
@@ -93,7 +100,16 @@ class AssistantContextBuilder:
             for attachment in attachments
         )
         include_tools = ProviderCapability.TOOLS in provider_capabilities
-        tools = model_tools(self._registry) if include_tools else ()
+        tools = (
+            model_tools(
+                self._registry,
+                profile=policy.profile,
+                sandbox_healthy=policy.sandbox_healthy,
+                overrides=policy.capability_overrides,
+            )
+            if include_tools
+            else ()
+        )
         required = {ProviderCapability.TEXT}
         if tools:
             required.add(ProviderCapability.TOOLS)

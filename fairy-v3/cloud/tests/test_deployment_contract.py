@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260711_0010"]
+    assert scripts.get_heads() == ["20260711_0011"]
+    assert scripts.get_revision("20260711_0011").down_revision == "20260711_0010"
     assert scripts.get_revision("20260711_0009").down_revision == "20260711_0008"
 
 
@@ -35,6 +36,8 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
     for table_name in (
         "CORE_TENANTS",
         "CORE_PROJECTS",
+        "CORE_EXECUTION_SETTINGS",
+        "CORE_EXECUTION_SETTING_UPDATES",
         "CORE_CONVERSATIONS",
         "CORE_VERSIONS",
         "CORE_TASKS",
@@ -99,8 +102,23 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_ASSISTANT_MESSAGES",
         "CORE_ASSISTANT_TOOL_INVOCATIONS",
         "CORE_RESEARCH_EVIDENCE",
+        "CORE_EXECUTION_SETTINGS",
+        "CORE_EXECUTION_SETTING_UPDATES",
     ):
         assert f'CREATE POLICY "TENANT_ISOLATION_{table_name}"' in ddl
+
+
+def test_execution_settings_migration_has_reversible_ddl() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260711_0011:20260711_0010", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_EXECUTION_SETTINGS"' in ddl
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_EXECUTION_SETTING_UPDATES"' in ddl
+    assert "DROP TABLE CORE_EXECUTION_SETTING_UPDATES" in ddl
+    assert "DROP TABLE CORE_EXECUTION_SETTINGS" in ddl
 
 
 def test_research_evidence_migration_has_reversible_ddl() -> None:

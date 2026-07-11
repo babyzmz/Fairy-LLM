@@ -9,7 +9,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fairy_core.commanding import CommandStatus
-from fairy_core.commanding.types import PermissionProfile
 
 
 class _ActionModel(BaseModel):
@@ -109,8 +108,6 @@ class SystemActionRequest(BaseModel):
     task_id: UUID
     action: SystemAction
     idempotency_key: str = Field(min_length=1, max_length=255)
-    profile: PermissionProfile
-    capability_overrides: dict[str, bool] = Field(default_factory=dict, max_length=5)
     user_confirmed: bool = False
 
     @field_validator("idempotency_key")
@@ -118,20 +115,6 @@ class SystemActionRequest(BaseModel):
     def validate_idempotency_key(cls, value: str) -> str:
         if value != value.strip() or any(ord(character) < 32 for character in value):
             raise ValueError("idempotency key must be canonical text")
-        return value
-
-    @field_validator("capability_overrides")
-    @classmethod
-    def validate_capability_overrides(cls, value: dict[str, bool]) -> dict[str, bool]:
-        allowed = {
-            "system.open_url",
-            "system.reveal_path",
-            "system.copy_text",
-            "system.notify",
-            "system.open_settings",
-        }
-        if not set(value).issubset(allowed):
-            raise ValueError("system action overrides contain an unknown capability")
         return value
 
 

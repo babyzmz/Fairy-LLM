@@ -576,29 +576,6 @@
         "title": "CapabilityManifestModel",
         "type": "object"
       },
-      "CapabilityRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "overrides": {
-            "additionalProperties": {
-              "type": "boolean"
-            },
-            "title": "Overrides",
-            "type": "object"
-          },
-          "profile": {
-            "$ref": "#/components/schemas/PermissionProfile",
-            "default": "standard"
-          },
-          "sandbox_healthy": {
-            "default": false,
-            "title": "Sandbox Healthy",
-            "type": "boolean"
-          }
-        },
-        "title": "CapabilityRequest",
-        "type": "object"
-      },
       "ChangesetModel": {
         "additionalProperties": false,
         "properties": {
@@ -1498,6 +1475,73 @@
         ],
         "title": "EventVisibilityModel",
         "type": "string"
+      },
+      "ExecutionSettingsModel": {
+        "additionalProperties": false,
+        "properties": {
+          "capability_overrides": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Capability Overrides",
+            "type": "object"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/PermissionProfile"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile",
+          "capability_overrides",
+          "revision",
+          "updated_at"
+        ],
+        "title": "ExecutionSettingsModel",
+        "type": "object"
+      },
+      "ExecutionSettingsUpdateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "capability_overrides": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "maxProperties": 256,
+            "title": "Capability Overrides",
+            "type": "object"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/PermissionProfile"
+          }
+        },
+        "required": [
+          "profile",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "title": "ExecutionSettingsUpdateInput",
+        "type": "object"
       },
       "ExecutionTarget": {
         "enum": [
@@ -4631,22 +4675,11 @@
             ],
             "title": "Action"
           },
-          "capability_overrides": {
-            "additionalProperties": {
-              "type": "boolean"
-            },
-            "maxProperties": 5,
-            "title": "Capability Overrides",
-            "type": "object"
-          },
           "idempotency_key": {
             "maxLength": 255,
             "minLength": 1,
             "title": "Idempotency Key",
             "type": "string"
-          },
-          "profile": {
-            "$ref": "#/components/schemas/PermissionProfile"
           },
           "task_id": {
             "format": "uuid",
@@ -4662,8 +4695,7 @@
         "required": [
           "task_id",
           "action",
-          "idempotency_key",
-          "profile"
+          "idempotency_key"
         ],
         "title": "SystemActionRequest",
         "type": "object"
@@ -6144,7 +6176,7 @@
       }
     },
     "/v1/capabilities": {
-      "post": {
+      "get": {
         "operationId": "capabilities.get",
         "parameters": [
           {
@@ -6164,16 +6196,6 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CapabilityRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
@@ -7800,6 +7822,127 @@
           }
         ],
         "summary": "List Messages"
+      }
+    },
+    "/v1/permissions": {
+      "get": {
+        "operationId": "permissions.get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionSettingsModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Permissions"
+      },
+      "put": {
+        "operationId": "permissions.update",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutionSettingsUpdateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionSettingsModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Permissions"
       }
     },
     "/v1/previews/resolve": {

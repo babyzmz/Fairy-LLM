@@ -24,6 +24,10 @@ from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.commanding import EventVisibility
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
+from fairy_core.commanding.settings import (
+    ExecutionPolicyResolver,
+    SandboxHealthProvider,
+)
 from fairy_core.contracts.methods import CORE_METHODS, EventSubscribeInput
 from fairy_core.contracts.models import (
     ApprovalDecisionInput,
@@ -35,7 +39,6 @@ from fairy_core.contracts.models import (
     AssistantTurnIdInput,
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
-    CapabilityRequest,
     ChangesetProposal,
     ConversationCreate,
     ConversationIdInput,
@@ -45,6 +48,7 @@ from fairy_core.contracts.models import (
     DocumentImportInput,
     DocumentListInput,
     DocumentSearchInput,
+    ExecutionSettingsUpdateInput,
     MemoryClaimGetInput,
     MemoryClaimPromoteInput,
     MemoryClaimQuery,
@@ -134,8 +138,12 @@ class CoreService:
         document_blob_store: DocumentBlobStore | None = None,
         runtime_application: RuntimeApplication | None = None,
         system_action_worker: SystemActionWorker | None = None,
+        sandbox_health_provider: SandboxHealthProvider | None = None,
+        default_execution_target: str = "local",
         on_close: Callable[[], None] | None = None,
     ) -> None:
+        if default_execution_target not in {"local", "cloud"}:
+            raise ValueError("default_execution_target must be local or cloud")
         self._application = application
         self._unit_of_work_factory = unit_of_work_factory
         self._registry = registry
@@ -149,11 +157,14 @@ class CoreService:
         self._turn_cancellations: dict[UUID, CancellationToken] = {}
         self._turn_cancellation_lock = RLock()
         self._runtime_application = runtime_application
+        self._default_execution_target = default_execution_target
+        self._execution_policy = ExecutionPolicyResolver(sandbox_health_provider)
         self._system_action_application = (
             SystemActionApplication(
                 unit_of_work_factory=unit_of_work_factory,
                 registry=registry,
                 command_policy=PolicyEngine(registry),
+                execution_policy=self._execution_policy,
                 scope_resolver=application.scope_for_task,
                 worker=system_action_worker,
             )
@@ -210,6 +221,7 @@ class CoreService:
             providers=self._provider_registry,
             image_attachments=self._image_attachments,
             tool_executor=effective_tool_executor,
+            execution_policy=self._execution_policy,
         )
         self._finalizer = finalize(self, on_close) if on_close is not None else None
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
@@ -254,6 +266,8 @@ class CoreService:
             "previews.resolve": self._resolve_preview,
             "previews.start": self._start_preview,
             "previews.stop": self._stop_preview,
+            "permissions.get": self._get_permissions,
+            "permissions.update": self._update_permissions,
             "providers.health": self._provider_health,
             "providers.list": self._list_providers,
             "runtimes.get": self._get_runtime,
@@ -756,19 +770,44 @@ class CoreService:
     def _discard_version(self, request: BaseModel) -> Any:
         return self._application.discard_task_version(cast(TaskIdInput, request).task_id)
 
-    def _get_capabilities(self, request: BaseModel) -> dict[str, Any]:
-        validated = cast(CapabilityRequest, request)
+    def _get_capabilities(self, _request: BaseModel) -> dict[str, Any]:
+        with self._unit_of_work_factory() as unit_of_work:
+            policy = self._execution_policy.resolve(
+                unit_of_work.execution_settings,
+                execution_target=self._default_execution_target,
+            )
         return {
-            "profile": validated.profile,
+            "profile": policy.profile,
             "operations": self._registry.capability_manifest(
-                profile=validated.profile,
-                sandbox_healthy=validated.sandbox_healthy,
-                overrides=validated.overrides,
+                profile=policy.profile,
+                sandbox_healthy=policy.sandbox_healthy,
+                overrides=dict(policy.capability_overrides),
             ),
-            "sandbox_healthy": validated.sandbox_healthy,
+            "sandbox_healthy": policy.sandbox_healthy,
             "command_metadata": self._registry.frontend_metadata(),
             "schema_version": 1,
         }
+
+    def _get_permissions(self, _request: BaseModel) -> Any:
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.execution_settings.get()
+
+    def _update_permissions(self, request: BaseModel) -> Any:
+        validated = cast(ExecutionSettingsUpdateInput, request)
+        unknown = sorted(
+            name for name in validated.capability_overrides if self._registry.get(name) is None
+        )
+        if unknown:
+            raise ValueError(f"unknown capability override: {', '.join(unknown)}")
+        with self._unit_of_work_factory() as unit_of_work:
+            changed = unit_of_work.execution_settings.update(
+                profile=validated.profile,
+                capability_overrides=validated.capability_overrides,
+                expected_revision=validated.expected_revision,
+                idempotency_key=validated.idempotency_key,
+            )
+            unit_of_work.commit()
+        return changed
 
     def _subscribe_events(self, request: BaseModel) -> dict[str, Any]:
         validated = cast(EventSubscribeInput, request)

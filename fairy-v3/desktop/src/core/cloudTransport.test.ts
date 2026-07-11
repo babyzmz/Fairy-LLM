@@ -186,10 +186,13 @@ describe("CloudCoreTransport", () => {
       approved: true,
       decided_by: "user",
     });
-    await transport.call("capabilities.get", {
+    await transport.call("capabilities.get", {});
+    await transport.call("permissions.get", {});
+    await transport.call("permissions.update", {
       profile: "standard",
-      sandbox_healthy: true,
-      overrides: { "network.http": false },
+      capability_overrides: { "web.search": false },
+      expected_revision: 0,
+      idempotency_key: "permissions:cloud:standard",
     });
     await transport.call("providers.list", {});
     await transport.call("providers.health", { profile_id: "openrouter-free" });
@@ -279,7 +282,6 @@ describe("CloudCoreTransport", () => {
       task_id: "task-1",
       action: { type: "reveal_path", relative_path: "README.md" },
       idempotency_key: "system:reveal",
-      profile: "standard",
       user_confirmed: true,
     });
 
@@ -290,7 +292,9 @@ describe("CloudCoreTransport", () => {
         "https://cloud.fairy.test/v1/projects?limit=25&cursor=next+page",
       ],
       ["POST", "https://cloud.fairy.test/v1/approvals/approval-1/decision"],
-      ["POST", "https://cloud.fairy.test/v1/capabilities"],
+      ["GET", "https://cloud.fairy.test/v1/capabilities"],
+      ["GET", "https://cloud.fairy.test/v1/permissions"],
+      ["PUT", "https://cloud.fairy.test/v1/permissions"],
       ["GET", "https://cloud.fairy.test/v1/providers"],
       [
         "GET",
@@ -347,23 +351,27 @@ describe("CloudCoreTransport", () => {
     ]);
     expect(requests[0]?.headers.get("Authorization")).toBe("Bearer access-token");
     expect(requests[0]?.headers.get("X-Fairy-Device-ID")).toBe("device-1");
-    expect(requests[12]?.headers.get("Idempotency-Key")).toBe("preview:start");
-    expect(requests[13]?.headers.get("Idempotency-Key")).toBe("preview:stop");
-    expect(requests[15]?.headers.get("Idempotency-Key")).toBe("turn:retry");
-    expect(requests[16]?.headers.get("Idempotency-Key")).toBe("documents:import");
-    expect(requests[20]?.headers.get("Idempotency-Key")).toBe("documents:delete");
-    expect(requests[23]?.headers.get("Idempotency-Key")).toBe("system:reveal");
-    await expect(requests[22]?.json()).resolves.not.toHaveProperty("text");
-    await expect(requests[3]?.json()).resolves.toEqual({
+    expect(requests[14]?.headers.get("Idempotency-Key")).toBe("preview:start");
+    expect(requests[15]?.headers.get("Idempotency-Key")).toBe("preview:stop");
+    expect(requests[17]?.headers.get("Idempotency-Key")).toBe("turn:retry");
+    expect(requests[18]?.headers.get("Idempotency-Key")).toBe("documents:import");
+    expect(requests[22]?.headers.get("Idempotency-Key")).toBe("documents:delete");
+    expect(requests[25]?.headers.get("Idempotency-Key")).toBe("system:reveal");
+    expect(requests[5]?.headers.get("Idempotency-Key")).toBe(
+      "permissions:cloud:standard",
+    );
+    await expect(requests[24]?.json()).resolves.not.toHaveProperty("text");
+    expect(requests[3]?.headers.has("Content-Type")).toBe(false);
+    await expect(requests[5]?.json()).resolves.toEqual({
       profile: "standard",
-      sandbox_healthy: true,
-      overrides: { "network.http": false },
+      capability_overrides: { "web.search": false },
+      expected_revision: 0,
+      idempotency_key: "permissions:cloud:standard",
     });
-    await expect(requests[23]?.json()).resolves.toEqual({
+    await expect(requests[25]?.json()).resolves.toEqual({
       task_id: "task-1",
       action: { type: "reveal_path", relative_path: "README.md" },
       idempotency_key: "system:reveal",
-      profile: "standard",
       user_confirmed: true,
     });
   });

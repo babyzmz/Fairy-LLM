@@ -33,6 +33,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   runtimes: Pick<CoreClient["runtimes"], "health">;
   previews: Pick<CoreClient["previews"], "resolve" | "start" | "stop">;
   capabilities: Pick<CoreClient["capabilities"], "get">;
+  permissions: Pick<CoreClient["permissions"], "get" | "update">;
   providers: Pick<CoreClient["providers"], "list" | "health">;
   messages: Pick<CoreClient["messages"], "list">;
   voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
@@ -121,11 +122,6 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     "project",
     ["project", "chat"],
   );
-  const [permissionProfile, setPermissionProfile] = usePersistedEnum<PermissionProfile>(
-    "fairy.workspace.permission",
-    "standard",
-    ["observe", "standard", "autonomous"],
-  );
   const [developerMode, setDeveloperMode] = usePersistedBoolean(
     "fairy.workspace.developer",
     false,
@@ -155,6 +151,13 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
     refetchOnWindowFocus: false,
   });
+  const permissionsQuery = useQuery({
+    queryKey: [...workspaceKey, "permissions"],
+    queryFn: () => client.permissions.get(),
+    enabled: healthQuery.isSuccess,
+    retry: false,
+  });
+  const permissionProfile = permissionsQuery.data?.profile ?? "standard";
   const projectsQuery = useQuery({
     queryKey: [...workspaceKey, "projects"],
     queryFn: () => client.projects.list({ limit: 100 }),
@@ -263,16 +266,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     enabled: selectedTask !== null,
     retry: false,
   });
-  const sandboxHealthy = runtimeHealthQuery.data?.executor.available === true;
   const capabilitiesQuery = useQuery({
-    queryKey: [...workspaceKey, "capabilities", permissionProfile, sandboxHealthy],
-    queryFn: () =>
-      client.capabilities.get({
-        profile: permissionProfile,
-        sandbox_healthy: sandboxHealthy,
-        overrides: {},
-      }),
-    enabled: healthQuery.isSuccess,
+    queryKey: [...workspaceKey, "capabilities", permissionsQuery.data?.revision],
+    queryFn: () => client.capabilities.get(),
+    enabled: permissionsQuery.isSuccess,
     retry: false,
   });
 
@@ -352,6 +349,22 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       }
     },
     [invalidateWorkspace],
+  );
+
+  const setPermissionProfile = useCallback(
+    (profile: PermissionProfile) => {
+      const current = permissionsQuery.data;
+      if (current === undefined || current.profile === profile) return;
+      void runAction(() =>
+        client.permissions.update({
+          profile,
+          capability_overrides: current.capability_overrides,
+          expected_revision: current.revision,
+          idempotency_key: `permissions:${current.revision}:${profile}`,
+        }),
+      ).catch(() => undefined);
+    },
+    [client.permissions, permissionsQuery.data, runAction],
   );
 
   const actions = useMemo(
@@ -478,10 +491,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     approvalsQuery.error,
     previewQuery.error,
     runtimeHealthQuery.error,
+    permissionsQuery.error,
     capabilitiesQuery.error,
   );
   const isLoading =
     healthQuery.isPending ||
+    (healthQuery.isSuccess && permissionsQuery.isPending) ||
     (healthQuery.isSuccess &&
       (projectsQuery.isPending ||
         conversationsQuery.isPending ||

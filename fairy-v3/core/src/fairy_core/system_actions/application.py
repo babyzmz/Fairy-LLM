@@ -16,6 +16,7 @@ from fairy_core.commanding import (
 from fairy_core.commanding.bus import CommandBus, CommandRequest
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolDefinition, ToolRegistry
+from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.domain.errors import DomainError, InvalidTransitionError
 from fairy_core.domain.models import ScopeContract
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
@@ -66,12 +67,14 @@ class SystemActionApplication:
         unit_of_work_factory: CoreUnitOfWorkFactory,
         registry: ToolRegistry,
         command_policy: PolicyEngine,
+        execution_policy: ExecutionPolicyResolver,
         scope_resolver: Callable,
         worker: SystemActionWorker,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._registry = registry
         self._command_policy = command_policy
+        self._execution_policy = execution_policy
         self._scope_resolver = scope_resolver
         self._worker = worker
 
@@ -84,6 +87,10 @@ class SystemActionApplication:
             tool_name = tool_name_for_action(request.action)
             worker_payload = _worker_payload(request.action, scope)
             bus = self._bus(unit_of_work)
+            policy = self._execution_policy.resolve(
+                unit_of_work.execution_settings,
+                execution_target=scope.execution_target,
+            )
             dispatch = bus.submit(
                 CommandRequest(
                     tool_name=tool_name,
@@ -92,9 +99,9 @@ class SystemActionApplication:
                     payload=worker_payload,
                     idempotency_key=request.idempotency_key,
                 ),
-                profile=request.profile,
-                capability_overrides=request.capability_overrides,
-                sandbox_healthy=False,
+                profile=policy.profile,
+                capability_overrides=dict(policy.capability_overrides),
+                sandbox_healthy=policy.sandbox_healthy,
             )
             if dispatch.run is None:
                 raise SystemActionUnavailableError(

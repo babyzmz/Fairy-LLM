@@ -57,3 +57,31 @@ test("release workspace exposes project, chat, preview, provider, and developer 
   );
   await expect(page.locator("body")).not.toContainText("sk-or-v1-");
 });
+
+test("permission changes persist through Core without client sandbox authority", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Chat" }).click();
+  await page.getByLabel("Message Fairy").fill("/permission autonomous");
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  await expect(page.getByLabel("Workspace telemetry")).toContainText("autonomous");
+  const update = await page.evaluate(() => {
+    const fixtureWindow = window as typeof window & {
+      __FAIRY_FIXTURE_CALLS__: Array<{
+        method: string;
+        params: Record<string, unknown>;
+      }>;
+    };
+    return fixtureWindow.__FAIRY_FIXTURE_CALLS__.findLast(
+      (call) => call.method === "permissions.update",
+    );
+  });
+
+  expect(update?.params).toMatchObject({
+    profile: "autonomous",
+    expected_revision: 0,
+  });
+  expect(update?.params).not.toHaveProperty("sandbox_healthy");
+});

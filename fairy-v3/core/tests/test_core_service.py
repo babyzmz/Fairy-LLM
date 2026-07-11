@@ -279,6 +279,8 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "previews.resolve",
         "previews.start",
         "previews.stop",
+        "permissions.get",
+        "permissions.update",
         "providers.health",
         "providers.list",
         "runtimes.get",

@@ -261,9 +261,21 @@ class VersionAcceptInput(TaskIdInput):
 
 
 class CapabilityRequest(ContractModel):
-    profile: PermissionProfile = PermissionProfile.STANDARD
-    sandbox_healthy: bool = False
-    overrides: dict[str, bool] = Field(default_factory=dict)
+    pass
+
+
+class ExecutionSettingsUpdateInput(ContractModel):
+    profile: PermissionProfile
+    capability_overrides: dict[str, bool] = Field(default_factory=dict, max_length=256)
+    expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class ExecutionSettingsModel(ContractModel):
+    profile: PermissionProfile
+    capability_overrides: dict[str, bool]
+    revision: int = Field(ge=0)
+    updated_at: datetime
 
 
 class ProviderHealthInput(ContractModel):

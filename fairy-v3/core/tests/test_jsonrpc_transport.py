@@ -55,7 +55,6 @@ def test_jsonrpc_system_action_reports_unavailable_without_local_worker(
             "task_id": "0198f4de-0114-7000-8000-000000000003",
             "action": {"type": "open_settings", "page": "display"},
             "idempotency_key": "system:unavailable",
-            "profile": "standard",
             "user_confirmed": True,
         },
     )
@@ -342,7 +341,7 @@ def test_jsonrpc_exposes_complete_local_project_loop_and_resumable_events(tmp_pa
         dispatcher,
         8,
         "capabilities.get",
-        {"profile": "standard", "sandbox_healthy": False},
+        {},
     )["result"]
     events = _call(dispatcher, 9, "events.subscribe", {"cursor": 0})["result"]
 
@@ -402,6 +401,8 @@ def test_public_method_manifest_is_stable() -> None:
             "previews.resolve",
             "previews.start",
             "previews.stop",
+            "permissions.get",
+            "permissions.update",
             "providers.health",
             "providers.list",
             "runtimes.get",

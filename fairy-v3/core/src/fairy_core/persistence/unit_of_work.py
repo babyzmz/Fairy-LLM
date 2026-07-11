@@ -9,6 +9,8 @@ from sqlalchemy.engine import Connection, Engine, Transaction
 from fairy_core.assistant.ports import AssistantRepository
 from fairy_core.assistant.repository import SqlAlchemyAssistantRepository
 from fairy_core.commanding.ports import CommandLedger
+from fairy_core.commanding.settings import ExecutionSettingsRepository
+from fairy_core.commanding.settings_sqlalchemy import SqlAlchemyExecutionSettingsRepository
 from fairy_core.commanding.sqlalchemy import SqlAlchemyCommandLedger
 from fairy_core.documents.ports import DocumentRepository, DocumentSearchIndex
 from fairy_core.documents.repository import SqlAlchemyDocumentRepository
@@ -34,6 +36,7 @@ class CoreUnitOfWork(Protocol):
     state: StateStore
     assistant: AssistantRepository
     commands: CommandLedger
+    execution_settings: ExecutionSettingsRepository
     memory: MemoryRepository
     snapshots: MemorySnapshotRepository
     memory_search: MemorySearchIndex
@@ -84,6 +87,10 @@ class SqlAlchemyUnitOfWork:
                 tenant_id=self._tenant_id,
             )
             self.commands = SqlAlchemyCommandLedger(connection, tenant_id=self._tenant_id)
+            self.execution_settings = SqlAlchemyExecutionSettingsRepository(
+                connection,
+                tenant_id=self._tenant_id,
+            )
             self.memory = SqlAlchemyMemoryRepository(connection, tenant_id=self._tenant_id)
             self.snapshots = SqlAlchemyMemorySnapshotRepository(
                 connection,

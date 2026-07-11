@@ -277,6 +277,12 @@ async function installCoreFixture(page: Page) {
         return startedAt;
       };
 
+      let permissions = {
+        profile: "standard",
+        capability_overrides: {} as Record<string, boolean>,
+        revision: 0,
+        updated_at: "2026-07-11T00:00:00Z",
+      };
       const results: Record<string, unknown> = {
         health: { status: "ok", service: "fairy-core", protocol: "core-service-v1" },
         "projects.list": { items: [project], next_cursor: null },
@@ -429,6 +435,33 @@ async function installCoreFixture(page: Page) {
                   frames: 2,
                   content_hash: voiceWavHash,
                 }
+              : request.method === "permissions.get"
+                ? permissions
+              : request.method === "permissions.update"
+                ? (() => {
+                    if (request.params.expected_revision !== permissions.revision) {
+                      throw new Error("VERSION_CONFLICT");
+                    }
+                    permissions = {
+                      profile: String(request.params.profile),
+                      capability_overrides:
+                        (request.params.capability_overrides as Record<string, boolean>) ?? {},
+                      revision: permissions.revision + 1,
+                      updated_at: "2026-07-11T00:00:01Z",
+                    };
+                    return permissions;
+                  })()
+              : request.method === "capabilities.get"
+                ? {
+                    ...(results["capabilities.get"] as Record<string, unknown>),
+                    profile: permissions.profile,
+                    operations: Object.fromEntries(
+                      Object.entries(permissions.capability_overrides).map(([name, enabled]) => [
+                        name,
+                        enabled,
+                      ]),
+                    ),
+                  }
               : request.method === "events.subscribe"
               ? (() => {
                   const cursor = Number(request.params.cursor ?? 0);
