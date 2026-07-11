@@ -97,6 +97,7 @@ def _delete_tenants(context: PostgresTestContext) -> None:
         "core_assistant_messages",
         "core_assistant_message_sequences",
         "core_assistant_turns",
+        "core_research_evidence",
         "core_artifacts",
         "core_preview_sessions",
         "core_runtime_sessions",

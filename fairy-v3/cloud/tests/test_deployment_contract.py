@@ -21,8 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260711_0008"]
-    assert scripts.get_revision("20260711_0008").down_revision == "20260711_0007"
+    assert scripts.get_heads() == ["20260711_0009"]
+    assert scripts.get_revision("20260711_0009").down_revision == "20260711_0008"
 
 
 def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
@@ -48,6 +48,7 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_ASSISTANT_MESSAGE_SEQUENCES",
         "CORE_ASSISTANT_MESSAGES",
         "CORE_ASSISTANT_TOOL_INVOCATIONS",
+        "CORE_RESEARCH_EVIDENCE",
         "COMMAND_RUNS",
         "TASK_EVENT_SEQUENCES",
         "MEMORY_OBSERVATIONS",
@@ -97,8 +98,21 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_ASSISTANT_MESSAGE_SEQUENCES",
         "CORE_ASSISTANT_MESSAGES",
         "CORE_ASSISTANT_TOOL_INVOCATIONS",
+        "CORE_RESEARCH_EVIDENCE",
     ):
         assert f'CREATE POLICY "TENANT_ISOLATION_{table_name}"' in ddl
+
+
+def test_research_evidence_migration_has_reversible_ddl() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260711_0009:20260711_0008", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_RESEARCH_EVIDENCE"' in ddl
+    assert "DROP INDEX IX_CORE_RESEARCH_EVIDENCE_TENANT_ARTIFACT" in ddl
+    assert "DROP TABLE CORE_RESEARCH_EVIDENCE" in ddl
 
 
 def test_assistant_ledger_migration_has_reversible_ddl() -> None:
@@ -147,6 +161,7 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
     assert services["postgres"]["image"] == "postgres:18.4-alpine3.24"
     assert services["object-store"]["image"] == "chrislusf/seaweedfs:4.39"
     assert services["oidc"]["image"] == "ghcr.io/navikt/mock-oauth2-server:4.0.0"
+    assert "FAIRY_PROVIDER_SECRET_BRAVE" in services["api"]["environment"]
     assert "fairy-postgres:/var/lib/postgresql" in services["postgres"]["volumes"]
     assert services["object-store"]["environment"]["S3_BUCKET"] == "fairy-objects"
     assert all(

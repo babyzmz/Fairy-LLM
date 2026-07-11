@@ -22,7 +22,7 @@ def test_tool_registry_is_single_source_for_capability_manifest() -> None:
     )
 
     assert manifest["project.read"] is True
-    assert manifest["public_research.search"] is True
+    assert manifest["web.search"] is True
     assert manifest["edit.apply_changeset"] is False
     assert manifest["run.sandboxed"] is False
     assert "run.host" not in manifest
@@ -147,15 +147,19 @@ def test_explicit_disable_override_removes_capability() -> None:
     policy = PolicyEngine(build_default_registry())
 
     decision = policy.evaluate(
-        tool_name="public_research.search",
+        tool_name="web.search",
         profile=PermissionProfile.AUTONOMOUS,
-        capability_overrides={"public_research.search": False},
+        capability_overrides={"web.search": False},
         approval_granted=False,
         sandbox_healthy=True,
     )
 
     assert decision.allowed is False
     assert decision.error_code == "CAPABILITY_NOT_AVAILABLE"
+
+
+def test_default_registry_does_not_keep_pre_v3_research_alias() -> None:
+    assert build_default_registry().get("public_research.search") is None
 
 
 def test_internal_workspace_commands_share_registry_but_are_not_model_tools() -> None:

@@ -170,15 +170,24 @@ skipped because neither runtime was discoverable on this machine.
 - `FetchPort.fetch(FetchRequest) -> FetchedDocument` returns final URL, textual media type, bytes hash, title, and bounded normalized text.
 - `ResearchApplication.build(task_id, kind, question, sources) -> Artifact` supports `web_brief`, `specs`, `compare`, and `release`.
 
-- [ ] Write failing URL tests for private IPv4/IPv6, encoded hosts, credentials, non-HTTP schemes, redirect loops, public-to-private redirects, DNS answer changes, oversized bodies, binary media, and decompression limits.
-- [ ] Implement canonical URL parsing, pre-connect and post-connect address validation, redirect-by-redirect checks, media allowlist, byte/time limits, and cache keys.
-- [ ] Write and run failing Brave fixture tests for auth, paging, freshness, provider diagnostics, malformed payloads, and no-key unavailable health.
-- [ ] Implement Brave search/news adapters with credential references and deterministic normalized hits.
-- [ ] Write failing research tests for citation retention, duplicate canonical URLs, source hashes, unsupported artifact kind, injection-labelled excerpts, and transactional Artifact/Event creation.
-- [ ] Implement Evidence persistence and research synthesis input/output without treating fetched text as instructions.
-- [ ] Register `web.search`, `web.fetch`, and `research.build` Tool Definitions and execute them only through Command Bus dispatch.
-- [ ] Run capabilities web tests, Core research tests, Cloud migration checks, and boundary checks.
-- [ ] Commit with `feat(v3): add governed web research`.
+- [x] Write failing URL tests for private IPv4/IPv6, encoded hosts, credentials, non-HTTP schemes, redirect loops, public-to-private redirects, DNS answer changes, oversized bodies, binary media, and decompression limits.
+- [x] Implement canonical URL parsing, pre-connect and post-connect address validation, redirect-by-redirect checks, media allowlist, byte/time limits, and cache keys.
+- [x] Write and run failing Brave fixture tests for auth, paging, freshness, provider diagnostics, malformed payloads, and no-key unavailable health.
+- [x] Implement Brave search/news adapters with credential references and deterministic normalized hits.
+- [x] Write failing research tests for citation retention, duplicate canonical URLs, source hashes, unsupported artifact kind, injection-labelled excerpts, and transactional Artifact/Event creation.
+- [x] Implement Evidence persistence and research synthesis input/output without treating fetched text as instructions.
+- [x] Register `web.search`, `web.fetch`, and `research.build` Tool Definitions and execute them only through Command Bus dispatch.
+- [x] Run capabilities web tests, Core research tests, Cloud migration checks, and boundary checks.
+- [x] Commit with `feat(v3): add governed web research`.
+
+Verification note: the complete local gate passed with 386 Core, 55
+Capabilities, 52 Cloud unit, all Rust, 21 Vitest, and 2 Playwright tests.
+URL/DNS/redirect/decompression limits, exact CommandRun binding, Scope network
+policy, transactional Evidence persistence, offline migration reversal, and
+generated contract stability are covered. The entry bundle remained 102.66 KB
+gzip. The PostgreSQL RLS test is collected by the Compose integration profile
+but was not executed because no Docker CLI/daemon is discoverable; WSL is also
+not installed, so sandbox attestation remained explicitly skipped.
 
 ### Task 33: News, Weather, Time, Maps, Stocks, FX, and Crypto
 

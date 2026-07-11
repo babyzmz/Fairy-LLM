@@ -12,6 +12,7 @@ from fairy_core.domain.execution import (
     RuntimeSession,
 )
 from fairy_core.domain.models import Conversation, Project, Task, Version
+from fairy_core.research.models import ResearchEvidence
 from fairy_core.storage.pagination import StatePage
 
 
@@ -135,6 +136,16 @@ class StateStore(Protocol):
     def get_artifact(self, artifact_id: UUID) -> Artifact | None: ...
 
     def artifacts_for_task(self, task_id: UUID) -> list[Artifact]: ...
+
+    def append_research_evidence(
+        self,
+        evidence: ResearchEvidence,
+    ) -> ResearchEvidence: ...
+
+    def research_evidence_for_artifact(
+        self,
+        artifact_id: UUID,
+    ) -> list[ResearchEvidence]: ...
 
     def accept_version(
         self,

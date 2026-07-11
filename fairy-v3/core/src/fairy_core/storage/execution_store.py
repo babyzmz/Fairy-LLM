@@ -30,7 +30,13 @@ from fairy_core.domain.execution import (
     RuntimeStatus,
 )
 from fairy_core.persistence.session import SqlAlchemySession
-from fairy_core.storage.schema import artifacts, preview_sessions, runtime_sessions
+from fairy_core.research.models import ResearchEvidence
+from fairy_core.storage.schema import (
+    artifacts,
+    preview_sessions,
+    research_evidence,
+    runtime_sessions,
+)
 
 _TERMINAL_PREVIEW_STATUSES = (
     PreviewStatus.STOPPED.value,
@@ -321,6 +327,49 @@ class ExecutionStateStoreMixin:
             )
         return [self._artifact_from_row(row) for row in rows]
 
+    def append_research_evidence(
+        self,
+        evidence: ResearchEvidence,
+    ) -> ResearchEvidence:
+        if self._insert_execution_once(
+            research_evidence,
+            self._research_evidence_values(evidence),
+        ):
+            return evidence
+        existing = self._research_evidence_by_id(evidence.id)
+        if existing == evidence:
+            return existing
+        raise IdempotencyConflictError("Research Evidence identity is immutable")
+
+    def research_evidence_for_artifact(
+        self,
+        artifact_id: UUID,
+    ) -> list[ResearchEvidence]:
+        with self._session.read() as connection:
+            rows = (
+                connection.execute(
+                    select(research_evidence)
+                    .where(
+                        research_evidence.c.tenant_id == self._tenant_id,
+                        research_evidence.c.artifact_id == str(artifact_id),
+                    )
+                    .order_by(
+                        research_evidence.c.ordinal,
+                        research_evidence.c.id,
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [self._research_evidence_from_row(row) for row in rows]
+
+    def _research_evidence_by_id(
+        self,
+        evidence_id: UUID,
+    ) -> ResearchEvidence | None:
+        row = self._get_by_id(research_evidence, evidence_id)
+        return self._research_evidence_from_row(row) if row is not None else None
+
     def _insert_execution_once(self, table: Table, values: dict[str, object]) -> bool:
         scoped_values = {"tenant_id": self._tenant_id, **values}
         if self._session.dialect_name == "postgresql":
@@ -435,6 +484,30 @@ class ExecutionStateStoreMixin:
         }
 
     @staticmethod
+    def _research_evidence_values(
+        evidence: ResearchEvidence,
+    ) -> dict[str, object]:
+        return {
+            "id": str(evidence.id),
+            "artifact_id": str(evidence.artifact_id),
+            "project_id": str(evidence.project_id) if evidence.project_id else None,
+            "conversation_id": str(evidence.conversation_id),
+            "task_id": str(evidence.task_id),
+            "version_id": str(evidence.version_id) if evidence.version_id else None,
+            "ordinal": evidence.ordinal,
+            "source_url": evidence.source_url,
+            "canonical_url": evidence.canonical_url,
+            "redirect_chain": list(evidence.redirect_chain),
+            "title": evidence.title,
+            "media_type": evidence.media_type,
+            "byte_length": evidence.byte_length,
+            "content_hash": evidence.content_hash,
+            "excerpt": evidence.excerpt,
+            "fetched_at": evidence.fetched_at,
+            "created_at": evidence.created_at,
+        }
+
+    @staticmethod
     def _runtime_from_row(row: Mapping[str, Any]) -> RuntimeSession:
         return RuntimeSession.restore(
             id=UUID(row["id"]),
@@ -494,5 +567,29 @@ class ExecutionStateStoreMixin:
             byte_length=int(row["byte_length"]),
             content_hash=row["content_hash"],
             metadata=row["metadata"],
+            created_at=_datetime(row["created_at"]),
+        )
+
+    @staticmethod
+    def _research_evidence_from_row(
+        row: Mapping[str, Any],
+    ) -> ResearchEvidence:
+        return ResearchEvidence.restore(
+            id=UUID(row["id"]),
+            artifact_id=UUID(row["artifact_id"]),
+            project_id=_uuid(row["project_id"]),
+            conversation_id=UUID(row["conversation_id"]),
+            task_id=UUID(row["task_id"]),
+            version_id=_uuid(row["version_id"]),
+            ordinal=int(row["ordinal"]),
+            source_url=row["source_url"],
+            canonical_url=row["canonical_url"],
+            redirect_chain=tuple(row["redirect_chain"]),
+            title=row["title"],
+            media_type=row["media_type"],
+            byte_length=int(row["byte_length"]),
+            content_hash=row["content_hash"],
+            excerpt=row["excerpt"],
+            fetched_at=_datetime(row["fetched_at"]),
             created_at=_datetime(row["created_at"]),
         )

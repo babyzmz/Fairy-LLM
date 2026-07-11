@@ -522,7 +522,16 @@ class AssistantApplication:
         try:
             cancellation.raise_if_cancelled()
             self._ensure_turn_waiting_for_tool(turn_id)
-            result = self._tool_executor.execute(definition, scope, arguments)
+            execute_command = getattr(self._tool_executor, "execute_command", None)
+            if callable(execute_command):
+                result = execute_command(
+                    definition,
+                    scope,
+                    arguments,
+                    command_run=running,
+                )
+            else:
+                result = self._tool_executor.execute(definition, scope, arguments)
             cancellation.raise_if_cancelled()
             self._ensure_turn_waiting_for_tool(turn_id)
         except ProviderCancelledError:

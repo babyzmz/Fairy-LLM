@@ -24,14 +24,14 @@ def test_tool_candidates_receive_core_scope_and_repeated_arguments_are_rejected(
                     profile_id="scripted",
                     sequence=1,
                     tool_call_id="call-1",
-                    tool_name="public_research.search",
+                    tool_name="web.search",
                     arguments_fragment=forged,
                 ),
                 ModelDelta.tool_call(
                     profile_id="scripted",
                     sequence=2,
                     tool_call_id="call-2",
-                    tool_name="public_research.search",
+                    tool_name="web.search",
                     arguments_fragment=forged,
                 ),
                 ModelDelta.done(
@@ -71,7 +71,7 @@ def test_tool_candidates_receive_core_scope_and_repeated_arguments_are_rejected(
         assert completed["status"] == "completed"
         assert len(executor.calls) == 1
         definition, scope, arguments = executor.calls[0]
-        assert definition.name == "public_research.search"
+        assert definition.name == "web.search"
         assert str(scope.task_id) == task["id"]
         assert arguments == {"query": "Fairy architecture"}
         assert len(invocations) == 1
@@ -152,7 +152,7 @@ def test_later_turn_does_not_replay_unpaired_historical_tool_messages(
                     profile_id="scripted",
                     sequence=1,
                     tool_call_id="call-history",
-                    tool_name="public_research.search",
+                    tool_name="web.search",
                     arguments_fragment='{"query":"Fairy history"}',
                 ),
                 ModelDelta.done(
@@ -249,7 +249,7 @@ def test_cancellation_during_tool_execution_cancels_command_without_result(
                     profile_id="scripted",
                     sequence=1,
                     tool_call_id="call-cancel",
-                    tool_name="public_research.search",
+                    tool_name="web.search",
                     arguments_fragment='{"query":"cancel"}',
                 ),
                 ModelDelta.done(
@@ -304,7 +304,7 @@ def test_oversized_tool_arguments_fail_before_dispatch(tmp_path: Path) -> None:
                     profile_id="scripted",
                     sequence=1,
                     tool_call_id="call-large",
-                    tool_name="public_research.search",
+                    tool_name="web.search",
                     arguments_fragment='{"query":"' + "x" * 65_000 + '"}',
                 ),
                 ModelDelta.done(
@@ -356,7 +356,7 @@ def test_cancellation_after_last_tool_delta_prevents_command_dispatch(
                     profile_id="scripted",
                     sequence=1,
                     tool_call_id="call-cancelled-before-dispatch",
-                    tool_name="public_research.search",
+                    tool_name="web.search",
                     arguments_fragment='{"query":"cancelled"}',
                 ),
             )

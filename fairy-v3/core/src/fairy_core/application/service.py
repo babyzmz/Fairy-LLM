@@ -73,6 +73,8 @@ from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.providers import CancellationToken, ProviderRegistry
+from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
+from fairy_core.research.ports import FetchPort
 from fairy_core.runtime.models import RuntimeExecutorError
 
 
@@ -100,6 +102,7 @@ class CoreService:
         registry: ToolRegistry,
         provider_registry: ProviderRegistry | None = None,
         tool_executor: ToolExecutor | None = None,
+        research_fetch_port: FetchPort | None = None,
         runtime_application: RuntimeApplication | None = None,
         on_close: Callable[[], None] | None = None,
     ) -> None:
@@ -121,12 +124,23 @@ class CoreService:
             unit_of_work_factory=unit_of_work_factory,
             scope_resolver=application.scope_for_task,
         )
+        effective_tool_executor = tool_executor
+        if research_fetch_port is not None:
+            effective_tool_executor = ResearchToolExecutor(
+                application=ResearchApplication(
+                    unit_of_work_factory=unit_of_work_factory,
+                    scope_resolver=application.scope_for_task,
+                    fetch_port=research_fetch_port,
+                ),
+                delegate=tool_executor,
+            )
+        self._tool_executor = effective_tool_executor
         self._assistant_application = AssistantApplication(
             unit_of_work_factory=unit_of_work_factory,
             scope_resolver=application.scope_for_task,
             registry=registry,
             providers=self._provider_registry,
-            tool_executor=tool_executor,
+            tool_executor=effective_tool_executor,
         )
         self._finalizer = finalize(self, on_close) if on_close is not None else None
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
@@ -188,6 +202,10 @@ class CoreService:
                 cancellation.cancel()
             self._turn_cancellations.clear()
         self._provider_registry.close()
+        if self._tool_executor is not None:
+            close_tool_executor = getattr(self._tool_executor, "close", None)
+            if callable(close_tool_executor):
+                close_tool_executor()
         if self._finalizer is not None:
             self._finalizer()
 

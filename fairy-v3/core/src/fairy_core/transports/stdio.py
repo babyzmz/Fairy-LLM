@@ -19,6 +19,7 @@ from fairy_core.persistence.data_directory_lock import DataDirectoryLock
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.providers import ProviderRegistry
+from fairy_core.research.ports import FetchPort
 from fairy_core.runtime.ports import RuntimeExecutor
 from fairy_core.runtime.rust_worker import RustRuntimeExecutor
 from fairy_core.runtime.unavailable import UnavailableRuntimeExecutor
@@ -35,6 +36,7 @@ def build_local_service(
     runtime_executor: RuntimeExecutor | None = None,
     provider_registry: ProviderRegistry | None = None,
     tool_executor: ToolExecutor | None = None,
+    research_fetch_port: FetchPort | None = None,
 ) -> CoreService:
     data_dir.mkdir(parents=True, exist_ok=True)
     resources = ExitStack()
@@ -99,6 +101,7 @@ def build_local_service(
             registry=registry,
             provider_registry=provider_registry,
             tool_executor=tool_executor,
+            research_fetch_port=research_fetch_port,
             runtime_application=runtime_application,
             on_close=resources.close,
         )
@@ -114,6 +117,7 @@ def build_local_dispatcher(
     runtime_executor: RuntimeExecutor | None = None,
     provider_registry: ProviderRegistry | None = None,
     tool_executor: ToolExecutor | None = None,
+    research_fetch_port: FetchPort | None = None,
 ) -> JsonRpcDispatcher:
     return JsonRpcDispatcher(
         build_local_service(
@@ -122,6 +126,7 @@ def build_local_dispatcher(
             runtime_executor=runtime_executor,
             provider_registry=provider_registry,
             tool_executor=tool_executor,
+            research_fetch_port=research_fetch_port,
         )
     )
 

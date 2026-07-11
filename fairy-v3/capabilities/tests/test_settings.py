@@ -4,7 +4,10 @@ import json
 
 import pytest
 
-from fairy_capabilities.composition import build_provider_registry
+from fairy_capabilities.composition import (
+    build_provider_registry,
+    build_web_capabilities,
+)
 from fairy_capabilities.settings import (
     EnvironmentProviderSecretResolver,
     ProviderSettings,
@@ -77,3 +80,23 @@ def test_composition_reports_presence_without_exposing_secret_reference() -> Non
 
 def test_empty_environment_builds_provider_free_registry() -> None:
     assert build_provider_registry({}).list_public() == ()
+
+
+def test_web_composition_uses_scoped_secret_reference_without_exposing_value() -> None:
+    secret = "brave-test-secret"
+    environment = {
+        "FAIRY_PROVIDER_SECRET_REFS_JSON": json.dumps({"brave": "FAIRY_PROVIDER_SECRET_BRAVE"}),
+        "FAIRY_PROVIDER_SECRET_BRAVE": secret,
+        "FAIRY_WEB_BRAVE_CREDENTIAL_REF": "brave",
+    }
+
+    configured = build_web_capabilities(environment)
+    unavailable = build_web_capabilities({})
+    try:
+        assert configured.search_port.health().status == "available"
+        assert unavailable.search_port.health().status == "unavailable"
+        assert configured.executor.fetch_port is configured.fetch_port
+        assert secret not in repr(configured)
+    finally:
+        configured.executor.close()
+        unavailable.executor.close()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from fairy_core.commanding.schema import domain_events
 from fairy_core.persistence.tenant import TENANT_ID_LENGTH
 from fairy_core.storage.schema import projects as core_projects
+from fairy_core.storage.schema import research_evidence as core_research_evidence
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -119,6 +120,7 @@ Index(
 __all__ = [
     "cloud_metadata",
     "core_projects",
+    "core_research_evidence",
     "core_tenants",
     "domain_events",
     "outbox",

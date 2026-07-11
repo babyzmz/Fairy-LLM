@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -471,6 +472,11 @@ class ArtifactModel(ContractModel):
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     metadata: dict[str, Any]
     created_at: datetime
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def thaw_metadata(cls, value: Any) -> Any:
+        return _mutable_json(value)
 
 
 class MessageModel(ContractModel):
@@ -1033,6 +1039,14 @@ class MemoryProjectionHealthModel(ContractModel):
             if self.last_error_code is not None:
                 raise ValueError("READY projection cannot carry an error code")
         return self
+
+
+def _mutable_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _mutable_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_mutable_json(item) for item in value]
+    return value
 
 
 def _validate_memory_snapshot_pair(

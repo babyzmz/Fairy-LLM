@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -163,6 +164,8 @@ def _sanitize_value(value: Any) -> object:
         }
     if isinstance(value, list):
         return [_sanitize_value(item) for item in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ToolCandidateError("tool arguments must contain finite numbers")
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     raise ToolCandidateError("tool arguments must contain JSON values only")
@@ -174,6 +177,12 @@ def _validate_schema_value(
     *,
     path: str,
 ) -> None:
+    enum = schema.get("enum")
+    if enum is not None:
+        if not isinstance(enum, (list, tuple)):
+            raise ToolCandidateError("tool schema enum must be an array")
+        if not any(type(value) is type(candidate) and value == candidate for candidate in enum):
+            raise ToolCandidateError(f"{path} is not an allowed value")
     expected = schema.get("type")
     if expected == "object":
         if not isinstance(value, dict):
@@ -201,6 +210,12 @@ def _validate_schema_value(
     if expected == "array":
         if not isinstance(value, list):
             raise ToolCandidateError(f"{path} must be an array")
+        minimum = schema.get("minItems")
+        maximum = schema.get("maxItems")
+        if isinstance(minimum, int) and len(value) < minimum:
+            raise ToolCandidateError(f"{path} has too few items")
+        if isinstance(maximum, int) and len(value) > maximum:
+            raise ToolCandidateError(f"{path} has too many items")
         items = schema.get("items")
         if isinstance(items, dict):
             for index, item in enumerate(value):
@@ -216,12 +231,32 @@ def _validate_schema_value(
         if isinstance(maximum, int) and len(value) > maximum:
             raise ToolCandidateError(f"{path} is too long")
         return
-    if expected == "integer" and (isinstance(value, bool) or not isinstance(value, int)):
-        raise ToolCandidateError(f"{path} must be an integer")
-    if expected == "number" and (isinstance(value, bool) or not isinstance(value, (int, float))):
-        raise ToolCandidateError(f"{path} must be a number")
+    if expected == "integer":
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ToolCandidateError(f"{path} must be an integer")
+        _validate_numeric_bounds(value, schema, path=path)
+    if expected == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ToolCandidateError(f"{path} must be a number")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ToolCandidateError(f"{path} must be finite")
+        _validate_numeric_bounds(value, schema, path=path)
     if expected == "boolean" and not isinstance(value, bool):
         raise ToolCandidateError(f"{path} must be a boolean")
+
+
+def _validate_numeric_bounds(
+    value: int | float,
+    schema: Mapping[str, object],
+    *,
+    path: str,
+) -> None:
+    minimum = schema.get("minimum")
+    maximum = schema.get("maximum")
+    if isinstance(minimum, (int, float)) and value < minimum:
+        raise ToolCandidateError(f"{path} is below its minimum")
+    if isinstance(maximum, (int, float)) and value > maximum:
+        raise ToolCandidateError(f"{path} exceeds its maximum")
 
 
 def _bounded_text(value: str, name: str, maximum: int) -> str:
