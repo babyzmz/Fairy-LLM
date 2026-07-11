@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260711_0013"]
+    assert scripts.get_heads() == ["20260711_0014"]
+    assert scripts.get_revision("20260711_0014").down_revision == "20260711_0013"
     assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
     assert scripts.get_revision("20260711_0012").down_revision == "20260711_0011"
     assert scripts.get_revision("20260711_0009").down_revision == "20260711_0008"
@@ -44,6 +45,8 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_TASKS",
         "CORE_TASK_WORKSPACES",
         "CORE_PROJECT_INDEXES",
+        "EXECUTION_JOBS",
+        "EXECUTION_WORKERS",
         "CORE_CHANGESETS",
         "CORE_APPROVALS",
         "CORE_CHECKPOINTS",
@@ -113,6 +116,7 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_EXECUTION_SETTING_UPDATES",
         "CORE_TASK_WORKSPACES",
         "CORE_PROJECT_INDEXES",
+        "EXECUTION_JOBS",
     ):
         assert f'CREATE POLICY "TENANT_ISOLATION_{table_name}"' in ddl
 
@@ -154,6 +158,18 @@ def test_workspace_index_migration_has_reversible_ddl() -> None:
     assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_TASK_WORKSPACES"' in ddl
     assert "DROP TABLE CORE_PROJECT_INDEXES" in ddl
     assert "DROP TABLE CORE_TASK_WORKSPACES" in ddl
+
+
+def test_execution_job_migration_has_reversible_fenced_queue_ddl() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260711_0014:20260711_0013", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_EXECUTION_JOBS"' in ddl
+    assert "DROP TABLE EXECUTION_WORKERS" in ddl
+    assert "DROP TABLE EXECUTION_JOBS" in ddl
 
 
 def test_research_evidence_migration_has_reversible_ddl() -> None:
@@ -210,6 +226,7 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
         "postgres",
         "postgres-permissions",
         "worker",
+        "execution",
     }
     assert services["postgres"]["image"] == "postgres:18.4-alpine3.24"
     assert services["object-store"]["image"] == "chrislusf/seaweedfs:4.39"
@@ -228,7 +245,7 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
     assert services["object-store"]["environment"]["S3_BUCKET"] == "fairy-objects"
     assert all(
         "healthcheck" in services[name]
-        for name in {"api", "object-store", "oidc", "postgres", "worker"}
+        for name in {"api", "execution", "object-store", "oidc", "postgres", "worker"}
     )
     assert services["api"]["build"]["target"] == "runtime"
     assert services["worker"]["command"] == [
@@ -238,6 +255,22 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
     ]
     assert services["worker"]["read_only"] is True
     assert services["worker"]["cap_drop"] == ["ALL"]
+    assert services["worker"].get("volumes", []) == []
+    assert "FAIRY_S3_SECRET_KEY" not in services["worker"]["environment"]
+    assert "FAIRY_PROVIDER_SECRET_OPENROUTER" not in services["worker"]["environment"]
+    assert services["execution"]["command"] == [
+        "python",
+        "-m",
+        "fairy_cloud.workers.execution",
+    ]
+    assert services["execution"]["read_only"] is True
+    assert services["execution"]["cap_drop"] == ["ALL"]
+    assert services["execution"]["security_opt"] == ["no-new-privileges:true"]
+    assert services["execution"].get("volumes", []) == []
+    assert services["execution"]["pids_limit"] == 768
+    assert services["execution"]["mem_limit"] == "3g"
+    assert services["execution"]["cpus"] == 2.0
+    assert any("/var/lib/fairy-sandbox" in item for item in services["execution"]["tmpfs"])
     assert services["migrate"]["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert services["postgres-permissions"]["depends_on"]["migrate"]["condition"] == (
         "service_completed_successfully"
@@ -256,6 +289,7 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
     )
     assert "fairy_app:" in services["api"]["environment"]["FAIRY_POSTGRES_DSN"]
     assert "fairy_worker:" in services["worker"]["environment"]["FAIRY_POSTGRES_DSN"]
+    assert "fairy_execution:" in services["execution"]["environment"]["FAIRY_POSTGRES_DSN"]
     assert "fairy:" in services["migrate"]["environment"]["FAIRY_POSTGRES_DSN"]
     assert any(
         "docker-entrypoint-initdb.d/010-fairy-roles.sh" in volume
@@ -271,17 +305,28 @@ def test_postgres_init_creates_rls_app_and_cross_tenant_worker_roles() -> None:
     worker_role = next(
         line for line in script.splitlines() if line.startswith("ALTER ROLE fairy_worker")
     )
+    execution_role = next(
+        line for line in script.splitlines() if line.startswith("ALTER ROLE fairy_execution")
+    )
 
     assert "NOSUPERUSER" in app_role
     assert "NOBYPASSRLS" in app_role
     assert "NOSUPERUSER" in worker_role
     assert "BYPASSRLS" in worker_role
     assert "NOBYPASSRLS" not in worker_role
+    assert "NOSUPERUSER" in execution_role
+    assert "BYPASSRLS" in execution_role
     assert "ALTER DEFAULT PRIVILEGES" in script
     assert "GRANT USAGE, SELECT ON ALL SEQUENCES" in script
     assert "ON ALL TABLES IN SCHEMA public TO fairy_app, fairy_worker" not in script
     assert "ON TABLE public.outbox TO fairy_worker" in script
     assert "ON TABLE public.worker_leases TO fairy_worker" in script
+    assert "ON TABLE public.execution_jobs TO fairy_execution" in script
+    assert "ON TABLE public.execution_workers TO fairy_execution" in script
+    assert "INSERT, UPDATE, DELETE ON TABLE public.execution_jobs TO fairy_execution" not in script
+    assert "DELETE ON TABLE public.execution_workers TO fairy_execution" not in script
+    assert "ON TABLE public.core_projects TO fairy_execution" not in script
+    assert "ON TABLE public.outbox TO fairy_execution" not in script
     assert "TABLES TO fairy_app, fairy_worker" not in script
     assert "REVOKE ALL ON TABLE public.alembic_version FROM fairy_app, fairy_worker" in script
 
@@ -292,6 +337,9 @@ def test_cloud_image_is_pinned_and_runs_as_non_root() -> None:
     assert "ghcr.io/astral-sh/uv:0.11.28-python3.13-trixie-slim" in dockerfile
     assert "USER 10001:10001" in dockerfile
     assert "uv sync --locked --no-dev --no-editable" in dockerfile
+    assert "bubblewrap" in dockerfile
+    assert "fairy_sandbox_runner.py" in dockerfile
+    assert "/usr/local/bin/fairy-sandbox-runner" in dockerfile
 
 
 def test_exported_openapi_uses_public_rpc_operation_ids() -> None:

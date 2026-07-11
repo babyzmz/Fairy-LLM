@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from fairy_core.runtime.models import RuntimeExecutorHealth
+
 from fairy_cloud.auth import RequestIdentity
 from fairy_cloud.dispatchers import TenantRuntimeRegistry
 from fairy_cloud.settings import to_sync_postgres_dsn
@@ -49,6 +51,34 @@ def test_runtime_registry_has_no_local_dispatcher_dependency() -> None:
     assert "build_local_dispatcher" not in source
     assert "create_sqlite" not in source
     assert "core.db" not in source
+
+
+def test_cloud_sandbox_composition_requires_a_matching_worker_attestation(
+    monkeypatch,
+) -> None:
+    import fairy_cloud.dispatchers as runtimes
+
+    class Store:
+        def health(self) -> RuntimeExecutorHealth:
+            return RuntimeExecutorHealth(
+                available=True,
+                executor="cloud_oci_worker",
+                version="1.0.0",
+                error_code=None,
+                diagnostics=("fixture",),
+            )
+
+    monkeypatch.setattr(
+        runtimes,
+        "ExecutionJobRepository",
+        lambda _engine, tenant_id: Store(),
+    )
+
+    sandbox = runtimes.build_cloud_sandbox(object(), tenant_id="tenant-a")
+
+    assert sandbox.executor.health().available is True
+    assert sandbox.health.is_healthy("cloud") is True
+    assert sandbox.health.is_healthy("local") is False
 
 
 def test_system_runtime_cannot_collide_with_an_oidc_subject(tmp_path: Path) -> None:

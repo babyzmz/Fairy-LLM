@@ -242,7 +242,7 @@ Commit: `feat(v3): add attested wsl sandbox execution`
 - Create: `cloud/src/fairy_cloud/execution/repository.py`
 - Create: `cloud/src/fairy_cloud/execution/executor.py`
 - Create: `cloud/src/fairy_cloud/workers/execution.py`
-- Create: `cloud/tests/integration/test_execution_worker.py`
+- Create: `cloud/tests/integration/test_cloud_execution.py`
 - Create: `cloud/tests/test_execution_worker.py`
 - Create: `cloud/migrations/versions/20260711_0014_execution_jobs.py`
 - Modify: `cloud/src/fairy_cloud/dispatchers.py`
@@ -255,21 +255,23 @@ Commit: `feat(v3): add attested wsl sandbox execution`
 - `CloudSandboxExecutor.execute()` enqueues then waits/reconciles a job without re-executing an uncertain completed effect.
 - `fairy_cloud.workers.execution` claims with `FOR UPDATE SKIP LOCKED`, runs one structured job as non-root, records hashes/bounded output, and acknowledges only its current fence.
 
-- [ ] **Step 1: Write failing unit and real PostgreSQL tests**
+- [x] **Step 1: Write failing unit and real PostgreSQL tests**
 
 Cover enqueue atomicity, RLS, duplicate key/fingerprint conflict, dual-worker claim, stale fence, crash before spawn/after spawn/after result, cancellation, scope mismatch, and no Outbox-worker project access.
 
-- [ ] **Step 2: Implement migration/repository and run unit tests**
+- [x] **Step 2: Implement migration/repository and run unit tests**
 
-- [ ] **Step 3: Implement non-root execution worker and Cloud composition**
+- [x] **Step 3: Implement non-root execution worker and Cloud composition**
 
-The execution service has a scoped project volume, read-only base filesystem, tmpfs, dropped capabilities, no Docker socket, resource limits, controlled egress, and a distinct database role. The Outbox service remains unchanged and mount-free.
+The execution service receives a bounded managed-workspace archive through PostgreSQL instead of a host/project volume. It has a read-only base filesystem, private tmpfs, dropped capabilities, no Docker socket, resource limits, no raw command egress, and a distinct least-privilege database role. The Outbox worker behavior remains unchanged and its service is mount-free and no longer inherits S3 or provider credentials.
 
-- [ ] **Step 4: Run Docker PostgreSQL/S3/OCI integration when available**
+- [x] **Step 4: Run Docker PostgreSQL/S3/OCI integration when available**
 
 Run: `docker compose -f cloud/compose.yaml --profile test up --build --abort-on-container-exit --exit-code-from integration integration`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
+
+Verification on 2026-07-11: `scripts/test-all.ps1 -SkipDocker` exited 0 with Sandbox Runner 25 passed/1 Windows-only POSIX process-group check skipped, Core 495, Capabilities 104, Cloud 81 unit tests/22 integration tests deselected, Vitest 68, and Playwright 18 tests passing. Ruff format/check, repository boundaries, offline Alembic upgrade and full downgrade, Rust fmt/clippy/tests, desktop build, generated-contract drift, and performance gates passed; Core readiness was 810.4 ms and initial renderer gzip was 131.1 KiB. The new real PostgreSQL/OCI tests cover app-role enqueue, execution-role isolation, an attested fixed Runner, idempotent replay, and cross-tenant RLS, but were not executed because `docker`, Podman, and Docker Desktop are not installed; PostgreSQL/S3/OCI is environment-blocked and is not reported as passed.
 
 Commit: `feat(v3): add cloud oci execution worker`
 

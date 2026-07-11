@@ -33,6 +33,7 @@ services:
       POSTGRES_PASSWORD: ${FAIRY_POSTGRES_PASSWORD:-fairy-dev-only}
       FAIRY_APP_POSTGRES_PASSWORD: ${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}
       FAIRY_WORKER_POSTGRES_PASSWORD: ${FAIRY_WORKER_POSTGRES_PASSWORD:-fairy-worker-dev-only}
+      FAIRY_EXECUTION_POSTGRES_PASSWORD: ${FAIRY_EXECUTION_POSTGRES_PASSWORD:-fairy-execution-dev-only}
     ports:
       - "127.0.0.1:${FAIRY_POSTGRES_PORT:-54320}:5432"
     volumes:
@@ -112,6 +113,7 @@ services:
       POSTGRES_USER: fairy
       FAIRY_APP_POSTGRES_PASSWORD: ${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}
       FAIRY_WORKER_POSTGRES_PASSWORD: ${FAIRY_WORKER_POSTGRES_PASSWORD:-fairy-worker-dev-only}
+      FAIRY_EXECUTION_POSTGRES_PASSWORD: ${FAIRY_EXECUTION_POSTGRES_PASSWORD:-fairy-execution-dev-only}
     volumes:
       - ./docker/postgres/010-fairy-roles.sh:/opt/fairy/010-fairy-roles.sh:ro
     depends_on:
@@ -169,9 +171,9 @@ services:
       target: runtime
     command: ["python", "-m", "fairy_cloud.workers.outbox"]
     environment:
-      <<: *cloud-environment
       FAIRY_POSTGRES_DSN: postgresql+asyncpg://fairy_worker:${FAIRY_WORKER_POSTGRES_PASSWORD:-fairy-worker-dev-only}@postgres:5432/fairy
       FAIRY_WORKER_OWNER_ID: worker-compose-1
+      FAIRY_WORKER_POLL_SECONDS: "1"
       FAIRY_WORKER_HEARTBEAT_PATH: /tmp/fairy-worker-ready
     depends_on:
       postgres-permissions:
@@ -195,6 +197,43 @@ services:
       timeout: 2s
       retries: 10
 
+  execution:
+    image: fairy-cloud:dev
+    build:
+      <<: *cloud-build
+      target: runtime
+    command: ["python", "-m", "fairy_cloud.workers.execution"]
+    environment:
+      FAIRY_POSTGRES_DSN: postgresql+asyncpg://fairy_execution:${FAIRY_EXECUTION_POSTGRES_PASSWORD:-fairy-execution-dev-only}@postgres:5432/fairy
+      FAIRY_EXECUTION_OWNER_ID: execution-compose-1
+      FAIRY_EXECUTION_POLL_SECONDS: "0.1"
+      FAIRY_EXECUTION_HEARTBEAT_PATH: /tmp/fairy-execution-ready
+    depends_on:
+      postgres-permissions:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/lib/fairy-sandbox:size=3g,mode=0700,uid=10001,gid=10001
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 768
+    mem_limit: 3g
+    cpus: 2.0
+    init: true
+    stop_grace_period: 20s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import pathlib,sys,time; p=pathlib.Path('/tmp/fairy-execution-ready'); sys.exit(0 if p.exists() and time.time()-p.stat().st_mtime < 30 else 1)"
+      start_period: 5s
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
   integration:
     build:
       <<: *cloud-build
@@ -205,6 +244,8 @@ services:
       FAIRY_TEST_POSTGRES_DSN: postgresql+asyncpg://fairy:${FAIRY_POSTGRES_PASSWORD:-fairy-dev-only}@postgres:5432/fairy
       FAIRY_TEST_APP_POSTGRES_DSN: postgresql+asyncpg://fairy_app:${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}@postgres:5432/fairy
       FAIRY_TEST_CORE_POSTGRES_DSN: postgresql+psycopg://fairy_app:${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}@postgres:5432/fairy
+      FAIRY_TEST_EXECUTION_POSTGRES_DSN: postgresql+asyncpg://fairy_execution:${FAIRY_EXECUTION_POSTGRES_PASSWORD:-fairy-execution-dev-only}@postgres:5432/fairy
+      FAIRY_TEST_EXECUTION_SYNC_POSTGRES_DSN: postgresql+psycopg://fairy_execution:${FAIRY_EXECUTION_POSTGRES_PASSWORD:-fairy-execution-dev-only}@postgres:5432/fairy
       FAIRY_TEST_S3_ENDPOINT: http://object-store:8333
       FAIRY_TEST_S3_BUCKET: fairy-objects
       FAIRY_S3_ACCESS_KEY: ${FAIRY_S3_ACCESS_KEY:-fairy-dev}
@@ -213,6 +254,8 @@ services:
       postgres-permissions:
         condition: service_completed_successfully
       object-store:
+        condition: service_healthy
+      execution:
         condition: service_healthy
     read_only: true
     tmpfs:

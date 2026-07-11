@@ -44,3 +44,12 @@ class CloudSettings(BaseSettings):
     @property
     def core_postgres_dsn(self) -> str:
         return to_sync_postgres_dsn(self.postgres_dsn)
+
+
+class OutboxWorkerSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="FAIRY_", extra="ignore")
+
+    postgres_dsn: str
+    worker_owner_id: str = "fairy-cloud-worker"
+    worker_poll_seconds: float = Field(default=1.0, gt=0, le=60)
+    worker_heartbeat_path: Path = Path("/tmp/fairy-worker-ready")

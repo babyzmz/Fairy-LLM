@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from fairy_capabilities.composition import (
@@ -19,16 +20,38 @@ from fairy_core.commanding.registry import build_default_registry
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.runtime.unavailable import UnavailableRuntimeExecutor
+from fairy_core.sandbox.tools import ExecutorSandboxHealthProvider
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
 from sqlalchemy.engine import Engine
 
 from fairy_cloud.auth import RequestIdentity
+from fairy_cloud.execution.executor import CloudSandboxExecutor
+from fairy_cloud.execution.repository import ExecutionJobRepository
 from fairy_cloud.storage.objects import S3ObjectStore
 from fairy_cloud.storage.postgres import tenant_id_for_user
 
 RuntimeBuilder = Callable[[str, Path, Engine], CoreService]
 MonotonicClock = Callable[[], float]
 _SYSTEM_TENANT_ID = "system"
+
+
+@dataclass(frozen=True, slots=True)
+class CloudSandboxComponents:
+    executor: CloudSandboxExecutor
+    health: ExecutorSandboxHealthProvider
+
+
+def build_cloud_sandbox(engine: Engine, *, tenant_id: str) -> CloudSandboxComponents:
+    executor = CloudSandboxExecutor(store=ExecutionJobRepository(engine, tenant_id=tenant_id))
+    return CloudSandboxComponents(
+        executor=executor,
+        health=ExecutorSandboxHealthProvider(
+            executor,
+            execution_target="cloud",
+            expected_executor="cloud_oci_worker",
+            expected_version="1.0.0",
+        ),
+    )
 
 
 def build_postgres_core_service(
@@ -39,6 +62,7 @@ def build_postgres_core_service(
     object_store: S3ObjectStore | None = None,
 ) -> CoreService:
     registry = build_default_registry()
+    sandbox = build_cloud_sandbox(engine, tenant_id=tenant_id)
     unit_of_work_factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id=tenant_id)
     application = CoreApplication(
         unit_of_work_factory=unit_of_work_factory,
@@ -83,6 +107,8 @@ def build_postgres_core_service(
                 object_store.document_blob_store(tenant_id) if object_store is not None else None
             ),
             runtime_application=runtime_application,
+            sandbox_executor=sandbox.executor,
+            sandbox_health_provider=sandbox.health,
             default_execution_target="cloud",
         )
     except BaseException:
@@ -168,4 +194,9 @@ class TenantRuntimeRegistry:
         return service
 
 
-__all__ = ["TenantRuntimeRegistry", "build_postgres_core_service"]
+__all__ = [
+    "CloudSandboxComponents",
+    "TenantRuntimeRegistry",
+    "build_cloud_sandbox",
+    "build_postgres_core_service",
+]

@@ -12,7 +12,7 @@ from typing import Protocol
 from fairy_core.contracts.models import EventEnvelopeModel
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from fairy_cloud.settings import CloudSettings
+from fairy_cloud.settings import OutboxWorkerSettings
 from fairy_cloud.storage.postgres import OutboxItem, PostgresSyncStore
 
 logger = logging.getLogger(__name__)
@@ -161,7 +161,7 @@ class OutboxWorker:
 
 
 async def _run() -> None:
-    settings = CloudSettings()
+    settings = OutboxWorkerSettings()
     engine = create_async_engine(settings.postgres_dsn, pool_pre_ping=True)
     store = PostgresSyncStore(engine)
     worker = OutboxWorker(

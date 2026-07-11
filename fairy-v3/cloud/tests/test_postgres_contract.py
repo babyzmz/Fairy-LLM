@@ -38,6 +38,8 @@ def test_outbox_claim_uses_postgres_skip_locked_without_external_broker() -> Non
         "outbox",
         "version_candidates",
         "worker_leases",
+        "execution_jobs",
+        "execution_workers",
     }
     canonical_tables = {
         table.name
@@ -65,6 +67,8 @@ def test_outbox_claim_uses_postgres_skip_locked_without_external_broker() -> Non
         "task_event_sequences",
         "version_candidates",
         "worker_leases",
+        "execution_jobs",
+        "execution_workers",
         "memory_observations",
         "memory_claims",
         "memory_claim_revisions",
@@ -147,6 +151,10 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "pk_outbox",
         "pk_version_candidates",
         "pk_worker_leases",
+        "pk_execution_jobs",
+        "pk_execution_workers",
+        "fk_execution_jobs_command_run",
+        "uq_execution_jobs_tenant_command_run",
         "fk_outbox_event",
         "fk_version_candidates_project",
         "fk_core_conversations_project",
@@ -191,6 +199,11 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "uq_core_documents_tenant_idempotency",
         "uq_core_document_chunks_revision_ordinal",
         "ck_memory_snapshots_status",
+        "ck_execution_jobs_command_identity",
+        "ck_execution_jobs_active_lease",
+        "ck_execution_jobs_result_evidence",
+        "ck_execution_jobs_result_status",
+        "ck_execution_jobs_network_policy",
     } <= constraint_names
     assert "fk_domain_events_run" not in constraint_names
     index_names = {
@@ -207,6 +220,8 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "ix_core_document_chunks_tenant_document",
         "ix_core_task_workspaces_tenant_version",
         "ix_core_project_indexes_tenant_project",
+        "ix_execution_jobs_claim",
+        "ix_execution_jobs_tenant_task",
     } <= index_names
 
 

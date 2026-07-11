@@ -26,7 +26,10 @@ from typing import BinaryIO
 from uuid import UUID
 
 RUNNER_VERSION = "1.0.0"
-EXECUTOR = "wsl_fairy_sandbox"
+_ALLOWED_EXECUTORS = frozenset({"cloud_oci_worker", "wsl_fairy_sandbox"})
+EXECUTOR = os.environ.get("FAIRY_SANDBOX_EXECUTOR", "wsl_fairy_sandbox")
+if EXECUTOR not in _ALLOWED_EXECUTORS:
+    raise RuntimeError("Sandbox executor identity is not allowed")
 DEFAULT_ROOT = Path("/var/lib/fairy-sandbox")
 WSL_CONFIG = Path("/etc/wsl.conf")
 BWRAP = Path("/usr/bin/bwrap")
