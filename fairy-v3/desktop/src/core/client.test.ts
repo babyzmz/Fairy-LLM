@@ -93,6 +93,24 @@ describe("CoreClient", () => {
     await client.previews.stop({ preview_id: id, idempotency_key: "preview-stop-1" });
     await client.artifacts.list(id);
     await client.artifacts.read(id);
+    await client.documents.import({
+      task_id: id,
+      filename: "evidence.txt",
+      media_type: "text/plain",
+      content_base64: "RmFpcnk=",
+      visibility: "conversation",
+      idempotency_key: "document-import-1",
+      user_confirmed: true,
+    });
+    await client.documents.list({ task_id: id, limit: 25 });
+    await client.documents.get(id, id);
+    await client.documents.search({ task_id: id, query: "evidence", limit: 10 });
+    await client.documents.delete({
+      task_id: id,
+      document_id: id,
+      idempotency_key: "document-delete-1",
+      user_confirmed: true,
+    });
     await client.capabilities.get({
       profile: "standard",
       sandbox_healthy: true,
@@ -195,6 +213,11 @@ describe("CoreClient", () => {
       "previews.stop",
       "artifacts.list",
       "artifacts.read",
+      "documents.import",
+      "documents.list",
+      "documents.get",
+      "documents.search",
+      "documents.delete",
       "capabilities.get",
       "providers.list",
       "providers.health",

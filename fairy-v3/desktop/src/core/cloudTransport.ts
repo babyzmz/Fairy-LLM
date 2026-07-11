@@ -109,6 +109,21 @@ const routes = {
     getWithQuery("/v1/artifacts", params, ["task_id"]),
   "artifacts.read": (params) =>
     get(`/v1/artifacts/${pathParameter(params, "artifact_id")}`),
+  "documents.import": (params) =>
+    postWithIdempotency("/v1/documents/import", params),
+  "documents.list": (params) =>
+    getWithQuery("/v1/documents", params, ["task_id", "limit"]),
+  "documents.get": (params) =>
+    get(
+      `/v1/documents/${pathParameter(params, "document_id")}` +
+        `?task_id=${stringParameter(params, "task_id")}`,
+    ),
+  "documents.search": (params) => post("/v1/documents/search", params),
+  "documents.delete": (params) =>
+    postWithIdempotency(
+      `/v1/documents/${pathParameter(params, "document_id")}/delete`,
+      params,
+    ),
   "assistant.turns.create": (params) =>
     postWithIdempotency("/v1/assistant/turns", params),
   "assistant.turns.get": (params) =>

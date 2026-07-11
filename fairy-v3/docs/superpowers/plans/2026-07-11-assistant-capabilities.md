@@ -251,14 +251,21 @@ the desktop environment boundary forwards only `FAIRY_PROVIDER_*` values.
 - Parser output is `ExtractedDocument(media_type, parser, parser_version, sections)`; chunks contain canonical revision/hash/locator provenance.
 - No document method calls a Hermes mutation method.
 
-- [ ] Write parser tests using minimal TXT, Markdown, HTML, PDF, and DOCX fixtures plus encrypted, malformed, oversized, and unsupported input.
-- [ ] Run parser tests and verify failure before adding pypdf/python-docx adapters.
-- [ ] Write Core tests for explicit import approval, managed copy hash, immutable revisions, deterministic chunks, lexical results, tenant/Project/Conversation isolation, deletion, and stale projection rejection.
-- [ ] Add a regression test that monkeypatches every Hermes mutation method to fail if RAG calls it.
-- [ ] Implement document records, repository, deterministic chunker, lexical projection, canonical-result revalidation, and Command Bus methods.
-- [ ] Add PostgreSQL tables, RLS, generated `tsvector` index, migration, and Docker integration tests.
-- [ ] Run document suites, Hermes suites, migrations, contracts, and boundary checks.
-- [ ] Commit with `feat(v3): add managed document rag`.
+- [x] Write parser tests using minimal TXT, Markdown, HTML, PDF, and DOCX fixtures plus encrypted, malformed, oversized, and unsupported input.
+- [x] Run parser tests and verify failure before adding pypdf/python-docx adapters.
+- [x] Write Core tests for explicit import approval, managed copy hash, immutable revisions, deterministic chunks, lexical results, tenant/Project/Conversation isolation, deletion, and stale projection rejection.
+- [x] Add a regression test that monkeypatches every Hermes mutation method to fail if RAG calls it.
+- [x] Implement document records, repository, deterministic chunker, lexical projection, canonical-result revalidation, and Command Bus methods.
+- [x] Add PostgreSQL tables, RLS, generated `tsvector` index, migration, and Docker integration tests.
+- [x] Run document suites, Hermes suites, migrations, contracts, and boundary checks.
+- [x] Commit with `feat(v3): add managed document rag`.
+
+Task 34 implements separate canonical Document, immutable Revision, and lexical Chunk
+tables without mutating Hermes. Local blobs are content-addressed below Fairy's
+managed directory; cloud blobs use a tenant-bound S3 adapter. Core, Capabilities,
+Cloud unit, desktop contract, migration SQL, and boundary gates pass. The PostgreSQL
+RLS/search and S3 integration tests collect successfully but were not executed on
+this workstation because neither the Docker CLI nor Docker Desktop is installed.
 
 ### Task 35: Scratch and Project Chat Desktop Experience
 

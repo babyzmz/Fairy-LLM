@@ -26,6 +26,21 @@ export type ConversationListInput = NonNullable<
   operations["conversations.list"]["parameters"]["query"]
 >;
 export type ConversationPage = Schemas["ConversationPageModel"];
+export type Document = Schemas["ManagedDocumentModel"];
+export type DocumentChunk = Schemas["DocumentChunkModel"];
+export type DocumentContext = Schemas["DocumentContextModel"];
+export type DocumentDeleteInput = Schemas["DocumentDeleteInput"];
+export type DocumentImportInput = Schemas["DocumentImportInput"];
+export type DocumentListInput = NonNullable<
+  operations["documents.list"]["parameters"]["query"]
+>;
+export type DocumentPage = Schemas["DocumentPageModel"];
+export type DocumentRevision = Schemas["DocumentRevisionModel"];
+export type DocumentSearchHit = Schemas["DocumentSearchHitModel"];
+export type DocumentSearchInput = Schemas["DocumentSearchInput"];
+export type DocumentSearchPage = Schemas["DocumentSearchPageModel"];
+export type DocumentStatus = Schemas["DocumentStatus"];
+export type DocumentVisibility = Schemas["DocumentVisibility"];
 export type EventEnvelope = Schemas["EventEnvelopeModel"];
 export type Health = Schemas["HealthModel"];
 export type MemoryClaim = Schemas["MemoryClaimModel"];
@@ -113,6 +128,14 @@ export interface CoreMethodMap {
     params: ConversationListInput;
     result: ConversationPage;
   };
+  "documents.import": { params: DocumentImportInput; result: DocumentContext };
+  "documents.list": { params: DocumentListInput; result: DocumentPage };
+  "documents.get": {
+    params: { task_id: string; document_id: string };
+    result: DocumentContext;
+  };
+  "documents.search": { params: DocumentSearchInput; result: DocumentSearchPage };
+  "documents.delete": { params: DocumentDeleteInput; result: DocumentContext };
   "tasks.create": { params: TaskCreateInput; result: TaskContext };
   "tasks.get": { params: { task_id: string }; result: Task };
   "tasks.list": { params: TaskListInput; result: TaskPage };

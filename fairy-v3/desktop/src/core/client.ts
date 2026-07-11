@@ -10,6 +10,10 @@ import type {
   ConversationListInput,
   CoreMethodMap,
   CoreMethodName,
+  DocumentDeleteInput,
+  DocumentImportInput,
+  DocumentListInput,
+  DocumentSearchInput,
   EventEnvelope,
   EventSubscriptionOptions,
   MemoryClaimPromoteInput,
@@ -128,6 +132,22 @@ export class CoreClient {
       this.transport.call("artifacts.list", { task_id: taskId }),
     read: (artifactId: string) =>
       this.transport.call("artifacts.read", { artifact_id: artifactId }),
+  };
+
+  readonly documents = {
+    import: (input: DocumentImportInput) =>
+      this.transport.call("documents.import", input),
+    list: (input: DocumentListInput) =>
+      this.transport.call("documents.list", input),
+    get: (taskId: string, documentId: string) =>
+      this.transport.call("documents.get", {
+        task_id: taskId,
+        document_id: documentId,
+      }),
+    search: (input: DocumentSearchInput) =>
+      this.transport.call("documents.search", input),
+    delete: (input: DocumentDeleteInput) =>
+      this.transport.call("documents.delete", input),
   };
 
   readonly assistant = {

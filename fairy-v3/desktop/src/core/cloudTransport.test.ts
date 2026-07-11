@@ -234,6 +234,31 @@ describe("CloudCoreTransport", () => {
       turn_id: "turn/1",
       idempotency_key: "turn:retry",
     });
+    await transport.call("documents.import", {
+      task_id: "task/1",
+      filename: "evidence.txt",
+      media_type: "text/plain",
+      content_base64: "RmFpcnk=",
+      visibility: "conversation",
+      idempotency_key: "documents:import",
+      user_confirmed: true,
+    });
+    await transport.call("documents.list", { task_id: "task/1", limit: 25 });
+    await transport.call("documents.get", {
+      task_id: "task/1",
+      document_id: "document/1",
+    });
+    await transport.call("documents.search", {
+      task_id: "task/1",
+      query: "evidence",
+      limit: 10,
+    });
+    await transport.call("documents.delete", {
+      task_id: "task/1",
+      document_id: "document/1",
+      idempotency_key: "documents:delete",
+      user_confirmed: true,
+    });
 
     expect(requests.map(({ method, url }) => [method, url])).toEqual([
       ["GET", "https://cloud.fairy.test/v1/projects/project%2Fa"],
@@ -279,12 +304,28 @@ describe("CloudCoreTransport", () => {
       ],
       ["POST", "https://cloud.fairy.test/v1/assistant/turns/turn%2F1/run"],
       ["POST", "https://cloud.fairy.test/v1/assistant/turns/turn%2F1/retry"],
+      ["POST", "https://cloud.fairy.test/v1/documents/import"],
+      [
+        "GET",
+        "https://cloud.fairy.test/v1/documents?task_id=task%2F1&limit=25",
+      ],
+      [
+        "GET",
+        "https://cloud.fairy.test/v1/documents/document%2F1?task_id=task%2F1",
+      ],
+      ["POST", "https://cloud.fairy.test/v1/documents/search"],
+      [
+        "POST",
+        "https://cloud.fairy.test/v1/documents/document%2F1/delete",
+      ],
     ]);
     expect(requests[0]?.headers.get("Authorization")).toBe("Bearer access-token");
     expect(requests[0]?.headers.get("X-Fairy-Device-ID")).toBe("device-1");
     expect(requests[12]?.headers.get("Idempotency-Key")).toBe("preview:start");
     expect(requests[13]?.headers.get("Idempotency-Key")).toBe("preview:stop");
     expect(requests[15]?.headers.get("Idempotency-Key")).toBe("turn:retry");
+    expect(requests[16]?.headers.get("Idempotency-Key")).toBe("documents:import");
+    expect(requests[20]?.headers.get("Idempotency-Key")).toBe("documents:delete");
     await expect(requests[3]?.json()).resolves.toEqual({
       profile: "standard",
       sandbox_healthy: true,

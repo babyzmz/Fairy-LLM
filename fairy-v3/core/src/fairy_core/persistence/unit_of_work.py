@@ -10,6 +10,9 @@ from fairy_core.assistant.ports import AssistantRepository
 from fairy_core.assistant.repository import SqlAlchemyAssistantRepository
 from fairy_core.commanding.ports import CommandLedger
 from fairy_core.commanding.sqlalchemy import SqlAlchemyCommandLedger
+from fairy_core.documents.ports import DocumentRepository, DocumentSearchIndex
+from fairy_core.documents.repository import SqlAlchemyDocumentRepository
+from fairy_core.documents.search import SqlAlchemyDocumentSearchIndex
 from fairy_core.memory.ports import MemoryRepository
 from fairy_core.memory.retrieval_ports import (
     MemoryProjectionWriter,
@@ -35,6 +38,8 @@ class CoreUnitOfWork(Protocol):
     snapshots: MemorySnapshotRepository
     memory_search: MemorySearchIndex
     memory_projections: MemoryProjectionWriter
+    documents: DocumentRepository
+    document_search: DocumentSearchIndex
 
     def __enter__(self) -> Self: ...
 
@@ -89,6 +94,14 @@ class SqlAlchemyUnitOfWork:
                 tenant_id=self._tenant_id,
             )
             self.memory_projections = SqlAlchemyMemoryProjectionWriter(
+                connection,
+                tenant_id=self._tenant_id,
+            )
+            self.documents = SqlAlchemyDocumentRepository(
+                connection,
+                tenant_id=self._tenant_id,
+            )
+            self.document_search = SqlAlchemyDocumentSearchIndex(
                 connection,
                 tenant_id=self._tenant_id,
             )

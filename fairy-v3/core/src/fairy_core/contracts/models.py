@@ -18,6 +18,10 @@ from fairy_core.assistant.models import (
     MessageRole,
 )
 from fairy_core.commanding.types import PermissionProfile
+from fairy_core.documents import (
+    DocumentStatus,
+    DocumentVisibility,
+)
 from fairy_core.domain.execution import (
     ApprovalDecision,
     ArtifactType,
@@ -111,6 +115,8 @@ class ErrorCode(StrEnum):
     MEMORY_PROJECTION_STALE = "MEMORY_PROJECTION_STALE"
     MEMORY_SNAPSHOT_TOO_LARGE = "MEMORY_SNAPSHOT_TOO_LARGE"
     MEMORY_FORGOTTEN = "MEMORY_FORGOTTEN"
+    DOCUMENT_PROJECTION_STALE = "DOCUMENT_PROJECTION_STALE"
+    DOCUMENT_INTEGRITY_FAILED = "DOCUMENT_INTEGRITY_FAILED"
 
 
 class TaskCreate(ContractModel):
@@ -202,6 +208,33 @@ class PreviewIdInput(ContractModel):
 
 class ArtifactIdInput(ContractModel):
     artifact_id: UUID
+
+
+class DocumentIdInput(TaskIdInput):
+    document_id: UUID
+
+
+class DocumentImportInput(TaskIdInput):
+    filename: str = Field(min_length=1, max_length=255)
+    media_type: str = Field(min_length=3, max_length=255)
+    content_base64: str = Field(min_length=1, max_length=28_000_000)
+    visibility: DocumentVisibility
+    idempotency_key: str = Field(min_length=1, max_length=512)
+    user_confirmed: bool
+
+
+class DocumentDeleteInput(DocumentIdInput):
+    idempotency_key: str = Field(min_length=1, max_length=512)
+    user_confirmed: bool
+
+
+class DocumentListInput(TaskIdInput):
+    limit: int = Field(default=100, ge=1, le=100)
+
+
+class DocumentSearchInput(TaskIdInput):
+    query: str = Field(min_length=1, max_length=10_000)
+    limit: int = Field(default=10, ge=1, le=50)
 
 
 class AssistantTurnIdInput(ContractModel):
@@ -477,6 +510,77 @@ class ArtifactModel(ContractModel):
     @classmethod
     def thaw_metadata(cls, value: Any) -> Any:
         return _mutable_json(value)
+
+
+class ManagedDocumentModel(ContractModel):
+    id: UUID
+    project_id: UUID | None
+    conversation_id: UUID
+    source_task_id: UUID
+    version_id: UUID | None
+    filename: str = Field(min_length=1, max_length=255)
+    media_type: str = Field(min_length=3, max_length=255)
+    byte_length: int = Field(ge=0)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    current_revision: int = Field(ge=1)
+    visibility: DocumentVisibility
+    status: DocumentStatus
+    idempotency_key: str = Field(min_length=1, max_length=512)
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocumentRevisionModel(ContractModel):
+    document_id: UUID
+    revision: int = Field(ge=1)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    byte_length: int = Field(ge=0)
+    media_type: str = Field(min_length=3, max_length=255)
+    parser: str = Field(min_length=1, max_length=128)
+    parser_version: str = Field(min_length=1, max_length=128)
+    section_count: int = Field(ge=1, le=10_000)
+    chunk_count: int = Field(ge=1, le=100_000)
+    created_at: datetime
+
+
+class DocumentChunkModel(ContractModel):
+    id: UUID
+    document_id: UUID
+    revision: int = Field(ge=1)
+    revision_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    ordinal: int = Field(ge=0)
+    section_ordinal: int = Field(ge=0)
+    locator: dict[str, str | int]
+    text: str = Field(min_length=1, max_length=20_000)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    token_count: int = Field(ge=1, le=20_000)
+    updated_at: datetime
+
+    @field_validator("locator", mode="before")
+    @classmethod
+    def thaw_locator(cls, value: Any) -> Any:
+        return _mutable_json(value)
+
+
+class DocumentContextModel(ContractModel):
+    document: ManagedDocumentModel
+    revision: DocumentRevisionModel
+
+
+class DocumentPageModel(ContractModel):
+    items: tuple[DocumentContextModel, ...]
+
+
+class DocumentSearchHitModel(ContractModel):
+    document: ManagedDocumentModel
+    revision: DocumentRevisionModel
+    chunk: DocumentChunkModel
+    lexical_score: float = Field(ge=0, le=1, allow_inf_nan=False)
+    exact_match: bool
+
+
+class DocumentSearchPageModel(ContractModel):
+    items: tuple[DocumentSearchHitModel, ...]
 
 
 class MessageModel(ContractModel):

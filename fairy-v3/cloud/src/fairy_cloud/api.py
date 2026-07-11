@@ -31,6 +31,13 @@ from fairy_core.contracts.models import (
     ConversationListInput,
     ConversationModel,
     ConversationPageModel,
+    DocumentContextModel,
+    DocumentDeleteInput,
+    DocumentImportInput,
+    DocumentListInput,
+    DocumentPageModel,
+    DocumentSearchInput,
+    DocumentSearchPageModel,
     HealthModel,
     MemoryClaimContextModel,
     MemoryClaimGetInput,
@@ -328,6 +335,71 @@ def create_cloud_app(
             "messages.list",
             request.model_dump(mode="json", exclude_none=True),
         )
+
+    @protected.post(
+        "/documents/import",
+        operation_id="documents.import",
+        response_model=DocumentContextModel,
+    )
+    async def import_document(
+        request: DocumentImportInput,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=512),
+        ],
+    ) -> dict[str, Any]:
+        require_idempotency_match(request.idempotency_key, idempotency_key)
+        return await invoke_async("documents.import", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/documents",
+        operation_id="documents.list",
+        response_model=DocumentPageModel,
+    )
+    def list_documents(
+        request: Annotated[DocumentListInput, Query()],
+    ) -> dict[str, Any]:
+        return invoke("documents.list", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/documents/{document_id}",
+        operation_id="documents.get",
+        response_model=DocumentContextModel,
+    )
+    def get_document(document_id: UUID, task_id: UUID) -> dict[str, Any]:
+        return invoke(
+            "documents.get",
+            {"task_id": str(task_id), "document_id": str(document_id)},
+        )
+
+    @protected.post(
+        "/documents/search",
+        operation_id="documents.search",
+        response_model=DocumentSearchPageModel,
+    )
+    def search_documents(request: DocumentSearchInput) -> dict[str, Any]:
+        return invoke("documents.search", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/documents/{document_id}/delete",
+        operation_id="documents.delete",
+        response_model=DocumentContextModel,
+    )
+    async def delete_document(
+        document_id: UUID,
+        request: DocumentDeleteInput,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=512),
+        ],
+    ) -> dict[str, Any]:
+        if request.document_id != document_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "document id mismatch"},
+            )
+        require_idempotency_match(request.idempotency_key, idempotency_key)
+        return await invoke_async("documents.delete", request.model_dump(mode="json"))
 
     @protected.post(
         "/assistant/turns",

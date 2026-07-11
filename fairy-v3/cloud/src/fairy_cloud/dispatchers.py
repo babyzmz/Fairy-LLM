@@ -8,6 +8,7 @@ from fairy_capabilities.composition import (
     build_capability_bundle,
     build_provider_registry,
 )
+from fairy_capabilities.documents import CompositeDocumentParser
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.service import CoreService
@@ -19,6 +20,7 @@ from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
 from sqlalchemy.engine import Engine
 
 from fairy_cloud.auth import RequestIdentity
+from fairy_cloud.storage.objects import S3ObjectStore
 from fairy_cloud.storage.postgres import tenant_id_for_user
 
 RuntimeBuilder = Callable[[str, Path, Engine], CoreService]
@@ -29,6 +31,8 @@ def build_postgres_core_service(
     tenant_id: str,
     workspace_root: Path,
     engine: Engine,
+    *,
+    object_store: S3ObjectStore | None = None,
 ) -> CoreService:
     registry = build_default_registry()
     unit_of_work_factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id=tenant_id)
@@ -62,6 +66,10 @@ def build_postgres_core_service(
             provider_registry=providers,
             tool_executor=capabilities.executor,
             research_fetch_port=capabilities.web.fetch_port,
+            document_parser=(CompositeDocumentParser() if object_store is not None else None),
+            document_blob_store=(
+                object_store.document_blob_store(tenant_id) if object_store is not None else None
+            ),
             runtime_application=runtime_application,
         )
     except BaseException:
@@ -79,10 +87,12 @@ class TenantRuntimeRegistry:
         root: Path,
         engine: Engine,
         builder: RuntimeBuilder = build_postgres_core_service,
+        object_store: S3ObjectStore | None = None,
     ) -> None:
         self._root = root
         self._engine = engine
         self._builder = builder
+        self._object_store = object_store
         self._services: dict[str, CoreService] = {}
         self._lock = threading.RLock()
 
@@ -107,7 +117,15 @@ class TenantRuntimeRegistry:
         with self._lock:
             service = self._services.get(tenant_id)
             if service is None:
-                service = self._builder(tenant_id, path, self._engine)
+                if self._builder is build_postgres_core_service:
+                    service = build_postgres_core_service(
+                        tenant_id,
+                        path,
+                        self._engine,
+                        object_store=self._object_store,
+                    )
+                else:
+                    service = self._builder(tenant_id, path, self._engine)
                 self._services[tenant_id] = service
             return service
 

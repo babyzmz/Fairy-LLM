@@ -12,6 +12,7 @@ from fairy_capabilities.composition import (
     build_capability_bundle,
     build_provider_registry,
 )
+from fairy_capabilities.documents import CompositeDocumentParser, ManagedFileDocumentStore
 
 
 def build_composed_local_dispatcher(
@@ -33,6 +34,8 @@ def build_composed_local_dispatcher(
             provider_registry=providers,
             tool_executor=capabilities.executor,
             research_fetch_port=capabilities.web.fetch_port,
+            document_parser=CompositeDocumentParser(),
+            document_blob_store=ManagedFileDocumentStore(data_dir / "documents"),
         )
     except BaseException:
         capabilities.executor.close()

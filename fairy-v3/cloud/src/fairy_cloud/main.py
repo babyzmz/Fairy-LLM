@@ -44,7 +44,11 @@ s3_client = boto3.client(
     ),
 )
 object_store = S3ObjectStore(client=s3_client, bucket=settings.s3_bucket)
-runtimes = TenantRuntimeRegistry(root=settings.core_data_dir, engine=core_engine)
+runtimes = TenantRuntimeRegistry(
+    root=settings.core_data_dir,
+    engine=core_engine,
+    object_store=object_store,
+)
 service = runtimes.system_service()
 
 

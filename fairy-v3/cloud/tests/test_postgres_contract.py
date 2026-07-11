@@ -54,6 +54,9 @@ def test_outbox_claim_uses_postgres_skip_locked_without_external_broker() -> Non
         "core_assistant_messages",
         "core_assistant_tool_invocations",
         "core_research_evidence",
+        "core_documents",
+        "core_document_revisions",
+        "core_document_chunks",
         "command_runs",
         "domain_events",
         "outbox",
@@ -131,6 +134,9 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "pk_core_assistant_messages",
         "pk_core_assistant_tool_invocations",
         "pk_core_research_evidence",
+        "pk_core_documents",
+        "pk_core_document_revisions",
+        "pk_core_document_chunks",
         "pk_command_runs",
         "pk_task_event_sequences",
         "pk_domain_events",
@@ -171,6 +177,8 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "uq_core_assistant_messages_conversation_sequence",
         "uq_core_assistant_tool_invocations_turn_arguments",
         "uq_core_research_evidence_artifact_url",
+        "uq_core_documents_tenant_idempotency",
+        "uq_core_document_chunks_revision_ordinal",
         "ck_memory_snapshots_status",
     } <= constraint_names
     assert "fk_domain_events_run" not in constraint_names
@@ -184,6 +192,8 @@ def test_runtime_metadata_matches_canonical_constraint_names() -> None:
         "uq_memory_search_documents_fts_rowid",
         "uq_core_preview_sessions_active_task",
         "ix_core_research_evidence_tenant_artifact",
+        "uq_core_document_chunks_fts_rowid",
+        "ix_core_document_chunks_tenant_document",
     } <= index_names
 
 

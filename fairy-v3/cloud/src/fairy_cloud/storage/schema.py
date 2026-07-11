@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from fairy_core.commanding.schema import domain_events
 from fairy_core.persistence.tenant import TENANT_ID_LENGTH
+from fairy_core.storage.schema import document_chunks as core_document_chunks
+from fairy_core.storage.schema import document_revisions as core_document_revisions
+from fairy_core.storage.schema import documents as core_documents
 from fairy_core.storage.schema import projects as core_projects
 from fairy_core.storage.schema import research_evidence as core_research_evidence
 from sqlalchemy import (
@@ -119,6 +122,9 @@ Index(
 
 __all__ = [
     "cloud_metadata",
+    "core_document_chunks",
+    "core_document_revisions",
+    "core_documents",
     "core_projects",
     "core_research_evidence",
     "core_tenants",

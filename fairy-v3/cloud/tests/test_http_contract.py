@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import threading
 from datetime import UTC, datetime
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from fairy_capabilities.documents import CompositeDocumentParser, ManagedFileDocumentStore
 from fairy_core.application.service import CoreService
 from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.runtime.models import (
@@ -162,7 +164,11 @@ def app(tmp_path: Path):
         scopes=frozenset({"fairy.api"}),
     )
     return create_cloud_app(
-        build_local_service(tmp_path / "cloud"),
+        build_local_service(
+            tmp_path / "cloud",
+            document_parser=CompositeDocumentParser(),
+            document_blob_store=ManagedFileDocumentStore(tmp_path / "cloud" / "documents"),
+        ),
         authenticator=StaticTokenAuthenticator({"test-token": identity}),
     )
 
@@ -205,6 +211,82 @@ async def test_rest_runs_the_same_project_contract_as_local_jsonrpc(app) -> None
     assert task["task"]["status"] == "planning"
     assert task["scope"]["execution_target"] == "cloud"
     assert task["scope"]["scope_digest"]
+
+
+@pytest.mark.asyncio
+async def test_document_routes_share_the_task_scoped_core_contract(app) -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=AUTH_HEADERS,
+    ) as client:
+        project_response = await client.post(
+            "/v1/projects",
+            json={"name": "Cloud documents", "residency": "local_only"},
+        )
+        project_response.raise_for_status()
+        project = project_response.json()["project"]
+        conversation_response = await client.post(
+            "/v1/conversations",
+            json={"project_id": project["id"], "workspace_type": "project_chat"},
+        )
+        conversation_response.raise_for_status()
+        task_response = await client.post(
+            "/v1/tasks",
+            json={
+                "conversation_id": conversation_response.json()["id"],
+                "user_request": "Search managed documents",
+                "operation_mode": "continue_current_chat_draft",
+                "execution_target": "local",
+                "idempotency_key": "http:documents:task",
+            },
+        )
+        task_response.raise_for_status()
+        task = task_response.json()["task"]
+        imported_response = await client.post(
+            "/v1/documents/import",
+            headers={"Idempotency-Key": "http:documents:import"},
+            json={
+                "task_id": task["id"],
+                "filename": "evidence.txt",
+                "media_type": "text/plain",
+                "content_base64": base64.b64encode(b"Cloud document sentinel").decode(),
+                "visibility": "conversation",
+                "idempotency_key": "http:documents:import",
+                "user_confirmed": True,
+            },
+        )
+        imported_response.raise_for_status()
+        imported = imported_response.json()
+        document_id = imported["document"]["id"]
+
+        listed = await client.get("/v1/documents", params={"task_id": task["id"]})
+        fetched = await client.get(
+            f"/v1/documents/{document_id}",
+            params={"task_id": task["id"]},
+        )
+        searched = await client.post(
+            "/v1/documents/search",
+            json={"task_id": task["id"], "query": "sentinel", "limit": 10},
+        )
+        deleted = await client.post(
+            f"/v1/documents/{document_id}/delete",
+            headers={"Idempotency-Key": "http:documents:delete"},
+            json={
+                "task_id": task["id"],
+                "document_id": document_id,
+                "idempotency_key": "http:documents:delete",
+                "user_confirmed": True,
+            },
+        )
+
+        for response in (listed, fetched, searched, deleted):
+            response.raise_for_status()
+        assert listed.json()["items"] == [imported]
+        assert fetched.json() == imported
+        assert searched.json()["items"][0]["document"] == imported["document"]
+        assert deleted.json()["document"]["status"] == "deleted"
+        assert "storage_location" not in imported["document"]
 
 
 @pytest.mark.asyncio

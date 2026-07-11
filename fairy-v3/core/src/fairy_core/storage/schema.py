@@ -649,6 +649,172 @@ artifacts = Table(
     ),
 )
 
+documents = Table(
+    "core_documents",
+    state_metadata,
+    _tenant_id(),
+    _id(),
+    Column("project_id", String(ID_LENGTH)),
+    Column("conversation_id", String(ID_LENGTH), nullable=False),
+    Column("source_task_id", String(ID_LENGTH), nullable=False),
+    Column("version_id", String(ID_LENGTH)),
+    Column("filename", String(255), nullable=False),
+    Column("media_type", String(255), nullable=False),
+    Column("byte_length", BigInteger, nullable=False),
+    Column("content_hash", String(64), nullable=False),
+    Column("storage_location", String(4096), nullable=False),
+    Column("current_revision", Integer, nullable=False),
+    Column("visibility", String(32), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("idempotency_key", String(512), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_documents"),
+    UniqueConstraint(
+        "tenant_id",
+        "idempotency_key",
+        name="uq_core_documents_tenant_idempotency",
+    ),
+    CheckConstraint("byte_length >= 0", name="ck_core_documents_byte_length"),
+    CheckConstraint("current_revision > 0", name="ck_core_documents_current_revision"),
+    CheckConstraint(
+        "length(content_hash) = 64 AND content_hash = lower(content_hash)",
+        name="ck_core_documents_content_hash",
+    ),
+    CheckConstraint(
+        "visibility IN ('conversation', 'project')",
+        name="ck_core_documents_visibility",
+    ),
+    CheckConstraint(
+        "status IN ('active', 'deleted')",
+        name="ck_core_documents_status",
+    ),
+    CheckConstraint(
+        "visibility != 'project' OR project_id IS NOT NULL",
+        name="ck_core_documents_project_visibility",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "project_id"],
+        [projects.c.tenant_id, projects.c.id],
+        name="fk_core_documents_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "conversation_id"],
+        [conversations.c.tenant_id, conversations.c.id],
+        name="fk_core_documents_conversation",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "source_task_id"],
+        [tasks.c.tenant_id, tasks.c.id],
+        name="fk_core_documents_source_task",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "version_id"],
+        [versions.c.tenant_id, versions.c.id],
+        name="fk_core_documents_version",
+    ),
+)
+
+document_revisions = Table(
+    "core_document_revisions",
+    state_metadata,
+    _tenant_id(),
+    Column("document_id", String(ID_LENGTH), primary_key=True),
+    Column("revision", Integer, primary_key=True),
+    Column("content_hash", String(64), nullable=False),
+    Column("byte_length", BigInteger, nullable=False),
+    Column("media_type", String(255), nullable=False),
+    Column("parser", String(128), nullable=False),
+    Column("parser_version", String(128), nullable=False),
+    Column("section_count", Integer, nullable=False),
+    Column("chunk_count", Integer, nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint(
+        "tenant_id",
+        "document_id",
+        "revision",
+        name="pk_core_document_revisions",
+    ),
+    CheckConstraint("revision > 0", name="ck_core_document_revisions_revision"),
+    CheckConstraint("byte_length >= 0", name="ck_core_document_revisions_byte_length"),
+    CheckConstraint(
+        "section_count BETWEEN 1 AND 10000",
+        name="ck_core_document_revisions_section_count",
+    ),
+    CheckConstraint(
+        "chunk_count BETWEEN 1 AND 100000",
+        name="ck_core_document_revisions_chunk_count",
+    ),
+    CheckConstraint(
+        "length(content_hash) = 64 AND content_hash = lower(content_hash)",
+        name="ck_core_document_revisions_content_hash",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "document_id"],
+        [documents.c.tenant_id, documents.c.id],
+        name="fk_core_document_revisions_document",
+        ondelete="CASCADE",
+    ),
+)
+
+document_chunks = Table(
+    "core_document_chunks",
+    state_metadata,
+    _tenant_id(),
+    _id(),
+    Column("fts_rowid", BigInteger, nullable=False),
+    Column("document_id", String(ID_LENGTH), nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("revision_hash", String(64), nullable=False),
+    Column("ordinal", Integer, nullable=False),
+    Column("section_ordinal", Integer, nullable=False),
+    Column("locator", JSON, nullable=False),
+    Column("normalized_text", Text, nullable=False),
+    Column("content_hash", String(64), nullable=False),
+    Column("token_count", Integer, nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_document_chunks"),
+    UniqueConstraint(
+        "tenant_id",
+        "document_id",
+        "revision",
+        "ordinal",
+        name="uq_core_document_chunks_revision_ordinal",
+    ),
+    CheckConstraint("fts_rowid > 0", name="ck_core_document_chunks_fts_rowid"),
+    CheckConstraint("revision > 0", name="ck_core_document_chunks_revision"),
+    CheckConstraint("ordinal >= 0", name="ck_core_document_chunks_ordinal"),
+    CheckConstraint(
+        "section_ordinal >= 0",
+        name="ck_core_document_chunks_section_ordinal",
+    ),
+    CheckConstraint(
+        "token_count BETWEEN 1 AND 20000",
+        name="ck_core_document_chunks_token_count",
+    ),
+    CheckConstraint(
+        "length(revision_hash) = 64 AND revision_hash = lower(revision_hash)",
+        name="ck_core_document_chunks_revision_hash",
+    ),
+    CheckConstraint(
+        "length(content_hash) = 64 AND content_hash = lower(content_hash)",
+        name="ck_core_document_chunks_content_hash",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "document_id", "revision"],
+        [
+            document_revisions.c.tenant_id,
+            document_revisions.c.document_id,
+            document_revisions.c.revision,
+        ],
+        name="fk_core_document_chunks_revision",
+        ondelete="CASCADE",
+    ),
+)
+
 research_evidence = Table(
     "core_research_evidence",
     state_metadata,
@@ -766,6 +932,38 @@ Index(
     artifacts.c.tenant_id,
     artifacts.c.task_id,
     artifacts.c.created_at,
+)
+Index(
+    "ix_core_documents_tenant_conversation",
+    documents.c.tenant_id,
+    documents.c.conversation_id,
+    documents.c.status,
+    documents.c.created_at,
+)
+Index(
+    "ix_core_documents_tenant_project",
+    documents.c.tenant_id,
+    documents.c.project_id,
+    documents.c.status,
+    documents.c.created_at,
+)
+Index(
+    "ix_core_document_revisions_tenant_document",
+    document_revisions.c.tenant_id,
+    document_revisions.c.document_id,
+    document_revisions.c.revision,
+)
+Index(
+    "ix_core_document_chunks_tenant_document",
+    document_chunks.c.tenant_id,
+    document_chunks.c.document_id,
+    document_chunks.c.revision,
+    document_chunks.c.ordinal,
+)
+Index(
+    "uq_core_document_chunks_fts_rowid",
+    document_chunks.c.fts_rowid,
+    unique=True,
 )
 Index(
     "ix_core_research_evidence_tenant_artifact",

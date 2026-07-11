@@ -949,6 +949,380 @@
         "title": "ConversationPageModel",
         "type": "object"
       },
+      "DocumentChunkModel": {
+        "additionalProperties": false,
+        "properties": {
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "locator": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Locator",
+            "type": "object"
+          },
+          "ordinal": {
+            "minimum": 0.0,
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "revision_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Revision Hash",
+            "type": "string"
+          },
+          "section_ordinal": {
+            "minimum": 0.0,
+            "title": "Section Ordinal",
+            "type": "integer"
+          },
+          "text": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "token_count": {
+            "maximum": 20000.0,
+            "minimum": 1.0,
+            "title": "Token Count",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "document_id",
+          "revision",
+          "revision_hash",
+          "ordinal",
+          "section_ordinal",
+          "locator",
+          "text",
+          "content_hash",
+          "token_count",
+          "updated_at"
+        ],
+        "title": "DocumentChunkModel",
+        "type": "object"
+      },
+      "DocumentContextModel": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/ManagedDocumentModel"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/DocumentRevisionModel"
+          }
+        },
+        "required": [
+          "document",
+          "revision"
+        ],
+        "title": "DocumentContextModel",
+        "type": "object"
+      },
+      "DocumentDeleteInput": {
+        "additionalProperties": false,
+        "properties": {
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "user_confirmed": {
+            "title": "User Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "document_id",
+          "idempotency_key",
+          "user_confirmed"
+        ],
+        "title": "DocumentDeleteInput",
+        "type": "object"
+      },
+      "DocumentImportInput": {
+        "additionalProperties": false,
+        "properties": {
+          "content_base64": {
+            "maxLength": 28000000,
+            "minLength": 1,
+            "title": "Content Base64",
+            "type": "string"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "media_type": {
+            "maxLength": 255,
+            "minLength": 3,
+            "title": "Media Type",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "user_confirmed": {
+            "title": "User Confirmed",
+            "type": "boolean"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/DocumentVisibility"
+          }
+        },
+        "required": [
+          "task_id",
+          "filename",
+          "media_type",
+          "content_base64",
+          "visibility",
+          "idempotency_key",
+          "user_confirmed"
+        ],
+        "title": "DocumentImportInput",
+        "type": "object"
+      },
+      "DocumentPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentContextModel"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "DocumentPageModel",
+        "type": "object"
+      },
+      "DocumentRevisionModel": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_length": {
+            "minimum": 0.0,
+            "title": "Byte Length",
+            "type": "integer"
+          },
+          "chunk_count": {
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Chunk Count",
+            "type": "integer"
+          },
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "media_type": {
+            "maxLength": 255,
+            "minLength": 3,
+            "title": "Media Type",
+            "type": "string"
+          },
+          "parser": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Parser",
+            "type": "string"
+          },
+          "parser_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Parser Version",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "section_count": {
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Section Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "document_id",
+          "revision",
+          "content_hash",
+          "byte_length",
+          "media_type",
+          "parser",
+          "parser_version",
+          "section_count",
+          "chunk_count",
+          "created_at"
+        ],
+        "title": "DocumentRevisionModel",
+        "type": "object"
+      },
+      "DocumentSearchHitModel": {
+        "additionalProperties": false,
+        "properties": {
+          "chunk": {
+            "$ref": "#/components/schemas/DocumentChunkModel"
+          },
+          "document": {
+            "$ref": "#/components/schemas/ManagedDocumentModel"
+          },
+          "exact_match": {
+            "title": "Exact Match",
+            "type": "boolean"
+          },
+          "lexical_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Lexical Score",
+            "type": "number"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/DocumentRevisionModel"
+          }
+        },
+        "required": [
+          "document",
+          "revision",
+          "chunk",
+          "lexical_score",
+          "exact_match"
+        ],
+        "title": "DocumentSearchHitModel",
+        "type": "object"
+      },
+      "DocumentSearchInput": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 10,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "query"
+        ],
+        "title": "DocumentSearchInput",
+        "type": "object"
+      },
+      "DocumentSearchPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentSearchHitModel"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "DocumentSearchPageModel",
+        "type": "object"
+      },
+      "DocumentStatus": {
+        "enum": [
+          "active",
+          "deleted"
+        ],
+        "title": "DocumentStatus",
+        "type": "string"
+      },
+      "DocumentVisibility": {
+        "enum": [
+          "conversation",
+          "project"
+        ],
+        "title": "DocumentVisibility",
+        "type": "string"
+      },
       "EventEnvelopeModel": {
         "additionalProperties": false,
         "properties": {
@@ -1134,6 +1508,118 @@
           "protocol"
         ],
         "title": "HealthModel",
+        "type": "object"
+      },
+      "ManagedDocumentModel": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_length": {
+            "minimum": 0.0,
+            "title": "Byte Length",
+            "type": "integer"
+          },
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "current_revision": {
+            "minimum": 1.0,
+            "title": "Current Revision",
+            "type": "integer"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "media_type": {
+            "maxLength": 255,
+            "minLength": 3,
+            "title": "Media Type",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "source_task_id": {
+            "format": "uuid",
+            "title": "Source Task Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DocumentStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/DocumentVisibility"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "conversation_id",
+          "source_task_id",
+          "version_id",
+          "filename",
+          "media_type",
+          "byte_length",
+          "content_hash",
+          "current_revision",
+          "visibility",
+          "status",
+          "idempotency_key",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ManagedDocumentModel",
         "type": "object"
       },
       "MemoryAuthority": {
@@ -5369,6 +5855,365 @@
           }
         ],
         "summary": "Get Conversation"
+      }
+    },
+    "/v1/documents": {
+      "get": {
+        "operationId": "documents.list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Documents"
+      }
+    },
+    "/v1/documents/import": {
+      "post": {
+        "operationId": "documents.import",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentImportInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentContextModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Import Document"
+      }
+    },
+    "/v1/documents/search": {
+      "post": {
+        "operationId": "documents.search",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentSearchInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentSearchPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Documents"
+      }
+    },
+    "/v1/documents/{document_id}": {
+      "get": {
+        "operationId": "documents.get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentContextModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Document"
+      }
+    },
+    "/v1/documents/{document_id}/delete": {
+      "post": {
+        "operationId": "documents.delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentDeleteInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentContextModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Document"
       }
     },
     "/v1/events": {

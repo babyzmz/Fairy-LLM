@@ -15,6 +15,7 @@ from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
+from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
 from fairy_core.persistence.data_directory_lock import DataDirectoryLock
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
@@ -37,6 +38,8 @@ def build_local_service(
     provider_registry: ProviderRegistry | None = None,
     tool_executor: ToolExecutor | None = None,
     research_fetch_port: FetchPort | None = None,
+    document_parser: DocumentParser | None = None,
+    document_blob_store: DocumentBlobStore | None = None,
 ) -> CoreService:
     data_dir.mkdir(parents=True, exist_ok=True)
     resources = ExitStack()
@@ -102,6 +105,8 @@ def build_local_service(
             provider_registry=provider_registry,
             tool_executor=tool_executor,
             research_fetch_port=research_fetch_port,
+            document_parser=document_parser,
+            document_blob_store=document_blob_store,
             runtime_application=runtime_application,
             on_close=resources.close,
         )
@@ -118,6 +123,8 @@ def build_local_dispatcher(
     provider_registry: ProviderRegistry | None = None,
     tool_executor: ToolExecutor | None = None,
     research_fetch_port: FetchPort | None = None,
+    document_parser: DocumentParser | None = None,
+    document_blob_store: DocumentBlobStore | None = None,
 ) -> JsonRpcDispatcher:
     return JsonRpcDispatcher(
         build_local_service(
@@ -127,6 +134,8 @@ def build_local_dispatcher(
             provider_registry=provider_registry,
             tool_executor=tool_executor,
             research_fetch_port=research_fetch_port,
+            document_parser=document_parser,
+            document_blob_store=document_blob_store,
         )
     )
 

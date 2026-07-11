@@ -226,6 +226,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Documents */
+        get: operations["documents.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/documents/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Document */
+        post: operations["documents.import"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/documents/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search Documents */
+        post: operations["documents.search"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Document */
+        get: operations["documents.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/documents/{document_id}/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete Document */
+        post: operations["documents.delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/events": {
         parameters: {
             query?: never;
@@ -1236,6 +1321,157 @@ export interface components {
             /** Next Cursor */
             next_cursor: string | null;
         };
+        /** DocumentChunkModel */
+        DocumentChunkModel: {
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Locator */
+            locator: {
+                [key: string]: string | number;
+            };
+            /** Ordinal */
+            ordinal: number;
+            /** Revision */
+            revision: number;
+            /** Revision Hash */
+            revision_hash: string;
+            /** Section Ordinal */
+            section_ordinal: number;
+            /** Text */
+            text: string;
+            /** Token Count */
+            token_count: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** DocumentContextModel */
+        DocumentContextModel: {
+            document: components["schemas"]["ManagedDocumentModel"];
+            revision: components["schemas"]["DocumentRevisionModel"];
+        };
+        /** DocumentDeleteInput */
+        DocumentDeleteInput: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+        };
+        /** DocumentImportInput */
+        DocumentImportInput: {
+            /** Content Base64 */
+            content_base64: string;
+            /** Filename */
+            filename: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Media Type */
+            media_type: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+            visibility: components["schemas"]["DocumentVisibility"];
+        };
+        /** DocumentPageModel */
+        DocumentPageModel: {
+            /** Items */
+            items: components["schemas"]["DocumentContextModel"][];
+        };
+        /** DocumentRevisionModel */
+        DocumentRevisionModel: {
+            /** Byte Length */
+            byte_length: number;
+            /** Chunk Count */
+            chunk_count: number;
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Media Type */
+            media_type: string;
+            /** Parser */
+            parser: string;
+            /** Parser Version */
+            parser_version: string;
+            /** Revision */
+            revision: number;
+            /** Section Count */
+            section_count: number;
+        };
+        /** DocumentSearchHitModel */
+        DocumentSearchHitModel: {
+            chunk: components["schemas"]["DocumentChunkModel"];
+            document: components["schemas"]["ManagedDocumentModel"];
+            /** Exact Match */
+            exact_match: boolean;
+            /** Lexical Score */
+            lexical_score: number;
+            revision: components["schemas"]["DocumentRevisionModel"];
+        };
+        /** DocumentSearchInput */
+        DocumentSearchInput: {
+            /**
+             * Limit
+             * @default 10
+             */
+            limit: number;
+            /** Query */
+            query: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /** DocumentSearchPageModel */
+        DocumentSearchPageModel: {
+            /** Items */
+            items: components["schemas"]["DocumentSearchHitModel"][];
+        };
+        /**
+         * DocumentStatus
+         * @enum {string}
+         */
+        DocumentStatus: "active" | "deleted";
+        /**
+         * DocumentVisibility
+         * @enum {string}
+         */
+        DocumentVisibility: "conversation" | "project";
         /** EventEnvelopeModel */
         EventEnvelopeModel: {
             /**
@@ -1310,6 +1546,52 @@ export interface components {
             service: string;
             /** Status */
             status: string;
+        };
+        /** ManagedDocumentModel */
+        ManagedDocumentModel: {
+            /** Byte Length */
+            byte_length: number;
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Current Revision */
+            current_revision: number;
+            /** Filename */
+            filename: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Media Type */
+            media_type: string;
+            /** Project Id */
+            project_id: string | null;
+            /**
+             * Source Task Id
+             * Format: uuid
+             */
+            source_task_id: string;
+            status: components["schemas"]["DocumentStatus"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version Id */
+            version_id: string | null;
+            visibility: components["schemas"]["DocumentVisibility"];
         };
         /**
          * MemoryAuthority
@@ -2908,6 +3190,184 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "documents.list": {
+        parameters: {
+            query: {
+                task_id: string;
+                limit?: number;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "documents.import": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentImportInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentContextModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "documents.search": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentSearchInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentSearchPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "documents.get": {
+        parameters: {
+            query: {
+                task_id: string;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentContextModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "documents.delete": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentDeleteInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentContextModel"];
                 };
             };
             /** @description Validation Error */

@@ -38,6 +38,11 @@ from fairy_core.contracts.models import (
     ConversationCreate,
     ConversationIdInput,
     ConversationListInput,
+    DocumentDeleteInput,
+    DocumentIdInput,
+    DocumentImportInput,
+    DocumentListInput,
+    DocumentSearchInput,
     MemoryClaimGetInput,
     MemoryClaimPromoteInput,
     MemoryClaimQuery,
@@ -68,6 +73,8 @@ from fairy_core.contracts.models import (
     VersionIdInput,
     VersionListInput,
 )
+from fairy_core.documents.application import DocumentApplication, DocumentToolExecutor
+from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
 from fairy_core.domain.errors import InvalidTransitionError, MemoryScopeViolationError
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
@@ -103,6 +110,8 @@ class CoreService:
         provider_registry: ProviderRegistry | None = None,
         tool_executor: ToolExecutor | None = None,
         research_fetch_port: FetchPort | None = None,
+        document_parser: DocumentParser | None = None,
+        document_blob_store: DocumentBlobStore | None = None,
         runtime_application: RuntimeApplication | None = None,
         on_close: Callable[[], None] | None = None,
     ) -> None:
@@ -134,6 +143,22 @@ class CoreService:
                 ),
                 delegate=tool_executor,
             )
+        if (document_parser is None) != (document_blob_store is None):
+            raise ValueError("document parser and blob store must be configured together")
+        self._document_application = None
+        if document_parser is not None and document_blob_store is not None:
+            self._document_application = DocumentApplication(
+                unit_of_work_factory=unit_of_work_factory,
+                registry=registry,
+                command_policy=PolicyEngine(registry),
+                scope_resolver=application.scope_for_task,
+                parser=document_parser,
+                blob_store=document_blob_store,
+            )
+            effective_tool_executor = DocumentToolExecutor(
+                application=self._document_application,
+                delegate=effective_tool_executor,
+            )
         self._tool_executor = effective_tool_executor
         self._assistant_application = AssistantApplication(
             unit_of_work_factory=unit_of_work_factory,
@@ -158,6 +183,11 @@ class CoreService:
             "conversations.create": self._create_conversation,
             "conversations.get": self._get_conversation,
             "conversations.list": self._list_conversations,
+            "documents.delete": self._delete_document,
+            "documents.get": self._get_document,
+            "documents.import": self._import_document,
+            "documents.list": self._list_documents,
+            "documents.search": self._search_documents,
             "events.subscribe": self._subscribe_events,
             "health": self._health,
             "memory.claims.get": self._get_memory_claim,
@@ -323,6 +353,26 @@ class CoreService:
             limit=validated.limit,
             cursor=validated.cursor,
         )
+
+    def _import_document(self, request: BaseModel) -> Any:
+        return self._documents().import_document(cast(DocumentImportInput, request))
+
+    def _get_document(self, request: BaseModel) -> Any:
+        return self._documents().get_document(cast(DocumentIdInput, request))
+
+    def _list_documents(self, request: BaseModel) -> Any:
+        return self._documents().list_documents(cast(DocumentListInput, request))
+
+    def _search_documents(self, request: BaseModel) -> Any:
+        return self._documents().search_documents(cast(DocumentSearchInput, request))
+
+    def _delete_document(self, request: BaseModel) -> Any:
+        return self._documents().delete_document(cast(DocumentDeleteInput, request))
+
+    def _documents(self) -> DocumentApplication:
+        if self._document_application is None:
+            raise RuntimeError("Managed document capability is unavailable")
+        return self._document_application
 
     def _observe_memory(self, request: BaseModel) -> Any:
         return self._memory_application.observe(cast(MemoryObserveInput, request))
