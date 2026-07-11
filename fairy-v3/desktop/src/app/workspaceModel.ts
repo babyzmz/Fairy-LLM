@@ -9,16 +9,21 @@ import type {
   Conversation,
   CoreClient,
   EventEnvelope,
+  ExecutionSettings,
   Message,
+  McpServer,
+  McpToolPolicyInput,
   PreviewContext,
   Project,
   ProviderHealth,
   ProviderProfile,
   RuntimeHealth,
+  Skill,
   Task,
   Version,
 } from "../core/client";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
+import type { McpServerDraft } from "../settings/extensionTypes";
 
 export type WorkspaceMode = "project" | "chat";
 export type PermissionProfile = "observe" | "standard" | "autonomous";
@@ -35,6 +40,13 @@ export interface WorkspaceClient extends AssistantTurnClient {
   capabilities: Pick<CoreClient["capabilities"], "get">;
   permissions: Pick<CoreClient["permissions"], "get" | "update">;
   providers: Pick<CoreClient["providers"], "list" | "health">;
+  skills: Pick<CoreClient["skills"], "list">;
+  mcp: {
+    servers: Pick<
+      CoreClient["mcp"]["servers"],
+      "list" | "configure" | "discover" | "accept" | "setEnabled" | "delete"
+    >;
+  };
   messages: Pick<CoreClient["messages"], "list">;
   voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
   events: Pick<CoreClient["events"], "subscribe">;
@@ -47,7 +59,8 @@ export interface WorkspaceModel {
   errorMessage: string | null;
   actionError: string | null;
   isActing: boolean;
-  permissionProfile: PermissionProfile;
+  permissionProfile: PermissionProfile | null;
+  permissionSettings: ExecutionSettings | null;
   developerMode: boolean;
   projects: Project[];
   conversations: Conversation[];
@@ -61,6 +74,8 @@ export interface WorkspaceModel {
   messages: Message[];
   providers: ProviderProfile[];
   providerHealth: ProviderHealth[];
+  skills: Skill[];
+  mcpServers: McpServer[];
   selectedProfileId: string | null;
   selectedProject: Project | null;
   selectedConversation: Conversation | null;
@@ -78,7 +93,13 @@ export interface WorkspaceModel {
   projectBusy: boolean;
   projectError: string | null;
   setMode(mode: WorkspaceMode): void;
-  setPermissionProfile(profile: PermissionProfile): void;
+  setPermissionProfile(profile: PermissionProfile): Promise<void>;
+  setCapabilityEnabled(name: string, enabled: boolean): Promise<void>;
+  configureMcpServer(input: McpServerDraft): Promise<void>;
+  discoverMcpServer(serverId: string): Promise<void>;
+  acceptMcpServer(serverId: string, tools: McpToolPolicyInput[]): Promise<void>;
+  setMcpServerEnabled(serverId: string, enabled: boolean): Promise<void>;
+  deleteMcpServer(serverId: string): Promise<void>;
   setDeveloperMode(enabled: boolean): void;
   selectProfile(profileId: string): void;
   selectProject(projectId: string): void;
@@ -111,6 +132,8 @@ export interface WorkspaceModel {
 }
 
 const workspaceKey = ["workspace"] as const;
+const permissionQueryKey = [...workspaceKey, "permissions"] as const;
+const capabilityQueryKey = [...workspaceKey, "capabilities"] as const;
 const terminalAssistantEvents = new Set([
   "assistant.turn.completed",
   "assistant.turn.cancelled",
@@ -155,12 +178,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     refetchOnWindowFocus: false,
   });
   const permissionsQuery = useQuery({
-    queryKey: [...workspaceKey, "permissions"],
+    queryKey: permissionQueryKey,
     queryFn: () => client.permissions.get(),
     enabled: healthQuery.isSuccess,
     retry: false,
   });
-  const permissionProfile = permissionsQuery.data?.profile ?? "standard";
+  const permissionProfile = permissionsQuery.data?.profile ?? null;
   const projectsQuery = useQuery({
     queryKey: [...workspaceKey, "projects"],
     queryFn: () => client.projects.list({ limit: 100 }),
@@ -176,6 +199,18 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const providersQuery = useQuery({
     queryKey: [...workspaceKey, "providers"],
     queryFn: () => client.providers.list(),
+    enabled: healthQuery.isSuccess,
+    retry: false,
+  });
+  const skillsQuery = useQuery({
+    queryKey: [...workspaceKey, "skills"],
+    queryFn: () => client.skills.list(),
+    enabled: healthQuery.isSuccess,
+    retry: false,
+  });
+  const mcpServersQuery = useQuery({
+    queryKey: [...workspaceKey, "mcp-servers"],
+    queryFn: () => client.mcp.servers.list(),
     enabled: healthQuery.isSuccess,
     retry: false,
   });
@@ -277,7 +312,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
   const capabilitiesQuery = useQuery({
-    queryKey: [...workspaceKey, "capabilities", permissionsQuery.data?.revision],
+    queryKey: [...capabilityQueryKey, permissionsQuery.data?.revision],
     queryFn: () => client.capabilities.get(),
     enabled: permissionsQuery.isSuccess,
     retry: false,
@@ -362,20 +397,187 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     [invalidateWorkspace],
   );
 
-  const setPermissionProfile = useCallback(
-    (profile: PermissionProfile) => {
+  const persistPermissions = useCallback(
+    async (
+      profile: PermissionProfile,
+      capabilityOverrides: Record<string, boolean>,
+    ): Promise<void> => {
       const current = permissionsQuery.data;
-      if (current === undefined || current.profile === profile) return;
-      void runAction(() =>
-        client.permissions.update({
-          profile,
-          capability_overrides: current.capability_overrides,
-          expected_revision: current.revision,
-          idempotency_key: `permissions:${current.revision}:${profile}`,
-        }),
-      ).catch(() => undefined);
+      if (current === undefined) throw new Error("Core permission settings are unavailable");
+      if (
+        current.profile === profile &&
+        equalOverrides(current.capability_overrides, capabilityOverrides)
+      ) {
+        return;
+      }
+      try {
+        const updated = await runAction(() =>
+          client.permissions.update({
+            profile,
+            capability_overrides: capabilityOverrides,
+            expected_revision: current.revision,
+            idempotency_key: permissionUpdateKey(
+              current.revision,
+              profile,
+              capabilityOverrides,
+            ),
+          }),
+        );
+        queryClient.setQueryData(permissionQueryKey, updated);
+      } catch (error) {
+        if (coreErrorCode(error) !== "VERSION_CONFLICT") throw error;
+        await Promise.allSettled([
+          queryClient.refetchQueries({ queryKey: permissionQueryKey, exact: true }),
+          queryClient.invalidateQueries({ queryKey: capabilityQueryKey }),
+        ]);
+        const conflict = new Error(
+          "Permissions changed on another device. Latest settings loaded; review and retry.",
+        );
+        setActionError(conflict.message);
+        throw conflict;
+      }
     },
-    [client.permissions, permissionsQuery.data, runAction],
+    [client.permissions, permissionsQuery.data, queryClient, runAction],
+  );
+
+  const setPermissionProfile = useCallback(
+    async (profile: PermissionProfile): Promise<void> => {
+      const current = permissionsQuery.data;
+      if (current === undefined) throw new Error("Core permission settings are unavailable");
+      await persistPermissions(profile, current.capability_overrides);
+    },
+    [permissionsQuery.data, persistPermissions],
+  );
+
+  const setCapabilityEnabled = useCallback(
+    async (name: string, enabled: boolean): Promise<void> => {
+      const current = permissionsQuery.data;
+      const known = capabilitiesQuery.data?.command_metadata.some(
+        (definition) => definition.name === name && definition.model_visible,
+      );
+      if (current === undefined || !known) {
+        throw new Error("Core capability metadata is unavailable");
+      }
+      const overrides = { ...current.capability_overrides };
+      if (enabled) delete overrides[name];
+      else overrides[name] = false;
+      await persistPermissions(current.profile, overrides);
+    },
+    [capabilitiesQuery.data?.command_metadata, permissionsQuery.data, persistPermissions],
+  );
+
+  const configureMcpServer = useCallback(
+    async (input: McpServerDraft): Promise<void> => {
+      const current = mcpServersQuery.data?.items.find(
+        (server) => server.server_id === input.serverId,
+      );
+      const expectedRevision = current?.revision ?? 0;
+      await runAction(() =>
+        client.mcp.servers.configure({
+          server_id: input.serverId,
+          display_name: input.displayName,
+          transport: input.transport,
+          command: input.command,
+          arguments: input.arguments,
+          endpoint: input.endpoint,
+          credential_ref: input.credentialRef,
+          environment_refs: input.environmentRefs,
+          expected_revision: expectedRevision,
+          idempotency_key: extensionUpdateKey(
+            "configure",
+            input.serverId,
+            expectedRevision,
+            input,
+          ),
+        }),
+      );
+    },
+    [client.mcp.servers, mcpServersQuery.data?.items, runAction],
+  );
+
+  const discoverMcpServer = useCallback(
+    async (serverId: string): Promise<void> => {
+      const current = requireMcpServer(mcpServersQuery.data?.items, serverId);
+      const taskId = selectedTask?.id ?? chatTaskId;
+      if (taskId === null) throw new Error("A durable Task is required to discover MCP tools");
+      await runAction(() =>
+        client.mcp.servers.discover({
+          server_id: serverId,
+          task_id: taskId,
+          expected_revision: current.revision,
+          idempotency_key: extensionUpdateKey(
+            "discover",
+            serverId,
+            current.revision,
+            { taskId },
+          ),
+        }),
+      );
+    }, [chatTaskId, client.mcp.servers, mcpServersQuery.data?.items, runAction, selectedTask?.id],
+  );
+
+  const acceptMcpServer = useCallback(
+    async (serverId: string, tools: McpToolPolicyInput[]): Promise<void> => {
+      const current = requireMcpServer(mcpServersQuery.data?.items, serverId);
+      if (current.pending_schema_digest === null) {
+        throw new Error("MCP server has no pending schema to accept");
+      }
+      await runAction(() =>
+        client.mcp.servers.accept({
+          server_id: serverId,
+          expected_revision: current.revision,
+          schema_digest: current.pending_schema_digest as string,
+          enabled: true,
+          tools,
+          idempotency_key: extensionUpdateKey(
+            "accept",
+            serverId,
+            current.revision,
+            tools,
+          ),
+        }),
+      );
+    },
+    [client.mcp.servers, mcpServersQuery.data?.items, runAction],
+  );
+
+  const setMcpServerEnabled = useCallback(
+    async (serverId: string, enabled: boolean): Promise<void> => {
+      const current = requireMcpServer(mcpServersQuery.data?.items, serverId);
+      await runAction(() =>
+        client.mcp.servers.setEnabled({
+          server_id: serverId,
+          expected_revision: current.revision,
+          enabled,
+          idempotency_key: extensionUpdateKey(
+            enabled ? "enable" : "disable",
+            serverId,
+            current.revision,
+            { enabled },
+          ),
+        }),
+      );
+    },
+    [client.mcp.servers, mcpServersQuery.data?.items, runAction],
+  );
+
+  const deleteMcpServer = useCallback(
+    async (serverId: string): Promise<void> => {
+      const current = requireMcpServer(mcpServersQuery.data?.items, serverId);
+      await runAction(() =>
+        client.mcp.servers.delete({
+          server_id: serverId,
+          expected_revision: current.revision,
+          idempotency_key: extensionUpdateKey(
+            "delete",
+            serverId,
+            current.revision,
+            {},
+          ),
+        }),
+      );
+    },
+    [client.mcp.servers, mcpServersQuery.data?.items, runAction],
   );
 
   const actions = useMemo(
@@ -507,6 +709,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     conversationsQuery.error,
     providersQuery.error,
     providerHealthQuery.error,
+    skillsQuery.error,
+    mcpServersQuery.error,
     tasksQuery.error,
     messagesQuery.error,
     versionsQuery.error,
@@ -525,6 +729,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         conversationsQuery.isPending ||
         providersQuery.isPending ||
         providerHealthQuery.isPending)) ||
+    (healthQuery.isSuccess && (skillsQuery.isPending || mcpServersQuery.isPending)) ||
     (selectedProject !== null && conversationsQuery.isPending) ||
     (selectedConversation !== null && tasksQuery.isPending) ||
     (selectedChatConversation !== null && messagesQuery.isPending);
@@ -545,6 +750,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     actionError,
     isActing,
     permissionProfile,
+    permissionSettings: permissionsQuery.data ?? null,
     developerMode,
     projects,
     conversations,
@@ -560,6 +766,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     messages,
     providers,
     providerHealth,
+    skills: skillsQuery.data?.items ?? [],
+    mcpServers: mcpServersQuery.data?.items ?? [],
     selectedProfileId,
     selectedProject,
     selectedConversation,
@@ -578,6 +786,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     projectError: projectAssistant.error,
     setMode,
     setPermissionProfile,
+    setCapabilityEnabled,
+    configureMcpServer,
+    discoverMcpServer,
+    acceptMcpServer,
+    setMcpServerEnabled,
+    deleteMcpServer,
     setDeveloperMode,
     selectProfile: setProfileSelection,
     selectProject: actions.selectProject,
@@ -632,6 +846,73 @@ function firstError(...errors: (Error | null)[]): Error | null {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Workspace request failed";
+}
+
+function coreErrorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null || !("errorCode" in error)) {
+    return null;
+  }
+  return typeof error.errorCode === "string" ? error.errorCode : null;
+}
+
+function equalOverrides(
+  left: Record<string, boolean>,
+  right: Record<string, boolean>,
+): boolean {
+  const leftEntries = Object.entries(left).sort(([a], [b]) => a.localeCompare(b));
+  const rightEntries = Object.entries(right).sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
+}
+
+function permissionUpdateKey(
+  revision: number,
+  profile: PermissionProfile,
+  overrides: Record<string, boolean>,
+): string {
+  const canonical = JSON.stringify({
+    profile,
+    overrides: Object.entries(overrides).sort(([a], [b]) => a.localeCompare(b)),
+  });
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(canonical)) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return `permissions:${revision}:${hash.toString(16).padStart(16, "0")}`;
+}
+
+function requireMcpServer(
+  servers: McpServer[] | undefined,
+  serverId: string,
+): McpServer {
+  const server = servers?.find((item) => item.server_id === serverId);
+  if (server === undefined) throw new Error("MCP server is unavailable");
+  return server;
+}
+
+function extensionUpdateKey(
+  operation: string,
+  serverId: string,
+  revision: number,
+  payload: unknown,
+): string {
+  const canonical = JSON.stringify(canonicalValue(payload));
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(canonical)) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return `mcp:${serverId}:${operation}:${revision}:${hash.toString(16).padStart(16, "0")}`;
+}
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalValue(item)]),
+  );
 }
 
 function readEventCursor(): number {

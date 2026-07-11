@@ -25,6 +25,7 @@ from fairy_core.runtime.models import (
     RuntimeExecutorError,
     RuntimeExecutorHealth,
     RuntimeProbeResult,
+    RuntimeRecoveryTarget,
     RuntimeStartResult,
     RuntimeStopResult,
     StaticRuntimeStart,
@@ -169,6 +170,9 @@ class FakeRuntimeExecutor:
         if isinstance(result, RuntimeExecutorError):
             raise result
         return result
+
+    def recovery_handle(self, target: RuntimeRecoveryTarget) -> str:
+        return f"static:{target.preview_id}"
 
     def stop(self, executor_handle: str) -> RuntimeStopResult:
         self.stop_calls.append(executor_handle)

@@ -17,6 +17,7 @@ from fairy_core.application.runtime import (
     PreviewStopRequest,
     RuntimeApplication,
 )
+from fairy_core.application.runtime_review import RuntimeReviewApplication
 from fairy_core.assistant.application import AssistantApplication
 from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
@@ -29,6 +30,13 @@ from fairy_core.commanding.settings import (
     SandboxHealthProvider,
 )
 from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
+from fairy_core.contracts.extensions import (
+    McpServerAcceptInput,
+    McpServerConfigureInput,
+    McpServerDeleteInput,
+    McpServerDiscoverInput,
+    McpServerSetEnabledInput,
+)
 from fairy_core.contracts.methods import CORE_METHODS, EventSubscribeInput
 from fairy_core.contracts.models import (
     ArtifactIdInput,
@@ -91,6 +99,8 @@ from fairy_core.execution.application import (
     ProjectExecutionApplication,
     ProjectExecutionToolExecutor,
 )
+from fairy_core.mcp.application import McpApplication
+from fairy_core.mcp.tools import McpToolExecutor
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
 from fairy_core.perception import ImageAttachment, ImageAttachmentStore
@@ -99,9 +109,12 @@ from fairy_core.providers import CancellationToken, ProviderCapability, Provider
 from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
 from fairy_core.research.ports import FetchPort
 from fairy_core.runtime.models import RuntimeExecutorError
+from fairy_core.runtime.review import RuntimeEvidenceStore, RuntimeReviewer
 from fairy_core.sandbox.archive import WorkspaceArchiveBuilder
 from fairy_core.sandbox.ports import SandboxExecutor
 from fairy_core.sandbox.tools import SandboxToolExecutor
+from fairy_core.skills.registry import SkillRegistry
+from fairy_core.skills.tools import SkillToolExecutor
 from fairy_core.system_actions.application import (
     SystemActionApplication,
     SystemActionToolExecutor,
@@ -144,9 +157,13 @@ class CoreService:
         document_parser: DocumentParser | None = None,
         document_blob_store: DocumentBlobStore | None = None,
         runtime_application: RuntimeApplication | None = None,
+        runtime_reviewer: RuntimeReviewer | None = None,
+        runtime_evidence_store: RuntimeEvidenceStore | None = None,
         system_action_worker: SystemActionWorker | None = None,
         sandbox_executor: SandboxExecutor | None = None,
         sandbox_health_provider: SandboxHealthProvider | None = None,
+        skill_registry: SkillRegistry | None = None,
+        mcp_application: McpApplication | None = None,
         default_execution_target: str = "local",
         on_close: Callable[[], None] | None = None,
     ) -> None:
@@ -155,6 +172,8 @@ class CoreService:
         self._application = application
         self._unit_of_work_factory = unit_of_work_factory
         self._registry = registry
+        self._skill_registry = skill_registry or SkillRegistry(registry)
+        self._mcp_application = mcp_application
         self._provider_registry = provider_registry or ProviderRegistry()
         self._voice_registry = voice_registry or VoiceRegistry()
         self._voice_application = VoiceApplication(
@@ -167,6 +186,21 @@ class CoreService:
         self._runtime_application = runtime_application
         self._default_execution_target = default_execution_target
         self._execution_policy = ExecutionPolicyResolver(sandbox_health_provider)
+        if (runtime_reviewer is None) != (runtime_evidence_store is None):
+            raise ValueError("Runtime reviewer and evidence store must be configured together")
+        self._runtime_review_application = (
+            RuntimeReviewApplication(
+                unit_of_work_factory=unit_of_work_factory,
+                reviewer=runtime_reviewer,
+                evidence_store=runtime_evidence_store,
+                registry=registry,
+                policy=PolicyEngine(registry),
+                scope_resolver=application.scope_for_task,
+                execution_policy=self._execution_policy,
+            )
+            if runtime_reviewer is not None and runtime_evidence_store is not None
+            else None
+        )
         self._project_execution_application = (
             ProjectExecutionApplication(
                 unit_of_work_factory=unit_of_work_factory,
@@ -250,6 +284,17 @@ class CoreService:
                 execution_target=default_execution_target,
                 delegate=effective_tool_executor,
             )
+        effective_tool_executor = SkillToolExecutor(
+            skills=self._skill_registry,
+            unit_of_work_factory=unit_of_work_factory,
+            delegate=effective_tool_executor,
+        )
+        if self._mcp_application is not None:
+            effective_tool_executor = McpToolExecutor(
+                application=self._mcp_application,
+                unit_of_work_factory=unit_of_work_factory,
+                delegate=effective_tool_executor,
+            )
         self._tool_executor = effective_tool_executor
         self._assistant_application = AssistantApplication(
             unit_of_work_factory=unit_of_work_factory,
@@ -294,6 +339,12 @@ class CoreService:
             "memory.projection.health": self._memory_projection_health,
             "memory.search": self._search_memory,
             "memory.snapshots.get": self._get_memory_snapshot,
+            "mcp.servers.accept": self._accept_mcp_server,
+            "mcp.servers.configure": self._configure_mcp_server,
+            "mcp.servers.delete": self._delete_mcp_server,
+            "mcp.servers.discover": self._discover_mcp_server,
+            "mcp.servers.list": self._list_mcp_servers,
+            "mcp.servers.set_enabled": self._set_mcp_server_enabled,
             "messages.list": self._list_messages,
             "projects.create": self._create_project,
             "projects.get": self._get_project,
@@ -309,6 +360,7 @@ class CoreService:
             "providers.list": self._list_providers,
             "runtimes.get": self._get_runtime,
             "runtimes.health": self._runtime_health,
+            "skills.list": self._list_skills,
             "system.actions.execute": self._execute_system_action,
             "tasks.create": self._create_task,
             "tasks.get": self._get_task,
@@ -399,6 +451,101 @@ class CoreService:
     def _provider_health(self, request: BaseModel) -> dict[str, Any]:
         validated = cast(ProviderHealthInput, request)
         return {"items": self._provider_registry.health(validated.profile_id)}
+
+    def _list_skills(self, _request: BaseModel) -> dict[str, Any]:
+        self._refresh_extensions()
+        with self._unit_of_work_factory() as unit_of_work:
+            policy = self._execution_policy.resolve(
+                unit_of_work.execution_settings,
+                execution_target=self._default_execution_target,
+            )
+        operations = self._registry.capability_manifest(
+            profile=policy.profile,
+            sandbox_healthy=policy.sandbox_healthy,
+            overrides=dict(policy.capability_overrides),
+        )
+        return {
+            "items": [
+                {
+                    "name": package.manifest.name,
+                    "version": package.manifest.version,
+                    "description": package.manifest.description,
+                    "tool_name": package.manifest.tool_name,
+                    "content_sha256": package.content_sha256,
+                    "required_capabilities": package.manifest.required_capabilities,
+                    "compatible_mcp_servers": package.manifest.compatible_mcp_servers,
+                    "provenance": package.manifest.provenance.model_dump(mode="json"),
+                    "available": operations.get(package.manifest.tool_name, False),
+                }
+                for package in self._skill_registry.packages()
+            ]
+        }
+
+    def _list_mcp_servers(self, _request: BaseModel) -> dict[str, Any]:
+        application = self._mcp()
+        return {
+            "items": [
+                self._mcp_server_payload(application, record)
+                for record in application.list_servers()
+            ]
+        }
+
+    def _configure_mcp_server(self, request: BaseModel) -> dict[str, Any]:
+        application = self._mcp()
+        record = application.configure(cast(McpServerConfigureInput, request))
+        return self._mcp_server_payload(application, record)
+
+    def _discover_mcp_server(self, request: BaseModel) -> dict[str, Any]:
+        application = self._mcp()
+        record = application.discover(cast(McpServerDiscoverInput, request))
+        return self._mcp_server_payload(application, record)
+
+    def _accept_mcp_server(self, request: BaseModel) -> dict[str, Any]:
+        application = self._mcp()
+        record = application.accept(cast(McpServerAcceptInput, request))
+        return self._mcp_server_payload(application, record)
+
+    def _set_mcp_server_enabled(self, request: BaseModel) -> dict[str, Any]:
+        application = self._mcp()
+        record = application.set_enabled(cast(McpServerSetEnabledInput, request))
+        return self._mcp_server_payload(application, record)
+
+    def _delete_mcp_server(self, request: BaseModel) -> dict[str, Any]:
+        server_id = self._mcp().delete(cast(McpServerDeleteInput, request))
+        return {"server_id": server_id, "deleted": True}
+
+    def _mcp(self) -> McpApplication:
+        if self._mcp_application is None:
+            raise RuntimeError("MCP extensions are unavailable")
+        return self._mcp_application
+
+    @staticmethod
+    def _mcp_server_payload(
+        application: McpApplication,
+        record,
+    ) -> dict[str, Any]:
+        connection = record.connection
+        return {
+            "server_id": connection.server_id,
+            "display_name": connection.display_name,
+            "transport": connection.transport,
+            "command": connection.command,
+            "arguments": connection.arguments,
+            "endpoint": connection.endpoint,
+            "credential_configured": application.credential_configured(record),
+            "environment_names": tuple(sorted(connection.environment_refs)),
+            "enabled": record.enabled,
+            "status": record.status,
+            "accepted_schema_digest": record.accepted_schema_digest,
+            "pending_schema_digest": record.pending_schema_digest,
+            "accepted_tools": tuple(tool.as_dict() for tool in record.accepted_tools),
+            "pending_tools": tuple(tool.as_dict() for tool in record.pending_tools),
+            "policies": tuple(policy.as_dict() for policy in record.policies),
+            "revision": record.revision,
+            "last_error_code": record.last_error_code,
+            "created_at": record.created_at.isoformat(),
+            "updated_at": record.updated_at.isoformat(),
+        }
 
     def _transcribe_voice(self, request: BaseModel) -> Any:
         return self._voice_application.transcribe(cast(VoiceTranscribeInput, request))
@@ -518,6 +665,7 @@ class CoreService:
                 continue
 
     def _run_assistant_turn(self, request: BaseModel) -> Any:
+        self._refresh_extensions()
         turn_id = cast(AssistantTurnRunInput, request).turn_id
         cancellation = CancellationToken()
         with self._turn_cancellation_lock:
@@ -713,6 +861,14 @@ class CoreService:
         task_id = cast(TaskIdInput, request).task_id
         if self._project_execution_application is not None:
             self._project_execution_application.run_review_suite(task_id)
+        if self._runtime_review_application is not None:
+            with self._unit_of_work_factory() as unit_of_work:
+                preview = unit_of_work.state.preview_for_task(
+                    task_id,
+                    include_terminal=True,
+                )
+            if preview is not None and preview.status.value == "ready":
+                self._runtime_review_application.review_task(task_id)
         return self._application.review_task(task_id)
 
     def _propose_changeset(self, request: BaseModel) -> Any:
@@ -844,21 +1000,24 @@ class CoreService:
         return self._application.discard_task_version(cast(TaskIdInput, request).task_id)
 
     def _get_capabilities(self, _request: BaseModel) -> dict[str, Any]:
+        self._refresh_extensions()
         with self._unit_of_work_factory() as unit_of_work:
             policy = self._execution_policy.resolve(
                 unit_of_work.execution_settings,
                 execution_target=self._default_execution_target,
             )
+        operations = self._registry.capability_manifest(
+            profile=policy.profile,
+            sandbox_healthy=policy.sandbox_healthy,
+            overrides=dict(policy.capability_overrides),
+        )
         return {
             "profile": policy.profile,
-            "operations": self._registry.capability_manifest(
-                profile=policy.profile,
-                sandbox_healthy=policy.sandbox_healthy,
-                overrides=dict(policy.capability_overrides),
-            ),
+            "operations": operations,
             "sandbox_healthy": policy.sandbox_healthy,
             "command_metadata": self._registry.frontend_metadata(),
-            "schema_version": 1,
+            "slash_commands": self._registry.slash_command_metadata(operations),
+            "schema_version": 3,
         }
 
     def _get_permissions(self, _request: BaseModel) -> Any:
@@ -866,6 +1025,7 @@ class CoreService:
             return unit_of_work.execution_settings.get()
 
     def _update_permissions(self, request: BaseModel) -> Any:
+        self._refresh_extensions()
         validated = cast(ExecutionSettingsUpdateInput, request)
         unknown = sorted(
             name for name in validated.capability_overrides if self._registry.get(name) is None
@@ -881,6 +1041,10 @@ class CoreService:
             )
             unit_of_work.commit()
         return changed
+
+    def _refresh_extensions(self) -> None:
+        if self._mcp_application is not None:
+            self._mcp_application.reload_registry()
 
     def _subscribe_events(self, request: BaseModel) -> dict[str, Any]:
         validated = cast(EventSubscribeInput, request)

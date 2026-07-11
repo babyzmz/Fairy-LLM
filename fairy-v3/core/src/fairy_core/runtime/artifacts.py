@@ -21,6 +21,11 @@ def ensure_preview_manifest(
     preview: PreviewSession,
     url: str,
     command_run_id: UUID | None,
+    adapter: str = "static",
+    dependency_key: str | None = None,
+    entry_path: str | None = "index.html",
+    readiness_path: str = "/",
+    workspace_generation: int | None = None,
 ) -> Artifact:
     expected_preview_id = str(preview.id)
     existing = next(
@@ -42,7 +47,11 @@ def ensure_preview_manifest(
         "kind": runtime.kind.value,
         "executor": runtime.executor,
         "execution_target": runtime.execution_target,
-        "entry_path": "index.html",
+        "adapter": adapter,
+        "dependency_key": dependency_key,
+        "entry_path": entry_path,
+        "readiness_path": readiness_path,
+        "workspace_generation": workspace_generation,
         "url": url,
         "command_run_id": str(command_run_id) if command_run_id is not None else None,
     }

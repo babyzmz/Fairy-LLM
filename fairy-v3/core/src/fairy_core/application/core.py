@@ -12,6 +12,11 @@ from sqlalchemy.exc import IntegrityError
 from fairy_core.application.approval import ApprovalApplication
 from fairy_core.application.errors import ApprovalRequiredError
 from fairy_core.application.recoverable_command import start_recoverable_core_command
+from fairy_core.application.replay_validation import (
+    normalize_idempotency_key,
+    validate_changeset_replay,
+    validate_task_replay,
+)
 from fairy_core.application.review_evidence import collect_checkpoint_evidence
 from fairy_core.application.scope import build_task_scope
 from fairy_core.commanding import CommandLedger, CommandRun, CommandStatus
@@ -20,7 +25,7 @@ from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.contracts.models import ChangesetProposal, TaskCreate
-from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
+from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.execution import (
     Approval,
     Changeset,
@@ -271,7 +276,7 @@ class CoreApplication:
         return conversation
 
     def create_task(self, request: TaskCreate) -> TaskContext:
-        idempotency_key = self._normalize_idempotency_key(request.idempotency_key)
+        idempotency_key = normalize_idempotency_key(request.idempotency_key)
         prepared = self._prepare_task_intent(
             request,
             idempotency_key=idempotency_key,
@@ -372,7 +377,7 @@ class CoreApplication:
             with self._transaction() as (unit_of_work, commands):
                 existing = unit_of_work.state.find_task_by_idempotency_key(idempotency_key)
                 if existing is not None:
-                    self._validate_task_replay(existing, request)
+                    validate_task_replay(existing, request)
                     return self._context_for(unit_of_work.state, existing)
 
                 conversation = self._require_conversation(
@@ -490,11 +495,11 @@ class CoreApplication:
                 existing = unit_of_work.state.find_task_by_idempotency_key(idempotency_key)
                 if existing is None:
                     raise
-                self._validate_task_replay(existing, request)
+                validate_task_replay(existing, request)
                 return self._context_for(unit_of_work.state, existing)
 
     def propose_changeset(self, request: ChangesetProposal) -> PendingChangeset:
-        idempotency_key = self._normalize_idempotency_key(request.idempotency_key)
+        idempotency_key = normalize_idempotency_key(request.idempotency_key)
         try:
             return self._propose_changeset_once(
                 request,
@@ -505,7 +510,7 @@ class CoreApplication:
                 existing = unit_of_work.state.find_changeset_by_idempotency_key(idempotency_key)
                 if existing is None:
                     raise
-                self._validate_changeset_replay(existing, request)
+                validate_changeset_replay(existing, request)
                 approval = unit_of_work.state.find_approval_by_changeset_id(existing.id)
                 if approval is None:
                     raise RuntimeError("changeset approval is missing") from conflict
@@ -520,7 +525,7 @@ class CoreApplication:
         with self._transaction() as (unit_of_work, commands):
             existing = unit_of_work.state.find_changeset_by_idempotency_key(idempotency_key)
             if existing is not None:
-                self._validate_changeset_replay(existing, request)
+                validate_changeset_replay(existing, request)
                 approval = unit_of_work.state.find_approval_by_changeset_id(existing.id)
                 if approval is None:
                     raise RuntimeError("changeset approval is missing")
@@ -799,6 +804,7 @@ class CoreApplication:
                 changed_files=evidence.changed_files,
                 command_run_ids=evidence.command_run_ids,
                 preview_artifact_id=evidence.preview_artifact_id,
+                evidence_artifact_ids=evidence.evidence_artifact_ids,
             )
             unit_of_work.state.save_checkpoint(checkpoint)
             persisted_task.transition_to(TaskStatus.READY)
@@ -1164,37 +1170,3 @@ class CoreApplication:
         if approval is None:
             raise KeyError(f"approval not found: {approval_id}")
         return approval
-
-    @staticmethod
-    def _normalize_idempotency_key(value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("idempotency_key is required")
-        return normalized
-
-    @staticmethod
-    def _validate_task_replay(existing: Task, request: TaskCreate) -> None:
-        if (
-            existing.conversation_id != request.conversation_id
-            or existing.user_request != request.user_request.strip()
-            or existing.operation_mode is not request.operation_mode
-            or existing.execution_target != request.execution_target.value
-        ):
-            raise IdempotencyConflictError(
-                "task idempotency key was already used for a different request"
-            )
-
-    @staticmethod
-    def _validate_changeset_replay(
-        existing: Changeset,
-        request: ChangesetProposal,
-    ) -> None:
-        if (
-            existing.task_id != request.task_id
-            or existing.files != tuple(mutation.path for mutation in request.files)
-            or existing.patches != tuple(mutation.content for mutation in request.files)
-            or existing.reason != request.reason.strip()
-        ):
-            raise IdempotencyConflictError(
-                "changeset idempotency key was already used for different mutations"
-            )

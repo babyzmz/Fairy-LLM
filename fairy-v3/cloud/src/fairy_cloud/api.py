@@ -10,6 +10,7 @@ from fairy_core.application.service import (
     CoreService,
 )
 from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
+from fairy_core.contracts.capabilities import CapabilityManifestModel
 from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.contracts.models import (
     ApprovalDecisionResultModel,
@@ -22,7 +23,6 @@ from fairy_core.contracts.models import (
     AssistantTurnModel,
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
-    CapabilityManifestModel,
     ChangesetProposal,
     CheckpointModel,
     ConversationCreate,
@@ -108,6 +108,8 @@ from starlette.types import Lifespan
 
 from fairy_cloud.auth import AuthenticationError, DenyAllAuthenticator
 from fairy_cloud.auth.models import Authenticator, RequestIdentity
+from fairy_cloud.mcp.routes import install_extension_routes
+from fairy_cloud.runtime.proxy import CloudPreviewProxy
 from fairy_cloud.storage.objects import (
     ImmutableObjectConflict,
     ObjectIntegrityError,
@@ -143,6 +145,19 @@ PUBLIC_ERROR_STATUS = {
     ErrorCode.MEMORY_FORGOTTEN.value: 410,
     ErrorCode.DOCUMENT_PROJECTION_STALE.value: 503,
     ErrorCode.DOCUMENT_INTEGRITY_FAILED.value: 409,
+    ErrorCode.MCP_CAPABILITY_MISSING.value: 409,
+    ErrorCode.MCP_CREDENTIAL_UNAVAILABLE.value: 503,
+    ErrorCode.MCP_DESTINATION_BLOCKED.value: 403,
+    ErrorCode.MCP_OUTPUT_INVALID.value: 502,
+    ErrorCode.MCP_OUTPUT_UNSUPPORTED.value: 502,
+    ErrorCode.MCP_PROTOCOL_MISMATCH.value: 409,
+    ErrorCode.MCP_RESULT_UNCERTAIN.value: 409,
+    ErrorCode.MCP_SCHEMA_CHANGED.value: 409,
+    ErrorCode.MCP_SCHEMA_INVALID.value: 409,
+    ErrorCode.MCP_TOOL_ERROR.value: 502,
+    ErrorCode.MCP_TRANSPORT_INTERRUPTED.value: 503,
+    ErrorCode.MCP_TRANSPORT_NOT_ALLOWED.value: 403,
+    ErrorCode.MCP_UNAVAILABLE.value: 503,
     "INVALID_STATE_TRANSITION": 409,
 }
 
@@ -158,10 +173,13 @@ def create_cloud_app(
     readiness: Callable[[], Awaitable[dict[str, Any]]] | None = None,
     lifespan: Lifespan[FastAPI] | None = None,
     service_resolver: Callable[[RequestIdentity], CoreService] | None = None,
+    preview_proxy: CloudPreviewProxy | None = None,
 ) -> FastAPI:
     if not 0 < event_poll_seconds <= 0.1:
         raise ValueError("event_poll_seconds must be within the 100 ms delivery budget")
     app = FastAPI(title="Fairy Cloud API", version="0.1.0", lifespan=lifespan)
+    if preview_proxy is not None:
+        preview_proxy.install(app)
 
     @app.exception_handler(IdempotencyConflictError)
     async def idempotency_conflict_handler(
@@ -1088,6 +1106,7 @@ def create_cloud_app(
                 yield ServerSentEvent(comment="keepalive")
             await asyncio.sleep(event_poll_seconds)
 
+    install_extension_routes(protected, invoke)
     operation_ids = {
         route.operation_id
         for route in (*app.routes, *protected.routes)

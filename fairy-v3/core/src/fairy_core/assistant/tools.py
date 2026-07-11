@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
@@ -103,6 +103,17 @@ def model_tools(
     sandbox_healthy: bool,
     overrides: Mapping[str, bool],
 ) -> tuple[ModelTool, ...]:
+    definitions = registry.available_agent_definitions(
+        profile=profile,
+        sandbox_healthy=sandbox_healthy,
+        overrides=dict(overrides),
+    )
+    return model_tools_for_definitions(definitions)
+
+
+def model_tools_for_definitions(
+    definitions: Iterable[ToolDefinition],
+) -> tuple[ModelTool, ...]:
     direct_answer = ModelTool.create(
         name=DIRECT_ANSWER_TOOL_NAME,
         description="Return the final answer without invoking a capability.",
@@ -113,19 +124,13 @@ def model_tools(
             "additionalProperties": False,
         },
     )
-    manifest = registry.capability_manifest(
-        profile=profile,
-        sandbox_healthy=sandbox_healthy,
-        overrides=dict(overrides),
-    )
     registered = tuple(
         ModelTool.create(
             name=definition.name,
             description=definition.description,
             input_schema=definition.input_schema,
         )
-        for definition in registry.agent_definitions()
-        if manifest.get(definition.name, False)
+        for definition in definitions
     )
     return (direct_answer, *registered)
 
@@ -142,6 +147,15 @@ def validate_tool_arguments(
     arguments: Mapping[str, object],
 ) -> None:
     _validate_schema_value(dict(arguments), definition.input_schema, path="arguments")
+
+
+def validate_tool_schema_value(
+    value: object,
+    schema: Mapping[str, object],
+    *,
+    name: str = "value",
+) -> None:
+    _validate_schema_value(value, schema, path=name)
 
 
 def tool_message_content(
@@ -290,7 +304,9 @@ __all__ = [
     "UnavailableToolExecutor",
     "direct_answer",
     "model_tools",
+    "model_tools_for_definitions",
     "sanitize_model_arguments",
     "tool_message_content",
     "validate_tool_arguments",
+    "validate_tool_schema_value",
 ]

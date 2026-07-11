@@ -23,6 +23,11 @@ import type {
   MemoryNamespace,
   MemoryObserveInput,
   MemorySearchInput,
+  McpServerAcceptInput,
+  McpServerConfigureInput,
+  McpServerDeleteInput,
+  McpServerDiscoverInput,
+  McpServerSetEnabledInput,
   MessageListInput,
   ProjectCreateInput,
   ProjectImportInput,
@@ -125,6 +130,26 @@ export class CoreClient {
           ? {}
           : ({ profile_id: profileId } satisfies ProviderHealthInput),
       ),
+  };
+
+  readonly skills = {
+    list: () => this.transport.call("skills.list", {}),
+  };
+
+  readonly mcp = {
+    servers: {
+      list: () => this.transport.call("mcp.servers.list", {}),
+      configure: (input: McpServerConfigureInput) =>
+        this.transport.call("mcp.servers.configure", input),
+      discover: (input: McpServerDiscoverInput) =>
+        this.transport.call("mcp.servers.discover", input),
+      accept: (input: McpServerAcceptInput) =>
+        this.transport.call("mcp.servers.accept", input),
+      setEnabled: (input: McpServerSetEnabledInput) =>
+        this.transport.call("mcp.servers.set_enabled", input),
+      delete: (input: McpServerDeleteInput) =>
+        this.transport.call("mcp.servers.delete", input),
+    },
   };
 
   readonly runtimes = {

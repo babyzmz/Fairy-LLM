@@ -1,0 +1,140 @@
+.execution-settings {
+  width: min(460px, calc(100vw - 82px));
+}
+
+.execution-unavailable {
+  padding: 18px 2px 4px;
+  color: #ef8e86;
+  font-size: 11px;
+}
+
+.permission-profiles {
+  margin: 14px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.permission-profiles legend,
+.capability-heading > span {
+  color: #b9bfbc;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.permission-segments {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 7px;
+  padding: 2px;
+  border: 1px solid #444946;
+  border-radius: 3px;
+  background: #151716;
+}
+
+.permission-segments label {
+  min-width: 0;
+  position: relative;
+  cursor: pointer;
+}
+
+.permission-segments input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.permission-segments span {
+  min-height: 29px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 2px;
+  color: #909793;
+  font-size: 10px;
+}
+
+.permission-segments input:checked + span {
+  color: #f0f4f1;
+  background: #303532;
+}
+
+.permission-segments input:focus-visible + span {
+  outline: 2px solid #68d9cf;
+  outline-offset: -2px;
+}
+
+.permission-segments input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.capability-settings {
+  margin-top: 15px;
+}
+
+.capability-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 6px;
+}
+
+.capability-heading small {
+  color: #8e9691;
+  font-size: 10px;
+}
+
+.capability-list {
+  display: grid;
+  max-height: min(330px, calc(100vh - 330px));
+  overflow-y: auto;
+  border-top: 1px solid #3b3f3d;
+  scrollbar-gutter: stable;
+}
+
+.capability-toggle {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 3px;
+  border-bottom: 1px solid #383c3a;
+}
+
+.capability-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.capability-copy strong {
+  color: #e3e7e4;
+  font: 600 11px/1.3 "Cascadia Mono", monospace;
+}
+
+.capability-copy > span {
+  color: #a4aaa6;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.capability-copy small {
+  color: #e1b85b;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.capability-copy small[data-effective="true"] {
+  color: #79d69c;
+}
+
+.capability-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #68d9cf;
+}

@@ -5,6 +5,8 @@ from pathlib import Path
 from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
 from fairy_core.storage.sqlite_migrations import (
+    migrate_checkpoint_evidence,
+    migrate_mcp_request_results,
     migrate_pre_tenant_schema,
     migrate_task_snapshot_binding,
 )
@@ -20,4 +22,6 @@ class SqliteStateStore(SqlAlchemyStateStore):
             owns_engine=True,
         )
         migrate_task_snapshot_binding(engine)
+        migrate_checkpoint_evidence(engine)
+        migrate_mcp_request_results(engine)
         migrate_pre_tenant_schema(engine, tenant_id="local")

@@ -7,12 +7,13 @@ import type {
   Message,
   ProviderHealth,
   ProviderProfile,
+  SlashCommandMetadata,
 } from "../core/client";
 import { ProviderSettings } from "../settings/ProviderSettings";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
-import { parseSlashCommand } from "./slashCommands";
+import { parseSlashCommand, slashCommandHelp } from "./slashCommands";
 
 export interface ChatWorkspaceProps {
   conversationAvailable: boolean;
@@ -28,11 +29,14 @@ export interface ChatWorkspaceProps {
   offline: boolean;
   developerMode: boolean;
   error: string | null;
+  slashCommands: SlashCommandMetadata[];
   onProfileChange(profileId: string): void;
   onDeveloperModeChange(enabled: boolean): void;
   onNewConversation(): Promise<void>;
   onSwitchProject(): void;
-  onPermissionChange(profile: "observe" | "standard" | "autonomous"): void;
+  onPermissionChange(
+    profile: "observe" | "standard" | "autonomous",
+  ): Promise<void>;
   onSend(
     value: string,
     files: File[],
@@ -57,6 +61,9 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     (!selectedProvider.credential_required || selectedProvider.credential_configured) &&
     selectedHealth?.status !== "unavailable";
   const retryAvailable = ["failed", "cancelled"].includes(props.turn?.status ?? "");
+  const newConversationAvailable = props.slashCommands.some(
+    (command) => command.name === "new" && command.available,
+  );
   const pendingApproval =
     props.approvals.find((approval) => approval.decision === "pending") ?? null;
   const statusLabel = useMemo(() => {
@@ -72,7 +79,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     files: File[],
     images: PendingImageAttachment[],
   ) => {
-    const command = parseSlashCommand(value);
+    const command = parseSlashCommand(value, props.slashCommands);
     if (command === null) {
       setNotice(null);
       await props.onSend(
@@ -84,6 +91,14 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     }
     if (files.length > 0 || images.length > 0) {
       setNotice("Slash commands cannot include attachments");
+      return;
+    }
+    if (command.name === "unavailable" || command.name === "unknown") {
+      setNotice(
+        command.name === "unavailable"
+          ? `Command unavailable: /${command.command}`
+          : `Unknown command: /${command.command}`,
+      );
       return;
     }
     if (command.name === "new" || command.name === "clear") {
@@ -101,7 +116,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     }
     if (command.name === "permission") {
       if (["observe", "standard", "autonomous"].includes(command.argument)) {
-        props.onPermissionChange(
+        await props.onPermissionChange(
           command.argument as "observe" | "standard" | "autonomous",
         );
         setNotice(`Permission profile: ${command.argument}`);
@@ -111,10 +126,9 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       return;
     }
     if (command.name === "help") {
-      setNotice("/new | /project | /permission | /stop | /clear | /help");
+      setNotice(slashCommandHelp(props.slashCommands));
       return;
     }
-    setNotice(`Unknown command: /${command.argument}`);
   };
 
   return (
@@ -143,7 +157,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
             type="button"
             aria-label="New conversation"
             title="New conversation"
-            disabled={props.offline || props.isBusy}
+            disabled={props.offline || props.isBusy || !newConversationAvailable}
             onClick={() => void props.onNewConversation()}
           >
             <MessageSquarePlus size={17} />
@@ -169,7 +183,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           <button
             className="primary-command"
             type="button"
-            disabled={props.offline}
+            disabled={props.offline || !newConversationAvailable}
             onClick={() => void props.onNewConversation()}
           >
             <MessageSquarePlus size={15} /> New conversation

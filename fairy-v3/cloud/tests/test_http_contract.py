@@ -12,10 +12,12 @@ from fairy_capabilities.documents import CompositeDocumentParser, ManagedFileDoc
 from fairy_core.application.service import CoreService
 from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.contracts.models import ErrorCode
+from fairy_core.mcp.ports import McpError
 from fairy_core.runtime.models import (
     ExecutorRuntimeState,
     RuntimeExecutorHealth,
     RuntimeProbeResult,
+    RuntimeRecoveryTarget,
     RuntimeStartResult,
     RuntimeStopResult,
     StaticRuntimeStart,
@@ -76,6 +78,9 @@ class HttpRuntimeExecutor:
     def probe(self, executor_handle: str) -> RuntimeProbeResult:
         return self.probes[executor_handle]
 
+    def recovery_handle(self, target: RuntimeRecoveryTarget) -> str:
+        return f"static:{target.preview_id}"
+
     def stop(self, executor_handle: str) -> RuntimeStopResult:
         current = self.probes[executor_handle]
         self.probes[executor_handle] = RuntimeProbeResult(
@@ -108,6 +113,31 @@ async def test_fastapi_invokes_core_service_without_jsonrpc_envelope() -> None:
 
     response.raise_for_status()
     assert service.calls == [("health", {})]
+
+
+@pytest.mark.asyncio
+async def test_mcp_domain_errors_keep_stable_public_code_and_status() -> None:
+    class FailingService:
+        def invoke(self, _method: str, _params: dict[str, Any]) -> Any:
+            raise McpError("MCP transport unavailable", error_code="MCP_UNAVAILABLE")
+
+    identity = RequestIdentity("mcp-user", "mcp-device", frozenset({"fairy.api"}))
+    direct_app = create_cloud_app(
+        cast(CoreService, FailingService()),
+        authenticator=StaticTokenAuthenticator({"mcp-token": identity}),
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=direct_app),
+        base_url="http://test",
+        headers={
+            "Authorization": "Bearer mcp-token",
+            "X-Fairy-Device-ID": "mcp-device",
+        },
+    ) as client:
+        response = await client.get("/v1/mcp/servers")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "MCP_UNAVAILABLE"
 
 
 @pytest.mark.asyncio
@@ -220,6 +250,72 @@ async def test_rest_runs_the_same_project_contract_as_local_jsonrpc(app) -> None
     assert task["task"]["status"] == "planning"
     assert task["scope"]["execution_target"] == "cloud"
     assert task["scope"]["scope_digest"]
+
+
+@pytest.mark.asyncio
+async def test_extension_routes_enforce_identity_and_replay_delete_tombstone(app) -> None:
+    configure = {
+        "server_id": "docs",
+        "display_name": "Docs MCP",
+        "transport": "streamable_http",
+        "command": None,
+        "arguments": [],
+        "endpoint": "https://mcp.example.test/mcp",
+        "credential_ref": None,
+        "environment_refs": {},
+        "expected_revision": 0,
+        "idempotency_key": "http:mcp:configure:docs",
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=AUTH_HEADERS,
+    ) as client:
+        skills = await client.get("/v1/skills")
+        configured = await client.put(
+            "/v1/mcp/servers/docs",
+            headers={"Idempotency-Key": configure["idempotency_key"]},
+            json=configure,
+        )
+        replayed = await client.put(
+            "/v1/mcp/servers/docs",
+            headers={"Idempotency-Key": configure["idempotency_key"]},
+            json=configure,
+        )
+        mismatched = await client.put(
+            "/v1/mcp/servers/other",
+            headers={"Idempotency-Key": configure["idempotency_key"]},
+            json=configure,
+        )
+        delete = {
+            "server_id": "docs",
+            "expected_revision": configured.json()["revision"],
+            "idempotency_key": "http:mcp:delete:docs",
+        }
+        deleted = await client.request(
+            "DELETE",
+            "/v1/mcp/servers/docs",
+            headers={"Idempotency-Key": delete["idempotency_key"]},
+            json=delete,
+        )
+        delete_replay = await client.request(
+            "DELETE",
+            "/v1/mcp/servers/docs",
+            headers={"Idempotency-Key": delete["idempotency_key"]},
+            json=delete,
+        )
+
+    skills.raise_for_status()
+    configured.raise_for_status()
+    replayed.raise_for_status()
+    deleted.raise_for_status()
+    delete_replay.raise_for_status()
+    assert skills.json() == {"items": []}
+    assert replayed.json() == configured.json()
+    assert mismatched.status_code == 409
+    assert mismatched.json()["detail"]["code"] == "SCOPE_MISMATCH"
+    assert deleted.json() == {"server_id": "docs", "deleted": True}
+    assert delete_replay.json() == deleted.json()
 
 
 @pytest.mark.asyncio

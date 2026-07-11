@@ -167,6 +167,15 @@ class WslSandboxHealthProbe:
             config.get(key) is not expected for key, expected in _REQUIRED_CONFIG.items()
         ):
             return "FairySandbox wsl.conf isolation keys are incomplete"
+        toolchain = values.get("toolchain")
+        if (
+            not isinstance(toolchain, dict)
+            or toolchain.get("node") != "v24.18.0"
+            or toolchain.get("pnpm") != "10.34.4"
+            or toolchain.get("yarn") != "1.22.22"
+            or toolchain.get("uv") != "uv 0.11.28"
+        ):
+            return "FairySandbox toolchain attestation does not match"
         if values.get("bwrap_path") != "/usr/bin/bwrap":
             return "FairySandbox bubblewrap identity does not match"
         for key in ("runner_sha256", "config_sha256", "bwrap_sha256"):

@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from threading import RLock
 from types import MappingProxyType
 
+from fairy_core.commanding.registry_projection import (
+    available_agent_definitions as project_available_agent_definitions,
+)
+from fairy_core.commanding.registry_projection import (
+    capability_manifest as project_capability_manifest,
+)
+from fairy_core.commanding.registry_projection import frontend_metadata as project_frontend_metadata
+from fairy_core.commanding.registry_projection import (
+    slash_command_metadata as project_slash_metadata,
+)
 from fairy_core.commanding.types import PermissionProfile
 
 
@@ -27,6 +41,25 @@ class ApprovalPolicy(StrEnum):
     ALWAYS = "always"
 
 
+_TOOL_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+_EXTENSION_KEY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9][a-z0-9_-]{0,63}$")
+_CLOSED_INPUT_SCHEMA = MappingProxyType({"type": "object", "additionalProperties": False})
+
+
+@dataclass(frozen=True, slots=True)
+class SlashCommandDefinition:
+    name: str
+    description: str
+    argument_hint: str | None = None
+    required_operation: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name or not self.name.isascii() or not self.name.islower():
+            raise ValueError("slash command names must be lowercase ASCII")
+        if not self.description.strip():
+            raise ValueError("slash command descriptions cannot be blank")
+
+
 @dataclass(frozen=True, slots=True)
 class ToolDefinition:
     name: str
@@ -39,56 +72,201 @@ class ToolDefinition:
     idempotent: bool = False
     model_visible: bool = True
     description: str = ""
-    input_schema: Mapping[str, object] = field(
-        default_factory=lambda: MappingProxyType({"type": "object", "additionalProperties": True})
-    )
+    source: str = "builtin"
+    origin_id: str | None = None
+    required_operations: frozenset[str] = frozenset()
+    required_extensions: frozenset[str] = frozenset()
+    input_schema: Mapping[str, object] = field(default_factory=lambda: _CLOSED_INPUT_SCHEMA)
+    definition_digest: str = field(init=False)
 
     def __post_init__(self) -> None:
+        if _TOOL_NAME.fullmatch(self.name) is None:
+            raise ValueError("tool name must be lowercase ASCII and namespace-safe")
         description = self.description.strip() or self.name.replace(".", " ")
-        schema = dict(self.input_schema)
+        try:
+            encoded_schema = json.dumps(
+                dict(self.input_schema),
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            schema = json.loads(encoded_schema)
+        except (TypeError, ValueError) as error:
+            raise ValueError("tool input_schema must contain canonical JSON") from error
         if schema.get("type") != "object":
             raise ValueError("tool input_schema must describe an object")
+        if schema.get("additionalProperties") is not False:
+            raise ValueError("tool input_schema must reject additional properties")
+        source = self.source.strip().lower()
+        if source not in {"builtin", "skill", "mcp"}:
+            raise ValueError("tool source must be builtin, skill, or mcp")
+        if source == "builtin" and self.origin_id is not None:
+            raise ValueError("builtin tools cannot declare an extension origin")
+        if source != "builtin" and not (self.origin_id or "").strip():
+            raise ValueError("extension tools require an origin_id")
+        if self.name in self.required_operations:
+            raise ValueError("tool cannot depend on itself")
+        for dependency in self.required_operations:
+            if _TOOL_NAME.fullmatch(dependency) is None:
+                raise ValueError("required operation name is invalid")
+        for extension in self.required_extensions:
+            if _EXTENSION_KEY.fullmatch(extension) is None:
+                raise ValueError("required extension key is invalid")
+        digest_payload = {
+            "name": self.name,
+            "side_effect": self.side_effect.value,
+            "risk_level": self.risk_level.value,
+            "approval_policy": self.approval_policy.value,
+            "profiles": sorted(profile.value for profile in self.profiles),
+            "executor": self.executor,
+            "requires_sandbox": self.requires_sandbox,
+            "idempotent": self.idempotent,
+            "model_visible": self.model_visible,
+            "description": description,
+            "source": source,
+            "origin_id": self.origin_id,
+            "required_operations": sorted(self.required_operations),
+            "required_extensions": sorted(self.required_extensions),
+            "input_schema": schema,
+        }
+        digest = hashlib.sha256(
+            json.dumps(
+                digest_payload,
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("ascii")
+        ).hexdigest()
         object.__setattr__(self, "description", description)
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "origin_id", self.origin_id.strip() if self.origin_id else None)
         object.__setattr__(self, "input_schema", MappingProxyType(schema))
+        object.__setattr__(self, "definition_digest", digest)
 
 
 class ToolRegistry:
-    def __init__(self, definitions: Iterable[ToolDefinition] = ()) -> None:
+    def __init__(
+        self,
+        definitions: Iterable[ToolDefinition] = (),
+        *,
+        slash_commands: Iterable[SlashCommandDefinition] = (),
+    ) -> None:
+        self._lock = RLock()
         self._definitions: dict[str, ToolDefinition] = {}
+        self._slash_commands: dict[str, SlashCommandDefinition] = {}
+        self._ready_extensions: set[str] = set()
+        self._generation = 0
         for definition in definitions:
             self.register(definition)
+        for command in slash_commands:
+            if command.name in self._slash_commands:
+                raise ValueError(f"slash command already registered: {command.name}")
+            if (
+                command.required_operation is not None
+                and command.required_operation not in self._definitions
+            ):
+                raise ValueError(
+                    f"slash command requires an unknown operation: {command.required_operation}"
+                )
+            self._slash_commands[command.name] = command
 
     def register(self, definition: ToolDefinition) -> None:
-        if definition.name in self._definitions:
-            raise ValueError(f"tool already registered: {definition.name}")
-        self._definitions[definition.name] = definition
+        with self._lock:
+            if definition.name in self._definitions:
+                raise ValueError(f"tool already registered: {definition.name}")
+            self._definitions[definition.name] = definition
+            self._generation += 1
+
+    @property
+    def generation(self) -> int:
+        with self._lock:
+            return self._generation
+
+    def replace_namespace(
+        self,
+        prefix: str,
+        definitions: Iterable[ToolDefinition],
+    ) -> None:
+        if not prefix.endswith(".") or _TOOL_NAME.fullmatch(f"{prefix}x") is None:
+            raise ValueError("tool namespace prefix is invalid")
+        replacements = tuple(definitions)
+        if any(not definition.name.startswith(prefix) for definition in replacements):
+            raise ValueError("replacement tool is outside its namespace")
+        names = [definition.name for definition in replacements]
+        if len(names) != len(set(names)):
+            raise ValueError("replacement namespace contains duplicate tools")
+        with self._lock:
+            replacement_map = {definition.name: definition for definition in replacements}
+            current_namespace = {
+                name: definition
+                for name, definition in self._definitions.items()
+                if name.startswith(prefix)
+            }
+            if current_namespace == replacement_map:
+                return
+            retained = {
+                name: definition
+                for name, definition in self._definitions.items()
+                if not name.startswith(prefix)
+            }
+            collisions = set(retained).intersection(names)
+            if collisions:
+                raise ValueError(f"tool already registered: {sorted(collisions)[0]}")
+            retained.update(replacement_map)
+            self._definitions = retained
+            self._generation += 1
+
+    def set_extension_ready(self, kind: str, extension_id: str, *, ready: bool) -> None:
+        key = f"{kind.strip().lower()}:{extension_id.strip().lower()}"
+        if _EXTENSION_KEY.fullmatch(key) is None:
+            raise ValueError("extension readiness key is invalid")
+        with self._lock:
+            before = key in self._ready_extensions
+            if ready:
+                self._ready_extensions.add(key)
+            else:
+                self._ready_extensions.discard(key)
+            if before != ready:
+                self._generation += 1
 
     def get(self, name: str) -> ToolDefinition | None:
-        return self._definitions.get(name)
+        with self._lock:
+            return self._definitions.get(name)
 
     def definitions(self) -> tuple[ToolDefinition, ...]:
-        return tuple(self._definitions.values())
+        with self._lock:
+            return tuple(self._definitions.values())
 
-    def agent_definitions(self) -> tuple[ToolDefinition, ...]:
-        return tuple(
-            definition for definition in self._definitions.values() if definition.model_visible
+    def available_agent_definitions(
+        self,
+        *,
+        profile: PermissionProfile,
+        sandbox_healthy: bool,
+        overrides: dict[str, bool] | None = None,
+    ) -> tuple[ToolDefinition, ...]:
+        with self._lock:
+            definitions = dict(self._definitions)
+            ready_extensions = frozenset(self._ready_extensions)
+        return project_available_agent_definitions(
+            definitions,
+            ready_extensions=ready_extensions,
+            profile=profile,
+            sandbox_healthy=sandbox_healthy,
+            overrides=overrides,
         )
 
     def frontend_metadata(self) -> tuple[dict[str, object], ...]:
-        return tuple(
-            {
-                "name": definition.name,
-                "side_effect": definition.side_effect.value,
-                "risk_level": definition.risk_level.value,
-                "approval_policy": definition.approval_policy.value,
-                "requires_sandbox": definition.requires_sandbox,
-                "idempotent": definition.idempotent,
-                "model_visible": definition.model_visible,
-                "description": definition.description,
-                "input_schema": dict(definition.input_schema),
-            }
-            for definition in self._definitions.values()
-        )
+        return project_frontend_metadata(self.definitions())
+
+    def slash_command_metadata(
+        self,
+        operations: Mapping[str, bool],
+    ) -> tuple[dict[str, object], ...]:
+        with self._lock:
+            commands = tuple(self._slash_commands.values())
+        return project_slash_metadata(commands, operations)
 
     def capability_manifest(
         self,
@@ -97,15 +275,16 @@ class ToolRegistry:
         sandbox_healthy: bool,
         overrides: dict[str, bool] | None = None,
     ) -> dict[str, bool]:
-        effective_overrides = overrides or {}
-        return {
-            definition.name: (
-                profile in definition.profiles
-                and effective_overrides.get(definition.name, True)
-                and (not definition.requires_sandbox or sandbox_healthy)
-            )
-            for definition in self._definitions.values()
-        }
+        with self._lock:
+            definitions = dict(self._definitions)
+            ready_extensions = frozenset(self._ready_extensions)
+        return project_capability_manifest(
+            definitions,
+            ready_extensions=ready_extensions,
+            profile=profile,
+            sandbox_healthy=sandbox_healthy,
+            overrides=overrides,
+        )
 
 
 def _tool(
@@ -136,7 +315,7 @@ def _tool(
         input_schema=(
             input_schema
             if input_schema is not None
-            else {"type": "object", "additionalProperties": True}
+            else {"type": "object", "additionalProperties": False}
         ),
     )
 
@@ -501,6 +680,8 @@ def _project_definitions(
 
 
 def build_default_registry() -> ToolRegistry:
+    from fairy_core.commanding.slash_commands import default_slash_commands
+
     all_profiles = frozenset(PermissionProfile)
     active_profiles = frozenset({PermissionProfile.STANDARD, PermissionProfile.AUTONOMOUS})
     autonomous = frozenset({PermissionProfile.AUTONOMOUS})
@@ -514,6 +695,30 @@ def build_default_registry() -> ToolRegistry:
             "model_provider",
             idempotent=True,
             model_visible=False,
+        ),
+        _tool(
+            "extensions.mcp.discover",
+            SideEffect.READ,
+            RiskLevel.MEDIUM,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "mcp_control",
+            idempotent=True,
+            model_visible=False,
+            description="Discover bounded tool metadata from an explicitly configured MCP server.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "server_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                    "connection_fingerprint": {
+                        "type": "string",
+                        "minLength": 64,
+                        "maxLength": 64,
+                    },
+                },
+                "required": ["server_id", "connection_fingerprint"],
+                "additionalProperties": False,
+            },
         ),
         _tool(
             "workspace.create_empty",
@@ -991,4 +1196,4 @@ def build_default_registry() -> ToolRegistry:
             model_visible=False,
         ),
     ]
-    return ToolRegistry(definitions)
+    return ToolRegistry(definitions, slash_commands=default_slash_commands())

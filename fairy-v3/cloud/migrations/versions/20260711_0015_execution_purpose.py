@@ -30,8 +30,7 @@ def upgrade() -> None:
     op.create_check_constraint(
         NETWORK_CONSTRAINT,
         JOBS,
-        "(network_policy = 'none') OR "
-        "(network_policy = 'public' AND purpose = 'dependency')",
+        "(network_policy = 'none') OR (network_policy = 'public' AND purpose = 'dependency')",
     )
     op.create_check_constraint(
         "ck_execution_jobs_purpose",

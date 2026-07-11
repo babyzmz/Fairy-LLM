@@ -4,11 +4,14 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from fairy_core.domain.execution import RuntimeKind
 from fairy_core.runtime.models import (
+    DynamicRuntimeStart,
     ExecutorRuntimeState,
     RuntimeExecutorError,
     RuntimeExecutorHealth,
     RuntimeProbeResult,
+    RuntimeRecoveryTarget,
     RuntimeStartResult,
     RuntimeStopResult,
     StaticRuntimeStart,
@@ -72,6 +75,20 @@ class RustRuntimeExecutor:
             return parsed
         except (KeyError, TypeError, ValueError) as error:
             raise RuntimeExecutorError("worker returned invalid Runtime metadata") from error
+
+    def start_dynamic(self, _request: DynamicRuntimeStart) -> RuntimeStartResult:
+        raise RuntimeExecutorError(
+            "Rust local worker does not supervise dynamic Runtime processes",
+            error_code="CAPABILITY_NOT_AVAILABLE",
+        )
+
+    def recovery_handle(self, target: RuntimeRecoveryTarget) -> str:
+        if target.kind is not RuntimeKind.STATIC_SITE or target.execution_target != "local":
+            raise RuntimeExecutorError(
+                "Rust Runtime recovery target is invalid",
+                error_code="SCOPE_MISMATCH",
+            )
+        return f"static:{target.preview_id}"
 
     def probe(self, executor_handle: str) -> RuntimeProbeResult:
         preview_id = _preview_id_from_handle(executor_handle)

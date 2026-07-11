@@ -42,6 +42,7 @@ def _request(
     network: SandboxNetworkPolicy = SandboxNetworkPolicy.NONE,
     purpose: SandboxPurpose = SandboxPurpose.RAW,
 ) -> SandboxRequest:
+    dependency_aware = purpose in {SandboxPurpose.DEPENDENCY, SandboxPurpose.REVIEW}
     return SandboxRequest.create(
         job_id=uuid4(),
         project_id=uuid4(),
@@ -59,6 +60,8 @@ def _request(
         network_policy=network,
         workspace_archive=b"PK\x03\x04cloud-fixture",
         purpose=purpose,
+        dependency_key="b" * 64 if dependency_aware else None,
+        dependency_manager="npm" if dependency_aware else None,
     )
 
 

@@ -250,6 +250,41 @@ def test_local_core_engine_adds_snapshot_columns_to_existing_tasks(tmp_path: Pat
     assert {"memory_snapshot_id", "memory_snapshot_hash"} <= columns
 
 
+def test_local_core_engine_migrates_early_mcp_request_results(tmp_path: Path) -> None:
+    from fairy_core.persistence.sqlite import create_sqlite_core_engine
+
+    database_path = tmp_path / "early-mcp.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE core_mcp_server_updates (
+                tenant_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                request_fingerprint TEXT NOT NULL,
+                server_id TEXT NOT NULL,
+                result_record JSON NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, idempotency_key)
+            )
+            """
+        )
+
+    engine = create_sqlite_core_engine(database_path)
+    try:
+        with sqlite3.connect(database_path) as connection:
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(core_mcp_server_updates)")
+            }
+            foreign_keys = list(
+                connection.execute("PRAGMA foreign_key_list(core_mcp_server_updates)")
+            )
+    finally:
+        engine.dispose()
+
+    assert {"result_record", "result_deleted", "result_error_code"} <= columns
+    assert foreign_keys == []
+
+
 def test_accept_version_is_atomic_compare_and_swap(tmp_path: Path) -> None:
     store = SqliteStateStore(tmp_path / "state.db")
     project = Project.create(name="Synced", residency=ProjectResidency.SYNCED)
@@ -378,6 +413,7 @@ def test_execution_records_survive_restart_with_explicit_ownership(tmp_path: Pat
         changed_files=("README.md",),
         command_run_ids=(approval.command_run_id,),
         preview_artifact_id=None,
+        evidence_artifact_ids=(),
     )
 
     store.save_project(project)

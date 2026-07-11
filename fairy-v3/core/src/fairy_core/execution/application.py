@@ -18,6 +18,7 @@ from fairy_core.domain.models import ScopeContract, Task, TaskStatus
 from fairy_core.execution.templates import (
     ReviewKind,
     UnknownProjectManagerError,
+    dependency_layer_key,
     dependency_template,
     review_template,
 )
@@ -87,6 +88,7 @@ class ProjectExecutionApplication:
             else review_template(scope.project_root, _REVIEW_TOOLS[tool_name])
         )
         archive = self._archive_builder.build(scope)
+        dependency_key = dependency_layer_key(scope.project_root, template.manager)
         request = SandboxRequest.create(
             job_id=command_run.id,
             project_id=scope.project_id,
@@ -104,6 +106,8 @@ class ProjectExecutionApplication:
             network_policy=template.network_policy,
             workspace_archive=archive.content,
             purpose=template.purpose,
+            dependency_key=dependency_key,
+            dependency_manager=template.manager.value,
         )
         try:
             result = self._sandbox_executor.execute(request)
@@ -115,6 +119,7 @@ class ProjectExecutionApplication:
                 tool_name=tool_name,
                 manager=template.manager.value,
                 generation=archive.generation,
+                dependency_key=dependency_key,
                 error=error,
             )
             self._mark_repairing(scope.task_id)
@@ -129,6 +134,7 @@ class ProjectExecutionApplication:
             tool_name=tool_name,
             manager=template.manager.value,
             generation=archive.generation,
+            dependency_key=dependency_key,
             result=result,
         )
         if result.status is not SandboxResultStatus.COMPLETED:
@@ -324,6 +330,7 @@ class ProjectExecutionApplication:
         tool_name: str,
         manager: str,
         generation: int,
+        dependency_key: str,
         result: SandboxResult,
     ) -> Artifact:
         payload = {
@@ -332,6 +339,7 @@ class ProjectExecutionApplication:
             "command_run_id": str(command_run.id),
             "manager": manager,
             "workspace_generation": generation,
+            "dependency_key": dependency_key,
             "status": result.status.value,
             "exit_code": result.exit_code,
             "executor": result.executor,
@@ -354,6 +362,7 @@ class ProjectExecutionApplication:
         tool_name: str,
         manager: str,
         generation: int,
+        dependency_key: str,
         error: Exception,
     ) -> Artifact:
         payload = {
@@ -362,6 +371,7 @@ class ProjectExecutionApplication:
             "command_run_id": str(command_run.id),
             "manager": manager,
             "workspace_generation": generation,
+            "dependency_key": dependency_key,
             "status": "interrupted",
             "error_code": str(getattr(error, "error_code", "WORKER_INTERRUPTED")),
         }
@@ -400,6 +410,7 @@ class ProjectExecutionApplication:
                 "command_run_id": str(command_run_id),
                 "tool_name": tool_name,
                 "workspace_generation": payload["workspace_generation"],
+                "dependency_key": payload["dependency_key"],
                 "status": payload["status"],
             },
         )

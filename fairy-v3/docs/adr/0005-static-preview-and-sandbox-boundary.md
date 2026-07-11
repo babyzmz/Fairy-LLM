@@ -1,6 +1,6 @@
 # ADR 0005: Allow Host Static Preview, Keep Dynamic Execution Sandboxed
 
-- Status: accepted
+- Status: Accepted; dynamic execution details extended by ADR 0008
 - Date: 2026-07-11
 
 ## Context
@@ -33,10 +33,10 @@ expiry before fenced recovery. A missing or rebound process becomes explicitly
 
 Dynamic project execution is a different capability. It must use an attested
 WSL2 `FairySandbox` or a non-root cloud OCI Worker. Missing health disables the
-capability with `SANDBOX_UNAVAILABLE`; there is no Windows shell fallback. The
-current WSL component is an attestation probe, not a dynamic Runtime executor,
-and cloud OCI execution remains unavailable until its own implementation
-slice.
+capability with `SANDBOX_UNAVAILABLE`; there is no Windows shell fallback. ADR
+0008 supplies the implemented WSL Runtime supervisor, cloud execution/Runtime
+workers, PostgreSQL lease model, and private Preview routing without changing
+this static-host boundary.
 
 The desktop consumes only Core-resolved Preview state. Local URLs are accepted
 only as exact loopback HTTP with an explicit port; cloud URLs require HTTPS.
@@ -47,8 +47,8 @@ explicit user action.
 
 - Static sites have a useful Preview without Docker, WSL, or project process
   execution.
-- Framework development servers and build commands remain unavailable until a
-  dedicated sandbox executor exists.
+- Framework development servers and build commands are available only through
+  the dedicated, healthy executors defined by ADR 0008.
 - Runtime recovery adds durable rows, revision fences, command leases, and
   explicit interrupted states.
 - The Local Worker keeps protocol, workspace, Preview server, and error

@@ -22,6 +22,7 @@ from fairy_core.runtime.models import (
     ExecutorRuntimeState,
     RuntimeExecutorHealth,
     RuntimeProbeResult,
+    RuntimeRecoveryTarget,
     RuntimeStartResult,
     RuntimeStopResult,
     StaticRuntimeStart,
@@ -72,6 +73,9 @@ class CrashOnceRuntimeExecutor:
 
     def probe(self, executor_handle: str) -> RuntimeProbeResult:
         return self.probes[executor_handle]
+
+    def recovery_handle(self, target: RuntimeRecoveryTarget) -> str:
+        return f"static:{target.preview_id}"
 
     def stop(self, executor_handle: str) -> RuntimeStopResult:
         current = self.probes[executor_handle]

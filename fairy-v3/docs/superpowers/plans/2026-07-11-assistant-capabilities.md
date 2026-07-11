@@ -1,6 +1,9 @@
 # Fairy V3 Assistant Capabilities Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Implementation record (reconciled 2026-07-12):** Checkmarks record the
+> delivered capability tasks and their conditional gate handling. They do not
+> claim that Docker- or WSL-only tests ran in the current environment; current
+> live evidence is in `docs/completion-audit.md`.
 
 **Goal:** Complete Fairy V3 as a Windows-first desktop assistant with Task-bound chat, local/cloud models, governed tools, research, information, documents/RAG, voice, perception, Presence, and typed system actions.
 

@@ -350,7 +350,19 @@ async def _run() -> None:
     heartbeat_path = Path(
         os.environ.get("FAIRY_EXECUTION_HEARTBEAT_PATH", "/tmp/fairy-execution-ready")
     )
-    attestation = _attestation_digest((Path(_RUNNER), Path("/usr/bin/bwrap")))
+    attestation = _attestation_digest(
+        (
+            Path(_RUNNER),
+            Path("/usr/bin/bwrap"),
+            Path("/usr/bin/cargo"),
+            Path("/usr/local/bin/node"),
+            Path("/usr/local/bin/npm"),
+            Path("/usr/local/bin/pnpm"),
+            Path("/usr/local/bin/python3.13"),
+            Path("/usr/local/bin/uv"),
+            Path("/usr/local/bin/yarn"),
+        )
+    )
     engine = create_async_engine(postgres_dsn, pool_pre_ping=True)
     store = AsyncExecutionJobRepository(engine, attestation_digest=attestation)
     worker = ExecutionWorker(

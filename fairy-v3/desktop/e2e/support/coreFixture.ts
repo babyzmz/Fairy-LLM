@@ -295,6 +295,27 @@ async function installCoreFixture(page: Page) {
         created_at: timestamp,
       };
       const events = [event];
+      const scenarios = new URLSearchParams(window.location.search);
+      if (scenarios.has("executionRecovery")) {
+        events.push(
+          {
+            ...event,
+            id: "0198f4de-0114-7000-8000-000000000020",
+            cursor: 2,
+            task_sequence: 2,
+            event_type: "command.running",
+            message: "Sandbox command running",
+          },
+          {
+            ...event,
+            id: "0198f4de-0114-7000-8000-000000000021",
+            cursor: 3,
+            task_sequence: 3,
+            event_type: "runtime.recovered",
+            message: "Runtime recovered after worker interruption",
+          },
+        );
+      }
       let approvalScenario = false;
       let approvalVisible = false;
       let approvalDecision: "pending" | "approved" | "rejected" = "pending";
@@ -320,6 +341,43 @@ async function installCoreFixture(page: Page) {
         revision: 0,
         updated_at: "2026-07-11T00:00:00Z",
       };
+      let mcpServer = {
+        server_id: "docs",
+        display_name: "Document server",
+        transport: "streamable_http",
+        command: null,
+        arguments: [],
+        endpoint: "https://mcp.example.test/mcp",
+        credential_configured: true,
+        environment_names: [],
+        enabled: false,
+        status: "review_required",
+        revision: 2,
+        accepted_schema_digest: null,
+        pending_schema_digest: "pending-docs-schema",
+        accepted_tools: [],
+        pending_tools: [
+          {
+            name: "search",
+            title: "Search",
+            description: "Search governed documents.",
+            input_schema: {
+              type: "object",
+              properties: { query: { type: "string", maxLength: 200 } },
+              required: ["query"],
+              additionalProperties: false,
+            },
+            output_schema: null,
+            imported_name: "mcp.docs.search",
+            schema_digest: "docs-search-schema",
+          },
+        ],
+        policies: [],
+        last_error_code: null,
+        created_at: timestamp,
+        updated_at: timestamp,
+      };
+      let permissionConflictPending = scenarios.has("permissionConflict");
       const results: Record<string, unknown> = {
         health: { status: "ok", service: "fairy-core", protocol: "core-service-v1" },
         "projects.list": { items: [project], next_cursor: null },
@@ -344,10 +402,111 @@ async function installCoreFixture(page: Page) {
         },
         "capabilities.get": {
           profile: "standard",
-          operations: {},
+          operations: {
+            "model.generate": true,
+            "workspace.create_scratch": true,
+            "web.search": true,
+            "run.sandboxed": false,
+          },
           sandbox_healthy: true,
-          command_metadata: [],
-          schema_version: 1,
+          command_metadata: [
+            {
+              name: "web.search",
+              side_effect: "read",
+              risk_level: "low",
+              approval_policy: "never",
+              profiles: ["observe", "standard", "autonomous"],
+              requires_sandbox: false,
+              idempotent: true,
+              model_visible: true,
+              description: "Search public web or news sources.",
+              input_schema: { type: "object" },
+              definition_digest: "web-search-v3",
+              required_extensions: [],
+              required_operations: [],
+              source: "builtin",
+            },
+            {
+              name: "run.sandboxed",
+              side_effect: "execute",
+              risk_level: "high",
+              approval_policy: "never",
+              profiles: ["autonomous"],
+              requires_sandbox: true,
+              idempotent: false,
+              model_visible: true,
+              description: "Run structured argv in FairySandbox.",
+              input_schema: { type: "object" },
+              definition_digest: "run-sandboxed-v3",
+              required_extensions: [],
+              required_operations: [],
+              source: "builtin",
+            },
+          ],
+          slash_commands: [
+            {
+              name: "new",
+              description: "Start a durable conversation.",
+              argument_hint: null,
+              required_operation: "workspace.create_scratch",
+              available: true,
+            },
+            {
+              name: "project",
+              description: "Switch to the Project workspace.",
+              argument_hint: null,
+              required_operation: null,
+              available: true,
+            },
+            {
+              name: "permission",
+              description: "Change the execution profile.",
+              argument_hint: "<observe|standard|autonomous>",
+              required_operation: null,
+              available: true,
+            },
+            {
+              name: "stop",
+              description: "Stop the active response.",
+              argument_hint: null,
+              required_operation: "model.generate",
+              available: true,
+            },
+            {
+              name: "clear",
+              description: "Start a durable conversation.",
+              argument_hint: null,
+              required_operation: "workspace.create_scratch",
+              available: true,
+            },
+            {
+              name: "help",
+              description: "Show available commands.",
+              argument_hint: null,
+              required_operation: null,
+              available: true,
+            },
+          ],
+          schema_version: 3,
+        },
+        "skills.list": {
+          items: [
+            {
+              name: "Fairy Docs",
+              version: "1.0.0",
+              description: "Work with governed project documents.",
+              tool_name: "skill.fairy-docs",
+              required_capabilities: ["document.search"],
+              compatible_mcp_servers: ["docs"],
+              provenance: {
+                source: "fairy://skills/docs",
+                publisher: "Fairy Labs",
+                license: "Apache-2.0",
+              },
+              content_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              available: false,
+            },
+          ],
         },
         "providers.list": {
           items: [
@@ -456,6 +615,24 @@ async function installCoreFixture(page: Page) {
             method: request.method,
             params: request.params,
           });
+          if (request.method === "permissions.update" && permissionConflictPending) {
+            permissionConflictPending = false;
+            permissions = {
+              profile: "observe",
+              capability_overrides: { "web.search": false },
+              revision: permissions.revision + 1,
+              updated_at: "2026-07-11T00:00:01Z",
+            };
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              error: {
+                code: -32000,
+                message: "stale permission revision",
+                data: { error_code: "VERSION_CONFLICT" },
+              },
+            };
+          }
           const result =
             request.method === "voice.synthesize"
               ? {
@@ -594,16 +771,60 @@ async function installCoreFixture(page: Page) {
                     return permissions;
                   })()
               : request.method === "capabilities.get"
-                ? {
-                    ...(results["capabilities.get"] as Record<string, unknown>),
-                    profile: permissions.profile,
-                    operations: Object.fromEntries(
-                      Object.entries(permissions.capability_overrides).map(([name, enabled]) => [
-                        name,
-                        enabled,
-                      ]),
-                    ),
-                  }
+                ? (() => {
+                    const base = results["capabilities.get"] as {
+                      slash_commands: Array<{
+                        required_operation: string | null;
+                        available: boolean;
+                      }>;
+                      [key: string]: unknown;
+                    };
+                    const operations: Record<string, boolean> = {
+                      "model.generate": true,
+                      "workspace.create_scratch": permissions.profile !== "observe",
+                      "web.search": permissions.capability_overrides["web.search"] !== false,
+                      "run.sandboxed":
+                        permissions.profile === "autonomous" &&
+                        !scenarios.has("sandboxUnavailable") &&
+                        permissions.capability_overrides["run.sandboxed"] !== false,
+                    };
+                    return {
+                      ...base,
+                      profile: permissions.profile,
+                      operations,
+                      sandbox_healthy: !scenarios.has("sandboxUnavailable"),
+                      slash_commands: base.slash_commands.map((command) => ({
+                        ...command,
+                        available:
+                          command.required_operation === null ||
+                          operations[command.required_operation] === true,
+                      })),
+                    };
+                  })()
+              : request.method === "mcp.servers.list"
+                ? { items: mcpServer === null ? [] : [mcpServer] }
+              : request.method === "mcp.servers.accept"
+                ? (() => {
+                    if (
+                      mcpServer === null ||
+                      request.params.server_id !== mcpServer.server_id ||
+                      request.params.expected_revision !== mcpServer.revision ||
+                      request.params.schema_digest !== mcpServer.pending_schema_digest
+                    ) {
+                      throw new Error("MCP acceptance revision mismatch");
+                    }
+                    mcpServer = {
+                      ...mcpServer,
+                      enabled: Boolean(request.params.enabled),
+                      status: request.params.enabled ? "ready" : "disabled",
+                      revision: mcpServer.revision + 1,
+                      accepted_schema_digest: mcpServer.pending_schema_digest,
+                      accepted_tools: mcpServer.pending_tools,
+                      policies: request.params.tools,
+                      updated_at: "2026-07-11T00:00:01Z",
+                    };
+                    return mcpServer;
+                  })()
               : request.method === "events.subscribe"
               ? (() => {
                   const cursor = Number(request.params.cursor ?? 0);

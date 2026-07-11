@@ -132,6 +132,55 @@ describe("CoreClient", () => {
     });
     await client.providers.list();
     await client.providers.health("openrouter-free");
+    await client.skills.list();
+    await client.mcp.servers.list();
+    await client.mcp.servers.configure({
+      server_id: "issues",
+      display_name: "Issues",
+      transport: "streamable_http",
+      command: null,
+      arguments: [],
+      endpoint: "https://mcp.example.test/mcp",
+      credential_ref: "secret:issues",
+      environment_refs: {},
+      expected_revision: 0,
+      idempotency_key: "mcp:configure:issues",
+    });
+    await client.mcp.servers.discover({
+      server_id: "issues",
+      task_id: id,
+      expected_revision: 1,
+      idempotency_key: "mcp:discover:issues",
+    });
+    await client.mcp.servers.accept({
+      server_id: "issues",
+      expected_revision: 2,
+      schema_digest: "a".repeat(64),
+      enabled: true,
+      tools: [
+        {
+          name: "get_issue",
+          enabled: true,
+          side_effect: "read",
+          risk_level: "low",
+          approval_policy: "never",
+          profiles: ["observe", "standard", "autonomous"],
+          idempotent: true,
+        },
+      ],
+      idempotency_key: "mcp:accept:issues",
+    });
+    await client.mcp.servers.setEnabled({
+      server_id: "issues",
+      expected_revision: 3,
+      enabled: false,
+      idempotency_key: "mcp:disable:issues",
+    });
+    await client.mcp.servers.delete({
+      server_id: "issues",
+      expected_revision: 4,
+      idempotency_key: "mcp:delete:issues",
+    });
     await client.memory.observations.create({
       task_id: id,
       content: "Use compact navigation.",
@@ -238,6 +287,13 @@ describe("CoreClient", () => {
       "permissions.update",
       "providers.list",
       "providers.health",
+      "skills.list",
+      "mcp.servers.list",
+      "mcp.servers.configure",
+      "mcp.servers.discover",
+      "mcp.servers.accept",
+      "mcp.servers.set_enabled",
+      "mcp.servers.delete",
       "memory.observations.create",
       "memory.observations.list",
       "memory.claims.promote",

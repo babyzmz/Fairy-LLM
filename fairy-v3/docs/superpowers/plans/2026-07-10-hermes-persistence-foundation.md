@@ -1,6 +1,10 @@
 # Hermes Persistence Foundation Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Implementation record (reconciled 2026-07-12):** Checkmarks record
+> delivered code, tests, migrations, documentation, and conditional gate
+> handling from commits `5164aead` through `7938d9f2`. They do not claim that
+> Docker-only tests ran in the current environment; current live evidence is in
+> `docs/completion-audit.md`.
 
 **Goal:** Replace Fairy Cloud's process-local SQLite composition with one tenant-scoped transactional persistence authority and add the canonical Hermes Claim/Observation database layer on top of it.
 
@@ -57,7 +61,7 @@
 - Produces: `CommandRun.lease_fence: int` and stable `IdempotencyConflictError.code = "IDEMPOTENCY_CONFLICT"`.
 - Preserves: `fairy_core.commanding.ledger` as a compatibility re-export module.
 
-- [ ] **Step 1: Complete the red tests already added for SQLite migration, UTC normalization, tenant isolation, fingerprint conflicts, and expired lease reclamation**
+- [x] **Step 1: Complete the red tests already added for SQLite migration, UTC normalization, tenant isolation, fingerprint conflicts, and expired lease reclamation**
 
 Keep these assertions in the focused suites:
 
@@ -76,7 +80,7 @@ with pytest.raises(IdempotencyConflictError):
 assert second_claim.lease_fence == first_claim.lease_fence + 1
 ```
 
-- [ ] **Step 2: Run the focused tests and confirm failures describe unfinished adapters**
+- [x] **Step 2: Run the focused tests and confirm failures describe unfinished adapters**
 
 Run:
 
@@ -86,7 +90,7 @@ C:\Python313\Scripts\uv.exe run pytest tests/test_state_store.py tests/test_ledg
 
 Expected before completion: import or behavior failures for the new command adapter; state tests already fixed during the interrupted TDD cycle remain green.
 
-- [ ] **Step 3: Finish `SqlAlchemyCommandLedger` with atomic request fingerprinting, CAS transitions, atomic task sequences, and fenced lease reclaim**
+- [x] **Step 3: Finish `SqlAlchemyCommandLedger` with atomic request fingerprinting, CAS transitions, atomic task sequences, and fenced lease reclaim**
 
 The public port must be concrete enough for CommandBus without referring to SQLite:
 
@@ -113,11 +117,11 @@ class CommandLedger(Protocol):
 
 Use a dialect-specific conflict-safe insert with `RETURNING`, compare the stored SHA-256 request fingerprint on replay, allocate task sequence with an upsert counter, and use `FOR UPDATE SKIP LOCKED` only for PostgreSQL.
 
-- [ ] **Step 4: Add an idempotent pre-tenant V3 SQLite ledger importer**
+- [x] **Step 4: Add an idempotent pre-tenant V3 SQLite ledger importer**
 
 Copy old `command_runs` and `command_events` into tenant-aware tables under tenant `local`, preserve cursors and task sequence, compute request fingerprints from the stored scope/input, and record a local migration revision. Do not read any legacy Fairy application database.
 
-- [ ] **Step 5: Replace concrete ledger type annotations with `CommandLedger` and retain compatibility imports**
+- [x] **Step 5: Replace concrete ledger type annotations with `CommandLedger` and retain compatibility imports**
 
 `CommandBus` and transport constructors import models and the port from `fairy_core.commanding`, while `commanding/ledger.py` contains only explicit re-exports:
 
@@ -128,7 +132,7 @@ from fairy_core.commanding.sqlite import SqliteCommandLedger
 __all__ = ["CommandRun", "CommandStatus", "EventEnvelope", "EventVisibility", "SqliteCommandLedger"]
 ```
 
-- [ ] **Step 6: Run focused and complete Core verification**
+- [x] **Step 6: Run focused and complete Core verification**
 
 Run:
 
@@ -140,7 +144,7 @@ C:\Python313\Scripts\uv.exe run pytest
 
 Expected: all Core tests pass; no raw `sqlite3` implementation remains in `commanding/ledger.py`.
 
-- [ ] **Step 7: Commit Task 1**
+- [x] **Step 7: Commit Task 1**
 
 ```powershell
 git add fairy-v3/core/src/fairy_core fairy-v3/core/tests/test_state_store.py fairy-v3/core/tests/test_ledger.py
@@ -168,7 +172,7 @@ git commit -m "refactor(v3): make command persistence tenant aware"
 - Produces: `CoreUnitOfWork.state: StateStore` and `CoreUnitOfWork.commands: CommandLedger` bound to one SQLAlchemy `Connection`.
 - Produces: `commit()` and rollback-on-exit semantics.
 
-- [ ] **Step 1: Write rollback and shared-connection tests**
+- [x] **Step 1: Write rollback and shared-connection tests**
 
 ```python
 def test_unit_of_work_rolls_back_state_and_command_event_together(engine):
@@ -192,7 +196,7 @@ def test_unit_of_work_rolls_back_state_and_command_event_together(engine):
 
 Add a commit test proving both records become visible together.
 
-- [ ] **Step 2: Run the new test and confirm it fails because no Unit of Work exists**
+- [x] **Step 2: Run the new test and confirm it fails because no Unit of Work exists**
 
 Run:
 
@@ -202,7 +206,7 @@ C:\Python313\Scripts\uv.exe run pytest tests/test_unit_of_work.py -q
 
 Expected: import failure for `SqlAlchemyUnitOfWorkFactory`.
 
-- [ ] **Step 3: Implement connection-bound repository sessions**
+- [x] **Step 3: Implement connection-bound repository sessions**
 
 `SqlAlchemySession` accepts `Engine | Connection`; `read()` reuses a bound connection and `write()` never starts a nested transaction when one is already owned by the Unit of Work.
 
@@ -216,7 +220,7 @@ def write(self) -> Iterator[Connection]:
             yield connection
 ```
 
-- [ ] **Step 4: Implement `SqlAlchemyUnitOfWorkFactory`**
+- [x] **Step 4: Implement `SqlAlchemyUnitOfWorkFactory`**
 
 ```python
 class CoreUnitOfWork(Protocol):
@@ -236,7 +240,7 @@ class SqlAlchemyUnitOfWorkFactory:
 
 On PostgreSQL entry, run `SET LOCAL app.tenant_id = :tenant_id`. Roll back unless `commit()` completed. Dispose only caller-owned engines.
 
-- [ ] **Step 5: Refactor Core use cases into short database phases around external operations**
+- [x] **Step 5: Refactor Core use cases into short database phases around external operations**
 
 For workspace operations, use this sequence:
 
@@ -248,11 +252,11 @@ UoW B: verify lease/fence + persist result + terminal event + commit
 
 Do not hold UoW A or B open during `WorkspaceProvisioner` calls.
 
-- [ ] **Step 6: Add crash-point tests around Task creation and Changeset approval**
+- [x] **Step 6: Add crash-point tests around Task creation and Changeset approval**
 
 Test a crash after intent commit and before workspace execution, then replay the same idempotency key. Assert no orphan Version, no duplicate command, and an explicitly recoverable or interrupted Task state.
 
-- [ ] **Step 7: Run Core verification and commit**
+- [x] **Step 7: Run Core verification and commit**
 
 ```powershell
 C:\Python313\Scripts\uv.exe run pytest
@@ -280,7 +284,7 @@ git commit -m "feat(v3): add transactional core unit of work"
 - Produces: tenant-aware fenced `outbox`, `version_candidates`, and `worker_leases`.
 - Removes: runtime dependency on `cloud_projects` after data migration.
 
-- [ ] **Step 1: Change migration-head and schema parity tests to expect revision `20260710_0002`**
+- [x] **Step 1: Change migration-head and schema parity tests to expect revision `20260710_0002`**
 
 ```python
 assert scripts.get_heads() == ["20260710_0002"]
@@ -289,7 +293,7 @@ assert scripts.get_revision("20260710_0002").down_revision == "20260710_0001"
 
 Add offline DDL assertions for `core_projects`, `command_runs`, `task_event_sequences`, tenant columns, RLS policies, and outbox fence.
 
-- [ ] **Step 2: Run deployment tests and confirm the missing revision failure**
+- [x] **Step 2: Run deployment tests and confirm the missing revision failure**
 
 ```powershell
 C:\Python313\Scripts\uv.exe run pytest tests/test_deployment_contract.py tests/test_postgres_contract.py -q
@@ -297,7 +301,7 @@ C:\Python313\Scripts\uv.exe run pytest tests/test_deployment_contract.py tests/t
 
 Expected: migration head mismatch and missing canonical tables.
 
-- [ ] **Step 3: Implement migration `20260710_0002`**
+- [x] **Step 3: Implement migration `20260710_0002`**
 
 The migration must:
 
@@ -311,19 +315,19 @@ The migration must:
 8. Create policies using `current_setting('app.tenant_id', true)`.
 9. Drop `cloud_projects` only after count and ownership checks pass.
 
-- [ ] **Step 4: Make runtime metadata match migration DDL**
+- [x] **Step 4: Make runtime metadata match migration DDL**
 
 Alembic `target_metadata` receives the state, command, and cloud metadata collections. Add a schema drift test that compares expected table and constraint names instead of calling `create_all`.
 
-- [ ] **Step 5: Make event/outbox replay verify payload fingerprints**
+- [x] **Step 5: Make event/outbox replay verify payload fingerprints**
 
 When an existing tenant/event ID is found, compare all immutable envelope fields and the canonical payload SHA-256. Raise `IDEMPOTENCY_CONFLICT` on mismatch instead of reusing the old cursor.
 
-- [ ] **Step 6: Add real PostgreSQL RLS, dual-connection CAS, and stale-fence tests**
+- [x] **Step 6: Add real PostgreSQL RLS, dual-connection CAS, and stale-fence tests**
 
 Use two connections with different `SET LOCAL app.tenant_id` values. Assert cross-tenant SELECT, UPDATE, and event replay return no rows even when IDs are identical.
 
-- [ ] **Step 7: Verify offline migration and commit**
+- [x] **Step 7: Verify offline migration and commit**
 
 ```powershell
 C:\Python313\Scripts\uv.exe run alembic upgrade head --sql
@@ -358,17 +362,17 @@ If Docker is unavailable, integration tests must be collected and skipped with t
 - Produces: generated `CORE_METHODS` catalog consumed by JSON-RPC, FastAPI, and contract tests.
 - Produces: tenant-bound PostgreSQL Core runtime from `TenantRuntimeRegistry`.
 
-- [ ] **Step 1: Write parity tests proving JSON-RPC and FastAPI call one fake CoreService directly**
+- [x] **Step 1: Write parity tests proving JSON-RPC and FastAPI call one fake CoreService directly**
 
 Assert FastAPI does not construct a JSON-RPC envelope and `TenantRuntimeRegistry` never imports or calls `build_local_dispatcher`.
 
-- [ ] **Step 2: Run tests and confirm current transport nesting fails the assertions**
+- [x] **Step 2: Run tests and confirm current transport nesting fails the assertions**
 
 ```powershell
 C:\Python313\Scripts\uv.exe run pytest tests/test_dispatchers.py tests/test_http_contract.py -q
 ```
 
-- [ ] **Step 3: Extract the stable method catalog and application service**
+- [x] **Step 3: Extract the stable method catalog and application service**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -393,19 +397,19 @@ CORE_METHODS: Mapping[str, CoreMethod] = {
 
 Move handler ownership out of `JsonRpcDispatcher`; JSON-RPC becomes error-envelope parsing around `CoreService.invoke`.
 
-- [ ] **Step 4: Build tenant PostgreSQL runtime composition**
+- [x] **Step 4: Build tenant PostgreSQL runtime composition**
 
 Add `psycopg[binary]` to Cloud only. Convert the configured async DSN to an explicit `postgresql+psycopg` DSN for synchronous Core, create one pooled engine, and construct tenant-bound UoW factories plus tenant workspace roots. `core_data_dir` stores workspace files only, never SQLite state.
 
-- [ ] **Step 5: Run synchronous Core calls from FastAPI's threadpool in async routes**
+- [x] **Step 5: Run synchronous Core calls from FastAPI's threadpool in async routes**
 
 Use `run_in_threadpool(service.invoke, method, params)` for async route handlers and SSE fallback work. Sync handlers may call the service directly because FastAPI already runs them in its worker pool.
 
-- [ ] **Step 6: Add production-composition SSE test**
+- [x] **Step 6: Add production-composition SSE test**
 
 Create a command through the Cloud route, then subscribe through configured PostgreSQL event storage and assert the command event appears once with its global cursor.
 
-- [ ] **Step 7: Regenerate contracts, run Core/Cloud/Desktop contract tests, and commit**
+- [x] **Step 7: Regenerate contracts, run Core/Cloud/Desktop contract tests, and commit**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\generate-contracts.ps1
@@ -434,7 +438,7 @@ git commit -m "refactor(v3): share core service across transports"
 - Produces: complete `CLAIM_TRANSITIONS: Mapping[ClaimStatus, frozenset[ClaimStatus]]` and the test helper `claim_in_status` in the test module.
 - Produces: `MemoryPolicy.evaluate_promotion(observation, target_namespace, scope) -> MemoryPolicyDecision`.
 
-- [ ] **Step 1: Write state-machine and property tests first**
+- [x] **Step 1: Write state-machine and property tests first**
 
 Cover candidate to active/conflicted/superseded/expired/forgotten transitions, monotonically increasing revisions, immutable provenance, and rejection of cross-Scope promotion.
 
@@ -450,13 +454,13 @@ def test_claim_state_machine_matches_declared_transitions(current, target):
             claim.transition_to(target)
 ```
 
-- [ ] **Step 2: Run tests and confirm missing-domain imports**
+- [x] **Step 2: Run tests and confirm missing-domain imports**
 
 ```powershell
 C:\Python313\Scripts\uv.exe run pytest tests/test_memory_domain.py tests/test_memory_policy.py -q
 ```
 
-- [ ] **Step 3: Implement exact enums and immutable domain records**
+- [x] **Step 3: Implement exact enums and immutable domain records**
 
 ```python
 class MemoryNamespace(StrEnum):
@@ -469,15 +473,15 @@ class MemoryNamespace(StrEnum):
 
 Claim revisions carry typed JSON value, normalized text, source Observation IDs, source event IDs, authority, confidence, valid-time interval, actor, and superseded revision.
 
-- [ ] **Step 4: Implement policy precedence and scanning gates**
+- [x] **Step 4: Implement policy precedence and scanning gates**
 
 Reject model-supplied identity, secret-like values, invisible Unicode controls, instruction-like memory payloads, and every namespace/Scope mismatch. Require explicit user approval to promote a model suggestion into Project Canonical Memory.
 
-- [ ] **Step 5: Add stable errors**
+- [x] **Step 5: Add stable errors**
 
 Add the exact codes from the design spec: `MEMORY_SCOPE_VIOLATION`, `MEMORY_CONFLICT`, `MEMORY_INJECTION_BLOCKED`, `MEMORY_SECRET_BLOCKED`, `MEMORY_PROJECTION_STALE`, `MEMORY_SNAPSHOT_TOO_LARGE`, and `MEMORY_FORGOTTEN`.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 ```powershell
 C:\Python313\Scripts\uv.exe run pytest tests/test_memory_domain.py tests/test_memory_policy.py -q
@@ -504,29 +508,29 @@ git commit -m "feat(v3): define Hermes memory domain"
 - Produces: `MemoryRepository.append_observation`, `create_claim`, `append_revision`, `resolve_conflict`, `forget`, and scoped reads.
 - Extends: `CoreUnitOfWork.memory: MemoryRepository`.
 
-- [ ] **Step 1: Write one repository contract suite parameterized by adapter factory**
+- [x] **Step 1: Write one repository contract suite parameterized by adapter factory**
 
 The suite must cover identical IDs across tenants, duplicate source event replay, revision CAS, conflict-set retention, expiry, tombstones, and rollback with state/command/event writes.
 
-- [ ] **Step 2: Run SQLite contract tests and confirm missing repository implementation**
+- [x] **Step 2: Run SQLite contract tests and confirm missing repository implementation**
 
 ```powershell
 C:\Python313\Scripts\uv.exe run pytest tests/test_memory_repository.py tests/test_memory_unit_of_work.py -q
 ```
 
-- [ ] **Step 3: Define relational tables**
+- [x] **Step 3: Define relational tables**
 
 Create `memory_observations`, `memory_claims`, `memory_claim_revisions`, and `memory_tombstones` with `(tenant_id, id)` composite keys and Scope foreign keys. Claim revision uniqueness is `(tenant_id, claim_id, revision)` and one partial unique index identifies the current revision.
 
-- [ ] **Step 4: Implement atomic repository methods on the bound Unit of Work connection**
+- [x] **Step 4: Implement atomic repository methods on the bound Unit of Work connection**
 
 Use request/content fingerprints on idempotent inserts. Append revisions with a compare-and-swap update guarded by `current_revision = expected_revision` and return the new revision; on zero rows, load current state and raise `MEMORY_CONFLICT`.
 
-- [ ] **Step 5: Add Alembic revision `20260710_0003` and RLS policies**
+- [x] **Step 5: Add Alembic revision `20260710_0003` and RLS policies**
 
 Create all four tables, indexes, composite foreign keys, and forced RLS. No migration imports application models or calls `metadata.create_all`.
 
-- [ ] **Step 6: Run SQLite and real PostgreSQL contract tests**
+- [x] **Step 6: Run SQLite and real PostgreSQL contract tests**
 
 ```powershell
 C:\Python313\Scripts\uv.exe run pytest tests/test_memory_repository.py tests/test_memory_unit_of_work.py -q
@@ -535,7 +539,7 @@ C:\Python313\Scripts\uv.exe run pytest tests/integration/test_postgres_memory.py
 
 When Docker is absent, the second command must skip explicitly and the first command must still pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add fairy-v3/core/src/fairy_core/memory fairy-v3/core/src/fairy_core/persistence fairy-v3/core/tests fairy-v3/cloud/migrations fairy-v3/cloud/tests
@@ -565,27 +569,27 @@ git commit -m "feat(v3): persist canonical Hermes memory"
 - Produces CoreClient groups: `memory.observations`, `memory.claims`, and `memory.forget`.
 - Emits typed memory lifecycle events through the canonical Event Ledger.
 
-- [ ] **Step 1: Write failing policy/command tests**
+- [x] **Step 1: Write failing policy/command tests**
 
 Assert direct repository access is absent from renderer-facing handlers, model-supplied tenant/Scope fields are ignored, Project Canonical promotion requires approval, and replay with the same fingerprint is idempotent.
 
-- [ ] **Step 2: Register memory ToolDefinitions with exact policy metadata**
+- [x] **Step 2: Register memory ToolDefinitions with exact policy metadata**
 
 Observe is low-risk for Conversation Draft only. Canonical promotion, conflict resolution, supersede, and forget require explicit approval. Every mutation requires the Core-injected Scope digest.
 
-- [ ] **Step 3: Implement `MemoryApplication` on CoreUnitOfWork**
+- [x] **Step 3: Implement `MemoryApplication` on CoreUnitOfWork**
 
 Each method validates contracts, submits a Command, writes canonical memory and a typed event in one Unit of Work, and completes/fails the Command with stable errors. It never invokes embeddings or FTS inside the transaction.
 
-- [ ] **Step 4: Add transport-neutral methods and generated contracts**
+- [x] **Step 4: Add transport-neutral methods and generated contracts**
 
 Add request/response Pydantic models and method catalog entries. FastAPI and JSON-RPC consume the same handlers. Regenerate OpenAPI and TypeScript; do not hand-edit generated declarations.
 
-- [ ] **Step 5: Add client methods and runtime contract tests**
+- [x] **Step 5: Add client methods and runtime contract tests**
 
 The TypeScript client receives typed methods for explicit remember, inspect Claims, resolve conflict, and forget. Zod validation rejects malformed memory envelopes at the cloud boundary.
 
-- [ ] **Step 6: Verify contracts and commit**
+- [x] **Step 6: Verify contracts and commit**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\generate-contracts.ps1
@@ -615,27 +619,27 @@ git commit -m "feat(v3): expose governed Hermes memory commands"
 - Produces: one deterministic full verification command.
 - Produces: executable proof of no cross-tenant leakage, stale-fence completion, partial commits, or production SSE gaps.
 
-- [ ] **Step 1: Add two-connection concurrency tests**
+- [x] **Step 1: Add two-connection concurrency tests**
 
 Cover Task and Command idempotency races, Claim revision CAS, duplicate memory event fingerprints, task sequence allocation, one-worker claim, lease expiry, and stale fence completion rejection.
 
-- [ ] **Step 2: Add crash injection tests at every persistence phase**
+- [x] **Step 2: Add crash injection tests at every persistence phase**
 
 Inject failure before intent commit, after intent commit, during external operation, before result commit, after event insert, and before outbox insert. Assert rollback or explicit resumable/interrupted state without duplicate side effects.
 
-- [ ] **Step 3: Add security tests**
+- [x] **Step 3: Add security tests**
 
 Cover RLS, tenant predicates, Conversation Draft isolation, malicious Scope fields, secret-like memory, invisible Unicode controls, prompt-injection text, and forgotten Claim suppression.
 
-- [ ] **Step 4: Add production Cloud event test**
+- [x] **Step 4: Add production Cloud event test**
 
 Run the real app composition with PostgreSQL stores, create a Core command and memory Claim, reconnect SSE with `Last-Event-ID`, and assert ordered deduplicated command and memory events.
 
-- [ ] **Step 5: Create `scripts/test-all.ps1`**
+- [x] **Step 5: Create `scripts/test-all.ps1`**
 
 The script runs boundary checks, Core lint/tests, Cloud lint/unit tests, offline Alembic DDL, Rust fmt/clippy/tests, desktop tests/build, contract regeneration with clean diff, and optional Docker integration when `docker version` succeeds.
 
-- [ ] **Step 6: Run the complete verification matrix**
+- [x] **Step 6: Run the complete verification matrix**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-all.ps1
@@ -643,7 +647,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-all.ps1
 
 Expected: all locally available gates pass. Docker-only tests report explicit skips when Docker is not installed.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add fairy-v3
@@ -672,7 +676,7 @@ git commit -m "test(v3): gate Hermes persistence recovery"
 - Renames the current outbox-only worker so it cannot be confused with the future OCI execution worker.
 - Records exact delivered and deferred Hermes slices.
 
-- [ ] **Step 1: Prove unused Core dependencies have no imports**
+- [x] **Step 1: Prove unused Core dependencies have no imports**
 
 ```powershell
 rg -n "^(from|import) (aiosqlite|alembic|asyncpg|fastapi|httpx|uvicorn)" fairy-v3/core/src fairy-v3/core/tests
@@ -680,15 +684,15 @@ rg -n "^(from|import) (aiosqlite|alembic|asyncpg|fastapi|httpx|uvicorn)" fairy-v
 
 Expected: no matches.
 
-- [ ] **Step 2: Remove unused Core dependencies and regenerate only `core/uv.lock`**
+- [x] **Step 2: Remove unused Core dependencies and regenerate only `core/uv.lock`**
 
 Keep Core dependencies to Pydantic and SQLAlchemy plus actual runtime needs. Keep Alembic, asyncpg, FastAPI, httpx, uvicorn, boto3, auth, and psycopg in Cloud.
 
-- [ ] **Step 3: Rename outbox worker ownership**
+- [x] **Step 3: Rename outbox worker ownership**
 
 Move `OutboxWorker` to `fairy_cloud.workers.outbox`; keep `fairy_cloud.worker` as a one-release compatibility re-export and update the worker entry point.
 
-- [ ] **Step 4: Run structure and boundary checks**
+- [x] **Step 4: Run structure and boundary checks**
 
 ```powershell
 C:\Python313\Scripts\uv.exe run --project fairy-v3/core python fairy-v3/scripts/check_boundaries.py fairy-v3
@@ -697,11 +701,11 @@ rg -n "build_local_dispatcher|SqliteStateStore|SqliteCommandLedger" fairy-v3/clo
 
 Expected: boundary check passes and Cloud source contains no local/SQLite composition references.
 
-- [ ] **Step 5: Update architecture and milestone documentation**
+- [x] **Step 5: Update architecture and milestone documentation**
 
 State that this plan delivers canonical persistence and Hermes Observation/Claim lifecycle only. Full-text Snapshot building, Episodes/pgvector ranking, and multi-device memory controls remain separate approved design slices, not partially implemented claims.
 
-- [ ] **Step 6: Run final verification, request whole-branch review, and commit fixes**
+- [x] **Step 6: Run final verification, request whole-branch review, and commit fixes**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File fairy-v3\scripts\test-all.ps1

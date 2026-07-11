@@ -64,6 +64,13 @@ def _attestation(**overrides: object) -> str:
         "config_sha256": "b" * 64,
         "bwrap_path": "/usr/bin/bwrap",
         "bwrap_sha256": "c" * 64,
+        "toolchain": {
+            "node": "v24.18.0",
+            "npm": "11.16.0",
+            "pnpm": "10.34.4",
+            "yarn": "1.22.22",
+            "uv": "uv 0.11.28",
+        },
         "files": {
             "runner": {"uid": 0, "mode": 0o755},
             "config": {"uid": 0, "mode": 0o644},
@@ -133,6 +140,11 @@ def test_wsl_probe_fails_closed_when_wsl_executable_is_missing(tmp_path: Path) -
             "FairySandbox Running 2\n",
             _attestation(config={"automount.enabled": False}),
             "wsl.conf",
+        ),
+        (
+            "FairySandbox Running 2\n",
+            _attestation(toolchain={"node": "v22.0.0"}),
+            "toolchain",
         ),
         (
             "FairySandbox Running 2\n",

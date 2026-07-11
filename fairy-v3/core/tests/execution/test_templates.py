@@ -67,7 +67,7 @@ def test_npm_dependency_template_is_fixed_and_ignores_package_scripts(tmp_path: 
             DependencyManager.YARN,
             "package.json",
             "yarn.lock",
-            ("yarn", "install", "--immutable", "--ignore-scripts"),
+            ("yarn", "install", "--frozen-lockfile", "--ignore-scripts"),
         ),
         (
             DependencyManager.UV,
@@ -109,7 +109,7 @@ def test_pip_requires_a_hash_locked_binary_only_requirements_file(tmp_path: Path
 
     assert template.manager is DependencyManager.PIP
     assert template.argv == (
-        "python3",
+        ".venv/bin/python",
         "-m",
         "pip",
         "install",

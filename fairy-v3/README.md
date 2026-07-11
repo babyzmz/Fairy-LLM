@@ -35,6 +35,8 @@ fixtures and runtime dependencies inside their actual boundary.
 
 The implementation is intentionally independent. Legacy character assets,
 voice assets, doctrine, and black-box behavior may be used as references only.
+The requirement-by-requirement release record is maintained in
+`docs/completion-audit.md`; architecture decisions live under `docs/adr/`.
 
 ## Release scope
 
@@ -56,6 +58,13 @@ untrusted candidates and every effect is a registered Command. The Windows
 host surface is limited to typed URL/path/clipboard/notification/settings
 actions with a durable idempotency journal; there is no host shell API.
 
+Governed Fairy Skills provide versioned, provenance-checked instruction
+packages. MCP `2025-11-25` tools use explicit server trust and per-tool policy,
+one Registry, Scope-bound CommandRuns, approvals, cancellation, schema drift
+checks, and Task-owned Artifacts. Local composition supports configured stdio
+or Streamable HTTP; Cloud supports Streamable HTTP only. Credentials and
+transport configuration are never model-visible.
+
 Hermes relational Observations, Claims, revisions, Tombstones, lexical
 projection, retrieval health, and immutable Task Snapshots are canonical
 memory. Managed documents are a separate revisioned local/S3 corpus; RAG and
@@ -70,11 +79,11 @@ non-root brokerless projection worker, not a project execution sandbox; no
 Redis, NATS, Docker socket, or host mount is introduced.
 
 Read-only static Preview works without WSL or Docker. Dynamic project commands
-remain capability-gated: `run.sandboxed` is exposed only when a dedicated
+remain capability-gated: `run.sandboxed` is exposed only when the composed
 FairySandbox or cloud OCI executor is configured and healthy, and never falls
 back to Windows process execution. Episodes, pgvector semantic expansion, and
-parallel projection generations remain optional later retrieval extensions,
-not missing memory authority.
+parallel projection generations are outside the V3 canonical-memory contract;
+their absence does not create a second or incomplete memory authority.
 
 Run every locally available release gate with:
 

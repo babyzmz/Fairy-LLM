@@ -40,6 +40,9 @@ def test_outbox_claim_uses_postgres_skip_locked_without_external_broker() -> Non
         "worker_leases",
         "execution_jobs",
         "execution_workers",
+        "runtime_leases",
+        "runtime_routes",
+        "runtime_workers",
     }
     canonical_tables = {
         table.name

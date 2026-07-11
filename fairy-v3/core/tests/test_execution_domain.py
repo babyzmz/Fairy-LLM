@@ -182,6 +182,7 @@ def test_artifact_checkpoint_and_memory_keep_ownership() -> None:
         changed_files=("src/app.ts",),
         command_run_ids=(new_id(),),
         preview_artifact_id=artifact.id,
+        evidence_artifact_ids=(artifact.id,),
     )
     memory = MemoryEntry.create(
         project_id=ids["project_id"],

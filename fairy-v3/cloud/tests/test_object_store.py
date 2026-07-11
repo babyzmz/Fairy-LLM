@@ -157,3 +157,21 @@ def test_tenant_document_store_rejects_declared_hash_mismatch() -> None:
             content=b"different",
             media_type="text/plain",
         )
+
+
+def test_runtime_screenshot_evidence_is_tenant_scoped_and_content_addressed() -> None:
+    client = FakeS3Client()
+    evidence = S3ObjectStore(
+        client=client,
+        bucket="fairy-objects",
+    ).runtime_evidence_store("tenant-1")
+    content = b"\x89PNG\r\n\x1a\nfixture"
+    digest = hashlib.sha256(content).hexdigest()
+
+    first = evidence.put(content=content, media_type="image/png")
+    replay = evidence.put(content=content, media_type="image/png")
+
+    assert replay == first
+    assert first.storage_location == (
+        f"s3://fairy-objects/tenants/tenant-1/runtime-evidence/sha256/{digest[:2]}/{digest}.png"
+    )

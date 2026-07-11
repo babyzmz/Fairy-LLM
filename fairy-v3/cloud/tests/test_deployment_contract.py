@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260711_0015"]
+    assert scripts.get_heads() == ["20260712_0017"]
+    assert scripts.get_revision("20260712_0016").down_revision == "20260711_0015"
     assert scripts.get_revision("20260711_0015").down_revision == "20260711_0014"
     assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
     assert scripts.get_revision("20260711_0012").down_revision == "20260711_0011"
@@ -40,6 +41,8 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_PROJECTS",
         "CORE_EXECUTION_SETTINGS",
         "CORE_EXECUTION_SETTING_UPDATES",
+        "CORE_MCP_SERVERS",
+        "CORE_MCP_SERVER_UPDATES",
         "CORE_CONVERSATIONS",
         "CORE_VERSIONS",
         "CORE_TASKS",
@@ -47,6 +50,9 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_PROJECT_INDEXES",
         "EXECUTION_JOBS",
         "EXECUTION_WORKERS",
+        "RUNTIME_LEASES",
+        "RUNTIME_ROUTES",
+        "RUNTIME_WORKERS",
         "CORE_CHANGESETS",
         "CORE_APPROVALS",
         "CORE_CHECKPOINTS",
@@ -103,6 +109,7 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
     assert "UQ_CORE_APPROVALS_TENANT_TOOL_INVOCATION" in ddl
     assert "UQ_CORE_ASSISTANT_TOOL_INVOCATIONS_TURN_PROVIDER_CALL" in ddl
     assert "FK_CORE_APPROVALS_TOOL_INVOCATION" in ddl
+    assert "ALTER TABLE CORE_CHECKPOINTS ADD COLUMN EVIDENCE_ARTIFACT_IDS" in ddl
     for table_name in (
         "CORE_RUNTIME_SESSIONS",
         "CORE_PREVIEW_SESSIONS",
@@ -114,11 +121,17 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_RESEARCH_EVIDENCE",
         "CORE_EXECUTION_SETTINGS",
         "CORE_EXECUTION_SETTING_UPDATES",
+        "CORE_MCP_SERVERS",
+        "CORE_MCP_SERVER_UPDATES",
         "CORE_TASK_WORKSPACES",
         "CORE_PROJECT_INDEXES",
         "EXECUTION_JOBS",
+        "RUNTIME_LEASES",
     ):
         assert f'CREATE POLICY "TENANT_ISOLATION_{table_name}"' in ddl
+    assert "RESULT_DELETED" in ddl
+    assert "RESULT_ERROR_CODE" in ddl
+    assert "FK_CORE_MCP_SERVER_UPDATES_SERVER" not in ddl
 
 
 def test_execution_settings_migration_has_reversible_ddl() -> None:
@@ -183,6 +196,34 @@ def test_execution_purpose_migration_is_reversible_and_fail_closed() -> None:
     assert "DROP COLUMN PURPOSE" in ddl
 
 
+def test_dynamic_runtime_migration_is_reversible_and_fenced() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260712_0016:20260711_0015", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert "DROP TABLE RUNTIME_ROUTES" in ddl
+    assert "DROP TABLE RUNTIME_WORKERS" in ddl
+    assert "DROP TABLE RUNTIME_LEASES" in ddl
+    assert "DROP COLUMN DEPENDENCY_KEY" in ddl
+    assert "DROP COLUMN DEPENDENCY_MANAGER" in ddl
+    assert "DROP COLUMN EVIDENCE_ARTIFACT_IDS" in ddl
+
+
+def test_governed_mcp_migration_is_reversible_and_keeps_delete_tombstones() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260712_0017:20260712_0016", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_MCP_SERVER_UPDATES"' in ddl
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_MCP_SERVERS"' in ddl
+    assert "DROP TABLE CORE_MCP_SERVER_UPDATES" in ddl
+    assert "DROP TABLE CORE_MCP_SERVERS" in ddl
+
+
 def test_research_evidence_migration_has_reversible_ddl() -> None:
     output = io.StringIO()
     config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
@@ -238,12 +279,16 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
         "postgres-permissions",
         "worker",
         "execution",
+        "runtime",
     }
     assert services["postgres"]["image"] == "postgres:18.4-alpine3.24"
     assert services["object-store"]["image"] == "chrislusf/seaweedfs:4.39"
     assert services["oidc"]["image"] == "ghcr.io/navikt/mock-oauth2-server:4.0.0"
     assert "FAIRY_PROVIDER_SECRET_BRAVE" in services["api"]["environment"]
     assert "FAIRY_PROVIDER_SECRET_ALPHA_VANTAGE" in services["api"]["environment"]
+    assert "FAIRY_RUNTIME_GATEWAY_KEY" in services["api"]["environment"]
+    assert "FAIRY_MCP_CREDENTIALS" in services["api"]["environment"]
+    assert "FAIRY_MCP_ALLOWED_HOSTS" in services["api"]["environment"]
     assert services["api"]["environment"]["FAIRY_EVENT_POLL_SECONDS"] == "0.025"
     assert services["api"]["environment"]["FAIRY_RECOVERY_INTERVAL_SECONDS"] == "5"
     assert services["api"]["environment"]["FAIRY_PROVIDER_BRAVE_CREDENTIAL_REF"].endswith(
@@ -256,7 +301,15 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
     assert services["object-store"]["environment"]["S3_BUCKET"] == "fairy-objects"
     assert all(
         "healthcheck" in services[name]
-        for name in {"api", "execution", "object-store", "oidc", "postgres", "worker"}
+        for name in {
+            "api",
+            "execution",
+            "runtime",
+            "object-store",
+            "oidc",
+            "postgres",
+            "worker",
+        }
     )
     assert services["api"]["build"]["target"] == "runtime"
     assert services["worker"]["command"] == [
@@ -277,11 +330,25 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
     assert services["execution"]["read_only"] is True
     assert services["execution"]["cap_drop"] == ["ALL"]
     assert services["execution"]["security_opt"] == ["no-new-privileges:true"]
-    assert services["execution"].get("volumes", []) == []
+    assert services["execution"]["volumes"] == [
+        "fairy-dependencies:/var/lib/fairy-sandbox/dependencies"
+    ]
     assert services["execution"]["pids_limit"] == 768
     assert services["execution"]["mem_limit"] == "3g"
     assert services["execution"]["cpus"] == 2.0
     assert any("/var/lib/fairy-sandbox" in item for item in services["execution"]["tmpfs"])
+    assert services["runtime"]["command"] == [
+        "python",
+        "-m",
+        "fairy_cloud.workers.runtime",
+    ]
+    assert services["runtime"]["read_only"] is True
+    assert services["runtime"]["cap_drop"] == ["ALL"]
+    assert services["runtime"]["volumes"] == [
+        "fairy-dependencies:/var/lib/fairy-sandbox/dependencies:ro"
+    ]
+    assert "FAIRY_RUNTIME_GATEWAY_KEY" in services["runtime"]["environment"]
+    assert services["runtime"]["environment"]["FAIRY_RUNTIME_LEASE_SECONDS"] == "180"
     assert services["migrate"]["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert services["postgres-permissions"]["depends_on"]["migrate"]["condition"] == (
         "service_completed_successfully"
@@ -301,6 +368,7 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
     assert "fairy_app:" in services["api"]["environment"]["FAIRY_POSTGRES_DSN"]
     assert "fairy_worker:" in services["worker"]["environment"]["FAIRY_POSTGRES_DSN"]
     assert "fairy_execution:" in services["execution"]["environment"]["FAIRY_POSTGRES_DSN"]
+    assert "fairy_runtime:" in services["runtime"]["environment"]["FAIRY_POSTGRES_DSN"]
     assert "fairy:" in services["migrate"]["environment"]["FAIRY_POSTGRES_DSN"]
     assert any(
         "docker-entrypoint-initdb.d/010-fairy-roles.sh" in volume
@@ -319,6 +387,9 @@ def test_postgres_init_creates_rls_app_and_cross_tenant_worker_roles() -> None:
     execution_role = next(
         line for line in script.splitlines() if line.startswith("ALTER ROLE fairy_execution")
     )
+    runtime_role = next(
+        line for line in script.splitlines() if line.startswith("ALTER ROLE fairy_runtime")
+    )
 
     assert "NOSUPERUSER" in app_role
     assert "NOBYPASSRLS" in app_role
@@ -327,6 +398,8 @@ def test_postgres_init_creates_rls_app_and_cross_tenant_worker_roles() -> None:
     assert "NOBYPASSRLS" not in worker_role
     assert "NOSUPERUSER" in execution_role
     assert "BYPASSRLS" in execution_role
+    assert "NOSUPERUSER" in runtime_role
+    assert "BYPASSRLS" in runtime_role
     assert "ALTER DEFAULT PRIVILEGES" in script
     assert "GRANT USAGE, SELECT ON ALL SEQUENCES" in script
     assert "ON ALL TABLES IN SCHEMA public TO fairy_app, fairy_worker" not in script
@@ -334,6 +407,8 @@ def test_postgres_init_creates_rls_app_and_cross_tenant_worker_roles() -> None:
     assert "ON TABLE public.worker_leases TO fairy_worker" in script
     assert "ON TABLE public.execution_jobs TO fairy_execution" in script
     assert "ON TABLE public.execution_workers TO fairy_execution" in script
+    assert "ON TABLE public.runtime_leases TO fairy_runtime" in script
+    assert "ON TABLE public.runtime_workers TO fairy_runtime" in script
     assert "INSERT, UPDATE, DELETE ON TABLE public.execution_jobs TO fairy_execution" not in script
     assert "DELETE ON TABLE public.execution_workers TO fairy_execution" not in script
     assert "ON TABLE public.core_projects TO fairy_execution" not in script
@@ -345,12 +420,19 @@ def test_postgres_init_creates_rls_app_and_cross_tenant_worker_roles() -> None:
 def test_cloud_image_is_pinned_and_runs_as_non_root() -> None:
     dockerfile = (CLOUD_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
+    assert "node:24.18.0-trixie-slim@sha256:366fdef9" in dockerfile
     assert "ghcr.io/astral-sh/uv:0.11.28-python3.13-trixie-slim" in dockerfile
     assert "USER 10001:10001" in dockerfile
     assert "uv sync --locked --no-dev --no-editable" in dockerfile
     assert "bubblewrap" in dockerfile
+    assert "chromium" in dockerfile
+    assert "npm" in dockerfile
+    assert "pnpm@10.34.4" in dockerfile
+    assert 'test "$(node --version)" = "v24.18.0"' in dockerfile
     assert "fairy_sandbox_runner.py" in dockerfile
     assert "/usr/local/bin/fairy-sandbox-runner" in dockerfile
+    assert "fairy_runtime_supervisor.py" in dockerfile
+    assert "/usr/local/bin/fairy-runtime-supervisor" in dockerfile
 
 
 def test_exported_openapi_uses_public_rpc_operation_ids() -> None:
@@ -382,13 +464,14 @@ def test_full_verification_script_covers_every_release_gate() -> None:
         "cargo fmt --check",
         "cargo clippy",
         "cargo test",
-        "npm test -- --run",
+        "Desktop: npm test",
         "npm run e2e",
         "npm run build",
         "release_performance.py",
         "Core ready <= 3s and initial renderer gzip <= 800 KiB",
         "generate-contracts.ps1",
-        "git diff --exit-code",
+        "Contracts: generated files unchanged",
+        "Git: diff --check",
         "docker version",
         "docker compose",
         "integration",

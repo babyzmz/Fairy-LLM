@@ -66,6 +66,8 @@ class ExecutionJob:
     output_limit_bytes: int
     network_policy: SandboxNetworkPolicy
     purpose: SandboxPurpose
+    dependency_key: str | None
+    dependency_manager: str | None
     workspace_archive: bytes
     archive_sha256: str
     status: ExecutionJobStatus
@@ -116,6 +118,8 @@ class ExecutionJob:
             output_limit_bytes=request.output_limit_bytes,
             network_policy=request.network_policy,
             purpose=request.purpose,
+            dependency_key=request.dependency_key,
+            dependency_manager=request.dependency_manager,
             workspace_archive=request.workspace_archive,
             archive_sha256=request.archive_sha256,
             status=ExecutionJobStatus.QUEUED,
@@ -157,6 +161,8 @@ class ExecutionJob:
             network_policy=self.network_policy,
             workspace_archive=self.workspace_archive,
             purpose=self.purpose,
+            dependency_key=self.dependency_key,
+            dependency_manager=self.dependency_manager,
         )
 
     def to_result(self) -> SandboxResult:

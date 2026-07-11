@@ -126,8 +126,11 @@ def test_assistant_dependency_install_uses_typed_template_and_persists_report(
             "--no-fund",
         )
         assert request.purpose is SandboxPurpose.DEPENDENCY
+        assert request.dependency_manager == "npm"
+        assert request.dependency_key is not None and len(request.dependency_key) == 64
         artifacts = service.invoke("artifacts.list", {"task_id": task_id})["items"]
         assert [item["artifact_type"] for item in artifacts] == ["log"]
+        assert artifacts[0]["metadata"]["dependency_key"] == request.dependency_key
         assert service.invoke("tasks.get", {"task_id": task_id})["status"] == "executing"
     finally:
         service.close()

@@ -24,8 +24,10 @@ from fairy_core.contracts.common import (
     EventVisibilityModel,
     ExecutionTarget,
     JsonValue,
-    PermissionProfileModel,
     PublicMessageVisibilityModel,
+)
+from fairy_core.contracts.common import (
+    PermissionProfileModel as PermissionProfileModel,
 )
 from fairy_core.documents import (
     DocumentStatus,
@@ -782,6 +784,7 @@ class CheckpointModel(ContractModel):
     changed_files: tuple[str, ...]
     command_run_ids: tuple[UUID, ...]
     preview_artifact_id: UUID | None
+    evidence_artifact_ids: tuple[UUID, ...]
     created_at: datetime
 
 
@@ -856,14 +859,6 @@ class ErrorModel(ContractModel):
     message: str
     retryable: bool = False
     details: dict[str, Any] = Field(default_factory=dict)
-
-
-class CapabilityManifestModel(ContractModel):
-    profile: PermissionProfileModel
-    operations: dict[str, bool]
-    sandbox_healthy: bool
-    command_metadata: list[dict[str, Any]] = Field(default_factory=list)
-    schema_version: int = 1
 
 
 class MemoryForgetTargetModel(StrEnum):

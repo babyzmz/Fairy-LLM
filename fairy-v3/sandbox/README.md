@@ -16,7 +16,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File sandbox/wsl/install.ps1 `
 ```
 
 The installer imports the distro as WSL 2, installs Python and bubblewrap, creates the
-non-root `fairy` account, writes `wsl.conf`, and installs the Runner through stdin. It
+non-root `fairy` account, writes `wsl.conf`, and installs the one-shot Runner and dynamic
+Runtime supervisor through stdin. It
 does not unregister or overwrite an existing `FairySandbox` distribution.
 
 ## Isolation Contract
@@ -29,6 +30,10 @@ does not unregister or overwrite an existing `FairySandbox` distribution.
   temporary filesystem, and no network unless Core's scratch Scope explicitly allows it.
 - Output is bounded, process groups are terminated on timeout/cancellation/flood, and
   returned bytes are bound to SHA-256 hashes.
+- Dependency installs publish atomic lock-digest layers. Review and dynamic Runtime jobs
+  mount only a completed matching layer; source generations remain immutable.
+- Dynamic Runtime processes bind exact IPv4 loopback, persist a fenced PID/start-time
+  identity inside WSL ext4, and never receive a host path, shell string, or provider secret.
 
 ## Verify
 

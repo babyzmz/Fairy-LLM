@@ -129,6 +129,8 @@ execution_jobs = Table(
     Column("output_limit_bytes", Integer, nullable=False),
     Column("network_policy", String(16), nullable=False),
     Column("purpose", String(32), nullable=False),
+    Column("dependency_key", String(64)),
+    Column("dependency_manager", String(16)),
     Column("workspace_archive", LargeBinary, nullable=False),
     Column("archive_sha256", String(64), nullable=False),
     Column("archive_byte_length", BigInteger, nullable=False),
@@ -207,6 +209,13 @@ execution_jobs = Table(
         name="ck_execution_jobs_purpose",
     ),
     CheckConstraint(
+        "(purpose = 'raw' AND dependency_key IS NULL AND dependency_manager IS NULL) OR "
+        "(purpose IN ('dependency','review') AND project_id IS NOT NULL "
+        "AND version_id IS NOT NULL AND dependency_key ~ '^[0-9a-f]{64}$' "
+        "AND dependency_manager IN ('npm','pnpm','yarn','uv','pip','cargo'))",
+        name="ck_execution_jobs_dependency_layer",
+    ),
+    CheckConstraint(
         "(status IN ('claimed','running','result_recorded')) = "
         "(lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_fence > 0)",
         name="ck_execution_jobs_active_lease",
@@ -255,6 +264,128 @@ execution_workers = Table(
     ),
 )
 
+runtime_leases = Table(
+    "runtime_leases",
+    cloud_metadata,
+    Column("tenant_id", String(TENANT_ID_LENGTH), primary_key=True),
+    Column("runtime_id", String(36), primary_key=True),
+    Column("preview_id", String(36), nullable=False),
+    Column("project_id", String(36), nullable=False),
+    Column("conversation_id", String(36), nullable=False),
+    Column("task_id", String(36), nullable=False),
+    Column("version_id", String(36), nullable=False),
+    Column("scope_digest", String(64), nullable=False),
+    Column("request_fingerprint", String(64), nullable=False),
+    Column("workspace_generation", BigInteger, nullable=False),
+    Column("request_lease_fence", BigInteger, nullable=False),
+    Column("adapter", String(32), nullable=False),
+    Column("argv", JSON, nullable=False),
+    Column("cwd", String(4096), nullable=False),
+    Column("readiness_path", String(2048), nullable=False),
+    Column("startup_timeout_seconds", Integer, nullable=False),
+    Column("dependency_key", String(64), nullable=False),
+    Column("workspace_archive", LargeBinary, nullable=False),
+    Column("archive_sha256", String(64), nullable=False),
+    Column("archive_byte_length", BigInteger, nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("internal_url", String(4096)),
+    Column("worker_id", String(128)),
+    Column("lease_owner", String(128)),
+    Column("lease_expires_at", DateTime(timezone=True)),
+    Column("lease_fence", BigInteger, nullable=False, server_default="0"),
+    Column("attempts", Integer, nullable=False, server_default="0"),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("error_code", String(128)),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "runtime_id", name="pk_runtime_leases"),
+    UniqueConstraint("runtime_id", name="uq_runtime_leases_runtime_id"),
+    UniqueConstraint("tenant_id", "preview_id", name="uq_runtime_leases_tenant_preview"),
+    CheckConstraint(
+        "status IN ('queued','starting','running','stopping','stopped','failed','interrupted')",
+        name="ck_runtime_leases_status",
+    ),
+    CheckConstraint(
+        "workspace_generation > 0 AND request_lease_fence > 0 AND lease_fence >= 0 "
+        "AND attempts >= 0",
+        name="ck_runtime_leases_fences",
+    ),
+    CheckConstraint(
+        "scope_digest ~ '^[0-9a-f]{64}$' AND "
+        "request_fingerprint ~ '^[0-9a-f]{64}$' AND "
+        "dependency_key ~ '^[0-9a-f]{64}$' AND archive_sha256 ~ '^[0-9a-f]{64}$'",
+        name="ck_runtime_leases_hashes",
+    ),
+    CheckConstraint(
+        "archive_byte_length > 0 AND archive_byte_length <= 134217728 AND "
+        "archive_byte_length = octet_length(workspace_archive)",
+        name="ck_runtime_leases_archive_size",
+    ),
+    CheckConstraint(
+        "adapter IN ('vite','next','astro','python_asgi') AND cwd = '.' AND "
+        "startup_timeout_seconds BETWEEN 1 AND 120",
+        name="ck_runtime_leases_template",
+    ),
+    CheckConstraint(
+        "(lease_owner IS NULL AND lease_expires_at IS NULL) OR "
+        "(lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_fence > 0)",
+        name="ck_runtime_leases_worker_lease",
+    ),
+    CheckConstraint(
+        "(status = 'running' AND internal_url IS NOT NULL AND worker_id IS NOT NULL) OR "
+        "(status <> 'running' AND internal_url IS NULL)",
+        name="ck_runtime_leases_internal_endpoint",
+    ),
+    CheckConstraint(
+        "(status IN ('failed','interrupted') AND error_code IS NOT NULL) OR "
+        "(status NOT IN ('failed','interrupted') AND error_code IS NULL)",
+        name="ck_runtime_leases_error",
+    ),
+)
+
+runtime_workers = Table(
+    "runtime_workers",
+    cloud_metadata,
+    Column("owner_id", String(128), primary_key=True),
+    Column("executor", String(128), nullable=False),
+    Column("executor_version", String(64), nullable=False),
+    Column("attestation_digest", String(64), nullable=False),
+    Column("gateway_base_url", String(4096), nullable=False),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("last_seen_at", DateTime(timezone=True), nullable=False),
+    PrimaryKeyConstraint("owner_id", name="pk_runtime_workers"),
+    CheckConstraint(
+        "executor = 'cloud_oci_runtime' AND executor_version = '1.0.0' AND "
+        "attestation_digest ~ '^[0-9a-f]{64}$'",
+        name="ck_runtime_workers_attestation",
+    ),
+)
+
+runtime_routes = Table(
+    "runtime_routes",
+    cloud_metadata,
+    Column("token_hash", String(64), primary_key=True),
+    Column("tenant_id", String(TENANT_ID_LENGTH), nullable=False),
+    Column("runtime_id", String(36), nullable=False),
+    Column("preview_id", String(36), nullable=False),
+    Column("task_id", String(36), nullable=False),
+    Column("version_id", String(36), nullable=False),
+    Column("request_lease_fence", BigInteger, nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    PrimaryKeyConstraint("token_hash", name="pk_runtime_routes"),
+    ForeignKeyConstraint(
+        ["tenant_id", "runtime_id"],
+        [runtime_leases.c.tenant_id, runtime_leases.c.runtime_id],
+        name="fk_runtime_routes_runtime",
+        ondelete="CASCADE",
+    ),
+    CheckConstraint(
+        "token_hash ~ '^[0-9a-f]{64}$' AND request_lease_fence > 0",
+        name="ck_runtime_routes_binding",
+    ),
+)
+
 Index(
     "ix_outbox_claim_global",
     outbox.c.published_at,
@@ -262,6 +393,20 @@ Index(
     outbox.c.lease_expires_at,
     outbox.c.id,
     postgresql_where=outbox.c.published_at.is_(None),
+)
+Index("ix_runtime_routes_expiry", runtime_routes.c.expires_at)
+Index(
+    "ix_runtime_leases_claim",
+    runtime_leases.c.status,
+    runtime_leases.c.lease_expires_at,
+    runtime_leases.c.created_at,
+    postgresql_where=runtime_leases.c.status.in_(("queued", "starting", "running", "stopping")),
+)
+Index(
+    "ix_runtime_leases_tenant_task",
+    runtime_leases.c.tenant_id,
+    runtime_leases.c.task_id,
+    runtime_leases.c.created_at,
 )
 Index(
     "ix_version_candidates_tenant_project_state",
@@ -295,6 +440,9 @@ __all__ = [
     "execution_jobs",
     "execution_workers",
     "outbox",
+    "runtime_leases",
+    "runtime_routes",
+    "runtime_workers",
     "version_candidates",
     "worker_leases",
 ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import stat
@@ -91,7 +92,7 @@ def dependency_template(project_root: Path) -> ExecutionTemplate:
             DependencyManager.YARN: (
                 "yarn",
                 "install",
-                "--immutable",
+                "--frozen-lockfile",
                 "--ignore-scripts",
             ),
             DependencyManager.UV: (
@@ -101,7 +102,7 @@ def dependency_template(project_root: Path) -> ExecutionTemplate:
                 "--no-install-project",
             ),
             DependencyManager.PIP: (
-                "python3",
+                ".venv/bin/python",
                 "-m",
                 "pip",
                 "install",
@@ -118,6 +119,26 @@ def dependency_template(project_root: Path) -> ExecutionTemplate:
         network_policy=SandboxNetworkPolicy.PUBLIC,
         purpose=SandboxPurpose.DEPENDENCY,
     )
+
+
+def dependency_layer_key(
+    project_root: Path,
+    manager: DependencyManager | None = None,
+) -> str:
+    root = _project_root(project_root)
+    resolved_manager = manager or _detect_manager(root)
+    lock_name = {
+        DependencyManager.NPM: "package-lock.json",
+        DependencyManager.PNPM: "pnpm-lock.yaml",
+        DependencyManager.YARN: "yarn.lock",
+        DependencyManager.UV: "uv.lock",
+        DependencyManager.PIP: "requirements.lock",
+        DependencyManager.CARGO: "Cargo.lock",
+    }[resolved_manager]
+    content = _bytes(root / lock_name)
+    return hashlib.sha256(
+        b"fairy-dependency-layer-v1\0" + resolved_manager.value.encode("ascii") + b"\0" + content
+    ).hexdigest()
 
 
 def review_template(project_root: Path, kind: ReviewKind) -> ExecutionTemplate:
@@ -325,6 +346,15 @@ def _text(path: Path) -> str:
         raise DependencyLockError(f"project control file is invalid UTF-8: {path.name}") from error
 
 
+def _bytes(path: Path) -> bytes:
+    if not _exists(path):
+        raise DependencyLockError(f"project control file is missing: {path.name}")
+    try:
+        return path.read_bytes()
+    except OSError as error:
+        raise DependencyLockError(f"project control file is unavailable: {path.name}") from error
+
+
 def _json_object(path: Path) -> dict[str, object]:
     try:
         value = json.loads(_text(path))
@@ -350,6 +380,7 @@ __all__ = [
     "ProjectManagerConflictError",
     "ReviewKind",
     "UnknownProjectManagerError",
+    "dependency_layer_key",
     "dependency_template",
     "review_template",
 ]

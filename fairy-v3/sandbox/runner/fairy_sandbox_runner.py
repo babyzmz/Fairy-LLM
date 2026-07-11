@@ -83,6 +83,8 @@ class RunnerRequest:
     output_limit_bytes: int
     network_policy: str
     purpose: str
+    dependency_key: str | None
+    dependency_manager: str | None
     archive_sha256: str
 
 
@@ -95,6 +97,15 @@ class ProcessOutcome:
     output_truncated: bool
     started_at: datetime
     finished_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class DependencyLayer:
+    path: Path
+    final_path: Path
+    manager: str
+    writable: bool
+    cached: bool
 
 
 def parse_request_frame(frame: bytes) -> tuple[RunnerRequest, bytes]:
@@ -156,6 +167,21 @@ def parse_request_frame(frame: bytes) -> tuple[RunnerRequest, bytes]:
         raise RunnerProtocolError(
             "raw public network is limited to a scratch Workspace"
         )
+    dependency_key = header.get("dependency_key")
+    dependency_manager = header.get("dependency_manager")
+    if purpose in {"dependency", "review"}:
+        if (
+            project_id is None
+            or version_id is None
+            or not isinstance(dependency_key, str)
+            or _DIGEST.fullmatch(dependency_key) is None
+            or dependency_manager not in {"npm", "pnpm", "yarn", "uv", "pip", "cargo"}
+        ):
+            raise RunnerProtocolError(
+                "dependency layer requires a Project, key, and supported manager"
+            )
+    elif dependency_key is not None or dependency_manager is not None:
+        raise RunnerProtocolError("raw purpose cannot bind a dependency layer")
     return (
         RunnerRequest(
             job_id=job_id,
@@ -173,6 +199,8 @@ def parse_request_frame(frame: bytes) -> tuple[RunnerRequest, bytes]:
             output_limit_bytes=output_limit,
             network_policy=network_policy,
             purpose=purpose,
+            dependency_key=dependency_key,
+            dependency_manager=dependency_manager,
             archive_sha256=archive_sha256,
         ),
         archive,
@@ -233,9 +261,16 @@ def synchronize_workspace(
     return target
 
 
-def build_isolation_command(request: RunnerRequest, workspace: Path) -> tuple[str, ...]:
+def build_isolation_command(
+    request: RunnerRequest,
+    workspace: Path,
+    dependency_layer: DependencyLayer | None = None,
+) -> tuple[str, ...]:
     workspace = workspace.resolve(strict=False)
     sandbox_cwd = "/workspace" if request.cwd == "." else f"/workspace/{request.cwd}"
+    sandbox_path = "/usr/local/bin:/usr/bin:/bin"
+    if dependency_layer is not None and dependency_layer.manager in {"uv", "pip"}:
+        sandbox_path = f"/workspace/.venv/bin:{sandbox_path}"
     command = [
         BWRAP.as_posix(),
         "--die-with-parent",
@@ -281,7 +316,7 @@ def build_isolation_command(request: RunnerRequest, workspace: Path) -> tuple[st
             "/home/fairy",
             "--setenv",
             "PATH",
-            "/usr/local/bin:/usr/bin:/bin",
+            sandbox_path,
             "--setenv",
             "LANG",
             "C.UTF-8",
@@ -304,6 +339,17 @@ def build_isolation_command(request: RunnerRequest, workspace: Path) -> tuple[st
                 "/etc/ssl",
             )
         )
+    if dependency_layer is not None:
+        source, target = _dependency_mount(request, workspace, dependency_layer)
+        command.extend(
+            (
+                "--bind" if dependency_layer.writable else "--ro-bind",
+                str(source),
+                target,
+            )
+        )
+        if dependency_layer.manager in {"uv", "pip"}:
+            command.extend(("--setenv", "VIRTUAL_ENV", "/workspace/.venv"))
     for name, value in sorted(request.environment.items()):
         command.extend(("--setenv", name, value))
     command.extend(("--chdir", sandbox_cwd, "--", *request.argv))
@@ -443,6 +489,13 @@ def health_document() -> dict[str, object]:
         "config_sha256": _file_sha256(WSL_CONFIG),
         "bwrap_path": str(BWRAP),
         "bwrap_sha256": _file_sha256(BWRAP),
+        "toolchain": {
+            "node": _tool_version(("/usr/local/bin/node", "--version")),
+            "npm": _tool_version(("/usr/local/bin/npm", "--version")),
+            "pnpm": _tool_version(("/usr/local/bin/pnpm", "--version")),
+            "yarn": _tool_version(("/usr/local/bin/yarn", "--version")),
+            "uv": _tool_version(("/usr/local/bin/uv", "--version")),
+        },
         "files": {
             "runner": _file_attestation(runner_path),
             "config": _file_attestation(WSL_CONFIG),
@@ -471,15 +524,37 @@ def execute_frame(frame: bytes, root: Path = DEFAULT_ROOT) -> dict[str, object]:
             "cwd is not a directory in the synchronized workspace"
         )
     cancellation_path = job_root / "cancel"
-    command = build_isolation_command(request, workspace)
-    outcome = run_bounded_process(
-        command,
-        cwd=workspace,
-        environment={},
-        timeout_seconds=request.timeout_seconds,
-        output_limit_bytes=request.output_limit_bytes,
-        cancellation_path=cancellation_path,
-    )
+    dependency_layer = prepare_dependency_layer(request, root, workspace)
+    if dependency_layer is not None and dependency_layer.cached:
+        now = datetime.now(UTC)
+        outcome = ProcessOutcome(
+            status="completed",
+            exit_code=0,
+            stdout=b"dependency layer cache hit\n",
+            stderr=b"",
+            output_truncated=False,
+            started_at=now,
+            finished_at=now,
+        )
+    else:
+        command = (
+            build_isolation_command(request, workspace)
+            if dependency_layer is None
+            else build_isolation_command(request, workspace, dependency_layer)
+        )
+        outcome = run_bounded_process(
+            command,
+            cwd=workspace,
+            environment={},
+            timeout_seconds=request.timeout_seconds,
+            output_limit_bytes=request.output_limit_bytes,
+            cancellation_path=cancellation_path,
+        )
+    if dependency_layer is not None and dependency_layer.writable:
+        if outcome.status == "completed":
+            complete_dependency_layer(request, dependency_layer)
+        else:
+            shutil.rmtree(dependency_layer.path, ignore_errors=True)
     return {
         "schema_version": 1,
         "executor": EXECUTOR,
@@ -500,6 +575,167 @@ def execute_frame(frame: bytes, root: Path = DEFAULT_ROOT) -> dict[str, object]:
         "started_at": outcome.started_at.isoformat(),
         "finished_at": outcome.finished_at.isoformat(),
     }
+
+
+def prepare_dependency_layer(
+    request: RunnerRequest,
+    root: Path,
+    workspace: Path,
+) -> DependencyLayer | None:
+    if request.purpose == "raw":
+        return None
+    assert request.dependency_key is not None and request.dependency_manager is not None
+    dependency_root = Path(root).resolve(strict=False) / "dependencies"
+    dependency_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    final_path = dependency_root / request.dependency_key
+    if final_path.exists():
+        _validate_dependency_layer(final_path, request)
+        return DependencyLayer(
+            path=final_path,
+            final_path=final_path,
+            manager=request.dependency_manager,
+            writable=False,
+            cached=request.purpose == "dependency",
+        )
+    if request.purpose == "review":
+        raise RunnerProtocolError("review requires a completed dependency layer")
+    staging = dependency_root / f".staging-{request.job_id}"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(mode=0o700)
+    try:
+        _prepare_layer_content(staging, request.dependency_manager)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return DependencyLayer(
+        path=staging,
+        final_path=final_path,
+        manager=request.dependency_manager,
+        writable=True,
+        cached=False,
+    )
+
+
+def complete_dependency_layer(
+    request: RunnerRequest,
+    layer: DependencyLayer,
+) -> None:
+    if not layer.writable or request.dependency_key is None:
+        raise RunnerProtocolError("dependency layer completion is invalid")
+    _write_json_atomic(
+        layer.path / "complete.json",
+        {
+            "schema_version": 1,
+            "dependency_key": request.dependency_key,
+            "dependency_manager": layer.manager,
+        },
+    )
+    try:
+        os.replace(layer.path, layer.final_path)
+    except OSError:
+        if not layer.final_path.is_dir():
+            raise
+        _validate_dependency_layer(layer.final_path, request)
+        shutil.rmtree(layer.path, ignore_errors=True)
+
+
+def _prepare_layer_content(path: Path, manager: str) -> None:
+    if manager in {"npm", "pnpm", "yarn"}:
+        (path / "node_modules").mkdir(mode=0o700)
+    elif manager == "uv":
+        (path / ".venv").mkdir(mode=0o700)
+    elif manager == "pip":
+        _create_virtual_environment(path / ".venv")
+    else:
+        (path / "cargo-home").mkdir(mode=0o700)
+
+
+def _create_virtual_environment(path: Path) -> None:
+    base_executable = Path(
+        str(getattr(sys, "_base_executable", sys.executable))
+    ).resolve(strict=True)
+    if not base_executable.as_posix().startswith("/usr/"):
+        raise RunnerProtocolError(
+            "Python base interpreter is outside the attested toolchain"
+        )
+    try:
+        completed = subprocess.run(
+            (str(base_executable), "-m", "venv", str(path)),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            timeout=60,
+            env={
+                "HOME": "/tmp",
+                "LANG": "C.UTF-8",
+                "PATH": "/usr/local/bin:/usr/bin:/bin",
+            },
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RunnerProtocolError(
+            "Python dependency venv could not be created"
+        ) from error
+    if completed.returncode != 0 or not (path / "bin" / "python").is_file():
+        raise RunnerProtocolError("Python dependency venv creation failed")
+
+
+def _dependency_mount(
+    request: RunnerRequest,
+    workspace: Path,
+    layer: DependencyLayer,
+) -> tuple[Path, str]:
+    manager = layer.manager
+    if manager in {"npm", "pnpm", "yarn"}:
+        name = "node_modules"
+        target = "/workspace/node_modules"
+    elif manager in {"uv", "pip"}:
+        name = ".venv"
+        target = "/workspace/.venv"
+    else:
+        name = "cargo-home"
+        target = "/home/fairy/.cargo"
+    source = (layer.path / name).resolve(strict=True)
+    if source.is_symlink() or not source.is_dir():
+        raise RunnerProtocolError("dependency layer mount is invalid")
+    if target.startswith("/workspace/"):
+        destination = workspace / name
+        if destination.exists() and (
+            destination.is_symlink() or not destination.is_dir()
+        ):
+            raise RunnerProtocolError("dependency layer target is invalid")
+        destination.mkdir(exist_ok=True)
+    return source, target
+
+
+def _validate_dependency_layer(path: Path, request: RunnerRequest) -> None:
+    if path.is_symlink() or not path.is_dir():
+        raise RunnerProtocolError("dependency layer path is invalid")
+    complete = path / "complete.json"
+    try:
+        if complete.is_symlink() or not complete.is_file():
+            raise RunnerProtocolError("dependency layer completion is missing")
+        values = json.loads(complete.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RunnerProtocolError("dependency layer completion is invalid") from error
+    if values != {
+        "schema_version": 1,
+        "dependency_key": request.dependency_key,
+        "dependency_manager": request.dependency_manager,
+    }:
+        raise RunnerProtocolError("dependency layer binding does not match")
+    manager = str(request.dependency_manager)
+    name = (
+        "node_modules"
+        if manager in {"npm", "pnpm", "yarn"}
+        else ".venv"
+        if manager in {"uv", "pip"}
+        else "cargo-home"
+    )
+    content = path / name
+    if content.is_symlink() or not content.is_dir():
+        raise RunnerProtocolError("dependency layer content is invalid")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -840,6 +1076,29 @@ def _file_sha256(path: Path) -> str:
         while chunk := source.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _tool_version(argv: tuple[str, ...]) -> str:
+    try:
+        completed = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            timeout=5,
+            env={
+                "HOME": "/tmp",
+                "LANG": "C.UTF-8",
+                "PATH": "/usr/local/bin:/usr/bin:/bin",
+            },
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RunnerProtocolError("Sandbox toolchain could not be attested") from error
+    value = completed.stdout.decode("utf-8", errors="strict").strip()
+    if completed.returncode != 0 or not value or "\n" in value:
+        raise RunnerProtocolError("Sandbox toolchain version is invalid")
+    return value
 
 
 def _file_attestation(path: Path) -> dict[str, int]:

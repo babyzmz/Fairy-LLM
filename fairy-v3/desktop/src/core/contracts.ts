@@ -17,6 +17,8 @@ export type AssistantTurnCreateInput = Schemas["AssistantTurnCreateInput"];
 export type AssistantTurnRetryInput = Schemas["AssistantTurnRetryInput"];
 export type AssistantTurnRunInput = Schemas["AssistantTurnRunInput"];
 export type CapabilityManifest = Schemas["CapabilityManifestModel"];
+export type SlashCommandMetadata = Schemas["SlashCommandMetadataModel"];
+export type ToolDefinitionMetadata = Schemas["ToolDefinitionMetadataModel"];
 export type Changeset = Schemas["ChangesetModel"];
 export type ChangesetProposal = Schemas["ChangesetProposal"];
 export type Checkpoint = Schemas["CheckpointModel"];
@@ -63,6 +65,15 @@ export type MemorySearchInput = operations["memory.search"]["parameters"]["query
 export type MemorySearchPage = Schemas["MemorySearchPageModel"];
 export type MemorySnapshot = Schemas["MemorySnapshotModel"];
 export type MemoryTombstone = Schemas["MemoryTombstoneModel"];
+export type McpServer = Schemas["McpServerModel"];
+export type McpServerAcceptInput = Schemas["McpServerAcceptInput"];
+export type McpServerConfigureInput = Schemas["McpServerConfigureInput"];
+export type McpServerDeleteInput = Schemas["McpServerDeleteInput"];
+export type McpServerDeleteResult = Schemas["McpServerDeleteResult"];
+export type McpServerDiscoverInput = Schemas["McpServerDiscoverInput"];
+export type McpServerPage = Schemas["McpServerPageModel"];
+export type McpServerSetEnabledInput = Schemas["McpServerSetEnabledInput"];
+export type McpToolPolicyInput = Schemas["McpToolPolicyInput"];
 export type Message = Schemas["MessageModel"];
 export type MessageListInput = NonNullable<
   operations["messages.list"]["parameters"]["query"]
@@ -92,6 +103,8 @@ export type ProviderProfile = Schemas["ProviderProfileModel"];
 export type ProviderProfilePage = Schemas["ProviderProfilePageModel"];
 export type Runtime = Schemas["RuntimeModel"];
 export type RuntimeHealth = Schemas["RuntimeHealthModel"];
+export type Skill = Schemas["SkillModel"];
+export type SkillPage = Schemas["SkillPageModel"];
 export type SystemActionExecution = Schemas["SystemActionExecution"];
 export type SystemActionRequest = Schemas["SystemActionRequest"];
 export type SystemAction = SystemActionRequest["action"];
@@ -165,6 +178,28 @@ export interface CoreMethodMap {
   };
   "providers.list": { params: EmptyParams; result: ProviderProfilePage };
   "providers.health": { params: ProviderHealthInput; result: ProviderHealthPage };
+  "skills.list": { params: EmptyParams; result: SkillPage };
+  "mcp.servers.list": { params: EmptyParams; result: McpServerPage };
+  "mcp.servers.configure": {
+    params: McpServerConfigureInput;
+    result: McpServer;
+  };
+  "mcp.servers.discover": {
+    params: McpServerDiscoverInput;
+    result: McpServer;
+  };
+  "mcp.servers.accept": {
+    params: McpServerAcceptInput;
+    result: McpServer;
+  };
+  "mcp.servers.set_enabled": {
+    params: McpServerSetEnabledInput;
+    result: McpServer;
+  };
+  "mcp.servers.delete": {
+    params: McpServerDeleteInput;
+    result: McpServerDeleteResult;
+  };
   "runtimes.get": { params: { runtime_id: string }; result: Runtime };
   "runtimes.health": { params: { task_id: string }; result: RuntimeHealth };
   "system.actions.execute": {

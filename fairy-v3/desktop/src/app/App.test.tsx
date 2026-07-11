@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Approval,
   AssistantTurn,
+  CapabilityManifest,
   Conversation,
   EventEnvelope,
+  ExecutionSettings,
   Message,
   Project,
   ProviderHealth,
@@ -283,6 +285,92 @@ describe("App", () => {
       }),
     );
   });
+
+  it("persists capability toggles through the current Core revision only", async () => {
+    const initial: ExecutionSettings = {
+      profile: "standard",
+      capability_overrides: {},
+      revision: 7,
+      updated_at: timestamp,
+    };
+    const update = vi.fn(async (input) => ({
+      profile: input.profile,
+      capability_overrides: input.capability_overrides ?? {},
+      revision: input.expected_revision + 1,
+      updated_at: timestamp,
+    }));
+    const client = createClient(
+      async () => ({ status: "ok", service: "fairy-core", protocol: "core-service-v1" }),
+      [project],
+      {
+        permissions: { get: async () => initial, update },
+        capabilities: { get: async () => capabilityManifest("standard", true) },
+      },
+    );
+    render(<App client={client} />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Execution controls" }),
+    );
+    await userEvent.click(screen.getByRole("checkbox", { name: "web.search" }));
+
+    await vi.waitFor(() => expect(update).toHaveBeenCalledOnce());
+    expect(update).toHaveBeenCalledWith({
+      profile: "standard",
+      capability_overrides: { "web.search": false },
+      expected_revision: 7,
+      idempotency_key: expect.stringMatching(/^permissions:7:[0-9a-f]{16}$/),
+    });
+    expect(Object.keys(window.localStorage)).not.toContain("fairy.workspace.permission");
+  });
+
+  it("reloads Core permissions after a revision conflict without overwriting them", async () => {
+    const latest: ExecutionSettings = {
+      profile: "observe",
+      capability_overrides: { "web.search": false },
+      revision: 3,
+      updated_at: timestamp,
+    };
+    const get = vi
+      .fn<WorkspaceClient["permissions"]["get"]>()
+      .mockResolvedValueOnce({
+        profile: "standard",
+        capability_overrides: {},
+        revision: 2,
+        updated_at: timestamp,
+      })
+      .mockResolvedValue(latest);
+    const conflict = Object.assign(new Error("stale permission revision"), {
+      errorCode: "VERSION_CONFLICT",
+    });
+    const update = vi.fn<WorkspaceClient["permissions"]["update"]>().mockRejectedValue(conflict);
+    const client = createClient(
+      async () => ({ status: "ok", service: "fairy-core", protocol: "core-service-v1" }),
+      [project],
+      {
+        permissions: { get, update },
+        capabilities: { get: async () => capabilityManifest("standard", true) },
+      },
+    );
+    render(<App client={client} />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Execution controls" }),
+    );
+    const readsBeforeConflict = get.mock.calls.length;
+    await userEvent.click(screen.getByText("Autonomous"));
+
+    expect(
+      await screen.findByText(
+        "Permissions changed on another device. Latest settings loaded; review and retry.",
+      ),
+    ).toBeVisible();
+    await vi.waitFor(() =>
+      expect(screen.getByLabelText("Workspace telemetry")).toHaveTextContent("observe"),
+    );
+    expect(get.mock.calls.length).toBeGreaterThan(readsBeforeConflict);
+    expect(update).toHaveBeenCalledTimes(1);
+  });
 });
 
 function createClient(
@@ -295,6 +383,8 @@ function createClient(
     createTask?: WorkspaceClient["tasks"]["create"];
     createTurn?: WorkspaceClient["assistant"]["turns"]["create"];
     runTurn?: WorkspaceClient["assistant"]["turns"]["run"];
+    permissions?: WorkspaceClient["permissions"];
+    capabilities?: WorkspaceClient["capabilities"];
   } = {},
 ): WorkspaceClient {
   return {
@@ -356,16 +446,10 @@ function createClient(
         throw new Error("not used");
       },
     },
-    capabilities: {
-      get: async () => ({
-        profile: "standard",
-        operations: {},
-        sandbox_healthy: false,
-        command_metadata: [],
-        schema_version: 1,
-      }),
+    capabilities: options.capabilities ?? {
+      get: async () => capabilityManifest("standard", false),
     },
-    permissions: {
+    permissions: options.permissions ?? {
       get: async () => ({
         profile: "standard",
         capability_overrides: {},
@@ -382,6 +466,19 @@ function createClient(
     providers: {
       list: async () => ({ items: [provider] }),
       health: async () => ({ items: [providerHealth] }),
+    },
+    skills: {
+      list: async () => ({ items: [] }),
+    },
+    mcp: {
+      servers: {
+        list: async () => ({ items: [] }),
+        configure: async () => { throw new Error("not used"); },
+        discover: async () => { throw new Error("not used"); },
+        accept: async () => { throw new Error("not used"); },
+        setEnabled: async () => { throw new Error("not used"); },
+        delete: async () => { throw new Error("not used"); },
+      },
     },
     messages: {
       list: async () => ({
@@ -411,6 +508,56 @@ function createClient(
     events: {
       subscribe: () => visibleEvents(),
     },
+  };
+}
+
+function capabilityManifest(
+  profile: ExecutionSettings["profile"],
+  sandboxHealthy: boolean,
+): CapabilityManifest {
+  return {
+    profile,
+    operations: {
+      "web.search": true,
+      "run.sandboxed": profile === "autonomous" && sandboxHealthy,
+    },
+    sandbox_healthy: sandboxHealthy,
+    command_metadata: [
+      {
+        name: "web.search",
+        side_effect: "read",
+        risk_level: "low",
+        approval_policy: "never",
+        profiles: ["observe", "standard", "autonomous"],
+        requires_sandbox: false,
+        idempotent: true,
+        model_visible: true,
+        description: "Search public web or news sources.",
+        input_schema: { type: "object" },
+        definition_digest: "web-search-v3",
+        required_extensions: [],
+        required_operations: [],
+        source: "builtin",
+      },
+      {
+        name: "run.sandboxed",
+        side_effect: "execute",
+        risk_level: "high",
+        approval_policy: "never",
+        profiles: ["autonomous"],
+        requires_sandbox: true,
+        idempotent: false,
+        model_visible: true,
+        description: "Run a governed command.",
+        input_schema: { type: "object" },
+        definition_digest: "run-sandboxed-v3",
+        required_extensions: [],
+        required_operations: [],
+        source: "builtin",
+      },
+    ],
+    slash_commands: [],
+    schema_version: 3,
   };
 }
 

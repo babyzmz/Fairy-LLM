@@ -9,7 +9,8 @@ psql \
   --set=database_name="$POSTGRES_DB" \
   --set=app_password="$FAIRY_APP_POSTGRES_PASSWORD" \
   --set=worker_password="$FAIRY_WORKER_POSTGRES_PASSWORD" \
-  --set=execution_password="$FAIRY_EXECUTION_POSTGRES_PASSWORD" <<'SQL'
+  --set=execution_password="$FAIRY_EXECUTION_POSTGRES_PASSWORD" \
+  --set=runtime_password="$FAIRY_RUNTIME_POSTGRES_PASSWORD" <<'SQL'
 SELECT format(
   'CREATE ROLE fairy_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD %L',
   :'app_password'
@@ -31,12 +32,20 @@ SELECT format(
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fairy_execution')
 \gexec
 
+SELECT format(
+  'CREATE ROLE fairy_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT BYPASSRLS PASSWORD %L',
+  :'runtime_password'
+)
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fairy_runtime')
+\gexec
+
 ALTER ROLE fairy_app WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD :'app_password';
 ALTER ROLE fairy_worker WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT BYPASSRLS PASSWORD :'worker_password';
 ALTER ROLE fairy_execution WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT BYPASSRLS PASSWORD :'execution_password';
+ALTER ROLE fairy_runtime WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT BYPASSRLS PASSWORD :'runtime_password';
 
-GRANT CONNECT ON DATABASE :"database_name" TO fairy_app, fairy_worker, fairy_execution;
-GRANT USAGE ON SCHEMA public TO fairy_app, fairy_worker, fairy_execution;
+GRANT CONNECT ON DATABASE :"database_name" TO fairy_app, fairy_worker, fairy_execution, fairy_runtime;
+GRANT USAGE ON SCHEMA public TO fairy_app, fairy_worker, fairy_execution, fairy_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO fairy_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO fairy_app;
 
@@ -50,6 +59,10 @@ WHERE to_regclass('public.alembic_version') IS NOT NULL
 \gexec
 
 SELECT 'REVOKE ALL ON TABLE public.alembic_version FROM fairy_execution'
+WHERE to_regclass('public.alembic_version') IS NOT NULL
+\gexec
+
+SELECT 'REVOKE ALL ON TABLE public.alembic_version FROM fairy_runtime'
 WHERE to_regclass('public.alembic_version') IS NOT NULL
 \gexec
 
@@ -67,5 +80,13 @@ WHERE to_regclass('public.execution_jobs') IS NOT NULL
 
 SELECT 'GRANT SELECT, INSERT, UPDATE ON TABLE public.execution_workers TO fairy_execution'
 WHERE to_regclass('public.execution_workers') IS NOT NULL
+\gexec
+
+SELECT 'GRANT SELECT, UPDATE ON TABLE public.runtime_leases TO fairy_runtime'
+WHERE to_regclass('public.runtime_leases') IS NOT NULL
+\gexec
+
+SELECT 'GRANT SELECT, INSERT, UPDATE ON TABLE public.runtime_workers TO fairy_runtime'
+WHERE to_regclass('public.runtime_workers') IS NOT NULL
 \gexec
 SQL

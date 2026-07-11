@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+from threading import RLock
+
+from fairy_core.commanding.registry import (
+    ApprovalPolicy,
+    RiskLevel,
+    SideEffect,
+    ToolDefinition,
+    ToolRegistry,
+)
+from fairy_core.commanding.types import PermissionProfile
+from fairy_core.skills.models import SkillPackage
+
+
+class SkillRegistry:
+    def __init__(self, tools: ToolRegistry) -> None:
+        self._tools = tools
+        self._packages: dict[str, SkillPackage] = {}
+        self._lock = RLock()
+
+    def install(self, package: SkillPackage) -> None:
+        name = package.manifest.name
+        definition = ToolDefinition(
+            name=package.manifest.tool_name,
+            side_effect=SideEffect.READ,
+            risk_level=RiskLevel.LOW,
+            approval_policy=ApprovalPolicy.NEVER,
+            profiles=frozenset(PermissionProfile),
+            executor="skill_instructions",
+            idempotent=True,
+            model_visible=True,
+            description=(
+                f"Load the governed {package.manifest.name} Skill instructions. "
+                f"{package.manifest.description}"
+            ),
+            source="skill",
+            origin_id=name,
+            required_operations=frozenset(package.manifest.required_capabilities),
+            required_extensions=frozenset(
+                f"mcp:{server_id}" for server_id in package.manifest.compatible_mcp_servers
+            ),
+            input_schema=package.manifest.input_schema,
+        )
+        with self._lock:
+            if name in self._packages:
+                raise ValueError(f"Skill is already installed: {name}")
+            missing = sorted(
+                operation
+                for operation in package.manifest.required_capabilities
+                if self._tools.get(operation) is None
+            )
+            if missing:
+                raise ValueError(f"Skill requires unknown capabilities: {', '.join(missing)}")
+            self._packages[name] = package
+            try:
+                self._tools.register(definition)
+            except Exception:
+                self._packages.pop(name, None)
+                raise
+
+    def get(self, name: str) -> SkillPackage | None:
+        with self._lock:
+            return self._packages.get(name)
+
+    def packages(self) -> tuple[SkillPackage, ...]:
+        with self._lock:
+            return tuple(self._packages.values())
+
+
+__all__ = ["SkillRegistry"]

@@ -34,17 +34,31 @@ bindings. Public Message pages exclude internal records. The Assistant Ledger
 does not import or call a model provider; provider execution remains behind
 Core ports and external composition.
 
-The local static executor is read-only. Dynamic WSL and cloud OCI execution
-remain unavailable until dedicated executors satisfy their health and
-attestation contracts; Core never substitutes a host shell.
+The local static executor is read-only. Local composition supplies the attested
+WSL2 Runtime/Sandbox supervisors, while Cloud supplies PostgreSQL-fenced OCI
+execution and Runtime adapters. Core exposes those capabilities only while the
+selected executor satisfies its health and attestation contract and never
+substitutes a host shell.
 
-Core runtime dependencies are intentionally limited to Pydantic and
-SQLAlchemy. FastAPI, Alembic, asyncpg, object storage, and server processes
-belong to Cloud; local JSON-RPC uses the Python standard library.
+Core also owns governed extension contracts. Fairy Skill packages are strict,
+immutable prompt resources registered as read-only `skill.*` definitions. MCP
+servers use official SDK 1.x adapters behind a Core port; accepted `mcp.*`
+tools still cross Scope, policy, approval, CommandRun, cancellation, and
+Artifact persistence. Transport configuration and credential values are not
+persisted into model-visible records.
+
+Core runtime dependencies are intentionally limited to Pydantic, SQLAlchemy,
+PyYAML, and stable MCP SDK 1.x. FastAPI, Alembic, asyncpg, object storage, and
+provider/server composition belong to Cloud; local JSON-RPC uses the Python
+standard library.
+
+Local stdio/HTTP MCP credential references resolve only from the
+`FAIRY_MCP_CREDENTIALS_JSON` string map inherited by Core. The map is runtime
+configuration and must not be checked into a Skill package or project.
 
 ```powershell
 C:\Python313\Scripts\uv.exe sync --dev
-C:\Python313\Scripts\uv.exe run pytest
+C:\Python313\Scripts\uv.exe run python -m pytest
 C:\Python313\Scripts\uv.exe run ruff format --check src tests
 C:\Python313\Scripts\uv.exe run ruff check src tests
 ```

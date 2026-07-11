@@ -9,6 +9,6 @@ export default defineConfig({
   webServer: {
     command: "npm run e2e:serve",
     url: "http://127.0.0.1:1431",
-    reuseExistingServer: false,
+    reuseExistingServer: process.env.CI !== "true",
   },
 });

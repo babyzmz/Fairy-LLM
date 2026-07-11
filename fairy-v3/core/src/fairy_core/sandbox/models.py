@@ -73,6 +73,8 @@ class SandboxRequest:
     output_limit_bytes: int
     network_policy: SandboxNetworkPolicy
     purpose: SandboxPurpose
+    dependency_key: str | None
+    dependency_manager: str | None
     workspace_archive: bytes
     archive_sha256: str
 
@@ -96,6 +98,8 @@ class SandboxRequest:
         network_policy: SandboxNetworkPolicy,
         workspace_archive: bytes,
         purpose: SandboxPurpose = SandboxPurpose.RAW,
+        dependency_key: str | None = None,
+        dependency_manager: str | None = None,
     ) -> SandboxRequest:
         if (project_id is None) != (version_id is None):
             raise ValueError("project_id and version_id must both be present or absent")
@@ -124,6 +128,19 @@ class SandboxRequest:
             SandboxPurpose.DEPENDENCY,
         }:
             raise ValueError("public network is incompatible with the Sandbox purpose")
+        dependency_aware = purpose in {SandboxPurpose.DEPENDENCY, SandboxPurpose.REVIEW}
+        valid_manager = dependency_manager in {"npm", "pnpm", "yarn", "uv", "pip", "cargo"}
+        if dependency_aware:
+            if (
+                project_id is None
+                or version_id is None
+                or not isinstance(dependency_key, str)
+                or _DIGEST.fullmatch(dependency_key) is None
+                or not valid_manager
+            ):
+                raise ValueError("dependency layer requires a Project, key, and supported manager")
+        elif dependency_key is not None or dependency_manager is not None:
+            raise ValueError("raw Sandbox requests cannot bind a dependency layer")
         archive = bytes(workspace_archive)
         if not archive or len(archive) > _MAX_ARCHIVE_BYTES:
             raise ValueError("workspace archive is empty or exceeds 128 MiB")
@@ -143,6 +160,8 @@ class SandboxRequest:
             output_limit_bytes=output_limit_bytes,
             network_policy=network_policy,
             purpose=purpose,
+            dependency_key=dependency_key,
+            dependency_manager=dependency_manager,
             workspace_archive=archive,
             archive_sha256=hashlib.sha256(archive).hexdigest(),
         )
@@ -165,6 +184,8 @@ class SandboxRequest:
             "output_limit_bytes": self.output_limit_bytes,
             "network_policy": self.network_policy.value,
             "purpose": self.purpose.value,
+            "dependency_key": self.dependency_key,
+            "dependency_manager": self.dependency_manager,
             "archive_byte_length": len(self.workspace_archive),
             "archive_sha256": self.archive_sha256,
         }

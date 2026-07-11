@@ -32,10 +32,30 @@ def test_installer_imports_a_verified_wsl2_rootfs_without_host_path_mounts() -> 
     assert "bubblewrap" in source
     assert "fairy-sandbox-runner" in source
     assert "fairy-sandbox-health" in source
+    assert "fairy-runtime-supervisor" in source
+    assert "fairy_runtime_supervisor.py" in source
+    assert "fairy_install_toolchain.sh" in source
+    assert '"curl", "gnupg"' in source
+    assert '"/var/lib/fairy-sandbox/dependencies"' in source
+    assert '"/var/lib/fairy-sandbox/runtimes"' in source
     assert "RedirectStandardInput" in source
     assert '"/usr/local/lib", "/usr/local/bin"' in source
     assert "--unregister" not in source
     assert "/mnt/" not in source
+
+
+def test_wsl_toolchain_is_version_pinned_and_signature_verified() -> None:
+    source = (ROOT / "sandbox" / "wsl" / "install-toolchain.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'NODE_VERSION="24.18.0"' in source
+    assert 'PNPM_VERSION="10.34.4"' in source
+    assert 'YARN_VERSION="1.22.22"' in source
+    assert 'UV_VERSION="0.11.28"' in source
+    assert "SHASUMS256.txt.sig" in source
+    assert "gpg --batch --verify" in source
+    assert "sha256sum --check --strict" in source
 
 
 def test_release_gate_runs_runner_tests_and_requires_real_execution_with_wsl() -> None:

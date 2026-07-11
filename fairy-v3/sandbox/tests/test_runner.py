@@ -66,6 +66,8 @@ def _frame(
         "output_limit_bytes": 4096,
         "network_policy": "none",
         "purpose": "raw",
+        "dependency_key": None,
+        "dependency_manager": None,
         "archive_byte_length": len(archive),
         "archive_sha256": hashlib.sha256(archive).hexdigest(),
     }
@@ -401,7 +403,13 @@ def test_public_network_is_bound_to_a_core_owned_execution_purpose() -> None:
 
     with pytest.raises(runner.RunnerProtocolError, match="review.*network"):
         runner.parse_request_frame(
-            _frame(archive, purpose="review", network_policy="public")
+            _frame(
+                archive,
+                purpose="review",
+                network_policy="public",
+                dependency_key="b" * 64,
+                dependency_manager="npm",
+            )
         )
     with pytest.raises(runner.RunnerProtocolError, match="dependency.*Project"):
         runner.parse_request_frame(
@@ -411,6 +419,8 @@ def test_public_network_is_bound_to_a_core_owned_execution_purpose() -> None:
                 version_id=None,
                 purpose="dependency",
                 network_policy="public",
+                dependency_key="b" * 64,
+                dependency_manager="npm",
             )
         )
     with pytest.raises(runner.RunnerProtocolError, match="raw.*scratch"):
@@ -419,6 +429,136 @@ def test_public_network_is_bound_to_a_core_owned_execution_purpose() -> None:
         )
 
     dependency, _decoded = runner.parse_request_frame(
-        _frame(archive, purpose="dependency", network_policy="public")
+        _frame(
+            archive,
+            purpose="dependency",
+            network_policy="public",
+            dependency_key="b" * 64,
+            dependency_manager="npm",
+        )
     )
     assert dependency.purpose == "dependency"
+
+
+def test_dependency_layer_is_atomic_and_review_mounts_it_read_only(
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    archive = _archive()
+    dependency, _decoded = runner.parse_request_frame(
+        _frame(
+            archive,
+            purpose="dependency",
+            network_policy="public",
+            dependency_key="b" * 64,
+            dependency_manager="npm",
+        )
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    staging = runner.prepare_dependency_layer(dependency, tmp_path, workspace)
+    assert staging is not None and staging.writable and not staging.cached
+    dependency_command = runner.build_isolation_command(
+        dependency,
+        workspace,
+        staging,
+    )
+    assert "--bind" in dependency_command
+    runner.complete_dependency_layer(dependency, staging)
+
+    review, _decoded = runner.parse_request_frame(
+        _frame(
+            archive,
+            purpose="review",
+            network_policy="none",
+            dependency_key="b" * 64,
+            dependency_manager="npm",
+        )
+    )
+    mounted = runner.prepare_dependency_layer(review, tmp_path, workspace)
+    assert mounted is not None and not mounted.writable and not mounted.cached
+    review_command = runner.build_isolation_command(review, workspace, mounted)
+    triples = tuple(
+        review_command[index : index + 3] for index in range(len(review_command) - 2)
+    )
+    assert any(
+        triple[0] == "--ro-bind" and triple[2] == "/workspace/node_modules"
+        for triple in triples
+    )
+
+
+def test_review_fails_closed_without_dependency_layer(tmp_path: Path) -> None:
+    runner = _load_runner()
+    review, _decoded = runner.parse_request_frame(
+        _frame(
+            _archive(),
+            purpose="review",
+            dependency_key="b" * 64,
+            dependency_manager="npm",
+        )
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    with pytest.raises(runner.RunnerProtocolError, match="completed dependency layer"):
+        runner.prepare_dependency_layer(review, tmp_path, workspace)
+
+
+def test_pip_dependency_layer_uses_managed_venv_for_install_and_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    created: list[Path] = []
+
+    def create_venv(path: Path) -> None:
+        created.append(path)
+        (path / "bin").mkdir(parents=True)
+        (path / "bin" / "python").touch()
+
+    monkeypatch.setattr(runner, "_create_virtual_environment", create_venv)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    dependency, _decoded = runner.parse_request_frame(
+        _frame(
+            _archive(),
+            argv=[
+                ".venv/bin/python",
+                "-m",
+                "pip",
+                "install",
+                "--require-hashes",
+                "--only-binary=:all:",
+                "-r",
+                "requirements.lock",
+            ],
+            purpose="dependency",
+            network_policy="public",
+            dependency_key="c" * 64,
+            dependency_manager="pip",
+        )
+    )
+    staging = runner.prepare_dependency_layer(dependency, tmp_path, workspace)
+    assert staging is not None
+    runner.complete_dependency_layer(dependency, staging)
+
+    review, _decoded = runner.parse_request_frame(
+        _frame(
+            _archive(),
+            purpose="review",
+            network_policy="none",
+            dependency_key="c" * 64,
+            dependency_manager="pip",
+        )
+    )
+    layer = runner.prepare_dependency_layer(review, tmp_path, workspace)
+    assert layer is not None
+    command = runner.build_isolation_command(review, workspace, layer)
+
+    assert len(created) == 1
+    assert ("--setenv", "VIRTUAL_ENV", "/workspace/.venv") in tuple(
+        command[index : index + 3] for index in range(len(command) - 2)
+    )
+    path_index = command.index("PATH")
+    assert command[path_index + 1].startswith("/workspace/.venv/bin:")

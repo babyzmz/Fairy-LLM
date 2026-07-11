@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import ExitStack
 from pathlib import Path
 from typing import TextIO
@@ -17,18 +17,26 @@ from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.commanding.settings import ExecutionPolicyResolver, SandboxHealthProvider
 from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
+from fairy_core.mcp.application import McpApplication
+from fairy_core.mcp.ports import McpConnector
+from fairy_core.mcp.sdk import MappingCredentialResolver, OfficialMcpConnector
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.data_directory_lock import DataDirectoryLock
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.providers import ProviderRegistry
 from fairy_core.research.ports import FetchPort
+from fairy_core.runtime.evidence_store import FileRuntimeEvidenceStore
+from fairy_core.runtime.http_review import HttpRuntimeReviewer
 from fairy_core.runtime.ports import RuntimeExecutor
 from fairy_core.runtime.rust_worker import RustRuntimeExecutor
+from fairy_core.runtime.supervisor import RoutedRuntimeExecutor, WslDynamicRuntimeExecutor
 from fairy_core.runtime.unavailable import UnavailableRuntimeExecutor
 from fairy_core.sandbox.ports import SandboxExecutor
 from fairy_core.sandbox.tools import ExecutorSandboxHealthProvider
 from fairy_core.sandbox.wsl import WslSandboxExecutor
+from fairy_core.skills.loader import SkillPackageLoader
+from fairy_core.skills.registry import SkillRegistry
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.voice import VoiceRegistry
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
@@ -53,6 +61,8 @@ def build_local_service(
     document_blob_store: DocumentBlobStore | None = None,
     sandbox_executor: SandboxExecutor | None = None,
     sandbox_health_provider: SandboxHealthProvider | None = None,
+    mcp_connector: McpConnector | None = None,
+    skill_paths: Iterable[Path] | None = None,
 ) -> CoreService:
     data_dir.mkdir(parents=True, exist_ok=True)
     resources = ExitStack()
@@ -87,8 +97,31 @@ def build_local_service(
                 executor="rust_local_worker",
                 diagnostic="Rust local worker is not configured",
             )
-        selected_runtime_executor = runtime_executor or configured_runtime_executor
+        selected_runtime_executor = runtime_executor or RoutedRuntimeExecutor(
+            static=configured_runtime_executor,
+            local_dynamic=WslDynamicRuntimeExecutor(host_environment=configured),
+        )
+        browser_program = configured.get("FAIRY_BROWSER_REVIEW_PROGRAM", "").strip()
+        if not browser_program:
+            edge = (
+                Path(configured.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"))
+                / "Microsoft"
+                / "Edge"
+                / "Application"
+                / "msedge.exe"
+            )
+            browser_program = str(edge) if edge.is_file() else ""
         registry = build_default_registry()
+        skills = SkillRegistry(registry)
+        configured_skill_paths = tuple(skill_paths or ())
+        default_skills_root = data_dir / "skills"
+        if not configured_skill_paths and default_skills_root.is_dir():
+            configured_skill_paths = tuple(
+                path for path in sorted(default_skills_root.iterdir()) if path.is_dir()
+            )
+        loader = SkillPackageLoader()
+        for skill_path in configured_skill_paths:
+            skills.install(loader.load(skill_path))
         engine = create_sqlite_core_engine(
             data_dir / "core.db",
             legacy_state_path=data_dir / "state.db",
@@ -110,6 +143,39 @@ def build_local_service(
             registry=registry,
             policy=PolicyEngine(registry),
             execution_policy=execution_policy,
+        )
+        raw_mcp_credentials = json.loads(configured.get("FAIRY_MCP_CREDENTIALS_JSON", "{}"))
+        if not isinstance(raw_mcp_credentials, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in raw_mcp_credentials.items()
+        ):
+            raise ValueError("FAIRY_MCP_CREDENTIALS_JSON must be a JSON string map")
+        inherited_process_environment = {
+            name: configured[name]
+            for name in (
+                "LOCALAPPDATA",
+                "PATH",
+                "PATHEXT",
+                "SYSTEMDRIVE",
+                "SYSTEMROOT",
+                "TEMP",
+                "TMP",
+                "USERPROFILE",
+                "WINDIR",
+            )
+            if configured.get(name)
+        }
+        selected_mcp_connector = mcp_connector or OfficialMcpConnector(
+            credentials=MappingCredentialResolver(raw_mcp_credentials),
+            base_environment=inherited_process_environment,
+        )
+        mcp_application = McpApplication(
+            unit_of_work_factory=unit_of_work_factory,
+            registry=registry,
+            connector=selected_mcp_connector,
+            scope_resolver=application.scope_for_task,
+            execution_policy=execution_policy,
+            execution_target="local",
         )
         runtime_application = RuntimeApplication(
             unit_of_work_factory=unit_of_work_factory,
@@ -139,9 +205,17 @@ def build_local_service(
             document_parser=document_parser,
             document_blob_store=document_blob_store,
             runtime_application=runtime_application,
+            runtime_reviewer=HttpRuntimeReviewer(
+                browser_executable=(Path(browser_program) if browser_program else None),
+                browser_scratch_root=data_dir / "runtime-browser",
+                host_environment=configured,
+            ),
+            runtime_evidence_store=FileRuntimeEvidenceStore(data_dir / "runtime-evidence"),
             system_action_worker=system_action_worker,
             sandbox_executor=selected_sandbox_executor,
             sandbox_health_provider=selected_sandbox_health,
+            skill_registry=skills,
+            mcp_application=mcp_application,
             default_execution_target="local",
             on_close=resources.close,
         )
@@ -164,6 +238,8 @@ def build_local_dispatcher(
     document_blob_store: DocumentBlobStore | None = None,
     sandbox_executor: SandboxExecutor | None = None,
     sandbox_health_provider: SandboxHealthProvider | None = None,
+    mcp_connector: McpConnector | None = None,
+    skill_paths: Iterable[Path] | None = None,
 ) -> JsonRpcDispatcher:
     return JsonRpcDispatcher(
         build_local_service(
@@ -179,6 +255,8 @@ def build_local_dispatcher(
             document_blob_store=document_blob_store,
             sandbox_executor=sandbox_executor,
             sandbox_health_provider=sandbox_health_provider,
+            mcp_connector=mcp_connector,
+            skill_paths=skill_paths,
         )
     )
 

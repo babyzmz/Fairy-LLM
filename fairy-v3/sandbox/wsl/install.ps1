@@ -16,7 +16,11 @@ $ErrorActionPreference = "Stop"
 $Distribution = "FairySandbox"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RunnerPath = Join-Path (Split-Path -Parent $ScriptRoot) "runner\fairy_sandbox_runner.py"
+$RuntimeRunnerPath = Join-Path (
+    (Split-Path -Parent $ScriptRoot)
+) "runner\fairy_runtime_supervisor.py"
 $ConfigPath = Join-Path $ScriptRoot "etc\wsl.conf"
+$ToolchainPath = Join-Path $ScriptRoot "install-toolchain.sh"
 $Wsl = Get-Command wsl.exe -ErrorAction Stop
 
 function Invoke-Wsl {
@@ -32,12 +36,18 @@ function Write-WslFile {
     param(
         [Parameter(Mandatory = $true)][byte[]]$Content,
         [Parameter(Mandatory = $true)]
-        [ValidateSet("runner", "config")]
+        [ValidateSet("runner", "runtime-runner", "config", "toolchain")]
         [string]$Target
     )
 
     $Destination = if ($Target -eq "runner") {
         "/usr/local/lib/fairy_sandbox_runner.py"
+    }
+    elseif ($Target -eq "runtime-runner") {
+        "/usr/local/lib/fairy_runtime_supervisor.py"
+    }
+    elseif ($Target -eq "toolchain") {
+        "/usr/local/lib/fairy_install_toolchain.sh"
     }
     else {
         "/etc/wsl.conf"
@@ -80,8 +90,14 @@ if ($ActualHash -ine $RootfsSha256) {
 if (-not (Test-Path -LiteralPath $RunnerPath -PathType Leaf)) {
     throw "Sandbox runner is missing: $RunnerPath"
 }
+if (-not (Test-Path -LiteralPath $RuntimeRunnerPath -PathType Leaf)) {
+    throw "Runtime supervisor is missing: $RuntimeRunnerPath"
+}
 if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
     throw "Sandbox wsl.conf is missing: $ConfigPath"
+}
+if (-not (Test-Path -LiteralPath $ToolchainPath -PathType Leaf)) {
+    throw "Sandbox toolchain installer is missing: $ToolchainPath"
 }
 
 $Installed = @(& $Wsl.Source --list --quiet) | ForEach-Object { $_.Trim() }
@@ -107,7 +123,8 @@ Invoke-Wsl @(
 Invoke-Wsl @(
     "--distribution", "FairySandbox", "--user", "root", "--exec",
     "/usr/bin/apt-get", "install", "--yes", "--no-install-recommends",
-    "bubblewrap", "ca-certificates", "python3"
+    "bubblewrap", "ca-certificates", "cargo", "curl", "gnupg", "python3", "python3-pip",
+    "python3-venv", "xz-utils"
 )
 
 & $Wsl.Source --distribution FairySandbox --user root --exec /usr/bin/id --user fairy *> $null
@@ -120,18 +137,37 @@ if ($LASTEXITCODE -ne 0) {
 Invoke-Wsl @(
     "--distribution", "FairySandbox", "--user", "root", "--exec",
     "/usr/bin/mkdir", "--parents", "/usr/local/lib", "/usr/local/bin", "/var/lib/fairy-sandbox/jobs",
-    "/var/lib/fairy-sandbox/workspaces"
+    "/var/lib/fairy-sandbox/workspaces",
+    "/var/lib/fairy-sandbox/dependencies", "/var/lib/fairy-sandbox/runtimes"
 )
 
 Write-WslFile -Content ([System.IO.File]::ReadAllBytes($RunnerPath)) -Target "runner"
+Write-WslFile `
+    -Content ([System.IO.File]::ReadAllBytes($RuntimeRunnerPath)) `
+    -Target "runtime-runner"
 Write-WslFile -Content ([System.IO.File]::ReadAllBytes($ConfigPath)) -Target "config"
+Write-WslFile `
+    -Content ([System.IO.File]::ReadAllBytes($ToolchainPath)) `
+    -Target "toolchain"
 Invoke-Wsl @(
     "--distribution", "FairySandbox", "--user", "root", "--exec",
     "/usr/bin/chmod", "0755", "/usr/local/lib/fairy_sandbox_runner.py"
 )
 Invoke-Wsl @(
     "--distribution", "FairySandbox", "--user", "root", "--exec",
+    "/usr/bin/chmod", "0755", "/usr/local/lib/fairy_runtime_supervisor.py"
+)
+Invoke-Wsl @(
+    "--distribution", "FairySandbox", "--user", "root", "--exec",
     "/usr/bin/chmod", "0644", "/etc/wsl.conf"
+)
+Invoke-Wsl @(
+    "--distribution", "FairySandbox", "--user", "root", "--exec",
+    "/usr/bin/chmod", "0755", "/usr/local/lib/fairy_install_toolchain.sh"
+)
+Invoke-Wsl @(
+    "--distribution", "FairySandbox", "--user", "root", "--exec",
+    "/usr/local/lib/fairy_install_toolchain.sh"
 )
 Invoke-Wsl @(
     "--distribution", "FairySandbox", "--user", "root", "--exec",
@@ -142,6 +178,11 @@ Invoke-Wsl @(
     "--distribution", "FairySandbox", "--user", "root", "--exec",
     "/usr/bin/ln", "--symbolic", "--force", "/usr/local/lib/fairy_sandbox_runner.py",
     "/usr/local/bin/fairy-sandbox-health"
+)
+Invoke-Wsl @(
+    "--distribution", "FairySandbox", "--user", "root", "--exec",
+    "/usr/bin/ln", "--symbolic", "--force", "/usr/local/lib/fairy_runtime_supervisor.py",
+    "/usr/local/bin/fairy-runtime-supervisor"
 )
 Invoke-Wsl @(
     "--distribution", "FairySandbox", "--user", "root", "--exec",
@@ -160,9 +201,36 @@ if (
     $HealthDocument.executor -ne "wsl_fairy_sandbox" -or
     $HealthDocument.runner_version -ne "1.0.0" -or
     $HealthDocument.user -ne "fairy" -or
-    $HealthDocument.uid -le 0
+    $HealthDocument.uid -le 0 -or
+    $HealthDocument.toolchain.node -ne "v24.18.0" -or
+    $HealthDocument.toolchain.pnpm -ne "10.34.4" -or
+    $HealthDocument.toolchain.yarn -ne "1.22.22" -or
+    $HealthDocument.toolchain.uv -ne "uv 0.11.28"
 ) {
     throw "FairySandbox returned an invalid health document"
+}
+$RuntimeHealth = & $Wsl.Source --distribution FairySandbox --user fairy --exec (
+    "/usr/local/bin/fairy-runtime-supervisor"
+) health
+if ($LASTEXITCODE -ne 0) {
+    throw "FairySandbox Runtime supervisor health verification failed"
+}
+$RuntimeHealthDocument = $RuntimeHealth | ConvertFrom-Json
+if (
+    $RuntimeHealthDocument.executor -ne "wsl_fairy_runtime" -or
+    $RuntimeHealthDocument.runner_version -ne "1.0.0" -or
+    $RuntimeHealthDocument.user -ne "fairy" -or
+    $RuntimeHealthDocument.uid -le 0 -or
+    $RuntimeHealthDocument.toolchain.node -ne "v24.18.0" -or
+    $RuntimeHealthDocument.toolchain.pnpm -ne "10.34.4" -or
+    $RuntimeHealthDocument.toolchain.yarn -ne "1.22.22" -or
+    $RuntimeHealthDocument.toolchain.uv -ne "uv 0.11.28" -or
+    $RuntimeHealthDocument.config.'automount.enabled' -ne $false -or
+    $RuntimeHealthDocument.config.'automount.mountFsTab' -ne $false -or
+    $RuntimeHealthDocument.config.'interop.enabled' -ne $false -or
+    $RuntimeHealthDocument.config.'interop.appendWindowsPath' -ne $false
+) {
+    throw "FairySandbox returned an invalid Runtime supervisor health document"
 }
 
 Write-Host "FairySandbox WSL 2 installation and health verification completed."

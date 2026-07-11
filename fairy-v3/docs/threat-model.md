@@ -110,6 +110,73 @@ and independently verified worker attestations/results.
 29. Validate Outbox delivery against the shared EventEnvelope plus exact tenant
     and event identity. Give projection handlers event ID, attempt, and lease
     fence; a stale worker cannot acknowledge a newer claim.
+30. Select dynamic Runtime commands only from strict Core templates. Bind the
+    immutable Version archive, Project Index generation, dependency lock key,
+    Scope digest, Runtime/Preview identity, and monotonic Runtime revision
+    fence before dispatch. Model-provided argv, cwd, host, port, URL,
+    environment, and endpoint fields are never accepted.
+31. Publish dependency layers atomically from a fixed, attested Node 24/uv
+    toolchain. Dependency jobs alone receive public package-registry access;
+    Review and Runtime mount a completed matching layer read-only. Python
+    packages install into the managed venv rather than the system interpreter.
+32. Keep dynamic project processes on exact loopback and deny outbound
+    `connect`, datagram-send, and `io_uring` setup syscalls with a
+    supervisor-generated seccomp program inherited by all children. The
+    program is passed through a private FD and cannot be changed by project
+    files or model output.
+33. Bind Cloud Preview capability tokens to tenant, Task, Version, Preview,
+    Runtime, fence, and expiry, and store only their hashes. Require a separate
+    32-byte gateway secret between API and Runtime services; strip incoming
+    credentials and internal headers, reject noncanonical internal targets,
+    stream within byte limits, and rewrite loopback redirects to the public
+    capability origin.
+34. Run browser Review only against the active Runtime's validated loopback
+    endpoint. Force local browser traffic through an unreachable proxy with an
+    exact loopback bypass, use an isolated profile and scrubbed environment,
+    and accept only bounded PNG evidence whose dimensions match its header.
+    Cloud Review additionally rechecks the full durable lease/Scope binding.
+35. Treat renderer permission state as an untrusted projection. Persist profile
+    and capability overrides only through a revision-fenced Core update; never
+    read them from local storage, accept renderer sandbox-health claims, or
+    automatically merge a conflict. Generate capability toggles and Slash
+    availability from the same typed Registry metadata and effective policy.
+36. Treat every Skill package as untrusted prompt material. Require a strict
+    manifest and frontmatter, canonical content digest, regular files inside a
+    bounded package root, and explicit provenance. Reject symlinks, traversal,
+    executable hooks, script directories, oversized content, and capability
+    claims that are absent from the Registry.
+37. Keep Fairy Skills separate from Codex Skills. A Fairy Skill can add only a
+    read-only instruction ToolDefinition and cannot resolve secrets, select an
+    MCP endpoint, supply Scope identity, execute a process, mutate policy, or
+    persist Project/Conversation state.
+38. Treat MCP configuration, discovery, schemas, and output as untrusted.
+    Endpoint, fixed argv, transport, credential references, and environment
+    references are user/deployment configuration and never model arguments.
+    Cloud rejects stdio and requires an exact deployment hostname allowlist.
+    Remote endpoints require HTTPS and public DNS addresses; redirects,
+    non-public destinations, and ambient proxy environment are disabled.
+39. Import MCP tools only after bounded schema sanitization and explicit
+    per-tool trust policy. Namespace names, reject collisions and reserved
+    Scope/credential fields, ignore server-declared trust annotations, and
+    remove accepted tools immediately on schema digest drift.
+40. Execute MCP through the immutable Task Scope, effective Capability
+    Manifest, Policy Matrix, Approval, leased CommandRun, cancellation, and
+    Task-owned Artifact path. Use one Registry snapshot per model round and
+    compare its definition digest again before dispatch and approval resume.
+41. Reserve MCP lifecycle idempotency keys before mutation and persist record,
+    deletion tombstone, failure, or pending outcomes without server-delete
+    cascade. Retry only explicitly idempotent read/none calls once. Treat all
+    mutating, response-started, duplicate-active, and crash-uncertain calls as
+    `MCP_RESULT_UNCERTAIN`; never infer success or repeat them automatically.
+42. Bound MCP tool count, pagination, schema depth/properties/items, text and
+    structured result bytes. Accept supported text/structured blocks only,
+    validate declared output schema, suppress stdio stderr/protocol frames, and
+    label all result content as untrusted data rather than instructions.
+43. Keep release structure executable as policy. Reject privileged Renderer
+    file/process imports, open tool schemas, unowned source types, oversized or
+    empty source modules, Docker sockets, host namespaces, added container
+    capabilities, and host bind mounts on project execution services. Run the
+    gate before tests and make its malicious fixtures fail for each rule.
 
 ## Environment verification
 
@@ -120,10 +187,12 @@ Windows process execution. The bundled Compose Outbox Worker is not that
 executor.
 
 The default verification run reports WSL as skipped. `-RequireWslSandbox`
-requires a real `FairySandbox` WSL2 attestation and the real Rust static
-Preview lifecycle test. PostgreSQL 18, RLS, recovery, and S3 claims are made
-only when the Docker integration profile actually runs; generated DDL or
-SQLite tests are not reported as PostgreSQL execution.
+requires a real `FairySandbox` WSL2 configuration/toolchain attestation and
+real static plus dynamic Preview lifecycle tests. PostgreSQL 18, RLS, S3,
+cloud Runtime recovery, Chromium Review, and capability proxy claims are made
+only when the Docker integration profile actually runs; generated DDL,
+mocked supervisors, or SQLite tests are not reported as real environment
+execution.
 
 ## Security error contract
 
@@ -133,5 +202,10 @@ IDEMPOTENCY_CONFLICT, SECRET_EGRESS_BLOCKED, CAPABILITY_NOT_AVAILABLE,
 WORKER_INTERRUPTED, MEMORY_SCOPE_VIOLATION, MEMORY_CONFLICT,
 MEMORY_INJECTION_BLOCKED, MEMORY_SECRET_BLOCKED, MEMORY_PROJECTION_STALE,
 MEMORY_SNAPSHOT_TOO_LARGE, MEMORY_FORGOTTEN, DOCUMENT_PROJECTION_STALE, and
-DOCUMENT_INTEGRITY_FAILED. Cloud maps every public code to an explicit HTTP
-status rather than relying on a generic fallback.
+DOCUMENT_INTEGRITY_FAILED, MCP_CAPABILITY_MISSING,
+MCP_CREDENTIAL_UNAVAILABLE, MCP_DESTINATION_BLOCKED, MCP_OUTPUT_INVALID,
+MCP_OUTPUT_UNSUPPORTED,
+MCP_PROTOCOL_MISMATCH, MCP_RESULT_UNCERTAIN, MCP_SCHEMA_CHANGED,
+MCP_SCHEMA_INVALID, MCP_TOOL_ERROR, MCP_TRANSPORT_INTERRUPTED,
+MCP_TRANSPORT_NOT_ALLOWED, and MCP_UNAVAILABLE. Cloud maps every public code
+to an explicit HTTP status rather than relying on a generic fallback.

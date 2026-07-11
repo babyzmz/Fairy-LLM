@@ -1,11 +1,26 @@
 use std::collections::BTreeMap;
 use std::env;
+use std::path::PathBuf;
 
 use fairy_core_bridge::{CoreBridge, CoreBridgeError, CoreLaunchSpec};
 use serde_json::json;
 
 fn python_program() -> String {
-    env::var("PYTHON").unwrap_or_else(|_| "python".to_owned())
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let core_root = manifest.join("../../../../core");
+    [
+        core_root.join(".venv/Scripts/python.exe"),
+        core_root.join(".venv/bin/python"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_file())
+    .map(|candidate| candidate.to_string_lossy().into_owned())
+    .or_else(|| {
+        env::var("PYTHON")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    })
+    .unwrap_or_else(|| "python".to_owned())
 }
 
 fn helper(script: &str) -> CoreLaunchSpec {

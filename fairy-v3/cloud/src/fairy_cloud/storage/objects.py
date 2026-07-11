@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from fairy_core.documents import StoredDocumentBlob
+from fairy_core.runtime.review import StoredRuntimeEvidence
 
 _SAFE_KEY_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+_MAX_RUNTIME_EVIDENCE_BYTES = 16 * 1024 * 1024
 
 
 class ObjectClient(Protocol):
@@ -43,6 +45,13 @@ class S3ObjectStore:
 
     def document_blob_store(self, tenant_id: str) -> TenantS3DocumentBlobStore:
         return TenantS3DocumentBlobStore(
+            client=self._client,
+            bucket=self._bucket,
+            tenant_id=tenant_id,
+        )
+
+    def runtime_evidence_store(self, tenant_id: str) -> TenantS3RuntimeEvidenceStore:
+        return TenantS3RuntimeEvidenceStore(
             client=self._client,
             bucket=self._bucket,
             tenant_id=tenant_id,
@@ -195,6 +204,50 @@ class TenantS3DocumentBlobStore:
         actual_size = response.get("ContentLength") if isinstance(response, dict) else None
         if actual_hash != expected_hash or actual_size != expected_size:
             raise ObjectIntegrityError("existing document object failed integrity validation")
+
+
+class TenantS3RuntimeEvidenceStore:
+    def __init__(self, *, client: ObjectClient, bucket: str, tenant_id: str) -> None:
+        self._client = client
+        self._bucket = bucket
+        self._tenant_id = _key_part(tenant_id, name="tenant_id")
+
+    def put(self, *, content: bytes, media_type: str) -> StoredRuntimeEvidence:
+        payload = bytes(content)
+        if (
+            media_type != "image/png"
+            or not payload.startswith(b"\x89PNG\r\n\x1a\n")
+            or len(payload) > _MAX_RUNTIME_EVIDENCE_BYTES
+        ):
+            raise ValueError("Runtime evidence object must be a PNG")
+        digest = hashlib.sha256(payload).hexdigest()
+        key = f"tenants/{self._tenant_id}/runtime-evidence/sha256/{digest[:2]}/{digest}.png"
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=key,
+                Body=payload,
+                ContentType=media_type,
+                Metadata={"sha256": digest},
+                IfNoneMatch="*",
+            )
+        except Exception as error:
+            if not _is_precondition_failure(error):
+                raise
+            response = self._client.head_object(Bucket=self._bucket, Key=key)
+            metadata = response.get("Metadata", {}) if isinstance(response, dict) else {}
+            if (
+                not isinstance(metadata, dict)
+                or metadata.get("sha256") != digest
+                or response.get("ContentLength") != len(payload)
+            ):
+                raise ObjectIntegrityError(
+                    "existing Runtime evidence failed integrity validation"
+                ) from error
+        return StoredRuntimeEvidence.create(
+            storage_location=f"s3://{self._bucket}/{key}",
+            content=payload,
+        )
 
 
 def _key_part(value: str, *, name: str) -> str:

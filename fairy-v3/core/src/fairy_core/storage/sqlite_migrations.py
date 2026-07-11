@@ -22,6 +22,8 @@ from fairy_core.storage.schema import (
 _PRE_TENANT_REVISION = "20260710_pre_tenant_state"
 _SNAPSHOT_BINDING_REVISION = "20260711_task_snapshot_binding"
 _GENERIC_APPROVAL_REVISION = "20260711_generic_approval"
+_CHECKPOINT_EVIDENCE_REVISION = "20260712_checkpoint_evidence"
+_MCP_REQUEST_RESULTS_REVISION = "20260712_mcp_request_results"
 
 
 def _datetime(value: str | None) -> datetime | None:
@@ -81,6 +83,7 @@ def _checkpoint(row: Mapping[str, Any]) -> dict[str, Any]:
     values = dict(row)
     values["changed_files"] = json.loads(values.pop("changed_files_json"))
     values["command_run_ids"] = json.loads(values.pop("command_run_ids_json"))
+    values["evidence_artifact_ids"] = json.loads(values.pop("evidence_artifact_ids_json", "[]"))
     values["created_at"] = _datetime(row["created_at"])
     return values
 
@@ -268,6 +271,131 @@ def migrate_generic_approval(engine: Engine) -> None:
             ),
             {
                 "revision": _GENERIC_APPROVAL_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_checkpoint_evidence(engine: Engine) -> None:
+    """Add generation-bound Runtime Review evidence to existing local Checkpoints."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS core_local_migrations (
+                revision TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _CHECKPOINT_EVIDENCE_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        if "core_checkpoints" in tables:
+            columns = {
+                column["name"] for column in inspect(connection).get_columns("core_checkpoints")
+            }
+            if "evidence_artifact_ids" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE core_checkpoints ADD COLUMN "
+                    "evidence_artifact_ids JSON NOT NULL DEFAULT '[]'"
+                )
+        connection.execute(
+            text(
+                """
+                INSERT INTO core_local_migrations (revision, applied_at)
+                VALUES (:revision, :applied_at)
+                """
+            ),
+            {
+                "revision": _CHECKPOINT_EVIDENCE_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_mcp_request_results(engine: Engine) -> None:
+    """Preserve MCP idempotency outcomes after server deletion and interrupted discovery."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS core_local_migrations (
+                revision TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _MCP_REQUEST_RESULTS_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        if "core_mcp_server_updates" in tables:
+            columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("core_mcp_server_updates")
+            }
+            if "result_deleted" not in columns:
+                connection.exec_driver_sql(
+                    """
+                    CREATE TABLE core_mcp_server_updates_v2 (
+                        tenant_id VARCHAR(128) NOT NULL,
+                        idempotency_key VARCHAR(512) NOT NULL,
+                        request_fingerprint VARCHAR(64) NOT NULL,
+                        server_id VARCHAR(64) NOT NULL,
+                        result_record JSON,
+                        result_deleted BOOLEAN,
+                        result_error_code VARCHAR(128),
+                        created_at DATETIME NOT NULL,
+                        CONSTRAINT pk_core_mcp_server_updates
+                            PRIMARY KEY (tenant_id, idempotency_key),
+                        CONSTRAINT ck_core_mcp_server_updates_fingerprint
+                            CHECK (
+                                length(request_fingerprint) = 64
+                                AND request_fingerprint = lower(request_fingerprint)
+                            ),
+                        CONSTRAINT ck_core_mcp_server_updates_result CHECK (
+                            (result_record IS NULL AND result_deleted IS NULL
+                                AND result_error_code IS NULL)
+                            OR (result_record IS NOT NULL AND result_deleted = 0
+                                AND result_error_code IS NULL)
+                            OR (result_record IS NULL AND result_deleted = 1
+                                AND result_error_code IS NULL)
+                            OR (result_record IS NULL AND result_deleted = 0
+                                AND result_error_code IS NOT NULL)
+                        )
+                    )
+                    """
+                )
+                connection.exec_driver_sql(
+                    """
+                    INSERT INTO core_mcp_server_updates_v2 (
+                        tenant_id, idempotency_key, request_fingerprint, server_id,
+                        result_record, result_deleted, result_error_code, created_at
+                    )
+                    SELECT tenant_id, idempotency_key, request_fingerprint, server_id,
+                           result_record, 0, NULL, created_at
+                    FROM core_mcp_server_updates
+                    """
+                )
+                connection.exec_driver_sql("DROP TABLE core_mcp_server_updates")
+                connection.exec_driver_sql(
+                    "ALTER TABLE core_mcp_server_updates_v2 RENAME TO core_mcp_server_updates"
+                )
+        connection.execute(
+            text(
+                """
+                INSERT INTO core_local_migrations (revision, applied_at)
+                VALUES (:revision, :applied_at)
+                """
+            ),
+            {
+                "revision": _MCP_REQUEST_RESULTS_REVISION,
                 "applied_at": datetime.now(UTC).isoformat(),
             },
         )

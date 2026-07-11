@@ -43,6 +43,24 @@ describe("ChatWorkspace", () => {
     expect(props.onSend).not.toHaveBeenCalled();
   });
 
+  it("rejects Slash and button actions disabled by Core metadata", async () => {
+    const user = userEvent.setup();
+    const props = workspaceProps({
+      slashCommands: workspaceProps().slashCommands.map((command) =>
+        command.name === "new" ? { ...command, available: false } : command,
+      ),
+    });
+    render(<ChatWorkspace {...props} />);
+
+    expect(screen.getByRole("button", { name: "New conversation" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Message Fairy"), "/new");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(await screen.findByText("Command unavailable: /new")).toBeVisible();
+    expect(props.onNewConversation).not.toHaveBeenCalled();
+    expect(props.onSend).not.toHaveBeenCalled();
+  });
+
   it("deduplicates streamed chunks and exposes stop then retry states", async () => {
     const user = userEvent.setup();
     const props = workspaceProps({
@@ -196,11 +214,27 @@ function workspaceProps(
     offline: false,
     developerMode: false,
     error: null,
+    slashCommands: [
+      {
+        name: "new",
+        description: "Start a durable conversation.",
+        argument_hint: null,
+        required_operation: "workspace.create_scratch",
+        available: true,
+      },
+      {
+        name: "permission",
+        description: "Change the permission profile.",
+        argument_hint: "<observe|standard|autonomous>",
+        required_operation: null,
+        available: true,
+      },
+    ],
     onProfileChange: vi.fn(),
     onDeveloperModeChange: vi.fn(),
     onNewConversation: vi.fn(async () => undefined),
     onSwitchProject: vi.fn(),
-    onPermissionChange: vi.fn(),
+    onPermissionChange: vi.fn(async () => undefined),
     onSend: vi.fn(async () => undefined),
     onCancel: vi.fn(async () => undefined),
     onRetry: vi.fn(async () => undefined),

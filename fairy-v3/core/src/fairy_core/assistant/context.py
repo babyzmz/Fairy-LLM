@@ -9,8 +9,8 @@ from fairy_core.assistant.models import (
     MessageRole,
     MessageVisibility,
 )
-from fairy_core.assistant.tools import model_tools
-from fairy_core.commanding.registry import ToolRegistry
+from fairy_core.assistant.tools import model_tools_for_definitions
+from fairy_core.commanding.registry import ToolDefinition, ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.domain.models import ScopeContract, Task
 from fairy_core.perception import ImageAttachmentStore
@@ -31,6 +31,7 @@ _MAX_HISTORY_MESSAGES = 40
 class AssistantContext:
     messages: tuple[ModelMessage, ...]
     tools: tuple[ModelTool, ...]
+    tool_definitions: tuple[ToolDefinition, ...]
     required_capabilities: frozenset[ProviderCapability]
 
 
@@ -100,16 +101,16 @@ class AssistantContextBuilder:
             for attachment in attachments
         )
         include_tools = ProviderCapability.TOOLS in provider_capabilities
-        tools = (
-            model_tools(
-                self._registry,
+        tool_definitions = (
+            self._registry.available_agent_definitions(
                 profile=policy.profile,
                 sandbox_healthy=policy.sandbox_healthy,
-                overrides=policy.capability_overrides,
+                overrides=dict(policy.capability_overrides),
             )
             if include_tools
             else ()
         )
+        tools = model_tools_for_definitions(tool_definitions) if include_tools else ()
         required = {ProviderCapability.TEXT}
         if tools:
             required.add(ProviderCapability.TOOLS)
@@ -127,6 +128,7 @@ class AssistantContextBuilder:
         return AssistantContext(
             messages=(system, *bounded_history),
             tools=tools,
+            tool_definitions=tool_definitions,
             required_capabilities=frozenset(required),
         )
 

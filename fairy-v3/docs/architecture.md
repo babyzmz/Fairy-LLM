@@ -45,6 +45,11 @@ Preview, Artifact, Checkpoint, and Memory state.
     or arbitrary URI API exists.
 19. Presence and Pet consume only fixed projections of public durable events.
     They cannot call Core, a model, approval, or execution APIs.
+20. Skills are immutable, read-only instruction packages. They cannot add an
+    execution path, own Scope, resolve credentials, or mutate policy.
+21. MCP tools enter the Agent surface only after explicit schema and per-tool
+    policy acceptance. Every invocation uses the same Task Scope, CommandRun,
+    approval, cancellation, ledger, and Artifact pipeline as built-in tools.
 
 ## Components
 
@@ -60,8 +65,9 @@ traffic uses HTTPS and resumable SSE through the same client interface.
 The Python Core is a modular application with domain, application, ports, and
 adapters boundaries. The domain and application layers do not depend on
 FastAPI, SQLite, PostgreSQL, Tauri, S3, model providers, or operating-system
-APIs. The Core package itself depends only on Pydantic and SQLAlchemy; server,
-migration, and cloud-provider dependencies stay in Cloud.
+APIs. Core runtime dependencies are Pydantic, SQLAlchemy, PyYAML for strict
+Skill frontmatter, and the stable official MCP SDK. FastAPI, Alembic, database
+drivers, object storage, and provider adapters stay outside Core.
 
 ### Workers
 
@@ -71,6 +77,10 @@ workspace, Preview, and error modules. Static serving never starts project
 code. Generic model-directed shell execution is available only through an
 attested WSL2 FairySandbox or a separately deployed non-root cloud OCI
 executor; the capability remains disabled when either provider is unhealthy.
+The execution and Runtime workers use fixed Node 24.18.0, uv 0.11.28,
+pnpm 10.34.4, and Yarn 1.22.22 toolchains. Dependency installation publishes
+an atomic lockfile-keyed layer; Review mounts that layer read-only and cannot
+fall back to host or mutable global dependencies.
 Cloud ships the brokerless `fairy_cloud.workers.outbox` service for typed
 event/projection delivery. It validates the full shared EventEnvelope and
 tenant/event identity, and gives handlers the attempt and lease fence. It is
@@ -90,6 +100,25 @@ rebinding or a missing process produces an explicit interrupted state. Preview
 resolution is Conversation-first: active Task, draft/base Version, then the
 Project's explicit active Preview pointer. It never selects a Project-wide
 newest Preview.
+
+Dynamic Preview templates are selected from immutable package and lock
+manifests and produce fixed Vite, Next, Astro, or Python ASGI argv. Core
+archives the indexed Version, binds its generation, dependency key, Scope
+digest, Runtime revision fence, and execution target, then dispatches to the
+WSL supervisor or PostgreSQL-backed OCI Runtime worker. Each Runtime directory
+has a process lock; higher fences replace older attempts, while equal fences
+replay only an identical fingerprint. Project processes receive an empty
+environment, a read-only dependency layer, a private workspace copy, exact
+loopback binding, and a supervisor-owned seccomp policy that denies outbound
+connection and datagram syscalls.
+
+Cloud returns only an expiring HMAC capability subdomain. The token hash maps
+to one tenant, Task, Version, Preview, Runtime, and request fence; the renderer
+never receives the worker endpoint. API-to-Runtime traffic uses a separate
+deployment secret, strips client credentials and internal headers, bounds
+streamed bodies, and revalidates the active lease before proxying. Runtime
+health and Chromium/Edge screenshots become generation- and Preview-manifest-
+bound Artifacts. Only those current Artifacts can join a Checkpoint.
 
 ### Storage and synchronization
 
@@ -120,6 +149,12 @@ remains a candidate.
 S3-compatible storage holds immutable version snapshots, artifacts, logs, and
 preview captures. Devices synchronize domain events and version manifests by
 cursor; databases are never mirrored.
+
+Tenant-scoped MCP trust records and idempotency outcomes are canonical rows,
+not model or renderer state. Settings requests reserve a durable key before
+mutation. Results persist as record, deletion tombstone, explicit failure, or
+pending uncertain state, so deletion and process recovery cannot repeat an
+unknown operation.
 
 An imported project is copied into Fairy-managed storage and initialized as an
 internal Git repository. Each Task receives an isolated worktree. Accepting a
@@ -162,9 +197,9 @@ replace an already-bound Snapshot.
 If the projection is missing, stale, failed, or throws during search, Core
 builds a bounded relational-fallback Snapshot with an explicit degraded state
 and stable error code. Canonical writes remain committed independently.
-Episodes, pgvector semantic expansion, and parallel projection generations
-remain later retrieval slices; neither document RAG nor an embedding index is
-a memory authority.
+Episodes, pgvector semantic expansion, and parallel projection generations are
+outside the V3 canonical-memory contract; neither document RAG nor an
+embedding index is a memory authority.
 
 ### Assistant ledger
 
@@ -204,6 +239,32 @@ hashes, visibility, chunks, and local/S3 blob adapters. Document search creates
 bounded RAG context for the current Task. It cannot create or update a Hermes
 Claim; an explicit governed Memory command is required.
 
+### Governed extensions
+
+Fairy Skills use a strict Agent Skills `SKILL.md` plus a versioned
+`fairy-skill.json` product manifest. Core verifies package boundaries,
+provenance, content digest, bounded instructions, input schema, required
+capabilities, and compatible MCP server IDs before materializing a read-only
+`skill.<name>` ToolDefinition. Executable hooks, symlinks, traversal, and
+script directories are rejected. Fairy Skills are independent of Codex Skills.
+
+MCP uses specification revision `2025-11-25` through official Python SDK
+`1.28.x`. Local Core permits configured stdio and Streamable HTTP; Cloud permits
+only deployment-trusted Streamable HTTP with an exact hostname allowlist.
+Legacy HTTP+SSE is absent. Remote resolution rejects non-public addresses;
+redirects and ambient proxy settings are disabled. Endpoint, argv, transport,
+environment references, and credentials never enter model context. Discovery
+creates a bounded sanitized `mcp.<server>.<tool>` schema, then requires user
+acceptance of side effect, risk, approval, profile, and idempotency policy for
+every tool.
+
+The Agent receives one immutable Registry snapshot per model round. Schema
+drift removes the tool until reaccepted and invalidates an older definition
+digest. Read-only tools explicitly trusted as idempotent may reconnect once;
+mutating or response-started interruption produces `MCP_RESULT_UNCERTAIN` and
+is never automatically replayed. Results are schema-validated, bounded,
+labelled untrusted, and persisted as Task-owned report Artifacts.
+
 ### Presence surfaces
 
 Workspace, Presence, and Guide are separate Tauri windows and separately
@@ -218,6 +279,15 @@ project state.
 Local permissions are device-global. Cloud permissions are configured
 independently. Both support observe, standard, autonomous, and explicit
 capability overrides.
+
+The durable Core setting and its optimistic revision are the only permission
+authority; renderer local storage holds no profile or capability decision. A
+revision conflict reloads the latest Core value and requires the user to retry
+rather than merging or overwriting another device. Capability Manifest schema
+v3 carries typed ToolDefinition metadata, origin, dependency and definition
+digest fields, allowed profiles, effective operations, sandbox health, and
+explicit Slash Command availability from the same Registry used by policy and
+Agent tool exposure.
 
 - observe exposes read-only capabilities;
 - standard requires policy approval for writes and execution;

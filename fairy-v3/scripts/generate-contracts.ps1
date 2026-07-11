@@ -5,11 +5,8 @@ $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
 if ($null -ne $uvCommand) {
     $uv = $uvCommand.Source
 } else {
-    $python = (& python -c "import sys; print(sys.executable)").Trim()
     $candidates = @(
         $env:UV,
-        (Join-Path (Split-Path -Parent $python) "uv.exe"),
-        (Join-Path (Split-Path -Parent $python) "Scripts\uv.exe"),
         (Join-Path $env:SystemDrive "Python313\Scripts\uv.exe"),
         (Join-Path $env:USERPROFILE ".local\bin\uv.exe")
     )

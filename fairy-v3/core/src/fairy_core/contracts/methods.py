@@ -7,6 +7,18 @@ from types import MappingProxyType
 from pydantic import BaseModel, Field
 
 from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
+from fairy_core.contracts.capabilities import CapabilityManifestModel
+from fairy_core.contracts.extensions import (
+    McpServerAcceptInput,
+    McpServerConfigureInput,
+    McpServerDeleteInput,
+    McpServerDeleteResult,
+    McpServerDiscoverInput,
+    McpServerModel,
+    McpServerPageModel,
+    McpServerSetEnabledInput,
+    SkillPageModel,
+)
 from fairy_core.contracts.models import (
     ApprovalDecisionResultModel,
     ApprovalPageModel,
@@ -20,7 +32,6 @@ from fairy_core.contracts.models import (
     AssistantTurnModel,
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
-    CapabilityManifestModel,
     CapabilityRequest,
     ChangesetProposal,
     CheckpointModel,
@@ -282,6 +293,36 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             MemorySnapshotGetInput,
             MemorySnapshotModel,
         ),
+        "mcp.servers.accept": CoreMethod(
+            "mcp.servers.accept",
+            McpServerAcceptInput,
+            McpServerModel,
+        ),
+        "mcp.servers.configure": CoreMethod(
+            "mcp.servers.configure",
+            McpServerConfigureInput,
+            McpServerModel,
+        ),
+        "mcp.servers.delete": CoreMethod(
+            "mcp.servers.delete",
+            McpServerDeleteInput,
+            McpServerDeleteResult,
+        ),
+        "mcp.servers.discover": CoreMethod(
+            "mcp.servers.discover",
+            McpServerDiscoverInput,
+            McpServerModel,
+        ),
+        "mcp.servers.list": CoreMethod(
+            "mcp.servers.list",
+            EmptyInput,
+            McpServerPageModel,
+        ),
+        "mcp.servers.set_enabled": CoreMethod(
+            "mcp.servers.set_enabled",
+            McpServerSetEnabledInput,
+            McpServerModel,
+        ),
         "messages.list": CoreMethod(
             "messages.list",
             MessageListInput,
@@ -357,6 +398,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "runtimes.health",
             RuntimeHealthInput,
             RuntimeHealthModel,
+        ),
+        "skills.list": CoreMethod(
+            "skills.list",
+            EmptyInput,
+            SkillPageModel,
         ),
         "tasks.create": CoreMethod("tasks.create", TaskCreate, TaskContextModel),
         "tasks.get": CoreMethod("tasks.get", TaskIdInput, TaskModel),

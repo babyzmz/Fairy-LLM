@@ -7,6 +7,7 @@ import pytest
 
 from fairy_core.sandbox.models import (
     SandboxNetworkPolicy,
+    SandboxPurpose,
     SandboxRequest,
     SandboxResult,
     SandboxResultStatus,
@@ -43,6 +44,27 @@ def test_sandbox_request_is_canonical_and_scope_bound() -> None:
     assert request.archive_sha256
     assert request.workspace_generation == 3
     assert request.lease_fence == 2
+
+
+@pytest.mark.parametrize("purpose", (SandboxPurpose.DEPENDENCY, SandboxPurpose.REVIEW))
+def test_dependency_aware_requests_require_a_lock_bound_layer(purpose: SandboxPurpose) -> None:
+    request = _request(
+        purpose=purpose,
+        dependency_key="b" * 64,
+        dependency_manager="npm",
+    )
+
+    assert request.dependency_key == "b" * 64
+    assert request.dependency_manager == "npm"
+    assert request.header()["dependency_key"] == "b" * 64
+
+    with pytest.raises(ValueError, match="dependency layer"):
+        _request(purpose=purpose)
+
+
+def test_raw_request_cannot_smuggle_a_dependency_layer() -> None:
+    with pytest.raises(ValueError, match="dependency layer"):
+        _request(dependency_key="b" * 64, dependency_manager="npm")
 
 
 @pytest.mark.parametrize(

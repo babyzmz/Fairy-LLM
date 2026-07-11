@@ -58,6 +58,13 @@ contain credential references only; `FAIRY_PROVIDER_SECRET_REFS_JSON` maps
 each reference to an explicitly scoped `FAIRY_PROVIDER_SECRET_*` environment
 variable. Provider values are never returned by REST or persisted by Core.
 
+Cloud MCP accepts only Streamable HTTP servers. `FAIRY_MCP_CREDENTIALS` is a
+JSON object from opaque credential reference to deployment secret; server trust
+records persist only references and expose only configured/missing state.
+`FAIRY_MCP_ALLOWED_HOSTS` is a JSON array of exact deployment-approved remote
+hostnames. Stdio, non-public destinations, and the removed legacy SSE transport
+are rejected in Cloud composition.
+
 Every insert into the canonical `domain_events` ledger is copied into Outbox
 by a PostgreSQL trigger in the same transaction. The worker entry point is
 `fairy_cloud.workers.outbox`; it is the only module entry point. The worker
@@ -88,9 +95,10 @@ gate; `scripts/test-all.ps1` prints an explicit skip when Docker CLI or the
 daemon is unavailable.
 
 Cloud REST exposes the same Runtime/Preview/Artifact contracts as local
-JSON-RPC. The current cloud Runtime executor intentionally returns
-`SANDBOX_UNAVAILABLE` unless a dedicated non-root OCI executor is composed and
-healthy; the Outbox Worker cannot be used as one and there is no API-process or
+JSON-RPC. PostgreSQL-fenced `execution` and `runtime` services provide the
+dedicated non-root OCI adapters and private Preview route. They return
+`SANDBOX_UNAVAILABLE` whenever their durable health record is absent or stale.
+The Outbox Worker cannot be used as an executor, and there is no API-process or
 host-shell fallback.
 
 The integration DSN must point to a dedicated test database. No Redis or NATS

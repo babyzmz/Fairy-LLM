@@ -15,7 +15,9 @@ def test_core_runtime_dependencies_stay_transport_independent() -> None:
     project = tomllib.loads((V3_ROOT / "core" / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert project["project"]["dependencies"] == [
+        "mcp>=1.28.1,<2",
         "pydantic>=2.13,<3",
+        "pyyaml>=6.0.3,<7",
         "sqlalchemy>=2.0.51,<2.1",
     ]
 
@@ -114,11 +116,28 @@ def test_boundary_gate_rejects_release_safety_and_structure_regressions(
         "export const keywordRouter = () => 'weather';\n",
         encoding="utf-8",
     )
+    (tmp_path / "desktop/src/privileged_renderer.ts").write_text(
+        'import { readTextFile } from "@tauri-apps/plugin-fs";\n',
+        encoding="utf-8",
+    )
     (tmp_path / "desktop/src/oversized.ts").write_text(
         "\n".join("export {};" for _ in range(1_201)),
         encoding="utf-8",
     )
+    (tmp_path / "core/src/unowned.bin").write_bytes(b"not source")
     (tmp_path / "desktop/src/empty_future").mkdir()
+    (tmp_path / "cloud/compose.yaml").write_text(
+        """services:
+  execution:
+    privileged: true
+    network_mode: host
+    cap_add: [SYS_ADMIN]
+    volumes:
+      - ./workspace:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+""",
+        encoding="utf-8",
+    )
 
     result = subprocess.run(
         [sys.executable, str(V3_ROOT / "scripts" / "check_boundaries.py"), str(tmp_path)],
@@ -133,6 +152,13 @@ def test_boundary_gate_rejects_release_safety_and_structure_regressions(
     assert "credential-shaped literal" in result.stdout
     assert "browser speech synthesis is forbidden" in result.stdout
     assert "keyword routing is forbidden" in result.stdout
+    assert "renderer privileged API is forbidden" in result.stdout
+    assert "Docker socket access is forbidden" in result.stdout
+    assert "privileged Compose service is forbidden" in result.stdout
+    assert "host network_mode is forbidden" in result.stdout
+    assert "added Linux capabilities are forbidden" in result.stdout
+    assert "project execution service has a host bind mount" in result.stdout
+    assert "unowned source file type" in result.stdout
     assert "source module exceeds 1200 lines" in result.stdout
     assert "empty future-facing source directory" in result.stdout
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from fairy_core.assistant.tools import model_tools
+from fairy_core.assistant.tools import model_tools, model_tools_for_definitions
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.commanding.settings import StaticSandboxHealthProvider
 from fairy_core.commanding.types import PermissionProfile
@@ -120,6 +120,38 @@ def test_capability_manifest_uses_persisted_policy_and_core_health(tmp_path: Pat
         assert manifest["sandbox_healthy"] is True
         assert manifest["operations"]["run.sandboxed"] is True
         assert manifest["operations"]["web.search"] is False
+        assert manifest["schema_version"] == 3
+        metadata = {item["name"]: item for item in manifest["command_metadata"]}
+        assert metadata["run.sandboxed"] == {
+            "name": "run.sandboxed",
+            "side_effect": "execute",
+            "risk_level": "high",
+            "approval_policy": "never",
+            "profiles": ["autonomous"],
+            "requires_sandbox": True,
+            "idempotent": False,
+            "model_visible": True,
+            "description": "Run structured argv inside the attested Task-bound Sandbox Workspace.",
+            "source": "builtin",
+            "origin_id": None,
+            "required_operations": [],
+            "required_extensions": [],
+            "definition_digest": metadata["run.sandboxed"]["definition_digest"],
+            "input_schema": metadata["run.sandboxed"]["input_schema"],
+        }
+        slash_commands = {item["name"]: item for item in manifest["slash_commands"]}
+        assert set(slash_commands) == {
+            "new",
+            "project",
+            "permission",
+            "stop",
+            "clear",
+            "help",
+        }
+        assert slash_commands["new"]["required_operation"] == "workspace.create_scratch"
+        assert slash_commands["new"]["available"] is True
+        assert slash_commands["permission"]["required_operation"] is None
+        assert slash_commands["permission"]["available"] is True
 
         with pytest.raises(ValueError, match="unknown capability"):
             service.invoke(
@@ -136,6 +168,31 @@ def test_capability_manifest_uses_persisted_policy_and_core_health(tmp_path: Pat
                 "capabilities.get",
                 {"profile": "autonomous", "sandbox_healthy": True},
             )
+    finally:
+        service.close()
+
+
+def test_slash_command_metadata_follows_the_effective_manifest(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        service.invoke(
+            "permissions.update",
+            {
+                "profile": "observe",
+                "capability_overrides": {},
+                "expected_revision": 0,
+                "idempotency_key": "settings:slash:observe",
+            },
+        )
+
+        manifest = service.invoke("capabilities.get", {})
+        commands = {item["name"]: item for item in manifest["slash_commands"]}
+
+        assert commands["new"]["available"] is False
+        assert commands["clear"]["available"] is False
+        assert commands["permission"]["available"] is True
+        assert commands["project"]["available"] is True
+        assert commands["help"]["available"] is True
     finally:
         service.close()
 
@@ -193,6 +250,25 @@ def test_model_tool_manifest_uses_the_same_effective_policy() -> None:
     assert "run.sandboxed" not in standard
     assert "run.sandboxed" in autonomous
     assert "web.search" not in autonomous
+
+
+def test_model_tools_are_derived_from_one_immutable_registry_snapshot() -> None:
+    registry = build_default_registry()
+    definitions = registry.available_agent_definitions(
+        profile=PermissionProfile.STANDARD,
+        sandbox_healthy=False,
+        overrides={},
+    )
+
+    registry.replace_namespace("web.", ())
+    offered = model_tools_for_definitions(definitions)
+
+    assert {tool.name for tool in offered} == {
+        "direct_answer",
+        *(definition.name for definition in definitions),
+    }
+    assert "web.search" in {tool.name for tool in offered}
+    assert registry.get("web.search") is None
 
 
 def test_core_application_commands_cannot_bypass_persisted_observe_policy(

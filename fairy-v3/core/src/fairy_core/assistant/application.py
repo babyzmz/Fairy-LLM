@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID
 
+from fairy_core.assistant.candidates import ToolCandidate, arguments_for_definition
 from fairy_core.assistant.context import AssistantContextBuilder
+from fairy_core.assistant.durable_context import durable_tool_context
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
@@ -21,9 +22,7 @@ from fairy_core.assistant.tools import (
     ToolExecutor,
     UnavailableToolExecutor,
     direct_answer,
-    sanitize_model_arguments,
     tool_message_content,
-    validate_tool_arguments,
 )
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.bus import CommandBus, CommandRequest
@@ -32,11 +31,11 @@ from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.domain.execution import Approval
 from fairy_core.domain.models import TaskStatus
+from fairy_core.mcp.ports import McpCancelledError
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.providers import (
     CancellationToken,
-    ModelDelta,
     ModelDeltaKind,
     ModelMessage,
     ModelRequest,
@@ -50,38 +49,7 @@ from fairy_core.providers import (
 
 _MAX_MODEL_ROUNDS = 3
 _MAX_TOOL_INVOCATIONS = 8
-_MAX_TOOL_ARGUMENT_CHARACTERS = 64_000
 _MAX_ASSISTANT_CHARACTERS = 1_000_000
-
-
-@dataclass(slots=True)
-class _Candidate:
-    call_id: str
-    name: str | None = None
-    argument_fragments: list[str] = field(default_factory=list)
-    argument_characters: int = 0
-
-    def append(self, delta: ModelDelta) -> None:
-        if delta.tool_name is not None:
-            if self.name is not None and self.name != delta.tool_name:
-                raise ToolCandidateError("tool candidate changed its name")
-            self.name = delta.tool_name
-        fragment = delta.tool_arguments_fragment or ""
-        self.argument_characters += len(fragment)
-        if self.argument_characters > _MAX_TOOL_ARGUMENT_CHARACTERS:
-            raise ToolCandidateError("tool candidate arguments are too large")
-        self.argument_fragments.append(fragment)
-
-    def arguments(self) -> dict[str, object]:
-        if self.name is None:
-            raise ToolCandidateError("tool candidate has no name")
-        try:
-            value = json.loads("".join(self.argument_fragments) or "{}")
-        except json.JSONDecodeError as error:
-            raise ToolCandidateError("tool candidate arguments are invalid JSON") from error
-        if not isinstance(value, dict):
-            raise ToolCandidateError("tool candidate arguments must be an object")
-        return sanitize_model_arguments(value)
 
 
 class AssistantApplication:
@@ -154,7 +122,10 @@ class AssistantApplication:
                     required_capabilities=context.required_capabilities,
                     max_output_tokens=4_096,
                 )
-                candidates: dict[str, _Candidate] = {}
+                offered_definitions = {
+                    definition.name: definition for definition in context.tool_definitions
+                }
+                candidates: dict[str, ToolCandidate] = {}
                 round_text: list[str] = []
                 for delta in self._providers.stream(request, cancellation):
                     cancellation.raise_if_cancelled()
@@ -178,7 +149,7 @@ class AssistantApplication:
                             raise ToolCandidateError("tool candidate has no call id")
                         candidate = candidates.setdefault(
                             delta.tool_call_id,
-                            _Candidate(call_id=delta.tool_call_id),
+                            ToolCandidate(call_id=delta.tool_call_id),
                         )
                         candidate.append(delta)
                     elif delta.kind is ModelDeltaKind.USAGE:
@@ -245,6 +216,7 @@ class AssistantApplication:
                             model_round=model_round,
                             sequence=tool_count,
                             cancellation=cancellation,
+                            offered_definitions=offered_definitions,
                         )
                         if waiting:
                             return self._get_turn(turn_id)
@@ -277,7 +249,7 @@ class AssistantApplication:
                 current_run,
                 error_code="ASSISTANT_ROUND_LIMIT",
             )
-        except ProviderCancelledError:
+        except (ProviderCancelledError, McpCancelledError):
             return self._cancel_turn(turn_id, current_run)
         except ProviderUnavailableError:
             return self._fail_turn(
@@ -448,10 +420,11 @@ class AssistantApplication:
         self,
         *,
         turn_id: UUID,
-        candidate: _Candidate,
+        candidate: ToolCandidate,
         model_round: int,
         sequence: int,
         cancellation: CancellationToken,
+        offered_definitions: dict[str, object],
     ) -> tuple[bool, Message | None]:
         cancellation.raise_if_cancelled()
         self._ensure_turn_waiting_for_tool(turn_id)
@@ -464,8 +437,8 @@ class AssistantApplication:
                 rejected=True,
             )
             return False, message
-        definition = self._registry.get(candidate.name)
-        if definition is None or not definition.model_visible:
+        definition = offered_definitions.get(candidate.name)
+        if definition is None or not getattr(definition, "model_visible", False):
             message = self._append_tool_message(
                 turn_id=turn_id,
                 tool_name=candidate.name,
@@ -475,8 +448,7 @@ class AssistantApplication:
             )
             return False, message
         try:
-            arguments = candidate.arguments()
-            validate_tool_arguments(definition, arguments)
+            arguments = arguments_for_definition(candidate, definition)
         except ToolCandidateError as error:
             message = self._append_tool_message(
                 turn_id=turn_id,
@@ -506,24 +478,48 @@ class AssistantApplication:
                 running = None
             else:
                 duplicate = False
+                current_definition = self._registry.get(definition.name)
+                if (
+                    current_definition is None
+                    or current_definition.definition_digest != definition.definition_digest
+                ):
+                    invocation.reject(error_code="MCP_SCHEMA_CHANGED")
+                    unit_of_work.assistant.save_tool_invocation(invocation)
+                    unit_of_work.commit()
+                    running = None
+                    duplicate = False
+                    definition_changed = True
+                else:
+                    definition_changed = False
                 bus = self._command_bus(unit_of_work.commands)
                 policy = self._execution_policy.resolve(
                     unit_of_work.execution_settings,
                     execution_target=scope.execution_target,
                 )
-                dispatch = bus.submit(
-                    CommandRequest(
-                        tool_name=definition.name,
-                        actor="assistant",
-                        scope=scope,
-                        payload=arguments,
-                        idempotency_key=(f"assistant:{turn.id}:tool:{invocation.argument_hash}"),
-                    ),
-                    profile=policy.profile,
-                    capability_overrides=dict(policy.capability_overrides),
-                    sandbox_healthy=policy.sandbox_healthy,
+                dispatch = (
+                    None
+                    if definition_changed
+                    else bus.submit(
+                        CommandRequest(
+                            tool_name=definition.name,
+                            actor="assistant",
+                            scope=scope,
+                            payload={
+                                "arguments": arguments,
+                                "definition_digest": definition.definition_digest,
+                            },
+                            idempotency_key=(
+                                f"assistant:{turn.id}:tool:{invocation.argument_hash}"
+                            ),
+                        ),
+                        profile=policy.profile,
+                        capability_overrides=dict(policy.capability_overrides),
+                        sandbox_healthy=policy.sandbox_healthy,
+                    )
                 )
-                if not dispatch.accepted or dispatch.run is None:
+                if dispatch is None:
+                    pass
+                elif not dispatch.accepted or dispatch.run is None:
                     invocation.reject(
                         error_code=dispatch.error_code or "TOOL_REJECTED",
                     )
@@ -595,6 +591,14 @@ class AssistantApplication:
         try:
             cancellation.raise_if_cancelled()
             self._ensure_turn_waiting_for_tool(turn_id)
+            current_definition = self._registry.get(definition.name)
+            if (
+                current_definition is None
+                or current_definition.definition_digest != definition.definition_digest
+            ):
+                error = RuntimeError("tool definition changed before execution")
+                error.error_code = "MCP_SCHEMA_CHANGED"  # type: ignore[attr-defined]
+                raise error
             execute_command = getattr(self._tool_executor, "execute_command", None)
             if callable(execute_command):
                 result = execute_command(
@@ -607,7 +611,7 @@ class AssistantApplication:
                 result = self._tool_executor.execute(definition, scope, arguments)
             cancellation.raise_if_cancelled()
             self._ensure_turn_waiting_for_tool(turn_id)
-        except ProviderCancelledError:
+        except (ProviderCancelledError, McpCancelledError):
             self._cancel_running_tool(invocation, running)
             raise
         except Exception as error:
@@ -710,6 +714,39 @@ class AssistantApplication:
             definition = self._registry.get(invocation.tool_name)
             if definition is None:
                 raise RuntimeError("pending Tool Invocation definition is missing")
+            expected_definition_digest = command.input_payload.get("definition_digest")
+            if (
+                definition.source != "builtin"
+                and expected_definition_digest != definition.definition_digest
+            ):
+                expected_status = invocation.status
+                invocation.fail(error_code="MCP_SCHEMA_CHANGED")
+                unit_of_work.assistant.update_tool_invocation(
+                    invocation,
+                    expected_status=expected_status,
+                )
+                self._append_tool_message_in_unit(
+                    unit_of_work,
+                    turn_id=turn_id,
+                    tool_name=invocation.tool_name,
+                    tool_call_id=invocation.provider_call_id,
+                    content="Tool schema changed before the approved call could run.",
+                    rejected=True,
+                )
+                if command.status is CommandStatus.QUEUED:
+                    unit_of_work.commands.transition(
+                        command.id,
+                        CommandStatus.INTERRUPTED,
+                    )
+                elif command.status is CommandStatus.RUNNING:
+                    unit_of_work.commands.transition(
+                        command.id,
+                        CommandStatus.INTERRUPTED,
+                        lease_owner=command.lease_owner,
+                        lease_fence=command.lease_fence,
+                    )
+                unit_of_work.commit()
+                return False
             task = _require_task(unit_of_work, turn.task_id)
             scope = self._scope_resolver(unit_of_work.state, task)
 
@@ -792,61 +829,7 @@ class AssistantApplication:
     def _durable_tool_context(self, turn_id: UUID) -> tuple[ModelMessage, ...]:
         with self._unit_of_work_factory() as unit_of_work:
             invocations = unit_of_work.assistant.list_tool_invocations(turn_id)
-        terminal = tuple(
-            invocation
-            for invocation in invocations
-            if invocation.status
-            in {
-                ToolInvocationStatus.COMPLETED,
-                ToolInvocationStatus.FAILED,
-                ToolInvocationStatus.REJECTED,
-            }
-        )
-        messages: list[ModelMessage] = []
-        rounds = sorted({invocation.model_round for invocation in terminal})
-        for model_round in rounds:
-            grouped = tuple(
-                invocation for invocation in terminal if invocation.model_round == model_round
-            )
-            messages.append(
-                ModelMessage.create(
-                    role=ModelRole.ASSISTANT,
-                    content="",
-                    tool_calls=tuple(
-                        ModelToolCall.create(
-                            tool_call_id=invocation.provider_call_id,
-                            name=invocation.tool_name,
-                            arguments=json.dumps(
-                                invocation.arguments,
-                                ensure_ascii=True,
-                                allow_nan=False,
-                                separators=(",", ":"),
-                                sort_keys=True,
-                            ),
-                        )
-                        for invocation in grouped
-                    ),
-                )
-            )
-            for invocation in grouped:
-                rejected = invocation.status is not ToolInvocationStatus.COMPLETED
-                content = invocation.model_content or (
-                    f"Tool execution failed ({invocation.error_code or 'TOOL_REJECTED'})."
-                )
-                messages.append(
-                    ModelMessage.create(
-                        role=ModelRole.TOOL,
-                        content=tool_message_content(
-                            tool_name=invocation.tool_name,
-                            tool_call_id=invocation.provider_call_id,
-                            content=content,
-                            rejected=rejected,
-                        ),
-                        name=invocation.tool_name,
-                        tool_call_id=invocation.provider_call_id,
-                    )
-                )
-        return tuple(messages)
+        return durable_tool_context(invocations)
 
     def _next_model_round(self, turn_id: UUID) -> int:
         with self._unit_of_work_factory() as unit_of_work:
@@ -893,7 +876,7 @@ class AssistantApplication:
             )
 
     @staticmethod
-    def _model_tool_call(candidate: _Candidate) -> ModelToolCall:
+    def _model_tool_call(candidate: ToolCandidate) -> ModelToolCall:
         try:
             arguments = candidate.arguments()
         except ToolCandidateError:

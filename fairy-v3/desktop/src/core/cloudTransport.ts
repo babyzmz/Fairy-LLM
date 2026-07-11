@@ -92,6 +92,33 @@ const routes = {
   "providers.list": () => get("/v1/providers"),
   "providers.health": (params) =>
     getWithQuery("/v1/providers/health", params, ["profile_id"]),
+  "skills.list": () => get("/v1/skills"),
+  "mcp.servers.list": () => get("/v1/mcp/servers"),
+  "mcp.servers.configure": (params) =>
+    putWithIdempotency(
+      `/v1/mcp/servers/${pathParameter(params, "server_id")}`,
+      params,
+    ),
+  "mcp.servers.discover": (params) =>
+    postWithIdempotency(
+      `/v1/mcp/servers/${pathParameter(params, "server_id")}/discover`,
+      params,
+    ),
+  "mcp.servers.accept": (params) =>
+    postWithIdempotency(
+      `/v1/mcp/servers/${pathParameter(params, "server_id")}/accept`,
+      params,
+    ),
+  "mcp.servers.set_enabled": (params) =>
+    postWithIdempotency(
+      `/v1/mcp/servers/${pathParameter(params, "server_id")}/enabled`,
+      params,
+    ),
+  "mcp.servers.delete": (params) =>
+    deleteWithIdempotency(
+      `/v1/mcp/servers/${pathParameter(params, "server_id")}`,
+      params,
+    ),
   "runtimes.get": (params) =>
     get(`/v1/runtimes/${pathParameter(params, "runtime_id")}`),
   "runtimes.health": (params) =>
@@ -366,6 +393,15 @@ function putWithIdempotency(path: string, params: RuntimeParams): RequestDescrip
 function postWithIdempotency(path: string, params: RuntimeParams): RequestDescriptor {
   return {
     method: "POST",
+    path,
+    body: params,
+    idempotencyKey: rawStringParameter(params, "idempotency_key"),
+  };
+}
+
+function deleteWithIdempotency(path: string, params: RuntimeParams): RequestDescriptor {
+  return {
+    method: "DELETE",
     path,
     body: params,
     idempotencyKey: rawStringParameter(params, "idempotency_key"),

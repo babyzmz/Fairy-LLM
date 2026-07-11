@@ -16,6 +16,8 @@ import { useState } from "react";
 import { ChatWorkspace } from "../chat/ChatWorkspace";
 import { Composer } from "../chat/Composer";
 import { ProviderSettings } from "../settings/ProviderSettings";
+import { ExecutionControls } from "../settings/ExecutionControls";
+import { ExtensionSettings } from "../settings/ExtensionSettings";
 import { PreviewPanel } from "./PreviewPanel";
 import { TaskTimeline } from "./TaskTimeline";
 import type { WorkspaceModel, WorkspaceMode } from "./workspaceModel";
@@ -97,16 +99,36 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               <Boxes size={14} /> Project
             </button>
           </div>
-          {model.mode === "project" ? (
-            <ProviderSettings
-              providers={model.providers}
-              health={model.providerHealth}
-              selectedProfileId={model.selectedProfileId}
-              developerMode={model.developerMode}
-              onProfileChange={model.selectProfile}
-              onDeveloperModeChange={model.setDeveloperMode}
+          <div className="mode-controls">
+            {model.mode === "project" ? (
+              <ProviderSettings
+                providers={model.providers}
+                health={model.providerHealth}
+                selectedProfileId={model.selectedProfileId}
+                developerMode={model.developerMode}
+                onProfileChange={model.selectProfile}
+                onDeveloperModeChange={model.setDeveloperMode}
+              />
+            ) : null}
+            <ExtensionSettings
+              skills={model.skills}
+              servers={model.mcpServers}
+              disabled={model.state === "offline" || model.isActing}
+              discoveryAvailable={model.selectedTask !== null || model.chatTurn !== null}
+              onConfigure={model.configureMcpServer}
+              onDiscover={model.discoverMcpServer}
+              onAccept={model.acceptMcpServer}
+              onEnabledChange={model.setMcpServerEnabled}
+              onDelete={model.deleteMcpServer}
             />
-          ) : null}
+            <ExecutionControls
+              settings={model.permissionSettings}
+              manifest={model.capabilities}
+              disabled={model.state === "offline" || model.isActing}
+              onProfileChange={model.setPermissionProfile}
+              onCapabilityChange={model.setCapabilityEnabled}
+            />
+          </div>
         </div>
 
         {model.actionError || model.errorMessage || model.projectError ? (
@@ -141,6 +163,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             offline={false}
             developerMode={model.developerMode}
             error={model.chatError}
+            slashCommands={model.capabilities?.slash_commands ?? []}
             onProfileChange={model.selectProfile}
             onDeveloperModeChange={model.setDeveloperMode}
             onNewConversation={model.createChatConversation}
@@ -272,7 +295,7 @@ function ContextBar({ model }: { model: WorkspaceModel }) {
           <Play size={14} /> {model.selectedTask?.execution_target ?? "local"}
         </span>
         <span className="telemetry-item">
-          <ShieldCheck size={14} /> {model.permissionProfile}
+          <ShieldCheck size={14} /> {model.permissionProfile ?? "unavailable"}
         </span>
         <span
           className={`telemetry-item ${model.state === "offline" ? "offline" : "online"}`}

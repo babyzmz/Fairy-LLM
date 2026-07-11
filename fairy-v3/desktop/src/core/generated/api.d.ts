@@ -345,6 +345,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/mcp/servers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Mcp Servers */
+        get: operations["mcp.servers.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{server_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Configure Mcp Server */
+        put: operations["mcp.servers.configure"];
+        post?: never;
+        /** Delete Mcp Server */
+        delete: operations["mcp.servers.delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{server_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept Mcp Server */
+        post: operations["mcp.servers.accept"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{server_id}/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discover Mcp Server */
+        post: operations["mcp.servers.discover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/servers/{server_id}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Mcp Server Enabled */
+        post: operations["mcp.servers.set_enabled"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/memory/claims": {
         parameters: {
             query?: never;
@@ -756,6 +842,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Skills */
+        get: operations["skills.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sync/events": {
         parameters: {
             query?: never;
@@ -1062,6 +1165,11 @@ export interface components {
             /** Next Cursor */
             next_cursor: string | null;
         };
+        /**
+         * ApprovalPolicy
+         * @enum {string}
+         */
+        ApprovalPolicy: "never" | "profile" | "always";
         /** ArtifactModel */
         ArtifactModel: {
             artifact_type: components["schemas"]["ArtifactType"];
@@ -1226,10 +1334,11 @@ export interface components {
         AudioMediaType: "audio/webm" | "audio/wav" | "audio/mpeg" | "audio/mp4" | "audio/ogg";
         /** CapabilityManifestModel */
         CapabilityManifestModel: {
-            /** Command Metadata */
-            command_metadata?: {
-                [key: string]: unknown;
-            }[];
+            /**
+             * Command Metadata
+             * @default []
+             */
+            command_metadata: components["schemas"]["ToolDefinitionMetadataModel"][];
             /** Operations */
             operations: {
                 [key: string]: boolean;
@@ -1239,9 +1348,15 @@ export interface components {
             sandbox_healthy: boolean;
             /**
              * Schema Version
-             * @default 1
+             * @default 3
+             * @constant
              */
-            schema_version: number;
+            schema_version: 3;
+            /**
+             * Slash Commands
+             * @default []
+             */
+            slash_commands: components["schemas"]["SlashCommandMetadataModel"][];
         };
         /** ChangesetModel */
         ChangesetModel: {
@@ -1323,6 +1438,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Evidence Artifact Ids */
+            evidence_artifact_ids: string[];
             /**
              * Id
              * Format: uuid
@@ -1728,6 +1845,184 @@ export interface components {
             version_id: string | null;
             visibility: components["schemas"]["DocumentVisibility"];
         };
+        /** McpServerAcceptInput */
+        McpServerAcceptInput: {
+            /** Enabled */
+            enabled: boolean;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Schema Digest */
+            schema_digest: string;
+            /** Server Id */
+            server_id: string;
+            /** Tools */
+            tools: components["schemas"]["McpToolPolicyInput"][];
+        };
+        /** McpServerConfigureInput */
+        McpServerConfigureInput: {
+            /**
+             * Arguments
+             * @default []
+             */
+            arguments: string[];
+            /** Command */
+            command?: string | null;
+            /** Credential Ref */
+            credential_ref?: string | null;
+            /** Display Name */
+            display_name: string;
+            /** Endpoint */
+            endpoint?: string | null;
+            /** Environment Refs */
+            environment_refs?: {
+                [key: string]: string;
+            };
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Server Id */
+            server_id: string;
+            transport: components["schemas"]["McpTransport"];
+        };
+        /** McpServerDeleteInput */
+        McpServerDeleteInput: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Server Id */
+            server_id: string;
+        };
+        /** McpServerDeleteResult */
+        McpServerDeleteResult: {
+            /** Deleted */
+            deleted: boolean;
+            /** Server Id */
+            server_id: string;
+        };
+        /** McpServerDiscoverInput */
+        McpServerDiscoverInput: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Server Id */
+            server_id: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
+        /** McpServerModel */
+        McpServerModel: {
+            /** Accepted Schema Digest */
+            accepted_schema_digest?: string | null;
+            /** Accepted Tools */
+            accepted_tools: components["schemas"]["McpToolDescriptorModel"][];
+            /**
+             * Arguments
+             * @default []
+             */
+            arguments: string[];
+            /** Command */
+            command?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Credential Configured */
+            credential_configured: boolean;
+            /** Display Name */
+            display_name: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Endpoint */
+            endpoint?: string | null;
+            /**
+             * Environment Names
+             * @default []
+             */
+            environment_names: string[];
+            /** Last Error Code */
+            last_error_code?: string | null;
+            /** Pending Schema Digest */
+            pending_schema_digest?: string | null;
+            /** Pending Tools */
+            pending_tools: components["schemas"]["McpToolDescriptorModel"][];
+            /** Policies */
+            policies: components["schemas"]["McpToolPolicyInput"][];
+            /** Revision */
+            revision: number;
+            /** Server Id */
+            server_id: string;
+            status: components["schemas"]["McpServerStatus"];
+            transport: components["schemas"]["McpTransport"];
+            /** Updated At */
+            updated_at: string;
+        };
+        /** McpServerPageModel */
+        McpServerPageModel: {
+            /** Items */
+            items: components["schemas"]["McpServerModel"][];
+        };
+        /** McpServerSetEnabledInput */
+        McpServerSetEnabledInput: {
+            /** Enabled */
+            enabled: boolean;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Server Id */
+            server_id: string;
+        };
+        /**
+         * McpServerStatus
+         * @enum {string}
+         */
+        McpServerStatus: "disabled" | "untrusted" | "review_required" | "ready" | "unavailable";
+        /** McpToolDescriptorModel */
+        McpToolDescriptorModel: {
+            /** Description */
+            description: string;
+            /** Imported Name */
+            imported_name?: string | null;
+            /** Input Schema */
+            input_schema: {
+                [key: string]: unknown;
+            };
+            /** Name */
+            name: string;
+            /** Output Schema */
+            output_schema: {
+                [key: string]: unknown;
+            } | null;
+            /** Schema Digest */
+            schema_digest: string;
+            /** Title */
+            title?: string | null;
+        };
+        /** McpToolPolicyInput */
+        McpToolPolicyInput: {
+            approval_policy: components["schemas"]["ApprovalPolicy"];
+            /** Enabled */
+            enabled: boolean;
+            /** Idempotent */
+            idempotent: boolean;
+            /** Name */
+            name: string;
+            /** Profiles */
+            profiles: components["schemas"]["PermissionProfile"][];
+            risk_level: components["schemas"]["RiskLevel"];
+            side_effect: components["schemas"]["SideEffect"];
+        };
+        /**
+         * McpTransport
+         * @enum {string}
+         */
+        McpTransport: "stdio" | "streamable_http";
         /**
          * MemoryAuthority
          * @enum {string}
@@ -2564,6 +2859,11 @@ export interface components {
              */
             type: "reveal_path";
         };
+        /**
+         * RiskLevel
+         * @enum {string}
+         */
+        RiskLevel: "low" | "medium" | "high";
         /** RuntimeExecutorHealthModel */
         RuntimeExecutorHealthModel: {
             /** Available */
@@ -2694,6 +2994,61 @@ export interface components {
             task_id: string;
             workspace_type: components["schemas"]["WorkspaceType"];
         };
+        /**
+         * SideEffect
+         * @enum {string}
+         */
+        SideEffect: "none" | "read" | "write" | "execute";
+        /** SkillModel */
+        SkillModel: {
+            /** Available */
+            available: boolean;
+            /** Compatible Mcp Servers */
+            compatible_mcp_servers: string[];
+            /** Content Sha256 */
+            content_sha256: string;
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+            provenance: components["schemas"]["SkillProvenanceModel"];
+            /** Required Capabilities */
+            required_capabilities: string[];
+            /** Tool Name */
+            tool_name: string;
+            /** Version */
+            version: string;
+        };
+        /** SkillPageModel */
+        SkillPageModel: {
+            /** Items */
+            items: components["schemas"]["SkillModel"][];
+        };
+        /** SkillProvenanceModel */
+        SkillProvenanceModel: {
+            /** License */
+            license: string;
+            /** Publisher */
+            publisher: string;
+            /** Source */
+            source: string;
+        };
+        /** SlashCommandMetadataModel */
+        SlashCommandMetadataModel: {
+            /** Argument Hint */
+            argument_hint?: string | null;
+            /** Available */
+            available: boolean;
+            /** Description */
+            description: string;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "new" | "project" | "permission" | "stop" | "clear" | "help";
+            /** Required Operation */
+            required_operation?: string | null;
+        };
         /** SyncEventBatch */
         SyncEventBatch: {
             /** Items */
@@ -2821,6 +3176,60 @@ export interface components {
          * @enum {string}
          */
         TaskStatus: "created" | "resolving_scope" | "building_workspace" | "planning" | "awaiting_approval" | "executing" | "installing" | "previewing" | "reviewing" | "repairing" | "ready" | "accepted" | "rejected" | "archived" | "failed";
+        /** ToolDefinitionMetadataModel */
+        ToolDefinitionMetadataModel: {
+            /**
+             * Approval Policy
+             * @enum {string}
+             */
+            approval_policy: "never" | "profile" | "always";
+            /** Definition Digest */
+            definition_digest: string;
+            /** Description */
+            description: string;
+            /** Idempotent */
+            idempotent: boolean;
+            /** Input Schema */
+            input_schema: {
+                [key: string]: unknown;
+            };
+            /** Model Visible */
+            model_visible: boolean;
+            /** Name */
+            name: string;
+            /** Origin Id */
+            origin_id?: string | null;
+            /** Profiles */
+            profiles: components["schemas"]["PermissionProfileModel"][];
+            /**
+             * Required Extensions
+             * @default []
+             */
+            required_extensions: string[];
+            /**
+             * Required Operations
+             * @default []
+             */
+            required_operations: string[];
+            /** Requires Sandbox */
+            requires_sandbox: boolean;
+            /**
+             * Risk Level
+             * @enum {string}
+             */
+            risk_level: "low" | "medium" | "high";
+            /**
+             * Side Effect
+             * @enum {string}
+             */
+            side_effect: "none" | "read" | "write" | "execute";
+            /**
+             * Source
+             * @default builtin
+             * @enum {string}
+             */
+            source: "builtin" | "skill" | "mcp";
+        };
         /** TranscriptSegmentModel */
         TranscriptSegmentModel: {
             /** End Seconds */
@@ -3764,6 +4173,227 @@ export interface operations {
             };
         };
     };
+    "mcp.servers.list": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "mcp.servers.configure": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerConfigureInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "mcp.servers.delete": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerDeleteInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerDeleteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "mcp.servers.accept": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerAcceptInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "mcp.servers.discover": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerDiscoverInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "mcp.servers.set_enabled": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                server_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpServerSetEnabledInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "memory.claims.list": {
         parameters: {
             query: {
@@ -4668,6 +5298,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuntimeModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "skills.list": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillPageModel"];
                 };
             };
             /** @description Validation Error */

@@ -181,6 +181,15 @@
         "title": "ApprovalPageModel",
         "type": "object"
       },
+      "ApprovalPolicy": {
+        "enum": [
+          "never",
+          "profile",
+          "always"
+        ],
+        "title": "ApprovalPolicy",
+        "type": "string"
+      },
       "ArtifactModel": {
         "additionalProperties": false,
         "properties": {
@@ -571,9 +580,9 @@
         "additionalProperties": false,
         "properties": {
           "command_metadata": {
+            "default": [],
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ToolDefinitionMetadataModel"
             },
             "title": "Command Metadata",
             "type": "array"
@@ -593,9 +602,18 @@
             "type": "boolean"
           },
           "schema_version": {
-            "default": 1,
+            "const": 3,
+            "default": 3,
             "title": "Schema Version",
             "type": "integer"
+          },
+          "slash_commands": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SlashCommandMetadataModel"
+            },
+            "title": "Slash Commands",
+            "type": "array"
           }
         },
         "required": [
@@ -771,6 +789,14 @@
             "title": "Created At",
             "type": "string"
           },
+          "evidence_artifact_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Evidence Artifact Ids",
+            "type": "array"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -806,6 +832,7 @@
           "changed_files",
           "command_run_ids",
           "preview_artifact_id",
+          "evidence_artifact_ids",
           "created_at"
         ],
         "title": "CheckpointModel",
@@ -1819,6 +1846,582 @@
         ],
         "title": "ManagedDocumentModel",
         "type": "object"
+      },
+      "McpServerAcceptInput": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "schema_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Schema Digest",
+            "type": "string"
+          },
+          "server_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "title": "Server Id",
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/McpToolPolicyInput"
+            },
+            "maxItems": 256,
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "server_id",
+          "expected_revision",
+          "schema_digest",
+          "enabled",
+          "tools",
+          "idempotency_key"
+        ],
+        "title": "McpServerAcceptInput",
+        "type": "object"
+      },
+      "McpServerConfigureInput": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Arguments",
+            "type": "array"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "credential_ref": {
+            "anyOf": [
+              {
+                "maxLength": 288,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Ref"
+          },
+          "display_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
+          "environment_refs": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 32,
+            "title": "Environment Refs",
+            "type": "object"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "server_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "title": "Server Id",
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/McpTransport"
+          }
+        },
+        "required": [
+          "server_id",
+          "display_name",
+          "transport",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "title": "McpServerConfigureInput",
+        "type": "object"
+      },
+      "McpServerDeleteInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "server_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "title": "Server Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "title": "McpServerDeleteInput",
+        "type": "object"
+      },
+      "McpServerDeleteResult": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "server_id": {
+            "title": "Server Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "deleted"
+        ],
+        "title": "McpServerDeleteResult",
+        "type": "object"
+      },
+      "McpServerDiscoverInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "server_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "title": "Server Id",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "task_id",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "title": "McpServerDiscoverInput",
+        "type": "object"
+      },
+      "McpServerModel": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_schema_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted Schema Digest"
+          },
+          "accepted_tools": {
+            "items": {
+              "$ref": "#/components/schemas/McpToolDescriptorModel"
+            },
+            "title": "Accepted Tools",
+            "type": "array"
+          },
+          "arguments": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "title": "Arguments",
+            "type": "array"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "credential_configured": {
+            "title": "Credential Configured",
+            "type": "boolean"
+          },
+          "display_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
+          "environment_names": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Environment Names",
+            "type": "array"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "pending_schema_digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Schema Digest"
+          },
+          "pending_tools": {
+            "items": {
+              "$ref": "#/components/schemas/McpToolDescriptorModel"
+            },
+            "title": "Pending Tools",
+            "type": "array"
+          },
+          "policies": {
+            "items": {
+              "$ref": "#/components/schemas/McpToolPolicyInput"
+            },
+            "title": "Policies",
+            "type": "array"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "server_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "title": "Server Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/McpServerStatus"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/McpTransport"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "display_name",
+          "transport",
+          "credential_configured",
+          "enabled",
+          "status",
+          "accepted_tools",
+          "pending_tools",
+          "policies",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "McpServerModel",
+        "type": "object"
+      },
+      "McpServerPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/McpServerModel"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "McpServerPageModel",
+        "type": "object"
+      },
+      "McpServerSetEnabledInput": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "server_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "title": "Server Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "expected_revision",
+          "enabled",
+          "idempotency_key"
+        ],
+        "title": "McpServerSetEnabledInput",
+        "type": "object"
+      },
+      "McpServerStatus": {
+        "enum": [
+          "disabled",
+          "untrusted",
+          "review_required",
+          "ready",
+          "unavailable"
+        ],
+        "title": "McpServerStatus",
+        "type": "string"
+      },
+      "McpToolDescriptorModel": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "imported_name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imported Name"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "output_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Schema"
+          },
+          "schema_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Schema Digest",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "input_schema",
+          "output_schema",
+          "schema_digest"
+        ],
+        "title": "McpToolDescriptorModel",
+        "type": "object"
+      },
+      "McpToolPolicyInput": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_policy": {
+            "$ref": "#/components/schemas/ApprovalPolicy"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "idempotent": {
+            "title": "Idempotent",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionProfile"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Profiles",
+            "type": "array"
+          },
+          "risk_level": {
+            "$ref": "#/components/schemas/RiskLevel"
+          },
+          "side_effect": {
+            "$ref": "#/components/schemas/SideEffect"
+          }
+        },
+        "required": [
+          "name",
+          "enabled",
+          "side_effect",
+          "risk_level",
+          "approval_policy",
+          "profiles",
+          "idempotent"
+        ],
+        "title": "McpToolPolicyInput",
+        "type": "object"
+      },
+      "McpTransport": {
+        "enum": [
+          "stdio",
+          "streamable_http"
+        ],
+        "title": "McpTransport",
+        "type": "string"
       },
       "MemoryAuthority": {
         "enum": [
@@ -4165,6 +4768,15 @@
         "title": "RevealPathAction",
         "type": "object"
       },
+      "RiskLevel": {
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "title": "RiskLevel",
+        "type": "string"
+      },
       "RuntimeExecutorHealthModel": {
         "additionalProperties": false,
         "properties": {
@@ -4580,6 +5192,190 @@
         "title": "ScopeContractModel",
         "type": "object"
       },
+      "SideEffect": {
+        "enum": [
+          "none",
+          "read",
+          "write",
+          "execute"
+        ],
+        "title": "SideEffect",
+        "type": "string"
+      },
+      "SkillModel": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "compatible_mcp_servers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Compatible Mcp Servers",
+            "type": "array"
+          },
+          "content_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/SkillProvenanceModel"
+          },
+          "required_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Capabilities",
+            "type": "array"
+          },
+          "tool_name": {
+            "pattern": "^skill\\.[a-z0-9][a-z0-9-]{0,63}$",
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 128,
+            "minLength": 5,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "description",
+          "tool_name",
+          "content_sha256",
+          "required_capabilities",
+          "compatible_mcp_servers",
+          "provenance",
+          "available"
+        ],
+        "title": "SkillModel",
+        "type": "object"
+      },
+      "SkillPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SkillModel"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SkillPageModel",
+        "type": "object"
+      },
+      "SkillProvenanceModel": {
+        "additionalProperties": false,
+        "properties": {
+          "license": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "License",
+            "type": "string"
+          },
+          "publisher": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Publisher",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "source",
+          "license"
+        ],
+        "title": "SkillProvenanceModel",
+        "type": "object"
+      },
+      "SlashCommandMetadataModel": {
+        "additionalProperties": false,
+        "properties": {
+          "argument_hint": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Argument Hint"
+          },
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "description": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "enum": [
+              "new",
+              "project",
+              "permission",
+              "stop",
+              "clear",
+              "help"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "required_operation": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[a-z][a-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Operation"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "available"
+        ],
+        "title": "SlashCommandMetadataModel",
+        "type": "object"
+      },
       "SyncEventBatch": {
         "additionalProperties": false,
         "properties": {
@@ -4969,6 +5765,137 @@
         ],
         "title": "TaskStatus",
         "type": "string"
+      },
+      "ToolDefinitionMetadataModel": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_policy": {
+            "enum": [
+              "never",
+              "profile",
+              "always"
+            ],
+            "title": "Approval Policy",
+            "type": "string"
+          },
+          "definition_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Definition Digest",
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "idempotent": {
+            "title": "Idempotent",
+            "type": "boolean"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "model_visible": {
+            "title": "Model Visible",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_.-]*$",
+            "title": "Name",
+            "type": "string"
+          },
+          "origin_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Id"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/PermissionProfileModel"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Profiles",
+            "type": "array"
+          },
+          "required_extensions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Extensions",
+            "type": "array"
+          },
+          "required_operations": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Operations",
+            "type": "array"
+          },
+          "requires_sandbox": {
+            "title": "Requires Sandbox",
+            "type": "boolean"
+          },
+          "risk_level": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "title": "Risk Level",
+            "type": "string"
+          },
+          "side_effect": {
+            "enum": [
+              "none",
+              "read",
+              "write",
+              "execute"
+            ],
+            "title": "Side Effect",
+            "type": "string"
+          },
+          "source": {
+            "default": "builtin",
+            "enum": [
+              "builtin",
+              "skill",
+              "mcp"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "side_effect",
+          "risk_level",
+          "approval_policy",
+          "profiles",
+          "requires_sandbox",
+          "idempotent",
+          "model_visible",
+          "description",
+          "definition_digest",
+          "input_schema"
+        ],
+        "title": "ToolDefinitionMetadataModel",
+        "type": "object"
       },
       "TranscriptSegmentModel": {
         "additionalProperties": false,
@@ -7015,6 +7942,460 @@
         "summary": "Health"
       }
     },
+    "/v1/mcp/servers": {
+      "get": {
+        "operationId": "mcp.servers.list",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Mcp Servers"
+      }
+    },
+    "/v1/mcp/servers/{server_id}": {
+      "delete": {
+        "operationId": "mcp.servers.delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "title": "Server Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerDeleteInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerDeleteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Mcp Server"
+      },
+      "put": {
+        "operationId": "mcp.servers.configure",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "title": "Server Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerConfigureInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Configure Mcp Server"
+      }
+    },
+    "/v1/mcp/servers/{server_id}/accept": {
+      "post": {
+        "operationId": "mcp.servers.accept",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "title": "Server Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerAcceptInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Accept Mcp Server"
+      }
+    },
+    "/v1/mcp/servers/{server_id}/discover": {
+      "post": {
+        "operationId": "mcp.servers.discover",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "title": "Server Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerDiscoverInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Discover Mcp Server"
+      }
+    },
+    "/v1/mcp/servers/{server_id}/enabled": {
+      "post": {
+        "operationId": "mcp.servers.set_enabled",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "title": "Server Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerSetEnabledInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Mcp Server Enabled"
+      }
+    },
     "/v1/memory/claims": {
       "get": {
         "operationId": "memory.claims.list",
@@ -8790,6 +10171,57 @@
           }
         ],
         "summary": "Get Runtime"
+      }
+    },
+    "/v1/skills": {
+      "get": {
+        "operationId": "skills.list",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Skills"
       }
     },
     "/v1/sync/events": {

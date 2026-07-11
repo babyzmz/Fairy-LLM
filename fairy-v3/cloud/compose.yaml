@@ -16,6 +16,9 @@ x-cloud-environment: &cloud-environment
   FAIRY_S3_SECRET_KEY: ${FAIRY_S3_SECRET_KEY:-fairy-dev-secret}
   FAIRY_EVENT_POLL_SECONDS: "0.025"
   FAIRY_RECOVERY_INTERVAL_SECONDS: "5"
+  FAIRY_PREVIEW_BASE_URL: ${FAIRY_PREVIEW_BASE_URL:-https://preview.fairy.test}
+  FAIRY_PREVIEW_SIGNING_KEY: ${FAIRY_PREVIEW_SIGNING_KEY:-fairy-preview-dev-signing-key-change-me}
+  FAIRY_RUNTIME_GATEWAY_KEY: ${FAIRY_RUNTIME_GATEWAY_KEY:-fairy-runtime-gateway-dev-key-change-me}
   FAIRY_PROVIDER_PROFILES_JSON: ${FAIRY_PROVIDER_PROFILES_JSON:-[]}
   FAIRY_PROVIDER_SECRET_REFS_JSON: ${FAIRY_PROVIDER_SECRET_REFS_JSON:-{}}
   FAIRY_PROVIDER_BRAVE_CREDENTIAL_REF: ${FAIRY_PROVIDER_BRAVE_CREDENTIAL_REF:-brave}
@@ -23,6 +26,8 @@ x-cloud-environment: &cloud-environment
   FAIRY_PROVIDER_SECRET_OPENROUTER: ${FAIRY_PROVIDER_SECRET_OPENROUTER:-}
   FAIRY_PROVIDER_SECRET_BRAVE: ${FAIRY_PROVIDER_SECRET_BRAVE:-}
   FAIRY_PROVIDER_SECRET_ALPHA_VANTAGE: ${FAIRY_PROVIDER_SECRET_ALPHA_VANTAGE:-}
+  FAIRY_MCP_CREDENTIALS: ${FAIRY_MCP_CREDENTIALS:-{}}
+  FAIRY_MCP_ALLOWED_HOSTS: ${FAIRY_MCP_ALLOWED_HOSTS:-[]}
 
 services:
   postgres:
@@ -34,6 +39,7 @@ services:
       FAIRY_APP_POSTGRES_PASSWORD: ${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}
       FAIRY_WORKER_POSTGRES_PASSWORD: ${FAIRY_WORKER_POSTGRES_PASSWORD:-fairy-worker-dev-only}
       FAIRY_EXECUTION_POSTGRES_PASSWORD: ${FAIRY_EXECUTION_POSTGRES_PASSWORD:-fairy-execution-dev-only}
+      FAIRY_RUNTIME_POSTGRES_PASSWORD: ${FAIRY_RUNTIME_POSTGRES_PASSWORD:-fairy-runtime-dev-only}
     ports:
       - "127.0.0.1:${FAIRY_POSTGRES_PORT:-54320}:5432"
     volumes:
@@ -114,6 +120,7 @@ services:
       FAIRY_APP_POSTGRES_PASSWORD: ${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}
       FAIRY_WORKER_POSTGRES_PASSWORD: ${FAIRY_WORKER_POSTGRES_PASSWORD:-fairy-worker-dev-only}
       FAIRY_EXECUTION_POSTGRES_PASSWORD: ${FAIRY_EXECUTION_POSTGRES_PASSWORD:-fairy-execution-dev-only}
+      FAIRY_RUNTIME_POSTGRES_PASSWORD: ${FAIRY_RUNTIME_POSTGRES_PASSWORD:-fairy-runtime-dev-only}
     volumes:
       - ./docker/postgres/010-fairy-roles.sh:/opt/fairy/010-fairy-roles.sh:ro
     depends_on:
@@ -143,6 +150,8 @@ services:
       object-store:
         condition: service_healthy
       oidc:
+        condition: service_healthy
+      runtime:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -215,6 +224,8 @@ services:
     tmpfs:
       - /tmp:size=64m,mode=1777
       - /var/lib/fairy-sandbox:size=3g,mode=0700,uid=10001,gid=10001
+    volumes:
+      - fairy-dependencies:/var/lib/fairy-sandbox/dependencies
     cap_drop: ["ALL"]
     security_opt:
       - no-new-privileges:true
@@ -234,18 +245,65 @@ services:
       timeout: 2s
       retries: 10
 
+  runtime:
+    image: fairy-cloud:dev
+    build:
+      <<: *cloud-build
+      target: runtime
+    command: ["python", "-m", "fairy_cloud.workers.runtime"]
+    environment:
+      FAIRY_POSTGRES_DSN: postgresql+asyncpg://fairy_runtime:${FAIRY_RUNTIME_POSTGRES_PASSWORD:-fairy-runtime-dev-only}@postgres:5432/fairy
+      FAIRY_RUNTIME_OWNER_ID: runtime-compose-1
+      FAIRY_RUNTIME_POLL_SECONDS: "0.1"
+      FAIRY_RUNTIME_LEASE_SECONDS: "180"
+      FAIRY_RUNTIME_HEARTBEAT_PATH: /tmp/fairy-runtime-ready
+      FAIRY_RUNTIME_GATEWAY_BASE_URL: http://runtime:8082
+      FAIRY_RUNTIME_GATEWAY_KEY: ${FAIRY_RUNTIME_GATEWAY_KEY:-fairy-runtime-gateway-dev-key-change-me}
+      FAIRY_RUNTIME_HOST: 0.0.0.0
+      FAIRY_RUNTIME_PORT: "8082"
+    expose: ["8082"]
+    depends_on:
+      postgres-permissions:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /var/lib/fairy-sandbox:size=3g,mode=0700,uid=10001,gid=10001
+    volumes:
+      - fairy-dependencies:/var/lib/fairy-sandbox/dependencies:ro
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 768
+    mem_limit: 3g
+    cpus: 2.0
+    init: true
+    stop_grace_period: 20s
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/ready', timeout=2).read()"
+      start_period: 5s
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
   integration:
     build:
       <<: *cloud-build
       target: test
     profiles: ["test"]
-    command: ["pytest", "-m", "integration", "-q"]
+    command: ["pytest", "-p", "no:cacheprovider", "-m", "integration", "-q"]
     environment:
       FAIRY_TEST_POSTGRES_DSN: postgresql+asyncpg://fairy:${FAIRY_POSTGRES_PASSWORD:-fairy-dev-only}@postgres:5432/fairy
       FAIRY_TEST_APP_POSTGRES_DSN: postgresql+asyncpg://fairy_app:${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}@postgres:5432/fairy
       FAIRY_TEST_CORE_POSTGRES_DSN: postgresql+psycopg://fairy_app:${FAIRY_APP_POSTGRES_PASSWORD:-fairy-app-dev-only}@postgres:5432/fairy
       FAIRY_TEST_EXECUTION_POSTGRES_DSN: postgresql+asyncpg://fairy_execution:${FAIRY_EXECUTION_POSTGRES_PASSWORD:-fairy-execution-dev-only}@postgres:5432/fairy
       FAIRY_TEST_EXECUTION_SYNC_POSTGRES_DSN: postgresql+psycopg://fairy_execution:${FAIRY_EXECUTION_POSTGRES_PASSWORD:-fairy-execution-dev-only}@postgres:5432/fairy
+      FAIRY_TEST_RUNTIME_POSTGRES_DSN: postgresql+asyncpg://fairy_runtime:${FAIRY_RUNTIME_POSTGRES_PASSWORD:-fairy-runtime-dev-only}@postgres:5432/fairy
+      FAIRY_TEST_RUNTIME_SYNC_POSTGRES_DSN: postgresql+psycopg://fairy_runtime:${FAIRY_RUNTIME_POSTGRES_PASSWORD:-fairy-runtime-dev-only}@postgres:5432/fairy
       FAIRY_TEST_S3_ENDPOINT: http://object-store:8333
       FAIRY_TEST_S3_BUCKET: fairy-objects
       FAIRY_S3_ACCESS_KEY: ${FAIRY_S3_ACCESS_KEY:-fairy-dev}
@@ -256,6 +314,8 @@ services:
       object-store:
         condition: service_healthy
       execution:
+        condition: service_healthy
+      runtime:
         condition: service_healthy
     read_only: true
     tmpfs:
@@ -268,3 +328,4 @@ volumes:
   fairy-postgres:
   fairy-objects:
   fairy-core:
+  fairy-dependencies:

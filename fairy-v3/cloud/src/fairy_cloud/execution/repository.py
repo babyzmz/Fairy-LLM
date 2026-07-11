@@ -529,6 +529,8 @@ def _job_values(job: ExecutionJob) -> dict[str, object]:
         "output_limit_bytes": job.output_limit_bytes,
         "network_policy": job.network_policy.value,
         "purpose": job.purpose.value,
+        "dependency_key": job.dependency_key,
+        "dependency_manager": job.dependency_manager,
         "workspace_archive": job.workspace_archive,
         "archive_sha256": job.archive_sha256,
         "archive_byte_length": len(job.workspace_archive),
@@ -561,6 +563,12 @@ def _job_from_row(row: Mapping[str, object]) -> ExecutionJob:
         output_limit_bytes=int(row["output_limit_bytes"]),
         network_policy=SandboxNetworkPolicy(str(row["network_policy"])),
         purpose=SandboxPurpose(str(row["purpose"])),
+        dependency_key=(
+            str(row["dependency_key"]) if row.get("dependency_key") is not None else None
+        ),
+        dependency_manager=(
+            str(row["dependency_manager"]) if row.get("dependency_manager") is not None else None
+        ),
         workspace_archive=bytes(row["workspace_archive"]),
         archive_sha256=str(row["archive_sha256"]),
         status=ExecutionJobStatus(str(row["status"])),

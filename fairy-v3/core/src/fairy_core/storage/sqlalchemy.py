@@ -354,6 +354,9 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
                 "preview_artifact_id": (
                     str(checkpoint.preview_artifact_id) if checkpoint.preview_artifact_id else None
                 ),
+                "evidence_artifact_ids": [
+                    str(artifact_id) for artifact_id in checkpoint.evidence_artifact_ids
+                ],
                 "created_at": checkpoint.created_at,
             },
         )
@@ -369,6 +372,7 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
             changed_files=tuple(row["changed_files"]),
             command_run_ids=tuple(UUID(value) for value in row["command_run_ids"]),
             preview_artifact_id=_uuid(row["preview_artifact_id"]),
+            evidence_artifact_ids=tuple(UUID(value) for value in row["evidence_artifact_ids"]),
             created_at=_datetime(row["created_at"]),
         )
 

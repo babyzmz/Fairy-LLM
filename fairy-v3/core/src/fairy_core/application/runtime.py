@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -14,6 +15,7 @@ from fairy_core.application.runtime_support import RuntimeApplicationSupport
 from fairy_core.commanding import CommandRun, EventVisibility
 from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
 from fairy_core.domain.execution import (
+    ArtifactType,
     PreviewSession,
     PreviewStatus,
     PreviewVisibility,
@@ -21,14 +23,24 @@ from fairy_core.domain.execution import (
     RuntimeSession,
     RuntimeStatus,
 )
-from fairy_core.domain.models import TaskStatus
+from fairy_core.domain.models import ScopeContract, TaskStatus
+from fairy_core.persistence.unit_of_work import CoreUnitOfWork
 from fairy_core.runtime.artifacts import ensure_preview_manifest
 from fairy_core.runtime.models import (
+    DynamicRuntimeStart,
     ExecutorRuntimeState,
     RuntimeExecutorError,
+    RuntimeExecutorHealth,
     RuntimeProbeResult,
+    RuntimeRecoveryTarget,
     RuntimeStartResult,
     StaticRuntimeStart,
+)
+from fairy_core.runtime.templates import (
+    RuntimeAdapter,
+    RuntimeTemplate,
+    RuntimeTemplateError,
+    select_runtime_template,
 )
 
 
@@ -36,6 +48,9 @@ from fairy_core.runtime.models import (
 class _StartIntent:
     context: PreviewContext
     command: CommandRun
+    scope: ScopeContract
+    template: RuntimeTemplate
+    workspace_generation: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,14 +90,53 @@ class RuntimeApplication(RuntimeApplicationSupport):
         runtime = intent.context.runtime
         assert runtime.project_id is not None and runtime.version_id is not None
         try:
-            result = self._executor.start_static(
-                StaticRuntimeStart(
-                    project_id=runtime.project_id,
-                    version_id=runtime.version_id,
-                    preview_id=preview.id,
-                    project_root=runtime.project_root,
+            if intent.template.adapter is RuntimeAdapter.STATIC:
+                result = self._executor.start_static(
+                    StaticRuntimeStart(
+                        project_id=runtime.project_id,
+                        version_id=runtime.version_id,
+                        preview_id=preview.id,
+                        project_root=runtime.project_root,
+                    )
                 )
-            )
+            else:
+                archive = self._archive_builder.build(intent.scope)
+                if archive.generation != intent.workspace_generation:
+                    raise RuntimeExecutorError(
+                        "Workspace changed after dependency layer validation",
+                        error_code="SCOPE_MISMATCH",
+                    )
+                dependency_key = intent.template.dependency_key
+                assert dependency_key is not None
+                result = self._executor.start_dynamic(
+                    DynamicRuntimeStart(
+                        project_id=runtime.project_id,
+                        conversation_id=runtime.conversation_id,
+                        task_id=runtime.task_id,
+                        version_id=runtime.version_id,
+                        runtime_id=runtime.id,
+                        preview_id=preview.id,
+                        project_root=runtime.project_root,
+                        execution_target=runtime.execution_target,
+                        kind=runtime.kind,
+                        adapter=intent.template.adapter.value,
+                        scope_digest=intent.scope.scope_digest,
+                        workspace_generation=archive.generation,
+                        lease_fence=runtime.revision,
+                        argv=intent.template.argv,
+                        cwd=intent.template.cwd,
+                        readiness_path=intent.template.readiness_path,
+                        startup_timeout_seconds=(intent.template.startup_timeout_seconds),
+                        dependency_key=dependency_key,
+                        workspace_archive=archive.content,
+                        archive_sha256=hashlib.sha256(archive.content).hexdigest(),
+                    )
+                )
+            if result.execution_target != runtime.execution_target:
+                raise RuntimeExecutorError(
+                    "Runtime executor rebound the execution target",
+                    error_code="SCOPE_MISMATCH",
+                )
         except Exception as error:
             self._fail_start(intent, error)
             raise
@@ -221,12 +275,6 @@ class RuntimeApplication(RuntimeApplicationSupport):
 
     def _prepare_start(self, request: PreviewStartRequest) -> _StartIntent | PreviewContext:
         key = request.idempotency_key.strip()
-        health = self._executor.health()
-        if not health.available:
-            raise RuntimeExecutorError(
-                "Runtime executor is unavailable",
-                error_code=health.error_code or "WORKER_INTERRUPTED",
-            )
         with self._transaction() as (unit_of_work, commands):
             state = unit_of_work.state
             existing = state.find_preview_by_idempotency_key(key)
@@ -251,6 +299,21 @@ class RuntimeApplication(RuntimeApplicationSupport):
                     state.save_task(task)
                 elif task.status is not TaskStatus.EXECUTING:
                     raise InvalidTransitionError("Task must be executing before Preview start")
+                scope = self._scope_resolver(state, task)
+                template = self._select_template(scope)
+                if runtime.kind is not template.kind:
+                    raise RuntimeExecutorError(
+                        "Preview retry cannot rebind the Runtime kind",
+                        error_code="SCOPE_MISMATCH",
+                    )
+                workspace_generation = self._validate_template_dependencies(
+                    unit_of_work,
+                    task.id,
+                    scope,
+                    template,
+                )
+                health = self._health_for(template.kind)
+                self._require_executor_health(health)
                 runtime_revision = runtime.revision
                 preview_revision = existing.revision
                 runtime.begin_start()
@@ -263,11 +326,18 @@ class RuntimeApplication(RuntimeApplicationSupport):
                 if task.status is not TaskStatus.EXECUTING:
                     raise InvalidTransitionError("Task must be executing before Preview start")
                 scope = self._scope_resolver(state, task)
-                self._validate_static_scope(scope)
-                self._validate_static_entry(scope.project_root)
+                template = self._select_template(scope)
+                workspace_generation = self._validate_template_dependencies(
+                    unit_of_work,
+                    task.id,
+                    scope,
+                    template,
+                )
+                health = self._health_for(template.kind)
+                self._require_executor_health(health)
                 runtime = RuntimeSession.create(
                     scope=scope,
-                    kind=RuntimeKind.STATIC_SITE,
+                    kind=template.kind,
                     executor=health.executor,
                     idempotency_key=f"{key}:runtime",
                 )
@@ -282,7 +352,6 @@ class RuntimeApplication(RuntimeApplicationSupport):
                 state.append_runtime(runtime)
                 state.append_preview(preview)
 
-            scope = self._scope_resolver(state, task)
             command = self._start_user_command(
                 unit_of_work,
                 commands,
@@ -292,6 +361,9 @@ class RuntimeApplication(RuntimeApplicationSupport):
                     "preview_id": str(preview.id),
                     "runtime_id": str(runtime.id),
                     "version_id": str(runtime.version_id),
+                    "adapter": template.adapter.value,
+                    "dependency_key": template.dependency_key,
+                    "workspace_generation": workspace_generation,
                 },
                 idempotency_key=f"{key}:start:{preview.revision}",
                 worker_id=self._start_worker_id(runtime.id),
@@ -309,6 +381,9 @@ class RuntimeApplication(RuntimeApplicationSupport):
         return _StartIntent(
             context=PreviewContext(task=task, runtime=runtime, preview=preview),
             command=command,
+            scope=scope,
+            template=template,
+            workspace_generation=workspace_generation,
         )
 
     def _finish_start(
@@ -346,6 +421,11 @@ class RuntimeApplication(RuntimeApplicationSupport):
                 preview=preview,
                 url=result.url,
                 command_run_id=intent.command.id,
+                adapter=intent.template.adapter.value,
+                dependency_key=intent.template.dependency_key,
+                entry_path=intent.template.entry_path,
+                readiness_path=intent.template.readiness_path,
+                workspace_generation=intent.workspace_generation,
             )
             unit_of_work.commands.append_event(
                 run_id=intent.command.id,
@@ -368,6 +448,71 @@ class RuntimeApplication(RuntimeApplicationSupport):
             )
             unit_of_work.commit()
         return PreviewContext(task=task, runtime=runtime, preview=preview)
+
+    def _health_for(self, kind: RuntimeKind) -> RuntimeExecutorHealth:
+        health_for = getattr(self._executor, "health_for", None)
+        return health_for(kind) if callable(health_for) else self._executor.health()
+
+    @staticmethod
+    def _require_executor_health(health: RuntimeExecutorHealth) -> None:
+        if not health.available:
+            raise RuntimeExecutorError(
+                "Runtime executor is unavailable",
+                error_code=health.error_code or "WORKER_INTERRUPTED",
+            )
+
+    def _select_template(self, scope: ScopeContract) -> RuntimeTemplate:
+        self._validate_project_scope(scope)
+        try:
+            template = select_runtime_template(
+                scope.project_root,
+                execution_target=scope.execution_target,
+            )
+        except RuntimeTemplateError as error:
+            raise RuntimeExecutorError(
+                str(error),
+                error_code=error.error_code,
+            ) from error
+        if template.adapter is RuntimeAdapter.STATIC:
+            self._validate_static_scope(scope)
+            self._validate_static_entry(scope.project_root)
+        return template
+
+    @staticmethod
+    def _validate_template_dependencies(
+        unit_of_work: CoreUnitOfWork,
+        task_id: UUID,
+        scope: ScopeContract,
+        template: RuntimeTemplate,
+    ) -> int:
+        assert scope.target_version_id is not None
+        index = unit_of_work.project_indexes.get(scope.target_version_id)
+        if index is None:
+            raise RuntimeExecutorError(
+                "Dynamic Preview Project Index is unavailable",
+                error_code="SCOPE_MISMATCH",
+            )
+        if template.adapter is RuntimeAdapter.STATIC:
+            return index.generation
+        matching = next(
+            (
+                artifact
+                for artifact in reversed(unit_of_work.state.artifacts_for_task(task_id))
+                if artifact.artifact_type is ArtifactType.LOG
+                and artifact.version_id == scope.target_version_id
+                and artifact.metadata.get("tool_name") == "deps.install"
+                and artifact.metadata.get("status") == "completed"
+                and artifact.metadata.get("workspace_generation") == index.generation
+                and artifact.metadata.get("dependency_key") == template.dependency_key
+            ),
+            None,
+        )
+        if matching is None:
+            raise RuntimeExecutorError(
+                "Dynamic Preview requires the current dependency layer",
+                error_code="DEPENDENCY_LAYER_MISSING",
+            )
+        return index.generation
 
     def _fail_start(self, intent: _StartIntent, error: Exception) -> None:
         error_code = str(getattr(error, "error_code", "WORKER_INTERRUPTED"))
@@ -510,8 +655,19 @@ class RuntimeApplication(RuntimeApplicationSupport):
         runtime: RuntimeSession,
         preview: PreviewSession,
     ) -> PreviewSession:
-        handle = runtime.executor_handle or f"static:{preview.id}"
+        command = self._recovery_command(runtime, "preview.start")
+        if command is None:
+            return preview
         try:
+            handle = runtime.executor_handle or self._executor.recovery_handle(
+                RuntimeRecoveryTarget(
+                    runtime_id=runtime.id,
+                    preview_id=preview.id,
+                    execution_target=runtime.execution_target,
+                    kind=runtime.kind,
+                    lease_fence=runtime.revision,
+                )
+            )
             probe = self._executor.probe(handle)
         except Exception as error:
             return self._mark_recovery_interrupted(runtime.id, preview.id, "preview.start", error)
@@ -532,8 +688,17 @@ class RuntimeApplication(RuntimeApplicationSupport):
                     error_code="SCOPE_MISMATCH",
                 ),
             )
+        if probe.execution_target != runtime.execution_target:
+            return self._mark_recovery_interrupted(
+                runtime.id,
+                preview.id,
+                "preview.start",
+                RuntimeExecutorError(
+                    "Runtime probe rebound the execution target",
+                    error_code="SCOPE_MISMATCH",
+                ),
+            )
         assert probe.port is not None and probe.url is not None
-        command = self._recovery_command(runtime, "preview.start")
         return self._finish_recovered_start(runtime.id, preview.id, probe, command)
 
     def _finish_recovered_start(
@@ -549,6 +714,19 @@ class RuntimeApplication(RuntimeApplicationSupport):
             runtime = self._require_runtime(state, runtime_id)
             preview = self._require_preview(state, preview_id)
             task = self._require_task(state, preview.task_id)
+            scope = self._scope_resolver(state, task)
+            template = self._select_template(scope)
+            generation = self._validate_template_dependencies(
+                unit_of_work,
+                task.id,
+                scope,
+                template,
+            )
+            if runtime.kind is not template.kind:
+                raise RuntimeExecutorError(
+                    "Recovered Runtime kind no longer matches the Project",
+                    error_code="SCOPE_MISMATCH",
+                )
             if runtime.status is RuntimeStatus.STARTING:
                 revision = runtime.revision
                 runtime.mark_running(executor_handle=probe.executor_handle, port=probe.port)
@@ -569,6 +747,11 @@ class RuntimeApplication(RuntimeApplicationSupport):
                 preview=preview,
                 url=probe.url,
                 command_run_id=command.id if command is not None else None,
+                adapter=template.adapter.value,
+                dependency_key=template.dependency_key,
+                entry_path=template.entry_path,
+                readiness_path=template.readiness_path,
+                workspace_generation=generation,
             )
             if command is not None:
                 unit_of_work.commands.append_event(

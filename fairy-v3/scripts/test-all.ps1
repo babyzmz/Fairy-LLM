@@ -15,6 +15,11 @@ $DesktopRoot = Join-Path $Root "desktop"
 $RustRoot = Join-Path $DesktopRoot "src-tauri"
 $UvCandidate = "C:\Python313\Scripts\uv.exe"
 $Uv = if (Test-Path -LiteralPath $UvCandidate) { $UvCandidate } else { "uv" }
+$ReleaseCacheRoot = Join-Path ([System.IO.Path]::GetTempPath()) "fairy-v3-release"
+New-Item -ItemType Directory -Force -Path $ReleaseCacheRoot | Out-Null
+$env:HYPOTHESIS_STORAGE_DIRECTORY = Join-Path $ReleaseCacheRoot "hypothesis"
+$env:PYTHONDONTWRITEBYTECODE = "1"
+$env:UV_CACHE_DIR = Join-Path $ReleaseCacheRoot "uv"
 
 function Invoke-Step {
     param(
@@ -48,6 +53,30 @@ function Test-DockerAvailable {
     return $LASTEXITCODE -eq 0
 }
 
+function New-DesktopPathAlias {
+    if ($Root -cmatch '^[\x00-\x7F]+$' -and -not $Root.Contains("~")) {
+        return [PSCustomObject]@{ Root = $Root; Drive = $null }
+    }
+
+    $SubstCommand = Get-Command subst.exe -ErrorAction SilentlyContinue
+    if ($null -eq $SubstCommand) {
+        Write-Warning "subst.exe is unavailable; desktop tools will use the original path."
+        return [PSCustomObject]@{ Root = $Root; Drive = $null }
+    }
+    foreach ($Letter in @("Q", "R", "S", "T", "U", "W", "X", "Y", "Z")) {
+        $Drive = "${Letter}:"
+        if (Test-Path -LiteralPath "${Drive}\") {
+            continue
+        }
+        & $SubstCommand.Source $Drive $Root
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "`nDesktop tools use ASCII workspace alias ${Drive}\"
+            return [PSCustomObject]@{ Root = "${Drive}\"; Drive = $Drive }
+        }
+    }
+    throw "No free drive letter is available for the desktop workspace alias"
+}
+
 Invoke-Step "Scripts: ruff format --check" $Root $Uv @(
     "run",
     "--project",
@@ -55,6 +84,7 @@ Invoke-Step "Scripts: ruff format --check" $Root $Uv @(
     "ruff",
     "format",
     "--check",
+    "--no-cache",
     "scripts/check_boundaries.py",
     "scripts/release_performance.py"
 )
@@ -64,6 +94,7 @@ Invoke-Step "Scripts: ruff check" $Root $Uv @(
     "core",
     "ruff",
     "check",
+    "--no-cache",
     "scripts/check_boundaries.py",
     "scripts/release_performance.py"
 )
@@ -74,43 +105,51 @@ Invoke-Step "Boundaries: check_boundaries.py" $Root $Uv @(
 
 Invoke-Step "Sandbox runner: ruff format --check" $Root $Uv @(
     "run", "--project", "core", "ruff", "format", "--check",
+    "--no-cache",
     "sandbox/runner", "sandbox/tests", "scripts/verify_wsl_sandbox.py"
 )
 Invoke-Step "Sandbox runner: ruff check" $Root $Uv @(
     "run", "--project", "core", "ruff", "check",
+    "--no-cache",
     "sandbox/runner", "sandbox/tests", "scripts/verify_wsl_sandbox.py"
 )
 Invoke-Step "Sandbox runner: pytest" $Root $Uv @(
-    "run", "--project", "core", "pytest", "sandbox/tests"
+    "run", "--project", "core", "python", "-m", "pytest",
+    "-p", "no:cacheprovider", "sandbox/tests"
 )
 
 Invoke-Step "Core: uv lock --check" $CoreRoot $Uv @("lock", "--check")
 Invoke-Step "Core: ruff format --check" $CoreRoot $Uv @(
-    "run", "ruff", "format", "--check", "src", "tests"
+    "run", "ruff", "format", "--check", "--no-cache", "src", "tests"
 )
 Invoke-Step "Core: ruff check" $CoreRoot $Uv @(
-    "run", "ruff", "check", "src", "tests"
+    "run", "ruff", "check", "--no-cache", "src", "tests"
 )
-Invoke-Step "Core: pytest" $CoreRoot $Uv @("run", "pytest")
+Invoke-Step "Core: pytest" $CoreRoot $Uv @(
+    "run", "python", "-m", "pytest", "-p", "no:cacheprovider"
+)
 
 Invoke-Step "Capabilities: uv lock --check" $CapabilitiesRoot $Uv @("lock", "--check")
 Invoke-Step "Capabilities: ruff format --check" $CapabilitiesRoot $Uv @(
-    "run", "ruff", "format", "--check", "src", "tests"
+    "run", "ruff", "format", "--check", "--no-cache", "src", "tests"
 )
 Invoke-Step "Capabilities: ruff check" $CapabilitiesRoot $Uv @(
-    "run", "ruff", "check", "src", "tests"
+    "run", "ruff", "check", "--no-cache", "src", "tests"
 )
-Invoke-Step "Capabilities: pytest" $CapabilitiesRoot $Uv @("run", "pytest")
+Invoke-Step "Capabilities: pytest" $CapabilitiesRoot $Uv @(
+    "run", "python", "-m", "pytest", "-p", "no:cacheprovider"
+)
 
 Invoke-Step "Cloud: uv lock --check" $CloudRoot $Uv @("lock", "--check")
 Invoke-Step "Cloud: ruff format --check" $CloudRoot $Uv @(
-    "run", "ruff", "format", "--check", "src", "tests"
+    "run", "ruff", "format", "--check", "--no-cache", "src", "tests"
 )
 Invoke-Step "Cloud: ruff check" $CloudRoot $Uv @(
-    "run", "ruff", "check", "src", "tests"
+    "run", "ruff", "check", "--no-cache", "src", "tests"
 )
 Invoke-Step "Cloud: pytest unit" $CloudRoot $Uv @(
-    "run", "pytest", "-m", "not integration"
+    "run", "python", "-m", "pytest", "-p", "no:cacheprovider",
+    "-m", "not integration"
 )
 Invoke-Step "Cloud: alembic upgrade head --sql" $CloudRoot $Uv @(
     "run", "alembic", "upgrade", "head", "--sql"
@@ -159,9 +198,21 @@ else {
     Write-Host "`nWSL sandbox verification skipped; pass -RequireWslSandbox to require a real FairySandbox attestation and static Preview lifecycle gate."
 }
 
-Invoke-Step "Desktop: npm test -- --run" $DesktopRoot "npm" @("test", "--", "--run")
-Invoke-Step "Desktop: npm run e2e" $DesktopRoot "npm" @("run", "e2e")
-Invoke-Step "Desktop: npm run build" $DesktopRoot "npm" @("run", "build")
+$DesktopAlias = New-DesktopPathAlias
+$DesktopTestRoot = Join-Path $DesktopAlias.Root "desktop"
+try {
+    Invoke-Step "Desktop: npm test" $DesktopTestRoot "npm" @("test")
+    Invoke-Step "Desktop: npm run e2e" $DesktopTestRoot "npm" @("run", "e2e")
+    Invoke-Step "Desktop: npm run build" $DesktopTestRoot "npm" @("run", "build")
+}
+finally {
+    if ($null -ne $DesktopAlias.Drive) {
+        & subst.exe $DesktopAlias.Drive /D
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Could not remove desktop workspace alias $($DesktopAlias.Drive)"
+        }
+    }
+}
 Invoke-Step "Performance: Core ready <= 3s and initial renderer gzip <= 800 KiB" $Root $Uv @(
     "run",
     "--project",
@@ -171,6 +222,14 @@ Invoke-Step "Performance: Core ready <= 3s and initial renderer gzip <= 800 KiB"
     "--desktop-dist",
     "desktop/dist"
 )
+$ContractPaths = @(
+    (Join-Path $Root "contracts/openapi.json"),
+    (Join-Path $Root "desktop/src/core/generated/api.d.ts")
+)
+$ContractHashes = @{}
+foreach ($ContractPath in $ContractPaths) {
+    $ContractHashes[$ContractPath] = (Get-FileHash -Algorithm SHA256 -LiteralPath $ContractPath).Hash
+}
 Invoke-Step "Contracts: generate-contracts.ps1" $Root "powershell" @(
     "-NoProfile",
     "-ExecutionPolicy",
@@ -178,13 +237,14 @@ Invoke-Step "Contracts: generate-contracts.ps1" $Root "powershell" @(
     "-File",
     "scripts/generate-contracts.ps1"
 )
-Invoke-Step "Contracts: git diff --exit-code" $Root "git" @(
-    "diff",
-    "--exit-code",
-    "--",
-    "contracts/openapi.json",
-    "desktop/src/core/generated/api.d.ts"
-)
+foreach ($ContractPath in $ContractPaths) {
+    $GeneratedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ContractPath).Hash
+    if ($GeneratedHash -ne $ContractHashes[$ContractPath]) {
+        throw "Generated contract drift detected: $ContractPath"
+    }
+}
+Write-Host "`nContracts: generated files unchanged"
+Invoke-Step "Git: diff --check" $Root "git" @("diff", "--check")
 
 $DockerAvailable = $false
 if (-not $SkipDocker) {

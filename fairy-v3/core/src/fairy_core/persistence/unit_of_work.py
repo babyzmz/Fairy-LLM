@@ -15,6 +15,7 @@ from fairy_core.commanding.sqlalchemy import SqlAlchemyCommandLedger
 from fairy_core.documents.ports import DocumentRepository, DocumentSearchIndex
 from fairy_core.documents.repository import SqlAlchemyDocumentRepository
 from fairy_core.documents.search import SqlAlchemyDocumentSearchIndex
+from fairy_core.mcp.repository import McpServerRepository, SqlAlchemyMcpServerRepository
 from fairy_core.memory.ports import MemoryRepository
 from fairy_core.memory.retrieval_ports import (
     MemoryProjectionWriter,
@@ -42,6 +43,7 @@ class CoreUnitOfWork(Protocol):
     assistant: AssistantRepository
     commands: CommandLedger
     execution_settings: ExecutionSettingsRepository
+    mcp_servers: McpServerRepository
     memory: MemoryRepository
     snapshots: MemorySnapshotRepository
     memory_search: MemorySearchIndex
@@ -95,6 +97,10 @@ class SqlAlchemyUnitOfWork:
             )
             self.commands = SqlAlchemyCommandLedger(connection, tenant_id=self._tenant_id)
             self.execution_settings = SqlAlchemyExecutionSettingsRepository(
+                connection,
+                tenant_id=self._tenant_id,
+            )
+            self.mcp_servers = SqlAlchemyMcpServerRepository(
                 connection,
                 tenant_id=self._tenant_id,
             )

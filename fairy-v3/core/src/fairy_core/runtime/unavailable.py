@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from fairy_core.runtime.models import (
+    DynamicRuntimeStart,
     RuntimeExecutorError,
     RuntimeExecutorHealth,
     RuntimeProbeResult,
+    RuntimeRecoveryTarget,
     RuntimeStartResult,
     RuntimeStopResult,
     StaticRuntimeStart,
@@ -32,6 +34,12 @@ class UnavailableRuntimeExecutor:
         )
 
     def start_static(self, _request: StaticRuntimeStart) -> RuntimeStartResult:
+        self._raise_unavailable()
+
+    def start_dynamic(self, _request: DynamicRuntimeStart) -> RuntimeStartResult:
+        self._raise_unavailable()
+
+    def recovery_handle(self, _target: RuntimeRecoveryTarget) -> str:
         self._raise_unavailable()
 
     def probe(self, _executor_handle: str) -> RuntimeProbeResult:

@@ -6,6 +6,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 SOURCE_ROOTS = (
     Path("core/src"),
     Path("capabilities/src"),
@@ -16,6 +18,7 @@ SOURCE_ROOTS = (
 PYTHON_SUFFIXES = {".py"}
 SCRIPT_SUFFIXES = {".cjs", ".js", ".jsx", ".mjs", ".rs", ".ts", ".tsx"}
 MANIFEST_NAMES = {"Cargo.toml", "package.json", "pyproject.toml"}
+OWNED_SOURCE_SUFFIXES = PYTHON_SUFFIXES | SCRIPT_SUFFIXES | {".css", ".json", ".toml"}
 FORBIDDEN_PYTHON_ROOTS = {
     "app",
     "fairy_desktop",
@@ -55,6 +58,24 @@ HOST_SHELL = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 DUPLICATE_MEMORY_ROOTS = {"chromadb", "faiss", "pinecone", "qdrant_client", "weaviate"}
+FORBIDDEN_RENDERER_IMPORTS = {
+    "@tauri-apps/api/fs",
+    "@tauri-apps/api/process",
+    "@tauri-apps/api/shell",
+    "@tauri-apps/plugin-fs",
+    "@tauri-apps/plugin-opener",
+    "@tauri-apps/plugin-process",
+    "@tauri-apps/plugin-shell",
+    "child_process",
+    "fs",
+    "fs/promises",
+    "node:child_process",
+    "node:fs",
+    "node:fs/promises",
+    "node:process",
+    "process",
+}
+PROJECT_EXECUTION_SERVICES = {"execution", "runtime", "worker"}
 SOURCE_LINE_LIMIT = 1_200
 CSS_LINE_LIMIT = 1_500
 IGNORED_DIRECTORY_NAMES = {
@@ -205,17 +226,25 @@ def _line_number(source: str, offset: int) -> int:
     return source.count("\n", 0, offset) + 1
 
 
-def _check_script(path: Path, root: Path) -> list[Violation]:
+def _check_script(path: Path, root: Path, *, renderer: bool) -> list[Violation]:
     source = path.read_text(encoding="utf-8")
-    return [
-        Violation(
-            path,
-            _line_number(source, match.start(1)),
-            f"import escapes the V3 product root: {match.group(1)}",
-        )
-        for match in SCRIPT_SPECIFIER.finditer(source)
-        if _outside_root(source=path, specifier=match.group(1), root=root)
-    ]
+    violations: list[Violation] = []
+    for match in SCRIPT_SPECIFIER.finditer(source):
+        specifier = match.group(1)
+        line = _line_number(source, match.start(1))
+        if _outside_root(source=path, specifier=specifier, root=root):
+            violations.append(
+                Violation(
+                    path, line, f"import escapes the V3 product root: {specifier}"
+                )
+            )
+        if renderer and specifier in FORBIDDEN_RENDERER_IMPORTS:
+            violations.append(
+                Violation(
+                    path, line, f"renderer privileged API is forbidden: {specifier}"
+                )
+            )
+    return violations
 
 
 def _check_manifest(path: Path, root: Path) -> list[Violation]:
@@ -229,6 +258,92 @@ def _check_manifest(path: Path, root: Path) -> list[Violation]:
         for match in MANIFEST_PATH.finditer(source)
         if _outside_root(source=path, specifier=match.group(1), root=root)
     ]
+
+
+def _check_compose(path: Path) -> list[Violation]:
+    source = path.read_text(encoding="utf-8")
+    violations: list[Violation] = []
+    if "docker.sock" in source.casefold():
+        offset = source.casefold().index("docker.sock")
+        violations.append(
+            Violation(
+                path, _line_number(source, offset), "Docker socket access is forbidden"
+            )
+        )
+    try:
+        document = yaml.safe_load(source)
+    except yaml.YAMLError as error:
+        return [Violation(path, 1, f"invalid Compose YAML: {error}")]
+    if not isinstance(document, dict):
+        return [Violation(path, 1, "Compose document must be an object")]
+    services = document.get("services")
+    if not isinstance(services, dict):
+        return [Violation(path, 1, "Compose services must be an object")]
+    for service_name, raw_service in services.items():
+        if not isinstance(service_name, str) or not isinstance(raw_service, dict):
+            violations.append(
+                Violation(path, 1, "Compose service entries must be objects")
+            )
+            continue
+        if raw_service.get("privileged") is True:
+            violations.append(
+                Violation(
+                    path, 1, f"privileged Compose service is forbidden: {service_name}"
+                )
+            )
+        for host_namespace in ("ipc", "network_mode", "pid"):
+            if str(raw_service.get(host_namespace, "")).casefold() == "host":
+                violations.append(
+                    Violation(
+                        path,
+                        1,
+                        f"host {host_namespace} is forbidden for Compose service: {service_name}",
+                    )
+                )
+        if raw_service.get("cap_add"):
+            violations.append(
+                Violation(
+                    path, 1, f"added Linux capabilities are forbidden: {service_name}"
+                )
+            )
+        if service_name not in PROJECT_EXECUTION_SERVICES:
+            continue
+        volumes = raw_service.get("volumes") or []
+        if not isinstance(volumes, list):
+            violations.append(
+                Violation(
+                    path, 1, f"Compose service volumes must be an array: {service_name}"
+                )
+            )
+            continue
+        for volume in volumes:
+            if _is_host_bind(volume):
+                violations.append(
+                    Violation(
+                        path,
+                        1,
+                        f"project execution service has a host bind mount: {service_name}",
+                    )
+                )
+    return violations
+
+
+def _is_host_bind(volume: object) -> bool:
+    if isinstance(volume, dict):
+        if str(volume.get("type", "")).casefold() == "bind":
+            return True
+        source = volume.get("source")
+        return isinstance(source, str) and _looks_like_host_path(source)
+    if not isinstance(volume, str):
+        return True
+    return _looks_like_host_path(volume)
+
+
+def _looks_like_host_path(value: str) -> bool:
+    normalized = value.strip().replace("\\", "/")
+    return normalized.startswith(("/", "./", "../", "~/")) or bool(
+        re.match(r"^[A-Za-z]:/", normalized)
+    )
 
 
 def check_boundaries(root: Path) -> list[Violation]:
@@ -254,15 +369,30 @@ def check_boundaries(root: Path) -> list[Violation]:
         for path in sorted(item for item in source_root.rglob("*") if item.is_file()):
             if _under_ignored_directory(path, source_root):
                 continue
+            if (
+                path.suffix not in OWNED_SOURCE_SUFFIXES
+                and path.name not in MANIFEST_NAMES
+            ):
+                violations.append(Violation(path, 1, "unowned source file type"))
+                continue
             if path.suffix in PYTHON_SUFFIXES:
                 violations.extend(_check_python(path, resolved_root))
             elif path.suffix in SCRIPT_SUFFIXES:
-                violations.extend(_check_script(path, resolved_root))
+                violations.extend(
+                    _check_script(
+                        path,
+                        resolved_root,
+                        renderer=relative_source_root == Path("desktop/src"),
+                    )
+                )
             elif path.name in MANIFEST_NAMES:
                 violations.extend(_check_manifest(path, resolved_root))
             if path.suffix in PYTHON_SUFFIXES | SCRIPT_SUFFIXES | {".css"}:
                 violations.extend(_check_release_safety(path))
                 violations.extend(_check_module_size(path))
+    compose_path = resolved_root / "cloud" / "compose.yaml"
+    if compose_path.is_file():
+        violations.extend(_check_compose(compose_path))
     return violations
 
 

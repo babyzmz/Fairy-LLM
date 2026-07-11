@@ -83,6 +83,10 @@ def _delete_tenants(context: PostgresTestContext) -> None:
     if not context.tenant_ids:
         return
     tables = (
+        "core_mcp_server_updates",
+        "core_mcp_servers",
+        "runtime_routes",
+        "runtime_leases",
         "execution_jobs",
         "memory_access_log",
         "memory_snapshot_items",

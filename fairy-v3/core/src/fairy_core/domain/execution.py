@@ -782,6 +782,7 @@ class Checkpoint:
     changed_files: tuple[str, ...]
     command_run_ids: tuple[UUID, ...]
     preview_artifact_id: UUID | None
+    evidence_artifact_ids: tuple[UUID, ...]
     created_at: datetime
 
     @classmethod

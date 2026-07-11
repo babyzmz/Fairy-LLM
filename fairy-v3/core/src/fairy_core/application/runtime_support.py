@@ -20,6 +20,7 @@ from fairy_core.domain.models import Conversation, Project, ScopeContract, Task
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
 from fairy_core.runtime.models import RuntimeExecutorError
 from fairy_core.runtime.ports import RuntimeExecutor
+from fairy_core.sandbox.archive import WorkspaceArchiveBuilder
 from fairy_core.storage import StateStore
 
 ScopeResolver = Callable[[StateStore, Task], ScopeContract]
@@ -42,6 +43,7 @@ class RuntimeApplicationSupport:
         self._policy = policy
         self._scope_resolver = scope_resolver
         self._execution_policy = execution_policy or ExecutionPolicyResolver()
+        self._archive_builder = WorkspaceArchiveBuilder(unit_of_work_factory)
         self._instance_id = uuid4().hex
         self._operation_lock = RLock()
 
@@ -184,6 +186,19 @@ class RuntimeApplicationSupport:
         ):
             raise RuntimeExecutorError(
                 "Static Preview requires a local Project draft",
+                error_code="SCOPE_MISMATCH",
+            )
+
+    @staticmethod
+    def _validate_project_scope(scope: ScopeContract) -> None:
+        if (
+            scope.workspace_type.value != "project_chat"
+            or scope.project_id is None
+            or scope.target_version_id is None
+            or scope.execution_target not in {"local", "cloud"}
+        ):
+            raise RuntimeExecutorError(
+                "Dynamic Preview requires an immutable Project draft Scope",
                 error_code="SCOPE_MISMATCH",
             )
 

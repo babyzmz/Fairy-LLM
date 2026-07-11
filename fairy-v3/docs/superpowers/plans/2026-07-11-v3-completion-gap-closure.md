@@ -269,7 +269,10 @@ The execution service receives a bounded managed-workspace archive through Postg
 
 Run: `docker compose -f cloud/compose.yaml --profile test up --build --abort-on-container-exit --exit-code-from integration integration`
 
-- [x] **Step 5: Commit**
+- [ ] **Step 5: Commit**
+
+Commit is pending because the current desktop sandbox denies writes to
+`.git/worktrees/fairy-v3`; source and verification artifacts remain intact.
 
 Verification on 2026-07-11: `scripts/test-all.ps1 -SkipDocker` exited 0 with Sandbox Runner 25 passed/1 Windows-only POSIX process-group check skipped, Core 495, Capabilities 104, Cloud 81 unit tests/22 integration tests deselected, Vitest 68, and Playwright 18 tests passing. Ruff format/check, repository boundaries, offline Alembic upgrade and full downgrade, Rust fmt/clippy/tests, desktop build, generated-contract drift, and performance gates passed; Core readiness was 810.4 ms and initial renderer gzip was 131.1 KiB. The new real PostgreSQL/OCI tests cover app-role enqueue, execution-role isolation, an attested fixed Runner, idempotent replay, and cross-tenant RLS, but were not executed because `docker`, Podman, and Docker Desktop are not installed; PostgreSQL/S3/OCI is environment-blocked and is not reported as passed.
 
@@ -351,15 +354,24 @@ Commit: `feat(v3): complete project execution closure`
 - Runtime health and browser checks produce typed `REPORT`/`SCREENSHOT` Artifacts and join the Checkpoint only when they match the current workspace generation and Preview manifest.
 - `UnavailableRuntimeExecutor` remains fail-closed unless the corresponding supervisor and route are actually configured and healthy.
 
-- [ ] **Step 1: Write failing local/cloud lifecycle, endpoint, recovery, and security tests**
+- [x] **Step 1: Write failing local/cloud lifecycle, endpoint, recovery, and security tests**
 
-- [ ] **Step 2: Implement typed dynamic templates and fenced Runtime supervisors**
+- [x] **Step 2: Implement typed dynamic templates and fenced Runtime supervisors**
 
-- [ ] **Step 3: Implement cloud Runtime leases, proxy routing, health, and browser Review**
+- [x] **Step 3: Implement cloud Runtime leases, proxy routing, health, and browser Review**
 
-- [ ] **Step 4: Run local fake/real WSL gates and cloud fake/real Docker gates truthfully**
+- [x] **Step 4: Run local fake/real WSL gates and cloud fake/real Docker gates truthfully**
+
+Verification on 2026-07-12: Core, Cloud unit, Sandbox simulation, Desktop, Rust,
+contract generation, and offline migration gates passed. Docker/Podman are not
+installed and WSL has no distribution, so real PostgreSQL 18, OCI Runtime,
+Chromium-in-container, seccomp/bwrap, and FairySandbox gates were not executed.
 
 - [ ] **Step 5: Commit**
+
+Commit remains pending because this session cannot create the worktree Git
+metadata lock. The implementation and verification are preserved in the
+working tree.
 
 Commit: `feat(v3): add fenced dynamic project runtimes`
 
@@ -382,13 +394,20 @@ Commit: `feat(v3): add fenced dynamic project runtimes`
 - Capability toggles render from generated ToolDefinition metadata and current effective manifest.
 - Slash command availability is driven by Core metadata; parsing remains exact and never routes natural language by keyword.
 
-- [ ] **Step 1: Write failing permission/toggle/offline/conflict tests**
+- [x] **Step 1: Write failing permission/toggle/offline/conflict tests**
 
-- [ ] **Step 2: Replace local authority with Core settings and generated metadata**
+- [x] **Step 2: Replace local authority with Core settings and generated metadata**
 
-- [ ] **Step 3: Add approval, sandbox unavailable, execution progress, recovery, and conflict Playwright flows**
+- [x] **Step 3: Add approval, sandbox unavailable, execution progress, recovery, and conflict Playwright flows**
 
-- [ ] **Step 4: Run Vitest, production Playwright, TypeScript/build, and commit**
+- [x] **Step 4: Run Vitest, production Playwright, and TypeScript/build**
+
+Verification on 2026-07-12 passed with 541 Core tests, 103 Cloud unit tests,
+74 Vitest tests, 22 production Playwright workflows, generated contracts,
+TypeScript, and the production build. Commit remains pending under the same
+read-only Git metadata restriction recorded in Task 47.
+
+- [ ] **Step 5: Commit**
 
 Commit: `feat(v3): connect governed execution controls`
 
@@ -416,15 +435,36 @@ Commit: `feat(v3): connect governed execution controls`
 - Server credentials and transport details remain outside model context. Disconnects, restarts, schema drift, duplicate responses, and uncertain side effects recover fail-closed from the durable ledger.
 - Fairy Skills are product capabilities and remain isolated from Codex's local skill system.
 
-- [ ] **Step 1: Verify the current official MCP specification and write Architecture/Threat ADRs**
+- [x] **Step 1: Verify the current official MCP specification and write Architecture/Threat ADRs**
 
-- [ ] **Step 2: Write failing Skill manifest, MCP lifecycle, policy, and malicious-server tests**
+Verified on 2026-07-12 against MCP revision `2025-11-25`, Agent Skills, and the
+official Python SDK. Stable `mcp 1.28.1` is selected with `<2`; v2 is still beta.
+ADR 0009 fixes the trust, transport, schema-drift, recovery, and product-Skill
+boundaries. The legacy HTTP+SSE transport is excluded.
 
-- [ ] **Step 3: Implement local and cloud governed adapters plus desktop settings**
+- [x] **Step 2: Write failing Skill manifest, MCP lifecycle, policy, and malicious-server tests**
 
-- [ ] **Step 4: Run contract, disconnect/recovery, scope-injection, and permission matrices**
+- [x] **Step 3: Implement local and cloud governed adapters plus desktop settings**
+
+- [x] **Step 4: Run contract, disconnect/recovery, scope-injection, and permission matrices**
+
+Verification on 2026-07-12: Core `570` tests passed; Cloud `109` tests passed
+with `27` Docker/PostgreSQL/S3 integration tests explicitly skipped. Ruff
+check/format, source boundaries, Core/Cloud lock checks, generated OpenAPI and
+TypeScript, offline Alembic full upgrade/downgrade through `20260712_0017`,
+TypeScript/production build, `75` Vitest tests, and `23` Playwright workflows
+passed. Official MCP SDK contract tests exercised real stdio and Streamable
+HTTP servers. Recovery tests covered deletion tombstones, process-loss
+uncertainty, deterministic failed replay, cancellation, schema drift, Registry
+snapshot consistency, private-address blocking, and Cloud hostname allowlists.
+Desktop screenshots at 1000x760 and 720x700 passed panel boundary and overflow
+checks. The PostgreSQL MCP RLS/tombstone test is present but was not executed:
+Docker CLI, Docker Desktop, and Podman are absent. `wsl.exe` reports that WSL
+is not installed, so no FairySandbox claim is made.
 
 - [ ] **Step 5: Commit**
+
+Commit is pending because this session cannot write the worktree Git metadata.
 
 Commit: `feat(v3): add governed skills and mcp extensions`
 
@@ -448,29 +488,58 @@ Commit: `feat(v3): add governed skills and mcp extensions`
 **Interfaces:**
 - `docs/completion-audit.md` maps every original numbered Implementation Change, Public Contract, Test Plan item, non-Legacy capability, and performance gate to exact implementation and fresh test/runtime evidence.
 
-- [ ] **Step 1: Re-read the original architecture attachment and V3 plan and construct the evidence matrix**
+- [x] **Step 1: Re-read the original architecture attachment and V3 plan and construct the evidence matrix**
 
 Classify every row as proven, contradicted, missing, or environment-blocked. A collected/skipped test is not proof.
 
-- [ ] **Step 2: Remove stale deferrals, ghost metadata, duplicate authority, oversized/mixed modules, empty trees, and compatibility leakage**
+- [x] **Step 2: Remove stale deferrals, ghost metadata, duplicate authority, oversized/mixed modules, empty trees, and compatibility leakage**
 
-- [ ] **Step 3: Run adversarial static scans and single-head migration checks**
+`docs/completion-audit.md` now maps the full plan and capability matrix.
+Historical milestone checklists are reconciled to their commits, stale Runtime
+descriptions are corrected, open ToolDefinition defaults are removed, source
+boundaries remain below their size limits, and 74 generated cache directories
+were removed. Four pre-existing `.pytest_cache` directories are ACL-protected
+by the desktop sandbox and remain ignored; the release gate disables future
+pytest/Ruff/Hypothesis source-tree caches.
+
+- [x] **Step 3: Run adversarial static scans and single-head migration checks**
 
 Include secret literals, host process APIs, shell flags, Docker socket/mounts, renderer filesystem/process APIs, model Scope fields, permissive execution schemas, keyword routers, browser speech synthesis, duplicate Memory authority, and unowned source files.
 
-- [ ] **Step 4: Run the complete release gate fresh**
+- [x] **Step 4: Run the complete release gate fresh**
 
 Run `scripts/test-all.ps1`, real Docker integration when available, real WSL attestation when available, Ruff/format, Rust fmt/clippy/tests, Vitest, production Playwright, generated-contract drift, Alembic upgrade/downgrade, single head, performance budgets, `git diff --check`, and clean status.
 
-- [ ] **Step 5: Record exact environment evidence and commit**
+Fresh verification on 2026-07-12: `scripts/test-all.ps1 -SkipDocker` exited 0.
+Sandbox Runner passed 45 with one Windows-inapplicable POSIX case skipped;
+Core passed 572, Capabilities 104, Cloud 109 with 27 Docker integration tests
+deselected, Vitest 75, and production Playwright 23. Ruff, boundaries, lock
+checks, full offline Alembic upgrade/downgrade through `20260712_0017`, one
+migration head, Rust fmt/clippy/tests, TypeScript/build, deterministic contract
+regeneration, and `git diff --check` passed. Core readiness was 1127.2ms and
+initial renderer gzip was 140.1KiB. Browser shell-interactive and event p95
+tests passed their 1.5-second and 100ms gates.
+
+- [x] **Step 5: Record exact environment evidence**
 
 Do not mark Docker/PostgreSQL/S3/OCI or WSL tests passed unless their commands executed successfully in this Task.
+
+Exact environment evidence is recorded in `docs/completion-audit.md`. Docker,
+Docker Desktop, and Podman are absent; `wsl.exe` reports that WSL is not
+installed. Real PostgreSQL/S3/OCI and FairySandbox gates were not executed.
+The worktree Git metadata is read-only to this session.
+
+- [ ] **Step 6: Commit**
+
+Final attempt on 2026-07-12: `git add --all -- .` failed because Git could not
+create `.git/worktrees/fairy-v3/index.lock` (`Permission denied`). No files
+were staged and no commit was created.
 
 Commit: `chore(v3): close full architecture acceptance`
 
 ## Self-review Record
 
 - **Spec coverage:** Task 41 covers Core-owned device/Cloud permissions and capability generation; Task 42 covers generic approval and durable resume; Task 43 covers persisted Workspace, Project Index, project reads, Artifact ownership, and governed Changesets; Tasks 44-45 cover actual local/cloud command execution; Task 46 covers dependencies, executable Review, repair, static Preview evidence, and checkpoint; Task 47 covers dynamic Runtime and runtime/browser Review; Task 48 covers the desktop control surface; Task 49 covers governed Skills/MCP extensibility; Task 50 covers all original contracts, non-Legacy capability acceptance, cleanup, performance, and environment truth.
-- **Known contradiction being removed:** Cloud dynamic Runtime remains `UnavailableRuntimeExecutor` and no Skills/MCP product runtime exists; both stay explicitly pending in Tasks 47 and 49. Task 46 removed hardcoded Runtime command policy and model-visible ghost tools instead of treating green static tests as proof of those pending capabilities.
+- **Known contradiction removed:** Task 47 replaces the Cloud dynamic `UnavailableRuntimeExecutor` path with fenced PostgreSQL/OCI Runtime dispatch and a private Review gateway. Task 49 now provides governed Skills/MCP through the same Registry, Scope, policy, approval, CommandRun, cancellation, and Artifact authority rather than a second execution path.
 - **Type consistency:** `EffectiveExecutionPolicy` feeds both model exposure and Command Bus policy; `SandboxRequest` is Core-injected and is consumed by WSL and Cloud executors; generic Approval links one CommandRun; Task Workspace/Project Index precede project tool execution.
 - **Placeholder scan:** No implementation step uses TBD, TODO, implement-later, or an unspecified executor. Environment-dependent tests have exact commands and explicit skip semantics.

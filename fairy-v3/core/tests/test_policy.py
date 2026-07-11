@@ -47,6 +47,19 @@ def test_registry_rejects_duplicate_tool_names() -> None:
         registry.register(tool)
 
 
+def test_tool_definition_rejects_permissive_argument_schemas() -> None:
+    with pytest.raises(ValueError, match="reject additional properties"):
+        ToolDefinition(
+            name="unsafe.open_schema",
+            side_effect=SideEffect.READ,
+            risk_level=RiskLevel.LOW,
+            approval_policy=ApprovalPolicy.NEVER,
+            profiles=frozenset({PermissionProfile.OBSERVE}),
+            executor="unsafe",
+            input_schema={"type": "object", "additionalProperties": True},
+        )
+
+
 def test_standard_profile_requires_approval_for_changeset_apply() -> None:
     registry = build_default_registry()
     policy = PolicyEngine(registry)
@@ -202,7 +215,9 @@ def test_internal_workspace_commands_share_registry_but_are_not_model_tools() ->
         profile=PermissionProfile.OBSERVE,
         sandbox_healthy=False,
     )
-    agent_names = {definition.name for definition in registry.agent_definitions()}
+    agent_names = {
+        definition.name for definition in registry.definitions() if definition.model_visible
+    }
     metadata = {item["name"]: item for item in registry.frontend_metadata()}
 
     assert standard["workspace.fork"] is True
@@ -231,9 +246,20 @@ def test_project_execution_tools_use_closed_argument_schemas() -> None:
         }
 
 
+def test_every_registered_tool_has_a_closed_root_schema() -> None:
+    registry = build_default_registry()
+
+    assert all(
+        definition.input_schema.get("additionalProperties") is False
+        for definition in registry.definitions()
+    )
+
+
 def test_core_and_user_only_execution_commands_are_not_agent_tools() -> None:
     registry = build_default_registry()
-    agent_names = {definition.name for definition in registry.agent_definitions()}
+    agent_names = {
+        definition.name for definition in registry.definitions() if definition.model_visible
+    }
 
     assert {
         "deps.install",

@@ -16,6 +16,11 @@ version decisions, loading/offline/interrupted/conflict states, and a lazy
 developer drawer. The Preview iframe accepts only validated loopback HTTP or
 cloud HTTPS and does not grant same-origin access.
 
+The Extensions panel lists verified Skill provenance and manages MCP server
+trust. MCP discovery requires a durable Task; schema acceptance reviews every
+tool's effect, risk, approval, profiles, idempotency, and enabled state. The
+renderer submits only credential references and never receives secret values.
+
 The Local Worker crate is split by boundary: `protocol.rs` owns the fixed
 JSON-RPC method map, `workspace.rs` owns managed Git and Changeset operations,
 `preview.rs` owns the read-only loopback server, and `error.rs` owns stable
@@ -40,3 +45,7 @@ scoped Git workspace operations. Neither boundary invokes a host shell.
 The Local Worker may invoke Git with fixed arguments for managed repository
 operations; it never accepts a generic command or shell string. Static Preview
 serves files only and never invokes `Command`.
+
+The complete cross-package acceptance record, including the exact distinction
+between production-browser evidence and unavailable Docker/WSL gates, is in
+`../docs/completion-audit.md`.
