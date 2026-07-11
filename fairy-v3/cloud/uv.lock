@@ -189,12 +189,14 @@ source = { editable = "../capabilities" }
 dependencies = [
     { name = "fairy-core" },
     { name = "httpx" },
+    { name = "tzdata" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fairy-core", editable = "../core" },
     { name = "httpx", specifier = ">=0.28,<0.29" },
+    { name = "tzdata", specifier = ">=2026.1,<2027" },
 ]
 
 [package.metadata.requires-dev]

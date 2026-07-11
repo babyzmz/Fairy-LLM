@@ -5,9 +5,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from fairy_core.assistant.tools import ToolExecutor
+from fairy_core.information import InformationCapabilityHealth
 from fairy_core.providers import ProviderRegistry
 from fairy_core.research.ports import FetchPort, SearchPort
 
+from fairy_capabilities.information.alpha_vantage import AlphaVantageAdapter
+from fairy_capabilities.information.frankfurter import FrankfurterAdapter
+from fairy_capabilities.information.open_meteo import OpenMeteoAdapter
+from fairy_capabilities.information.timezones import TimeZoneService
+from fairy_capabilities.information.tools import InformationToolExecutor
 from fairy_capabilities.models.openai_compatible import OpenAICompatibleProvider
 from fairy_capabilities.settings import (
     EnvironmentProviderSecretResolver,
@@ -23,6 +29,33 @@ class WebCapabilities:
     search_port: SearchPort
     fetch_port: FetchPort
     executor: WebToolExecutor
+
+
+@dataclass(frozen=True, slots=True)
+class InformationCapabilities:
+    weather: OpenMeteoAdapter
+    timezones: TimeZoneService
+    fx: FrankfurterAdapter
+    markets: AlphaVantageAdapter
+    executor: InformationToolExecutor
+
+    def health(self) -> tuple[InformationCapabilityHealth, ...]:
+        return (
+            self.weather.health(),
+            self.timezones.health(),
+            self.fx.health(),
+            self.markets.health(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityBundle:
+    web: WebCapabilities
+    information: InformationCapabilities
+
+    @property
+    def executor(self) -> InformationToolExecutor:
+        return self.information.executor
 
 
 def build_provider_registry(
@@ -54,7 +87,7 @@ def build_web_capabilities(
         configured,
     )
     credential_ref = configured.get(
-        "FAIRY_WEB_BRAVE_CREDENTIAL_REF",
+        "FAIRY_PROVIDER_BRAVE_CREDENTIAL_REF",
         "brave",
     ).strip()
     search = BraveSearchAdapter(
@@ -75,4 +108,59 @@ def build_web_capabilities(
 def build_tool_executor(
     environment: Mapping[str, str] | None = None,
 ) -> ToolExecutor:
-    return build_web_capabilities(environment).executor
+    return build_capability_bundle(environment).executor
+
+
+def build_information_capabilities(
+    environment: Mapping[str, str] | None = None,
+    *,
+    news_search: SearchPort,
+    delegate: ToolExecutor,
+) -> InformationCapabilities:
+    configured = os.environ if environment is None else environment
+    settings = ProviderSettings.from_environment(configured)
+    resolver = EnvironmentProviderSecretResolver(
+        settings.secret_environment_names,
+        configured,
+    )
+    credential_ref = configured.get(
+        "FAIRY_PROVIDER_ALPHA_VANTAGE_CREDENTIAL_REF",
+        "alpha_vantage",
+    ).strip()
+    weather = OpenMeteoAdapter()
+    timezones = TimeZoneService()
+    fx = FrankfurterAdapter()
+    markets = AlphaVantageAdapter(
+        secret=resolver.try_resolve(credential_ref or None),
+    )
+    executor = InformationToolExecutor(
+        weather=weather,
+        timezones=timezones,
+        fx=fx,
+        markets=markets,
+        news_search=news_search,
+        delegate=delegate,
+    )
+    return InformationCapabilities(
+        weather=weather,
+        timezones=timezones,
+        fx=fx,
+        markets=markets,
+        executor=executor,
+    )
+
+
+def build_capability_bundle(
+    environment: Mapping[str, str] | None = None,
+) -> CapabilityBundle:
+    web = build_web_capabilities(environment)
+    try:
+        information = build_information_capabilities(
+            environment,
+            news_search=web.search_port,
+            delegate=web.executor,
+        )
+    except BaseException:
+        web.executor.close()
+        raise
+    return CapabilityBundle(web=web, information=information)

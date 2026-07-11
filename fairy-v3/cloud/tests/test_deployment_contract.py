@@ -162,6 +162,13 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
     assert services["object-store"]["image"] == "chrislusf/seaweedfs:4.39"
     assert services["oidc"]["image"] == "ghcr.io/navikt/mock-oauth2-server:4.0.0"
     assert "FAIRY_PROVIDER_SECRET_BRAVE" in services["api"]["environment"]
+    assert "FAIRY_PROVIDER_SECRET_ALPHA_VANTAGE" in services["api"]["environment"]
+    assert services["api"]["environment"]["FAIRY_PROVIDER_BRAVE_CREDENTIAL_REF"].endswith(
+        ":-brave}"
+    )
+    assert services["api"]["environment"]["FAIRY_PROVIDER_ALPHA_VANTAGE_CREDENTIAL_REF"].endswith(
+        ":-alpha_vantage}"
+    )
     assert "fairy-postgres:/var/lib/postgresql" in services["postgres"]["volumes"]
     assert services["object-store"]["environment"]["S3_BUCKET"] == "fairy-objects"
     assert all(

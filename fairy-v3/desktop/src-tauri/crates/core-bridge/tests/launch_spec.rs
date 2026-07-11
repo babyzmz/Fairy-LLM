@@ -33,6 +33,10 @@ fn development_spec_prefers_composed_runtime_and_filters_parent_environment() {
         ),
         ("FAIRY_PROVIDER_PROFILES_JSON".to_owned(), "[]".to_owned()),
         (
+            "FAIRY_PROVIDER_ALPHA_VANTAGE_CREDENTIAL_REF".to_owned(),
+            "alpha_vantage".to_owned(),
+        ),
+        (
             "FAIRY_CORE_MODULE".to_owned(),
             "fairy_capabilities.stdio".to_owned(),
         ),
@@ -49,6 +53,10 @@ fn development_spec_prefers_composed_runtime_and_filters_parent_environment() {
     assert_eq!(
         spec.env["FAIRY_PROVIDER_SECRET_OPENROUTER"],
         "provider-secret"
+    );
+    assert_eq!(
+        spec.env["FAIRY_PROVIDER_ALPHA_VANTAGE_CREDENTIAL_REF"],
+        "alpha_vantage"
     );
     assert!(!spec.env.contains_key("UNRELATED_SECRET"));
     assert!(!spec.env.contains_key("FAIRY_CORE_MODULE"));

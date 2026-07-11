@@ -23,6 +23,9 @@ def test_tool_registry_is_single_source_for_capability_manifest() -> None:
 
     assert manifest["project.read"] is True
     assert manifest["web.search"] is True
+    assert manifest["info.weather"] is True
+    assert manifest["info.time"] is True
+    assert manifest["info.crypto"] is True
     assert manifest["edit.apply_changeset"] is False
     assert manifest["run.sandboxed"] is False
     assert "run.host" not in manifest

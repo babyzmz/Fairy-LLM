@@ -1,5 +1,9 @@
 from fairy_capabilities.composition import (
+    CapabilityBundle,
+    InformationCapabilities,
     WebCapabilities,
+    build_capability_bundle,
+    build_information_capabilities,
     build_provider_registry,
     build_tool_executor,
     build_web_capabilities,
@@ -11,10 +15,14 @@ from fairy_capabilities.settings import (
 )
 
 __all__ = [
+    "CapabilityBundle",
     "EnvironmentProviderSecretResolver",
+    "InformationCapabilities",
     "OpenAICompatibleProvider",
     "ProviderSettings",
     "WebCapabilities",
+    "build_capability_bundle",
+    "build_information_capabilities",
     "build_provider_registry",
     "build_tool_executor",
     "build_web_capabilities",

@@ -9,8 +9,8 @@ from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.transports.stdio import build_local_service, process_stream
 
 from fairy_capabilities.composition import (
+    build_capability_bundle,
     build_provider_registry,
-    build_web_capabilities,
 )
 
 
@@ -20,16 +20,25 @@ def build_composed_local_dispatcher(
     environment: Mapping[str, str] | None = None,
 ) -> JsonRpcDispatcher:
     configured = dict(os.environ if environment is None else environment)
-    web = build_web_capabilities(configured)
-    return JsonRpcDispatcher(
-        build_local_service(
+    providers = build_provider_registry(configured)
+    try:
+        capabilities = build_capability_bundle(configured)
+    except BaseException:
+        providers.close()
+        raise
+    try:
+        service = build_local_service(
             data_dir,
             environment=configured,
-            provider_registry=build_provider_registry(configured),
-            tool_executor=web.executor,
-            research_fetch_port=web.fetch_port,
+            provider_registry=providers,
+            tool_executor=capabilities.executor,
+            research_fetch_port=capabilities.web.fetch_port,
         )
-    )
+    except BaseException:
+        capabilities.executor.close()
+        providers.close()
+        raise
+    return JsonRpcDispatcher(service)
 
 
 def main() -> None:

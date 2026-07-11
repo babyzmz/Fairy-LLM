@@ -5,8 +5,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 from fairy_capabilities.composition import (
+    build_capability_bundle,
     build_provider_registry,
-    build_web_capabilities,
 )
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.runtime import RuntimeApplication
@@ -48,16 +48,26 @@ def build_postgres_core_service(
         policy=PolicyEngine(registry),
         scope_resolver=application.scope_for_task,
     )
-    web = build_web_capabilities()
-    return CoreService(
-        application,
-        unit_of_work_factory=unit_of_work_factory,
-        registry=registry,
-        provider_registry=build_provider_registry(),
-        tool_executor=web.executor,
-        research_fetch_port=web.fetch_port,
-        runtime_application=runtime_application,
-    )
+    providers = build_provider_registry()
+    try:
+        capabilities = build_capability_bundle()
+    except BaseException:
+        providers.close()
+        raise
+    try:
+        return CoreService(
+            application,
+            unit_of_work_factory=unit_of_work_factory,
+            registry=registry,
+            provider_registry=providers,
+            tool_executor=capabilities.executor,
+            research_fetch_port=capabilities.web.fetch_port,
+            runtime_application=runtime_application,
+        )
+    except BaseException:
+        capabilities.executor.close()
+        providers.close()
+        raise
 
 
 class TenantRuntimeRegistry:

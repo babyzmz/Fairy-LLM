@@ -5,6 +5,7 @@ import json
 import pytest
 
 from fairy_capabilities.composition import (
+    build_capability_bundle,
     build_provider_registry,
     build_web_capabilities,
 )
@@ -87,7 +88,7 @@ def test_web_composition_uses_scoped_secret_reference_without_exposing_value() -
     environment = {
         "FAIRY_PROVIDER_SECRET_REFS_JSON": json.dumps({"brave": "FAIRY_PROVIDER_SECRET_BRAVE"}),
         "FAIRY_PROVIDER_SECRET_BRAVE": secret,
-        "FAIRY_WEB_BRAVE_CREDENTIAL_REF": "brave",
+        "FAIRY_PROVIDER_BRAVE_CREDENTIAL_REF": "brave",
     }
 
     configured = build_web_capabilities(environment)
@@ -96,6 +97,33 @@ def test_web_composition_uses_scoped_secret_reference_without_exposing_value() -
         assert configured.search_port.health().status == "available"
         assert unavailable.search_port.health().status == "unavailable"
         assert configured.executor.fetch_port is configured.fetch_port
+        assert secret not in repr(configured)
+    finally:
+        configured.executor.close()
+        unavailable.executor.close()
+
+
+def test_information_composition_reports_alpha_vantage_key_presence_only() -> None:
+    secret = "alpha-test-secret"
+    environment = {
+        "FAIRY_PROVIDER_SECRET_REFS_JSON": json.dumps(
+            {"alpha_vantage": "FAIRY_PROVIDER_SECRET_ALPHA_VANTAGE"}
+        ),
+        "FAIRY_PROVIDER_SECRET_ALPHA_VANTAGE": secret,
+        "FAIRY_PROVIDER_ALPHA_VANTAGE_CREDENTIAL_REF": "alpha_vantage",
+    }
+
+    configured = build_capability_bundle(environment)
+    unavailable = build_capability_bundle({})
+    try:
+        assert configured.information.markets.health().status == "available"
+        assert unavailable.information.markets.health().status == "unavailable"
+        assert [health.provider for health in configured.information.health()] == [
+            "open_meteo",
+            "python_zoneinfo",
+            "frankfurter_v2",
+            "alpha_vantage",
+        ]
         assert secret not in repr(configured)
     finally:
         configured.executor.close()

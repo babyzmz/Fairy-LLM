@@ -209,13 +209,21 @@ not installed, so sandbox attestation remained explicitly skipped.
 - Tool names are `info.weather`, `info.news`, `info.time`, `info.map`, `info.stock`, `info.fx`, and `info.crypto`.
 - Every result has provider, `observed_at`, freshness label, normalized values, source URL, and diagnostics; unavailable credentials produce `CAPABILITY_NOT_AVAILABLE`.
 
-- [ ] Write fixture tests for geocoding ambiguity, weather units, timezone conversion across DST, OpenStreetMap deep-link encoding, exchange-rate dates, delayed stock quotes, crypto market currency, rate limits, and provider error payloads.
-- [ ] Run tests and confirm adapters are missing.
-- [ ] Implement strict Pydantic result models and adapters with injectable endpoints/clocks and bounded retries for idempotent GET requests.
-- [ ] Add Tool Definitions, policy risk, network capability metadata, provider health, and normalized public summaries.
-- [ ] Add assistant-loop tests proving the model selects tools from schemas and ordinary chat still uses `direct_answer` without keyword routing.
-- [ ] Run all capabilities information tests, Core assistant tests, Ruff, and contract generation.
-- [ ] Commit with `feat(v3): add live information tools`.
+- [x] Write fixture tests for geocoding ambiguity, weather units, timezone conversion across DST, OpenStreetMap deep-link encoding, exchange-rate dates, delayed stock quotes, crypto market currency, rate limits, and provider error payloads.
+- [x] Run tests and confirm adapters are missing.
+- [x] Implement strict Pydantic result models and adapters with injectable endpoints/clocks and bounded retries for idempotent GET requests.
+- [x] Add Tool Definitions, policy risk, network capability metadata, provider health, and normalized public summaries.
+- [x] Add assistant-loop tests proving the model selects tools from schemas and ordinary chat still uses `direct_answer` without keyword routing.
+- [x] Run all capabilities information tests, Core assistant tests, Ruff, and contract generation.
+- [x] Commit with `feat(v3): add live information tools`.
+
+Verification note: fixture-backed adapters use current Open-Meteo endpoints,
+Frankfurter v2, Alpha Vantage, Brave News, OpenStreetMap, and locked IANA
+`tzdata` 2026.3. The package gate passed with 390 Core, 78 Capabilities, and
+52 Cloud unit tests; generated contracts remained stable. Remote information
+tools enforce the Core network policy while time conversion and map-link
+generation remain available offline. Provider secrets are reference-only and
+the desktop environment boundary forwards only `FAIRY_PROVIDER_*` values.
 
 ### Task 34: Managed Documents and RAG Projection
 

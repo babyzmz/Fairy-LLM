@@ -46,10 +46,10 @@ class WebToolExecutor:
         arguments: dict[str, object],
     ) -> ToolResult:
         if definition.name == "web.search":
-            _require_public_network(scope)
+            require_public_network(scope)
             return self._search(arguments)
         if definition.name == "web.fetch":
-            _require_public_network(scope)
+            require_public_network(scope)
             return self._fetch(arguments)
         return self._delegate.execute(definition, scope, arguments)
 
@@ -139,9 +139,9 @@ def _optional_integer(
     return value
 
 
-def _require_public_network(scope: ScopeContract) -> None:
+def require_public_network(scope: ScopeContract) -> None:
     if scope.network_policy not in _PUBLIC_NETWORK_POLICIES:
         raise NetworkPolicyError("public network access is blocked by the Core Scope")
 
 
-__all__ = ["NetworkPolicyError", "WebToolExecutor"]
+__all__ = ["NetworkPolicyError", "WebToolExecutor", "require_public_network"]

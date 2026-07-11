@@ -47,6 +47,21 @@ def test_research_schema_enforces_source_count(source_count: int) -> None:
         )
 
 
+def test_information_schemas_enforce_units_and_numeric_bounds() -> None:
+    registry = build_default_registry()
+    weather = registry.get("info.weather")
+    fx = registry.get("info.fx")
+    assert weather is not None and fx is not None
+
+    validate_tool_arguments(weather, {"location": "Sydney", "units": "metric"})
+    validate_tool_arguments(fx, {"base": "USD", "quote": "EUR", "amount": 10.5})
+
+    with pytest.raises(ToolCandidateError, match="allowed"):
+        validate_tool_arguments(weather, {"location": "Sydney", "units": "kelvin"})
+    with pytest.raises(ToolCandidateError, match="minimum"):
+        validate_tool_arguments(fx, {"base": "USD", "quote": "EUR", "amount": -1})
+
+
 @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
 def test_model_argument_sanitizer_rejects_non_finite_numbers(value: float) -> None:
     with pytest.raises(ToolCandidateError, match="finite"):

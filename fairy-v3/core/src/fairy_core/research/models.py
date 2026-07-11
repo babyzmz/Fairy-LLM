@@ -2,18 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import posixpath
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from urllib.parse import quote, urlsplit, urlunsplit
 from uuid import UUID
 
 from fairy_core.domain.ids import new_id
+from fairy_core.domain.urls import canonical_http_url
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_MAX_URL_LENGTH = 2_048
 
 
 class SearchKind(StrEnum):
@@ -140,7 +138,7 @@ class SearchHit:
             provider=_required_text(provider, "provider", maximum=128),
             rank=rank,
             title=_required_text(title, "title", maximum=1_000),
-            url=_canonical_request_url(url),
+            url=canonical_http_url(url),
             description=_bounded_text(description, maximum=4_000),
             published_at=published_at,
             language=_optional_text(language, maximum=32),
@@ -163,7 +161,7 @@ class FetchRequest:
         timeout_seconds: float = 15,
         max_text_characters: int = 200_000,
     ) -> FetchRequest:
-        canonical = _canonical_request_url(url)
+        canonical = canonical_http_url(url)
         if isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 30:
             raise ValueError("timeout_seconds must be between 0 and 30")
         if isinstance(max_text_characters, bool) or not 1_000 <= max_text_characters <= 1_000_000:
@@ -213,9 +211,9 @@ class FetchedDocument:
         fetched_at: datetime | None = None,
         truncated: bool = False,
     ) -> FetchedDocument:
-        requested = _canonical_request_url(requested_url)
-        final = _canonical_request_url(final_url)
-        chain = tuple(_canonical_request_url(item) for item in redirect_chain)
+        requested = canonical_http_url(requested_url)
+        final = canonical_http_url(final_url)
+        chain = tuple(canonical_http_url(item) for item in redirect_chain)
         if not chain or chain[0] != requested or chain[-1] != final:
             raise ValueError("redirect_chain must bind requested and final URLs")
         if isinstance(byte_length, bool) or byte_length < 0:
@@ -276,13 +274,13 @@ class ResearchEvidence:
             raise ValueError("evidence identifiers must be UUID values")
         if isinstance(self.ordinal, bool) or self.ordinal < 1:
             raise ValueError("evidence ordinal must be positive")
-        source_url = _canonical_request_url(self.source_url)
-        canonical_url = _canonical_request_url(self.canonical_url)
+        source_url = canonical_http_url(self.source_url)
+        canonical_url = canonical_http_url(self.canonical_url)
         if source_url != self.source_url or canonical_url != self.canonical_url:
             raise ValueError("evidence URLs must be canonical")
         if not isinstance(self.redirect_chain, tuple):
             raise ValueError("evidence redirect_chain must be an immutable tuple")
-        redirect_chain = tuple(_canonical_request_url(item) for item in self.redirect_chain)
+        redirect_chain = tuple(canonical_http_url(item) for item in self.redirect_chain)
         if (
             redirect_chain != self.redirect_chain
             or not redirect_chain
@@ -347,54 +345,6 @@ class ResearchEvidence:
     @classmethod
     def restore(cls, **values) -> ResearchEvidence:
         return cls(**values)
-
-
-def canonical_http_url(value: str) -> str:
-    return _canonical_request_url(value)
-
-
-def _canonical_request_url(value: str) -> str:
-    normalized = value.strip()
-    if not normalized or len(normalized) > _MAX_URL_LENGTH:
-        raise ValueError("url is required and cannot exceed 2,048 characters")
-    if "\\" in normalized or any(ord(character) < 32 for character in normalized):
-        raise ValueError("url contains forbidden characters")
-    try:
-        parsed = urlsplit(normalized)
-        port = parsed.port
-    except ValueError as error:
-        raise ValueError("url authority is invalid") from error
-    scheme = parsed.scheme.lower()
-    if scheme not in {"http", "https"}:
-        raise ValueError("url scheme must be http or https")
-    if parsed.username is not None or parsed.password is not None:
-        raise ValueError("url credentials are not allowed")
-    host = parsed.hostname
-    if host is None or "%" in parsed.netloc:
-        raise ValueError("url host is invalid")
-    try:
-        ascii_host = host.rstrip(".").encode("idna").decode("ascii").lower()
-    except UnicodeError as error:
-        raise ValueError("url host is invalid") from error
-    if not ascii_host or any(character.isspace() for character in ascii_host):
-        raise ValueError("url host is invalid")
-    default_port = 443 if scheme == "https" else 80
-    if port is not None and not 1 <= port <= 65_535:
-        raise ValueError("url port is invalid")
-    host_display = f"[{ascii_host}]" if ":" in ascii_host else ascii_host
-    authority = host_display if port in {None, default_port} else f"{host_display}:{port}"
-    raw_path = parsed.path or "/"
-    decoded_segments = raw_path.split("/")
-    normalized_path = posixpath.normpath("/".join(decoded_segments))
-    if raw_path.startswith("/") and not normalized_path.startswith("/"):
-        normalized_path = f"/{normalized_path}"
-    if normalized_path in {".", ""}:
-        normalized_path = "/"
-    if raw_path.endswith("/") and not normalized_path.endswith("/"):
-        normalized_path += "/"
-    path = quote(normalized_path, safe="/%:@!$&'()*+,;=-._~")
-    query = quote(parsed.query, safe="=&;%:+,/?@!$'()*-._~")
-    return urlunsplit((scheme, authority, path, query, ""))
 
 
 def _required_text(value: str, name: str, *, maximum: int) -> str:
