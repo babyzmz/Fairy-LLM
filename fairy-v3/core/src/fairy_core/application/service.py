@@ -19,7 +19,7 @@ from fairy_core.application.runtime import (
 )
 from fairy_core.assistant.application import AssistantApplication
 from fairy_core.assistant.ledger import AssistantLedgerApplication
-from fairy_core.assistant.models import AssistantTurnStatus
+from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.commanding import EventVisibility
 from fairy_core.commanding.policy import PolicyEngine
@@ -95,6 +95,9 @@ from fairy_core.providers import CancellationToken, ProviderCapability, Provider
 from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
 from fairy_core.research.ports import FetchPort
 from fairy_core.runtime.models import RuntimeExecutorError
+from fairy_core.sandbox.archive import WorkspaceArchiveBuilder
+from fairy_core.sandbox.ports import SandboxExecutor
+from fairy_core.sandbox.tools import SandboxToolExecutor
 from fairy_core.system_actions.application import (
     SystemActionApplication,
     SystemActionToolExecutor,
@@ -138,6 +141,7 @@ class CoreService:
         document_blob_store: DocumentBlobStore | None = None,
         runtime_application: RuntimeApplication | None = None,
         system_action_worker: SystemActionWorker | None = None,
+        sandbox_executor: SandboxExecutor | None = None,
         sandbox_health_provider: SandboxHealthProvider | None = None,
         default_execution_target: str = "local",
         on_close: Callable[[], None] | None = None,
@@ -218,6 +222,13 @@ class CoreService:
             unit_of_work_factory=unit_of_work_factory,
             delegate=effective_tool_executor,
         )
+        if sandbox_executor is not None:
+            effective_tool_executor = SandboxToolExecutor(
+                executor=sandbox_executor,
+                archive_builder=WorkspaceArchiveBuilder(unit_of_work_factory),
+                execution_target=default_execution_target,
+                delegate=effective_tool_executor,
+            )
         self._tool_executor = effective_tool_executor
         self._assistant_application = AssistantApplication(
             unit_of_work_factory=unit_of_work_factory,
@@ -449,6 +460,8 @@ class CoreService:
             was_running = cancellation is not None
             if cancellation is not None:
                 cancellation.cancel()
+        if was_running:
+            self._cancel_running_tool_command(validated.turn_id)
         try:
             cancelled = self._assistant_ledger.cancel_turn(
                 turn_id=validated.turn_id,
@@ -464,6 +477,24 @@ class CoreService:
                 raise
             self._image_attachments.release(validated.turn_id)
             return persisted
+
+    def _cancel_running_tool_command(self, turn_id: UUID) -> None:
+        cancel_command = getattr(self._tool_executor, "cancel_command", None)
+        if not callable(cancel_command):
+            return
+        with self._unit_of_work_factory() as unit_of_work:
+            runs = tuple(
+                run
+                for invocation in unit_of_work.assistant.list_tool_invocations(turn_id)
+                if invocation.status is ToolInvocationStatus.RUNNING
+                and invocation.command_run_id is not None
+                if (run := unit_of_work.commands.get_run(invocation.command_run_id)) is not None
+            )
+        for run in runs:
+            try:
+                cancel_command(run)
+            except Exception:
+                continue
 
     def _run_assistant_turn(self, request: BaseModel) -> Any:
         turn_id = cast(AssistantTurnRunInput, request).turn_id

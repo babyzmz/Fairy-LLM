@@ -213,21 +213,23 @@ Commit: `feat(v3): add scoped project execution tools`
 - `SandboxExecutor.health/execute/cancel` returns attested executor identity, job ID, exit status, bounded stdout/stderr hashes, and timing.
 - The WSL adapter invokes only `wsl.exe --distribution FairySandbox --user fairy --exec /usr/local/bin/fairy-sandbox-runner`; it never uses `shell=True` or a mounted Windows path.
 
-- [ ] **Step 1: Write failing protocol, path, environment, resource, and cancellation tests**
+- [x] **Step 1: Write failing protocol, path, environment, resource, and cancellation tests**
 
 Cover malformed argv, NULs, overlong values, forbidden host environment keys, output floods, timeout, process tree termination, workspace generation mismatch, archive traversal, symlink escape, and attestation mismatch.
 
-- [ ] **Step 2: Run tests and observe missing sandbox interfaces**
+- [x] **Step 2: Run tests and observe missing sandbox interfaces**
 
-- [ ] **Step 3: Implement the runner and streamed managed-workspace synchronization**
+- [x] **Step 3: Implement the runner and streamed managed-workspace synchronization**
 
-The installer creates a non-root `fairy` user, disables automount/interoperability, installs the runner and isolation dependencies, and emits a signed-format health document. Workspace content crosses stdin as a bounded validated archive and is stored only in the distro ext4 filesystem.
+The installer creates a non-root `fairy` user, disables automount/interoperability, installs the runner and isolation dependencies, and emits a digest-bound, root-owned health document. Workspace content crosses stdin as a bounded validated archive and is stored only in the distro ext4 filesystem.
 
-- [ ] **Step 4: Compose local capability health and fail closed when attestation fails**
+- [x] **Step 4: Compose local capability health and fail closed when attestation fails**
 
 Expose `run.sandboxed`, dependency, review, and dynamic Runtime commands only after a current attestation from the matching executor.
 
-- [ ] **Step 5: Verify simulated adapters and run the real WSL gate when available; commit**
+- [x] **Step 5: Verify simulated adapters and run the real WSL gate when available; commit**
+
+Verification on 2026-07-11: `scripts/test-all.ps1 -SkipDocker` exited 0 with Sandbox Runner 25 passed/1 Windows-only POSIX process-group check skipped, Core 495, Capabilities 104, Cloud 62, Vitest 68, and Playwright 18 tests passing. Ruff, repository boundaries, PowerShell installer parsing, offline Alembic upgrade/downgrade, Rust fmt/clippy/tests, desktop build, generated contracts, and performance gates passed; Core readiness was 817.7 ms and initial renderer gzip was 131.1 KiB. The real `FairySandbox` gate was unavailable (`wsl --status failed`) and Docker/PostgreSQL/S3 integration was explicitly skipped because the Docker CLI is not installed; neither was reported as passed.
 
 Commit: `feat(v3): add attested wsl sandbox execution`
 

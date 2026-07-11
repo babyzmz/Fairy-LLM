@@ -822,6 +822,7 @@ def build_default_registry() -> ToolRegistry:
             ApprovalPolicy.PROFILE,
             active_profiles,
             "dependency_worker",
+            sandbox=True,
         ),
         _tool(
             "preview.start",
@@ -848,6 +849,7 @@ def build_default_registry() -> ToolRegistry:
             ApprovalPolicy.NEVER,
             active_profiles,
             "review_worker",
+            sandbox=True,
             idempotent=True,
         ),
         _tool(
@@ -857,6 +859,7 @@ def build_default_registry() -> ToolRegistry:
             ApprovalPolicy.NEVER,
             active_profiles,
             "review_worker",
+            sandbox=True,
             idempotent=True,
         ),
         _tool(
@@ -866,6 +869,7 @@ def build_default_registry() -> ToolRegistry:
             ApprovalPolicy.NEVER,
             active_profiles,
             "review_worker",
+            sandbox=True,
             idempotent=True,
         ),
         _tool(
@@ -875,6 +879,7 @@ def build_default_registry() -> ToolRegistry:
             ApprovalPolicy.NEVER,
             active_profiles,
             "review_worker",
+            sandbox=True,
             idempotent=True,
         ),
         _tool(
@@ -903,6 +908,48 @@ def build_default_registry() -> ToolRegistry:
             autonomous,
             "sandbox_worker",
             sandbox=True,
+            description=("Run structured argv inside the attested Task-bound Sandbox Workspace."),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "argv": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 64,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 4_096},
+                    },
+                    "cwd": {"type": "string", "minLength": 1, "maxLength": 1_024},
+                    "environment": {
+                        "type": "array",
+                        "maxItems": 32,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 64,
+                                },
+                                "value": {"type": "string", "maxLength": 8_192},
+                            },
+                            "required": ["name", "value"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 900,
+                    },
+                    "output_limit_bytes": {
+                        "type": "integer",
+                        "minimum": 1_024,
+                        "maximum": 1_048_576,
+                    },
+                },
+                "required": ["argv"],
+                "additionalProperties": False,
+            },
         ),
         _tool(
             "project.accept_version",

@@ -8,6 +8,8 @@ from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.information import InformationCapabilityHealth
 from fairy_core.providers import ProviderCapability, ProviderRegistry
 from fairy_core.research.ports import FetchPort, SearchPort
+from fairy_core.sandbox.tools import ExecutorSandboxHealthProvider
+from fairy_core.sandbox.wsl import WslSandboxExecutor
 from fairy_core.voice import VoiceRegistry
 
 from fairy_capabilities.information.alpha_vantage import AlphaVantageAdapter
@@ -58,6 +60,23 @@ class CapabilityBundle:
     @property
     def executor(self) -> InformationToolExecutor:
         return self.information.executor
+
+
+@dataclass(frozen=True, slots=True)
+class LocalSandboxCapabilities:
+    executor: WslSandboxExecutor
+    health: ExecutorSandboxHealthProvider
+
+
+def build_local_sandbox(
+    environment: Mapping[str, str] | None = None,
+) -> LocalSandboxCapabilities:
+    configured = os.environ if environment is None else environment
+    executor = WslSandboxExecutor(host_environment=configured)
+    return LocalSandboxCapabilities(
+        executor=executor,
+        health=ExecutorSandboxHealthProvider(executor, execution_target="local"),
+    )
 
 
 def build_provider_registry(

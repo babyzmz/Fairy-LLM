@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
+import re
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -22,6 +25,7 @@ _REQUIRED_CONFIG = {
     "interop.enabled": False,
     "interop.appendWindowsPath": False,
 }
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +149,8 @@ class WslSandboxHealthProbe:
     def _validate_attestation(self, values: object) -> str | None:
         if not isinstance(values, dict) or values.get("schema_version") != 1:
             return "FairySandbox health schema is invalid"
+        if values.get("executor") != _EXECUTOR:
+            return "FairySandbox executor identity does not match"
         if values.get("runner_version") != self._expected_runner_version:
             return "FairySandbox runner version does not match"
         uid = values.get("uid")
@@ -161,6 +167,43 @@ class WslSandboxHealthProbe:
             config.get(key) is not expected for key, expected in _REQUIRED_CONFIG.items()
         ):
             return "FairySandbox wsl.conf isolation keys are incomplete"
+        if values.get("bwrap_path") != "/usr/bin/bwrap":
+            return "FairySandbox bubblewrap identity does not match"
+        for key in ("runner_sha256", "config_sha256", "bwrap_sha256"):
+            value = values.get(key)
+            if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
+                return f"FairySandbox {key} is invalid"
+        files = values.get("files")
+        if not isinstance(files, dict):
+            return "FairySandbox root-owned file attestation is missing"
+        for name in ("runner", "config", "bwrap"):
+            file = files.get(name)
+            if not isinstance(file, dict):
+                return "FairySandbox root-owned file attestation is incomplete"
+            uid = file.get("uid")
+            mode = file.get("mode")
+            if uid != 0 or isinstance(mode, bool) or not isinstance(mode, int):
+                return "FairySandbox files must be root-owned"
+            if mode < 0 or mode > 0o7777 or mode & 0o022:
+                return "FairySandbox files must not be group/world writable"
+            if name in {"runner", "bwrap"} and mode & 0o111 == 0:
+                return "FairySandbox executable attestation is invalid"
+        attestation_digest = values.get("attestation_digest")
+        if not isinstance(attestation_digest, str) or _SHA256.fullmatch(attestation_digest) is None:
+            return "FairySandbox attestation digest is invalid"
+        signed_values = dict(values)
+        del signed_values["attestation_digest"]
+        expected_digest = hashlib.sha256(
+            json.dumps(
+                signed_values,
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        if not hmac.compare_digest(attestation_digest, expected_digest):
+            return "FairySandbox attestation digest does not match"
         return None
 
     @staticmethod

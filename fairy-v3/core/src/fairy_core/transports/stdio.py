@@ -26,6 +26,9 @@ from fairy_core.research.ports import FetchPort
 from fairy_core.runtime.ports import RuntimeExecutor
 from fairy_core.runtime.rust_worker import RustRuntimeExecutor
 from fairy_core.runtime.unavailable import UnavailableRuntimeExecutor
+from fairy_core.sandbox.ports import SandboxExecutor
+from fairy_core.sandbox.tools import ExecutorSandboxHealthProvider
+from fairy_core.sandbox.wsl import WslSandboxExecutor
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.voice import VoiceRegistry
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
@@ -48,6 +51,7 @@ def build_local_service(
     research_fetch_port: FetchPort | None = None,
     document_parser: DocumentParser | None = None,
     document_blob_store: DocumentBlobStore | None = None,
+    sandbox_executor: SandboxExecutor | None = None,
     sandbox_health_provider: SandboxHealthProvider | None = None,
 ) -> CoreService:
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -92,7 +96,14 @@ def build_local_service(
         )
         resources.callback(engine.dispose)
         unit_of_work_factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
-        execution_policy = ExecutionPolicyResolver(sandbox_health_provider)
+        selected_sandbox_executor = sandbox_executor or WslSandboxExecutor(
+            host_environment=configured,
+        )
+        selected_sandbox_health = sandbox_health_provider or ExecutorSandboxHealthProvider(
+            selected_sandbox_executor,
+            execution_target="local",
+        )
+        execution_policy = ExecutionPolicyResolver(selected_sandbox_health)
         application = CoreApplication(
             unit_of_work_factory=unit_of_work_factory,
             workspace_provisioner=workspace_provisioner,
@@ -128,7 +139,8 @@ def build_local_service(
             document_blob_store=document_blob_store,
             runtime_application=runtime_application,
             system_action_worker=system_action_worker,
-            sandbox_health_provider=sandbox_health_provider,
+            sandbox_executor=selected_sandbox_executor,
+            sandbox_health_provider=selected_sandbox_health,
             default_execution_target="local",
             on_close=resources.close,
         )
@@ -149,6 +161,7 @@ def build_local_dispatcher(
     research_fetch_port: FetchPort | None = None,
     document_parser: DocumentParser | None = None,
     document_blob_store: DocumentBlobStore | None = None,
+    sandbox_executor: SandboxExecutor | None = None,
     sandbox_health_provider: SandboxHealthProvider | None = None,
 ) -> JsonRpcDispatcher:
     return JsonRpcDispatcher(
@@ -163,6 +176,7 @@ def build_local_dispatcher(
             research_fetch_port=research_fetch_port,
             document_parser=document_parser,
             document_blob_store=document_blob_store,
+            sandbox_executor=sandbox_executor,
             sandbox_health_provider=sandbox_health_provider,
         )
     )

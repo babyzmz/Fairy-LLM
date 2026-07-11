@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -48,6 +49,7 @@ def _result(stdout: str = "", *, returncode: int = 0, utf16: bool = False) -> Pr
 def _attestation(**overrides: object) -> str:
     values: dict[str, object] = {
         "schema_version": 1,
+        "executor": "wsl_fairy_sandbox",
         "runner_version": "1.0.0",
         "user": "fairy",
         "uid": 1000,
@@ -58,8 +60,26 @@ def _attestation(**overrides: object) -> str:
             "interop.enabled": False,
             "interop.appendWindowsPath": False,
         },
+        "runner_sha256": "a" * 64,
+        "config_sha256": "b" * 64,
+        "bwrap_path": "/usr/bin/bwrap",
+        "bwrap_sha256": "c" * 64,
+        "files": {
+            "runner": {"uid": 0, "mode": 0o755},
+            "config": {"uid": 0, "mode": 0o644},
+            "bwrap": {"uid": 0, "mode": 0o755},
+        },
     }
     values.update(overrides)
+    values["attestation_digest"] = hashlib.sha256(
+        json.dumps(
+            values,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
     return json.dumps(values)
 
 
@@ -113,6 +133,27 @@ def test_wsl_probe_fails_closed_when_wsl_executable_is_missing(tmp_path: Path) -
             "FairySandbox Running 2\n",
             _attestation(config={"automount.enabled": False}),
             "wsl.conf",
+        ),
+        (
+            "FairySandbox Running 2\n",
+            _attestation(executor="forged"),
+            "executor identity",
+        ),
+        (
+            "FairySandbox Running 2\n",
+            _attestation(bwrap_path="/tmp/bwrap"),
+            "bubblewrap",
+        ),
+        (
+            "FairySandbox Running 2\n",
+            _attestation(
+                files={
+                    "runner": {"uid": 1000, "mode": 0o775},
+                    "config": {"uid": 0, "mode": 0o644},
+                    "bwrap": {"uid": 0, "mode": 0o755},
+                }
+            ),
+            "root-owned",
         ),
     ),
 )
@@ -185,3 +226,20 @@ def test_wsl_probe_accepts_only_full_wsl2_fairysandbox_attestation(
     ]
     forbidden = {"--install", "--import", "--unregister", "--set-default-version"}
     assert all(not (forbidden & set(call["argv"])) for call in runner.calls)
+
+
+def test_wsl_probe_rejects_an_attestation_changed_after_signing(tmp_path: Path) -> None:
+    values = json.loads(_attestation())
+    values["runner_sha256"] = "d" * 64
+    runner = FakeRunner(
+        [
+            _result("Default Version: 2"),
+            _result("FairySandbox Running 2\n", utf16=True),
+            _result(json.dumps(values)),
+        ]
+    )
+
+    health = _probe(tmp_path, runner).health()
+
+    assert health.available is False
+    assert any("digest" in item for item in health.diagnostics)

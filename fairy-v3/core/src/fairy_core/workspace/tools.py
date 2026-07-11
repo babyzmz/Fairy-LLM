@@ -42,6 +42,11 @@ class ProjectToolExecutor:
         self._unit_of_work_factory = unit_of_work_factory
         self._delegate = delegate or UnavailableToolExecutor()
 
+    def close(self) -> None:
+        close = getattr(self._delegate, "close", None)
+        if callable(close):
+            close()
+
     def execute(
         self,
         definition: ToolDefinition,

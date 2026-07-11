@@ -129,6 +129,32 @@ def test_static_preview_approval_is_independent_from_wsl_health() -> None:
     assert metadata["preview.start"]["idempotent"] is True
 
 
+def test_dependency_and_executable_reviews_require_current_sandbox_health() -> None:
+    registry = build_default_registry()
+    unavailable = registry.capability_manifest(
+        profile=PermissionProfile.STANDARD,
+        sandbox_healthy=False,
+    )
+    available = registry.capability_manifest(
+        profile=PermissionProfile.STANDARD,
+        sandbox_healthy=True,
+    )
+    metadata = {item["name"]: item for item in registry.frontend_metadata()}
+
+    for name in (
+        "deps.install",
+        "review.typecheck",
+        "review.lint",
+        "review.test",
+        "review.build",
+    ):
+        assert unavailable[name] is False
+        assert available[name] is True
+        assert metadata[name]["requires_sandbox"] is True
+    assert unavailable["preview.start"] is True
+    assert unavailable["review.health"] is True
+
+
 @pytest.mark.parametrize("profile", list(PermissionProfile))
 def test_active_version_promotion_always_requires_approval(profile: PermissionProfile) -> None:
     policy = PolicyEngine(build_default_registry())

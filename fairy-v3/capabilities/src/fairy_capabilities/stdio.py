@@ -10,6 +10,7 @@ from fairy_core.transports.stdio import build_local_service, process_stream
 
 from fairy_capabilities.composition import (
     build_capability_bundle,
+    build_local_sandbox,
     build_provider_registry,
     build_voice_registry,
 )
@@ -34,6 +35,7 @@ def build_composed_local_dispatcher(
         voice.close()
         providers.close()
         raise
+    sandbox = build_local_sandbox(configured)
     try:
         service = build_local_service(
             data_dir,
@@ -44,6 +46,8 @@ def build_composed_local_dispatcher(
             research_fetch_port=capabilities.web.fetch_port,
             document_parser=CompositeDocumentParser(),
             document_blob_store=ManagedFileDocumentStore(data_dir / "documents"),
+            sandbox_executor=sandbox.executor,
+            sandbox_health_provider=sandbox.health,
         )
     except BaseException:
         capabilities.executor.close()

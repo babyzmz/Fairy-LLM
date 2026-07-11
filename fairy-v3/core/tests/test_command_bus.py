@@ -139,7 +139,7 @@ def test_bus_records_synchronous_executor_lifecycle(tmp_path: Path) -> None:
         ),
         profile=PermissionProfile.STANDARD,
         capability_overrides={},
-        sandbox_healthy=False,
+        sandbox_healthy=True,
     )
 
     running = bus.start(submitted.run.id)
@@ -172,7 +172,7 @@ def test_bus_records_executor_failure_without_exposing_exception_details(tmp_pat
         ),
         profile=PermissionProfile.STANDARD,
         capability_overrides={},
-        sandbox_healthy=False,
+        sandbox_healthy=True,
     )
 
     running = bus.start(submitted.run.id)
@@ -201,7 +201,7 @@ def test_stale_worker_cannot_complete_a_reclaimed_run(tmp_path: Path) -> None:
         ),
         profile=PermissionProfile.STANDARD,
         capability_overrides={},
-        sandbox_healthy=False,
+        sandbox_healthy=True,
     )
     first_claim = ledger.claim_next(
         worker_id="worker-a",
@@ -249,7 +249,7 @@ def test_bus_start_claims_a_recoverable_worker_lease(tmp_path: Path) -> None:
         ),
         profile=PermissionProfile.STANDARD,
         capability_overrides={},
-        sandbox_healthy=False,
+        sandbox_healthy=True,
     )
 
     running = bus.start(

@@ -72,6 +72,18 @@ Invoke-Step "Boundaries: check_boundaries.py" $Root $Uv @(
     "run", "--project", "core", "python", "scripts/check_boundaries.py", "."
 )
 
+Invoke-Step "Sandbox runner: ruff format --check" $Root $Uv @(
+    "run", "--project", "core", "ruff", "format", "--check",
+    "sandbox/runner", "sandbox/tests", "scripts/verify_wsl_sandbox.py"
+)
+Invoke-Step "Sandbox runner: ruff check" $Root $Uv @(
+    "run", "--project", "core", "ruff", "check",
+    "sandbox/runner", "sandbox/tests", "scripts/verify_wsl_sandbox.py"
+)
+Invoke-Step "Sandbox runner: pytest" $Root $Uv @(
+    "run", "--project", "core", "pytest", "sandbox/tests"
+)
+
 Invoke-Step "Core: uv lock --check" $CoreRoot $Uv @("lock", "--check")
 Invoke-Step "Core: ruff format --check" $CoreRoot $Uv @(
     "run", "ruff", "format", "--check", "src", "tests"
@@ -134,6 +146,9 @@ raise SystemExit(0 if health.available else 1)
 '@
     Invoke-Step "WSL: FairySandbox attestation" $CoreRoot $Uv @(
         "run", "python", "-c", $WslProbeScript
+    )
+    Invoke-Step "WSL: structured Sandbox execution" $Root $Uv @(
+        "run", "--project", "core", "python", "scripts/verify_wsl_sandbox.py"
     )
     Invoke-Step "WSL-required Runtime: static Preview start/status/stop" $RustRoot "cargo" @(
         "test", "-p", "fairy-local-worker", "--test", "preview_recovery"
