@@ -287,14 +287,22 @@ this workstation because neither the Docker CLI nor Docker Desktop is installed.
 - CoreClient adds typed `messages`, `assistant.turns`, `providers`, `documents`, and event-delta helpers generated from the shared contract.
 - Slash Commands are `/new`, `/project`, `/permission`, `/stop`, `/clear`, and `/help`; parsing occurs only when the first non-space character is `/`.
 
-- [ ] Write failing component tests for scratch creation, project binding, sending, stream resume/de-duplication, cancellation, retry, provider unavailable, approval, offline state, and keyboard/focus behavior.
-- [ ] Write failing slash tests proving exact command parsing and that natural-language weather/news phrases remain ordinary user text.
-- [ ] Implement compact Chat/Project tabs, Message list, accessible Composer controls, status indicators, attachment controls, and Developer Mode details without nested cards.
-- [ ] Wire events by global cursor and Turn chunk index; reconnect without duplicating visible text and load final Messages after completion.
-- [ ] Add Provider settings showing non-secret profile health and secret presence only; no secret value may be rendered or read back.
-- [ ] Add Playwright desktop/mobile-scale/reduced-motion flows using the real JSON-RPC fixture.
-- [ ] Run Vitest, Playwright at 880x680 and 640x700, TypeScript, build, and gzip size gate.
-- [ ] Commit with `feat(v3): add task-bound desktop chat`.
+- [x] Write failing component tests for scratch creation, project binding, sending, stream resume/de-duplication, cancellation, retry, provider unavailable, approval, offline state, and keyboard/focus behavior.
+- [x] Write failing slash tests proving exact command parsing and that natural-language weather/news phrases remain ordinary user text.
+- [x] Implement compact Chat/Project tabs, Message list, accessible Composer controls, status indicators, attachment controls, and Developer Mode details without nested cards.
+- [x] Wire events by global cursor and Turn chunk index; reconnect without duplicating visible text and load final Messages after completion.
+- [x] Add Provider settings showing non-secret profile health and secret presence only; no secret value may be rendered or read back.
+- [x] Add Playwright desktop/mobile-scale/reduced-motion flows using the real JSON-RPC fixture.
+- [x] Run Vitest, Playwright at 880x680 and 640x700, TypeScript, build, and gzip size gate.
+- [x] Commit with `feat(v3): add task-bound desktop chat`.
+
+Verification note: the complete local gate passed with 401 Core, 92 Capabilities,
+55 Cloud unit, all Rust, 36 Vitest, and 6 Playwright tests. Generated contracts
+remained stable and the desktop entry bundle was 109.09 KB gzip. Screenshot review
+at 880x680 and 640x700 found no overlap or overflow, and transient cloud SSE
+reconnection retains `Last-Event-ID` without duplicating chunks. Docker/PostgreSQL,
+S3, and WSL verification remained explicitly skipped because those runtimes were
+not discoverable on this machine.
 
 ### Task 36: STT, TTS, WAV Contract, and Sentence Queue
 

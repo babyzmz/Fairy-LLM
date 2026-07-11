@@ -76,8 +76,8 @@ async function measureLayout(page: Page) {
     contextBottom:
       document.querySelector(".context-bar")?.getBoundingClientRect().bottom ?? 0,
     composerTop:
-      document.querySelector(".composer")?.getBoundingClientRect().top ?? 0,
+      document.querySelector(".chat-composer")?.getBoundingClientRect().top ?? 0,
     composerBottom:
-      document.querySelector(".composer")?.getBoundingClientRect().bottom ?? 0,
+      document.querySelector(".chat-composer")?.getBoundingClientRect().bottom ?? 0,
   }));
 }

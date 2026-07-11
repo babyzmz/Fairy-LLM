@@ -273,19 +273,24 @@ export class CloudCoreTransport implements CoreTransport {
   ): AsyncIterable<EventEnvelope> {
     let current = cursor;
     while (!options.signal?.aborted) {
-      const response = await this.request(
-        get(`/v1/events?cursor=${current}&follow=true`),
-        {
-          accept: "text/event-stream",
-          lastEventId: current > 0 ? String(current) : undefined,
-          signal: options.signal,
-        },
-      );
-      await assertSuccessful(response);
-      for await (const event of parseEventStream(response)) {
-        if (event.cursor <= current) continue;
-        current = event.cursor;
-        yield event;
+      try {
+        const response = await this.request(
+          get(`/v1/events?cursor=${current}&follow=true`),
+          {
+            accept: "text/event-stream",
+            lastEventId: current > 0 ? String(current) : undefined,
+            signal: options.signal,
+          },
+        );
+        await assertSuccessful(response);
+        for await (const event of parseEventStream(response)) {
+          if (event.cursor <= current) continue;
+          current = event.cursor;
+          yield event;
+        }
+      } catch (error) {
+        if (options.signal?.aborted) return;
+        if (!isRetryableEventStreamError(error)) throw error;
       }
       if (!options.signal?.aborted) {
         await waitForReconnect(options.pollIntervalMs ?? 500, options.signal);
@@ -320,6 +325,17 @@ export class CloudCoreTransport implements CoreTransport {
       signal: options.signal,
     });
   }
+}
+
+function isRetryableEventStreamError(error: unknown): boolean {
+  if (error instanceof TypeError) return true;
+  return (
+    error instanceof CloudCoreError &&
+    (error.status === 408 ||
+      error.status === 425 ||
+      error.status === 429 ||
+      error.status >= 500)
+  );
 }
 
 function get(path: string): RequestDescriptor {

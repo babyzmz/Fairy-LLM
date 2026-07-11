@@ -1,0 +1,175 @@
+import { MessageSquarePlus, RotateCcw } from "lucide-react";
+import { useMemo, useState } from "react";
+
+import type {
+  AssistantTurn,
+  Message,
+  ProviderHealth,
+  ProviderProfile,
+} from "../core/client";
+import { ProviderSettings } from "../settings/ProviderSettings";
+import { Composer } from "./Composer";
+import { MessageList } from "./MessageList";
+import { parseSlashCommand } from "./slashCommands";
+
+export interface ChatWorkspaceProps {
+  conversationAvailable: boolean;
+  messages: Message[];
+  streamedText: string;
+  turn: AssistantTurn | null;
+  providers: ProviderProfile[];
+  providerHealth: ProviderHealth[];
+  selectedProfileId: string | null;
+  isBusy: boolean;
+  offline: boolean;
+  developerMode: boolean;
+  error: string | null;
+  onProfileChange(profileId: string): void;
+  onDeveloperModeChange(enabled: boolean): void;
+  onNewConversation(): Promise<void>;
+  onSwitchProject(): void;
+  onPermissionChange(profile: "observe" | "standard" | "autonomous"): void;
+  onSend(value: string, files: File[]): Promise<void>;
+  onCancel(): Promise<void>;
+  onRetry(): Promise<void>;
+}
+
+export function ChatWorkspace(props: ChatWorkspaceProps) {
+  const [notice, setNotice] = useState<string | null>(null);
+  const selectedProvider = props.providers.find(
+    (provider) => provider.id === props.selectedProfileId,
+  );
+  const selectedHealth = props.providerHealth.find(
+    (health) => health.profile_id === props.selectedProfileId,
+  );
+  const providerAvailable =
+    selectedProvider !== undefined &&
+    selectedProvider.enabled &&
+    (!selectedProvider.credential_required || selectedProvider.credential_configured) &&
+    selectedHealth?.status !== "unavailable";
+  const retryAvailable = ["failed", "cancelled"].includes(props.turn?.status ?? "");
+  const statusLabel = useMemo(() => {
+    if (!providerAvailable) return "Provider unavailable";
+    if (props.offline) return "Core offline";
+    if (props.isBusy) return "Fairy is working";
+    return "Ready";
+  }, [props.isBusy, props.offline, providerAvailable]);
+
+  const submit = async (value: string, files: File[]) => {
+    const command = parseSlashCommand(value);
+    if (command === null) {
+      setNotice(null);
+      await props.onSend(value || "Review the attached documents.", files);
+      return;
+    }
+    if (files.length > 0) {
+      setNotice("Slash commands cannot include attachments");
+      return;
+    }
+    if (command.name === "new" || command.name === "clear") {
+      await props.onNewConversation();
+      setNotice(command.name === "clear" ? "Started a new durable conversation" : null);
+      return;
+    }
+    if (command.name === "project") {
+      props.onSwitchProject();
+      return;
+    }
+    if (command.name === "stop") {
+      await props.onCancel();
+      return;
+    }
+    if (command.name === "permission") {
+      if (["observe", "standard", "autonomous"].includes(command.argument)) {
+        props.onPermissionChange(
+          command.argument as "observe" | "standard" | "autonomous",
+        );
+        setNotice(`Permission profile: ${command.argument}`);
+      } else {
+        setNotice("Permission must be observe, standard, or autonomous");
+      }
+      return;
+    }
+    if (command.name === "help") {
+      setNotice("/new | /project | /permission | /stop | /clear | /help");
+      return;
+    }
+    setNotice(`Unknown command: /${command.argument}`);
+  };
+
+  return (
+    <section className="chat-workspace" aria-label="Chat workspace">
+      <header className="chat-toolbar">
+        <div>
+          <span className="eyebrow">Conversation</span>
+          <h1>Chat</h1>
+        </div>
+        <div className="chat-toolbar-actions">
+          <span
+            className={`chat-status ${providerAvailable && !props.offline ? "online" : "offline"}`}
+          >
+            {statusLabel}
+          </span>
+          <ProviderSettings
+            providers={props.providers}
+            health={props.providerHealth}
+            selectedProfileId={props.selectedProfileId}
+            developerMode={props.developerMode}
+            onProfileChange={props.onProfileChange}
+            onDeveloperModeChange={props.onDeveloperModeChange}
+          />
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="New conversation"
+            title="New conversation"
+            disabled={props.offline || props.isBusy}
+            onClick={() => void props.onNewConversation()}
+          >
+            <MessageSquarePlus size={17} />
+          </button>
+        </div>
+      </header>
+      {props.error || notice ? (
+        <div className="chat-notice" role={props.error ? "alert" : "status"}>
+          {props.error ?? notice}
+        </div>
+      ) : null}
+      {props.conversationAvailable ? (
+        <MessageList
+          messages={props.messages}
+          streamedText={props.streamedText}
+          turn={props.turn}
+          developerMode={props.developerMode}
+        />
+      ) : (
+        <div className="message-list message-list-empty">
+          <MessageSquarePlus size={24} />
+          <strong>No conversation selected</strong>
+          <button
+            className="primary-command"
+            type="button"
+            disabled={props.offline}
+            onClick={() => void props.onNewConversation()}
+          >
+            <MessageSquarePlus size={15} /> New conversation
+          </button>
+        </div>
+      )}
+      {retryAvailable ? (
+        <div className="chat-retry-bar">
+          <span>{props.turn?.error_code ?? "Response stopped"}</span>
+          <button className="secondary-command" type="button" onClick={() => void props.onRetry()}>
+            <RotateCcw size={14} /> Retry response
+          </button>
+        </div>
+      ) : null}
+      <Composer
+        disabled={props.offline || !providerAvailable || !props.conversationAvailable}
+        isBusy={props.isBusy}
+        onSubmit={submit}
+        onStop={props.onCancel}
+      />
+    </section>
+  );
+}

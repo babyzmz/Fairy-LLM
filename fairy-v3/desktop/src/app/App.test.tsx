@@ -5,9 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   Approval,
+  AssistantTurn,
   Conversation,
   EventEnvelope,
+  Message,
   Project,
+  ProviderHealth,
+  ProviderProfile,
   Task,
   Version,
 } from "../core/client";
@@ -20,6 +24,10 @@ const ID = {
   task: "0198f4de-0114-7000-8000-000000000003",
   version: "0198f4de-0114-7000-8000-000000000004",
   event: "0198f4de-0114-7000-8000-000000000005",
+  scratchConversation: "0198f4de-0114-7000-8000-000000000010",
+  scratchTask: "0198f4de-0114-7000-8000-000000000011",
+  turn: "0198f4de-0114-7000-8000-000000000012",
+  message: "0198f4de-0114-7000-8000-000000000013",
 };
 const timestamp = "2026-07-11T00:00:00Z";
 
@@ -68,6 +76,65 @@ const version: Version = {
   project_root: "C:/Fairy/versions/atlas",
   visibility: "chat_draft",
   created_at: timestamp,
+};
+const scratchConversation: Conversation = {
+  id: ID.scratchConversation,
+  project_id: null,
+  workspace_type: "chat_scratch",
+  base_version_id: null,
+  active_draft_version_id: null,
+  active_task_id: null,
+  active_preview_id: null,
+  created_at: timestamp,
+  updated_at: timestamp,
+};
+const scratchMessage: Message = {
+  id: ID.message,
+  conversation_id: ID.scratchConversation,
+  task_id: ID.scratchTask,
+  turn_id: ID.turn,
+  sequence: 1,
+  role: "assistant",
+  visibility: "user",
+  content: "Scratch chat is durable",
+  created_at: timestamp,
+};
+const provider: ProviderProfile = {
+  id: "openrouter-free",
+  display_name: "OpenRouter Free",
+  kind: "openai_compatible",
+  base_url: "https://openrouter.ai/api/v1",
+  model_id: "openrouter/free",
+  capabilities: ["text", "tools"],
+  credential_required: true,
+  credential_configured: true,
+  enabled: true,
+  timeout_seconds: 60,
+  fallback_profile_id: null,
+};
+const providerHealth: ProviderHealth = {
+  profile_id: provider.id,
+  status: "available",
+  error_code: null,
+  diagnostics: [],
+};
+const completedTurn: AssistantTurn = {
+  id: ID.turn,
+  task_id: ID.scratchTask,
+  conversation_id: ID.scratchConversation,
+  profile_id: provider.id,
+  status: "completed",
+  idempotency_key: "desktop:test",
+  scope_digest: "scope",
+  memory_snapshot_id: "0198f4de-0114-7000-8000-000000000014",
+  memory_snapshot_hash: "memory",
+  cancellation_revision: 0,
+  usage: {},
+  created_at: timestamp,
+  updated_at: timestamp,
+  started_at: timestamp,
+  completed_at: timestamp,
+  error_code: null,
 };
 
 beforeEach(() => window.localStorage.clear());
@@ -148,6 +215,74 @@ describe("App", () => {
       decided_by: "desktop-user",
     });
   });
+
+  it("loads durable scratch chat and runs a task-bound assistant turn", async () => {
+    window.localStorage.setItem("fairy.workspace.mode", "chat");
+    const createTask = vi.fn(async () => ({ task: { id: ID.scratchTask } }) as never);
+    const createTurn = vi.fn(async () => ({ ...completedTurn, status: "created" }) as AssistantTurn);
+    const runTurn = vi.fn(async () => completedTurn);
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [project],
+      { scratch: true, createTask, createTurn, runTurn },
+    );
+    render(<App client={client} />);
+
+    expect(await screen.findByRole("heading", { name: "Chat" })).toBeVisible();
+    expect(await screen.findByText("Scratch chat is durable")).toBeVisible();
+    await userEvent.type(screen.getByLabelText("Message Fairy"), "Check Sydney weather");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await vi.waitFor(() => expect(runTurn).toHaveBeenCalledWith(ID.turn));
+    expect(createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversation_id: ID.scratchConversation,
+        operation_mode: "answer",
+        user_request: "Check Sydney weather",
+      }),
+    );
+    expect(createTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ task_id: ID.scratchTask, profile_id: provider.id }),
+    );
+  });
+
+  it("binds project composer requests to the selected project conversation", async () => {
+    const projectTurn = {
+      ...completedTurn,
+      task_id: ID.task,
+      conversation_id: ID.conversation,
+    };
+    const createTask = vi.fn(async () => ({ task: { id: ID.task } }) as never);
+    const createTurn = vi.fn(async () => ({ ...projectTurn, status: "created" }) as AssistantTurn);
+    const runTurn = vi.fn(async () => projectTurn);
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [project],
+      { createTask, createTurn, runTurn },
+    );
+    render(<App client={client} />);
+
+    const composer = await screen.findByLabelText("Message Fairy");
+    await userEvent.type(composer, "Implement the approved layout");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await vi.waitFor(() => expect(runTurn).toHaveBeenCalledWith(ID.turn));
+    expect(createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversation_id: ID.conversation,
+        operation_mode: "continue_current_chat_draft",
+        user_request: "Implement the approved layout",
+      }),
+    );
+  });
 });
 
 function createClient(
@@ -156,6 +291,10 @@ function createClient(
   options: {
     approvals?: Approval[];
     decide?: WorkspaceClient["approvals"]["decide"];
+    scratch?: boolean;
+    createTask?: WorkspaceClient["tasks"]["create"];
+    createTurn?: WorkspaceClient["assistant"]["turns"]["create"];
+    runTurn?: WorkspaceClient["assistant"]["turns"]["run"];
   } = {},
 ): WorkspaceClient {
   return {
@@ -167,15 +306,17 @@ function createClient(
     },
     conversations: {
       list: async () => ({
-        items: projects.length > 0 ? [conversation] : [],
+        items: [
+          ...(projects.length > 0 ? [conversation] : []),
+          ...(options.scratch ? [scratchConversation] : []),
+        ],
         next_cursor: null,
       }),
+      create: async () => scratchConversation,
     },
     tasks: {
       list: async () => ({ items: [task], next_cursor: null }),
-      create: async () => {
-        throw new Error("not used");
-      },
+      create: options.createTask ?? (async () => { throw new Error("not used"); }),
     },
     approvals: {
       list: async () => ({ items: options.approvals ?? [], next_cursor: null }),
@@ -220,6 +361,27 @@ function createClient(
         command_metadata: [],
         schema_version: 1,
       }),
+    },
+    providers: {
+      list: async () => ({ items: [provider] }),
+      health: async () => ({ items: [providerHealth] }),
+    },
+    messages: {
+      list: async () => ({
+        items: options.scratch ? [scratchMessage] : [],
+        next_cursor: null,
+      }),
+    },
+    documents: {
+      import: async () => ({} as never),
+    },
+    assistant: {
+      turns: {
+        create: options.createTurn ?? (async () => { throw new Error("not used"); }),
+        run: options.runTurn ?? (async () => { throw new Error("not used"); }),
+        cancel: async () => completedTurn,
+        retry: async () => completedTurn,
+      },
     },
     events: {
       subscribe: () => visibleEvents(),

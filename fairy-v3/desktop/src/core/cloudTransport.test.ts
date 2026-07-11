@@ -365,6 +365,36 @@ describe("CloudCoreTransport", () => {
     expect(requests[1]?.headers.get("Last-Event-ID")).toBe("4");
   });
 
+  it("reconnects a live SSE stream after a transient network failure", async () => {
+    const requests: Request[] = [];
+    let attempt = 0;
+    const transport = new CloudCoreTransport({
+      baseUrl: "https://cloud.fairy.test",
+      accessToken: () => "token",
+      deviceId: "device-1",
+      fetch: async (input, init) => {
+        requests.push(new Request(input, init));
+        attempt += 1;
+        if (attempt === 1) throw new TypeError("network disconnected");
+        return new Response(`id: 5\nevent: task.created\ndata: ${JSON.stringify(EVENT)}\n\n`, {
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      },
+    });
+    const controller = new AbortController();
+    const iterator = transport
+      .subscribeEvents(4, { signal: controller.signal, pollIntervalMs: 1 })
+      [Symbol.asyncIterator]();
+
+    const live = await iterator.next();
+    controller.abort();
+    await iterator.return?.();
+
+    expect(live.value).toEqual(EVENT);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.headers.get("Last-Event-ID")).toBe("4");
+  });
+
   it("preserves stable cloud error codes", async () => {
     const transport = new CloudCoreTransport({
       baseUrl: "https://cloud.fairy.test",

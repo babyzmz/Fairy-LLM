@@ -23,6 +23,10 @@ async function installCoreFixture(page: Page) {
         event: "0198f4de-0114-7000-8000-000000000005",
         runtime: "0198f4de-0114-7000-8000-000000000006",
         preview: "0198f4de-0114-7000-8000-000000000007",
+        scratchConversation: "0198f4de-0114-7000-8000-000000000010",
+        scratchTask: "0198f4de-0114-7000-8000-000000000011",
+        turn: "0198f4de-0114-7000-8000-000000000012",
+        message: "0198f4de-0114-7000-8000-000000000013",
       };
       const timestamp = "2026-07-11T00:00:00Z";
       const project = {
@@ -60,6 +64,61 @@ async function installCoreFixture(page: Page) {
         status: "ready",
         created_at: timestamp,
         updated_at: timestamp,
+      };
+      const scratchConversation = {
+        id: id.scratchConversation,
+        project_id: null,
+        workspace_type: "chat_scratch",
+        base_version_id: null,
+        active_draft_version_id: null,
+        active_task_id: null,
+        active_preview_id: null,
+        created_at: timestamp,
+        updated_at: timestamp,
+      };
+      const scratchTask = {
+        id: id.scratchTask,
+        project_id: null,
+        conversation_id: id.scratchConversation,
+        user_request: "Fixture chat request",
+        operation_mode: "answer",
+        base_version_id: null,
+        execution_target: "local",
+        target_version_id: null,
+        memory_snapshot_id: null,
+        memory_snapshot_hash: null,
+        status: "ready",
+        created_at: timestamp,
+        updated_at: timestamp,
+      };
+      const completedTurn = {
+        id: id.turn,
+        task_id: id.scratchTask,
+        conversation_id: id.scratchConversation,
+        profile_id: "openrouter-free",
+        status: "completed",
+        idempotency_key: "e2e-turn",
+        scope_digest: "e2e-scope",
+        memory_snapshot_id: "0198f4de-0114-7000-8000-000000000014",
+        memory_snapshot_hash: "e2e-memory",
+        cancellation_revision: 0,
+        usage: {},
+        created_at: timestamp,
+        updated_at: timestamp,
+        started_at: timestamp,
+        completed_at: timestamp,
+        error_code: null,
+      };
+      const scratchMessage = {
+        id: id.message,
+        conversation_id: id.scratchConversation,
+        task_id: id.scratchTask,
+        turn_id: id.turn,
+        sequence: 1,
+        role: "assistant",
+        visibility: "user",
+        content: "Scratch chat is durable",
+        created_at: timestamp,
       };
       const version = {
         id: id.version,
@@ -130,7 +189,10 @@ async function installCoreFixture(page: Page) {
       const results: Record<string, unknown> = {
         health: { status: "ok", service: "fairy-core", protocol: "core-service-v1" },
         "projects.list": { items: [project], next_cursor: null },
-        "conversations.list": { items: [conversation], next_cursor: null },
+        "conversations.list": {
+          items: [conversation, scratchConversation],
+          next_cursor: null,
+        },
         "tasks.list": { items: [task], next_cursor: null },
         "versions.list": { items: [version], next_cursor: null },
         "approvals.list": { items: [], next_cursor: null },
@@ -153,6 +215,41 @@ async function installCoreFixture(page: Page) {
           command_metadata: [],
           schema_version: 1,
         },
+        "providers.list": {
+          items: [
+            {
+              id: "openrouter-free",
+              display_name: "OpenRouter Free",
+              kind: "openai_compatible",
+              base_url: "https://openrouter.ai/api/v1",
+              model_id: "openrouter/free",
+              capabilities: ["text", "tools"],
+              credential_required: true,
+              credential_configured: true,
+              enabled: true,
+              timeout_seconds: 60,
+              fallback_profile_id: null,
+            },
+          ],
+        },
+        "providers.health": {
+          items: [
+            {
+              profile_id: "openrouter-free",
+              status: "available",
+              error_code: null,
+              diagnostics: [],
+            },
+          ],
+        },
+        "messages.list": { items: [scratchMessage], next_cursor: null },
+        "tasks.create": { task: scratchTask },
+        "documents.import": {},
+        "assistant.turns.create": { ...completedTurn, status: "created" },
+        "assistant.turns.run": completedTurn,
+        "assistant.turns.cancel": { ...completedTurn, status: "cancelled" },
+        "assistant.turns.retry": { ...completedTurn, status: "created" },
+        "conversations.create": scratchConversation,
       };
 
       const tauriWindow = window as unknown as {

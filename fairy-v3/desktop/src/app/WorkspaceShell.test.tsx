@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceShell } from "./WorkspaceShell";
@@ -28,34 +28,72 @@ describe("WorkspaceShell", () => {
     expect(screen.getByRole("heading", { name: "Core offline" })).toBeVisible();
     expect(screen.queryByText("Homepage revision")).not.toBeInTheDocument();
   });
+
+  it("routes the segmented mode controls through the workspace model", () => {
+    const model = workspaceModel();
+    render(<WorkspaceShell model={model} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Conversations" }));
+
+    expect(model.setMode).toHaveBeenNthCalledWith(1, "chat");
+    expect(model.setMode).toHaveBeenNthCalledWith(2, "chat");
+  });
 });
 
 function workspaceModel(): WorkspaceModel {
   return {
     state: "ready",
+    mode: "project",
     statusLabel: "Core ready",
     errorMessage: null,
     actionError: null,
     isActing: false,
+    permissionProfile: "standard",
+    developerMode: false,
     projects: [],
     conversations: [],
+    chatConversations: [],
     tasks: [],
     versions: [],
     approvals: [],
     events: [],
+    messages: [],
+    providers: [],
+    providerHealth: [],
+    selectedProfileId: null,
     selectedProject: null,
     selectedConversation: null,
+    selectedChatConversation: null,
     selectedTask: null,
     selectedVersion: null,
     preview: null,
     runtimeHealth: null,
     capabilities: null,
+    chatTurn: null,
+    chatStreamedText: "",
+    chatBusy: false,
+    chatError: null,
+    projectTurn: null,
+    projectBusy: false,
+    projectError: null,
+    setMode: vi.fn(),
+    setPermissionProfile: vi.fn(),
+    setDeveloperMode: vi.fn(),
+    selectProfile: vi.fn(),
     selectProject: vi.fn(),
     selectConversation: vi.fn(),
+    selectChatConversation: vi.fn(),
     selectTask: vi.fn(),
     createProject: vi.fn(async () => undefined),
     importProject: vi.fn(async () => undefined),
+    createChatConversation: vi.fn(async () => undefined),
     createTask: vi.fn(async () => undefined),
+    sendChatMessage: vi.fn(async () => undefined),
+    sendProjectMessage: vi.fn(async () => undefined),
+    cancelChatTurn: vi.fn(async () => undefined),
+    retryChatTurn: vi.fn(async () => undefined),
+    cancelProjectTurn: vi.fn(async () => undefined),
     decideApproval: vi.fn(async () => undefined),
     startPreview: vi.fn(async () => undefined),
     stopPreview: vi.fn(async () => undefined),
