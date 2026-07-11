@@ -440,13 +440,28 @@ or approval state.
 - Tool names are `system.open_url`, `system.reveal_path`, `system.copy_text`, `system.notify`, and `system.open_settings`.
 - Rust receives tagged enums only. The protocol has no `program`, `args`, `command`, `shell`, `script`, registry, keyboard, pointer, or arbitrary URI field.
 
-- [ ] Write failing Core tests for CommandRun creation, profile approval, HTTPS-only URL, managed-path identity, text limits, notification limits, and fixed Settings enum.
-- [ ] Write failing Rust protocol tests that reject unknown fields, non-HTTPS URLs, path escape, oversized text, unsupported Settings names, and every shell-shaped payload.
-- [ ] Implement typed actions with OS library calls and exact Core-resolved inputs; keep model-provided path/Scope fields discarded.
-- [ ] Add recovery/idempotency semantics so repeated action keys complete once or return the prior result.
-- [ ] Extend the structural boundary test to reject process-spawn APIs from `system_actions.rs`.
-- [ ] Run Core command/policy/security tests and full Rust workspace fmt/clippy/tests.
-- [ ] Commit with `feat(v3): add typed host actions`.
+- [x] Write failing Core tests for CommandRun creation, profile approval, HTTPS-only URL, managed-path identity, text limits, notification limits, and fixed Settings enum.
+- [x] Write failing Rust protocol tests that reject unknown fields, non-HTTPS URLs, path escape, oversized text, unsupported Settings names, and every shell-shaped payload.
+- [x] Implement typed actions with OS library calls and exact Core-resolved inputs; keep model-provided path/Scope fields discarded.
+- [x] Add recovery/idempotency semantics so repeated action keys complete once or return the prior result.
+- [x] Extend the structural boundary test to reject process-spawn APIs from `system_actions.rs`.
+- [x] Run Core command/policy/security tests and full Rust workspace fmt/clippy/tests.
+- [x] Commit with `feat(v3): add typed host actions`.
+
+Task 39 verification covers the shared local JSON-RPC, Cloud REST, generated
+TypeScript, and `CoreClient` contract. Standard profile calls persist a waiting
+CommandRun until explicit confirmation, autonomous calls remain policy-bound,
+observe and disabled capability toggles are rejected, and all host effects use
+the same Rust tagged-enum protocol. Immutable prepared/completed/failed records
+prevent duplicate effects across Worker restarts. The Worker accepts no program,
+argument vector, generic command, shell, script, registry, keyboard, pointer, or
+arbitrary Settings URI field.
+
+Verification passed with 428 Core tests, 101 capability-adapter tests, 55
+Cloud unit/contract tests (15 Docker integration tests deselected), 65 Vitest
+assertions, 14 Playwright workflows, the full Rust workspace test suite,
+warning-free Ruff/Clippy, deterministic generated contracts, and a production
+desktop build.
 
 ### Task 40: Cloud Completion, Acceptance, Performance, and Cleanup
 

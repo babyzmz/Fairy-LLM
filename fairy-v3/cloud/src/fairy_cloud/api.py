@@ -95,6 +95,7 @@ from fairy_core.contracts.models import (
 )
 from fairy_core.domain.errors import DomainError, IdempotencyConflictError, VersionConflictError
 from fairy_core.memory.models import MemoryNamespace
+from fairy_core.system_actions.models import SystemActionExecution, SystemActionRequest
 from fairy_core.workspace.worker_transport import WorkerRpcError
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -699,6 +700,14 @@ def create_cloud_app(
             "providers.health",
             request.model_dump(mode="json", exclude_none=True),
         )
+
+    @protected.post(
+        "/system/actions",
+        operation_id="system.actions.execute",
+        response_model=SystemActionExecution,
+    )
+    def execute_system_action(request: SystemActionRequest) -> dict[str, Any]:
+        return invoke("system.actions.execute", request.model_dump(mode="json"))
 
     @protected.post(
         "/voice/transcriptions",

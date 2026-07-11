@@ -218,6 +218,31 @@ impl WorkspaceManager {
         self.write_file_unlocked(project_id, version_id, relative_path, content)
     }
 
+    pub(crate) fn resolve_existing_path(
+        &self,
+        project_id: &str,
+        version_id: &str,
+        relative_path: &str,
+    ) -> Result<PathBuf, WorkerError> {
+        let _operation = self.lock()?;
+        validate_identifier(project_id)?;
+        validate_identifier(version_id)?;
+        let managed_root = self.managed_root.canonicalize()?;
+        let version_root = self.version_root(project_id, version_id).canonicalize()?;
+        if !version_root.starts_with(&managed_root) {
+            return Err(WorkerError::PathOutOfScope(relative_path.to_owned()));
+        }
+        let target = validate_scoped_target(&version_root, relative_path)?;
+        if !target.exists() {
+            return Err(WorkerError::PathOutOfScope(relative_path.to_owned()));
+        }
+        let canonical = target.canonicalize()?;
+        if !canonical.starts_with(&version_root) {
+            return Err(WorkerError::PathOutOfScope(relative_path.to_owned()));
+        }
+        Ok(canonical)
+    }
+
     fn write_file_unlocked(
         &self,
         project_id: &str,

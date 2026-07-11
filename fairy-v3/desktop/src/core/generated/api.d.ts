@@ -806,6 +806,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/system/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute System Action */
+        post: operations["system.actions.execute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks": {
         parameters: {
             query?: never;
@@ -1320,6 +1337,11 @@ export interface components {
          * @enum {string}
          */
         ClaimStatus: "candidate" | "active" | "conflicted" | "superseded" | "expired" | "rejected" | "forgotten";
+        /**
+         * CommandStatus
+         * @enum {string}
+         */
+        CommandStatus: "created" | "queued" | "waiting_approval" | "running" | "succeeded" | "failed" | "rejected" | "cancelled" | "interrupted";
         /** ConversationCreate */
         ConversationCreate: {
             /** Project Id */
@@ -1361,6 +1383,16 @@ export interface components {
             items: components["schemas"]["ConversationModel"][];
             /** Next Cursor */
             next_cursor: string | null;
+        };
+        /** CopyTextAction */
+        CopyTextAction: {
+            /** Text */
+            text: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "copy_text";
         };
         /** DocumentChunkModel */
         DocumentChunkModel: {
@@ -2197,10 +2229,48 @@ export interface components {
          */
         MessageRole: "user" | "assistant" | "tool" | "system_notice";
         /**
+         * NotificationLevel
+         * @enum {string}
+         */
+        NotificationLevel: "info" | "warning";
+        /** NotifyAction */
+        NotifyAction: {
+            /** Body */
+            body: string;
+            /** @default info */
+            level: components["schemas"]["NotificationLevel"];
+            /** Title */
+            title: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "notify";
+        };
+        /**
          * ObservationStatus
          * @enum {string}
          */
         ObservationStatus: "pending" | "accepted" | "rejected" | "promoted" | "forgotten";
+        /** OpenSettingsAction */
+        OpenSettingsAction: {
+            page: components["schemas"]["SystemSettings"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "open_settings";
+        };
+        /** OpenUrlAction */
+        OpenUrlAction: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "open_url";
+            /** Url */
+            url: string;
+        };
         /**
          * OperationMode
          * @enum {string}
@@ -2448,6 +2518,16 @@ export interface components {
          * @enum {string}
          */
         PublicMessageVisibilityModel: "user" | "developer";
+        /** RevealPathAction */
+        RevealPathAction: {
+            /** Relative Path */
+            relative_path: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "reveal_path";
+        };
         /** RuntimeExecutorHealthModel */
         RuntimeExecutorHealthModel: {
             /** Available */
@@ -2593,6 +2673,53 @@ export interface components {
              */
             project_id: string;
         };
+        /** SystemActionExecution */
+        SystemActionExecution: {
+            /** Completed */
+            completed: boolean;
+            /** Replayed */
+            replayed: boolean;
+            /** Requires Approval */
+            requires_approval: boolean;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            status: components["schemas"]["CommandStatus"];
+            /**
+             * Tool Name
+             * @enum {string}
+             */
+            tool_name: "system.open_url" | "system.reveal_path" | "system.copy_text" | "system.notify" | "system.open_settings";
+        };
+        /** SystemActionRequest */
+        SystemActionRequest: {
+            /** Action */
+            action: components["schemas"]["OpenUrlAction"] | components["schemas"]["RevealPathAction"] | components["schemas"]["CopyTextAction"] | components["schemas"]["NotifyAction"] | components["schemas"]["OpenSettingsAction"];
+            /** Capability Overrides */
+            capability_overrides?: {
+                [key: string]: boolean;
+            };
+            /** Idempotency Key */
+            idempotency_key: string;
+            profile: components["schemas"]["PermissionProfile"];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /**
+             * User Confirmed
+             * @default false
+             */
+            user_confirmed: boolean;
+        };
+        /**
+         * SystemSettings
+         * @enum {string}
+         */
+        SystemSettings: "display" | "microphone" | "notifications" | "sound";
         /** TaskContextModel */
         TaskContextModel: {
             scope: components["schemas"]["ScopeContractModel"];
@@ -4597,6 +4724,41 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "system.actions.execute": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SystemActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemActionExecution"];
                 };
             };
             /** @description Validation Error */

@@ -283,6 +283,7 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "providers.list",
         "runtimes.get",
         "runtimes.health",
+        "system.actions.execute",
         "tasks.create",
         "tasks.get",
         "tasks.list",

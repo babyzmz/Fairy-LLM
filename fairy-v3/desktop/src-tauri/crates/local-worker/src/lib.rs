@@ -1,6 +1,7 @@
 mod error;
 pub mod preview;
 mod protocol;
+pub mod system_actions;
 mod workspace;
 
 pub use error::WorkerError;

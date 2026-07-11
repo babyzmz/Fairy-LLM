@@ -275,6 +275,13 @@ describe("CloudCoreTransport", () => {
       start_offset: 0,
       end_offset: 6,
     });
+    await transport.call("system.actions.execute", {
+      task_id: "task-1",
+      action: { type: "reveal_path", relative_path: "README.md" },
+      idempotency_key: "system:reveal",
+      profile: "standard",
+      user_confirmed: true,
+    });
 
     expect(requests.map(({ method, url }) => [method, url])).toEqual([
       ["GET", "https://cloud.fairy.test/v1/projects/project%2Fa"],
@@ -336,6 +343,7 @@ describe("CloudCoreTransport", () => {
       ],
       ["POST", "https://cloud.fairy.test/v1/voice/transcriptions"],
       ["POST", "https://cloud.fairy.test/v1/voice/speech"],
+      ["POST", "https://cloud.fairy.test/v1/system/actions"],
     ]);
     expect(requests[0]?.headers.get("Authorization")).toBe("Bearer access-token");
     expect(requests[0]?.headers.get("X-Fairy-Device-ID")).toBe("device-1");
@@ -344,11 +352,19 @@ describe("CloudCoreTransport", () => {
     expect(requests[15]?.headers.get("Idempotency-Key")).toBe("turn:retry");
     expect(requests[16]?.headers.get("Idempotency-Key")).toBe("documents:import");
     expect(requests[20]?.headers.get("Idempotency-Key")).toBe("documents:delete");
+    expect(requests[23]?.headers.get("Idempotency-Key")).toBe("system:reveal");
     await expect(requests[22]?.json()).resolves.not.toHaveProperty("text");
     await expect(requests[3]?.json()).resolves.toEqual({
       profile: "standard",
       sandbox_healthy: true,
       overrides: { "network.http": false },
+    });
+    await expect(requests[23]?.json()).resolves.toEqual({
+      task_id: "task-1",
+      action: { type: "reveal_path", relative_path: "README.md" },
+      idempotency_key: "system:reveal",
+      profile: "standard",
+      user_confirmed: true,
     });
   });
 

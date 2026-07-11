@@ -110,6 +110,8 @@ def build_voice_registry(
 
 def build_web_capabilities(
     environment: Mapping[str, str] | None = None,
+    *,
+    delegate: ToolExecutor | None = None,
 ) -> WebCapabilities:
     configured = os.environ if environment is None else environment
     settings = ProviderSettings.from_environment(configured)
@@ -128,6 +130,7 @@ def build_web_capabilities(
     executor = WebToolExecutor(
         search_port=search,
         fetch_port=fetch,
+        delegate=delegate,
     )
     return WebCapabilities(
         search_port=search,
@@ -138,8 +141,10 @@ def build_web_capabilities(
 
 def build_tool_executor(
     environment: Mapping[str, str] | None = None,
+    *,
+    delegate: ToolExecutor | None = None,
 ) -> ToolExecutor:
-    return build_capability_bundle(environment).executor
+    return build_capability_bundle(environment, delegate=delegate).executor
 
 
 def build_information_capabilities(
@@ -183,8 +188,10 @@ def build_information_capabilities(
 
 def build_capability_bundle(
     environment: Mapping[str, str] | None = None,
+    *,
+    delegate: ToolExecutor | None = None,
 ) -> CapabilityBundle:
-    web = build_web_capabilities(environment)
+    web = build_web_capabilities(environment, delegate=delegate)
     try:
         information = build_information_capabilities(
             environment,

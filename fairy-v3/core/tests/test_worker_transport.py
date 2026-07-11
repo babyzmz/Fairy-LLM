@@ -4,7 +4,21 @@ import sys
 
 import pytest
 
-from fairy_core.workspace.worker_transport import SubprocessWorkerTransport, WorkerRpcError
+from fairy_core.workspace.worker_transport import (
+    RustSystemActionWorker,
+    SubprocessWorkerTransport,
+    WorkerRpcError,
+)
+
+
+class RecordingTransport:
+    def __init__(self, result: dict[str, object]) -> None:
+        self.result = result
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
+        self.calls.append((method, params))
+        return self.result
 
 
 def test_subprocess_transport_keeps_one_worker_and_matches_response_ids() -> None:
@@ -87,3 +101,36 @@ for line in sys.stdin:
 
     assert captured.value.error_code == "PATH_OUT_OF_SCOPE"
     transport.close()
+
+
+def test_system_action_transport_accepts_only_exact_tagged_payloads() -> None:
+    transport = RecordingTransport(
+        {"action_type": "open_settings", "completed": True, "replayed": False}
+    )
+    worker = RustSystemActionWorker(transport)
+
+    result = worker.execute(
+        action={"type": "open_settings", "page": "display"},
+        idempotency_key="system:one",
+    )
+
+    assert result.completed is True
+    assert transport.calls == [
+        (
+            "system.execute",
+            {
+                "idempotency_key": "system:one",
+                "action": {"type": "open_settings", "page": "display"},
+            },
+        )
+    ]
+    with pytest.raises(ValueError, match="unexpected fields"):
+        worker.execute(
+            action={
+                "type": "open_settings",
+                "page": "display",
+                "command": "whoami",
+            },
+            idempotency_key="system:two",
+        )
+    assert len(transport.calls) == 1

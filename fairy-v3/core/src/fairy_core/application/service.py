@@ -92,6 +92,13 @@ from fairy_core.providers import CancellationToken, ProviderCapability, Provider
 from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
 from fairy_core.research.ports import FetchPort
 from fairy_core.runtime.models import RuntimeExecutorError
+from fairy_core.system_actions.application import (
+    SystemActionApplication,
+    SystemActionToolExecutor,
+    SystemActionUnavailableError,
+    SystemActionWorker,
+)
+from fairy_core.system_actions.models import SystemActionRequest
 from fairy_core.voice.application import VoiceApplication
 from fairy_core.voice.registry import VoiceRegistry
 
@@ -126,6 +133,7 @@ class CoreService:
         document_parser: DocumentParser | None = None,
         document_blob_store: DocumentBlobStore | None = None,
         runtime_application: RuntimeApplication | None = None,
+        system_action_worker: SystemActionWorker | None = None,
         on_close: Callable[[], None] | None = None,
     ) -> None:
         self._application = application
@@ -141,6 +149,17 @@ class CoreService:
         self._turn_cancellations: dict[UUID, CancellationToken] = {}
         self._turn_cancellation_lock = RLock()
         self._runtime_application = runtime_application
+        self._system_action_application = (
+            SystemActionApplication(
+                unit_of_work_factory=unit_of_work_factory,
+                registry=registry,
+                command_policy=PolicyEngine(registry),
+                scope_resolver=application.scope_for_task,
+                worker=system_action_worker,
+            )
+            if system_action_worker is not None
+            else None
+        )
         self._memory_application = MemoryApplication(
             unit_of_work_factory=unit_of_work_factory,
             registry=registry,
@@ -176,6 +195,11 @@ class CoreService:
             )
             effective_tool_executor = DocumentToolExecutor(
                 application=self._document_application,
+                delegate=effective_tool_executor,
+            )
+        if system_action_worker is not None:
+            effective_tool_executor = SystemActionToolExecutor(
+                worker=system_action_worker,
                 delegate=effective_tool_executor,
             )
         self._tool_executor = effective_tool_executor
@@ -234,6 +258,7 @@ class CoreService:
             "providers.list": self._list_providers,
             "runtimes.get": self._get_runtime,
             "runtimes.health": self._runtime_health,
+            "system.actions.execute": self._execute_system_action,
             "tasks.create": self._create_task,
             "tasks.get": self._get_task,
             "tasks.list": self._list_tasks,
@@ -317,6 +342,11 @@ class CoreService:
 
     def _synthesize_voice(self, request: BaseModel) -> Any:
         return self._voice_application.synthesize(cast(VoiceSynthesizeInput, request))
+
+    def _execute_system_action(self, request: BaseModel) -> Any:
+        if self._system_action_application is None:
+            raise SystemActionUnavailableError("Typed system actions are unavailable")
+        return self._system_action_application.execute(cast(SystemActionRequest, request))
 
     def _create_project(self, request: BaseModel) -> Any:
         validated = cast(ProjectCreate, request)

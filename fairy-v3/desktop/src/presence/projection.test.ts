@@ -89,6 +89,29 @@ describe("PresenceProjection", () => {
     );
   });
 
+  it("shows the durable CommandRun approval phase without exposing its payload", () => {
+    const pending = PresenceProjection.reduce(
+      PresenceProjection.initial(),
+      event("command.waiting_approval"),
+    );
+
+    expect(pending.activity).toBe("needs_attention");
+    expect(pending.status_text).toBe("Waiting for your decision");
+    expect(pending.notice?.text).toBe("An approval needs your decision");
+    expect(JSON.stringify(pending)).not.toContain("secret-value");
+
+    const completed = PresenceProjection.reduce(
+      pending,
+      event("system.action.completed", {
+        id: "01989f92-4b80-7000-8000-000000000020",
+        cursor: 2,
+        created_at: new Date(BASE_TIME + 1_000).toISOString(),
+      }),
+    );
+    expect(completed.activity).toBe("ready");
+    expect(completed.status_text).toBe("System action complete");
+  });
+
   it("rejects arbitrary cross-window text even when the shape is otherwise valid", () => {
     const state = PresenceProjection.reduce(
       PresenceProjection.initial(),

@@ -128,3 +128,21 @@ def test_information_composition_reports_alpha_vantage_key_presence_only() -> No
     finally:
         configured.executor.close()
         unavailable.executor.close()
+
+
+def test_capability_composition_preserves_a_typed_host_delegate() -> None:
+    class ClosingDelegate:
+        def __init__(self) -> None:
+            self.close_count = 0
+
+        def execute(self, definition, scope, arguments):  # pragma: no cover - delegation shape
+            raise AssertionError((definition, scope, arguments))
+
+        def close(self) -> None:
+            self.close_count += 1
+
+    delegate = ClosingDelegate()
+    bundle = build_capability_bundle({}, delegate=delegate)
+    bundle.executor.close()
+
+    assert delegate.close_count == 1

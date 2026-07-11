@@ -31,6 +31,7 @@ import type {
   PreviewStartInput,
   PreviewStopInput,
   ProviderHealthInput,
+  SystemActionRequest,
   TaskCreateInput,
   TaskListInput,
   VersionAcceptInput,
@@ -123,6 +124,11 @@ export class CoreClient {
       this.transport.call("runtimes.get", { runtime_id: runtimeId }),
     health: (taskId: string) =>
       this.transport.call("runtimes.health", { task_id: taskId }),
+  };
+
+  readonly systemActions = {
+    execute: (input: SystemActionRequest) =>
+      this.transport.call("system.actions.execute", input),
   };
 
   readonly previews = {

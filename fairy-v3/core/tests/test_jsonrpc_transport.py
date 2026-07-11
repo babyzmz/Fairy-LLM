@@ -44,6 +44,25 @@ def test_jsonrpc_transport_invokes_one_core_service_without_own_handlers() -> No
     assert response["result"]["service"] == "fake"
 
 
+def test_jsonrpc_system_action_reports_unavailable_without_local_worker(
+    tmp_path: Path,
+) -> None:
+    response = _call(
+        _dispatcher(tmp_path),
+        8,
+        "system.actions.execute",
+        {
+            "task_id": "0198f4de-0114-7000-8000-000000000003",
+            "action": {"type": "open_settings", "page": "display"},
+            "idempotency_key": "system:unavailable",
+            "profile": "standard",
+            "user_confirmed": True,
+        },
+    )
+
+    assert response["error"]["data"]["error_code"] == "CAPABILITY_NOT_AVAILABLE"
+
+
 def test_jsonrpc_project_conversation_task_vertical_slice(tmp_path: Path) -> None:
     dispatcher = _dispatcher(tmp_path)
     project_response = _call(
@@ -387,6 +406,7 @@ def test_public_method_manifest_is_stable() -> None:
             "providers.list",
             "runtimes.get",
             "runtimes.health",
+            "system.actions.execute",
             "tasks.create",
             "tasks.get",
             "tasks.list",

@@ -6,10 +6,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::preview::{StaticPreviewManager, StaticPreviewRequest};
+use crate::system_actions::{SystemActionError, SystemActionManager, SystemActionRequest};
 use crate::workspace::{FileMutationParams, WorkspaceManager};
 use crate::WorkerError;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WorkerRequest {
     jsonrpc: String,
     id: Value,
@@ -80,7 +82,7 @@ struct PreviewIdParams {
 #[derive(Debug)]
 struct ProtocolError {
     rpc_code: i32,
-    error_code: &'static str,
+    error_code: String,
     message: String,
 }
 
@@ -101,7 +103,17 @@ impl From<WorkerError> for ProtocolError {
         };
         Self {
             rpc_code: -32000,
-            error_code,
+            error_code: error_code.to_owned(),
+            message: error.to_string(),
+        }
+    }
+}
+
+impl From<SystemActionError> for ProtocolError {
+    fn from(error: SystemActionError) -> Self {
+        Self {
+            rpc_code: -32000,
+            error_code: error.error_code().to_owned(),
             message: error.to_string(),
         }
     }
@@ -111,14 +123,29 @@ impl From<WorkerError> for ProtocolError {
 pub struct LocalWorker {
     workspace: WorkspaceManager,
     previews: StaticPreviewManager,
+    system_actions: SystemActionManager,
 }
 
 impl LocalWorker {
     pub fn new(workspace: WorkspaceManager) -> Self {
         let previews = StaticPreviewManager::new(workspace.managed_root());
+        let system_actions = SystemActionManager::new(workspace.clone());
         Self {
             workspace,
             previews,
+            system_actions,
+        }
+    }
+
+    pub fn with_system_actions(
+        workspace: WorkspaceManager,
+        system_actions: SystemActionManager,
+    ) -> Self {
+        let previews = StaticPreviewManager::new(workspace.managed_root());
+        Self {
+            workspace,
+            previews,
+            system_actions,
         }
     }
 }
@@ -136,7 +163,7 @@ pub fn dispatch_worker_request(worker: &LocalWorker, request: Value) -> Value {
                 Value::Null,
                 ProtocolError {
                     rpc_code: -32600,
-                    error_code: "INVALID_REQUEST",
+                    error_code: "INVALID_REQUEST".to_owned(),
                     message: "jsonrpc must be 2.0".to_owned(),
                 },
             )
@@ -146,7 +173,7 @@ pub fn dispatch_worker_request(worker: &LocalWorker, request: Value) -> Value {
                 Value::Null,
                 ProtocolError {
                     rpc_code: -32600,
-                    error_code: "INVALID_REQUEST",
+                    error_code: "INVALID_REQUEST".to_owned(),
                     message: error.to_string(),
                 },
             )
@@ -173,7 +200,7 @@ pub fn process_stream(
                 Value::Null,
                 ProtocolError {
                     rpc_code: -32700,
-                    error_code: "PARSE_ERROR",
+                    error_code: "PARSE_ERROR".to_owned(),
                     message: error.to_string(),
                 },
             ),
@@ -288,9 +315,14 @@ fn execute_method(
             worker.previews.stop(&params.preview_id)?;
             Ok(json!({"stopped": true}))
         }
+        "system.execute" => {
+            let params: SystemActionRequest = parse_params(params)?;
+            let result = worker.system_actions.execute(params)?;
+            Ok(serde_json::to_value(result).expect("serializable system action result"))
+        }
         _ => Err(ProtocolError {
             rpc_code: -32601,
-            error_code: "METHOD_NOT_FOUND",
+            error_code: "METHOD_NOT_FOUND".to_owned(),
             message: format!("unknown worker method: {method}"),
         }),
     }
@@ -299,7 +331,7 @@ fn execute_method(
 fn parse_params<T: DeserializeOwned>(params: Value) -> Result<T, ProtocolError> {
     serde_json::from_value(params).map_err(|error| ProtocolError {
         rpc_code: -32602,
-        error_code: "INVALID_PARAMS",
+        error_code: "INVALID_PARAMS".to_owned(),
         message: error.to_string(),
     })
 }

@@ -29,7 +29,10 @@ from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.voice import VoiceRegistry
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
 from fairy_core.workspace.rust_worker import RustWorkspaceProvisioner
-from fairy_core.workspace.worker_transport import SubprocessWorkerTransport
+from fairy_core.workspace.worker_transport import (
+    RustSystemActionWorker,
+    SubprocessWorkerTransport,
+)
 
 
 def build_local_service(
@@ -52,6 +55,7 @@ def build_local_service(
         configured = dict(os.environ if environment is None else environment)
         workspace_root = data_dir / "workspaces"
         worker_program = configured.get("FAIRY_LOCAL_WORKER_PROGRAM", "").strip()
+        system_action_worker = None
         if worker_program:
             raw_args = configured.get("FAIRY_LOCAL_WORKER_ARGS_JSON", "[]")
             parsed_args = json.loads(raw_args)
@@ -65,6 +69,7 @@ def build_local_service(
                 environment={"FAIRY_MANAGED_ROOT": str(workspace_root)},
             )
             resources.callback(transport.close)
+            system_action_worker = RustSystemActionWorker(transport)
             workspace_provisioner = RustWorkspaceProvisioner(transport, workspace_root)
             configured_runtime_executor: RuntimeExecutor = RustRuntimeExecutor(
                 transport,
@@ -118,6 +123,7 @@ def build_local_service(
             document_parser=document_parser,
             document_blob_store=document_blob_store,
             runtime_application=runtime_application,
+            system_action_worker=system_action_worker,
             on_close=resources.close,
         )
     except BaseException:

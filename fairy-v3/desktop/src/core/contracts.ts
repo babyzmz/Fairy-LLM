@@ -90,6 +90,10 @@ export type ProviderProfile = Schemas["ProviderProfileModel"];
 export type ProviderProfilePage = Schemas["ProviderProfilePageModel"];
 export type Runtime = Schemas["RuntimeModel"];
 export type RuntimeHealth = Schemas["RuntimeHealthModel"];
+export type SystemActionExecution = Schemas["SystemActionExecution"];
+export type SystemActionRequest = Schemas["SystemActionRequest"];
+export type SystemAction = SystemActionRequest["action"];
+export type SystemSettings = Schemas["SystemSettings"];
 export type Task = Schemas["TaskModel"];
 export type TaskContext = Schemas["TaskContextModel"];
 export type TaskCreateInput = Schemas["TaskCreate"];
@@ -156,6 +160,10 @@ export interface CoreMethodMap {
   "providers.health": { params: ProviderHealthInput; result: ProviderHealthPage };
   "runtimes.get": { params: { runtime_id: string }; result: Runtime };
   "runtimes.health": { params: { task_id: string }; result: RuntimeHealth };
+  "system.actions.execute": {
+    params: SystemActionRequest;
+    result: SystemActionExecution;
+  };
   "previews.start": { params: PreviewStartInput; result: PreviewContext };
   "previews.get": { params: { preview_id: string }; result: PreviewContext };
   "previews.resolve": { params: PreviewResolveInput; result: PreviewResolution };

@@ -45,6 +45,7 @@ const PRESENCE_STATUS_TEXTS = [
   "Preparing the preview",
   "Preview ready",
   "Waiting for your decision",
+  "System action complete",
   "Ready for review",
   "Needs attention",
 ] as const;
@@ -130,6 +131,15 @@ const RULES: Readonly<Record<string, ProjectionRule>> = Object.freeze({
     activity: "needs_attention",
     statusText: "Waiting for your decision",
     notice: { tone: "critical", text: "An approval needs your decision" },
+  },
+  "command.waiting_approval": {
+    activity: "needs_attention",
+    statusText: "Waiting for your decision",
+    notice: { tone: "critical", text: "An approval needs your decision" },
+  },
+  "system.action.completed": {
+    activity: "ready",
+    statusText: "System action complete",
   },
   "assistant.turn.completed": {
     activity: "ready",

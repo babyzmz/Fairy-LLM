@@ -7,7 +7,9 @@ import threading
 from collections import deque
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol, TextIO
+from typing import Any, ClassVar, Protocol, TextIO
+
+from fairy_core.system_actions.models import SystemActionWorkerResult
 
 _INHERITED_WORKER_ENVIRONMENT = (
     "LANG",
@@ -37,6 +39,52 @@ class WorkerRpcError(RuntimeError):
 
 class WorkerTransport(Protocol):
     def call(self, method: str, params: dict[str, object]) -> dict[str, object]: ...
+
+
+class RustSystemActionWorker:
+    _ACTION_FIELDS: ClassVar[dict[str, frozenset[str]]] = {
+        "open_url": frozenset({"type", "url"}),
+        "reveal_path": frozenset({"type", "project_id", "version_id", "relative_path"}),
+        "copy_text": frozenset({"type", "text"}),
+        "notify": frozenset({"type", "title", "body", "level"}),
+        "open_settings": frozenset({"type", "page"}),
+    }
+
+    def __init__(self, transport: WorkerTransport) -> None:
+        self._transport = transport
+
+    def execute(
+        self,
+        *,
+        action: dict[str, object],
+        idempotency_key: str,
+    ) -> SystemActionWorkerResult:
+        self._validate_action(action)
+        if not idempotency_key or len(idempotency_key) > 255:
+            raise ValueError("system action idempotency key is invalid")
+        result = self._transport.call(
+            "system.execute",
+            {
+                "idempotency_key": idempotency_key,
+                "action": dict(action),
+            },
+        )
+        if set(result) != {"action_type", "completed", "replayed"}:
+            raise WorkerRpcError("system action worker result has an invalid shape")
+        try:
+            return SystemActionWorkerResult.model_validate(result)
+        except ValueError as error:
+            raise WorkerRpcError("system action worker result is invalid") from error
+
+    @classmethod
+    def _validate_action(cls, action: dict[str, object]) -> None:
+        action_type = action.get("type")
+        if not isinstance(action_type, str) or action_type not in cls._ACTION_FIELDS:
+            raise ValueError("system action type is invalid")
+        if set(action) != cls._ACTION_FIELDS[action_type]:
+            raise ValueError("system action contains unexpected fields")
+        if not all(isinstance(value, str) for value in action.values()):
+            raise ValueError("system action fields must be text")
 
 
 class SubprocessWorkerTransport:

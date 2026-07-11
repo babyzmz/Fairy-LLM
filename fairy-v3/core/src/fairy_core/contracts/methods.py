@@ -100,6 +100,7 @@ from fairy_core.contracts.models import (
     VoiceTranscribeInput,
     VoiceTranscriptModel,
 )
+from fairy_core.system_actions.models import SystemActionExecution, SystemActionRequest
 
 
 class EmptyInput(ContractModel):
@@ -325,6 +326,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "providers.health",
             ProviderHealthInput,
             ProviderHealthPageModel,
+        ),
+        "system.actions.execute": CoreMethod(
+            "system.actions.execute",
+            SystemActionRequest,
+            SystemActionExecution,
         ),
         "providers.list": CoreMethod(
             "providers.list",

@@ -817,6 +817,21 @@
         "title": "ClaimStatus",
         "type": "string"
       },
+      "CommandStatus": {
+        "enum": [
+          "created",
+          "queued",
+          "waiting_approval",
+          "running",
+          "succeeded",
+          "failed",
+          "rejected",
+          "cancelled",
+          "interrupted"
+        ],
+        "title": "CommandStatus",
+        "type": "string"
+      },
       "ConversationCreate": {
         "additionalProperties": false,
         "properties": {
@@ -966,6 +981,28 @@
           "next_cursor"
         ],
         "title": "ConversationPageModel",
+        "type": "object"
+      },
+      "CopyTextAction": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "maxLength": 32768,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "copy_text",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "title": "CopyTextAction",
         "type": "object"
       },
       "DocumentChunkModel": {
@@ -3282,6 +3319,47 @@
         "title": "MessageRole",
         "type": "string"
       },
+      "NotificationLevel": {
+        "enum": [
+          "info",
+          "warning"
+        ],
+        "title": "NotificationLevel",
+        "type": "string"
+      },
+      "NotifyAction": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "level": {
+            "$ref": "#/components/schemas/NotificationLevel",
+            "default": "info"
+          },
+          "title": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "const": "notify",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "body"
+        ],
+        "title": "NotifyAction",
+        "type": "object"
+      },
       "ObservationStatus": {
         "enum": [
           "pending",
@@ -3292,6 +3370,47 @@
         ],
         "title": "ObservationStatus",
         "type": "string"
+      },
+      "OpenSettingsAction": {
+        "additionalProperties": false,
+        "properties": {
+          "page": {
+            "$ref": "#/components/schemas/SystemSettings"
+          },
+          "type": {
+            "const": "open_settings",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "page"
+        ],
+        "title": "OpenSettingsAction",
+        "type": "object"
+      },
+      "OpenUrlAction": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "const": "open_url",
+            "title": "Type",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "url"
+        ],
+        "title": "OpenUrlAction",
+        "type": "object"
       },
       "OperationMode": {
         "enum": [
@@ -3950,6 +4069,28 @@
         "title": "PublicMessageVisibilityModel",
         "type": "string"
       },
+      "RevealPathAction": {
+        "additionalProperties": false,
+        "properties": {
+          "relative_path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "type": {
+            "const": "reveal_path",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "relative_path"
+        ],
+        "title": "RevealPathAction",
+        "type": "object"
+      },
       "RuntimeExecutorHealthModel": {
         "additionalProperties": false,
         "properties": {
@@ -4410,6 +4551,132 @@
         ],
         "title": "SyncProjectRegistration",
         "type": "object"
+      },
+      "SystemActionExecution": {
+        "additionalProperties": false,
+        "properties": {
+          "completed": {
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "requires_approval": {
+            "title": "Requires Approval",
+            "type": "boolean"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CommandStatus"
+          },
+          "tool_name": {
+            "enum": [
+              "system.open_url",
+              "system.reveal_path",
+              "system.copy_text",
+              "system.notify",
+              "system.open_settings"
+            ],
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "tool_name",
+          "status",
+          "requires_approval",
+          "completed",
+          "replayed"
+        ],
+        "title": "SystemActionExecution",
+        "type": "object"
+      },
+      "SystemActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "discriminator": {
+              "mapping": {
+                "copy_text": "#/components/schemas/CopyTextAction",
+                "notify": "#/components/schemas/NotifyAction",
+                "open_settings": "#/components/schemas/OpenSettingsAction",
+                "open_url": "#/components/schemas/OpenUrlAction",
+                "reveal_path": "#/components/schemas/RevealPathAction"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/OpenUrlAction"
+              },
+              {
+                "$ref": "#/components/schemas/RevealPathAction"
+              },
+              {
+                "$ref": "#/components/schemas/CopyTextAction"
+              },
+              {
+                "$ref": "#/components/schemas/NotifyAction"
+              },
+              {
+                "$ref": "#/components/schemas/OpenSettingsAction"
+              }
+            ],
+            "title": "Action"
+          },
+          "capability_overrides": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "maxProperties": 5,
+            "title": "Capability Overrides",
+            "type": "object"
+          },
+          "idempotency_key": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/PermissionProfile"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "user_confirmed": {
+            "default": false,
+            "title": "User Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "action",
+          "idempotency_key",
+          "profile"
+        ],
+        "title": "SystemActionRequest",
+        "type": "object"
+      },
+      "SystemSettings": {
+        "enum": [
+          "display",
+          "microphone",
+          "notifications",
+          "sound"
+        ],
+        "title": "SystemSettings",
+        "type": "string"
       },
       "TaskContextModel": {
         "additionalProperties": false,
@@ -8632,6 +8899,67 @@
           }
         ],
         "summary": "Upload Version Snapshot"
+      }
+    },
+    "/v1/system/actions": {
+      "post": {
+        "operationId": "system.actions.execute",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemActionExecution"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Execute System Action"
       }
     },
     "/v1/tasks": {

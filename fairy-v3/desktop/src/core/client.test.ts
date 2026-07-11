@@ -87,6 +87,13 @@ describe("CoreClient", () => {
     await client.versions.discard(id);
     await client.runtimes.get(id);
     await client.runtimes.health(id);
+    await client.systemActions.execute({
+      task_id: id,
+      action: { type: "open_url", url: "https://example.com" },
+      idempotency_key: "system-action-1",
+      profile: "standard",
+      user_confirmed: true,
+    });
     await client.previews.start({ task_id: id, idempotency_key: "preview-start-1" });
     await client.previews.get(id);
     await client.previews.resolve({ conversation_id: id });
@@ -207,6 +214,7 @@ describe("CoreClient", () => {
       "versions.discard",
       "runtimes.get",
       "runtimes.health",
+      "system.actions.execute",
       "previews.start",
       "previews.get",
       "previews.resolve",
