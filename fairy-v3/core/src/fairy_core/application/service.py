@@ -288,6 +288,18 @@ class CoreService:
         if self._finalizer is not None:
             self._finalizer()
 
+    def recover_interrupted_work(self) -> dict[str, int]:
+        turns = self._assistant_ledger.recover_orphaned_turns()
+        previews = (
+            self._runtime_application.recover_interrupted()
+            if self._runtime_application is not None
+            else ()
+        )
+        return {
+            "assistant_turns": len(turns),
+            "previews": len(previews),
+        }
+
     def invoke(self, method: str, params: Mapping[str, Any]) -> Any:
         definition = CORE_METHODS.get(method)
         if definition is None:

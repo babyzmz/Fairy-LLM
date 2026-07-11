@@ -39,8 +39,12 @@ state in Cloud composition.
 Assistant Messages, Turns, Tool Invocations, and Message sequence rows use the
 same PostgreSQL tenant key and forced RLS. Alembic revision `20260711_0008`
 adds those tables. Local JSON-RPC and Cloud REST expose the same create/get/
-cancel/list contracts; Turn creation requires an idempotency key and cannot
-accept client Scope or Memory bindings.
+cancel/run/retry/list contracts; Turn creation requires an idempotency key and
+cannot accept client Scope or Memory bindings. Tenant service resolution
+periodically reconciles Assistant and Runtime work. A live linked Command lease
+is preserved; an expired lease is reclaimed with a higher fence and terminates
+the Turn explicitly as `WORKER_INTERRUPTED` without replaying model or tool
+effects.
 
 - API readiness: `http://127.0.0.1:8088/v1/ready`
 - S3 endpoint: `http://127.0.0.1:8333`
@@ -56,9 +60,11 @@ variable. Provider values are never returned by REST or persisted by Core.
 
 Every insert into the canonical `domain_events` ledger is copied into Outbox
 by a PostgreSQL trigger in the same transaction. The worker entry point is
-`fairy_cloud.workers.outbox`; it is the only module entry point. This worker
-publishes durable events only. The future non-root OCI project-execution Worker
-is a separate component and is not part of this persistence milestone.
+`fairy_cloud.workers.outbox`; it is the only module entry point. The worker
+validates the complete shared EventEnvelope plus exact tenant/event identity
+before delivery. Typed projection handlers receive event ID, attempt, and
+lease fence for idempotency. This non-root service has no project mount, host
+mount, or Docker socket and must not be treated as an OCI project executor.
 
 Apply the cloud schema only through Alembic:
 
@@ -74,15 +80,18 @@ docker compose --profile test run --build --rm integration
 
 This profile also runs canonical Core, Memory Snapshot/FTS, Runtime/Preview
 revision and partial-uniqueness checks, same-ID RLS, command/Outbox atomicity,
-crash recovery, migration, and generated-vector integration tests against
-PostgreSQL 18.4. A local static/unit pass is not a substitute for this gate;
-`scripts/test-all.ps1` prints an explicit skip when Docker CLI or the daemon is
-unavailable.
+Assistant crash recovery at each durable phase, capability Outbox delivery,
+SSE resume/de-duplication, offline upload, two-device candidate conflicts,
+document/evidence isolation, migration, and generated-`tsvector` integration tests
+against PostgreSQL 18.4. A local static/unit pass is not a substitute for this
+gate; `scripts/test-all.ps1` prints an explicit skip when Docker CLI or the
+daemon is unavailable.
 
 Cloud REST exposes the same Runtime/Preview/Artifact contracts as local
 JSON-RPC. The current cloud Runtime executor intentionally returns
-`SANDBOX_UNAVAILABLE`; the Outbox Worker is not an OCI project-execution
-worker and cannot be used as one.
+`SANDBOX_UNAVAILABLE` unless a dedicated non-root OCI executor is composed and
+healthy; the Outbox Worker cannot be used as one and there is no API-process or
+host-shell fallback.
 
 The integration DSN must point to a dedicated test database. No Redis or NATS
 service is required; PostgreSQL owns leases and the transactional outbox.

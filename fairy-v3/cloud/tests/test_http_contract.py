@@ -11,6 +11,7 @@ import pytest
 from fairy_capabilities.documents import CompositeDocumentParser, ManagedFileDocumentStore
 from fairy_core.application.service import CoreService
 from fairy_core.contracts.methods import CORE_METHODS
+from fairy_core.contracts.models import ErrorCode
 from fairy_core.runtime.models import (
     ExecutorRuntimeState,
     RuntimeExecutorHealth,
@@ -22,7 +23,7 @@ from fairy_core.runtime.models import (
 from fairy_core.transports.stdio import build_local_service
 from httpx import ASGITransport, AsyncClient
 
-from fairy_cloud.api import create_cloud_app
+from fairy_cloud.api import EVENT_POLL_SECONDS, PUBLIC_ERROR_STATUS, create_cloud_app
 from fairy_cloud.auth import RequestIdentity, StaticTokenAuthenticator
 from fairy_cloud.dispatchers import TenantRuntimeRegistry
 
@@ -30,6 +31,14 @@ AUTH_HEADERS = {
     "Authorization": "Bearer test-token",
     "X-Fairy-Device-ID": "device-1",
 }
+
+
+def test_cloud_public_error_and_event_latency_contract_is_complete() -> None:
+    assert {code.value for code in ErrorCode} <= PUBLIC_ERROR_STATUS.keys()
+    assert EVENT_POLL_SECONDS <= 0.1
+    assert PUBLIC_ERROR_STATUS[ErrorCode.PATH_OUT_OF_SCOPE.value] == 403
+    assert PUBLIC_ERROR_STATUS[ErrorCode.SECRET_EGRESS_BLOCKED.value] == 403
+    assert PUBLIC_ERROR_STATUS[ErrorCode.WORKER_INTERRUPTED.value] == 503
 
 
 class HttpRuntimeExecutor:

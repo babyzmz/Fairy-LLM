@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fairy_core.assistant.models import (
@@ -9,7 +10,9 @@ from fairy_core.assistant.models import (
     Message,
     MessageRole,
     MessageVisibility,
+    ToolInvocationStatus,
 )
+from fairy_core.commanding.models import CommandRun, CommandStatus, EventVisibility
 from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
 from fairy_core.domain.models import ScopeContract, Task
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -179,15 +182,74 @@ class AssistantLedgerApplication:
     def recover_orphaned_turns(
         self,
         *,
-        live_turn_ids: tuple[UUID, ...] = (),
+        live_turn_ids: tuple[UUID, ...] | None = None,
     ) -> tuple[AssistantTurn, ...]:
         with self._unit_of_work_factory() as unit_of_work:
-            interrupted = unit_of_work.assistant.interrupt_orphaned_turns(
-                live_turn_ids=live_turn_ids
+            effective_live_turn_ids = (
+                unit_of_work.assistant.live_turn_ids() if live_turn_ids is None else live_turn_ids
             )
+            interrupted = unit_of_work.assistant.interrupt_orphaned_turns(
+                live_turn_ids=effective_live_turn_ids
+            )
+            for turn in interrupted:
+                runs: dict[UUID, CommandRun] = {}
+                model_run = unit_of_work.commands.active_run_for_task(
+                    turn.task_id,
+                    "model.generate",
+                )
+                if model_run is not None and model_run.input_payload.get("turn_id") == str(turn.id):
+                    runs[model_run.id] = model_run
+                for invocation in unit_of_work.assistant.list_tool_invocations(turn.id):
+                    if invocation.status in {
+                        ToolInvocationStatus.CREATED,
+                        ToolInvocationStatus.QUEUED,
+                        ToolInvocationStatus.RUNNING,
+                    }:
+                        expected_status = invocation.status
+                        invocation.fail(error_code="WORKER_INTERRUPTED")
+                        unit_of_work.assistant.update_tool_invocation(
+                            invocation,
+                            expected_status=expected_status,
+                        )
+                    if invocation.command_run_id is not None:
+                        command = unit_of_work.commands.get_run(invocation.command_run_id)
+                        if command is not None:
+                            runs[command.id] = command
+                for run in runs.values():
+                    self._interrupt_command(unit_of_work.commands, turn.id, run)
             if interrupted:
                 unit_of_work.commit()
         return interrupted
+
+    @staticmethod
+    def _interrupt_command(commands, turn_id: UUID, run: CommandRun) -> None:
+        if run.status not in {CommandStatus.QUEUED, CommandStatus.RUNNING}:
+            return
+        lease_owner: str | None = None
+        lease_fence: int | None = None
+        if run.status is CommandStatus.RUNNING:
+            run = commands.claim(
+                run.id,
+                worker_id=f"assistant-recovery:{turn_id}",
+                lease_until=datetime.now(UTC) + timedelta(seconds=30),
+            )
+            lease_owner = run.lease_owner
+            lease_fence = run.lease_fence
+        commands.append_event(
+            run_id=run.id,
+            event_type="assistant.turn.failed",
+            visibility=EventVisibility.USER,
+            message="Assistant turn interrupted",
+            payload={"turn_id": str(turn_id), "error_code": "WORKER_INTERRUPTED"},
+            lease_owner=lease_owner,
+            lease_fence=lease_fence,
+        )
+        commands.transition(
+            run.id,
+            CommandStatus.INTERRUPTED,
+            lease_owner=lease_owner,
+            lease_fence=lease_fence,
+        )
 
     @staticmethod
     def _validate_replay(

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
 import pytest
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from fairy_core.assistant.ledger import AssistantLedgerApplication
@@ -16,6 +18,10 @@ from fairy_core.assistant.models import (
     MessageVisibility,
     ToolInvocation,
 )
+from fairy_core.commanding.bus import CommandBus, CommandRequest
+from fairy_core.commanding.policy import PermissionProfile, PolicyEngine
+from fairy_core.commanding.registry import build_default_registry
+from fairy_core.commanding.schema import command_runs
 from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.models import (
     Conversation,
@@ -263,6 +269,71 @@ def test_repository_interrupts_only_orphaned_active_turns(tmp_path: Path) -> Non
     assert restored_orphaned is not None
     assert restored_orphaned.status is AssistantTurnStatus.FAILED
     assert restored_orphaned.error_code == "WORKER_INTERRUPTED"
+
+
+def test_ledger_recovery_honors_live_command_lease_then_interrupts_expired_run(
+    tmp_path: Path,
+) -> None:
+    engine = create_sqlite_core_engine(tmp_path / "lease-recovery.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
+    task, scope = _seed_task(factory, label="lease")
+    turn = _turn(task, scope, key="turn:leased")
+    turn.start()
+    registry = build_default_registry()
+
+    with factory() as unit_of_work:
+        unit_of_work.assistant.save_turn(turn)
+        bus = CommandBus(
+            registry=registry,
+            policy=PolicyEngine(registry),
+            ledger=unit_of_work.commands,
+        )
+        dispatch = bus.submit(
+            CommandRequest(
+                tool_name="model.generate",
+                actor="assistant",
+                scope=scope,
+                payload={"turn_id": str(turn.id), "profile_id": "local-default"},
+                idempotency_key="assistant:leased:model:1",
+            ),
+            profile=PermissionProfile.STANDARD,
+            capability_overrides={},
+            sandbox_healthy=False,
+        )
+        assert dispatch.run is not None
+        running = bus.start(
+            dispatch.run.id,
+            worker_id="core-live",
+            lease_until=datetime.now(UTC) + timedelta(minutes=1),
+        )
+        unit_of_work.commit()
+
+    recovery = AssistantLedgerApplication(
+        unit_of_work_factory=factory,
+        scope_resolver=lambda _state, _task: scope,
+    )
+
+    assert recovery.recover_orphaned_turns() == ()
+
+    with engine.begin() as connection:
+        connection.execute(
+            update(command_runs)
+            .where(command_runs.c.id == str(running.id))
+            .values(lease_until=datetime.now(UTC) - timedelta(seconds=1))
+        )
+
+    assert tuple(item.id for item in recovery.recover_orphaned_turns()) == (turn.id,)
+    with factory() as unit_of_work:
+        recovered_turn = unit_of_work.assistant.get_turn(turn.id)
+        recovered_run = unit_of_work.commands.get_run(running.id)
+        events = unit_of_work.commands.events_for_run(running.id)
+
+    assert recovered_turn is not None
+    assert recovered_turn.status is AssistantTurnStatus.FAILED
+    assert recovered_turn.error_code == "WORKER_INTERRUPTED"
+    assert recovered_run is not None
+    assert recovered_run.status.value == "interrupted"
+    assert [event.event_type for event in events].count("assistant.turn.failed") == 1
 
 
 def test_message_sequence_reservation_does_not_depend_on_existing_messages(

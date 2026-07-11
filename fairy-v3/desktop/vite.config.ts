@@ -10,6 +10,7 @@ export default defineConfig({
   publicDir: fileURLToPath(new URL("../resources", import.meta.url)),
   plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
   build: {
+    manifest: true,
     target: "es2022",
     sourcemap: true,
   },

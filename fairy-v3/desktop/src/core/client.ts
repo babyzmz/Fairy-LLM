@@ -40,6 +40,8 @@ import type {
   VoiceTranscribeInput,
 } from "./contracts";
 
+export const DEFAULT_EVENT_POLL_MS = 25;
+
 export type * from "./contracts";
 
 export interface CoreCallOptions {
@@ -266,7 +268,7 @@ export class CoreClient {
         yield event;
       }
       if (batch.items.length === 0) {
-        await waitForPoll(options.pollIntervalMs ?? 250, options.signal);
+        await waitForPoll(options.pollIntervalMs ?? DEFAULT_EVENT_POLL_MS, options.signal);
       }
     }
   }

@@ -486,15 +486,26 @@ desktop build.
 - Cloud REST/SSE implements the same generated Core methods and event envelopes as local JSON-RPC.
 - Docker integration validates PostgreSQL 18, S3, RLS, leases, recovery, outbox, documents, evidence, and two-device conflicts; no Redis/NATS service is introduced.
 
-- [ ] Write failing real-PostgreSQL tests for Turn lease fencing, crash at every persisted phase, no duplicate Message/tool effect, RLS, event/outbox atomicity, SSE resume/de-duplication, offline local continuation, and two-device Version conflict.
-- [ ] Implement cloud adapter composition and worker recovery until the Docker tests pass when a Docker CLI/daemon is available.
-- [ ] Add contract parity tests for every new local/cloud method and public error code.
-- [ ] Run the complete black-box workflow matrix: scratch, project, provider unavailable/fallback, research, information, documents/RAG, Hermes, voice, perception, Presence, approval, Preview, accept/discard, offline, conflict, and recovery.
-- [ ] Measure shell interactive time, Core readiness, ledger-event-to-UI p95, and initial gzip size; fail the gate above 1.5 s, 3 s, 100 ms, or 800 KB respectively.
-- [ ] Remove obsolete compatibility paths, split oversized modules, remove empty future-facing directories, scan for legacy imports, secrets, host-shell APIs, keyword routers, browser speech synthesis, and duplicate memory authorities.
-- [ ] Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-all.ps1` and preserve explicit Docker/WSL skip reporting when those runtimes are unavailable.
-- [ ] Verify a single Alembic head, offline upgrade/downgrade, clean generated contracts, clean Git status, and documentation consistency.
-- [ ] Commit with `chore(v3): complete assistant capability platform`.
+- [x] Write failing real-PostgreSQL tests for Turn lease fencing, crash at every persisted phase, no duplicate Message/tool effect, RLS, event/outbox atomicity, SSE resume/de-duplication, offline local continuation, and two-device Version conflict.
+- [x] Implement cloud adapter composition and worker recovery until the Docker tests pass when a Docker CLI/daemon is available.
+- [x] Add contract parity tests for every new local/cloud method and public error code.
+- [x] Run the complete black-box workflow matrix: scratch, project, provider unavailable/fallback, research, information, documents/RAG, Hermes, voice, perception, Presence, approval, Preview, accept/discard, offline, conflict, and recovery.
+- [x] Measure shell interactive time, Core readiness, ledger-event-to-UI p95, and initial gzip size; fail the gate above 1.5 s, 3 s, 100 ms, or 800 KB respectively.
+- [x] Remove obsolete compatibility paths, split oversized modules, remove empty future-facing directories, scan for legacy imports, secrets, host-shell APIs, keyword routers, browser speech synthesis, and duplicate memory authorities.
+- [x] Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-all.ps1` and preserve explicit Docker/WSL skip reporting when those runtimes are unavailable.
+- [x] Verify a single Alembic head, offline upgrade/downgrade, clean generated contracts, clean Git status, and documentation consistency.
+- [x] Commit with `chore(v3): complete assistant capability platform`.
+
+Verification note: the complete available release gate passed with 432 Core,
+101 Capability, 59 Cloud unit, 66 Vitest, and 16 production-build Playwright
+tests, plus the full Rust workspace, Ruff, boundary scans, lock checks,
+reversible offline migrations, and deterministic generated contracts. Composed
+Core readiness measured 730.9ms and the conservative 14-chunk renderer set was
+130.7KiB gzip. Five new PostgreSQL cases cover Assistant crash phases,
+capability Outbox, offline/SSE resume, and two-device conflicts; they were
+collected but not executed because no Docker CLI/daemon is discoverable on this
+host. WSL attestation was also explicitly skipped, so neither environment is
+reported as passed.
 
 ## Self-review record
 

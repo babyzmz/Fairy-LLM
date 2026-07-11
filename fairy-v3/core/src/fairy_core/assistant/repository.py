@@ -24,6 +24,8 @@ from fairy_core.assistant.models import (
     ToolInvocation,
     ToolInvocationStatus,
 )
+from fairy_core.commanding.models import CommandStatus
+from fairy_core.commanding.schema import command_runs
 from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.persistence.session import SqlAlchemySession
 from fairy_core.persistence.tenant import normalize_tenant_id
@@ -291,6 +293,58 @@ class SqlAlchemyAssistantRepository:
                 .all()
             )
         return tuple(self._tool_from_row(row) for row in rows)
+
+    def live_turn_ids(self) -> tuple[UUID, ...]:
+        now = datetime.now(UTC)
+        with self._session.read() as connection:
+            runs = (
+                connection.execute(
+                    select(
+                        command_runs.c.id,
+                        command_runs.c.command_name,
+                        command_runs.c.input,
+                    ).where(
+                        command_runs.c.tenant_id == self._tenant_id,
+                        command_runs.c.status == CommandStatus.RUNNING.value,
+                        command_runs.c.lease_until.is_not(None),
+                        command_runs.c.lease_until > now,
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            invocation_rows = (
+                connection.execute(
+                    select(
+                        assistant_tool_invocations.c.command_run_id,
+                        assistant_tool_invocations.c.turn_id,
+                    ).where(
+                        assistant_tool_invocations.c.tenant_id == self._tenant_id,
+                        assistant_tool_invocations.c.command_run_id.is_not(None),
+                        assistant_tool_invocations.c.status == ToolInvocationStatus.RUNNING.value,
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        invocation_turns = {
+            str(row["command_run_id"]): UUID(str(row["turn_id"])) for row in invocation_rows
+        }
+        live: set[UUID] = set()
+        for row in runs:
+            linked_turn = invocation_turns.get(str(row["id"]))
+            if linked_turn is not None:
+                live.add(linked_turn)
+                continue
+            if row["command_name"] != "model.generate":
+                continue
+            payload = row["input"]
+            turn_id = payload.get("turn_id") if isinstance(payload, Mapping) else None
+            try:
+                live.add(UUID(str(turn_id)))
+            except (TypeError, ValueError):
+                continue
+        return tuple(sorted(live, key=str))
 
     def interrupt_orphaned_turns(
         self,

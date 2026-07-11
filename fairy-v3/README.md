@@ -35,51 +35,45 @@ fixtures and runtime dependencies inside their actual boundary.
 The implementation is intentionally independent. Legacy character assets,
 voice assets, doctrine, and black-box behavior may be used as references only.
 
-## Current milestone
+## Release scope
 
-The local vertical slice is executable: Tauri supervises Python Core, Core
-dispatches scoped workspace operations to the Rust worker, and the durable
-ledger covers import, worktree creation, Changeset approval, review,
-checkpoint, accept, discard, capabilities, and resumable events. The Docker
-cloud environment, OIDC, PostgreSQL sync/outbox, S3 snapshots, and generated
-cloud client exist. Local JSON-RPC and Cloud REST now invoke the same
-transport-independent CoreService; Cloud Core state uses the canonical
-tenant-scoped PostgreSQL Unit of Work, while `FAIRY_CORE_DATA_DIR` holds only
-managed workspace files. Canonical Hermes Observations, Claims, immutable
-revisions, and tombstones now share the same SQLite/PostgreSQL Unit of Work.
-Governed Memory commands are exposed through the shared Core contract, and
-PostgreSQL enqueues every canonical domain event through a transaction-local
-Outbox trigger. A disposable lexical projection provides SQLite FTS5 and
-PostgreSQL generated-`tsvector` search behind one port. Every Task is bound to
-one deterministic, bounded, immutable Memory Snapshot before execution; stale
-or failed projections produce an explicit relational-fallback Snapshot instead
-of silently reusing context. Search, Snapshot inspection, and projection
-health are available through the shared CoreClient contract. Property,
-crash-recovery, scope, injection, fence, contract, and production SSE gates
-cover the delivered persistence and lexical retrieval slices.
+The V3 application shell and durable platform are implemented. Tauri
+supervises the composed Python Core, owns isolated windows and credentials, and
+hosts the Rust local worker. Project import, worktrees, Changesets, approval,
+review, Preview, checkpoint, accept/discard, artifacts, capabilities, and
+resumable events all cross Core and the Command Bus. React renders the actual
+Task Timeline, Preview, scratch chat, provider settings, voice, perception,
+Presence, Pet, and Guide surfaces through generated contracts.
 
-Runtime, Preview, and Artifact state is also durable and transport-neutral.
-The Rust Local Worker serves a read-only static candidate Version over exact
-loopback without invoking project code, while Core owns start/stop intent,
-lease fencing, recovery, Preview resolution, and accept/discard invariants.
-React now renders the persisted Task Timeline and sandboxed Preview iframe
-through CoreClient; production sample state has been removed.
+Assistant execution is Task-bound and durable. Messages, Turns, Tool
+Invocations, model rounds, public deltas, cancellation, retry, and lease-aware
+recovery use the same SQLite/PostgreSQL Unit of Work. `fairy-capabilities`
+provides OpenAI-compatible local/cloud model adapters, explicit fallback,
+research, news/weather/time/maps/market information, managed documents and
+RAG, STT/TTS, and bounded perception adapters. Model tool calls remain
+untrusted candidates and every effect is a registered Command. The Windows
+host surface is limited to typed URL/path/clipboard/notification/settings
+actions with a durable idempotency journal; there is no host shell API.
 
-The next durable product slice is also in place: Task-bound Assistant Messages,
-Turns, Tool Invocations, and per-Conversation sequence allocation share the
-SQLite/PostgreSQL Unit of Work. Turn creation is idempotent, cancellation and
-recovery are fenced, public Message pages exclude internal records, and local
-JSON-RPC, Cloud REST, OpenAPI, and CoreClient expose one generated contract.
-The provider-neutral model contract, explicit fallback registry, redacted
-secret boundary, and OpenAI-compatible SSE adapter are now implemented in the
-separate `capabilities/` package. Local and Cloud composition expose only
-public provider presence and health metadata. The durable Assistant loop does
-not yet dispatch a model; that remains the next slice.
+Hermes relational Observations, Claims, revisions, Tombstones, lexical
+projection, retrieval health, and immutable Task Snapshots are canonical
+memory. Managed documents are a separate revisioned local/S3 corpus; RAG and
+future vector indexes cannot become memory authority or silently write Claims.
 
-Episodes, pgvector expansion, asynchronous projection rebuild workers,
-multi-device memory controls, dynamic WSL/OCI project execution, and remaining
-product capability workflows remain separate implementation slices. They stay
-unavailable rather than falling back to host execution.
+Cloud composition includes FastAPI REST/SSE parity, OIDC, PostgreSQL 18 forced
+RLS, global cursor synchronization, optimistic two-device version promotion,
+candidate conflict retention, S3-compatible immutable objects, transactional
+Outbox, fenced Worker leases, and lease-aware Assistant/Runtime recovery. The
+Outbox Worker validates complete EventEnvelopes and delivery identity. It is a
+non-root brokerless projection worker, not a project execution sandbox; no
+Redis, NATS, Docker socket, or host mount is introduced.
+
+Read-only static Preview works without WSL or Docker. Dynamic project commands
+remain capability-gated: `run.sandboxed` is exposed only when a dedicated
+FairySandbox or cloud OCI executor is configured and healthy, and never falls
+back to Windows process execution. Episodes, pgvector semantic expansion, and
+parallel projection generations remain optional later retrieval extensions,
+not missing memory authority.
 
 Run every locally available release gate with:
 
@@ -88,8 +82,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-all.ps1
 ```
 
 The command runs Core, Capabilities, and Cloud lint/tests, offline Alembic DDL,
-Rust checks, Desktop tests/build, contract regeneration, and repository
-boundary checks.
+Rust checks, production-build Playwright workflows, contract regeneration,
+repository safety/structure checks, and release performance gates. The budgets
+are 1.5 seconds to interactive shell, 3 seconds to composed Core readiness,
+100ms event-to-UI p95, and 800KiB conservative renderer gzip.
 When Docker is available it also runs the real PostgreSQL/S3 integration
 profile; otherwise it reports those integration tests as explicitly skipped.
 The default run also reports WSL verification as skipped. Require a real

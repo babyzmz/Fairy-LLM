@@ -38,6 +38,13 @@ Preview, Artifact, Checkpoint, and Memory state.
     Core records; renderer state and provider streams are never conversation
     authority.
 16. Public Message queries exclude internal provider and orchestration data.
+17. Managed document RAG is a separate corpus; only relational Hermes rows can
+    be Memory authority or enter an immutable Memory Snapshot.
+18. Typed Windows system actions require a running, fenced CommandRun and a
+    durable effect journal; no generic process, shell, script, registry, input,
+    or arbitrary URI API exists.
+19. Presence and Pet consume only fixed projections of public durable events.
+    They cannot call Core, a model, approval, or execution APIs.
 
 ## Components
 
@@ -61,11 +68,13 @@ migration, and cloud-provider dependencies stay in Cloud.
 The Rust local worker handles scoped Git workspace/file operations and an exact
 loopback, read-only static Preview server. Its crate separates protocol,
 workspace, Preview, and error modules. Static serving never starts project
-code. Generic model-directed shell execution will be available only through
-the dedicated WSL2 FairySandbox provider; it must remain disabled until that
-provider is healthy. Cloud currently ships a brokerless Outbox Worker at
-`fairy_cloud.workers.outbox`. The future non-root OCI execution Worker is a
-separate approved slice and must not be confused with the Outbox publisher.
+code. Generic model-directed shell execution is available only through an
+attested WSL2 FairySandbox or a separately deployed non-root cloud OCI
+executor; the capability remains disabled when either provider is unhealthy.
+Cloud ships the brokerless `fairy_cloud.workers.outbox` service for typed
+event/projection delivery. It validates the full shared EventEnvelope and
+tenant/event identity, and gives handlers the attempt and lease fence. It is
+not a project execution worker and has no Docker socket or host mounts.
 
 ### Runtime and Preview
 
@@ -99,6 +108,14 @@ state, command completion, domain events, and outbox records commit together
 after the idempotent operation returns. PostgreSQL owns the Event-to-Outbox
 handoff through an invoker-rights `AFTER INSERT` trigger, so Core and sync API
 events cannot bypass the same-transaction Outbox invariant.
+
+Cloud tenant services reconcile interrupted Assistant and Runtime work when a
+tenant is resolved. A linked live Command lease prevents takeover. After lease
+expiry, recovery reclaims with a higher fence, records `WORKER_INTERRUPTED`,
+and never automatically repeats an uncertain model or tool effect. Devices
+resume SSE by global cursor and de-duplicate by event identity. Concurrent
+Active Version promotion uses `project.revision`; the stale device's Version
+remains a candidate.
 
 S3-compatible storage holds immutable version snapshots, artifacts, logs, and
 preview captures. Devices synchronize domain events and version manifests by
@@ -145,9 +162,9 @@ replace an already-bound Snapshot.
 If the projection is missing, stale, failed, or throws during search, Core
 builds a bounded relational-fallback Snapshot with an explicit degraded state
 and stable error code. Canonical writes remain committed independently.
-Episodes, pgvector semantic expansion, parallel projection generations,
-asynchronous rebuild workers, and multi-device memory controls remain later
-slices; neither RAG nor an embedding index is a memory authority.
+Episodes, pgvector semantic expansion, and parallel projection generations
+remain later retrieval slices; neither document RAG nor an embedding index is
+a memory authority.
 
 ### Assistant ledger
 
@@ -155,13 +172,46 @@ Every assistant request binds an existing Task and its Core-generated Scope
 and immutable Hermes Snapshot before creating a Turn. Message sequence
 allocation is atomic per Conversation. Turn creation is idempotent across Core
 instances, cancellation is compare-and-swap fenced, and orphaned active Turns
-become explicit `WORKER_INTERRUPTED` failures during local Core recovery.
+become explicit `WORKER_INTERRUPTED` failures during local or Cloud recovery.
+Recovery derives live Turn identity from linked model/tool Command leases, so
+another API instance cannot interrupt healthy work.
 
 Messages are append-only. Tool Invocations have stable argument hashes and
 unique per-Turn sequence/hash constraints. Public `messages.list` exposes only
 user and developer visibility; internal prompts and orchestration records do
-not cross the public contract. Model/provider execution is composed in the
-following capability milestone and cannot be inferred from a stored Turn.
+not cross the public contract. Provider streaming, cancellation, explicit
+fallback, model tool candidates, and tool results execute through injected
+ports. A terminal Turn is never resumed; retry creates a new Turn.
+
+### Capability adapters and documents
+
+`fairy-capabilities` owns replaceable OpenAI-compatible model adapters, safe
+web research and information providers, document parsers, voice providers, and
+their environment-bound secret resolvers. Core owns provider-neutral contracts
+and the ToolDefinition registry. Provider profiles expose health and modality
+metadata only; credential values never cross into Core persistence or public
+contracts.
+
+Research fetches use URL, redirect, DNS, media-type, and byte limits and persist
+source-labelled Evidence. Information tools cover time, weather, news, maps,
+markets, foreign exchange, and crypto through typed schemas rather than a
+keyword router. Voice and screen attachments are bounded, hashed, explicitly
+selected, and released after a terminal Turn. Browser speech synthesis is not
+used.
+
+Managed documents have tenant-scoped metadata, immutable revisions, integrity
+hashes, visibility, chunks, and local/S3 blob adapters. Document search creates
+bounded RAG context for the current Task. It cannot create or update a Hermes
+Claim; an explicit governed Memory command is required.
+
+### Presence surfaces
+
+Workspace, Presence, and Guide are separate Tauri windows and separately
+loaded React surfaces. Presence receives a fixed cross-window projection of
+public durable events, stores only local visual preferences and monitor
+position, and uses canned status text. Window capabilities are minimal;
+Presence and Guide do not instantiate CoreClient or receive Scope, model, or
+project state.
 
 ## Permission model
 
@@ -183,4 +233,7 @@ Project mode uses a Task Timeline and Preview split view. A persistent context
 bar displays Project, Conversation, Version, execution target, permission
 profile, and synchronization status. Developer details are lazy-loaded in a
 drawer. Functional scan lines, telemetry rails, and HUD motion communicate
-real state and honor reduced-motion settings.
+real state and honor reduced-motion settings. Release gates use a production
+build and enforce a 1.5-second shell interactive budget, 3-second composed Core
+readiness, 100ms ledger-event-to-UI p95, and 800KiB conservative renderer gzip
+ceiling.

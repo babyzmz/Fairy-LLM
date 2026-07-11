@@ -31,11 +31,14 @@ async function installCoreFixture(page: Page) {
       capturePngHash,
     }) => {
       const fixtureWindow = window as unknown as {
+        __FAIRY_BOOT_STARTED_AT__: number;
         __FAIRY_FIXTURE_CALLS__: Array<{
           method: string;
           params: Record<string, unknown>;
         }>;
+        __FAIRY_PUSH_EVENT__: (message: string) => number;
       };
+      fixtureWindow.__FAIRY_BOOT_STARTED_AT__ = performance.now();
       fixtureWindow.__FAIRY_FIXTURE_CALLS__ = [];
       Object.defineProperty(navigator, "mediaDevices", {
         configurable: true,
@@ -258,6 +261,21 @@ async function installCoreFixture(page: Page) {
         schema_version: 1,
         created_at: timestamp,
       };
+      const events = [event];
+      fixtureWindow.__FAIRY_PUSH_EVENT__ = (message) => {
+        const startedAt = performance.now();
+        const cursor = (events.at(-1)?.cursor ?? 0) + 1;
+        events.push({
+          ...event,
+          id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
+          cursor,
+          task_sequence: cursor,
+          event_type: "command.output",
+          message,
+          payload: { release_sequence: cursor },
+        });
+        return startedAt;
+      };
 
       const results: Record<string, unknown> = {
         health: { status: "ok", service: "fairy-core", protocol: "core-service-v1" },
@@ -412,10 +430,14 @@ async function installCoreFixture(page: Page) {
                   content_hash: voiceWavHash,
                 }
               : request.method === "events.subscribe"
-              ? {
-                  items: request.params.cursor === 0 ? [event] : [],
-                  next_cursor: 1,
-                }
+              ? (() => {
+                  const cursor = Number(request.params.cursor ?? 0);
+                  const items = events.filter((item) => item.cursor > cursor);
+                  return {
+                    items,
+                    next_cursor: items.at(-1)?.cursor ?? cursor,
+                  };
+                })()
               : results[request.method];
           if (result === undefined) {
             throw new Error(`Unexpected Core method: ${request.method}`);

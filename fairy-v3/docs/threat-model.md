@@ -32,9 +32,10 @@ and independently verified worker attestations/results.
 6. Keep the WSL2 FairySandbox isolated from Windows interop and host-drive
    automounts. Network access is off unless a typed network capability opens an
    allowlisted destination class.
-7. Run the Outbox Worker and future OCI execution Workers as distinct non-root
+7. Run the Outbox Worker and any OCI execution Worker as distinct non-root
    services with read-only base filesystems, resource limits, scoped mounts,
-   and controlled egress.
+   and controlled egress. The Outbox Worker has no project mount or Docker
+   socket and cannot be treated as an execution sandbox.
 8. Store refresh credentials in the Tauri secure store; keep access tokens in
    memory. Use OIDC Authorization Code with PKCE and device registration.
 9. Filter EventEnvelope by ownership and visibility. Internal events and model
@@ -82,12 +83,41 @@ and independently verified worker attestations/results.
     unique index, while Runtime and Preview revisions use compare-and-swap.
     Runtime, Preview, Artifact, Event, and Outbox rows remain tenant-scoped and
     are covered by forced-RLS same-ID tests.
+22. Keep provider credential values in the local credential adapter or Cloud
+    deployment secret store. Core receives provider profiles and credential
+    references only. Redact string/repr values and prohibit secrets in events,
+    prompts, artifacts, HTTP errors, and logs.
+23. Treat web URLs, redirects, DNS answers, media types, and bodies as
+    untrusted. Require HTTPS where applicable, reject loopback/private/link-local
+    destinations and credential-bearing URLs, revalidate every redirect and DNS
+    result, cap bytes/time, and persist source-labelled Evidence.
+24. Keep document blobs separate from Hermes Memory. Verify hash, size,
+    revision, tenant, Project/Conversation visibility, and deletion state before
+    parsing or retrieval. A RAG hit cannot write a Claim.
+25. Treat model tool calls as candidates, never authority. Validate against the
+    generated ToolDefinition schema, drop model-supplied Scope fields, and
+    require the linked fenced CommandRun before adapter execution.
+26. Allow Windows host actions only through the tagged action union and the
+    durable prepared/completed/failed journal. Restrict URLs to HTTPS, paths to
+    Core-resolved managed paths, settings to a fixed enum, and text sizes to
+    bounded public values. Never expose a process or input-simulation API.
+27. Make screen capture an explicit user action. Bind image bytes, dimensions,
+    media type, and hash to one Turn; label OCR/vision text as untrusted and
+    remove ephemeral bytes after terminal completion, cancellation, or failure.
+28. Keep Presence and Guide outside CoreClient. Send only fixed projections of
+    public events over the cross-window channel; reject arbitrary text, Scope,
+    project data, approvals, and execution requests.
+29. Validate Outbox delivery against the shared EventEnvelope plus exact tenant
+    and event identity. Give projection handlers event ID, attempt, and lease
+    fence; a stale worker cannot acknowledge a newer claim.
 
 ## Environment verification
 
 Static Preview is not a general execution sandbox. Dynamic project execution
-through WSL2 or cloud OCI remains unavailable until its dedicated executor is
-implemented and healthy; it never falls back to Windows process execution.
+is exposed only when a dedicated WSL2 or cloud OCI executor is configured and
+healthy; otherwise the capability is unavailable and never falls back to
+Windows process execution. The bundled Compose Outbox Worker is not that
+executor.
 
 The default verification run reports WSL as skipped. `-RequireWslSandbox`
 requires a real `FairySandbox` WSL2 attestation and the real Rust static
@@ -97,8 +127,11 @@ SQLite tests are not reported as PostgreSQL execution.
 
 ## Security error contract
 
-Security failures use stable codes: PATH_OUT_OF_SCOPE, SCOPE_MISMATCH,
-APPROVAL_REQUIRED, SANDBOX_UNAVAILABLE, VERSION_CONFLICT,
-SECRET_EGRESS_BLOCKED, CAPABILITY_NOT_AVAILABLE, WORKER_INTERRUPTED,
-MEMORY_SCOPE_VIOLATION, MEMORY_INJECTION_BLOCKED, MEMORY_SECRET_BLOCKED, and
-MEMORY_FORGOTTEN.
+Security failures use stable codes: PATH_OUT_OF_SCOPE, PATH_IDENTITY_CHANGED,
+SCOPE_MISMATCH, APPROVAL_REQUIRED, SANDBOX_UNAVAILABLE, VERSION_CONFLICT,
+IDEMPOTENCY_CONFLICT, SECRET_EGRESS_BLOCKED, CAPABILITY_NOT_AVAILABLE,
+WORKER_INTERRUPTED, MEMORY_SCOPE_VIOLATION, MEMORY_CONFLICT,
+MEMORY_INJECTION_BLOCKED, MEMORY_SECRET_BLOCKED, MEMORY_PROJECTION_STALE,
+MEMORY_SNAPSHOT_TOO_LARGE, MEMORY_FORGOTTEN, DOCUMENT_PROJECTION_STALE, and
+DOCUMENT_INTEGRITY_FAILED. Cloud maps every public code to an explicit HTTP
+status rather than relying on a generic fallback.

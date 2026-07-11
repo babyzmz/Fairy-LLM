@@ -7,15 +7,16 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
+from fairy_core.contracts.models import EventEnvelopeModel
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from fairy_cloud.settings import CloudSettings
 from fairy_cloud.storage.postgres import OutboxItem, PostgresSyncStore
 
 logger = logging.getLogger(__name__)
-OutboxHandler = Callable[[dict[str, Any]], Awaitable[None]]
+OutboxHandler = Callable[[OutboxItem], Awaitable[None]]
 
 
 class OutboxStore(Protocol):
@@ -40,6 +41,66 @@ class WorkerCycle:
     claimed: int
     published: int
     failed: int
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveredDomainEvent:
+    tenant_id: str
+    outbox_id: int
+    event_id: str
+    attempt: int
+    lease_fence: int
+    envelope: EventEnvelopeModel
+
+
+DomainEventHandler = Callable[[DeliveredDomainEvent], Awaitable[None]]
+
+
+class DomainEventRouter:
+    def __init__(self, handlers: Mapping[str, DomainEventHandler] | None = None) -> None:
+        self._handlers = dict(handlers or {})
+
+    async def __call__(self, item: OutboxItem) -> None:
+        if item.topic != "domain.events":
+            raise ValueError("domain event router received the wrong topic")
+        payload = item.payload
+        if payload.get("tenant_id") != item.tenant_id:
+            raise ValueError("domain event tenant does not match the outbox item")
+        if payload.get("event_id") != item.event_id:
+            raise ValueError("domain event identity does not match the outbox item")
+        envelope = EventEnvelopeModel.model_validate(
+            {
+                "id": payload.get("event_id"),
+                "cursor": payload.get("cursor"),
+                "run_id": payload.get("run_id"),
+                "project_id": payload.get("project_id"),
+                "conversation_id": payload.get("conversation_id"),
+                "task_id": payload.get("task_id"),
+                "version_id": payload.get("version_id"),
+                "task_sequence": payload.get("task_sequence"),
+                "schema_version": payload.get("schema_version"),
+                "event_type": payload.get("event_type"),
+                "visibility": payload.get("visibility"),
+                "message": payload.get("message"),
+                "payload": payload.get("payload"),
+                "created_at": payload.get("created_at"),
+            }
+        )
+        if envelope.schema_version != 1:
+            raise ValueError("unsupported domain event schema version")
+        handler = self._handlers.get(envelope.event_type)
+        if handler is None:
+            return
+        await handler(
+            DeliveredDomainEvent(
+                tenant_id=item.tenant_id,
+                outbox_id=item.id,
+                event_id=item.event_id,
+                attempt=item.attempts,
+                lease_fence=item.lease_fence,
+                envelope=envelope,
+            )
+        )
 
 
 class OutboxWorker:
@@ -73,7 +134,7 @@ class OutboxWorker:
                 logger.error("No outbox handler registered for topic %s", item.topic)
                 continue
             try:
-                await handler(item.payload)
+                await handler(item)
             except Exception:
                 failed += 1
                 logger.exception("Outbox item %s failed", item.id)
@@ -99,11 +160,6 @@ class OutboxWorker:
                 await asyncio.wait_for(stop.wait(), timeout=poll_seconds)
 
 
-async def _validate_durable_event(payload: dict[str, Any]) -> None:
-    if not isinstance(payload.get("event_id"), str) or not isinstance(payload.get("cursor"), int):
-        raise ValueError("domain event outbox payload is malformed")
-
-
 async def _run() -> None:
     settings = CloudSettings()
     engine = create_async_engine(settings.postgres_dsn, pool_pre_ping=True)
@@ -111,7 +167,7 @@ async def _run() -> None:
     worker = OutboxWorker(
         store=store,
         owner_id=settings.worker_owner_id,
-        handlers={"domain.events": _validate_durable_event},
+        handlers={"domain.events": DomainEventRouter()},
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -137,6 +193,9 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "DeliveredDomainEvent",
+    "DomainEventHandler",
+    "DomainEventRouter",
     "OutboxHandler",
     "OutboxStore",
     "OutboxWorker",

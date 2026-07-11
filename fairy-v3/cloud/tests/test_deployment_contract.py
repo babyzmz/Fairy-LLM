@@ -163,6 +163,8 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
     assert services["oidc"]["image"] == "ghcr.io/navikt/mock-oauth2-server:4.0.0"
     assert "FAIRY_PROVIDER_SECRET_BRAVE" in services["api"]["environment"]
     assert "FAIRY_PROVIDER_SECRET_ALPHA_VANTAGE" in services["api"]["environment"]
+    assert services["api"]["environment"]["FAIRY_EVENT_POLL_SECONDS"] == "0.025"
+    assert services["api"]["environment"]["FAIRY_RECOVERY_INTERVAL_SECONDS"] == "5"
     assert services["api"]["environment"]["FAIRY_PROVIDER_BRAVE_CREDENTIAL_REF"].endswith(
         ":-brave}"
     )
@@ -271,6 +273,8 @@ def test_full_verification_script_covers_every_release_gate() -> None:
         "npm test -- --run",
         "npm run e2e",
         "npm run build",
+        "release_performance.py",
+        "Core ready <= 3s and initial renderer gzip <= 800 KiB",
         "generate-contracts.ps1",
         "git diff --exit-code",
         "docker version",

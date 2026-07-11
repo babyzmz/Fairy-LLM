@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CoreClient,
+  DEFAULT_EVENT_POLL_MS,
   type CoreMethodMap,
   type CoreMethodName,
   type CoreTransport,
@@ -46,6 +47,10 @@ class RecordingTransport implements CoreTransport {
 }
 
 describe("CoreClient", () => {
+  it("keeps local ledger polling inside the event latency budget", () => {
+    expect(DEFAULT_EVENT_POLL_MS).toBeLessThanOrEqual(50);
+  });
+
   it("exposes one typed method surface for local and cloud transports", async () => {
     const transport = new RecordingTransport();
     const client = new CoreClient(transport);

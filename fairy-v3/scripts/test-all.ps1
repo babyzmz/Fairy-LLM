@@ -48,6 +48,26 @@ function Test-DockerAvailable {
     return $LASTEXITCODE -eq 0
 }
 
+Invoke-Step "Scripts: ruff format --check" $Root $Uv @(
+    "run",
+    "--project",
+    "core",
+    "ruff",
+    "format",
+    "--check",
+    "scripts/check_boundaries.py",
+    "scripts/release_performance.py"
+)
+Invoke-Step "Scripts: ruff check" $Root $Uv @(
+    "run",
+    "--project",
+    "core",
+    "ruff",
+    "check",
+    "scripts/check_boundaries.py",
+    "scripts/release_performance.py"
+)
+
 Invoke-Step "Boundaries: check_boundaries.py" $Root $Uv @(
     "run", "--project", "core", "python", "scripts/check_boundaries.py", "."
 )
@@ -127,6 +147,15 @@ else {
 Invoke-Step "Desktop: npm test -- --run" $DesktopRoot "npm" @("test", "--", "--run")
 Invoke-Step "Desktop: npm run e2e" $DesktopRoot "npm" @("run", "e2e")
 Invoke-Step "Desktop: npm run build" $DesktopRoot "npm" @("run", "build")
+Invoke-Step "Performance: Core ready <= 3s and initial renderer gzip <= 800 KiB" $Root $Uv @(
+    "run",
+    "--project",
+    "capabilities",
+    "python",
+    "scripts/release_performance.py",
+    "--desktop-dist",
+    "desktop/dist"
+)
 Invoke-Step "Contracts: generate-contracts.ps1" $Root "powershell" @(
     "-NoProfile",
     "-ExecutionPolicy",
@@ -158,7 +187,7 @@ if ($DockerAvailable) {
         "test"
     )
     try {
-        Invoke-Step "Docker: docker compose integration (PostgreSQL 18.4, S3, RLS, memory retrieval, runtime Preview)" $Root "docker" (
+        Invoke-Step "Docker: docker compose integration (PostgreSQL 18.4/S3/RLS/recovery/outbox/two-device)" $Root "docker" (
             $ComposeArguments + @("run", "--build", "--rm", "integration")
         )
     }
@@ -171,10 +200,10 @@ if ($DockerAvailable) {
     }
 }
 elseif ($SkipDocker) {
-    Write-Host "`nDocker explicitly disabled with -SkipDocker: PostgreSQL/S3 integration tests skipped; memory retrieval and runtime Preview integration was not executed."
+    Write-Host "`nDocker explicitly disabled with -SkipDocker: PostgreSQL/S3 integration tests skipped; recovery, capability Outbox, two-device sync, memory retrieval, documents, evidence, and runtime Preview integration was not executed."
 }
 else {
-    Write-Host "`nDocker CLI or daemon unavailable: real PostgreSQL/S3 integration tests skipped; memory retrieval and runtime Preview integration was not executed."
+    Write-Host "`nDocker CLI or daemon unavailable: real PostgreSQL/S3 integration tests skipped; recovery, capability Outbox, two-device sync, memory retrieval, documents, evidence, and runtime Preview integration was not executed."
 }
 
 Write-Host "`nAll available Fairy V3 verification gates passed."

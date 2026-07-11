@@ -1,0 +1,32 @@
+# Python
+**/__pycache__/
+**/.hypothesis/
+**/.mypy_cache/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.venv/
+*.db
+*.db-shm
+*.db-wal
+
+# JavaScript and browser tests
+**/node_modules/
+desktop/dist/
+desktop/playwright-report/
+desktop/test-results/
+
+# Rust and Tauri
+**/target/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -83,6 +83,60 @@ def test_boundary_gate_rejects_core_cloud_cycles_and_cloud_local_adapters(
     assert "Cloud cannot use local SQLite adapters" in result.stdout
 
 
+def test_boundary_gate_rejects_release_safety_and_structure_regressions(
+    tmp_path: Path,
+) -> None:
+    for source_root in (
+        "core/src",
+        "capabilities/src",
+        "cloud/src",
+        "desktop/src",
+        "desktop/src-tauri/crates",
+    ):
+        (tmp_path / source_root).mkdir(parents=True)
+    (tmp_path / "core/src/host_shell.py").write_text(
+        'import subprocess\nsubprocess.run(["cmd.exe"], shell=True)\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "capabilities/src/vector_authority.py").write_text(
+        "import chromadb\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cloud/src/embedded_secret.py").write_text(
+        'TOKEN = "sk-or-v1-abcdefghijklmnopqrstuvwxyz"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "desktop/src/browser_voice.ts").write_text(
+        "window.speechSynthesis.speak(new SpeechSynthesisUtterance('unsafe'));\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "desktop/src/keyword_router.ts").write_text(
+        "export const keywordRouter = () => 'weather';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "desktop/src/oversized.ts").write_text(
+        "\n".join("export {};" for _ in range(1_201)),
+        encoding="utf-8",
+    )
+    (tmp_path / "desktop/src/empty_future").mkdir()
+
+    result = subprocess.run(
+        [sys.executable, str(V3_ROOT / "scripts" / "check_boundaries.py"), str(tmp_path)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "host shell execution is forbidden" in result.stdout
+    assert "duplicate memory authority dependency" in result.stdout
+    assert "credential-shaped literal" in result.stdout
+    assert "browser speech synthesis is forbidden" in result.stdout
+    assert "keyword routing is forbidden" in result.stdout
+    assert "source module exceeds 1200 lines" in result.stdout
+    assert "empty future-facing source directory" in result.stdout
+
+
 def test_state_store_protocol_and_sqlalchemy_adapter_expose_runtime_contract() -> None:
     required_methods = {
         "list_projects",

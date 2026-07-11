@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -65,3 +67,74 @@ def test_system_runtime_cannot_collide_with_an_oidc_subject(tmp_path: Path) -> N
     assert system is not user
     assert built[0] == "system"
     assert len(built[1]) == 64
+
+
+def test_tenant_runtime_runs_recovery_on_creation_and_after_interval(tmp_path: Path) -> None:
+    now = [10.0]
+
+    class RecoverableService:
+        def __init__(self) -> None:
+            self.recovery_calls = 0
+
+        def recover_interrupted_work(self) -> dict[str, int]:
+            self.recovery_calls += 1
+            return {"assistant_turns": 0, "previews": 0}
+
+    service = RecoverableService()
+    registry = TenantRuntimeRegistry(
+        root=tmp_path,
+        engine=object(),
+        builder=lambda _tenant, _path, _engine: service,
+        recovery_interval_seconds=5,
+        clock=lambda: now[0],
+    )
+    identity = RequestIdentity("recovery-user", "device-a", frozenset())
+
+    assert registry.for_identity(identity) is service
+    assert registry.for_identity(identity) is service
+    assert service.recovery_calls == 1
+
+    now[0] += 5
+    assert registry.for_identity(identity) is service
+    assert service.recovery_calls == 2
+
+
+def test_recovery_for_one_tenant_does_not_block_another_tenant(tmp_path: Path) -> None:
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+    built = 0
+
+    class RecoverableService:
+        def __init__(self, order: int) -> None:
+            self.order = order
+
+        def recover_interrupted_work(self) -> dict[str, int]:
+            if self.order == 1:
+                first_entered.set()
+                assert release_first.wait(timeout=5)
+            else:
+                second_entered.set()
+            return {"assistant_turns": 0, "previews": 0}
+
+        def close(self) -> None:
+            pass
+
+    def build(_tenant: str, _path: Path, _engine: Any) -> RecoverableService:
+        nonlocal built
+        built += 1
+        return RecoverableService(built)
+
+    registry = TenantRuntimeRegistry(root=tmp_path, engine=object(), builder=build)
+    identity_a = RequestIdentity("parallel-a", "device-a", frozenset())
+    identity_b = RequestIdentity("parallel-b", "device-b", frozenset())
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(registry.for_identity, identity_a)
+        assert first_entered.wait(timeout=5)
+        second = executor.submit(registry.for_identity, identity_b)
+        try:
+            assert second_entered.wait(timeout=1)
+        finally:
+            release_first.set()
+        first.result(timeout=5)
+        second.result(timeout=5)

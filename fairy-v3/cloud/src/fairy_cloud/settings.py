@@ -34,6 +34,8 @@ class CloudSettings(BaseSettings):
 
     api_host: str = "0.0.0.0"
     api_port: int = Field(default=8080, ge=1, le=65_535)
+    event_poll_seconds: float = Field(default=0.025, gt=0, le=0.1)
+    recovery_interval_seconds: float = Field(default=5.0, gt=0, le=300)
 
     worker_owner_id: str = "fairy-cloud-worker"
     worker_poll_seconds: float = Field(default=1.0, gt=0, le=60)

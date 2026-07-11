@@ -48,6 +48,7 @@ runtimes = TenantRuntimeRegistry(
     root=settings.core_data_dir,
     engine=core_engine,
     object_store=object_store,
+    recovery_interval_seconds=settings.recovery_interval_seconds,
 )
 service = runtimes.system_service()
 
@@ -73,6 +74,7 @@ app = create_cloud_app(
     authenticator=authenticator,
     sync_store=sync_store,
     object_store=object_store,
+    event_poll_seconds=settings.event_poll_seconds,
     readiness=readiness,
     lifespan=lifespan,
     service_resolver=runtimes.for_identity,

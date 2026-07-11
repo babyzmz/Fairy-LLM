@@ -57,6 +57,8 @@ class AssistantRepository(Protocol):
 
     def list_tool_invocations(self, turn_id: UUID) -> tuple[ToolInvocation, ...]: ...
 
+    def live_turn_ids(self) -> tuple[UUID, ...]: ...
+
     def interrupt_orphaned_turns(
         self,
         *,

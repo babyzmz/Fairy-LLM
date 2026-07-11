@@ -38,6 +38,7 @@ from fairy_core.contracts.models import (
     DocumentPageModel,
     DocumentSearchInput,
     DocumentSearchPageModel,
+    ErrorCode,
     HealthModel,
     MemoryClaimContextModel,
     MemoryClaimGetInput,
@@ -121,6 +122,29 @@ from fairy_cloud.sync.models import SyncedEvent
 from fairy_cloud.sync.ports import SyncStore
 
 _MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
+EVENT_POLL_SECONDS = 0.025
+PUBLIC_ERROR_STATUS = {
+    ErrorCode.PATH_OUT_OF_SCOPE.value: 403,
+    ErrorCode.PATH_IDENTITY_CHANGED.value: 409,
+    ErrorCode.SCOPE_MISMATCH.value: 409,
+    ErrorCode.APPROVAL_REQUIRED.value: 409,
+    ErrorCode.SANDBOX_UNAVAILABLE.value: 503,
+    ErrorCode.VERSION_CONFLICT.value: 409,
+    ErrorCode.IDEMPOTENCY_CONFLICT.value: 409,
+    ErrorCode.SECRET_EGRESS_BLOCKED.value: 403,
+    ErrorCode.CAPABILITY_NOT_AVAILABLE.value: 503,
+    ErrorCode.WORKER_INTERRUPTED.value: 503,
+    ErrorCode.MEMORY_SCOPE_VIOLATION.value: 409,
+    ErrorCode.MEMORY_CONFLICT.value: 409,
+    ErrorCode.MEMORY_INJECTION_BLOCKED.value: 403,
+    ErrorCode.MEMORY_SECRET_BLOCKED.value: 403,
+    ErrorCode.MEMORY_PROJECTION_STALE.value: 503,
+    ErrorCode.MEMORY_SNAPSHOT_TOO_LARGE.value: 413,
+    ErrorCode.MEMORY_FORGOTTEN.value: 410,
+    ErrorCode.DOCUMENT_PROJECTION_STALE.value: 503,
+    ErrorCode.DOCUMENT_INTEGRITY_FAILED.value: 409,
+    "INVALID_STATE_TRANSITION": 409,
+}
 
 
 def create_cloud_app(
@@ -130,10 +154,13 @@ def create_cloud_app(
     sync_store: SyncStore | None = None,
     object_store: S3ObjectStore | None = None,
     max_snapshot_bytes: int = _MAX_SNAPSHOT_BYTES,
+    event_poll_seconds: float = EVENT_POLL_SECONDS,
     readiness: Callable[[], Awaitable[dict[str, Any]]] | None = None,
     lifespan: Lifespan[FastAPI] | None = None,
     service_resolver: Callable[[RequestIdentity], CoreService] | None = None,
 ) -> FastAPI:
+    if not 0 < event_poll_seconds <= 0.1:
+        raise ValueError("event_poll_seconds must be within the 100 ms delivery budget")
     app = FastAPI(title="Fairy Cloud API", version="0.1.0", lifespan=lifespan)
 
     @app.exception_handler(IdempotencyConflictError)
@@ -1041,7 +1068,7 @@ def create_cloud_app(
                 break
             if not items:
                 yield ServerSentEvent(comment="keepalive")
-            await asyncio.sleep(1)
+            await asyncio.sleep(event_poll_seconds)
 
     operation_ids = {
         route.operation_id
@@ -1094,21 +1121,7 @@ def _core_http_exception(error: Exception) -> HTTPException:
         )
     if isinstance(error, DomainError):
         error_code = str(getattr(error, "code", "DOMAIN_ERROR"))
-        status_code = {
-            "APPROVAL_REQUIRED": 409,
-            "CAPABILITY_NOT_AVAILABLE": 503,
-            "IDEMPOTENCY_CONFLICT": 409,
-            "INVALID_STATE_TRANSITION": 409,
-            "MEMORY_CONFLICT": 409,
-            "MEMORY_FORGOTTEN": 410,
-            "MEMORY_PROJECTION_STALE": 503,
-            "MEMORY_SCOPE_VIOLATION": 409,
-            "MEMORY_SNAPSHOT_TOO_LARGE": 413,
-            "SANDBOX_UNAVAILABLE": 503,
-            "SCOPE_MISMATCH": 409,
-            "VERSION_CONFLICT": 409,
-            "WORKER_INTERRUPTED": 503,
-        }.get(error_code, 400)
+        status_code = PUBLIC_ERROR_STATUS.get(error_code, 400)
         return HTTPException(
             status_code=status_code,
             detail={"code": error_code, "message": str(error)},

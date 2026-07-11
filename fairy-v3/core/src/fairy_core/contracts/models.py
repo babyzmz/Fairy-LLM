@@ -11,13 +11,22 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
+from pydantic import Field, RootModel, field_validator, model_validator
 
 from fairy_core.assistant.models import (
     AssistantTurnStatus,
     MessageRole,
 )
 from fairy_core.commanding.types import PermissionProfile
+from fairy_core.contracts.common import (
+    ContractModel,
+    ErrorCode,
+    EventVisibilityModel,
+    ExecutionTarget,
+    JsonValue,
+    PermissionProfileModel,
+    PublicMessageVisibilityModel,
+)
 from fairy_core.documents import (
     DocumentStatus,
     DocumentVisibility,
@@ -64,61 +73,6 @@ from fairy_core.providers.models import (
     ProviderKind,
 )
 from fairy_core.voice import AudioMediaType
-
-JsonValue = str | int | float | bool | None | list[Any] | dict[str, Any]
-
-
-class ContractModel(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        frozen=True,
-        from_attributes=True,
-        use_enum_values=False,
-    )
-
-
-class ExecutionTarget(StrEnum):
-    LOCAL = "local"
-    CLOUD = "cloud"
-
-
-class PermissionProfileModel(StrEnum):
-    OBSERVE = "observe"
-    STANDARD = "standard"
-    AUTONOMOUS = "autonomous"
-
-
-class EventVisibilityModel(StrEnum):
-    USER = "user"
-    DEVELOPER = "developer"
-    INTERNAL = "internal"
-
-
-class PublicMessageVisibilityModel(StrEnum):
-    USER = "user"
-    DEVELOPER = "developer"
-
-
-class ErrorCode(StrEnum):
-    PATH_OUT_OF_SCOPE = "PATH_OUT_OF_SCOPE"
-    PATH_IDENTITY_CHANGED = "PATH_IDENTITY_CHANGED"
-    SCOPE_MISMATCH = "SCOPE_MISMATCH"
-    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
-    SANDBOX_UNAVAILABLE = "SANDBOX_UNAVAILABLE"
-    VERSION_CONFLICT = "VERSION_CONFLICT"
-    IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
-    SECRET_EGRESS_BLOCKED = "SECRET_EGRESS_BLOCKED"
-    CAPABILITY_NOT_AVAILABLE = "CAPABILITY_NOT_AVAILABLE"
-    WORKER_INTERRUPTED = "WORKER_INTERRUPTED"
-    MEMORY_SCOPE_VIOLATION = "MEMORY_SCOPE_VIOLATION"
-    MEMORY_CONFLICT = "MEMORY_CONFLICT"
-    MEMORY_INJECTION_BLOCKED = "MEMORY_INJECTION_BLOCKED"
-    MEMORY_SECRET_BLOCKED = "MEMORY_SECRET_BLOCKED"
-    MEMORY_PROJECTION_STALE = "MEMORY_PROJECTION_STALE"
-    MEMORY_SNAPSHOT_TOO_LARGE = "MEMORY_SNAPSHOT_TOO_LARGE"
-    MEMORY_FORGOTTEN = "MEMORY_FORGOTTEN"
-    DOCUMENT_PROJECTION_STALE = "DOCUMENT_PROJECTION_STALE"
-    DOCUMENT_INTEGRITY_FAILED = "DOCUMENT_INTEGRITY_FAILED"
 
 
 class TaskCreate(ContractModel):

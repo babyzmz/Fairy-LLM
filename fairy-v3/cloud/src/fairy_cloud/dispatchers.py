@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from fairy_cloud.storage.objects import S3ObjectStore
 from fairy_cloud.storage.postgres import tenant_id_for_user
 
 RuntimeBuilder = Callable[[str, Path, Engine], CoreService]
+MonotonicClock = Callable[[], float]
 _SYSTEM_TENANT_ID = "system"
 
 
@@ -99,12 +101,20 @@ class TenantRuntimeRegistry:
         engine: Engine,
         builder: RuntimeBuilder = build_postgres_core_service,
         object_store: S3ObjectStore | None = None,
+        recovery_interval_seconds: float = 5.0,
+        clock: MonotonicClock = time.monotonic,
     ) -> None:
+        if recovery_interval_seconds <= 0:
+            raise ValueError("recovery_interval_seconds must be positive")
         self._root = root
         self._engine = engine
         self._builder = builder
         self._object_store = object_store
+        self._recovery_interval_seconds = recovery_interval_seconds
+        self._clock = clock
         self._services: dict[str, CoreService] = {}
+        self._last_recovery: dict[str, float] = {}
+        self._recovery_locks: dict[str, threading.Lock] = {}
         self._lock = threading.RLock()
 
     def system_service(self) -> CoreService:
@@ -121,6 +131,8 @@ class TenantRuntimeRegistry:
         with self._lock:
             services = tuple(self._services.values())
             self._services.clear()
+            self._last_recovery.clear()
+            self._recovery_locks.clear()
         for service in services:
             service.close()
 
@@ -138,7 +150,21 @@ class TenantRuntimeRegistry:
                 else:
                     service = self._builder(tenant_id, path, self._engine)
                 self._services[tenant_id] = service
-            return service
+            recovery_lock = self._recovery_locks.setdefault(tenant_id, threading.Lock())
+
+        with recovery_lock:
+            now = self._clock()
+            with self._lock:
+                last_recovery = self._last_recovery.get(tenant_id)
+            recovery_due = (
+                last_recovery is None or now - last_recovery >= self._recovery_interval_seconds
+            )
+            recover = getattr(service, "recover_interrupted_work", None)
+            if recovery_due and callable(recover):
+                recover()
+                with self._lock:
+                    self._last_recovery[tenant_id] = now
+        return service
 
 
 __all__ = ["TenantRuntimeRegistry", "build_postgres_core_service"]
