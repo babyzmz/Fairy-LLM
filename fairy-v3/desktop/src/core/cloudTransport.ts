@@ -118,6 +118,16 @@ const routes = {
       `/v1/assistant/turns/${pathParameter(params, "turn_id")}/cancel`,
       params,
     ),
+  "assistant.turns.run": (params) =>
+    post(
+      `/v1/assistant/turns/${pathParameter(params, "turn_id")}/run`,
+      params,
+    ),
+  "assistant.turns.retry": (params) =>
+    postWithIdempotency(
+      `/v1/assistant/turns/${pathParameter(params, "turn_id")}/retry`,
+      params,
+    ),
   "messages.list": (params) =>
     getWithQuery("/v1/messages", params, ["conversation_id", "limit", "cursor"]),
   "memory.observations.create": (params) => post("/v1/memory/observations", params),

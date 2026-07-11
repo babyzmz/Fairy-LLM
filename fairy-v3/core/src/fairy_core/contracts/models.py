@@ -217,6 +217,14 @@ class AssistantTurnCancelInput(AssistantTurnIdInput):
     expected_cancellation_revision: int = Field(ge=0)
 
 
+class AssistantTurnRunInput(AssistantTurnIdInput):
+    pass
+
+
+class AssistantTurnRetryInput(AssistantTurnIdInput):
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
 class MessageListInput(CollectionPageInput):
     conversation_id: UUID
 

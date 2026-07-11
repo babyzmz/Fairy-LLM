@@ -245,6 +245,8 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "assistant.turns.cancel",
         "assistant.turns.create",
         "assistant.turns.get",
+        "assistant.turns.retry",
+        "assistant.turns.run",
         "capabilities.get",
         "changesets.propose",
         "conversations.create",

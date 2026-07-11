@@ -153,3 +153,17 @@ class CommandBus:
             lease_owner=lease_owner,
             lease_fence=lease_fence,
         )
+
+    def cancel(
+        self,
+        run_id: UUID,
+        *,
+        lease_owner: str | None = None,
+        lease_fence: int | None = None,
+    ) -> CommandRun:
+        return self._ledger.transition(
+            run_id,
+            CommandStatus.CANCELLED,
+            lease_owner=lease_owner,
+            lease_fence=lease_fence,
+        )

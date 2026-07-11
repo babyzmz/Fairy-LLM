@@ -9,6 +9,7 @@ from fairy_core.assistant.models import (
     Message,
     MessageVisibility,
     ToolInvocation,
+    ToolInvocationStatus,
 )
 from fairy_core.storage.pagination import StatePage
 
@@ -44,6 +45,13 @@ class AssistantRepository(Protocol):
     ) -> StatePage[Message]: ...
 
     def save_tool_invocation(self, invocation: ToolInvocation) -> None: ...
+
+    def update_tool_invocation(
+        self,
+        invocation: ToolInvocation,
+        *,
+        expected_status: ToolInvocationStatus,
+    ) -> None: ...
 
     def list_tool_invocations(self, turn_id: UUID) -> tuple[ToolInvocation, ...]: ...
 

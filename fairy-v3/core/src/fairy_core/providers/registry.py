@@ -6,11 +6,13 @@ from fairy_core.providers.models import (
     ModelDelta,
     ModelRequest,
     ProviderHealth,
+    ProviderProfile,
     PublicProviderProfile,
 )
 from fairy_core.providers.ports import (
     CancellationToken,
     ModelProvider,
+    ProviderProtocolError,
     ProviderUnavailableError,
 )
 
@@ -30,6 +32,9 @@ class ProviderRegistry:
             )
             for provider in self._providers.values()
         )
+
+    def profile(self, profile_id: str) -> ProviderProfile:
+        return self._require_provider(profile_id).profile
 
     def close(self) -> None:
         for provider in self._providers.values():
@@ -52,7 +57,7 @@ class ProviderRegistry:
         self._validate_request(provider, request)
         emitted = False
         try:
-            for delta in provider.stream(request, cancellation):
+            for delta in self._validated_stream(provider, request, cancellation):
                 emitted = True
                 yield delta
         except ProviderUnavailableError:
@@ -62,7 +67,29 @@ class ProviderRegistry:
             fallback = self._require_provider(provider.profile.fallback_profile_id)
             fallback_request = request.for_profile(fallback.profile.id)
             self._validate_request(fallback, fallback_request)
-            yield from fallback.stream(fallback_request, cancellation)
+            yield from self._validated_stream(
+                fallback,
+                fallback_request,
+                cancellation,
+            )
+
+    @staticmethod
+    def _validated_stream(
+        provider: ModelProvider,
+        request: ModelRequest,
+        cancellation: CancellationToken,
+    ) -> Iterator[ModelDelta]:
+        expected_sequence = 1
+        for delta in provider.stream(request, cancellation):
+            cancellation.raise_if_cancelled()
+            if delta.profile_id != provider.profile.id:
+                raise ProviderProtocolError(
+                    "provider delta profile does not match the selected profile"
+                )
+            if delta.sequence != expected_sequence:
+                raise ProviderProtocolError("provider delta sequence is not contiguous")
+            expected_sequence += 1
+            yield delta
 
     def _require_provider(self, profile_id: str) -> ModelProvider:
         try:

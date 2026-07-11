@@ -132,11 +132,36 @@ class PublicProviderProfile:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelToolCall:
+    id: str
+    name: str
+    arguments: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        tool_call_id: str,
+        name: str,
+        arguments: str,
+    ) -> ModelToolCall:
+        normalized_arguments = arguments.strip()
+        if not normalized_arguments:
+            raise ValueError("tool call arguments are required")
+        return cls(
+            id=_required_text(tool_call_id, "tool_call_id", maximum=255),
+            name=_required_text(name, "tool name", maximum=128),
+            arguments=normalized_arguments,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ModelMessage:
     role: ModelRole
     content: str
     name: str | None = None
     tool_call_id: str | None = None
+    tool_calls: tuple[ModelToolCall, ...] = ()
 
     @classmethod
     def create(
@@ -146,21 +171,29 @@ class ModelMessage:
         content: str,
         name: str | None = None,
         tool_call_id: str | None = None,
+        tool_calls: tuple[ModelToolCall, ...] = (),
     ) -> ModelMessage:
         normalized = content.strip()
-        if not normalized:
+        normalized_calls = tuple(tool_calls)
+        if not normalized and not (ModelRole(role) is ModelRole.ASSISTANT and normalized_calls):
             raise ValueError("message content is required")
         if len(normalized) > 1_000_000:
             raise ValueError("message content is too large")
+        if normalized_calls and ModelRole(role) is not ModelRole.ASSISTANT:
+            raise ValueError("only assistant messages can contain tool_calls")
+        normalized_tool_call_id = _optional_text(
+            tool_call_id,
+            "tool_call_id",
+            maximum=255,
+        )
+        if ModelRole(role) is ModelRole.TOOL and normalized_tool_call_id is None:
+            raise ValueError("tool messages require tool_call_id")
         return cls(
             role=ModelRole(role),
             content=normalized,
             name=_optional_text(name, "name", maximum=128),
-            tool_call_id=_optional_text(
-                tool_call_id,
-                "tool_call_id",
-                maximum=255,
-            ),
+            tool_call_id=normalized_tool_call_id,
+            tool_calls=normalized_calls,
         )
 
 

@@ -131,14 +131,20 @@ machine still has no discoverable Docker CLI/daemon.
 - `ToolExecutor.execute(definition, scope, arguments) -> ToolResult` receives only Core-injected Scope.
 - `assistant.turns.run` returns terminal Turn metadata while text is read through durable events and `messages.list`.
 
-- [ ] Write a failing end-to-end Core test where a scratch user request creates a Task, immutable Hermes Snapshot, user Message, Turn, deltas, final Message, and completion event.
-- [ ] Write failing tests proving `direct_answer` always exists, ordinary chat performs no tool call, no keyword forces a route, client/model Scope fields are discarded, repeated tool arguments are rejected, and cancellation drops later deltas.
-- [ ] Run the assistant tests and verify the application is absent.
-- [ ] Implement bounded context assembly from Conversation Messages, the Task-bound Hermes Snapshot, provider capability manifest, and source-labelled attachments.
-- [ ] Implement the model loop, durable delta sequence, tool candidate validation, CommandRun lifecycle, approval result, bounded ToolResult, final Message commit, and interrupted recovery.
-- [ ] Add public run/retry methods and consistent JSON-RPC/REST error mapping.
-- [ ] Run Core assistant/command/recovery tests, Cloud transport contract tests, contract generation, and Ruff.
-- [ ] Commit with `feat(v3): run task-bound assistant turns`.
+- [x] Write a failing end-to-end Core test where a scratch user request creates a Task, immutable Hermes Snapshot, user Message, Turn, deltas, final Message, and completion event.
+- [x] Write failing tests proving `direct_answer` always exists, ordinary chat performs no tool call, no keyword forces a route, client/model Scope fields are discarded, repeated tool arguments are rejected, and cancellation drops later deltas.
+- [x] Run the assistant tests and verify the application is absent.
+- [x] Implement bounded context assembly from Conversation Messages, the Task-bound Hermes Snapshot, provider capability manifest, and source-labelled attachments.
+- [x] Implement the model loop, durable delta sequence, tool candidate validation, CommandRun lifecycle, approval result, bounded ToolResult, final Message commit, and interrupted recovery.
+- [x] Add public run/retry methods and consistent JSON-RPC/REST error mapping.
+- [x] Run Core assistant/command/recovery tests, Cloud transport contract tests, contract generation, and Ruff.
+- [x] Commit with `feat(v3): run task-bound assistant turns`.
+
+Verification note: the complete local gate passed with 357 Core, 14
+Capabilities, 51 Cloud unit, all Rust, 21 Vitest, and 2 Playwright tests.
+Contracts regenerated without drift and the desktop entry bundle was 102.66 KB
+gzip. Docker/PostgreSQL and WSL sandbox verification remained explicitly
+skipped because neither runtime was discoverable on this machine.
 
 ### Task 32: Safe Web Research and Evidence Artifacts
 

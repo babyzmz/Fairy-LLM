@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fairy_core.assistant.models import (
     AssistantTurn,
+    AssistantTurnStatus,
     Message,
     MessageRole,
     MessageVisibility,
@@ -83,6 +84,54 @@ class AssistantLedgerApplication:
         if turn is None:
             raise KeyError(f"Assistant Turn not found: {turn_id}")
         return turn
+
+    def retry_turn(
+        self,
+        *,
+        turn_id: UUID,
+        idempotency_key: str,
+    ) -> AssistantTurn:
+        normalized_key = idempotency_key.strip()
+        with self._unit_of_work_factory() as unit_of_work:
+            original = unit_of_work.assistant.get_turn(turn_id)
+            if original is None:
+                raise KeyError(f"Assistant Turn not found: {turn_id}")
+            if original.status not in {
+                AssistantTurnStatus.COMPLETED,
+                AssistantTurnStatus.CANCELLED,
+                AssistantTurnStatus.FAILED,
+            }:
+                raise InvalidTransitionError("only a terminal Assistant Turn can be retried")
+            task = unit_of_work.state.get_task(original.task_id)
+            if task is None:
+                raise KeyError(f"task not found: {original.task_id}")
+            scope = self._scope_resolver(unit_of_work.state, task)
+            existing = unit_of_work.assistant.find_turn_by_idempotency_key(normalized_key)
+            if existing is not None:
+                self._validate_replay(
+                    existing,
+                    task=task,
+                    scope=scope,
+                    profile_id=original.profile_id,
+                )
+                return existing
+            retry = AssistantTurn.create(
+                task=task,
+                scope=scope,
+                profile_id=original.profile_id,
+                idempotency_key=normalized_key,
+            )
+            persisted, inserted = unit_of_work.assistant.create_turn_if_absent(retry)
+            if not inserted:
+                self._validate_replay(
+                    persisted,
+                    task=task,
+                    scope=scope,
+                    profile_id=original.profile_id,
+                )
+                return persisted
+            unit_of_work.commit()
+        return retry
 
     def cancel_turn(
         self,

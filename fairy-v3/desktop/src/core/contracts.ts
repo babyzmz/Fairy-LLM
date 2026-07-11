@@ -13,6 +13,8 @@ export type ArtifactPage = Schemas["ArtifactPageModel"];
 export type AssistantTurn = Schemas["AssistantTurnModel"];
 export type AssistantTurnCancelInput = Schemas["AssistantTurnCancelInput"];
 export type AssistantTurnCreateInput = Schemas["AssistantTurnCreateInput"];
+export type AssistantTurnRetryInput = Schemas["AssistantTurnRetryInput"];
+export type AssistantTurnRunInput = Schemas["AssistantTurnRunInput"];
 export type CapabilityManifest = Schemas["CapabilityManifestModel"];
 export type CapabilityRequest = Schemas["CapabilityRequest"];
 export type Changeset = Schemas["ChangesetModel"];
@@ -140,6 +142,14 @@ export interface CoreMethodMap {
   "assistant.turns.get": { params: { turn_id: string }; result: AssistantTurn };
   "assistant.turns.cancel": {
     params: AssistantTurnCancelInput;
+    result: AssistantTurn;
+  };
+  "assistant.turns.run": {
+    params: AssistantTurnRunInput;
+    result: AssistantTurn;
+  };
+  "assistant.turns.retry": {
+    params: AssistantTurnRetryInput;
     result: AssistantTurn;
   };
   "messages.list": { params: MessageListInput; result: MessagePage };

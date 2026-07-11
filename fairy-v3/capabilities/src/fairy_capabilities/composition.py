@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
+from fairy_core.assistant.tools import ToolExecutor, UnavailableToolExecutor
 from fairy_core.providers import ProviderRegistry
 
 from fairy_capabilities.models.openai_compatible import OpenAICompatibleProvider
@@ -29,3 +30,8 @@ def build_provider_registry(
         for profile in settings.profiles
     )
     return ProviderRegistry(providers)
+
+
+def build_tool_executor() -> ToolExecutor:
+    """Return a fail-closed executor until capability adapters register handlers."""
+    return UnavailableToolExecutor()

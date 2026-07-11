@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 
 from fairy_core.commanding.types import PermissionProfile
 
@@ -37,6 +38,18 @@ class ToolDefinition:
     requires_sandbox: bool = False
     idempotent: bool = False
     model_visible: bool = True
+    description: str = ""
+    input_schema: Mapping[str, object] = field(
+        default_factory=lambda: MappingProxyType({"type": "object", "additionalProperties": True})
+    )
+
+    def __post_init__(self) -> None:
+        description = self.description.strip() or self.name.replace(".", " ")
+        schema = dict(self.input_schema)
+        if schema.get("type") != "object":
+            raise ValueError("tool input_schema must describe an object")
+        object.__setattr__(self, "description", description)
+        object.__setattr__(self, "input_schema", MappingProxyType(schema))
 
 
 class ToolRegistry:
@@ -71,6 +84,8 @@ class ToolRegistry:
                 "requires_sandbox": definition.requires_sandbox,
                 "idempotent": definition.idempotent,
                 "model_visible": definition.model_visible,
+                "description": definition.description,
+                "input_schema": dict(definition.input_schema),
             }
             for definition in self._definitions.values()
         )
@@ -104,6 +119,8 @@ def _tool(
     sandbox: bool = False,
     idempotent: bool = False,
     model_visible: bool = True,
+    description: str = "",
+    input_schema: Mapping[str, object] | None = None,
 ) -> ToolDefinition:
     return ToolDefinition(
         name=name,
@@ -115,6 +132,12 @@ def _tool(
         requires_sandbox=sandbox,
         idempotent=idempotent,
         model_visible=model_visible,
+        description=description,
+        input_schema=(
+            input_schema
+            if input_schema is not None
+            else {"type": "object", "additionalProperties": True}
+        ),
     )
 
 
@@ -123,6 +146,16 @@ def build_default_registry() -> ToolRegistry:
     active_profiles = frozenset({PermissionProfile.STANDARD, PermissionProfile.AUTONOMOUS})
     autonomous = frozenset({PermissionProfile.AUTONOMOUS})
     definitions = [
+        _tool(
+            "model.generate",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "model_provider",
+            idempotent=True,
+            model_visible=False,
+        ),
         _tool(
             "workspace.create_empty",
             SideEffect.WRITE,

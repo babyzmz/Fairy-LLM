@@ -12,6 +12,7 @@ from fairy_core.providers import (
     ModelRequest,
     ModelRole,
     ModelTool,
+    ModelToolCall,
     ProviderCapability,
     ProviderKind,
     ProviderProfile,
@@ -142,6 +143,79 @@ def test_stream_normalizes_text_tools_usage_and_done() -> None:
     assert usage.usage["total_tokens"] == 11
     assert deltas[-1].kind is ModelDeltaKind.DONE
     assert deltas[-1].finish_reason == "tool_calls"
+
+
+def test_stream_serializes_structured_tool_protocol_for_follow_up_round() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assistant = payload["messages"][1]
+        tool = payload["messages"][2]
+        assert assistant == {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "weather.get",
+                        "arguments": '{"city":"Paris"}',
+                    },
+                }
+            ],
+        }
+        assert tool == {
+            "role": "tool",
+            "content": "18 C",
+            "name": "weather.get",
+            "tool_call_id": "call-1",
+        }
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_sse(
+                {"choices": [{"delta": {"content": "It is 18 C"}}]},
+                {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+                "[DONE]",
+            ),
+        )
+
+    request = ModelRequest.create(
+        profile_id="fixture",
+        messages=(
+            ModelMessage.create(role=ModelRole.USER, content="Weather in Paris"),
+            ModelMessage.create(
+                role=ModelRole.ASSISTANT,
+                content="",
+                tool_calls=(
+                    ModelToolCall.create(
+                        tool_call_id="call-1",
+                        name="weather.get",
+                        arguments='{"city":"Paris"}',
+                    ),
+                ),
+            ),
+            ModelMessage.create(
+                role=ModelRole.TOOL,
+                content="18 C",
+                name="weather.get",
+                tool_call_id="call-1",
+            ),
+        ),
+        tools=_request().tools,
+        required_capabilities=frozenset({ProviderCapability.TEXT, ProviderCapability.TOOLS}),
+        max_output_tokens=128,
+    )
+    provider = OpenAICompatibleProvider(
+        profile=_profile(credential_ref=None),
+        secret=None,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    deltas = tuple(provider.stream(request, CancellationToken()))
+
+    assert "".join(delta.text or "" for delta in deltas) == "It is 18 C"
+    assert deltas[-1].kind is ModelDeltaKind.DONE
 
 
 @pytest.mark.parametrize(

@@ -349,6 +349,8 @@ def test_public_method_manifest_is_stable() -> None:
             "assistant.turns.cancel",
             "assistant.turns.create",
             "assistant.turns.get",
+            "assistant.turns.retry",
+            "assistant.turns.run",
             "capabilities.get",
             "changesets.propose",
             "conversations.create",

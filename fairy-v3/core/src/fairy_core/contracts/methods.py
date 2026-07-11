@@ -18,6 +18,8 @@ from fairy_core.contracts.models import (
     AssistantTurnCreateInput,
     AssistantTurnIdInput,
     AssistantTurnModel,
+    AssistantTurnRetryInput,
+    AssistantTurnRunInput,
     CapabilityManifestModel,
     CapabilityRequest,
     ChangesetModel,
@@ -143,6 +145,16 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
         "assistant.turns.get": CoreMethod(
             "assistant.turns.get",
             AssistantTurnIdInput,
+            AssistantTurnModel,
+        ),
+        "assistant.turns.retry": CoreMethod(
+            "assistant.turns.retry",
+            AssistantTurnRetryInput,
+            AssistantTurnModel,
+        ),
+        "assistant.turns.run": CoreMethod(
+            "assistant.turns.run",
+            AssistantTurnRunInput,
             AssistantTurnModel,
         ),
         "capabilities.get": CoreMethod(

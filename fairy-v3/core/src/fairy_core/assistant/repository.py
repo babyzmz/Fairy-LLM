@@ -230,6 +230,40 @@ class SqlAlchemyAssistantRepository:
         with self._session.write() as connection:
             connection.execute(insert(assistant_tool_invocations).values(**values))
 
+    def update_tool_invocation(
+        self,
+        invocation: ToolInvocation,
+        *,
+        expected_status: ToolInvocationStatus,
+    ) -> None:
+        with self._session.write() as connection:
+            result = connection.execute(
+                update(assistant_tool_invocations)
+                .where(
+                    assistant_tool_invocations.c.tenant_id == self._tenant_id,
+                    assistant_tool_invocations.c.id == str(invocation.id),
+                    assistant_tool_invocations.c.turn_id == str(invocation.turn_id),
+                    assistant_tool_invocations.c.task_id == str(invocation.task_id),
+                    assistant_tool_invocations.c.sequence == invocation.sequence,
+                    assistant_tool_invocations.c.tool_name == invocation.tool_name,
+                    assistant_tool_invocations.c.scope_digest == invocation.scope_digest,
+                    assistant_tool_invocations.c.argument_hash == invocation.argument_hash,
+                    assistant_tool_invocations.c.status == expected_status.value,
+                )
+                .values(
+                    command_run_id=(
+                        str(invocation.command_run_id) if invocation.command_run_id else None
+                    ),
+                    status=invocation.status.value,
+                    public_summary=invocation.public_summary,
+                    artifact_ids=[str(value) for value in invocation.artifact_ids],
+                    error_code=invocation.error_code,
+                    updated_at=invocation.updated_at,
+                )
+            )
+        if result.rowcount != 1:
+            raise InvalidTransitionError("Tool Invocation changed concurrently")
+
     def list_tool_invocations(self, turn_id: UUID) -> tuple[ToolInvocation, ...]:
         with self._session.read() as connection:
             rows = (

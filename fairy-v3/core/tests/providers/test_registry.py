@@ -19,6 +19,7 @@ from fairy_core.providers.models import (
 from fairy_core.providers.ports import (
     CancellationToken,
     ProviderCancelledError,
+    ProviderProtocolError,
     ProviderUnavailableError,
 )
 from fairy_core.providers.registry import ProviderRegistry
@@ -170,3 +171,36 @@ def test_registry_public_profiles_hide_secret_references() -> None:
     assert public[0].credential_configured is False
     assert not hasattr(public[0], "credential_ref")
     assert ModelDeltaKind.TEXT.value == "text"
+
+
+@pytest.mark.parametrize(
+    "outcomes",
+    [
+        [_text("wrong-profile", 1, "wrong")],
+        [_text("primary", 2, "starts late")],
+        [_text("primary", 1, "first"), _text("primary", 1, "duplicate")],
+        [_text("primary", 1, "first"), _text("primary", 3, "gap")],
+    ],
+)
+def test_registry_rejects_untrusted_profile_and_sequence_metadata(
+    outcomes: list[ModelDelta],
+) -> None:
+    registry = ProviderRegistry((FakeProvider(_profile("primary"), outcomes),))
+
+    with pytest.raises(ProviderProtocolError):
+        tuple(registry.stream(_request("primary"), CancellationToken()))
+
+
+def test_registry_validates_fallback_delta_metadata() -> None:
+    primary = FakeProvider(
+        _profile("primary", fallback="fallback"),
+        [ProviderUnavailableError("primary unavailable")],
+    )
+    fallback = FakeProvider(
+        _profile("fallback"),
+        [_text("primary", 1, "forged fallback identity")],
+    )
+    registry = ProviderRegistry((primary, fallback))
+
+    with pytest.raises(ProviderProtocolError):
+        tuple(registry.stream(_request("primary"), CancellationToken()))

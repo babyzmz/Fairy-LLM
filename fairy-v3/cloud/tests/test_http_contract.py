@@ -270,6 +270,20 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
                 "expected_cancellation_revision": 0,
             },
         )
+        retry_body = {
+            "turn_id": created["id"],
+            "idempotency_key": "http:assistant:turn:retry",
+        }
+        retried = await client.post(
+            f"/v1/assistant/turns/{created['id']}/retry",
+            headers={"Idempotency-Key": retry_body["idempotency_key"]},
+            json=retry_body,
+        )
+        retried.raise_for_status()
+        run = await client.post(
+            f"/v1/assistant/turns/{retried.json()['id']}/run",
+            json={"turn_id": retried.json()["id"]},
+        )
 
     assert missing_header.status_code == 422
     assert mismatched_header.status_code == 409
@@ -281,6 +295,10 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
     assert cancelled.json()["status"] == "cancelled"
     assert stale_cancel.status_code == 409
     assert stale_cancel.json()["detail"]["code"] == "INVALID_STATE_TRANSITION"
+    assert retried.json()["status"] == "created"
+    assert run.status_code == 200
+    assert run.json()["status"] == "failed"
+    assert run.json()["error_code"] == "CAPABILITY_NOT_AVAILABLE"
 
 
 @pytest.mark.asyncio

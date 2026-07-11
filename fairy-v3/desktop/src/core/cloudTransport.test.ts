@@ -229,6 +229,11 @@ describe("CloudCoreTransport", () => {
       preview_id: PREVIEW.id,
       idempotency_key: "preview:stop",
     });
+    await transport.call("assistant.turns.run", { turn_id: "turn/1" });
+    await transport.call("assistant.turns.retry", {
+      turn_id: "turn/1",
+      idempotency_key: "turn:retry",
+    });
 
     expect(requests.map(({ method, url }) => [method, url])).toEqual([
       ["GET", "https://cloud.fairy.test/v1/projects/project%2Fa"],
@@ -272,11 +277,14 @@ describe("CloudCoreTransport", () => {
         "POST",
         `https://cloud.fairy.test/v1/previews/${PREVIEW.id}/stop`,
       ],
+      ["POST", "https://cloud.fairy.test/v1/assistant/turns/turn%2F1/run"],
+      ["POST", "https://cloud.fairy.test/v1/assistant/turns/turn%2F1/retry"],
     ]);
     expect(requests[0]?.headers.get("Authorization")).toBe("Bearer access-token");
     expect(requests[0]?.headers.get("X-Fairy-Device-ID")).toBe("device-1");
-    expect(requests.at(-2)?.headers.get("Idempotency-Key")).toBe("preview:start");
-    expect(requests.at(-1)?.headers.get("Idempotency-Key")).toBe("preview:stop");
+    expect(requests[12]?.headers.get("Idempotency-Key")).toBe("preview:start");
+    expect(requests[13]?.headers.get("Idempotency-Key")).toBe("preview:stop");
+    expect(requests[15]?.headers.get("Idempotency-Key")).toBe("turn:retry");
     await expect(requests[3]?.json()).resolves.toEqual({
       profile: "standard",
       sandbox_healthy: true,

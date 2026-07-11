@@ -3,6 +3,7 @@ import type {
   ApprovalListInput,
   AssistantTurnCancelInput,
   AssistantTurnCreateInput,
+  AssistantTurnRetryInput,
   CapabilityRequest,
   ChangesetProposal,
   ConversationCreateInput,
@@ -137,6 +138,10 @@ export class CoreClient {
         this.transport.call("assistant.turns.get", { turn_id: turnId }),
       cancel: (input: AssistantTurnCancelInput) =>
         this.transport.call("assistant.turns.cancel", input),
+      run: (turnId: string) =>
+        this.transport.call("assistant.turns.run", { turn_id: turnId }),
+      retry: (input: AssistantTurnRetryInput) =>
+        this.transport.call("assistant.turns.retry", input),
     },
   };
 

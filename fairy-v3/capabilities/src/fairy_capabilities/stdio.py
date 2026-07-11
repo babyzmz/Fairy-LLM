@@ -8,7 +8,7 @@ from pathlib import Path
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.transports.stdio import build_local_service, process_stream
 
-from fairy_capabilities.composition import build_provider_registry
+from fairy_capabilities.composition import build_provider_registry, build_tool_executor
 
 
 def build_composed_local_dispatcher(
@@ -22,6 +22,7 @@ def build_composed_local_dispatcher(
             data_dir,
             environment=configured,
             provider_registry=build_provider_registry(configured),
+            tool_executor=build_tool_executor(),
         )
     )
 

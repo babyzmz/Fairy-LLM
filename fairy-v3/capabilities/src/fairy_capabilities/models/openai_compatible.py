@@ -210,13 +210,25 @@ class OpenAICompatibleProvider:
         return headers
 
     def _request_payload(self, request: ModelRequest) -> dict[str, Any]:
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
         for message in request.messages:
             value = {"role": _openai_role(message.role), "content": message.content}
             if message.name is not None:
                 value["name"] = message.name
             if message.tool_call_id is not None:
                 value["tool_call_id"] = message.tool_call_id
+            if message.tool_calls:
+                value["tool_calls"] = [
+                    {
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.name,
+                            "arguments": tool_call.arguments,
+                        },
+                    }
+                    for tool_call in message.tool_calls
+                ]
             messages.append(value)
         payload: dict[str, Any] = {
             "model": self.profile.model_id,

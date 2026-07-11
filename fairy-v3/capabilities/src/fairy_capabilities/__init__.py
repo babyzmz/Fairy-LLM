@@ -1,4 +1,4 @@
-from fairy_capabilities.composition import build_provider_registry
+from fairy_capabilities.composition import build_provider_registry, build_tool_executor
 from fairy_capabilities.models.openai_compatible import OpenAICompatibleProvider
 from fairy_capabilities.settings import (
     EnvironmentProviderSecretResolver,
@@ -10,4 +10,5 @@ __all__ = [
     "OpenAICompatibleProvider",
     "ProviderSettings",
     "build_provider_registry",
+    "build_tool_executor",
 ]

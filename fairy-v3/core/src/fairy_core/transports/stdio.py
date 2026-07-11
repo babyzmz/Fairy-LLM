@@ -12,6 +12,7 @@ from fairy_core.application.core import CoreApplication
 from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.service import CoreService
 from fairy_core.assistant.ledger import AssistantLedgerApplication
+from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.persistence.data_directory_lock import DataDirectoryLock
@@ -33,6 +34,7 @@ def build_local_service(
     environment: Mapping[str, str] | None = None,
     runtime_executor: RuntimeExecutor | None = None,
     provider_registry: ProviderRegistry | None = None,
+    tool_executor: ToolExecutor | None = None,
 ) -> CoreService:
     data_dir.mkdir(parents=True, exist_ok=True)
     resources = ExitStack()
@@ -96,6 +98,7 @@ def build_local_service(
             unit_of_work_factory=unit_of_work_factory,
             registry=registry,
             provider_registry=provider_registry,
+            tool_executor=tool_executor,
             runtime_application=runtime_application,
             on_close=resources.close,
         )
@@ -110,6 +113,7 @@ def build_local_dispatcher(
     environment: Mapping[str, str] | None = None,
     runtime_executor: RuntimeExecutor | None = None,
     provider_registry: ProviderRegistry | None = None,
+    tool_executor: ToolExecutor | None = None,
 ) -> JsonRpcDispatcher:
     return JsonRpcDispatcher(
         build_local_service(
@@ -117,6 +121,7 @@ def build_local_dispatcher(
             environment=environment,
             runtime_executor=runtime_executor,
             provider_registry=provider_registry,
+            tool_executor=tool_executor,
         )
     )
 

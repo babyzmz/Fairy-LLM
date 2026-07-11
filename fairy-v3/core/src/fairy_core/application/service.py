@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from threading import RLock
 from typing import Any, cast
+from uuid import UUID
 from weakref import finalize
 
 from pydantic import BaseModel, ValidationError
@@ -13,7 +15,10 @@ from fairy_core.application.runtime import (
     PreviewStopRequest,
     RuntimeApplication,
 )
+from fairy_core.assistant.application import AssistantApplication
 from fairy_core.assistant.ledger import AssistantLedgerApplication
+from fairy_core.assistant.models import AssistantTurnStatus
+from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.commanding import EventVisibility
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
@@ -26,6 +31,8 @@ from fairy_core.contracts.models import (
     AssistantTurnCancelInput,
     AssistantTurnCreateInput,
     AssistantTurnIdInput,
+    AssistantTurnRetryInput,
+    AssistantTurnRunInput,
     CapabilityRequest,
     ChangesetProposal,
     ConversationCreate,
@@ -61,11 +68,11 @@ from fairy_core.contracts.models import (
     VersionIdInput,
     VersionListInput,
 )
-from fairy_core.domain.errors import MemoryScopeViolationError
+from fairy_core.domain.errors import InvalidTransitionError, MemoryScopeViolationError
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
-from fairy_core.providers import ProviderRegistry
+from fairy_core.providers import CancellationToken, ProviderRegistry
 from fairy_core.runtime.models import RuntimeExecutorError
 
 
@@ -92,6 +99,7 @@ class CoreService:
         unit_of_work_factory: CoreUnitOfWorkFactory,
         registry: ToolRegistry,
         provider_registry: ProviderRegistry | None = None,
+        tool_executor: ToolExecutor | None = None,
         runtime_application: RuntimeApplication | None = None,
         on_close: Callable[[], None] | None = None,
     ) -> None:
@@ -99,6 +107,8 @@ class CoreService:
         self._unit_of_work_factory = unit_of_work_factory
         self._registry = registry
         self._provider_registry = provider_registry or ProviderRegistry()
+        self._turn_cancellations: dict[UUID, CancellationToken] = {}
+        self._turn_cancellation_lock = RLock()
         self._runtime_application = runtime_application
         self._memory_application = MemoryApplication(
             unit_of_work_factory=unit_of_work_factory,
@@ -111,6 +121,13 @@ class CoreService:
             unit_of_work_factory=unit_of_work_factory,
             scope_resolver=application.scope_for_task,
         )
+        self._assistant_application = AssistantApplication(
+            unit_of_work_factory=unit_of_work_factory,
+            scope_resolver=application.scope_for_task,
+            registry=registry,
+            providers=self._provider_registry,
+            tool_executor=tool_executor,
+        )
         self._finalizer = finalize(self, on_close) if on_close is not None else None
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
             "approvals.decide": self._decide_approval,
@@ -120,6 +137,8 @@ class CoreService:
             "assistant.turns.cancel": self._cancel_assistant_turn,
             "assistant.turns.create": self._create_assistant_turn,
             "assistant.turns.get": self._get_assistant_turn,
+            "assistant.turns.retry": self._retry_assistant_turn,
+            "assistant.turns.run": self._run_assistant_turn,
             "capabilities.get": self._get_capabilities,
             "changesets.propose": self._propose_changeset,
             "conversations.create": self._create_conversation,
@@ -164,6 +183,10 @@ class CoreService:
             raise RuntimeError("Core service handlers do not match the public method catalog")
 
     def close(self) -> None:
+        with self._turn_cancellation_lock:
+            for cancellation in self._turn_cancellations.values():
+                cancellation.cancel()
+            self._turn_cancellations.clear()
         self._provider_registry.close()
         if self._finalizer is not None:
             self._finalizer()
@@ -237,9 +260,42 @@ class CoreService:
 
     def _cancel_assistant_turn(self, request: BaseModel) -> Any:
         validated = cast(AssistantTurnCancelInput, request)
-        return self._assistant_ledger.cancel_turn(
+        with self._turn_cancellation_lock:
+            cancellation = self._turn_cancellations.get(validated.turn_id)
+            was_running = cancellation is not None
+            if cancellation is not None:
+                cancellation.cancel()
+        try:
+            return self._assistant_ledger.cancel_turn(
+                turn_id=validated.turn_id,
+                expected_cancellation_revision=validated.expected_cancellation_revision,
+            )
+        except InvalidTransitionError:
+            if not was_running:
+                raise
+            persisted = self._assistant_ledger.get_turn(validated.turn_id)
+            if persisted.status is not AssistantTurnStatus.CANCELLED:
+                raise
+            return persisted
+
+    def _run_assistant_turn(self, request: BaseModel) -> Any:
+        turn_id = cast(AssistantTurnRunInput, request).turn_id
+        cancellation = CancellationToken()
+        with self._turn_cancellation_lock:
+            if turn_id in self._turn_cancellations:
+                raise ValueError("Assistant Turn is already running")
+            self._turn_cancellations[turn_id] = cancellation
+        try:
+            return self._assistant_application.run_turn(turn_id, cancellation)
+        finally:
+            with self._turn_cancellation_lock:
+                self._turn_cancellations.pop(turn_id, None)
+
+    def _retry_assistant_turn(self, request: BaseModel) -> Any:
+        validated = cast(AssistantTurnRetryInput, request)
+        return self._assistant_ledger.retry_turn(
             turn_id=validated.turn_id,
-            expected_cancellation_revision=validated.expected_cancellation_revision,
+            idempotency_key=validated.idempotency_key,
         )
 
     def _list_messages(self, request: BaseModel) -> Any:

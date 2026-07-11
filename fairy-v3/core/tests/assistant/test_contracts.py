@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
 
 from fairy_core.contracts.models import AssistantTurnCreateInput, MessageModel
 from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
+from fairy_core.providers import CancellationToken
 from fairy_core.transports.stdio import build_local_service
 
 
@@ -149,6 +151,48 @@ def test_turn_cancel_is_revision_fenced_and_terminal(tmp_path: Path) -> None:
                 "assistant.turns.cancel",
                 {"turn_id": created["id"], "expected_cancellation_revision": 0},
             )
+    finally:
+        service.close()
+
+
+def test_active_turn_cancel_tolerates_concurrent_terminal_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        task = _scratch_task(service)
+        created = service.invoke(
+            "assistant.turns.create",
+            {
+                "task_id": task["id"],
+                "profile_id": "local-default",
+                "idempotency_key": "turn:cancel-race",
+            },
+        )
+        turn_id = UUID(str(created["id"]))
+        cancellation = CancellationToken()
+        service._turn_cancellations[turn_id] = cancellation  # type: ignore[attr-defined]
+        original_cancel = service._assistant_ledger.cancel_turn  # type: ignore[attr-defined]
+
+        def concurrent_cancel(**kwargs):
+            original_cancel(**kwargs)
+            return original_cancel(**kwargs)
+
+        monkeypatch.setattr(
+            service._assistant_ledger,  # type: ignore[attr-defined]
+            "cancel_turn",
+            concurrent_cancel,
+        )
+
+        cancelled = service.invoke(
+            "assistant.turns.cancel",
+            {"turn_id": created["id"], "expected_cancellation_revision": 0},
+        )
+
+        assert cancellation.is_cancelled is True
+        assert cancelled["status"] == "cancelled"
+        assert cancelled["cancellation_revision"] == 1
     finally:
         service.close()
 

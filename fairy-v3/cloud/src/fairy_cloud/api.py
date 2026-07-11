@@ -20,6 +20,8 @@ from fairy_core.contracts.models import (
     AssistantTurnCancelInput,
     AssistantTurnCreateInput,
     AssistantTurnModel,
+    AssistantTurnRetryInput,
+    AssistantTurnRunInput,
     CapabilityManifestModel,
     CapabilityRequest,
     ChangesetModel,
@@ -365,6 +367,46 @@ def create_cloud_app(
                 detail={"code": "SCOPE_MISMATCH", "message": "turn id mismatch"},
             )
         return invoke("assistant.turns.cancel", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/assistant/turns/{turn_id}/run",
+        operation_id="assistant.turns.run",
+        response_model=AssistantTurnModel,
+    )
+    async def run_assistant_turn(
+        turn_id: UUID,
+        request: AssistantTurnRunInput,
+    ) -> dict[str, Any]:
+        if request.turn_id != turn_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "turn id mismatch"},
+            )
+        return await invoke_async(
+            "assistant.turns.run",
+            request.model_dump(mode="json"),
+        )
+
+    @protected.post(
+        "/assistant/turns/{turn_id}/retry",
+        operation_id="assistant.turns.retry",
+        response_model=AssistantTurnModel,
+    )
+    def retry_assistant_turn(
+        turn_id: UUID,
+        request: AssistantTurnRetryInput,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=512),
+        ],
+    ) -> dict[str, Any]:
+        if request.turn_id != turn_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "turn id mismatch"},
+            )
+        require_idempotency_match(request.idempotency_key, idempotency_key)
+        return invoke("assistant.turns.retry", request.model_dump(mode="json"))
 
     @protected.get(
         "/tasks",
