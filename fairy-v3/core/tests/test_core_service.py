@@ -45,6 +45,15 @@ def test_core_service_rejects_unknown_methods_and_invalid_params(tmp_path: Path)
         service.close()
 
 
+def test_core_service_is_provider_free_without_composition(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        assert service.invoke("providers.list", {}) == {"items": []}
+        assert service.invoke("providers.health", {}) == {"items": []}
+    finally:
+        service.close()
+
+
 def test_core_service_exposes_typed_workspace_collection_pages(tmp_path: Path) -> None:
     service = build_local_service(tmp_path)
     try:
@@ -263,6 +272,8 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "previews.resolve",
         "previews.start",
         "previews.stop",
+        "providers.health",
+        "providers.list",
         "runtimes.get",
         "runtimes.health",
         "tasks.create",

@@ -12,6 +12,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY core /app/core
+COPY capabilities /app/capabilities
 COPY cloud /app/cloud
 WORKDIR /app/cloud
 
@@ -43,4 +44,3 @@ ENV PATH="/app/cloud/.venv/bin:$PATH" \
 
 USER 10001:10001
 CMD ["pytest"]
-

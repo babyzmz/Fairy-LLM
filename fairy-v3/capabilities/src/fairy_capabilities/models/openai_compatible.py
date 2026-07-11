@@ -1,0 +1,328 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator, Mapping
+from typing import Any
+
+import httpx
+from fairy_core.providers import (
+    CancellationToken,
+    ModelDelta,
+    ModelRequest,
+    ModelRole,
+    ProviderHealth,
+    ProviderHealthStatus,
+    ProviderProfile,
+    ProviderProtocolError,
+    ProviderUnavailableError,
+    SecretValue,
+)
+
+
+class OpenAICompatibleProvider:
+    def __init__(
+        self,
+        *,
+        profile: ProviderProfile,
+        secret: SecretValue | None,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.profile = profile
+        self._secret = secret
+        self._owns_client = client is None
+        self._client = client or httpx.Client(
+            trust_env=False,
+            follow_redirects=False,
+            timeout=profile.timeout_seconds,
+        )
+
+    @property
+    def credential_configured(self) -> bool:
+        return self.profile.credential_ref is None or self._secret is not None
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
+
+    def health(self) -> ProviderHealth:
+        if not self.profile.enabled:
+            return self._health(
+                ProviderHealthStatus.UNAVAILABLE,
+                "PROVIDER_DISABLED",
+            )
+        if not self.credential_configured:
+            return self._health(
+                ProviderHealthStatus.UNAVAILABLE,
+                "CREDENTIAL_NOT_CONFIGURED",
+            )
+        try:
+            response = self._client.get(
+                f"{self.profile.base_url}/models",
+                headers=self._headers(),
+                timeout=self.profile.timeout_seconds,
+            )
+        except httpx.TimeoutException:
+            return self._health(
+                ProviderHealthStatus.UNAVAILABLE,
+                "PROVIDER_TIMEOUT",
+            )
+        except httpx.HTTPError:
+            return self._health(
+                ProviderHealthStatus.UNAVAILABLE,
+                "PROVIDER_TRANSPORT_ERROR",
+            )
+        if 200 <= response.status_code < 300:
+            return self._health(ProviderHealthStatus.AVAILABLE, None)
+        if response.status_code == 429:
+            return self._health(
+                ProviderHealthStatus.DEGRADED,
+                "PROVIDER_RATE_LIMITED",
+            )
+        return self._health(
+            ProviderHealthStatus.UNAVAILABLE,
+            _status_error_code(response.status_code),
+        )
+
+    def stream(
+        self,
+        request: ModelRequest,
+        cancellation: CancellationToken,
+    ) -> Iterator[ModelDelta]:
+        cancellation.raise_if_cancelled()
+        if request.profile_id != self.profile.id:
+            raise ValueError("model request profile does not match provider")
+        if not self.credential_configured:
+            raise ProviderUnavailableError("provider credential is not configured")
+        sequence = 0
+        done_emitted = False
+        tool_ids: dict[int, str] = {}
+        tool_names: dict[int, str] = {}
+        try:
+            with self._client.stream(
+                "POST",
+                f"{self.profile.base_url}/chat/completions",
+                headers=self._headers(),
+                json=self._request_payload(request),
+                timeout=self.profile.timeout_seconds,
+            ) as response:
+                if not 200 <= response.status_code < 300:
+                    raise ProviderUnavailableError(
+                        f"provider request failed ({_status_error_code(response.status_code)})"
+                    )
+                for line in response.iter_lines():
+                    cancellation.raise_if_cancelled()
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith(":"):
+                        continue
+                    if not stripped.startswith("data:"):
+                        continue
+                    data = stripped[5:].strip()
+                    if data == "[DONE]":
+                        if not done_emitted:
+                            sequence += 1
+                            yield ModelDelta.done(
+                                profile_id=self.profile.id,
+                                sequence=sequence,
+                                finish_reason=None,
+                            )
+                        return
+                    payload = _parse_frame(data)
+                    if payload.get("error") is not None:
+                        raise ProviderUnavailableError("provider stream reported an error")
+                    choices = payload.get("choices", ())
+                    if not isinstance(choices, list):
+                        raise ProviderProtocolError("provider frame choices must be a list")
+                    finish_reason: str | None = None
+                    for choice in choices:
+                        if not isinstance(choice, dict):
+                            raise ProviderProtocolError("provider frame choice must be an object")
+                        delta = choice.get("delta") or {}
+                        if not isinstance(delta, dict):
+                            raise ProviderProtocolError("provider frame delta must be an object")
+                        content = delta.get("content")
+                        if content is not None:
+                            if not isinstance(content, str):
+                                raise ProviderProtocolError("provider text delta must be a string")
+                            if content:
+                                sequence += 1
+                                yield ModelDelta.text(
+                                    profile_id=self.profile.id,
+                                    sequence=sequence,
+                                    text=content,
+                                )
+                                cancellation.raise_if_cancelled()
+                        for tool_delta in _tool_deltas(
+                            delta,
+                            tool_ids=tool_ids,
+                            tool_names=tool_names,
+                        ):
+                            sequence += 1
+                            yield ModelDelta.tool_call(
+                                profile_id=self.profile.id,
+                                sequence=sequence,
+                                **tool_delta,
+                            )
+                            cancellation.raise_if_cancelled()
+                        raw_finish = choice.get("finish_reason")
+                        if raw_finish is not None:
+                            if not isinstance(raw_finish, str):
+                                raise ProviderProtocolError(
+                                    "provider finish_reason must be a string"
+                                )
+                            finish_reason = raw_finish
+                    usage = payload.get("usage")
+                    if usage is not None:
+                        if not isinstance(usage, dict):
+                            raise ProviderProtocolError("provider usage must be an object")
+                        sequence += 1
+                        yield ModelDelta.usage_delta(
+                            profile_id=self.profile.id,
+                            sequence=sequence,
+                            usage=_integer_usage(usage),
+                        )
+                        cancellation.raise_if_cancelled()
+                    if finish_reason is not None:
+                        sequence += 1
+                        yield ModelDelta.done(
+                            profile_id=self.profile.id,
+                            sequence=sequence,
+                            finish_reason=finish_reason,
+                        )
+                        cancellation.raise_if_cancelled()
+                        done_emitted = True
+                if not done_emitted:
+                    raise ProviderProtocolError("provider stream ended before completion")
+        except (ProviderProtocolError, ProviderUnavailableError):
+            raise
+        except httpx.TimeoutException as error:
+            raise ProviderUnavailableError("provider request timed out") from error
+        except httpx.HTTPError as error:
+            raise ProviderUnavailableError("provider transport failed") from error
+
+    def _headers(self) -> dict[str, str]:
+        headers = {
+            "Accept": "text/event-stream, application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Fairy-V3/0.1",
+        }
+        if self._secret is not None:
+            headers["Authorization"] = f"Bearer {self._secret.reveal()}"
+        return headers
+
+    def _request_payload(self, request: ModelRequest) -> dict[str, Any]:
+        messages: list[dict[str, str]] = []
+        for message in request.messages:
+            value = {"role": _openai_role(message.role), "content": message.content}
+            if message.name is not None:
+                value["name"] = message.name
+            if message.tool_call_id is not None:
+                value["tool_call_id"] = message.tool_call_id
+            messages.append(value)
+        payload: dict[str, Any] = {
+            "model": self.profile.model_id,
+            "messages": messages,
+            "max_tokens": request.max_output_tokens,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if request.tools:
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": dict(tool.input_schema),
+                    },
+                }
+                for tool in request.tools
+            ]
+        return payload
+
+    def _health(
+        self,
+        status: ProviderHealthStatus,
+        error_code: str | None,
+    ) -> ProviderHealth:
+        return ProviderHealth.create(
+            profile_id=self.profile.id,
+            status=status,
+            error_code=error_code,
+            diagnostics=(),
+        )
+
+
+def _parse_frame(value: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise ProviderProtocolError("provider returned malformed SSE data") from error
+    if not isinstance(payload, dict):
+        raise ProviderProtocolError("provider SSE data must be an object")
+    return payload
+
+
+def _tool_deltas(
+    delta: Mapping[str, Any],
+    *,
+    tool_ids: dict[int, str],
+    tool_names: dict[int, str],
+) -> Iterator[dict[str, Any]]:
+    raw_calls = delta.get("tool_calls")
+    if raw_calls is None:
+        return
+    if not isinstance(raw_calls, list):
+        raise ProviderProtocolError("provider tool_calls must be a list")
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, dict):
+            raise ProviderProtocolError("provider tool call must be an object")
+        raw_index = raw_call.get("index", 0)
+        if isinstance(raw_index, bool) or not isinstance(raw_index, int) or raw_index < 0:
+            raise ProviderProtocolError("provider tool call index is invalid")
+        raw_id = raw_call.get("id")
+        if raw_id is not None:
+            if not isinstance(raw_id, str) or not raw_id:
+                raise ProviderProtocolError("provider tool call id is invalid")
+            tool_ids[raw_index] = raw_id
+        tool_call_id = tool_ids.get(raw_index)
+        if tool_call_id is None:
+            raise ProviderProtocolError("provider tool call fragment has no id")
+        function = raw_call.get("function") or {}
+        if not isinstance(function, dict):
+            raise ProviderProtocolError("provider tool call function is invalid")
+        raw_name = function.get("name")
+        if raw_name is not None:
+            if not isinstance(raw_name, str) or not raw_name:
+                raise ProviderProtocolError("provider tool name is invalid")
+            tool_names[raw_index] = raw_name
+        arguments = function.get("arguments", "")
+        if not isinstance(arguments, str):
+            raise ProviderProtocolError("provider tool arguments must be text")
+        yield {
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_names.get(raw_index),
+            "arguments_fragment": arguments,
+        }
+
+
+def _integer_usage(usage: Mapping[str, Any]) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for key, value in usage.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            continue
+        result[str(key)] = value
+    return result
+
+
+def _openai_role(role: ModelRole) -> str:
+    return role.value
+
+
+def _status_error_code(status_code: int) -> str:
+    if status_code in {401, 403}:
+        return "PROVIDER_AUTH_REJECTED"
+    if status_code == 429:
+        return "PROVIDER_RATE_LIMITED"
+    if status_code >= 500:
+        return "PROVIDER_UPSTREAM_ERROR"
+    return "PROVIDER_REQUEST_REJECTED"

@@ -18,6 +18,7 @@ durable ledger before execution.
 ```text
 fairy-v3/
 |- core/       Python domain, application services, and transports
+|- capabilities/ Replaceable model and product capability adapters
 |- desktop/    React/Tauri shell and the Rust local worker
 |- contracts/  Generated OpenAPI, JSON Schema, TypeScript, and Rust contracts
 |- cloud/      Cloud API/worker composition and deployment files
@@ -69,7 +70,11 @@ Turns, Tool Invocations, and per-Conversation sequence allocation share the
 SQLite/PostgreSQL Unit of Work. Turn creation is idempotent, cancellation and
 recovery are fenced, public Message pages exclude internal records, and local
 JSON-RPC, Cloud REST, OpenAPI, and CoreClient expose one generated contract.
-This ledger does not yet call a model; provider execution is the next slice.
+The provider-neutral model contract, explicit fallback registry, redacted
+secret boundary, and OpenAI-compatible SSE adapter are now implemented in the
+separate `capabilities/` package. Local and Cloud composition expose only
+public provider presence and health metadata. The durable Assistant loop does
+not yet dispatch a model; that remains the next slice.
 
 Episodes, pgvector expansion, asynchronous projection rebuild workers,
 multi-device memory controls, dynamic WSL/OCI project execution, and remaining
@@ -82,8 +87,9 @@ Run every locally available release gate with:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-all.ps1
 ```
 
-The command runs Core and Cloud lint/tests, offline Alembic DDL, Rust checks,
-Desktop tests/build, contract regeneration, and repository boundary checks.
+The command runs Core, Capabilities, and Cloud lint/tests, offline Alembic DDL,
+Rust checks, Desktop tests/build, contract regeneration, and repository
+boundary checks.
 When Docker is available it also runs the real PostgreSQL/S3 integration
 profile; otherwise it reports those integration tests as explicitly skipped.
 The default run also reports WSL verification as skipped. Require a real

@@ -13,6 +13,7 @@ fn helper(script: &str) -> CoreLaunchSpec {
         program: python_program(),
         args: vec!["-u".to_owned(), "-c".to_owned(), script.to_owned()],
         env: BTreeMap::new(),
+        clear_environment: true,
         current_dir: None,
     }
 }

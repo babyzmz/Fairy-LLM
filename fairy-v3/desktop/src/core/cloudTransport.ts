@@ -87,6 +87,9 @@ const routes = {
     path: `/v1/tasks/${pathParameter(params, "task_id")}/version`,
   }),
   "capabilities.get": (params) => post("/v1/capabilities", params),
+  "providers.list": () => get("/v1/providers"),
+  "providers.health": (params) =>
+    getWithQuery("/v1/providers/health", params, ["profile_id"]),
   "runtimes.get": (params) =>
     get(`/v1/runtimes/${pathParameter(params, "runtime_id")}`),
   "runtimes.health": (params) =>

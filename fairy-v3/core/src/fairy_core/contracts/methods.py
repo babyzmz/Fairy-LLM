@@ -67,6 +67,9 @@ from fairy_core.contracts.models import (
     ProjectListInput,
     ProjectModel,
     ProjectPageModel,
+    ProviderHealthInput,
+    ProviderHealthPageModel,
+    ProviderProfilePageModel,
     RuntimeHealthInput,
     RuntimeHealthModel,
     RuntimeIdInput,
@@ -268,6 +271,16 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "previews.stop",
             PreviewStopInput,
             PreviewModel,
+        ),
+        "providers.health": CoreMethod(
+            "providers.health",
+            ProviderHealthInput,
+            ProviderHealthPageModel,
+        ),
+        "providers.list": CoreMethod(
+            "providers.list",
+            EmptyInput,
+            ProviderProfilePageModel,
         ),
         "runtimes.get": CoreMethod(
             "runtimes.get",

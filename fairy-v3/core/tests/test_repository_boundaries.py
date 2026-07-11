@@ -41,12 +41,21 @@ def test_boundary_gate_rejects_core_cloud_cycles_and_cloud_local_adapters(
 ) -> None:
     for source_root in (
         "core/src",
+        "capabilities/src",
         "cloud/src",
         "desktop/src",
         "desktop/src-tauri/crates",
     ):
         (tmp_path / source_root).mkdir(parents=True)
     (tmp_path / "core/src/core_cycle.py").write_text(
+        "from fairy_cloud.api import create_cloud_app\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "core/src/capability_cycle.py").write_text(
+        "from fairy_capabilities.composition import build_provider_registry\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "capabilities/src/cloud_cycle.py").write_text(
         "from fairy_cloud.api import create_cloud_app\n",
         encoding="utf-8",
     )
@@ -68,6 +77,8 @@ def test_boundary_gate_rejects_core_cloud_cycles_and_cloud_local_adapters(
 
     assert result.returncode == 1
     assert "Core cannot import Cloud adapters" in result.stdout
+    assert "Core cannot import Capability adapters" in result.stdout
+    assert "Capabilities cannot import Cloud composition" in result.stdout
     assert "Cloud cannot compose through Core transports" in result.stdout
     assert "Cloud cannot use local SQLite adapters" in result.stdout
 

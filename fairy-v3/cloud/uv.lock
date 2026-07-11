@@ -183,6 +183,27 @@ wheels = [
 ]
 
 [[package]]
+name = "fairy-capabilities"
+version = "0.1.0"
+source = { editable = "../capabilities" }
+dependencies = [
+    { name = "fairy-core" },
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fairy-core", editable = "../core" },
+    { name = "httpx", specifier = ">=0.28,<0.29" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.1,<10" },
+    { name = "ruff", specifier = ">=0.14,<1" },
+]
+
+[[package]]
 name = "fairy-cloud"
 version = "0.1.0"
 source = { editable = "." }
@@ -190,6 +211,7 @@ dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "boto3" },
+    { name = "fairy-capabilities" },
     { name = "fairy-core" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -213,6 +235,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.18,<2" },
     { name = "asyncpg", specifier = ">=0.31,<1" },
     { name = "boto3", specifier = ">=1.42,<2" },
+    { name = "fairy-capabilities", editable = "../capabilities" },
     { name = "fairy-core", editable = "../core" },
     { name = "fastapi", specifier = ">=0.139,<0.140" },
     { name = "httpx", specifier = ">=0.28,<1" },

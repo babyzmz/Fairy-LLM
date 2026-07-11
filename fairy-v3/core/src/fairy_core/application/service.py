@@ -51,6 +51,7 @@ from fairy_core.contracts.models import (
     ProjectIdInput,
     ProjectImport,
     ProjectListInput,
+    ProviderHealthInput,
     RuntimeHealthInput,
     RuntimeIdInput,
     TaskCreate,
@@ -64,6 +65,7 @@ from fairy_core.domain.errors import MemoryScopeViolationError
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
+from fairy_core.providers import ProviderRegistry
 from fairy_core.runtime.models import RuntimeExecutorError
 
 
@@ -89,12 +91,14 @@ class CoreService:
         *,
         unit_of_work_factory: CoreUnitOfWorkFactory,
         registry: ToolRegistry,
+        provider_registry: ProviderRegistry | None = None,
         runtime_application: RuntimeApplication | None = None,
         on_close: Callable[[], None] | None = None,
     ) -> None:
         self._application = application
         self._unit_of_work_factory = unit_of_work_factory
         self._registry = registry
+        self._provider_registry = provider_registry or ProviderRegistry()
         self._runtime_application = runtime_application
         self._memory_application = MemoryApplication(
             unit_of_work_factory=unit_of_work_factory,
@@ -143,6 +147,8 @@ class CoreService:
             "previews.resolve": self._resolve_preview,
             "previews.start": self._start_preview,
             "previews.stop": self._stop_preview,
+            "providers.health": self._provider_health,
+            "providers.list": self._list_providers,
             "runtimes.get": self._get_runtime,
             "runtimes.health": self._runtime_health,
             "tasks.create": self._create_task,
@@ -158,6 +164,7 @@ class CoreService:
             raise RuntimeError("Core service handlers do not match the public method catalog")
 
     def close(self) -> None:
+        self._provider_registry.close()
         if self._finalizer is not None:
             self._finalizer()
 
@@ -180,6 +187,35 @@ class CoreService:
             "service": "fairy-core",
             "protocol": "core-service-v1",
         }
+
+    def _list_providers(self, _request: BaseModel) -> dict[str, Any]:
+        return {
+            "items": [
+                {
+                    "id": profile.id,
+                    "display_name": profile.display_name,
+                    "kind": profile.kind,
+                    "base_url": profile.base_url,
+                    "model_id": profile.model_id,
+                    "capabilities": tuple(
+                        sorted(
+                            profile.capabilities,
+                            key=lambda capability: capability.value,
+                        )
+                    ),
+                    "fallback_profile_id": profile.fallback_profile_id,
+                    "timeout_seconds": profile.timeout_seconds,
+                    "enabled": profile.enabled,
+                    "credential_required": profile.credential_required,
+                    "credential_configured": profile.credential_configured,
+                }
+                for profile in self._provider_registry.list_public()
+            ]
+        }
+
+    def _provider_health(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(ProviderHealthInput, request)
+        return {"items": self._provider_registry.health(validated.profile_id)}
 
     def _create_project(self, request: BaseModel) -> Any:
         validated = cast(ProjectCreate, request)

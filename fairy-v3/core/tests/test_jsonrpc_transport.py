@@ -376,6 +376,8 @@ def test_public_method_manifest_is_stable() -> None:
             "previews.resolve",
             "previews.start",
             "previews.stop",
+            "providers.health",
+            "providers.list",
             "runtimes.get",
             "runtimes.health",
             "tasks.create",

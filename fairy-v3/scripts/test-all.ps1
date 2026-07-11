@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 $CoreRoot = Join-Path $Root "core"
+$CapabilitiesRoot = Join-Path $Root "capabilities"
 $CloudRoot = Join-Path $Root "cloud"
 $DesktopRoot = Join-Path $Root "desktop"
 $RustRoot = Join-Path $DesktopRoot "src-tauri"
@@ -59,6 +60,15 @@ Invoke-Step "Core: ruff check" $CoreRoot $Uv @(
     "run", "ruff", "check", "src", "tests"
 )
 Invoke-Step "Core: pytest" $CoreRoot $Uv @("run", "pytest")
+
+Invoke-Step "Capabilities: uv lock --check" $CapabilitiesRoot $Uv @("lock", "--check")
+Invoke-Step "Capabilities: ruff format --check" $CapabilitiesRoot $Uv @(
+    "run", "ruff", "format", "--check", "src", "tests"
+)
+Invoke-Step "Capabilities: ruff check" $CapabilitiesRoot $Uv @(
+    "run", "ruff", "check", "src", "tests"
+)
+Invoke-Step "Capabilities: pytest" $CapabilitiesRoot $Uv @("run", "pytest")
 
 Invoke-Step "Cloud: uv lock --check" $CloudRoot $Uv @("lock", "--check")
 Invoke-Step "Cloud: ruff format --check" $CloudRoot $Uv @(

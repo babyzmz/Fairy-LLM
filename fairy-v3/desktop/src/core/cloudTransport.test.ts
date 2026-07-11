@@ -191,6 +191,8 @@ describe("CloudCoreTransport", () => {
       sandbox_healthy: true,
       overrides: { "network.http": false },
     });
+    await transport.call("providers.list", {});
+    await transport.call("providers.health", { profile_id: "openrouter-free" });
     await transport.call("memory.observations.list", {
       task_id: "task/1",
       namespace: "conversation_draft",
@@ -236,6 +238,11 @@ describe("CloudCoreTransport", () => {
       ],
       ["POST", "https://cloud.fairy.test/v1/approvals/approval-1/decision"],
       ["POST", "https://cloud.fairy.test/v1/capabilities"],
+      ["GET", "https://cloud.fairy.test/v1/providers"],
+      [
+        "GET",
+        "https://cloud.fairy.test/v1/providers/health?profile_id=openrouter-free",
+      ],
       [
         "GET",
         "https://cloud.fairy.test/v1/memory/observations?task_id=task%2F1&namespace=conversation_draft",

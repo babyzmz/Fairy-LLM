@@ -534,6 +534,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Providers */
+        get: operations["providers.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/providers/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Provider Health */
+        get: operations["providers.health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/ready": {
         parameters: {
             query?: never;
@@ -1949,6 +1983,65 @@ export interface components {
          * @enum {string}
          */
         ProjectionState: "ready" | "stale" | "unavailable" | "failed";
+        /**
+         * ProviderCapability
+         * @enum {string}
+         */
+        ProviderCapability: "text" | "tools" | "vision" | "structured_output" | "stt" | "tts";
+        /** ProviderHealthModel */
+        ProviderHealthModel: {
+            /** Diagnostics */
+            diagnostics: string[];
+            /** Error Code */
+            error_code?: string | null;
+            /** Profile Id */
+            profile_id: string;
+            status: components["schemas"]["ProviderHealthStatus"];
+        };
+        /** ProviderHealthPageModel */
+        ProviderHealthPageModel: {
+            /** Items */
+            items: components["schemas"]["ProviderHealthModel"][];
+        };
+        /**
+         * ProviderHealthStatus
+         * @enum {string}
+         */
+        ProviderHealthStatus: "available" | "degraded" | "unavailable";
+        /**
+         * ProviderKind
+         * @enum {string}
+         */
+        ProviderKind: "openai_compatible" | "local_openai_compatible";
+        /** ProviderProfileModel */
+        ProviderProfileModel: {
+            /** Base Url */
+            base_url: string;
+            /** Capabilities */
+            capabilities: components["schemas"]["ProviderCapability"][];
+            /** Credential Configured */
+            credential_configured: boolean;
+            /** Credential Required */
+            credential_required: boolean;
+            /** Display Name */
+            display_name: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Fallback Profile Id */
+            fallback_profile_id?: string | null;
+            /** Id */
+            id: string;
+            kind: components["schemas"]["ProviderKind"];
+            /** Model Id */
+            model_id: string;
+            /** Timeout Seconds */
+            timeout_seconds: number;
+        };
+        /** ProviderProfilePageModel */
+        ProviderProfilePageModel: {
+            /** Items */
+            items: components["schemas"]["ProviderProfileModel"][];
+        };
         /**
          * PublicMessageVisibilityModel
          * @enum {string}
@@ -3441,6 +3534,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "providers.list": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderProfilePageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "providers.health": {
+        parameters: {
+            query?: {
+                profile_id?: string | null;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderHealthPageModel"];
                 };
             };
             /** @description Validation Error */

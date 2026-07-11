@@ -64,6 +64,13 @@ export type PreviewResolveInput = operations["previews.resolve"]["parameters"]["
 export type PreviewResolution = Schemas["PreviewResolutionModel"];
 export type PreviewStartInput = Schemas["PreviewStartInput"];
 export type PreviewStopInput = Schemas["PreviewStopInput"];
+export type ProviderHealth = Schemas["ProviderHealthModel"];
+export type ProviderHealthInput = NonNullable<
+  operations["providers.health"]["parameters"]["query"]
+>;
+export type ProviderHealthPage = Schemas["ProviderHealthPageModel"];
+export type ProviderProfile = Schemas["ProviderProfileModel"];
+export type ProviderProfilePage = Schemas["ProviderProfilePageModel"];
 export type Runtime = Schemas["RuntimeModel"];
 export type RuntimeHealth = Schemas["RuntimeHealthModel"];
 export type Task = Schemas["TaskModel"];
@@ -116,6 +123,8 @@ export interface CoreMethodMap {
   "versions.accept": { params: VersionAcceptInput; result: Project };
   "versions.discard": { params: { task_id: string }; result: Task };
   "capabilities.get": { params: CapabilityRequest; result: CapabilityManifest };
+  "providers.list": { params: EmptyParams; result: ProviderProfilePage };
+  "providers.health": { params: ProviderHealthInput; result: ProviderHealthPage };
   "runtimes.get": { params: { runtime_id: string }; result: Runtime };
   "runtimes.health": { params: { task_id: string }; result: RuntimeHealth };
   "previews.start": { params: PreviewStartInput; result: PreviewContext };

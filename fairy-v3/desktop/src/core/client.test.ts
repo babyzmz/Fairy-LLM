@@ -98,6 +98,8 @@ describe("CoreClient", () => {
       sandbox_healthy: true,
       overrides: { "network.http": false },
     });
+    await client.providers.list();
+    await client.providers.health("openrouter-free");
     await client.memory.observations.create({
       task_id: id,
       content: "Use compact navigation.",
@@ -189,6 +191,8 @@ describe("CoreClient", () => {
       "artifacts.list",
       "artifacts.read",
       "capabilities.get",
+      "providers.list",
+      "providers.health",
       "memory.observations.create",
       "memory.observations.list",
       "memory.claims.promote",

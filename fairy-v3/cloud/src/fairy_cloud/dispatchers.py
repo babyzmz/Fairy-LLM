@@ -4,6 +4,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+from fairy_capabilities.composition import build_provider_registry
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.service import CoreService
@@ -48,6 +49,7 @@ def build_postgres_core_service(
         application,
         unit_of_work_factory=unit_of_work_factory,
         registry=registry,
+        provider_registry=build_provider_registry(),
         runtime_application=runtime_application,
     )
 

@@ -8,6 +8,7 @@ from pathlib import Path
 
 SOURCE_ROOTS = (
     Path("core/src"),
+    Path("capabilities/src"),
     Path("cloud/src"),
     Path("desktop/src"),
     Path("desktop/src-tauri/crates"),
@@ -25,6 +26,10 @@ FORBIDDEN_PYTHON_ROOTS = {
 FORBIDDEN_LAYER_IMPORTS = {
     Path("core/src"): (
         ("fairy_cloud", "Core cannot import Cloud adapters"),
+        ("fairy_capabilities", "Core cannot import Capability adapters"),
+    ),
+    Path("capabilities/src"): (
+        ("fairy_cloud", "Capabilities cannot import Cloud composition"),
     ),
     Path("cloud/src"): (
         ("fairy_core.transports", "Cloud cannot compose through Core transports"),

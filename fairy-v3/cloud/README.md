@@ -49,6 +49,11 @@ accept client Scope or Memory bindings.
 The identity service is development-only. Production accepts compatible
 PostgreSQL 18, S3, and OIDC providers and requires HTTPS.
 
+Model profiles are supplied through `FAIRY_PROVIDER_PROFILES_JSON`. Profiles
+contain credential references only; `FAIRY_PROVIDER_SECRET_REFS_JSON` maps
+each reference to an explicitly scoped `FAIRY_PROVIDER_SECRET_*` environment
+variable. Provider values are never returned by REST or persisted by Core.
+
 Every insert into the canonical `domain_events` ledger is copied into Outbox
 by a PostgreSQL trigger in the same transaction. The worker entry point is
 `fairy_cloud.workers.outbox`; it is the only module entry point. This worker

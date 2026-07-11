@@ -90,17 +90,26 @@ it was not executed because this machine has no discoverable Docker CLI.
 - `ProviderSecretResolver.resolve(reference: str) -> SecretValue` is implemented only in composition; `SecretValue` redacts `repr` and string conversion.
 - Tauri launches module `FAIRY_CORE_MODULE`, defaulting to `fairy_capabilities.stdio` when the composed package is available.
 
-- [ ] Write Core tests for profile validation, explicit fallback compatibility, cancellation state, redacted secret values, and modality negotiation.
-- [ ] Run the tests and confirm missing provider ports fail.
-- [ ] Implement provider-neutral frozen types and registry rules in Core.
-- [ ] Write local HTTP fixture tests for OpenAI-compatible SSE text deltas, tool candidates, usage, malformed frames, timeout, upstream error, fallback, and mid-stream cancellation.
-- [ ] Run the fixture tests and confirm the adapter is missing.
-- [ ] Create `fairy-capabilities`, lock exact dependencies, and implement the adapter without logging headers or request bodies containing secrets.
-- [ ] Add provider-free `fairy_core.transports.stdio` and provider-composed `fairy_capabilities.stdio` launch tests.
-- [ ] Update the Tauri launch spec to inject only configured credential references and to support the composed module without returning secrets to JavaScript.
-- [ ] Add capabilities lint/tests/lock checks to `scripts/test-all.ps1` and dependency-direction assertions to `check_boundaries.py`.
-- [ ] Run Core, capabilities, Rust bridge tests, boundary checks, and contract generation.
-- [ ] Commit with `feat(v3): add model provider composition`.
+- [x] Write Core tests for profile validation, explicit fallback compatibility, cancellation state, redacted secret values, and modality negotiation.
+- [x] Run the tests and confirm missing provider ports fail.
+- [x] Implement provider-neutral frozen types and registry rules in Core.
+- [x] Write local HTTP fixture tests for OpenAI-compatible SSE text deltas, tool candidates, usage, malformed frames, timeout, upstream error, fallback, and mid-stream cancellation.
+- [x] Run the fixture tests and confirm the adapter is missing.
+- [x] Create `fairy-capabilities`, lock exact dependencies, and implement the adapter without logging headers or request bodies containing secrets.
+- [x] Add provider-free `fairy_core.transports.stdio` and provider-composed `fairy_capabilities.stdio` launch tests.
+- [x] Update the Tauri launch spec to inject only configured credential references and to support the composed module without returning secrets to JavaScript.
+- [x] Add capabilities lint/tests/lock checks to `scripts/test-all.ps1` and dependency-direction assertions to `check_boundaries.py`.
+- [x] Run Core, capabilities, Rust bridge tests, boundary checks, and contract generation.
+- [x] Commit with `feat(v3): add model provider composition`.
+
+Verification note: the OpenAI-compatible adapter completed a real SSE request
+against the zero-price OpenRouter model `cohere/north-mini-code:free`; the API
+key remained in an external file and process memory only. The complete local
+gate passed with 340 Core, 13 Capabilities, 51 Cloud unit, all Rust, 21 Vitest,
+and 2 Playwright tests, plus TypeScript/build and offline migration checks.
+The repository Docker Compose environment includes Capabilities composition,
+but real PostgreSQL/S3 integration remained explicitly skipped because this
+machine still has no discoverable Docker CLI/daemon.
 
 ### Task 31: Model-led Assistant Loop and Command Bus Dispatch
 

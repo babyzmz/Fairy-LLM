@@ -64,6 +64,9 @@ from fairy_core.contracts.models import (
     ProjectListInput,
     ProjectModel,
     ProjectPageModel,
+    ProviderHealthInput,
+    ProviderHealthPageModel,
+    ProviderProfilePageModel,
     RuntimeHealthInput,
     RuntimeHealthModel,
     RuntimeModel,
@@ -556,6 +559,27 @@ def create_cloud_app(
         return invoke(
             "capabilities.get",
             request.model_dump(mode="json"),
+        )
+
+    @protected.get(
+        "/providers",
+        operation_id="providers.list",
+        response_model=ProviderProfilePageModel,
+    )
+    def list_providers() -> dict[str, Any]:
+        return invoke("providers.list", {})
+
+    @protected.get(
+        "/providers/health",
+        operation_id="providers.health",
+        response_model=ProviderHealthPageModel,
+    )
+    def provider_health(
+        request: Annotated[ProviderHealthInput, Query()],
+    ) -> dict[str, Any]:
+        return invoke(
+            "providers.health",
+            request.model_dump(mode="json", exclude_none=True),
         )
 
     @protected.post(

@@ -486,6 +486,22 @@ async def test_commands_and_event_stream_fail_closed_without_identity(app) -> No
 
 
 @pytest.mark.asyncio
+async def test_provider_contracts_are_available_over_rest(app) -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=AUTH_HEADERS,
+    ) as client:
+        profiles = await client.get("/v1/providers")
+        health = await client.get("/v1/providers/health")
+
+    assert profiles.status_code == 200
+    assert profiles.json() == {"items": []}
+    assert health.status_code == 200
+    assert health.json() == {"items": []}
+
+
+@pytest.mark.asyncio
 async def test_cloud_capability_request_preserves_advanced_overrides(app) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=app),

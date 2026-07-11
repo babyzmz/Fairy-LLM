@@ -25,6 +25,7 @@ import type {
   PreviewResolveInput,
   PreviewStartInput,
   PreviewStopInput,
+  ProviderHealthInput,
   TaskCreateInput,
   TaskListInput,
   VersionAcceptInput,
@@ -92,6 +93,17 @@ export class CoreClient {
 
   readonly capabilities = {
     get: (input: CapabilityRequest) => this.transport.call("capabilities.get", input),
+  };
+
+  readonly providers = {
+    list: () => this.transport.call("providers.list", {}),
+    health: (profileId?: string) =>
+      this.transport.call(
+        "providers.health",
+        profileId === undefined
+          ? {}
+          : ({ profile_id: profileId } satisfies ProviderHealthInput),
+      ),
   };
 
   readonly runtimes = {

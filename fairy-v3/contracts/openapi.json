@@ -3146,6 +3146,192 @@
         "title": "ProjectionState",
         "type": "string"
       },
+      "ProviderCapability": {
+        "enum": [
+          "text",
+          "tools",
+          "vision",
+          "structured_output",
+          "stt",
+          "tts"
+        ],
+        "title": "ProviderCapability",
+        "type": "string"
+      },
+      "ProviderHealthModel": {
+        "additionalProperties": false,
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "profile_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProviderHealthStatus"
+          }
+        },
+        "required": [
+          "profile_id",
+          "status",
+          "diagnostics"
+        ],
+        "title": "ProviderHealthModel",
+        "type": "object"
+      },
+      "ProviderHealthPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderHealthModel"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ProviderHealthPageModel",
+        "type": "object"
+      },
+      "ProviderHealthStatus": {
+        "enum": [
+          "available",
+          "degraded",
+          "unavailable"
+        ],
+        "title": "ProviderHealthStatus",
+        "type": "string"
+      },
+      "ProviderKind": {
+        "enum": [
+          "openai_compatible",
+          "local_openai_compatible"
+        ],
+        "title": "ProviderKind",
+        "type": "string"
+      },
+      "ProviderProfileModel": {
+        "additionalProperties": false,
+        "properties": {
+          "base_url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Base Url",
+            "type": "string"
+          },
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderCapability"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "credential_configured": {
+            "title": "Credential Configured",
+            "type": "boolean"
+          },
+          "credential_required": {
+            "title": "Credential Required",
+            "type": "boolean"
+          },
+          "display_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "fallback_profile_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Profile Id"
+          },
+          "id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProviderKind"
+          },
+          "model_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Model Id",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 300.0,
+            "title": "Timeout Seconds",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "kind",
+          "base_url",
+          "model_id",
+          "capabilities",
+          "timeout_seconds",
+          "enabled",
+          "credential_required",
+          "credential_configured"
+        ],
+        "title": "ProviderProfileModel",
+        "type": "object"
+      },
+      "ProviderProfilePageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderProfileModel"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ProviderProfilePageModel",
+        "type": "object"
+      },
       "PublicMessageVisibilityModel": {
         "enum": [
           "user",
@@ -6508,6 +6694,126 @@
           }
         ],
         "summary": "Get Project"
+      }
+    },
+    "/v1/providers": {
+      "get": {
+        "operationId": "providers.list",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderProfilePageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Providers"
+      }
+    },
+    "/v1/providers/health": {
+      "get": {
+        "operationId": "providers.health",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "profile_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderHealthPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Provider Health"
       }
     },
     "/v1/ready": {
