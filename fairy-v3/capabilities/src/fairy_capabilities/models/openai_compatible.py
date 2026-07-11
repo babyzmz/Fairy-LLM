@@ -182,7 +182,7 @@ class OpenAICompatibleProvider:
                             usage=_integer_usage(usage),
                         )
                         cancellation.raise_if_cancelled()
-                    if finish_reason is not None:
+                    if finish_reason is not None and not done_emitted:
                         sequence += 1
                         yield ModelDelta.done(
                             profile_id=self.profile.id,

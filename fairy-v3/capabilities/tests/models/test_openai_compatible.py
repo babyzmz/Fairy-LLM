@@ -151,6 +151,34 @@ def test_stream_normalizes_text_tools_usage_and_done() -> None:
     assert deltas[-1].finish_reason == "tool_calls"
 
 
+def test_stream_emits_one_done_when_upstream_repeats_finish_reason() -> None:
+    provider = OpenAICompatibleProvider(
+        profile=_profile(credential_ref=None),
+        secret=None,
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    content=_sse(
+                        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+                        {
+                            "choices": [{"delta": {}, "finish_reason": "stop"}],
+                            "usage": {"total_tokens": 7},
+                        },
+                        "[DONE]",
+                    ),
+                )
+            )
+        ),
+    )
+
+    deltas = tuple(provider.stream(_request(), CancellationToken()))
+
+    assert [delta.kind for delta in deltas].count(ModelDeltaKind.DONE) == 1
+    assert [delta.kind for delta in deltas].count(ModelDeltaKind.USAGE) == 1
+
+
 def test_stream_serializes_structured_tool_protocol_for_follow_up_round() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)

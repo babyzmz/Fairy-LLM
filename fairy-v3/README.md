@@ -22,6 +22,7 @@ fairy-v3/
 |- desktop/    React/Tauri shell and the Rust local worker
 |- contracts/  Generated OpenAPI, JSON Schema, TypeScript, and Rust contracts
 |- cloud/      Cloud API/worker composition and deployment files
+|- config/     Secret-free provider profile presets
 |- resources/  Provenanced character, icon, and voice assets
 |- scripts/    Contract generation and repository boundary checks
 |- docs/       Architecture, threat model, ADRs, and operating documentation
@@ -97,6 +98,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-all.ps1 -Requir
 
 Use `-SkipDocker` when an intentionally local-only gate is required. Static
 Preview itself does not require Docker or WSL.
+
+For local OpenRouter development, the checked-in free-model preset uses
+NVIDIA Nemotron 3 Ultra first and Tencent Hy3 as its explicit fallback. Start
+the Tauri application with a key file; the script reads the key only into the
+child-process environment and never copies it into the repository:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-desktop.ps1 `
+  -OpenRouterKeyFile C:\secure\openrouter.txt
+```
+
+The preset is stored in `config/openrouter-free.providers.json`. Free model
+availability and rate limits are controlled by OpenRouter, so provider health
+remains authoritative at runtime.
 
 Run only the dependency and layer boundary gate with:
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +14,8 @@ from fairy_capabilities.settings import (
     EnvironmentProviderSecretResolver,
     ProviderSettings,
 )
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _environment() -> dict[str, str]:
@@ -38,6 +41,29 @@ def _environment() -> dict[str, str]:
         ),
         "FAIRY_PROVIDER_SECRET_OPENROUTER": "test-only-secret",
     }
+
+
+def test_openrouter_free_profile_preset_is_secret_free_and_fallback_safe() -> None:
+    preset_path = _REPOSITORY_ROOT / "config" / "openrouter-free.providers.json"
+    raw = preset_path.read_text(encoding="utf-8")
+    settings = ProviderSettings.from_environment(
+        {
+            "FAIRY_PROVIDER_PROFILES_JSON": raw,
+            "FAIRY_PROVIDER_SECRET_REFS_JSON": json.dumps(
+                {"openrouter": "FAIRY_PROVIDER_SECRET_OPENROUTER"}
+            ),
+        }
+    )
+
+    assert [profile.id for profile in settings.profiles] == [
+        "openrouter-nemotron-ultra-free",
+        "openrouter-hy3-free",
+    ]
+    assert settings.profiles[0].model_id == "nvidia/nemotron-3-ultra-550b-a55b:free"
+    assert settings.profiles[0].fallback_profile_id == settings.profiles[1].id
+    assert settings.profiles[1].model_id == "tencent/hy3:free"
+    assert settings.profiles[1].fallback_profile_id is None
+    assert "sk-or-" not in raw
 
 
 def test_settings_store_only_secret_environment_names() -> None:
