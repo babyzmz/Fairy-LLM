@@ -28,6 +28,12 @@ class CommandLedger(Protocol):
 
     def get_run(self, run_id: UUID) -> CommandRun | None: ...
 
+    def active_run_for_task(
+        self,
+        task_id: UUID,
+        command_name: str,
+    ) -> CommandRun | None: ...
+
     def transition(
         self,
         run_id: UUID,

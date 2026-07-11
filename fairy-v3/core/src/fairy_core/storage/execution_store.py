@@ -152,6 +152,28 @@ class ExecutionStateStoreMixin:
             )
         return [self._runtime_from_row(row) for row in rows]
 
+    def recoverable_runtimes(self) -> list[RuntimeSession]:
+        with self._session.read() as connection:
+            rows = (
+                connection.execute(
+                    select(runtime_sessions)
+                    .where(
+                        runtime_sessions.c.tenant_id == self._tenant_id,
+                        runtime_sessions.c.status.in_(
+                            (
+                                RuntimeStatus.STARTING.value,
+                                RuntimeStatus.RUNNING.value,
+                                RuntimeStatus.STOPPING.value,
+                            )
+                        ),
+                    )
+                    .order_by(runtime_sessions.c.updated_at, runtime_sessions.c.id)
+                )
+                .mappings()
+                .all()
+            )
+        return [self._runtime_from_row(row) for row in rows]
+
     def append_preview(self, preview: PreviewSession) -> PreviewSession:
         existing = self.find_preview_by_idempotency_key(preview.idempotency_key)
         if existing is not None:

@@ -571,6 +571,19 @@ class PreviewSession:
         object.__setattr__(self, "health", PreviewHealth.INTERRUPTED)
         object.__setattr__(self, "error_code", normalized_error)
 
+    def promote_to_project_active(self) -> None:
+        if self.visibility is PreviewVisibility.PROJECT_ACTIVE:
+            return
+        if self.status is not PreviewStatus.READY:
+            raise InvalidTransitionError("only a ready Preview can become Project active")
+        if self.project_id is None or self.version_id is None:
+            raise InvalidTransitionError("Project active Preview requires a Project Version")
+        if self.visibility is not PreviewVisibility.CHAT_DRAFT:
+            raise InvalidTransitionError("Preview visibility cannot be promoted")
+        object.__setattr__(self, "visibility", PreviewVisibility.PROJECT_ACTIVE)
+        object.__setattr__(self, "revision", self.revision + 1)
+        object.__setattr__(self, "updated_at", _now())
+
     def _transition(self, target: PreviewStatus) -> None:
         if target not in _PREVIEW_TRANSITIONS[self.status]:
             raise InvalidTransitionError(

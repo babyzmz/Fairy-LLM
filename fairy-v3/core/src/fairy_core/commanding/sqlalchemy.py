@@ -172,6 +172,36 @@ class SqlAlchemyCommandLedger:
             row = self._run_by_id(connection, run_id)
         return self._run_from_row(row) if row is not None else None
 
+    def active_run_for_task(
+        self,
+        task_id: UUID,
+        command_name: str,
+    ) -> CommandRun | None:
+        active_statuses = (
+            CommandStatus.CREATED.value,
+            CommandStatus.QUEUED.value,
+            CommandStatus.WAITING_APPROVAL.value,
+            CommandStatus.RUNNING.value,
+            CommandStatus.INTERRUPTED.value,
+        )
+        with self._session.read() as connection:
+            row = (
+                connection.execute(
+                    select(command_runs)
+                    .where(
+                        command_runs.c.tenant_id == self._tenant_id,
+                        command_runs.c.task_id == str(task_id),
+                        command_runs.c.command_name == command_name,
+                        command_runs.c.status.in_(active_statuses),
+                    )
+                    .order_by(command_runs.c.updated_at.desc(), command_runs.c.id.desc())
+                    .limit(1)
+                )
+                .mappings()
+                .first()
+            )
+        return self._run_from_row(row) if row is not None else None
+
     def transition(
         self,
         run_id: UUID,

@@ -23,6 +23,7 @@ from fairy_core.domain.execution import (
     Changeset,
     ChangesetStatus,
     Checkpoint,
+    PreviewStatus,
 )
 from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import (
@@ -595,8 +596,8 @@ class CoreApplication:
     def review_task(self, task_id: UUID) -> Checkpoint:
         with self._transaction() as (unit_of_work, commands):
             task = self._require_task(unit_of_work.state, task_id)
-            if task.status is not TaskStatus.EXECUTING:
-                raise InvalidTransitionError("Task must be executing before review")
+            if task.status not in {TaskStatus.EXECUTING, TaskStatus.PREVIEWING}:
+                raise InvalidTransitionError("Task must be executing or previewing before review")
             if task.project_id is None or task.target_version_id is None:
                 raise ValueError("scratch tasks do not produce project checkpoints")
             task.transition_to(TaskStatus.REVIEWING)
@@ -709,6 +710,16 @@ class CoreApplication:
             project = self._require_project(unit_of_work.state, task.project_id)
             if project.active_version_id == task.target_version_id:
                 raise InvalidTransitionError("the Active Version cannot be discarded")
+            blocking_previews = (
+                preview
+                for preview in unit_of_work.state.previews_for_conversation(task.conversation_id)
+                if preview.task_id == task.id
+                and preview.status not in {PreviewStatus.STOPPED, PreviewStatus.FAILED}
+            )
+            if next(blocking_previews, None) is not None:
+                raise InvalidTransitionError(
+                    "Preview must be stopped before discarding its Version"
+                )
             context = self._context_for(unit_of_work.state, task)
             version = self._require_version(
                 unit_of_work.state,
@@ -859,11 +870,33 @@ class CoreApplication:
                     unit_of_work.state,
                     persisted_task.conversation_id,
                 )
+                preview = next(
+                    (
+                        item
+                        for item in reversed(
+                            unit_of_work.state.previews_for_conversation(conversation.id)
+                        )
+                        if item.task_id == persisted_task.id
+                        and item.version_id == version.id
+                        and item.status is PreviewStatus.READY
+                    ),
+                    None,
+                )
                 version.visibility = VersionVisibility.PROJECT_ACTIVE
                 persisted_task.transition_to(TaskStatus.ACCEPTED)
                 conversation.base_version_id = persisted_task.target_version_id
                 conversation.active_draft_version_id = None
                 conversation.active_task_id = None
+                if preview is not None:
+                    preview_revision = preview.revision
+                    preview.promote_to_project_active()
+                    unit_of_work.state.save_preview(
+                        preview,
+                        expected_revision=preview_revision,
+                    )
+                    project.active_preview_id = preview.id
+                    conversation.active_preview_id = preview.id
+                    unit_of_work.state.save_project(project)
                 unit_of_work.state.save_version(version)
                 unit_of_work.state.save_task(persisted_task)
                 unit_of_work.state.save_conversation(conversation)
@@ -872,6 +905,7 @@ class CoreApplication:
                     output={
                         "project_revision": project.revision,
                         "version_id": str(version.id),
+                        "preview_id": str(preview.id) if preview is not None else None,
                     },
                     lease_owner=running.lease_owner,
                     lease_fence=running.lease_fence,
