@@ -225,6 +225,7 @@ class RuntimeApplication:
     def runtime_health(self, task_id: UUID) -> RuntimeHealthResult:
         health = self._executor.health()
         with self._transaction() as (unit_of_work, _commands):
+            self._require_task(unit_of_work.state, task_id)
             preview = unit_of_work.state.preview_for_task(task_id, include_terminal=True)
             runtimes = unit_of_work.state.runtimes_for_task(task_id)
         return RuntimeHealthResult(

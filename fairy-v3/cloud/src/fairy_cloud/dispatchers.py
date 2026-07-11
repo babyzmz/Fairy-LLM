@@ -5,10 +5,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from fairy_core.application.core import CoreApplication
+from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.service import CoreService
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
+from fairy_core.runtime.unavailable import UnavailableRuntimeExecutor
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
 from sqlalchemy.engine import Engine
 
@@ -32,10 +34,21 @@ def build_postgres_core_service(
         registry=registry,
         policy=PolicyEngine(registry),
     )
+    runtime_application = RuntimeApplication(
+        unit_of_work_factory=unit_of_work_factory,
+        executor=UnavailableRuntimeExecutor(
+            executor="cloud_oci_worker",
+            diagnostic="Cloud OCI Runtime is not configured",
+        ),
+        registry=registry,
+        policy=PolicyEngine(registry),
+        scope_resolver=application.scope_for_task,
+    )
     return CoreService(
         application,
         unit_of_work_factory=unit_of_work_factory,
         registry=registry,
+        runtime_application=runtime_application,
     )
 
 

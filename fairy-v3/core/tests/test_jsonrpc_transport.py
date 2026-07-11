@@ -4,8 +4,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from fairy_core.application.service import CoreService
+from fairy_core.commanding.registry import build_default_registry
+from fairy_core.domain.execution import Artifact, ArtifactType, ArtifactVisibility
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.transports.stdio import build_local_dispatcher
+from tests.runtime_support import build_runtime_stack
 
 
 def _dispatcher(tmp_path: Path) -> JsonRpcDispatcher:
@@ -77,6 +80,67 @@ def test_jsonrpc_project_conversation_task_vertical_slice(tmp_path: Path) -> Non
     assert task_context["task"]["conversation_id"] == conversation["id"]
     assert task_context["target_version"]["parent_version_id"] == initial_version["id"]
     assert task_context["scope"]["scope_digest"]
+
+
+def test_jsonrpc_runtime_preview_and_artifact_contracts(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    artifact = Artifact.create(
+        project_id=stack.task.task.project_id,
+        conversation_id=stack.task.task.conversation_id,
+        task_id=stack.task.task.id,
+        version_id=stack.task.task.target_version_id,
+        artifact_type=ArtifactType.PREVIEW_MANIFEST,
+        visibility=ArtifactVisibility.CONVERSATION,
+        storage_location="artifacts/preview.json",
+        media_type="application/json",
+        byte_length=2,
+        content_hash="b" * 64,
+        metadata={},
+    )
+    with stack.factory() as unit_of_work:
+        unit_of_work.state.append_artifact(artifact)
+        unit_of_work.commit()
+    dispatcher = JsonRpcDispatcher(
+        CoreService(
+            stack.core,
+            unit_of_work_factory=stack.factory,
+            registry=build_default_registry(),
+            runtime_application=stack.runtime,
+        )
+    )
+
+    started = _call(
+        dispatcher,
+        30,
+        "previews.start",
+        {
+            "task_id": str(stack.task.task.id),
+            "idempotency_key": "rpc:preview:start",
+        },
+    )["result"]
+    preview_id = started["preview"]["id"]
+    runtime_id = started["runtime"]["id"]
+
+    assert _call(dispatcher, 31, "previews.get", {"preview_id": preview_id})["result"] == started
+    assert (
+        _call(dispatcher, 32, "runtimes.get", {"runtime_id": runtime_id})["result"]["status"]
+        == "running"
+    )
+    assert _call(
+        dispatcher,
+        33,
+        "artifacts.list",
+        {"task_id": str(stack.task.task.id)},
+    )["result"]["items"][0]["id"] == str(artifact.id)
+    assert (
+        _call(
+            dispatcher,
+            34,
+            "previews.stop",
+            {"preview_id": preview_id, "idempotency_key": "rpc:preview:stop"},
+        )["result"]["status"]
+        == "stopped"
+    )
 
 
 def test_jsonrpc_task_create_rejects_client_scope_injection(tmp_path: Path) -> None:
@@ -280,6 +344,8 @@ def test_public_method_manifest_is_stable() -> None:
         {
             "approvals.decide",
             "approvals.list",
+            "artifacts.list",
+            "artifacts.read",
             "capabilities.get",
             "changesets.propose",
             "conversations.create",
@@ -302,6 +368,12 @@ def test_public_method_manifest_is_stable() -> None:
             "projects.get",
             "projects.import",
             "projects.list",
+            "previews.get",
+            "previews.resolve",
+            "previews.start",
+            "previews.stop",
+            "runtimes.get",
+            "runtimes.health",
             "tasks.create",
             "tasks.get",
             "tasks.list",

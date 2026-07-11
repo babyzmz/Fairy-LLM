@@ -9,12 +9,16 @@ from pathlib import Path
 from typing import TextIO
 
 from fairy_core.application.core import CoreApplication
+from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.service import CoreService
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.persistence.data_directory_lock import DataDirectoryLock
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
+from fairy_core.runtime.ports import RuntimeExecutor
+from fairy_core.runtime.rust_worker import RustRuntimeExecutor
+from fairy_core.runtime.unavailable import UnavailableRuntimeExecutor
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
 from fairy_core.workspace.rust_worker import RustWorkspaceProvisioner
@@ -25,6 +29,7 @@ def build_local_service(
     data_dir: Path,
     *,
     environment: Mapping[str, str] | None = None,
+    runtime_executor: RuntimeExecutor | None = None,
 ) -> CoreService:
     data_dir.mkdir(parents=True, exist_ok=True)
     resources = ExitStack()
@@ -47,8 +52,17 @@ def build_local_service(
             )
             resources.callback(transport.close)
             workspace_provisioner = RustWorkspaceProvisioner(transport, workspace_root)
+            configured_runtime_executor: RuntimeExecutor = RustRuntimeExecutor(
+                transport,
+                managed_root=workspace_root,
+            )
         else:
             workspace_provisioner = FileSystemWorkspaceProvisioner(workspace_root)
+            configured_runtime_executor = UnavailableRuntimeExecutor(
+                executor="rust_local_worker",
+                diagnostic="Rust local worker is not configured",
+            )
+        selected_runtime_executor = runtime_executor or configured_runtime_executor
         registry = build_default_registry()
         engine = create_sqlite_core_engine(
             data_dir / "core.db",
@@ -63,10 +77,18 @@ def build_local_service(
             registry=registry,
             policy=PolicyEngine(registry),
         )
+        runtime_application = RuntimeApplication(
+            unit_of_work_factory=unit_of_work_factory,
+            executor=selected_runtime_executor,
+            registry=registry,
+            policy=PolicyEngine(registry),
+            scope_resolver=application.scope_for_task,
+        )
         return CoreService(
             application,
             unit_of_work_factory=unit_of_work_factory,
             registry=registry,
+            runtime_application=runtime_application,
             on_close=resources.close,
         )
     except BaseException:
@@ -78,8 +100,15 @@ def build_local_dispatcher(
     data_dir: Path,
     *,
     environment: Mapping[str, str] | None = None,
+    runtime_executor: RuntimeExecutor | None = None,
 ) -> JsonRpcDispatcher:
-    return JsonRpcDispatcher(build_local_service(data_dir, environment=environment))
+    return JsonRpcDispatcher(
+        build_local_service(
+            data_dir,
+            environment=environment,
+            runtime_executor=runtime_executor,
+        )
+    )
 
 
 def process_stream(

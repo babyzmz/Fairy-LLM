@@ -48,4 +48,22 @@ describe("TauriCoreTransport", () => {
       errorCode: "SANDBOX_UNAVAILABLE",
     });
   });
+
+  it("rejects malformed local Preview envelopes", async () => {
+    const id = "0198f4de-0114-7000-8000-000000000001";
+    const invoke = vi.fn().mockResolvedValue({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        task: { id, conversation_id: id, status: "previewing" },
+        runtime: { id, status: "running" },
+        preview: { id, status: "ready", url: "http://localhost:43125/" },
+      },
+    });
+    const transport = new TauriCoreTransport(invoke);
+
+    await expect(transport.call("previews.get", { preview_id: id })).rejects.toMatchObject({
+      name: "ZodError",
+    });
+  });
 });

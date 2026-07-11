@@ -16,14 +16,20 @@ if ($null -ne $uvCommand) {
     $uv = $candidates | Where-Object {
         -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_)
     } | Select-Object -First 1
-    if ([string]::IsNullOrWhiteSpace($uv)) {
-        throw "uv was not found on PATH or beside the active Python installation"
-    }
 }
 
-& $uv run --project (Join-Path $root "cloud") python `
-    (Join-Path $root "cloud\scripts\export_openapi.py") `
-    (Join-Path $root "contracts\openapi.json")
+$exportScript = Join-Path $root "cloud\scripts\export_openapi.py"
+$openApiPath = Join-Path $root "contracts\openapi.json"
+if (-not [string]::IsNullOrWhiteSpace($uv)) {
+    & $uv run --project (Join-Path $root "cloud") python $exportScript $openApiPath
+} else {
+    $cloudPython = Join-Path $root "cloud\.venv\Scripts\python.exe"
+    if (-not (Test-Path -LiteralPath $cloudPython)) {
+        throw "uv was not found and the locked Cloud virtual environment is unavailable"
+    }
+    Write-Host "uv not found; using the existing locked Cloud virtual environment"
+    & $cloudPython $exportScript $openApiPath
+}
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

@@ -1,8 +1,10 @@
 import type {
   ApprovalDecisionInput,
+  ApprovalListInput,
   CapabilityRequest,
   ChangesetProposal,
   ConversationCreateInput,
+  ConversationListInput,
   CoreMethodMap,
   CoreMethodName,
   EventEnvelope,
@@ -16,8 +18,14 @@ import type {
   MemorySearchInput,
   ProjectCreateInput,
   ProjectImportInput,
+  ProjectListInput,
+  PreviewResolveInput,
+  PreviewStartInput,
+  PreviewStopInput,
   TaskCreateInput,
+  TaskListInput,
   VersionAcceptInput,
+  VersionListInput,
 } from "./contracts";
 
 export type * from "./contracts";
@@ -40,16 +48,22 @@ export class CoreClient {
     import: (input: ProjectImportInput) => this.transport.call("projects.import", input),
     get: (projectId: string) =>
       this.transport.call("projects.get", { project_id: projectId }),
+    list: (input: ProjectListInput = {}) => this.transport.call("projects.list", input),
   };
 
   readonly conversations = {
     create: (input: ConversationCreateInput) =>
       this.transport.call("conversations.create", input),
+    get: (conversationId: string) =>
+      this.transport.call("conversations.get", { conversation_id: conversationId }),
+    list: (input: ConversationListInput = {}) =>
+      this.transport.call("conversations.list", input),
   };
 
   readonly tasks = {
     create: (input: TaskCreateInput) => this.transport.call("tasks.create", input),
     get: (taskId: string) => this.transport.call("tasks.get", { task_id: taskId }),
+    list: (input: TaskListInput = {}) => this.transport.call("tasks.list", input),
     review: (taskId: string) => this.transport.call("tasks.review", { task_id: taskId }),
   };
 
@@ -59,11 +73,15 @@ export class CoreClient {
 
   readonly approvals = {
     decide: (input: ApprovalDecisionInput) => this.transport.call("approvals.decide", input),
+    list: (input: ApprovalListInput = {}) =>
+      this.transport.call("approvals.list", input),
   };
 
   readonly versions = {
     get: (versionId: string) =>
       this.transport.call("versions.get", { version_id: versionId }),
+    list: (input: VersionListInput = {}) =>
+      this.transport.call("versions.list", input),
     accept: (input: VersionAcceptInput) => this.transport.call("versions.accept", input),
     discard: (taskId: string) =>
       this.transport.call("versions.discard", { task_id: taskId }),
@@ -71,6 +89,29 @@ export class CoreClient {
 
   readonly capabilities = {
     get: (input: CapabilityRequest) => this.transport.call("capabilities.get", input),
+  };
+
+  readonly runtimes = {
+    get: (runtimeId: string) =>
+      this.transport.call("runtimes.get", { runtime_id: runtimeId }),
+    health: (taskId: string) =>
+      this.transport.call("runtimes.health", { task_id: taskId }),
+  };
+
+  readonly previews = {
+    start: (input: PreviewStartInput) => this.transport.call("previews.start", input),
+    get: (previewId: string) =>
+      this.transport.call("previews.get", { preview_id: previewId }),
+    resolve: (input: PreviewResolveInput) =>
+      this.transport.call("previews.resolve", input),
+    stop: (input: PreviewStopInput) => this.transport.call("previews.stop", input),
+  };
+
+  readonly artifacts = {
+    list: (taskId: string) =>
+      this.transport.call("artifacts.list", { task_id: taskId }),
+    read: (artifactId: string) =>
+      this.transport.call("artifacts.read", { artifact_id: artifactId }),
   };
 
   readonly memory = {

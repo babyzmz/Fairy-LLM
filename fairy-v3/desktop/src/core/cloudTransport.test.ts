@@ -86,6 +86,57 @@ const PROJECTION_HEALTH = {
   updated_at: "2026-07-10T00:00:00Z",
 };
 
+const RUNTIME = {
+  id: "0198f4de-0114-7000-8000-000000000010",
+  project_id: "0198f4de-0114-7000-8000-000000000011",
+  conversation_id: "0198f4de-0114-7000-8000-000000000002",
+  task_id: "0198f4de-0114-7000-8000-000000000003",
+  version_id: "0198f4de-0114-7000-8000-000000000012",
+  project_root: "C:/managed/version",
+  execution_target: "local",
+  kind: "static_site",
+  executor: "rust_local_worker",
+  executor_handle: "static:0198f4de-0114-7000-8000-000000000013",
+  port: 43125,
+  status: "running",
+  health: "healthy",
+  error_code: null,
+  idempotency_key: "preview:runtime",
+  revision: 2,
+  created_at: "2026-07-10T00:00:00Z",
+  updated_at: "2026-07-10T00:00:00Z",
+};
+
+const PREVIEW = {
+  id: "0198f4de-0114-7000-8000-000000000013",
+  project_id: RUNTIME.project_id,
+  conversation_id: RUNTIME.conversation_id,
+  task_id: RUNTIME.task_id,
+  version_id: RUNTIME.version_id,
+  runtime_id: RUNTIME.id,
+  project_root: RUNTIME.project_root,
+  execution_target: "local",
+  url: "http://127.0.0.1:43125/0198f4de-0114-7000-8000-000000000013/",
+  visibility: "chat_draft",
+  status: "ready",
+  health: "healthy",
+  error_code: null,
+  idempotency_key: "preview:start",
+  revision: 2,
+  created_at: "2026-07-10T00:00:00Z",
+  updated_at: "2026-07-10T00:00:00Z",
+};
+
+const PREVIEW_CONTEXT = {
+  task: {
+    id: RUNTIME.task_id,
+    conversation_id: RUNTIME.conversation_id,
+    status: "previewing",
+  },
+  runtime: RUNTIME,
+  preview: PREVIEW,
+};
+
 describe("CloudCoreTransport", () => {
   it("maps typed Core calls to authenticated REST requests", async () => {
     const requests: Request[] = [];
@@ -104,6 +155,18 @@ describe("CloudCoreTransport", () => {
       if (request.url.includes("/v1/memory/projection/health?")) {
         return Response.json(PROJECTION_HEALTH);
       }
+      if (request.url.endsWith("/stop")) {
+        return Response.json({
+          ...PREVIEW,
+          url: null,
+          status: "stopped",
+          health: "stopped",
+          revision: 4,
+        });
+      }
+      if (request.url.includes("/v1/previews/")) {
+        return Response.json(PREVIEW_CONTEXT);
+      }
       if (request.url.includes("/v1/memory/claims/")) {
         return Response.json(CLAIM_CONTEXT);
       }
@@ -117,6 +180,7 @@ describe("CloudCoreTransport", () => {
     });
 
     await transport.call("projects.get", { project_id: "project/a" });
+    await transport.call("projects.list", { limit: 25, cursor: "next page" });
     await transport.call("approvals.decide", {
       approval_id: "approval-1",
       approved: true,
@@ -155,9 +219,21 @@ describe("CloudCoreTransport", () => {
       snapshot_id: "snapshot/1",
     });
     await transport.call("memory.projection.health", { task_id: "task/1" });
+    await transport.call("previews.start", {
+      task_id: RUNTIME.task_id,
+      idempotency_key: "preview:start",
+    });
+    await transport.call("previews.stop", {
+      preview_id: PREVIEW.id,
+      idempotency_key: "preview:stop",
+    });
 
     expect(requests.map(({ method, url }) => [method, url])).toEqual([
       ["GET", "https://cloud.fairy.test/v1/projects/project%2Fa"],
+      [
+        "GET",
+        "https://cloud.fairy.test/v1/projects?limit=25&cursor=next+page",
+      ],
       ["POST", "https://cloud.fairy.test/v1/approvals/approval-1/decision"],
       ["POST", "https://cloud.fairy.test/v1/capabilities"],
       [
@@ -184,10 +260,17 @@ describe("CloudCoreTransport", () => {
         "GET",
         "https://cloud.fairy.test/v1/memory/projection/health?task_id=task%2F1",
       ],
+      ["POST", "https://cloud.fairy.test/v1/previews/start"],
+      [
+        "POST",
+        `https://cloud.fairy.test/v1/previews/${PREVIEW.id}/stop`,
+      ],
     ]);
     expect(requests[0]?.headers.get("Authorization")).toBe("Bearer access-token");
     expect(requests[0]?.headers.get("X-Fairy-Device-ID")).toBe("device-1");
-    await expect(requests[2]?.json()).resolves.toEqual({
+    expect(requests.at(-2)?.headers.get("Idempotency-Key")).toBe("preview:start");
+    expect(requests.at(-1)?.headers.get("Idempotency-Key")).toBe("preview:stop");
+    await expect(requests[3]?.json()).resolves.toEqual({
       profile: "standard",
       sandbox_healthy: true,
       overrides: { "network.http": false },
@@ -277,6 +360,27 @@ describe("CloudCoreTransport", () => {
         task_id: "0198f4de-0114-7000-8000-000000000003",
         snapshot_id: "0198f4de-0114-7000-8000-000000000006",
       }),
+    ).rejects.toMatchObject({
+      name: "CloudCoreError",
+      status: 200,
+      errorCode: "INVALID_RESPONSE",
+    });
+  });
+
+  it("rejects unscoped Preview URLs before they reach the client", async () => {
+    const transport = new CloudCoreTransport({
+      baseUrl: "https://cloud.fairy.test",
+      accessToken: () => "token",
+      deviceId: "device-1",
+      fetch: async () =>
+        Response.json({
+          ...PREVIEW_CONTEXT,
+          preview: { ...PREVIEW, url: `http://localhost:${RUNTIME.port}/preview/` },
+        }),
+    });
+
+    await expect(
+      transport.call("previews.get", { preview_id: PREVIEW.id }),
     ).rejects.toMatchObject({
       name: "CloudCoreError",
       status: 200,

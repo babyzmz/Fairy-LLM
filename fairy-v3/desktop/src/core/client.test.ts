@@ -55,7 +55,10 @@ describe("CoreClient", () => {
     await client.projects.create({ name: "Example", residency: "local_only" });
     await client.projects.import({ name: "Imported", residency: "synced", source_path: "C:/src" });
     await client.projects.get(id);
+    await client.projects.list({ limit: 20 });
     await client.conversations.create({ project_id: id, workspace_type: "project_chat" });
+    await client.conversations.get(id);
+    await client.conversations.list({ project_id: id });
     await client.tasks.create({
       conversation_id: id,
       user_request: "Build it",
@@ -64,6 +67,7 @@ describe("CoreClient", () => {
       idempotency_key: "task-1",
     });
     await client.tasks.get(id);
+    await client.tasks.list({ conversation_id: id });
     await client.tasks.review(id);
     await client.changesets.propose({
       task_id: id,
@@ -72,13 +76,23 @@ describe("CoreClient", () => {
       idempotency_key: "changeset-1",
     });
     await client.approvals.decide({ approval_id: id, approved: true, decided_by: "user" });
+    await client.approvals.list({ task_id: id });
     await client.versions.get(id);
+    await client.versions.list({ project_id: id });
     await client.versions.accept({
       task_id: id,
       expected_project_revision: 0,
       user_confirmed: true,
     });
     await client.versions.discard(id);
+    await client.runtimes.get(id);
+    await client.runtimes.health(id);
+    await client.previews.start({ task_id: id, idempotency_key: "preview-start-1" });
+    await client.previews.get(id);
+    await client.previews.resolve({ conversation_id: id });
+    await client.previews.stop({ preview_id: id, idempotency_key: "preview-stop-1" });
+    await client.artifacts.list(id);
+    await client.artifacts.read(id);
     await client.capabilities.get({
       profile: "standard",
       sandbox_healthy: true,
@@ -140,15 +154,29 @@ describe("CoreClient", () => {
       "projects.create",
       "projects.import",
       "projects.get",
+      "projects.list",
       "conversations.create",
+      "conversations.get",
+      "conversations.list",
       "tasks.create",
       "tasks.get",
+      "tasks.list",
       "tasks.review",
       "changesets.propose",
       "approvals.decide",
+      "approvals.list",
       "versions.get",
+      "versions.list",
       "versions.accept",
       "versions.discard",
+      "runtimes.get",
+      "runtimes.health",
+      "previews.start",
+      "previews.get",
+      "previews.resolve",
+      "previews.stop",
+      "artifacts.list",
+      "artifacts.read",
       "capabilities.get",
       "memory.observations.create",
       "memory.observations.list",
@@ -163,8 +191,8 @@ describe("CoreClient", () => {
       "memory.projection.health",
     ]);
     expect(transport.requests[3]?.params).toEqual({ project_id: id });
-    expect(transport.requests[7]?.params).toEqual({ task_id: id });
-    expect(transport.requests[12]?.params).toEqual({ task_id: id });
+    expect(transport.requests[11]?.params).toEqual({ task_id: id });
+    expect(transport.requests[20]?.params).toEqual({ task_id: id });
   });
 
   it("uses the transport-native resumable event subscription", async () => {

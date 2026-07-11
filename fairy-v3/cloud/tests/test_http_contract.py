@@ -9,6 +9,14 @@ from typing import Any, cast
 import pytest
 from fairy_core.application.service import CoreService
 from fairy_core.contracts.methods import CORE_METHODS
+from fairy_core.runtime.models import (
+    ExecutorRuntimeState,
+    RuntimeExecutorHealth,
+    RuntimeProbeResult,
+    RuntimeStartResult,
+    RuntimeStopResult,
+    StaticRuntimeStart,
+)
 from fairy_core.transports.stdio import build_local_service
 from httpx import ASGITransport, AsyncClient
 
@@ -20,6 +28,53 @@ AUTH_HEADERS = {
     "Authorization": "Bearer test-token",
     "X-Fairy-Device-ID": "device-1",
 }
+
+
+class HttpRuntimeExecutor:
+    def __init__(self) -> None:
+        self.probes: dict[str, RuntimeProbeResult] = {}
+
+    def health(self) -> RuntimeExecutorHealth:
+        return RuntimeExecutorHealth(
+            available=True,
+            executor="http_test_worker",
+            version="1",
+            error_code=None,
+            diagnostics=(),
+        )
+
+    def start_static(self, request: StaticRuntimeStart) -> RuntimeStartResult:
+        handle = f"static:{request.preview_id}"
+        url = f"http://127.0.0.1:43125/{request.preview_id}/"
+        result = RuntimeStartResult(
+            executor_handle=handle,
+            host="127.0.0.1",
+            port=43125,
+            url=url,
+            state=ExecutorRuntimeState.RUNNING,
+        )
+        self.probes[handle] = RuntimeProbeResult(
+            executor_handle=handle,
+            state=ExecutorRuntimeState.RUNNING,
+            host=result.host,
+            port=result.port,
+            url=result.url,
+        )
+        return result
+
+    def probe(self, executor_handle: str) -> RuntimeProbeResult:
+        return self.probes[executor_handle]
+
+    def stop(self, executor_handle: str) -> RuntimeStopResult:
+        current = self.probes[executor_handle]
+        self.probes[executor_handle] = RuntimeProbeResult(
+            executor_handle=executor_handle,
+            state=ExecutorRuntimeState.STOPPED,
+            host=current.host,
+            port=current.port,
+            url=current.url,
+        )
+        return RuntimeStopResult(stopped=True)
 
 
 @pytest.mark.asyncio
@@ -150,6 +205,147 @@ async def test_rest_runs_the_same_project_contract_as_local_jsonrpc(app) -> None
     assert task["task"]["status"] == "planning"
     assert task["scope"]["execution_target"] == "cloud"
     assert task["scope"]["scope_digest"]
+
+
+@pytest.mark.asyncio
+async def test_rest_exposes_collection_runtime_preview_and_artifact_contracts(
+    tmp_path: Path,
+) -> None:
+    identity = RequestIdentity("user", "device-1", frozenset({"fairy.api"}))
+    app = create_cloud_app(
+        build_local_service(
+            tmp_path / "runtime-http",
+            runtime_executor=HttpRuntimeExecutor(),
+        ),
+        authenticator=StaticTokenAuthenticator({"test-token": identity}),
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers=AUTH_HEADERS,
+    ) as client:
+        project = (
+            await client.post(
+                "/v1/projects",
+                json={"name": "Runtime HTTP", "residency": "local_only"},
+            )
+        ).json()
+        project_id = project["project"]["id"]
+        projects = await client.get("/v1/projects", params={"limit": 1})
+        conversation = (
+            await client.post(
+                "/v1/conversations",
+                json={"project_id": project_id, "workspace_type": "project_chat"},
+            )
+        ).json()
+        conversation_id = conversation["id"]
+        fetched_conversation = await client.get(f"/v1/conversations/{conversation_id}")
+        conversations = await client.get(
+            "/v1/conversations",
+            params={"project_id": project_id},
+        )
+        task = (
+            await client.post(
+                "/v1/tasks",
+                json={
+                    "conversation_id": conversation_id,
+                    "user_request": "Build preview",
+                    "operation_mode": "continue_current_chat_draft",
+                    "execution_target": "local",
+                    "idempotency_key": "http:runtime:task",
+                },
+            )
+        ).json()["task"]
+        task_id = task["id"]
+        pending = (
+            await client.post(
+                "/v1/changesets",
+                json={
+                    "task_id": task_id,
+                    "files": [{"path": "index.html", "content": "<h1>HTTP</h1>"}],
+                    "reason": "Preview entry",
+                    "idempotency_key": "http:runtime:changeset",
+                },
+            )
+        ).json()
+        approval = pending["approval"]
+        decided = await client.post(
+            f"/v1/approvals/{approval['id']}/decision",
+            json={
+                "approval_id": approval["id"],
+                "approved": True,
+                "decided_by": "user",
+            },
+        )
+        tasks = await client.get("/v1/tasks", params={"conversation_id": conversation_id})
+        versions = await client.get("/v1/versions", params={"project_id": project_id})
+        approvals = await client.get("/v1/approvals", params={"task_id": task_id})
+        missing_idempotency = await client.post(
+            "/v1/previews/start",
+            json={"task_id": task_id, "idempotency_key": "http:preview:start"},
+        )
+        mismatched_idempotency = await client.post(
+            "/v1/previews/start",
+            headers={"Idempotency-Key": "different"},
+            json={"task_id": task_id, "idempotency_key": "http:preview:start"},
+        )
+        started = await client.post(
+            "/v1/previews/start",
+            headers={"Idempotency-Key": "http:preview:start"},
+            json={"task_id": task_id, "idempotency_key": "http:preview:start"},
+        )
+        started.raise_for_status()
+        preview = started.json()["preview"]
+        runtime = started.json()["runtime"]
+        fetched_runtime = await client.get(f"/v1/runtimes/{runtime['id']}")
+        runtime_health = await client.get("/v1/runtimes/health", params={"task_id": task_id})
+        fetched_preview = await client.get(f"/v1/previews/{preview['id']}")
+        resolved_preview = await client.get(
+            "/v1/previews/resolve",
+            params={"conversation_id": conversation_id},
+        )
+        artifacts = await client.get("/v1/artifacts", params={"task_id": task_id})
+        missing_artifact = await client.get("/v1/artifacts/018f0f7c-1234-7000-8000-000000000099")
+        stopped = await client.post(
+            f"/v1/previews/{preview['id']}/stop",
+            headers={"Idempotency-Key": "http:preview:stop"},
+            json={
+                "preview_id": preview["id"],
+                "idempotency_key": "http:preview:stop",
+            },
+        )
+
+    for response in (
+        projects,
+        fetched_conversation,
+        conversations,
+        decided,
+        tasks,
+        versions,
+        approvals,
+        fetched_runtime,
+        runtime_health,
+        fetched_preview,
+        resolved_preview,
+        artifacts,
+        stopped,
+    ):
+        response.raise_for_status()
+    assert projects.json()["items"][0]["id"] == project_id
+    assert fetched_conversation.json()["id"] == conversation_id
+    assert task_id in {item["id"] for item in tasks.json()["items"]}
+    assert approval["id"] in {item["id"] for item in approvals.json()["items"]}
+    assert len(versions.json()["items"]) == 2
+    assert missing_idempotency.status_code == 422
+    assert mismatched_idempotency.status_code == 409
+    assert mismatched_idempotency.json()["detail"]["code"] == "SCOPE_MISMATCH"
+    assert fetched_runtime.json()["id"] == runtime["id"]
+    assert runtime_health.json()["executor"]["available"] is True
+    assert fetched_preview.json()["preview"]["id"] == preview["id"]
+    assert resolved_preview.json()["preview"]["id"] == preview["id"]
+    assert artifacts.json() == {"items": []}
+    assert missing_artifact.status_code == 404
+    assert stopped.json()["status"] == "stopped"
 
 
 @pytest.mark.asyncio

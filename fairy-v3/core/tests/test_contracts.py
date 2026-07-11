@@ -16,6 +16,8 @@ from fairy_core.contracts.models import (
     MemorySnapshotItemModel,
     MemorySnapshotModel,
     PermissionProfileModel,
+    PreviewModel,
+    PreviewStartInput,
     ProjectListInput,
     ScopeContractModel,
     TaskCreate,
@@ -128,6 +130,49 @@ def test_collection_inputs_bound_limits_and_owning_scope() -> None:
         ProjectListInput(limit=101)
     with pytest.raises(ValidationError):
         ProjectListInput(cursor="")
+
+
+def test_preview_contract_accepts_only_executor_owned_local_loopback_urls() -> None:
+    payload = {
+        "id": new_id(),
+        "project_id": new_id(),
+        "conversation_id": new_id(),
+        "task_id": new_id(),
+        "version_id": new_id(),
+        "runtime_id": new_id(),
+        "project_root": "C:/managed/version",
+        "execution_target": "local",
+        "url": "http://127.0.0.1:43125/preview/",
+        "visibility": "chat_draft",
+        "status": "ready",
+        "health": "healthy",
+        "error_code": None,
+        "idempotency_key": "preview:1",
+        "revision": 2,
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC),
+    }
+
+    assert PreviewModel.model_validate(payload).url == payload["url"]
+    for forged_url in (
+        "http://localhost:43125/preview/",
+        "http://127.0.0.2:43125/preview/",
+        "https://127.0.0.1:43125/preview/",
+        "http://user@127.0.0.1:43125/preview/",
+    ):
+        with pytest.raises(ValidationError):
+            PreviewModel.model_validate({**payload, "url": forged_url})
+
+    with pytest.raises(ValidationError):
+        PreviewStartInput.model_validate(
+            {
+                "task_id": new_id(),
+                "idempotency_key": "preview:start",
+                "url": payload["url"],
+                "runtime_id": new_id(),
+                "project_root": "C:/forged",
+            }
+        )
 
 
 def test_memory_snapshot_contract_rejects_tampered_hashes_and_non_finite_scores() -> None:

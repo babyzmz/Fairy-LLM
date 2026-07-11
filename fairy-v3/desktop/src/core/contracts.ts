@@ -3,6 +3,13 @@ import type { components, operations } from "./generated/api";
 type Schemas = components["schemas"];
 
 export type ApprovalDecisionInput = Schemas["ApprovalDecisionInput"];
+export type Approval = Schemas["ApprovalModel"];
+export type ApprovalListInput = NonNullable<
+  operations["approvals.list"]["parameters"]["query"]
+>;
+export type ApprovalPage = Schemas["ApprovalPageModel"];
+export type Artifact = Schemas["ArtifactModel"];
+export type ArtifactPage = Schemas["ArtifactPageModel"];
 export type CapabilityManifest = Schemas["CapabilityManifestModel"];
 export type CapabilityRequest = Schemas["CapabilityRequest"];
 export type Changeset = Schemas["ChangesetModel"];
@@ -10,6 +17,10 @@ export type ChangesetProposal = Schemas["ChangesetProposal"];
 export type Checkpoint = Schemas["CheckpointModel"];
 export type Conversation = Schemas["ConversationModel"];
 export type ConversationCreateInput = Schemas["ConversationCreate"];
+export type ConversationListInput = NonNullable<
+  operations["conversations.list"]["parameters"]["query"]
+>;
+export type ConversationPage = Schemas["ConversationPageModel"];
 export type EventEnvelope = Schemas["EventEnvelopeModel"];
 export type Health = Schemas["HealthModel"];
 export type MemoryClaim = Schemas["MemoryClaimModel"];
@@ -35,11 +46,31 @@ export type Project = Schemas["ProjectModel"];
 export type ProjectContext = Schemas["ProjectContextModel"];
 export type ProjectCreateInput = Schemas["ProjectCreate"];
 export type ProjectImportInput = Schemas["ProjectImport"];
+export type ProjectListInput = NonNullable<
+  operations["projects.list"]["parameters"]["query"]
+>;
+export type ProjectPage = Schemas["ProjectPageModel"];
+export type Preview = Schemas["PreviewModel"];
+export type PreviewContext = Schemas["PreviewContextModel"];
+export type PreviewResolveInput = operations["previews.resolve"]["parameters"]["query"];
+export type PreviewResolution = Schemas["PreviewResolutionModel"];
+export type PreviewStartInput = Schemas["PreviewStartInput"];
+export type PreviewStopInput = Schemas["PreviewStopInput"];
+export type Runtime = Schemas["RuntimeModel"];
+export type RuntimeHealth = Schemas["RuntimeHealthModel"];
 export type Task = Schemas["TaskModel"];
 export type TaskContext = Schemas["TaskContextModel"];
 export type TaskCreateInput = Schemas["TaskCreate"];
+export type TaskListInput = NonNullable<
+  operations["tasks.list"]["parameters"]["query"]
+>;
+export type TaskPage = Schemas["TaskPageModel"];
 export type Version = Schemas["VersionModel"];
 export type VersionAcceptInput = Schemas["VersionAcceptInput"];
+export type VersionListInput = NonNullable<
+  operations["versions.list"]["parameters"]["query"]
+>;
+export type VersionPage = Schemas["VersionPageModel"];
 
 export interface EventBatch {
   items: EventEnvelope[];
@@ -58,16 +89,33 @@ export interface CoreMethodMap {
   "projects.create": { params: ProjectCreateInput; result: ProjectContext };
   "projects.import": { params: ProjectImportInput; result: ProjectContext };
   "projects.get": { params: { project_id: string }; result: Project };
+  "projects.list": { params: ProjectListInput; result: ProjectPage };
   "conversations.create": { params: ConversationCreateInput; result: Conversation };
+  "conversations.get": { params: { conversation_id: string }; result: Conversation };
+  "conversations.list": {
+    params: ConversationListInput;
+    result: ConversationPage;
+  };
   "tasks.create": { params: TaskCreateInput; result: TaskContext };
   "tasks.get": { params: { task_id: string }; result: Task };
+  "tasks.list": { params: TaskListInput; result: TaskPage };
   "tasks.review": { params: { task_id: string }; result: Checkpoint };
   "changesets.propose": { params: ChangesetProposal; result: PendingChangeset };
   "approvals.decide": { params: ApprovalDecisionInput; result: Changeset };
+  "approvals.list": { params: ApprovalListInput; result: ApprovalPage };
   "versions.get": { params: { version_id: string }; result: Version };
+  "versions.list": { params: VersionListInput; result: VersionPage };
   "versions.accept": { params: VersionAcceptInput; result: Project };
   "versions.discard": { params: { task_id: string }; result: Task };
   "capabilities.get": { params: CapabilityRequest; result: CapabilityManifest };
+  "runtimes.get": { params: { runtime_id: string }; result: Runtime };
+  "runtimes.health": { params: { task_id: string }; result: RuntimeHealth };
+  "previews.start": { params: PreviewStartInput; result: PreviewContext };
+  "previews.get": { params: { preview_id: string }; result: PreviewContext };
+  "previews.resolve": { params: PreviewResolveInput; result: PreviewResolution };
+  "previews.stop": { params: PreviewStopInput; result: Preview };
+  "artifacts.list": { params: { task_id: string }; result: ArtifactPage };
+  "artifacts.read": { params: { artifact_id: string }; result: Artifact };
   "events.subscribe": { params: { cursor: number }; result: EventBatch };
   "memory.observations.create": {
     params: MemoryObserveInput;

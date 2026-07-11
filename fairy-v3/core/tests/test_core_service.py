@@ -5,9 +5,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from fairy_core.application.service import CoreMethodNotFoundError
+from fairy_core.application.service import CoreMethodNotFoundError, CoreService
+from fairy_core.commanding.registry import build_default_registry
 from fairy_core.contracts.methods import CORE_METHODS
+from fairy_core.domain.execution import Artifact, ArtifactType, ArtifactVisibility
+from fairy_core.domain.ids import new_id
 from fairy_core.transports.stdio import build_local_service
+from tests.runtime_support import build_runtime_stack
 
 
 def test_core_service_owns_validation_handlers_and_response_serialization(tmp_path: Path) -> None:
@@ -122,10 +126,113 @@ def test_core_service_exposes_typed_workspace_collection_pages(tmp_path: Path) -
         service.close()
 
 
+def test_core_service_exposes_runtime_preview_and_artifact_contracts(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    service = CoreService(
+        stack.core,
+        unit_of_work_factory=stack.factory,
+        registry=build_default_registry(),
+        runtime_application=stack.runtime,
+    )
+    artifact = Artifact.create(
+        project_id=stack.task.task.project_id,
+        conversation_id=stack.task.task.conversation_id,
+        task_id=stack.task.task.id,
+        version_id=stack.task.task.target_version_id,
+        artifact_type=ArtifactType.PREVIEW_MANIFEST,
+        visibility=ArtifactVisibility.CONVERSATION,
+        storage_location="artifacts/preview.json",
+        media_type="application/json",
+        byte_length=2,
+        content_hash="a" * 64,
+        metadata={"kind": "static_site"},
+    )
+    with stack.factory() as unit_of_work:
+        unit_of_work.state.append_artifact(artifact)
+        unit_of_work.commit()
+
+    started = service.invoke(
+        "previews.start",
+        {
+            "task_id": str(stack.task.task.id),
+            "idempotency_key": "service:preview:start",
+        },
+    )
+    runtime_id = started["runtime"]["id"]
+    preview_id = started["preview"]["id"]
+
+    assert started["preview"]["status"] == "ready"
+    assert service.invoke("runtimes.get", {"runtime_id": runtime_id})["status"] == "running"
+    assert (
+        service.invoke(
+            "runtimes.health",
+            {"task_id": str(stack.task.task.id)},
+        )["executor"]["available"]
+        is True
+    )
+    assert service.invoke("previews.get", {"preview_id": preview_id}) == started
+    assert (
+        service.invoke(
+            "previews.resolve",
+            {"conversation_id": str(stack.task.task.conversation_id)},
+        )["preview"]["id"]
+        == preview_id
+    )
+    assert service.invoke(
+        "artifacts.list",
+        {"task_id": str(stack.task.task.id)},
+    )["items"] == [service.invoke("artifacts.read", {"artifact_id": str(artifact.id)})]
+    stopped = service.invoke(
+        "previews.stop",
+        {
+            "preview_id": preview_id,
+            "idempotency_key": "service:preview:stop",
+        },
+    )
+    assert stopped["status"] == "stopped"
+
+
+def test_local_service_reports_unconfigured_runtime_fail_closed(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        project = service.invoke(
+            "projects.create",
+            {"name": "No worker", "residency": "local_only"},
+        )
+        with pytest.raises(KeyError):
+            service.invoke("runtimes.health", {"task_id": str(new_id())})
+
+        conversation = service.invoke(
+            "conversations.create",
+            {
+                "project_id": project["project"]["id"],
+                "workspace_type": "project_chat",
+            },
+        )
+        task = service.invoke(
+            "tasks.create",
+            {
+                "conversation_id": conversation["id"],
+                "user_request": "Inspect runtime",
+                "operation_mode": "continue_current_chat_draft",
+                "execution_target": "local",
+                "idempotency_key": "runtime:unavailable:task",
+            },
+        )["task"]
+        health = service.invoke("runtimes.health", {"task_id": task["id"]})
+
+        assert health["executor"]["available"] is False
+        assert health["executor"]["error_code"] == "SANDBOX_UNAVAILABLE"
+    finally:
+        service.close()
+
+
 def test_core_method_catalog_is_the_single_public_method_authority() -> None:
     assert set(CORE_METHODS) == {
         "approvals.decide",
         "approvals.list",
+        "artifacts.list",
+        "artifacts.read",
         "capabilities.get",
         "changesets.propose",
         "conversations.create",
@@ -148,6 +255,12 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "projects.get",
         "projects.import",
         "projects.list",
+        "previews.get",
+        "previews.resolve",
+        "previews.start",
+        "previews.stop",
+        "runtimes.get",
+        "runtimes.health",
         "tasks.create",
         "tasks.get",
         "tasks.list",

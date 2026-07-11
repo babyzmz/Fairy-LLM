@@ -6,11 +6,14 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from fairy_core.domain.errors import DomainError
 
-class RuntimeExecutorError(RuntimeError):
+
+class RuntimeExecutorError(DomainError):
     def __init__(self, message: str, *, error_code: str = "WORKER_INTERRUPTED") -> None:
         super().__init__(message)
         self.error_code = error_code
+        self.code = error_code
 
 
 class ExecutorRuntimeState(StrEnum):

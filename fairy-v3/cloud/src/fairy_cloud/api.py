@@ -12,13 +12,20 @@ from fairy_core.application.service import (
 from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.contracts.models import (
     ApprovalDecisionInput,
+    ApprovalListInput,
+    ApprovalPageModel,
+    ArtifactListInput,
+    ArtifactModel,
+    ArtifactPageModel,
     CapabilityManifestModel,
     CapabilityRequest,
     ChangesetModel,
     ChangesetProposal,
     CheckpointModel,
     ConversationCreate,
+    ConversationListInput,
     ConversationModel,
+    ConversationPageModel,
     HealthModel,
     MemoryClaimContextModel,
     MemoryClaimGetInput,
@@ -40,15 +47,30 @@ from fairy_core.contracts.models import (
     MemorySnapshotModel,
     MemoryTombstoneModel,
     PendingChangesetModel,
+    PreviewContextModel,
+    PreviewModel,
+    PreviewResolutionModel,
+    PreviewResolveInput,
+    PreviewStartInput,
+    PreviewStopInput,
     ProjectContextModel,
     ProjectCreate,
     ProjectImport,
+    ProjectListInput,
     ProjectModel,
+    ProjectPageModel,
+    RuntimeHealthInput,
+    RuntimeHealthModel,
+    RuntimeModel,
     TaskContextModel,
     TaskCreate,
+    TaskListInput,
     TaskModel,
+    TaskPageModel,
     VersionAcceptInput,
+    VersionListInput,
     VersionModel,
+    VersionPageModel,
 )
 from fairy_core.domain.errors import DomainError, IdempotencyConflictError, VersionConflictError
 from fairy_core.memory.models import MemoryNamespace
@@ -189,6 +211,16 @@ def create_cloud_app(
             )
         return object_store
 
+    def require_idempotency_match(body_key: str, header_key: str) -> None:
+        if body_key != header_key:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "SCOPE_MISMATCH",
+                    "message": "Idempotency-Key does not match Core params",
+                },
+            )
+
     @app.get("/v1/health", operation_id="health", response_model=HealthModel)
     def health() -> dict[str, Any]:
         return invoke("health", {})
@@ -198,6 +230,14 @@ def create_cloud_app(
         if readiness is None:
             return {"status": "ready"}
         return await readiness()
+
+    @protected.get(
+        "/projects",
+        operation_id="projects.list",
+        response_model=ProjectPageModel,
+    )
+    def list_projects(request: Annotated[ProjectListInput, Query()]) -> dict[str, Any]:
+        return invoke("projects.list", request.model_dump(mode="json", exclude_none=True))
 
     @protected.post(
         "/projects",
@@ -239,6 +279,19 @@ def create_cloud_app(
     def get_project(project_id: UUID) -> dict[str, Any]:
         return invoke("projects.get", {"project_id": str(project_id)})
 
+    @protected.get(
+        "/conversations",
+        operation_id="conversations.list",
+        response_model=ConversationPageModel,
+    )
+    def list_conversations(
+        request: Annotated[ConversationListInput, Query()],
+    ) -> dict[str, Any]:
+        return invoke(
+            "conversations.list",
+            request.model_dump(mode="json", exclude_none=True),
+        )
+
     @protected.post(
         "/conversations",
         operation_id="conversations.create",
@@ -247,6 +300,22 @@ def create_cloud_app(
     def create_conversation(request: ConversationCreate) -> dict[str, Any]:
         return invoke("conversations.create", request.model_dump(mode="json"))
 
+    @protected.get(
+        "/conversations/{conversation_id}",
+        operation_id="conversations.get",
+        response_model=ConversationModel,
+    )
+    def get_conversation(conversation_id: UUID) -> dict[str, Any]:
+        return invoke("conversations.get", {"conversation_id": str(conversation_id)})
+
+    @protected.get(
+        "/tasks",
+        operation_id="tasks.list",
+        response_model=TaskPageModel,
+    )
+    def list_tasks(request: Annotated[TaskListInput, Query()]) -> dict[str, Any]:
+        return invoke("tasks.list", request.model_dump(mode="json", exclude_none=True))
+
     @protected.post("/tasks", operation_id="tasks.create", response_model=TaskContextModel)
     def create_task(request: TaskCreate) -> dict[str, Any]:
         return invoke("tasks.create", request.model_dump(mode="json"))
@@ -254,6 +323,14 @@ def create_cloud_app(
     @protected.get("/tasks/{task_id}", operation_id="tasks.get", response_model=TaskModel)
     def get_task(task_id: UUID) -> dict[str, Any]:
         return invoke("tasks.get", {"task_id": str(task_id)})
+
+    @protected.get(
+        "/approvals",
+        operation_id="approvals.list",
+        response_model=ApprovalPageModel,
+    )
+    def list_approvals(request: Annotated[ApprovalListInput, Query()]) -> dict[str, Any]:
+        return invoke("approvals.list", request.model_dump(mode="json", exclude_none=True))
 
     @protected.post(
         "/changesets",
@@ -309,12 +386,109 @@ def create_cloud_app(
         return invoke("versions.discard", {"task_id": str(task_id)})
 
     @protected.get(
+        "/versions",
+        operation_id="versions.list",
+        response_model=VersionPageModel,
+    )
+    def list_versions(request: Annotated[VersionListInput, Query()]) -> dict[str, Any]:
+        return invoke("versions.list", request.model_dump(mode="json", exclude_none=True))
+
+    @protected.get(
         "/versions/{version_id}",
         operation_id="versions.get",
         response_model=VersionModel,
     )
     def get_version(version_id: UUID) -> dict[str, Any]:
         return invoke("versions.get", {"version_id": str(version_id)})
+
+    @protected.get(
+        "/runtimes/health",
+        operation_id="runtimes.health",
+        response_model=RuntimeHealthModel,
+    )
+    def runtime_health(request: Annotated[RuntimeHealthInput, Query()]) -> dict[str, Any]:
+        return invoke("runtimes.health", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/runtimes/{runtime_id}",
+        operation_id="runtimes.get",
+        response_model=RuntimeModel,
+    )
+    def get_runtime(runtime_id: UUID) -> dict[str, Any]:
+        return invoke("runtimes.get", {"runtime_id": str(runtime_id)})
+
+    @protected.post(
+        "/previews/start",
+        operation_id="previews.start",
+        response_model=PreviewContextModel,
+    )
+    def start_preview(
+        request: PreviewStartInput,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=255),
+        ],
+    ) -> dict[str, Any]:
+        require_idempotency_match(request.idempotency_key, idempotency_key)
+        return invoke("previews.start", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/previews/resolve",
+        operation_id="previews.resolve",
+        response_model=PreviewResolutionModel,
+    )
+    def resolve_preview(
+        request: Annotated[PreviewResolveInput, Query()],
+    ) -> dict[str, Any] | None:
+        return invoke(
+            "previews.resolve",
+            request.model_dump(mode="json", exclude_none=True),
+        )
+
+    @protected.get(
+        "/previews/{preview_id}",
+        operation_id="previews.get",
+        response_model=PreviewContextModel,
+    )
+    def get_preview(preview_id: UUID) -> dict[str, Any]:
+        return invoke("previews.get", {"preview_id": str(preview_id)})
+
+    @protected.post(
+        "/previews/{preview_id}/stop",
+        operation_id="previews.stop",
+        response_model=PreviewModel,
+    )
+    def stop_preview(
+        preview_id: UUID,
+        request: PreviewStopInput,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=255),
+        ],
+    ) -> dict[str, Any]:
+        if request.preview_id != preview_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "preview id mismatch"},
+            )
+        require_idempotency_match(request.idempotency_key, idempotency_key)
+        return invoke("previews.stop", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/artifacts",
+        operation_id="artifacts.list",
+        response_model=ArtifactPageModel,
+    )
+    def list_artifacts(request: Annotated[ArtifactListInput, Query()]) -> dict[str, Any]:
+        return invoke("artifacts.list", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/artifacts/{artifact_id}",
+        operation_id="artifacts.read",
+        response_model=ArtifactModel,
+    )
+    def read_artifact(artifact_id: UUID) -> dict[str, Any]:
+        return invoke("artifacts.read", {"artifact_id": str(artifact_id)})
 
     @protected.post(
         "/capabilities",
@@ -706,6 +880,8 @@ def _core_http_exception(error: Exception) -> HTTPException:
             "MEMORY_PROJECTION_STALE": 503,
             "MEMORY_SCOPE_VIOLATION": 409,
             "MEMORY_SNAPSHOT_TOO_LARGE": 413,
+            "SANDBOX_UNAVAILABLE": 503,
+            "SCOPE_MISMATCH": 409,
             "VERSION_CONFLICT": 409,
             "WORKER_INTERRUPTED": 503,
         }.get(error_code, 400)

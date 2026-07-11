@@ -1,4 +1,6 @@
 import type { CoreMethodMap, CoreMethodName, CoreTransport } from "./client";
+import { parseMemoryResult } from "./memoryValidation";
+import { parseRuntimeResult } from "./runtimeValidation";
 
 export type InvokeFunction = <T>(
   command: string,
@@ -63,6 +65,9 @@ export class TauriCoreTransport implements CoreTransport {
     if ("error" in response) {
       throw new CoreRpcError(response.error);
     }
-    return response.result;
+    return parseRuntimeResult(
+      method,
+      parseMemoryResult(method, response.result),
+    ) as CoreMethodMap[M]["result"];
   }
 }

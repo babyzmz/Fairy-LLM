@@ -8,6 +8,7 @@ import type {
 } from "./contracts";
 import type { CoreTransport } from "./client";
 import { parseMemoryResult } from "./memoryValidation";
+import { parseRuntimeResult } from "./runtimeValidation";
 
 type AccessTokenProvider = () => Promise<string | null> | string | null;
 
@@ -22,6 +23,7 @@ interface RequestDescriptor {
   method: "DELETE" | "GET" | "POST";
   path: string;
   body?: unknown;
+  idempotencyKey?: string;
 }
 
 type RuntimeParams = Record<string, unknown>;
@@ -33,9 +35,22 @@ const routes = {
   "projects.import": (params) => post("/v1/projects/import", params),
   "projects.get": (params) =>
     get(`/v1/projects/${pathParameter(params, "project_id")}`),
+  "projects.list": (params) =>
+    getWithQuery("/v1/projects", params, ["limit", "cursor"]),
   "conversations.create": (params) => post("/v1/conversations", params),
+  "conversations.get": (params) =>
+    get(`/v1/conversations/${pathParameter(params, "conversation_id")}`),
+  "conversations.list": (params) =>
+    getWithQuery("/v1/conversations", params, ["limit", "cursor", "project_id"]),
   "tasks.create": (params) => post("/v1/tasks", params),
   "tasks.get": (params) => get(`/v1/tasks/${pathParameter(params, "task_id")}`),
+  "tasks.list": (params) =>
+    getWithQuery("/v1/tasks", params, [
+      "limit",
+      "cursor",
+      "project_id",
+      "conversation_id",
+    ]),
   "tasks.review": (params) =>
     post(`/v1/tasks/${pathParameter(params, "task_id")}/review`),
   "changesets.propose": (params) => post("/v1/changesets", params),
@@ -44,8 +59,24 @@ const routes = {
       `/v1/approvals/${pathParameter(params, "approval_id")}/decision`,
       params,
     ),
+  "approvals.list": (params) =>
+    getWithQuery("/v1/approvals", params, [
+      "limit",
+      "cursor",
+      "project_id",
+      "conversation_id",
+      "task_id",
+    ]),
   "versions.get": (params) =>
     get(`/v1/versions/${pathParameter(params, "version_id")}`),
+  "versions.list": (params) =>
+    getWithQuery("/v1/versions", params, [
+      "limit",
+      "cursor",
+      "project_id",
+      "conversation_id",
+      "task_id",
+    ]),
   "versions.accept": (params) =>
     post(
       `/v1/tasks/${pathParameter(params, "task_id")}/accept-version`,
@@ -56,6 +87,25 @@ const routes = {
     path: `/v1/tasks/${pathParameter(params, "task_id")}/version`,
   }),
   "capabilities.get": (params) => post("/v1/capabilities", params),
+  "runtimes.get": (params) =>
+    get(`/v1/runtimes/${pathParameter(params, "runtime_id")}`),
+  "runtimes.health": (params) =>
+    getWithQuery("/v1/runtimes/health", params, ["task_id"]),
+  "previews.start": (params) =>
+    postWithIdempotency("/v1/previews/start", params),
+  "previews.get": (params) =>
+    get(`/v1/previews/${pathParameter(params, "preview_id")}`),
+  "previews.resolve": (params) =>
+    getWithQuery("/v1/previews/resolve", params, ["conversation_id", "preview_id"]),
+  "previews.stop": (params) =>
+    postWithIdempotency(
+      `/v1/previews/${pathParameter(params, "preview_id")}/stop`,
+      params,
+    ),
+  "artifacts.list": (params) =>
+    getWithQuery("/v1/artifacts", params, ["task_id"]),
+  "artifacts.read": (params) =>
+    get(`/v1/artifacts/${pathParameter(params, "artifact_id")}`),
   "memory.observations.create": (params) => post("/v1/memory/observations", params),
   "memory.observations.list": (params) =>
     get(
@@ -220,6 +270,9 @@ export class CloudCoreTransport implements CoreTransport {
     if (token) headers.set("Authorization", `Bearer ${token}`);
     if (options.lastEventId) headers.set("Last-Event-ID", options.lastEventId);
     if (descriptor.body !== undefined) headers.set("Content-Type", "application/json");
+    if (descriptor.idempotencyKey) {
+      headers.set("Idempotency-Key", descriptor.idempotencyKey);
+    }
 
     return this.fetcher(new URL(descriptor.path.replace(/^\//, ""), this.baseUrl), {
       method: descriptor.method,
@@ -236,6 +289,33 @@ function get(path: string): RequestDescriptor {
 
 function post(path: string, body?: unknown): RequestDescriptor {
   return { method: "POST", path, body };
+}
+
+function postWithIdempotency(path: string, params: RuntimeParams): RequestDescriptor {
+  return {
+    method: "POST",
+    path,
+    body: params,
+    idempotencyKey: rawStringParameter(params, "idempotency_key"),
+  };
+}
+
+function getWithQuery(
+  path: string,
+  params: RuntimeParams,
+  names: readonly string[],
+): RequestDescriptor {
+  const query = new URLSearchParams();
+  for (const name of names) {
+    const value = params[name];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "string" && typeof value !== "number") {
+      throw new TypeError(`Core parameter ${name} must be a string or number`);
+    }
+    query.set(name, String(value));
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  return get(`${path}${suffix}`);
 }
 
 function pathParameter(params: RuntimeParams, name: string): string {
@@ -255,11 +335,15 @@ function integerParameter(params: RuntimeParams, name: string): number {
 }
 
 function stringParameter(params: RuntimeParams, name: string): string {
+  return encodeURIComponent(rawStringParameter(params, name));
+}
+
+function rawStringParameter(params: RuntimeParams, name: string): string {
   const value = params[name];
   if (typeof value !== "string" || value.length === 0) {
     throw new TypeError(`Core parameter ${name} must be a non-empty string`);
   }
-  return encodeURIComponent(value);
+  return value;
 }
 
 function memorySearchLimit(params: RuntimeParams): number {
@@ -272,10 +356,10 @@ function memorySearchLimit(params: RuntimeParams): number {
 
 function validateCoreResult(method: CoreMethodName, payload: unknown): unknown {
   try {
-    return parseMemoryResult(method, payload);
+    return parseRuntimeResult(method, parseMemoryResult(method, payload));
   } catch (error) {
     if (!(error instanceof z.ZodError)) throw error;
-    throw new CloudCoreError("Cloud memory response does not match its contract", {
+    throw new CloudCoreError("Cloud Core response does not match its contract", {
       status: 200,
       errorCode: "INVALID_RESPONSE",
       details: { issues: error.issues },
