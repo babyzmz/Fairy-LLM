@@ -346,6 +346,7 @@ def build_default_registry() -> ToolRegistry:
             ApprovalPolicy.PROFILE,
             active_profiles,
             "preview_worker",
+            idempotent=True,
         ),
         _tool(
             "preview.stop",
@@ -354,6 +355,7 @@ def build_default_registry() -> ToolRegistry:
             ApprovalPolicy.PROFILE,
             active_profiles,
             "preview_worker",
+            idempotent=True,
         ),
         _tool(
             "review.typecheck",

@@ -94,6 +94,38 @@ def test_autonomous_profile_exposes_shell_only_with_healthy_sandbox() -> None:
     assert available.requires_approval is False
 
 
+def test_static_preview_approval_is_independent_from_wsl_health() -> None:
+    registry = build_default_registry()
+    policy = PolicyEngine(registry)
+
+    pending = policy.evaluate(
+        tool_name="preview.start",
+        profile=PermissionProfile.STANDARD,
+        capability_overrides={},
+        approval_granted=False,
+        sandbox_healthy=False,
+    )
+    approved = policy.evaluate(
+        tool_name="preview.start",
+        profile=PermissionProfile.STANDARD,
+        capability_overrides={},
+        approval_granted=True,
+        sandbox_healthy=False,
+    )
+    manifest = registry.capability_manifest(
+        profile=PermissionProfile.STANDARD,
+        sandbox_healthy=False,
+    )
+    metadata = {item["name"]: item for item in registry.frontend_metadata()}
+
+    assert pending.error_code == "APPROVAL_REQUIRED"
+    assert approved.allowed is True
+    assert manifest["preview.start"] is True
+    assert manifest["run.sandboxed"] is False
+    assert metadata["preview.start"]["requires_sandbox"] is False
+    assert metadata["preview.start"]["idempotent"] is True
+
+
 @pytest.mark.parametrize("profile", list(PermissionProfile))
 def test_active_version_promotion_always_requires_approval(profile: PermissionProfile) -> None:
     policy = PolicyEngine(build_default_registry())
