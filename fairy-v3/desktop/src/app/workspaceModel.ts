@@ -55,6 +55,7 @@ export interface WorkspaceModel {
   versions: Version[];
   approvals: Approval[];
   events: EventEnvelope[];
+  presenceEvents: EventEnvelope[];
   messages: Message[];
   providers: ProviderProfile[];
   providerHealth: ProviderHealth[];
@@ -516,6 +517,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     events: allEvents.filter(
       (event) => event.task_id === selectedTask?.id && event.visibility === "user",
     ),
+    presenceEvents: allEvents.filter((event) => event.visibility === "user"),
     messages,
     providers,
     providerHealth,

@@ -1,4 +1,16 @@
 {
   "schema_version": 1,
-  "assets": []
+  "assets": [
+    {
+      "id": "fairy.presence.blue-ring",
+      "source_path": "icon/9d55d61ca9ca9d98dd7bfa4916cc11852755e0f5.jpg@128w_128h_1c_1s.webp",
+      "destination_path": "presence/fairy-blue-ring.webp",
+      "sha256": "ce841a68340af76bfd3e00ec748905102dba82e6481479744dbdb2bdca23fc26",
+      "byte_length": 2340,
+      "provenance_assertion": "Existing Fairy project asset supplied and authorized by the project owner; no third-party metadata was present in the source tree.",
+      "license_assertion": "Project-owner authorized for Fairy V3 product use.",
+      "intended_use": "Primary visual identity for the isolated Presence and display-only Guide windows.",
+      "validation_status": "approved"
+    }
+  ]
 }

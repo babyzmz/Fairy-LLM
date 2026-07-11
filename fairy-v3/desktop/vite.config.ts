@@ -7,6 +7,7 @@ const rootDirectory = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   root: rootDirectory,
+  publicDir: fileURLToPath(new URL("../resources", import.meta.url)),
   plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
   build: {
     target: "es2022",

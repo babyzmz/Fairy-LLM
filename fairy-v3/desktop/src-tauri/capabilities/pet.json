@@ -3,5 +3,12 @@
   "identifier": "pet-window",
   "description": "Companion-only capabilities; no project or execution access",
   "windows": ["pet"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:window:allow-available-monitors",
+    "core:window:allow-primary-monitor",
+    "core:window:allow-outer-position",
+    "core:window:allow-outer-size",
+    "core:window:allow-set-position",
+    "core:window:allow-start-dragging"
+  ]
 }

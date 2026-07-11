@@ -11,11 +11,31 @@ pub mod capture;
 #[derive(Debug)]
 pub struct WindowScopeError;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AuxiliaryWindowPolicy {
+    pub ignore_cursor_events: bool,
+    pub focusable: bool,
+}
+
 pub fn authorize_core_rpc_window(label: &str) -> Result<(), WindowScopeError> {
     if label == "main" {
         Ok(())
     } else {
         Err(WindowScopeError)
+    }
+}
+
+pub fn auxiliary_window_policy(label: &str) -> Option<AuxiliaryWindowPolicy> {
+    match label {
+        "pet" => Some(AuxiliaryWindowPolicy {
+            ignore_cursor_events: false,
+            focusable: true,
+        }),
+        "guide" => Some(AuxiliaryWindowPolicy {
+            ignore_cursor_events: true,
+            focusable: false,
+        }),
+        _ => None,
     }
 }
 
@@ -100,6 +120,19 @@ pub fn run() {
             app.manage(DesktopState {
                 core: Arc::new(bridge),
             });
+            for label in ["pet", "guide"] {
+                let Some(policy) = auxiliary_window_policy(label) else {
+                    continue;
+                };
+                let Some(window) = app.get_webview_window(label) else {
+                    continue;
+                };
+                window.set_ignore_cursor_events(policy.ignore_cursor_events)?;
+                window.set_focusable(policy.focusable)?;
+                if label == "guide" {
+                    window.show()?;
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

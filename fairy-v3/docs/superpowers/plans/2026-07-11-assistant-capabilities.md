@@ -405,13 +405,21 @@ because those runtimes were not discoverable on this machine.
 - `PresenceProjection.reduce(publicEvent)` maps only durable user-visible event types to ambient/work states.
 - Presence local settings contain monitor-relative position, scale, Quiet Mode, dismissed notice IDs, and reduced-motion override; no domain entity or model context is stored.
 
-- [ ] Inventory approved legacy character media, record source/hash/license assertion/intended use, and copy only manifested assets.
-- [ ] Write failing projection tests proving internal/developer events, model deltas, tool arguments, and hidden reasoning cannot become Presence activity.
-- [ ] Write failing interaction tests for hover input, 5 px drag threshold, 20 px snap, per-monitor restore, Quiet Mode, dismissible notices, closable reply bubble, AFK/density, and reduced motion.
-- [ ] Implement one owned Presence boundary and a display-only click-through Guide boundary.
-- [ ] Configure strict window capabilities: main owns Core/capture/actions; Presence owns local projection/settings only; Guide owns no invoke command.
-- [ ] Run Vitest, Tauri window-scope tests, Playwright at 100/125/200 percent simulated scale, and asset-manifest validation.
-- [ ] Commit with `feat(v3): add isolated fairy presence`.
+- [x] Inventory approved legacy character media, record source/hash/license assertion/intended use, and copy only manifested assets.
+- [x] Write failing projection tests proving internal/developer events, model deltas, tool arguments, and hidden reasoning cannot become Presence activity.
+- [x] Write failing interaction tests for hover input, 5 px drag threshold, 20 px snap, per-monitor restore, Quiet Mode, dismissible notices, closable reply bubble, AFK/density, and reduced motion.
+- [x] Implement one owned Presence boundary and a display-only click-through Guide boundary.
+- [x] Configure strict window capabilities: main owns Core/capture/actions; Presence owns local projection/settings only; Guide owns no invoke command.
+- [x] Run Vitest, Tauri window-scope tests, Playwright at 100/125/200 percent simulated scale, and asset-manifest validation.
+- [x] Commit with `feat(v3): add isolated fairy presence`.
+
+Task 38 verification passed with 64 Vitest assertions, 14 Playwright workflows,
+the complete Rust workspace test suite, warning-free Clippy, a production desktop
+build, and exact validation of the single manifested Presence asset. The Pet
+window owns only monitor geometry, movement, and native drag permissions; Guide
+owns no invoke permission. Presence projects all user-visible ledger activity
+through a fixed-text allowlist and stores no project, Task, Conversation, model,
+or approval state.
 
 ### Task 39: Typed System Actions Without Host Shell
 

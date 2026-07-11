@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { PresenceBridge } from "../presence/PresenceBridge";
 import { VoiceController } from "../voice/VoiceController";
 
 import { WorkspaceShell } from "./WorkspaceShell";
@@ -23,14 +24,17 @@ function Workspace({ client }: AppProps) {
       ? model.selectedChatConversation?.id ?? null
       : model.selectedConversation?.id ?? null;
   return (
-    <VoiceController
-      client={client}
-      conversationId={conversationId}
-      profile={profile}
-      health={health}
-    >
-      <WorkspaceShell model={model} />
-    </VoiceController>
+    <>
+      <PresenceBridge events={model.presenceEvents} />
+      <VoiceController
+        client={client}
+        conversationId={conversationId}
+        profile={profile}
+        health={health}
+      >
+        <WorkspaceShell model={model} />
+      </VoiceController>
+    </>
   );
 }
 

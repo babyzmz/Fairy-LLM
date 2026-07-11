@@ -58,6 +58,7 @@ function workspaceModel(): WorkspaceModel {
     versions: [],
     approvals: [],
     events: [],
+    presenceEvents: [],
     messages: [],
     providers: [],
     providerHealth: [],
