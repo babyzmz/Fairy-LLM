@@ -223,6 +223,7 @@ def test_full_verification_script_covers_every_release_gate() -> None:
         "cargo clippy",
         "cargo test",
         "npm test -- --run",
+        "npm run e2e",
         "npm run build",
         "generate-contracts.ps1",
         "git diff --exit-code",

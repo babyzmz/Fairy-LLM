@@ -10,10 +10,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
-from fairy_core.commanding import SqlAlchemyCommandLedger
-from fairy_core.commanding.ledger import (
+from fairy_core.commanding import (
     CommandStatus,
     EventVisibility,
+    SqlAlchemyCommandLedger,
     SqliteCommandLedger,
 )
 from fairy_core.commanding.registry import RiskLevel

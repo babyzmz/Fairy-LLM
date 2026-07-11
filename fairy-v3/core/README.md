@@ -20,6 +20,17 @@ authority ordering and token budgets. Projection failure returns an explicit
 degraded Snapshot from bounded relational fallback and cannot mutate a
 Snapshot already bound to a Task.
 
+Runtime orchestration follows the same Core-owned rule. `runtime.py` contains
+the start/stop/resolve/recovery lifecycle, `runtime_contracts.py` contains its
+application DTOs, and `runtime_support.py` owns command leases, Scope checks,
+and persistence lookups. Runtime executor output is untrusted and must match
+the durable Runtime handle and exact loopback endpoint before Preview state can
+advance. A different Core instance cannot recover a live lease before expiry.
+
+The local static executor is read-only. Dynamic WSL and cloud OCI execution
+remain unavailable until dedicated executors satisfy their health and
+attestation contracts; Core never substitutes a host shell.
+
 Core runtime dependencies are intentionally limited to Pydantic and
 SQLAlchemy. FastAPI, Alembic, asyncpg, object storage, and server processes
 belong to Cloud; local JSON-RPC uses the Python standard library.

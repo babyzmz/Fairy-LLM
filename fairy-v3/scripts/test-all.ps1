@@ -115,6 +115,7 @@ else {
 }
 
 Invoke-Step "Desktop: npm test -- --run" $DesktopRoot "npm" @("test", "--", "--run")
+Invoke-Step "Desktop: npm run e2e" $DesktopRoot "npm" @("run", "e2e")
 Invoke-Step "Desktop: npm run build" $DesktopRoot "npm" @("run", "build")
 Invoke-Step "Contracts: generate-contracts.ps1" $Root "powershell" @(
     "-NoProfile",

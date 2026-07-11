@@ -10,6 +10,17 @@ the public method map over private JSON-RPC; `CloudCoreTransport` maps the same
 methods to authenticated REST and resumable SSE. Network event envelopes are
 validated with Zod before reaching React.
 
+The main workspace is backed only by durable Core collections and user-visible
+Ledger events. It presents Task Timeline plus Preview, explicit approval and
+version decisions, loading/offline/interrupted/conflict states, and a lazy
+developer drawer. The Preview iframe accepts only validated loopback HTTP or
+cloud HTTPS and does not grant same-origin access.
+
+The Local Worker crate is split by boundary: `protocol.rs` owns the fixed
+JSON-RPC method map, `workspace.rs` owns managed Git and Changeset operations,
+`preview.rs` owns the read-only loopback server, and `error.rs` owns stable
+worker failures. The crate root only exports the supported API.
+
 Run the root `scripts/generate-contracts.ps1` command after a Core or cloud API
 contract change. `npm run generate:contracts` regenerates only the desktop
 declaration from the existing OpenAPI snapshot.
@@ -26,3 +37,6 @@ npm run tauri -- dev
 The development Tauri process launches Python Core over line-oriented
 JSON-RPC. Core then launches the same `fairy.exe` with `--local-worker` for
 scoped Git workspace operations. Neither boundary invokes a host shell.
+The Local Worker may invoke Git with fixed arguments for managed repository
+operations; it never accepts a generic command or shell string. Static Preview
+serves files only and never invokes `Command`.

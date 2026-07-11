@@ -31,6 +31,11 @@ def test_v3_source_has_no_legacy_runtime_dependencies() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_pre_adapter_compatibility_modules_are_removed() -> None:
+    assert not (V3_ROOT / "core/src/fairy_core/commanding/ledger.py").exists()
+    assert not (V3_ROOT / "core/src/fairy_core/storage/state_store.py").exists()
+
+
 def test_boundary_gate_rejects_core_cloud_cycles_and_cloud_local_adapters(
     tmp_path: Path,
 ) -> None:

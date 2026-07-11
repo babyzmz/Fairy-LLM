@@ -31,6 +31,9 @@ Preview, Artifact, Checkpoint, and Memory state.
     retrieval projections can never create or overwrite a Claim.
 12. A Task binds one immutable Memory Snapshot ID and hash before execution;
     later writes or fresher projections cannot replace that context.
+13. Runtime start/stop intent is durable and fenced; executor metadata cannot
+    rebind Scope, endpoint, or handle during recovery.
+14. Host static Preview is read-only file serving, not project execution.
 
 ## Components
 
@@ -51,12 +54,29 @@ migration, and cloud-provider dependencies stay in Cloud.
 
 ### Workers
 
-The Rust local worker currently handles scoped Git workspace and file
-operations. Generic model-directed shell execution will be available only
-through the dedicated WSL2 FairySandbox provider; it must remain disabled until
-that provider is healthy. Cloud currently ships a brokerless Outbox Worker at
+The Rust local worker handles scoped Git workspace/file operations and an exact
+loopback, read-only static Preview server. Its crate separates protocol,
+workspace, Preview, and error modules. Static serving never starts project
+code. Generic model-directed shell execution will be available only through
+the dedicated WSL2 FairySandbox provider; it must remain disabled until that
+provider is healthy. Cloud currently ships a brokerless Outbox Worker at
 `fairy_cloud.workers.outbox`. The future non-root OCI execution Worker is a
 separate approved slice and must not be confused with the Outbox publisher.
+
+### Runtime and Preview
+
+Core persists Runtime and Preview intent before calling `RuntimeExecutor`.
+The executor returns an opaque handle and validated endpoint; completion,
+events, and command status are then committed. Runtime and Preview revisions
+are compare-and-swap fenced, PostgreSQL permits one active Preview per tenant
+and Task, and repeated idempotency keys reuse the same entities.
+
+Recovery probes only the durable handle. Same-instance lifecycle calls are
+serialized, another Core instance cannot cross a live lease, and handle
+rebinding or a missing process produces an explicit interrupted state. Preview
+resolution is Conversation-first: active Task, draft/base Version, then the
+Project's explicit active Preview pointer. It never selects a Project-wide
+newest Preview.
 
 ### Storage and synchronization
 

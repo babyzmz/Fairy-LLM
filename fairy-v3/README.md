@@ -55,10 +55,19 @@ or failed projections produce an explicit relational-fallback Snapshot instead
 of silently reusing context. Search, Snapshot inspection, and projection
 health are available through the shared CoreClient contract. Property,
 crash-recovery, scope, injection, fence, contract, and production SSE gates
-cover the delivered persistence and lexical retrieval slices. Episodes,
-pgvector expansion, asynchronous projection rebuild workers, multi-device
-memory controls, and final product workflows remain separate implementation
-slices.
+cover the delivered persistence and lexical retrieval slices.
+
+Runtime, Preview, and Artifact state is also durable and transport-neutral.
+The Rust Local Worker serves a read-only static candidate Version over exact
+loopback without invoking project code, while Core owns start/stop intent,
+lease fencing, recovery, Preview resolution, and accept/discard invariants.
+React now renders the persisted Task Timeline and sandboxed Preview iframe
+through CoreClient; production sample state has been removed.
+
+Episodes, pgvector expansion, asynchronous projection rebuild workers,
+multi-device memory controls, dynamic WSL/OCI project execution, and remaining
+product capability workflows remain separate implementation slices. They stay
+unavailable rather than falling back to host execution.
 
 Run every locally available release gate with:
 
@@ -70,6 +79,15 @@ The command runs Core and Cloud lint/tests, offline Alembic DDL, Rust checks,
 Desktop tests/build, contract regeneration, and repository boundary checks.
 When Docker is available it also runs the real PostgreSQL/S3 integration
 profile; otherwise it reports those integration tests as explicitly skipped.
+The default run also reports WSL verification as skipped. Require a real
+FairySandbox attestation with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-all.ps1 -RequireWslSandbox
+```
+
+Use `-SkipDocker` when an intentionally local-only gate is required. Static
+Preview itself does not require Docker or WSL.
 
 Run only the dependency and layer boundary gate with:
 

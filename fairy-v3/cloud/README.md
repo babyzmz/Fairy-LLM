@@ -61,11 +61,17 @@ Run the real PostgreSQL/S3 adapters inside the same network:
 docker compose --profile test run --build --rm integration
 ```
 
-This profile also runs canonical Core, Memory Snapshot/FTS, same-ID RLS,
-concurrency, recovery, migration, and generated-vector integration tests
-against PostgreSQL 18.4. A local static/unit pass is not a substitute for this
-gate; `scripts/test-all.ps1` prints an explicit skip when Docker CLI or the
-daemon is unavailable.
+This profile also runs canonical Core, Memory Snapshot/FTS, Runtime/Preview
+revision and partial-uniqueness checks, same-ID RLS, command/Outbox atomicity,
+crash recovery, migration, and generated-vector integration tests against
+PostgreSQL 18.4. A local static/unit pass is not a substitute for this gate;
+`scripts/test-all.ps1` prints an explicit skip when Docker CLI or the daemon is
+unavailable.
+
+Cloud REST exposes the same Runtime/Preview/Artifact contracts as local
+JSON-RPC. The current cloud Runtime executor intentionally returns
+`SANDBOX_UNAVAILABLE`; the Outbox Worker is not an OCI project-execution
+worker and cannot be used as one.
 
 The integration DSN must point to a dedicated test database. No Redis or NATS
 service is required; PostgreSQL owns leases and the transactional outbox.
