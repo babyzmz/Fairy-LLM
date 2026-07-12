@@ -260,7 +260,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     queryFn: () =>
       client.messages.list({
         conversation_id: requireId(selectedChatConversation?.id),
-        limit: 200,
+        limit: 100,
       }),
     enabled: selectedChatConversation !== null,
     retry: false,

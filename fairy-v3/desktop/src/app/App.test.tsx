@@ -220,6 +220,7 @@ describe("App", () => {
 
   it("loads durable scratch chat and runs a task-bound assistant turn", async () => {
     window.localStorage.setItem("fairy.workspace.mode", "chat");
+    const listMessages = vi.fn(async () => ({ items: [scratchMessage], next_cursor: null }));
     const createTask = vi.fn(async () => ({ task: { id: ID.scratchTask } }) as never);
     const createTurn = vi.fn(async () => ({ ...completedTurn, status: "created" }) as AssistantTurn);
     const runTurn = vi.fn(async () => completedTurn);
@@ -230,7 +231,7 @@ describe("App", () => {
         protocol: "core-service-v1",
       }),
       [project],
-      { scratch: true, createTask, createTurn, runTurn },
+      { scratch: true, createTask, createTurn, runTurn, listMessages },
     );
     render(<App client={client} />);
 
@@ -250,6 +251,10 @@ describe("App", () => {
     expect(createTurn).toHaveBeenCalledWith(
       expect.objectContaining({ task_id: ID.scratchTask, profile_id: provider.id }),
     );
+    expect(listMessages).toHaveBeenCalledWith({
+      conversation_id: ID.scratchConversation,
+      limit: 100,
+    });
   });
 
   it("binds project composer requests to the selected project conversation", async () => {
@@ -385,6 +390,7 @@ function createClient(
     runTurn?: WorkspaceClient["assistant"]["turns"]["run"];
     permissions?: WorkspaceClient["permissions"];
     capabilities?: WorkspaceClient["capabilities"];
+    listMessages?: WorkspaceClient["messages"]["list"];
   } = {},
 ): WorkspaceClient {
   return {
@@ -481,10 +487,12 @@ function createClient(
       },
     },
     messages: {
-      list: async () => ({
-        items: options.scratch ? [scratchMessage] : [],
-        next_cursor: null,
-      }),
+      list:
+        options.listMessages ??
+        (async () => ({
+          items: options.scratch ? [scratchMessage] : [],
+          next_cursor: null,
+        })),
     },
     documents: {
       import: async () => ({} as never),

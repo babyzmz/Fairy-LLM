@@ -36,8 +36,14 @@ npm test
 npm run e2e
 npm run build
 npm run tauri -- build --debug --no-bundle
-npm run tauri -- dev
+powershell -NoProfile -ExecutionPolicy Bypass -File ..\scripts\start-desktop.ps1
 ```
+
+Use the repository launcher for desktop development. It keeps Vite's strict
+filesystem policy enabled while handling Windows repository paths that contain
+non-ASCII characters or a literal `~`. A plain browser receives a dedicated
+host-boundary screen; only Tauri or the explicit Playwright fixture mounts a
+`CoreClient`.
 
 The development Tauri process launches Python Core over line-oriented
 JSON-RPC. Core then launches the same `fairy.exe` with `--local-worker` for

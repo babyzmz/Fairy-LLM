@@ -31,6 +31,7 @@ async function installCoreFixture(page: Page) {
       capturePngHash,
     }) => {
       const fixtureWindow = window as unknown as {
+        isTauri: boolean;
         __FAIRY_BOOT_STARTED_AT__: number;
         __FAIRY_FIXTURE_CALLS__: Array<{
           method: string;
@@ -38,6 +39,7 @@ async function installCoreFixture(page: Page) {
         }>;
         __FAIRY_PUSH_EVENT__: (message: string) => number;
       };
+      fixtureWindow.isTauri = true;
       fixtureWindow.__FAIRY_BOOT_STARTED_AT__ = performance.now();
       fixtureWindow.__FAIRY_FIXTURE_CALLS__ = [];
       Object.defineProperty(navigator, "mediaDevices", {

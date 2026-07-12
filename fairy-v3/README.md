@@ -110,13 +110,21 @@ Preview itself does not require Docker or WSL.
 
 For local OpenRouter development, the checked-in free-model preset uses
 NVIDIA Nemotron 3 Ultra first and Tencent Hy3 as its explicit fallback. Start
-the Tauri application with a key file; the script reads the key only into the
-child-process environment and never copies it into the repository:
+the Tauri application through the repository launcher. It creates a temporary
+ASCII path alias when Vite cannot safely serve the repository path. The key is
+optional; when supplied, the script reads it only into the child-process
+environment and never copies it into the repository:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\start-desktop.ps1 `
   -OpenRouterKeyFile C:\secure\openrouter.txt
 ```
+
+Running the script without `-OpenRouterKeyFile` starts Core with the same
+secret-free provider profiles and reports their credentials as unavailable.
+Opening the Vite URL in a normal browser intentionally shows the desktop-host
+boundary instead of a disabled workspace because local Core IPC exists only in
+the Tauri application.
 
 The preset is stored in `config/openrouter-free.providers.json`. Free model
 availability and rate limits are controlled by OpenRouter, so provider health

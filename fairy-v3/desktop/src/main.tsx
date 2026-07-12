@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { isTauri } from "@tauri-apps/api/core";
 
 const root = document.getElementById("root");
 if (root === null) {
@@ -31,13 +32,22 @@ async function mountSurface() {
     return;
   }
 
-  const [{ invoke }, { App }, { CoreClient }, { TauriCoreTransport }] =
-    await Promise.all([
-      import("@tauri-apps/api/core"),
-      import("./app/App"),
-      import("./core/client"),
-      import("./core/tauriTransport"),
-    ]);
+  if (!isTauri()) {
+    const { DesktopHostRequired } = await import("./host/DesktopHostRequired");
+    createRoot(rootElement).render(
+      <StrictMode>
+        <DesktopHostRequired />
+      </StrictMode>,
+    );
+    return;
+  }
+
+  const [{ invoke }, { App }, { CoreClient }, { TauriCoreTransport }] = await Promise.all([
+    import("@tauri-apps/api/core"),
+    import("./app/App"),
+    import("./core/client"),
+    import("./core/tauriTransport"),
+  ]);
   const client = new CoreClient(new TauriCoreTransport(invoke));
   createRoot(rootElement).render(
     <StrictMode>
