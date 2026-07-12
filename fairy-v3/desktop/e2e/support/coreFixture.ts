@@ -207,10 +207,18 @@ async function installCoreFixture(page: Page) {
         content: "Scratch chat is durable",
         created_at: timestamp,
       };
+      const toolMessage = {
+        ...scratchMessage,
+        id: "0198f4de-0114-7000-8000-000000000020",
+        sequence: 2,
+        role: "tool",
+        visibility: "developer",
+        content: "[TOOL_RESULT] fixture provider payload [/TOOL_RESULT]",
+      };
       const resumedMessage = {
         ...scratchMessage,
         id: id.resumedMessage,
-        sequence: 2,
+        sequence: 3,
         content: "Notification completed after approval",
       };
       const waitingTurn = {
@@ -321,7 +329,7 @@ async function installCoreFixture(page: Page) {
       let approvalScenario = false;
       let approvalVisible = false;
       let approvalDecision: "pending" | "approved" | "rejected" = "pending";
-      let messages = [scratchMessage];
+      let messages = [scratchMessage, toolMessage];
       fixtureWindow.__FAIRY_PUSH_EVENT__ = (message) => {
         const startedAt = performance.now();
         const cursor = (events.at(-1)?.cursor ?? 0) + 1;
@@ -541,7 +549,7 @@ async function installCoreFixture(page: Page) {
             },
           ],
         },
-        "messages.list": { items: [scratchMessage], next_cursor: null },
+        "messages.list": { items: [scratchMessage, toolMessage], next_cursor: null },
         "tasks.create": { task: scratchTask },
         "documents.import": {},
         "assistant.turns.create": { ...completedTurn, status: "created" },
@@ -682,7 +690,7 @@ async function installCoreFixture(page: Page) {
                     approvalScenario = userRequest === "Request a governed notification";
                     approvalVisible = false;
                     approvalDecision = "pending";
-                    messages = [scratchMessage];
+                    messages = [scratchMessage, toolMessage];
                     return { task: { ...scratchTask, user_request: userRequest } };
                   })()
               : request.method === "assistant.turns.create"

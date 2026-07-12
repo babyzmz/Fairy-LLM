@@ -19,6 +19,7 @@ for (const viewport of [
 
     await expect(page.getByRole("heading", { name: "Chat" })).toBeVisible();
     await expect(page.getByText("Scratch chat is durable")).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("fixture provider payload");
     const composer = page.getByLabel("Message Fairy");
     await composer.fill("Check Sydney weather");
     await page.getByRole("button", { name: "Send message" }).click();
@@ -47,6 +48,15 @@ for (const viewport of [
     });
   });
 }
+
+test("tool protocol is visible only in developer mode", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Chat" }).click();
+
+  await expect(page.locator("body")).not.toContainText("fixture provider payload");
+  await page.getByRole("button", { name: "Developer mode" }).click();
+  await expect(page.getByText(/fixture provider payload/)).toBeVisible();
+});
 
 test("reduced motion disables repeated chat activity animation", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });

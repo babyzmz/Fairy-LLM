@@ -18,6 +18,9 @@ export function MessageList({
   developerMode,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
+  const visibleMessages = developerMode
+    ? messages
+    : messages.filter((message) => message.role !== "tool");
 
   useEffect(() => {
     const scrollIntoView = endRef.current?.scrollIntoView;
@@ -26,7 +29,7 @@ export function MessageList({
     }
   }, [messages, streamedText]);
 
-  if (messages.length === 0 && !streamedText) {
+  if (visibleMessages.length === 0 && !streamedText) {
     return (
       <div className="message-list message-list-empty" aria-label="Conversation messages">
         <Bot size={24} />
@@ -37,7 +40,7 @@ export function MessageList({
 
   return (
     <div className="message-list" aria-label="Conversation messages" aria-live="polite">
-      {messages.map((message) => (
+      {visibleMessages.map((message) => (
         <article
           className={`message-row message-${message.role}`}
           key={message.id}

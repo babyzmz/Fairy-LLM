@@ -31,6 +31,23 @@ describe("ChatWorkspace", () => {
     expect(screen.getByLabelText("Message Fairy")).toHaveFocus();
   });
 
+  it("keeps durable tool protocol messages inside developer mode", () => {
+    const toolMessage: Message = {
+      ...MESSAGES[0],
+      id: "0198f4de-0114-7000-8000-000000000099",
+      role: "tool",
+      sequence: 3,
+      content: "[TOOL_RESULT] raw provider payload [/TOOL_RESULT]",
+    };
+    const props = workspaceProps({ messages: [...MESSAGES, toolMessage] });
+    const { rerender } = render(<ChatWorkspace {...props} />);
+
+    expect(screen.queryByText(toolMessage.content)).not.toBeInTheDocument();
+
+    rerender(<ChatWorkspace {...props} developerMode />);
+    expect(screen.getByText(toolMessage.content)).toBeVisible();
+  });
+
   it("routes slash commands without sending them as model text", async () => {
     const user = userEvent.setup();
     const props = workspaceProps();
