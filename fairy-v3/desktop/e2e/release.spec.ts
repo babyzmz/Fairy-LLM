@@ -46,6 +46,11 @@ test("release workspace exposes project, chat, preview, provider, and developer 
 
   await expect(page.getByLabel("Workspace telemetry")).toContainText("Core ready");
   await expect(page.getByTitle("Task preview")).toBeVisible();
+  await page.getByRole("button", { name: "Manage projects" }).click();
+  await expect(page.getByRole("complementary", { name: "Project manager" })).toBeVisible();
+  await page.getByRole("button", { name: "Choose project folder" }).click();
+  await expect(page.getByLabel("Folder path")).toHaveValue("C:\\Projects\\fixture");
+  await page.getByRole("button", { name: "Close project manager" }).click();
   await page.getByRole("button", { name: "Developer mode" }).click();
   await expect(page.getByLabel("Developer details")).toBeVisible();
 

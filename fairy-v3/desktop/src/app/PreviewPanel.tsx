@@ -48,6 +48,8 @@ export function PreviewPanel({
   const canStop =
     preview !== null && ["ready", "stopping", "interrupted"].includes(preview.status);
   const canDecide = task?.status === "ready";
+  const canDiscard = task !== null && ["ready", "failed"].includes(task.status);
+  const terminalDecision = task !== null && ["accepted", "rejected", "archived"].includes(task.status);
   const canReview =
     task !== null && task !== undefined && ["executing", "previewing"].includes(task.status);
 
@@ -117,7 +119,8 @@ export function PreviewPanel({
 
       <div className="version-decision-bar">
         <span>{decisionLabel(task, preview?.status ?? null)}</span>
-        <div>
+        {!terminalDecision ? (
+          <div>
           {!canDecide ? (
             <button
               className="primary-command"
@@ -132,7 +135,7 @@ export function PreviewPanel({
           <button
             className="secondary-command"
             type="button"
-            disabled={!canDecide || isActing}
+            disabled={!canDiscard || isActing}
             onClick={() => settle(onDiscard())}
           >
             Discard
@@ -145,7 +148,8 @@ export function PreviewPanel({
           >
             Use this version
           </button>
-        </div>
+          </div>
+        ) : null}
       </div>
 
       {developerOpen ? (
@@ -251,6 +255,16 @@ function renderPreviewState({
   if (preview?.status === "stopped") {
     return <PreviewNotice icon={<Square />} title="Preview stopped" detail="Runtime released" />;
   }
+  if (task.status === "failed") {
+    return (
+      <PreviewNotice
+        icon={<AlertCircle />}
+        title="Task failed"
+        detail={runtimeHealth?.runtime?.error_code ?? "WORKER_INTERRUPTED"}
+        tone="danger"
+      />
+    );
+  }
   if (runtimeHealth !== null && !runtimeHealth.executor.available) {
     return (
       <PreviewNotice
@@ -323,6 +337,9 @@ export function isSafePreviewUrl(
 }
 
 function decisionLabel(task: Task | null, previewStatus: string | null): string {
+  if (task?.status === "accepted") return "Version active";
+  if (task?.status === "rejected") return "Candidate discarded";
+  if (task?.status === "archived") return "Task archived";
   if (task?.status === "ready") return "Review complete";
   if (previewStatus === "ready") return "Preview ready; review still required";
   return task === null ? "No candidate version" : task.status.replaceAll("_", " ");

@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceShell } from "./WorkspaceShell";
@@ -38,6 +38,19 @@ describe("WorkspaceShell", () => {
 
     expect(model.setMode).toHaveBeenNthCalledWith(1, "chat");
     expect(model.setMode).toHaveBeenNthCalledWith(2, "chat");
+  });
+
+  it("keeps project creation available and fills the native folder selection", async () => {
+    const model = workspaceModel();
+    render(<WorkspaceShell model={model} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Manage projects" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose project folder" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Folder path")).toHaveValue("C:\\Projects\\selected"),
+    );
+    expect(model.selectProjectFolder).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -106,6 +119,7 @@ function workspaceModel(): WorkspaceModel {
     selectTask: vi.fn(),
     createProject: vi.fn(async () => undefined),
     importProject: vi.fn(async () => undefined),
+    selectProjectFolder: vi.fn(async () => "C:\\Projects\\selected"),
     createChatConversation: vi.fn(async () => undefined),
     createTask: vi.fn(async () => undefined),
     sendChatMessage: vi.fn(async () => undefined),

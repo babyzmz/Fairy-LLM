@@ -102,6 +102,22 @@ describe("PreviewPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(accept).toHaveBeenCalledTimes(1);
     expect(discard).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <PreviewPanel
+        task={{ ...readyTask, status: "accepted" }}
+        context={context}
+        runtimeHealth={null}
+        isActing={false}
+        onStart={start}
+        onStop={vi.fn(async () => undefined)}
+        onReview={vi.fn(async () => undefined)}
+        onAccept={accept}
+        onDiscard={discard}
+      />,
+    );
+    expect(screen.getByText("Version active")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Use this version" })).not.toBeInTheDocument();
   });
 
   it("runs governed Review before Version decisions become available", async () => {
@@ -124,6 +140,39 @@ describe("PreviewPanel", () => {
     expect(screen.getByRole("button", { name: "Use this version" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Review" }));
     expect(review).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the typed failure and allows the failed candidate to be discarded", async () => {
+    const discard = vi.fn(async () => undefined);
+    render(
+      <PreviewPanel
+        task={{ ...task(), status: "failed" }}
+        context={null}
+        runtimeHealth={{
+          executor: {
+            available: true,
+            executor: "rust_local_worker",
+            version: "1",
+            error_code: null,
+            diagnostics: [],
+          },
+          runtime: { ...readyContext().runtime, status: "failed", health: "unhealthy", error_code: "SCOPE_MISMATCH" },
+          preview: null,
+        }}
+        isActing={false}
+        onStart={vi.fn(async () => undefined)}
+        onStop={vi.fn(async () => undefined)}
+        onReview={vi.fn(async () => undefined)}
+        onAccept={vi.fn(async () => undefined)}
+        onDiscard={discard}
+      />,
+    );
+
+    expect(screen.getByText("Task failed")).toBeVisible();
+    expect(screen.getByText("SCOPE_MISMATCH")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(discard).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Use this version" })).toBeDisabled();
   });
 });
 

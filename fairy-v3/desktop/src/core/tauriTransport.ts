@@ -70,6 +70,10 @@ export class TauriCoreTransport implements CoreTransport {
     return this.invoke("provider_openrouter_delete");
   }
 
+  selectProjectFolder(): Promise<string | null> {
+    return this.invoke("select_project_folder");
+  }
+
   async call<M extends CoreMethodName>(
     method: M,
     params: CoreMethodMap[M]["params"],

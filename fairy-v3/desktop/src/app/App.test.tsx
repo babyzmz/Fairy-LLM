@@ -399,6 +399,7 @@ function createClient(
       list: async () => ({ items: projects, next_cursor: null }),
       create: async () => ({ project, initial_version: version }),
       import: async () => ({ project, initial_version: version }),
+      selectFolder: async () => "C:\\Projects\\selected",
     },
     conversations: {
       list: async () => ({

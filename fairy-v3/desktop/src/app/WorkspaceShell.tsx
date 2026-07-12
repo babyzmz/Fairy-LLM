@@ -3,6 +3,7 @@ import {
   Cloud,
   Code2,
   FolderInput,
+  FolderOpen,
   FolderPlus,
   MessageSquareText,
   Play,
@@ -10,6 +11,7 @@ import {
   ShieldCheck,
   Sparkles,
   WifiOff,
+  X,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -22,6 +24,7 @@ import { PreviewPanel } from "./PreviewPanel";
 import { TaskTimeline } from "./TaskTimeline";
 import type { WorkspaceModel, WorkspaceMode } from "./workspaceModel";
 import "./workspace.css";
+import "./project-manager.css";
 
 interface WorkspaceShellProps {
   model: WorkspaceModel;
@@ -30,6 +33,7 @@ interface WorkspaceShellProps {
 export function WorkspaceShell({ model }: WorkspaceShellProps) {
   const [projectName, setProjectName] = useState("");
   const [importPath, setImportPath] = useState("");
+  const [projectManagerOpen, setProjectManagerOpen] = useState(false);
   const providerAvailable = selectedProviderAvailable(model);
   const visionAvailable =
     model.providers
@@ -101,6 +105,66 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
           </div>
           <div className="mode-controls">
             {model.mode === "project" ? (
+              <div className="project-control">
+                <button
+                  className={`icon-button ${projectManagerOpen ? "active" : ""}`}
+                  type="button"
+                  aria-label="Manage projects"
+                  title="Manage projects"
+                  aria-expanded={projectManagerOpen}
+                  onClick={() => setProjectManagerOpen((current) => !current)}
+                >
+                  <FolderPlus size={16} />
+                </button>
+                {projectManagerOpen ? (
+                  <aside className="project-manager" aria-label="Project manager">
+                    <header>
+                      <div>
+                        <span className="eyebrow">Workspace</span>
+                        <h2>Projects</h2>
+                      </div>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        aria-label="Close project manager"
+                        title="Close project manager"
+                        onClick={() => setProjectManagerOpen(false)}
+                      >
+                        <X size={16} />
+                      </button>
+                    </header>
+                    <ProjectSetup
+                      projectName={projectName}
+                      importPath={importPath}
+                      isActing={model.isActing}
+                      onProjectName={setProjectName}
+                      onImportPath={setImportPath}
+                      onSelectFolder={async () => {
+                        const selected = await model.selectProjectFolder();
+                        if (selected !== null) setImportPath(selected);
+                      }}
+                      onCreate={async () => {
+                        const name = projectName.trim();
+                        if (!name) return;
+                        await model.createProject(name);
+                        setProjectName("");
+                        setProjectManagerOpen(false);
+                      }}
+                      onImport={async () => {
+                        const path = importPath.trim();
+                        const name = projectName.trim() || folderName(path);
+                        if (!path || !name) return;
+                        await model.importProject(name, path);
+                        setProjectName("");
+                        setImportPath("");
+                        setProjectManagerOpen(false);
+                      }}
+                    />
+                  </aside>
+                ) : null}
+              </div>
+            ) : null}
+            {model.mode === "project" ? (
               <ProviderSettings
                 providers={model.providers}
                 health={model.providerHealth}
@@ -150,6 +214,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             isActing={model.isActing}
             onProjectName={setProjectName}
             onImportPath={setImportPath}
+            onSelectFolder={async () => undefined}
             onCreate={async () => undefined}
             onImport={async () => undefined}
           />
@@ -227,6 +292,10 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             isActing={model.isActing}
             onProjectName={setProjectName}
             onImportPath={setImportPath}
+            onSelectFolder={async () => {
+              const selected = await model.selectProjectFolder();
+              if (selected !== null) setImportPath(selected);
+            }}
             onCreate={async () => {
               const name = projectName.trim();
               if (!name) return;
@@ -381,6 +450,7 @@ interface EmptyWorkspaceProps {
   isActing: boolean;
   onProjectName(value: string): void;
   onImportPath(value: string): void;
+  onSelectFolder(): Promise<void>;
   onCreate(): Promise<void>;
   onImport(): Promise<void>;
 }
@@ -392,6 +462,7 @@ function EmptyWorkspace({
   isActing,
   onProjectName,
   onImportPath,
+  onSelectFolder,
   onCreate,
   onImport,
 }: EmptyWorkspaceProps) {
@@ -419,6 +490,32 @@ function EmptyWorkspace({
         <Boxes size={25} />
         <h1>Projects</h1>
       </div>
+      <ProjectSetup
+        projectName={projectName}
+        importPath={importPath}
+        isActing={isActing}
+        onProjectName={onProjectName}
+        onImportPath={onImportPath}
+        onSelectFolder={onSelectFolder}
+        onCreate={onCreate}
+        onImport={onImport}
+      />
+    </section>
+  );
+}
+
+function ProjectSetup({
+  projectName,
+  importPath,
+  isActing,
+  onProjectName,
+  onImportPath,
+  onSelectFolder,
+  onCreate,
+  onImport,
+}: Omit<EmptyWorkspaceProps, "state">) {
+  return (
+    <div className="project-setup">
       <div className="create-controls">
         <label>
           <span>Project name</span>
@@ -438,14 +535,27 @@ function EmptyWorkspace({
         </button>
       </div>
       <div className="create-controls import-controls">
-        <label>
-          <span>Folder path</span>
-          <input
-            value={importPath}
-            onChange={(event) => onImportPath(event.target.value)}
-            placeholder="C:\\Projects\\example"
-          />
-        </label>
+        <div className="folder-field">
+          <label htmlFor="project-folder-path">Folder path</label>
+          <div>
+            <input
+              id="project-folder-path"
+              value={importPath}
+              onChange={(event) => onImportPath(event.target.value)}
+              placeholder="C:\\Projects\\example"
+            />
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Choose project folder"
+              title="Choose project folder"
+              disabled={isActing}
+              onClick={() => void onSelectFolder()}
+            >
+              <FolderOpen size={16} />
+            </button>
+          </div>
+        </div>
         <button
           className="secondary-command"
           type="button"
@@ -455,7 +565,7 @@ function EmptyWorkspace({
           <FolderInput size={15} /> Import folder
         </button>
       </div>
-    </section>
+    </div>
   );
 }
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -48,7 +49,7 @@ class RustRuntimeExecutor:
             / "versions"
             / str(request.version_id)
         ).resolve(strict=False)
-        if request.project_root != expected_root:
+        if _path_identity(request.project_root) != _path_identity(expected_root):
             raise RuntimeExecutorError(
                 "Static Runtime root does not match the managed Version",
                 error_code="SCOPE_MISMATCH",
@@ -169,3 +170,15 @@ def _validate_worker_identity(executor_handle: str, preview_id: UUID) -> None:
 def _validate_preview_url_path(url: str, preview_id: UUID) -> None:
     if urlsplit(url).path != f"/{preview_id}/":
         raise ValueError("worker returned a URL for another Preview")
+
+
+def _path_identity(path: Path) -> str:
+    value = os.path.normcase(str(Path(path).resolve(strict=False)))
+    if os.name != "nt":
+        return value
+    normalized = value.replace("/", "\\")
+    if normalized.startswith("\\\\?\\unc\\"):
+        return "\\\\" + normalized[8:]
+    if normalized.startswith("\\\\?\\"):
+        return normalized[4:]
+    return normalized

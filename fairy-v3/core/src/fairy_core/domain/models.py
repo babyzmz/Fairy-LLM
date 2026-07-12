@@ -120,7 +120,7 @@ _TASK_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
     TaskStatus.ACCEPTED: frozenset({TaskStatus.ARCHIVED}),
     TaskStatus.REJECTED: frozenset({TaskStatus.ARCHIVED}),
     TaskStatus.ARCHIVED: frozenset(),
-    TaskStatus.FAILED: frozenset({TaskStatus.REPAIRING, TaskStatus.ARCHIVED}),
+    TaskStatus.FAILED: frozenset({TaskStatus.REPAIRING, TaskStatus.REJECTED, TaskStatus.ARCHIVED}),
 }
 
 

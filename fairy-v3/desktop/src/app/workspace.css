@@ -387,6 +387,10 @@ h2 {
 }
 
 .approval-block {
+  position: sticky;
+  z-index: 4;
+  bottom: 0;
+  flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -395,6 +399,7 @@ h2 {
   border: 1px solid #75612f;
   border-radius: 3px;
   background: #282315;
+  box-shadow: 0 -12px 24px rgb(17 18 18 / 78%);
 }
 
 .approval-block .eyebrow {
@@ -643,15 +648,23 @@ h2 {
   border-top: 1px solid #393c3a;
 }
 
-.create-controls label {
+.create-controls label,
+.folder-field {
   min-width: 0;
   display: grid;
   gap: 6px;
 }
 
-.create-controls label span {
+.create-controls label span,
+.folder-field > label {
   color: #989e9a;
   font-size: 11px;
+}
+
+.folder-field > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
 }
 
 .create-controls input,

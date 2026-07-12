@@ -80,6 +80,7 @@ export interface CoreTransport {
     input: OpenRouterConfigurationInput,
   ): Promise<OpenRouterConfigurationStatus>;
   providerOpenRouterDelete?(): Promise<OpenRouterConfigurationStatus>;
+  selectProjectFolder?(): Promise<string | null>;
 }
 
 export class CoreClient {
@@ -89,6 +90,12 @@ export class CoreClient {
     get: (projectId: string) =>
       this.transport.call("projects.get", { project_id: projectId }),
     list: (input: ProjectListInput = {}) => this.transport.call("projects.list", input),
+    selectFolder: () => {
+      if (this.transport.selectProjectFolder === undefined) {
+        throw new Error("Project folder selection requires the Fairy desktop host");
+      }
+      return this.transport.selectProjectFolder();
+    },
   };
 
   readonly conversations = {

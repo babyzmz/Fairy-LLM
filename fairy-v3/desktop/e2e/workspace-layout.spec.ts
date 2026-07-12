@@ -76,6 +76,7 @@ test("governed Review promotes a previewing Task before Version acceptance", asy
   await expect(accept).toBeDisabled();
   await page.getByRole("button", { name: "Review", exact: true }).click();
   await expect(accept).toBeEnabled();
+  await accept.click();
 
   const calls = await page.evaluate(
     () =>
@@ -86,6 +87,7 @@ test("governed Review promotes a previewing Task before Version acceptance", asy
       ).__FAIRY_FIXTURE_CALLS__,
   );
   expect(calls.some((call) => call.method === "tasks.review")).toBe(true);
+  expect(calls.some((call) => call.method === "versions.accept")).toBe(true);
 });
 
 async function measureLayout(page: Page) {

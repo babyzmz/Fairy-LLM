@@ -72,6 +72,14 @@ describe("TauriCoreTransport", () => {
     expect(invoke).not.toHaveBeenCalledWith("core_rpc", expect.anything());
   });
 
+  it("selects project folders through the restricted host command", async () => {
+    const invoke = vi.fn().mockResolvedValue("C:\\Projects\\selected");
+    const transport = new TauriCoreTransport(invoke);
+
+    await expect(transport.selectProjectFolder()).resolves.toBe("C:\\Projects\\selected");
+    expect(invoke).toHaveBeenCalledWith("select_project_folder");
+  });
+
   it("rejects malformed local Preview envelopes", async () => {
     const id = "0198f4de-0114-7000-8000-000000000001";
     const invoke = vi.fn().mockResolvedValue({

@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use fairy_core_bridge::{CoreBridge, CoreBridgeError, CoreLaunchSpec};
 use serde_json::{json, Value};
 use tauri::{Manager, State, WebviewWindow};
+use tauri_plugin_dialog::{DialogExt, FilePath};
 
 use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStore};
 use provider_credentials::ProviderCredentialStore;
@@ -181,6 +182,26 @@ async fn provider_openrouter_delete(
     })
 }
 
+#[tauri::command]
+async fn select_project_folder(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Import a project folder")
+            .blocking_pick_folder()
+            .map(|selected| match selected {
+                FilePath::Path(path) => path.to_string_lossy().into_owned(),
+                FilePath::Url(url) => url.to_string(),
+            })
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 fn development_core_root() -> PathBuf {
     env::var_os("FAIRY_CORE_ROOT")
         .map(PathBuf::from)
@@ -270,6 +291,7 @@ fn restart_core(state: &DesktopState) -> Result<(), Box<dyn std::error::Error>> 
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
@@ -304,6 +326,7 @@ pub fn run() {
             provider_openrouter_status,
             provider_openrouter_configure,
             provider_openrouter_delete,
+            select_project_folder,
             capture::list_capture_surfaces,
             capture::capture_surface
         ])

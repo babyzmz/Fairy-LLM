@@ -31,7 +31,7 @@ export type PermissionProfile = "observe" | "standard" | "autonomous";
 
 export interface WorkspaceClient extends AssistantTurnClient {
   health: CoreClient["health"];
-  projects: Pick<CoreClient["projects"], "list" | "create" | "import">;
+  projects: Pick<CoreClient["projects"], "list" | "create" | "import" | "selectFolder">;
   conversations: Pick<CoreClient["conversations"], "list" | "create">;
   tasks: Pick<CoreClient["tasks"], "list" | "create" | "review">;
   approvals: Pick<CoreClient["approvals"], "list" | "decide">;
@@ -115,6 +115,7 @@ export interface WorkspaceModel {
   selectTask(taskId: string): void;
   createProject(name: string): Promise<void>;
   importProject(name: string, sourcePath: string): Promise<void>;
+  selectProjectFolder(): Promise<string | null>;
   createChatConversation(): Promise<void>;
   createTask(userRequest: string): Promise<void>;
   sendChatMessage(
@@ -490,6 +491,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     [client.providers, queryClient, runAction, setProfileSelection],
   );
 
+  const selectProjectFolder = useCallback(
+    () => runAction(() => client.projects.selectFolder()),
+    [client.projects, runAction],
+  );
+
   const deleteOpenRouter = useCallback(async (): Promise<void> => {
     const status = await runAction(() => client.providers.deleteOpenRouter());
     queryClient.setQueryData([...workspaceKey, "openrouter-status"], status);
@@ -835,6 +841,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     selectTask: setTaskSelection,
     createProject: actions.createProject,
     importProject: actions.importProject,
+    selectProjectFolder,
     createChatConversation: actions.createChatConversation,
     createTask: (userRequest) => projectAssistant.send(userRequest, []),
     sendChatMessage: chatAssistant.send,

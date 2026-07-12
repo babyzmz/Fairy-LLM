@@ -116,7 +116,7 @@ async function installCoreFixture(page: Page) {
         new URLSearchParams(window.location.search).get("taskStatus") === "previewing"
           ? "previewing"
           : "ready";
-      const project = {
+      let project = {
         id: id.project,
         name: "Atlas Console",
         residency: "local_only",
@@ -137,7 +137,7 @@ async function installCoreFixture(page: Page) {
         created_at: timestamp,
         updated_at: timestamp,
       };
-      const task = {
+      let task = {
         id: id.task,
         project_id: id.project,
         conversation_id: id.conversation,
@@ -621,6 +621,9 @@ async function installCoreFixture(page: Page) {
             openRouterStatus = { configured: false, model_id: null };
             return openRouterStatus;
           }
+          if (command === "select_project_folder") {
+            return "C:\\Projects\\fixture";
+          }
           if (command !== "core_rpc") {
             throw new Error(`Unexpected Tauri command: ${command}`);
           }
@@ -652,7 +655,13 @@ async function installCoreFixture(page: Page) {
             };
           }
           const result =
-            request.method === "voice.synthesize"
+            request.method === "projects.list"
+              ? { items: [{ ...project }], next_cursor: null }
+              : request.method === "tasks.list"
+                ? { items: [{ ...task }], next_cursor: null }
+              : request.method === "previews.resolve"
+                ? { task: { ...task }, runtime: { ...runtime }, preview: { ...preview } }
+              : request.method === "voice.synthesize"
               ? {
                   task_id: request.params.task_id,
                   turn_id: request.params.turn_id,
@@ -751,7 +760,7 @@ async function installCoreFixture(page: Page) {
                     if (request.params.task_id !== id.task) {
                       throw new Error("Task is unavailable");
                     }
-                    task.status = "ready";
+                    task = { ...task, status: "ready" };
                     const cursor = (events.at(-1)?.cursor ?? 0) + 1;
                     events.push({
                       ...event,
@@ -771,6 +780,16 @@ async function installCoreFixture(page: Page) {
                       preview_artifact_id: null,
                       created_at: timestamp,
                     };
+                  })()
+              : request.method === "versions.accept"
+                ? (() => {
+                    task = { ...task, status: "accepted" };
+                    project = {
+                      ...project,
+                      active_version_id: id.version,
+                      revision: project.revision + 1,
+                    };
+                    return project;
                   })()
               : request.method === "permissions.get"
                 ? permissions

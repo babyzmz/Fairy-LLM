@@ -240,3 +240,29 @@ def test_discard_removes_candidate_without_changing_active_version(tmp_path: Pat
     assert app.get_task(task.task.id).status is TaskStatus.REJECTED
     assert app.get_version(task.target_version.id).visibility is VersionVisibility.REJECTED
     assert not task.target_version.project_root.exists()
+
+
+def test_discard_removes_a_failed_candidate_without_promoting_it(tmp_path: Path) -> None:
+    app, _ledger = _application(tmp_path)
+    project = app.create_project(name="Failed", residency=ProjectResidency.LOCAL_ONLY)
+    conversation = app.create_conversation(
+        project_id=project.project.id,
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+    )
+    task = app.create_task(
+        TaskCreate(
+            conversation_id=conversation.id,
+            user_request="Fail safely",
+            operation_mode=OperationMode.CREATE_NEW_VERSION,
+            execution_target=ExecutionTarget.LOCAL,
+            idempotency_key="loop:failed-discard",
+        )
+    )
+    app.transition_task(task.task.id, TaskStatus.FAILED)
+
+    discarded = app.discard_task_version(task.task.id)
+
+    assert discarded.status is TaskStatus.REJECTED
+    assert app.get_project(project.project.id).active_version_id == project.initial_version.id
+    assert app.get_version(task.target_version.id).visibility is VersionVisibility.REJECTED
+    assert not task.target_version.project_root.exists()

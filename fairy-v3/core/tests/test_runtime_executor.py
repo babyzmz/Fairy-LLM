@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -166,6 +167,36 @@ def test_rust_runtime_executor_rejects_rebound_root_without_dispatch(tmp_path: P
 
     assert captured.value.error_code == "SCOPE_MISMATCH"
     assert transport.calls == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows extended path syntax")
+def test_rust_runtime_executor_accepts_the_same_managed_root_with_extended_prefix(
+    tmp_path: Path,
+) -> None:
+    managed_root = tmp_path / "managed"
+    request = _request(managed_root)
+    extended = StaticRuntimeStart(
+        project_id=request.project_id,
+        version_id=request.version_id,
+        preview_id=request.preview_id,
+        project_root=Path("\\\\?\\" + str(request.project_root.resolve(strict=False))),
+        entry_path="index.html",
+    )
+    transport = FakeWorkerTransport(
+        {
+            "preview.start_static": {
+                "executor_handle": f"static:{request.preview_id}",
+                "host": "127.0.0.1",
+                "port": 43125,
+                "url": f"http://127.0.0.1:43125/{request.preview_id}/",
+                "state": "running",
+            }
+        }
+    )
+
+    RustRuntimeExecutor(transport, managed_root=managed_root).start_static(extended)
+
+    assert [call[0] for call in transport.calls] == ["preview.start_static"]
 
 
 def test_rust_runtime_executor_preserves_typed_worker_failure(tmp_path: Path) -> None:
