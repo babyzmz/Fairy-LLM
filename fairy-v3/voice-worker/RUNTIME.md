@@ -15,3 +15,8 @@ TensorRT 11 is not compatible with the current CosyVoice conversion adapter beca
 removed the explicit-batch builder flag. The release builder verifies and packages the
 compatible runtime; the model and generated GPU-specific TensorRT plan remain in the
 per-user application data directory.
+
+The Worker does not report `ready` until model loading, speaker registration, and a
+production-shaped bidirectional streaming warmup have completed. The bundled prompt is
+a 1.834-second, 16 kHz mono Fairy-owned legacy recording; keeping the zero-shot prefix
+short is required for the 450ms first-frame latency gate.

@@ -17,9 +17,9 @@ deselected test is never counted as proof. No accepted row is `Missing` or
 
 Fairy V3 is functionally source-complete against the approved plan. Local,
 contract, migration, Rust, renderer, production-browser, Docker Compose, and
-real WSL2 FairySandbox gates are proven. The remaining measured exception is
-CosyVoice first-frame latency on the current RTX 5060 Ti: p95 is about 755ms,
-above the 450ms target; voice streaming, ordering, gaps, and cancellation pass.
+real WSL2 FairySandbox gates are proven. The native CosyVoice/TensorRT worker
+also passes its real RTX 5060 Ti performance gate: first-frame p95 is 423.6ms,
+prefetched gap is 0ms, and cancellation response is 15.2ms.
 
 ## Implementation Changes
 
@@ -71,7 +71,7 @@ above the 450ms target; voice streaming, ordering, gaps, and cancellation pass.
 | Documents and RAG | Proven | TXT/Markdown/HTML/PDF/DOCX parsers, revisions, lexical results, deletion, Hermes non-mutation, live S3 object storage, and PostgreSQL RLS pass. |
 | Hermes relational memory | Proven | Observation, Claim, revisions, Tombstones, policy, lexical projection, immutable Snapshot, degraded fallback, property tests, PostgreSQL generated `tsvector`, and RLS pass. |
 | Screen understanding and game perception | Proven | Tauri display/window capture, explicit preview/attach, PNG/hash/scope checks, multimodal context tests, and `perception.spec.ts` using a Game window. |
-| STT and streaming TTS | Proven; first-frame target pending | Core VoiceSession contracts, native loopback token, PCM Tauri Channel/AudioWorklet, sentence ordering, cancellation, packaged CosyVoice/TensorRT worker, and `voice.spec.ts` pass. Real RTX 5060 Ti p95 first frame is about 755ms versus the 450ms target; prefetched gaps are 0ms and cancellation is under 16ms. |
+| STT and streaming TTS | Proven | Core VoiceSession contracts, native loopback token, PCM Tauri Channel/AudioWorklet, sentence ordering, cancellation, packaged CosyVoice/TensorRT worker, and `voice.spec.ts` pass. Ten enforced real RTX 5060 Ti samples produced a 423.6ms first-frame p95, 0ms prefetched gap, and 15.2ms cancellation response. |
 | Programmatic Fairy Pet | Proven | Canvas nonblank/scaling tests, public-event projection tests, typed cross-window requests, revision-fenced pet preferences, anchored native resizing, quick scratch chat, context menu, Reduced Motion, and `presence.spec.ts`. The Pet has no CoreClient, project state, approval decision, capture, or execution API. |
 | Slash Commands | Proven | Core-generated metadata and exact parser tests; natural-language keyword routing is statically forbidden. |
 | Typed system actions | Proven | HTTPS URL, managed reveal path, clipboard, notification, fixed Settings, approval/idempotency journal, Rust protocol, and shell-shaped payload rejection tests. |
@@ -102,6 +102,9 @@ above the 450ms target; voice streaming, ordering, gaps, and cancellation pass.
   OCI execution/Runtime, recovery, Outbox, and two-device integration: 27 passed.
 - WSL2 FairySandbox attestation reported executor `wsl_fairy_sandbox` version
   `1.0.0`; structured execution completed with a verified stdout digest.
+- The packaged native Voice Worker reported TensorRT/CUDA readiness on an RTX
+  5060 Ti. `benchmark.py --samples 10 --enforce` passed with every first frame
+  between 376.2ms and 423.6ms.
 
 ## Fresh Release Evidence
 

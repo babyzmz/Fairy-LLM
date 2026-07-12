@@ -4,11 +4,15 @@ import sys
 import threading
 from collections.abc import Iterator
 from http.client import HTTPConnection
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from fairy_voice_worker.protocol import OneTimeTokenRegistry, TokenRejectedError
 from fairy_voice_worker.runtime import (
+    INITIAL_TOKEN_HOP,
+    CosyVoice3Runtime,
     VoiceWorkerHealth,
     _install_frozen_runtime_guards,
     normalize_spoken_text,
@@ -42,6 +46,39 @@ def test_cosyvoice_cannot_download_an_unverified_model_at_runtime() -> None:
 
     decorated = sys.modules["typeguard"].typechecked(original)  # type: ignore[attr-defined]
     assert decorated is original
+
+
+def test_cosyvoice_prime_uses_the_production_bistream_path() -> None:
+    runtime = CosyVoice3Runtime(
+        model_dir=Path("model"),
+        source_dir=Path("source"),
+        prompt_wav=Path("prompt.wav"),
+        prompt_text=Path("prompt.txt"),
+    )
+    model = RecordingCosyVoiceModel()
+    runtime._model = model
+
+    runtime._prime()
+
+    assert model.model.token_hop_len == INITIAL_TOKEN_HOP
+    assert model.received_text == "Fairy 已准备好继续工作。"
+
+
+def test_cosyvoice_does_not_report_ready_until_prime_completes() -> None:
+    runtime = CosyVoice3Runtime(
+        model_dir=Path("model"),
+        source_dir=Path("source"),
+        prompt_wav=Path("prompt.wav"),
+        prompt_text=Path("prompt.txt"),
+    )
+    runtime._model = RecordingCosyVoiceModel()
+    runtime._model_digest = "a" * 64
+
+    assert runtime.health().status != "ready"
+
+    runtime._ready = True
+
+    assert runtime.health().status == "ready"
 
 
 def test_loopback_server_streams_pcm_and_rejects_token_replay() -> None:
@@ -131,3 +168,23 @@ class FakeRuntime:
         assert text == "Hello"
         if not cancellation.is_set():
             yield b"\x00\x00\x01\x00"
+
+
+class RecordingCosyVoiceModel:
+    def __init__(self) -> None:
+        self.model = SimpleNamespace(token_hop_len=25)
+        self.received_text = ""
+
+    def inference_zero_shot(
+        self,
+        text: Iterator[str],
+        _prompt_text: str,
+        _prompt_wav: str,
+        *,
+        zero_shot_spk_id: str,
+        stream: bool,
+    ) -> Iterator[dict[str, object]]:
+        assert zero_shot_spk_id == "fairy-v3"
+        assert stream is True
+        self.received_text = "".join(text)
+        return iter(())

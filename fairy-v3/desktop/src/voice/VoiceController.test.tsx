@@ -124,6 +124,7 @@ describe("VoiceController", () => {
       stop: vi.fn(async () => new Blob(["recorded"])),
       cancel: vi.fn(),
     };
+    const startPlayback = vi.fn(() => playback);
     renderVoice(
       <>
         <VoiceSpeakControl message={assistantMessage("One sentence.")} />
@@ -133,13 +134,13 @@ describe("VoiceController", () => {
         synthesize: vi.fn(async (input) => voiceAudio(wav, input)),
       }),
       environment({
-        startPlayback: vi.fn(() => playback),
+        startPlayback,
         startRecording: vi.fn(async () => session),
       }),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Speak message" }));
-    await screen.findByRole("button", { name: "Stop speaking" });
+    await waitFor(() => expect(startPlayback).toHaveBeenCalledOnce());
     fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
 
     await waitFor(() => expect(playback.stop).toHaveBeenCalledTimes(1));

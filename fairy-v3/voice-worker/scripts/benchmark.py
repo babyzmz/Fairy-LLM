@@ -67,7 +67,9 @@ def measure_stream(
     response = connection.getresponse()
     if response.status != 200:
         raise RuntimeError(f"voice stream failed: HTTP {response.status}")
-    first = response.read(4096)
+    # One socket-buffer read measures the first flushed PCM frame. HTTPResponse.read()
+    # may wait for the requested byte count and accidentally include later frames.
+    first = response.read1(4096)
     first_at = time.perf_counter()
     if first_frame is not None:
         first_frame.set()

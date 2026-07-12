@@ -1,2 +1,3 @@
 fairy-v3/** text eol=lf
 fairy-v3/desktop/src-tauri/icons/*.ico binary
+fairy-v3/voice-worker/assets/*.wav binary

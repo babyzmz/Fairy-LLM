@@ -77,6 +77,7 @@ class CosyVoice3Runtime:
         self._prompt_wav = prompt_wav
         self._prompt_text = prompt_text
         self._model: Any | None = None
+        self._ready = False
         self._error_code: str | None = None
         self._model_digest: str | None = None
         self._load_lock = threading.Lock()
@@ -88,7 +89,7 @@ class CosyVoice3Runtime:
 
     def health(self) -> VoiceWorkerHealth:
         model_installed = _model_files_ready(self._model_dir)
-        model_ready = self._model is not None and self._model_digest is not None
+        model_ready = self._ready
         prompt_ready = self._prompt_wav.is_file() and self._prompt_text.is_file()
         cuda_available = False
         tensorrt_available = importlib.util.find_spec("tensorrt") is not None
@@ -138,8 +139,9 @@ class CosyVoice3Runtime:
 
     def load(self) -> None:
         with self._load_lock:
-            if self._model is not None:
+            if self._ready:
                 return
+            self._ready = False
             try:
                 self._validate_assets()
                 matcha = self._source_dir / "third_party" / "Matcha-TTS"
@@ -170,8 +172,12 @@ class CosyVoice3Runtime:
                 self._model_digest = model_manifest_digest(self._model_dir)
                 self._write_trt_manifest(trt_fingerprint)
                 self._prime()
+                self._ready = True
                 self._error_code = None
             except Exception:
+                self._model = None
+                self._model_digest = None
+                self._ready = False
                 self._error_code = "VOICE_WORKER_LOAD_FAILED"
                 raise
 
@@ -243,8 +249,9 @@ class CosyVoice3Runtime:
 
     def _prime(self) -> None:
         assert self._model is not None
+        self._model.model.token_hop_len = INITIAL_TOKEN_HOP
         output = self._model.inference_zero_shot(
-            "Fairy is ready.",
+            _bistream_text("Fairy 已准备好继续工作。"),
             "",
             "",
             zero_shot_spk_id="fairy-v3",

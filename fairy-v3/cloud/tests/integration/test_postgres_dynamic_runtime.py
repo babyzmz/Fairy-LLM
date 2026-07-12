@@ -120,6 +120,7 @@ async def test_runtime_worker_claim_is_skip_locked_and_fenced(
         pytest.skip("FAIRY_TEST_RUNTIME_POSTGRES_DSN is not set")
     tenant_id = postgres_test_context.track_tenant(f"runtime-claim-{uuid4().hex}")
     app_engine = create_engine(postgres_test_context.core_sync_dsn, pool_pre_ping=True)
+    admin_engine = create_engine(postgres_test_context.admin_sync_dsn, pool_pre_ping=True)
     request = _request(tmp_path)
     CloudRuntimeRepository(app_engine, tenant_id=tenant_id).enqueue(request)
     engine = create_async_engine(runtime_dsn, pool_pre_ping=True)
@@ -140,11 +141,26 @@ async def test_runtime_worker_claim_is_skip_locked_and_fenced(
             stores[0].claim_next(owner_id="runtime-a", lease_seconds=30),
             stores[1].claim_next(owner_id="runtime-b", lease_seconds=30),
         )
-        assert sum(claim is not None for claim in claims) == 1
-        claim = next(claim for claim in claims if claim is not None)
-        assert claim.lease.lease_fence == 1
+        local_claims = [claim for claim in claims if claim is not None]
+        assert len(local_claims) <= 1
+        with admin_engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT status, attempts, lease_fence FROM runtime_leases "
+                    "WHERE tenant_id=:tenant AND runtime_id=:runtime"
+                ),
+                {"tenant": tenant_id, "runtime": str(request.runtime_id)},
+            ).one()
+        assert row.attempts == 1
+        assert row.lease_fence == 1
+        if local_claims:
+            assert local_claims[0].lease.lease_fence == 1
+        else:
+            # The live Compose worker is a third legitimate claimant.
+            assert row.status != "queued"
     finally:
         await engine.dispose()
+        admin_engine.dispose()
         app_engine.dispose()
 
 
