@@ -79,10 +79,14 @@ def build_local_service(
                 isinstance(argument, str) for argument in parsed_args
             ):
                 raise ValueError("FAIRY_LOCAL_WORKER_ARGS_JSON must be a JSON string array")
+            worker_environment = {"FAIRY_MANAGED_ROOT": str(workspace_root)}
+            configured_git = configured.get("FAIRY_GIT_PROGRAM", "").strip()
+            if configured_git:
+                worker_environment["FAIRY_GIT_PROGRAM"] = configured_git
             transport = SubprocessWorkerTransport(
                 program=worker_program,
                 args=tuple(parsed_args),
-                environment={"FAIRY_MANAGED_ROOT": str(workspace_root)},
+                environment=worker_environment,
             )
             resources.callback(transport.close)
             system_action_worker = RustSystemActionWorker(transport)

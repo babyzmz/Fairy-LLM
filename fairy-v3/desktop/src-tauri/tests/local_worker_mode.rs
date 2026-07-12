@@ -42,3 +42,23 @@ fn desktop_binary_runs_local_worker_without_starting_tauri() {
         .join("projects/project-1/versions/version-base")
         .is_dir());
 }
+
+#[test]
+fn bundled_core_path_is_adjacent_to_the_desktop_executable() {
+    let executable = std::path::Path::new("C:/Program Files/Fairy/fairy.exe");
+    let sidecar = fairy_desktop_v3::bundled_core_path(executable);
+    assert_eq!(
+        sidecar,
+        std::path::Path::new("C:/Program Files/Fairy/fairy-core.exe")
+    );
+}
+
+#[test]
+fn bundled_git_path_stays_inside_the_resource_directory() {
+    let resources = std::path::Path::new("C:/Program Files/Fairy/resources");
+    let git = fairy_desktop_v3::bundled_git_path(resources);
+    assert_eq!(
+        git,
+        std::path::Path::new("C:/Program Files/Fairy/resources/runtime/git/cmd/git.exe")
+    );
+}

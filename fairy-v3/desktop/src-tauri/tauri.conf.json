@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.fairy.desktop.v3",
   "build": {
+    "beforeBuildCommand": "npm run build:desktop",
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1430",
     "frontendDist": "../dist"
@@ -67,6 +68,8 @@
   },
   "bundle": {
     "active": true,
+    "externalBin": ["binaries/fairy-core"],
+    "resources": ["runtime/git"],
     "targets": "all"
   }
 }

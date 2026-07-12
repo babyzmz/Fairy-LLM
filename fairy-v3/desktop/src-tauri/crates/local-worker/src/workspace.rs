@@ -657,7 +657,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let output = Command::new("git").args(arguments).output()?;
+    let output = Command::new(git_program()).args(arguments).output()?;
     if !output.status.success() {
         return Err(WorkerError::Git(
             String::from_utf8_lossy(&output.stderr).trim().to_owned(),
@@ -670,7 +670,7 @@ fn run_git_in<const N: usize>(
     directory: &Path,
     arguments: [&str; N],
 ) -> Result<String, WorkerError> {
-    let output = Command::new("git")
+    let output = Command::new(git_program())
         .arg("-C")
         .arg(directory)
         .args(arguments)
@@ -681,4 +681,8 @@ fn run_git_in<const N: usize>(
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn git_program() -> std::ffi::OsString {
+    std::env::var_os("FAIRY_GIT_PROGRAM").unwrap_or_else(|| "git".into())
 }

@@ -86,3 +86,51 @@ fn reports_worker_interrupted_when_core_exits() {
 
     assert!(matches!(error, CoreBridgeError::WorkerInterrupted));
 }
+
+#[test]
+fn verifies_the_core_service_and_protocol_before_use() {
+    let script = r#"
+import json
+import sys
+
+for line in sys.stdin:
+    request = json.loads(line)
+    print(json.dumps({
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": {
+            "status": "ok",
+            "service": "fairy-core",
+            "protocol": "core-service-v1",
+        },
+    }), flush=True)
+"#;
+
+    CoreBridge::spawn_verified(helper(script)).expect("verified Core handshake");
+}
+
+#[test]
+fn rejects_an_incompatible_core_protocol() {
+    let script = r#"
+import json
+import sys
+
+for line in sys.stdin:
+    request = json.loads(line)
+    print(json.dumps({
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": {
+            "status": "ok",
+            "service": "fairy-core",
+            "protocol": "core-service-v0",
+        },
+    }), flush=True)
+"#;
+
+    let error = match CoreBridge::spawn_verified(helper(script)) {
+        Ok(_) => panic!("protocol mismatch must fail"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, CoreBridgeError::ProtocolMismatch { .. }));
+}

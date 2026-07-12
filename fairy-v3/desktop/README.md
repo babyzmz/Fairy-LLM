@@ -52,6 +52,11 @@ The Local Worker may invoke Git with fixed arguments for managed repository
 operations; it never accepts a generic command or shell string. Static Preview
 serves files only and never invokes `Command`.
 
+Release builds run `npm run build:desktop` before compiling Tauri. It creates a
+health-verified `fairy-core` sidecar and a hash-pinned MinGit runtime under
+ignored build directories. `tauri build` places both next to the application;
+Release LaunchSpec does not search for Python or Git on the host.
+
 The complete cross-package acceptance record, including the exact distinction
 between production-browser evidence and unavailable Docker/WSL gates, is in
 `../docs/completion-audit.md`.

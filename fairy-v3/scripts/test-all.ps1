@@ -167,6 +167,9 @@ Invoke-Step "Rust: cargo clippy" $RustRoot "cargo" @(
 Invoke-Step "Rust: cargo test" $RustRoot "cargo" @(
     "test", "--workspace", "--all-targets", "--all-features"
 )
+Invoke-Step "Rust: build desktop worker for release composition" $RustRoot "cargo" @(
+    "build", "--bin", "fairy"
+)
 
 if ($RequireWslSandbox) {
     $WslProbeScript = @'
@@ -197,6 +200,28 @@ raise SystemExit(0 if health.available else 1)
 else {
     Write-Host "`nWSL sandbox verification skipped; pass -RequireWslSandbox to require a real FairySandbox attestation and static Preview lifecycle gate."
 }
+
+Invoke-Step "Desktop release: build and probe bundled Core" $Root "powershell" @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts/build-core-sidecar.ps1"
+)
+Invoke-Step "Desktop release: verify pinned MinGit runtime" $Root "powershell" @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts/prepare-git-runtime.ps1"
+)
+Invoke-Step "Desktop release: bundled Core, Rust worker, and MinGit composition" $Root "powershell" @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts/test-release-composition.ps1"
+)
 
 $DesktopAlias = New-DesktopPathAlias
 $DesktopTestRoot = Join-Path $DesktopAlias.Root "desktop"

@@ -102,12 +102,41 @@ fn development_core_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../core"))
 }
 
+pub fn bundled_core_path(desktop_executable: &std::path::Path) -> PathBuf {
+    desktop_executable
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(if cfg!(windows) {
+            "fairy-core.exe"
+        } else {
+            "fairy-core"
+        })
+}
+
+pub fn bundled_git_path(resource_dir: &std::path::Path) -> PathBuf {
+    resource_dir.join("runtime/git/cmd/git.exe")
+}
+
+fn core_launch_spec(data_dir: &std::path::Path) -> Result<CoreLaunchSpec, std::io::Error> {
+    if cfg!(debug_assertions) {
+        return Ok(CoreLaunchSpec::development(
+            development_core_root(),
+            data_dir,
+        ));
+    }
+    let executable = std::env::current_exe()?;
+    let core_program = env::var_os("FAIRY_CORE_PROGRAM")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| bundled_core_path(&executable));
+    Ok(CoreLaunchSpec::bundled(core_program, data_dir))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let mut launch = CoreLaunchSpec::development(development_core_root(), data_dir);
+            let mut launch = core_launch_spec(&data_dir)?;
             launch.env.insert(
                 "FAIRY_LOCAL_WORKER_PROGRAM".to_owned(),
                 std::env::current_exe()?.to_string_lossy().into_owned(),
@@ -116,7 +145,15 @@ pub fn run() {
                 "FAIRY_LOCAL_WORKER_ARGS_JSON".to_owned(),
                 "[\"--local-worker\"]".to_owned(),
             );
-            let bridge = CoreBridge::spawn(launch)?;
+            if !cfg!(debug_assertions) {
+                launch.env.insert(
+                    "FAIRY_GIT_PROGRAM".to_owned(),
+                    bundled_git_path(&app.path().resource_dir()?)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+            let bridge = CoreBridge::spawn_verified(launch)?;
             app.manage(DesktopState {
                 core: Arc::new(bridge),
             });

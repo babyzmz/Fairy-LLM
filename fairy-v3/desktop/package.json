@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1430",
     "build": "tsc --noEmit && vite build",
+    "build:core-sidecar": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-core-sidecar.ps1",
+    "build:git-runtime": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/prepare-git-runtime.ps1",
+    "build:desktop": "npm run build:core-sidecar && npm run build:git-runtime && npm run build",
     "e2e:serve": "npm run build && npm run preview:e2e",
     "generate:contracts": "npm --prefix ../tools/contracts run generate",
     "test": "vitest run",

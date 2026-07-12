@@ -8,6 +8,9 @@ use std::sync::Mutex;
 use serde_json::Value;
 use thiserror::Error;
 
+const CORE_SERVICE: &str = "fairy-core";
+const CORE_PROTOCOL: &str = "core-service-v1";
+
 #[derive(Debug, Clone)]
 pub struct CoreLaunchSpec {
     pub program: String,
@@ -97,6 +100,32 @@ impl CoreLaunchSpec {
             }),
         }
     }
+
+    pub fn bundled(program: impl AsRef<Path>, data_dir: impl AsRef<Path>) -> Self {
+        Self::bundled_with_environment(program, data_dir, &env::vars().collect())
+    }
+
+    pub fn bundled_with_environment(
+        program: impl AsRef<Path>,
+        data_dir: impl AsRef<Path>,
+        parent_environment: &BTreeMap<String, String>,
+    ) -> Self {
+        let program = program.as_ref().to_path_buf();
+        let mut child_environment = filtered_child_environment(parent_environment);
+        child_environment.insert(
+            "FAIRY_V3_DATA_DIR".to_owned(),
+            data_dir.as_ref().to_string_lossy().into_owned(),
+        );
+        child_environment.insert("PYTHONIOENCODING".to_owned(), "utf-8".to_owned());
+        child_environment.insert("PYTHONUNBUFFERED".to_owned(), "1".to_owned());
+        Self {
+            program: program.to_string_lossy().into_owned(),
+            args: Vec::new(),
+            env: child_environment,
+            clear_environment: true,
+            current_dir: program.parent().map(Path::to_path_buf),
+        }
+    }
 }
 
 fn development_python(root: &Path) -> Option<String> {
@@ -129,6 +158,7 @@ fn filtered_child_environment(
         .iter()
         .filter(|(key, _)| {
             key.starts_with("FAIRY_PROVIDER_")
+                || key.eq_ignore_ascii_case("FAIRY_GIT_PROGRAM")
                 || OS_RUNTIME_KEYS
                     .iter()
                     .any(|allowed| key.eq_ignore_ascii_case(allowed))
@@ -149,6 +179,10 @@ pub enum CoreBridgeError {
     ResponseIdMismatch { expected: i64, actual: i64 },
     #[error("Fairy Core process was interrupted")]
     WorkerInterrupted,
+    #[error("Fairy Core startup handshake failed: {0}")]
+    HandshakeRejected(String),
+    #[error("Fairy Core protocol mismatch: expected {expected}, got {actual}")]
+    ProtocolMismatch { expected: String, actual: String },
     #[error("Fairy Core bridge lock is poisoned")]
     LockPoisoned,
 }
@@ -201,6 +235,43 @@ impl CoreBridge {
                 stdout: BufReader::new(stdout),
             }),
         })
+    }
+
+    pub fn spawn_verified(spec: CoreLaunchSpec) -> Result<Self, CoreBridgeError> {
+        let bridge = Self::spawn(spec)?;
+        bridge.verify_handshake()?;
+        Ok(bridge)
+    }
+
+    fn verify_handshake(&self) -> Result<(), CoreBridgeError> {
+        let response = self.call(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "health",
+            "params": {}
+        }))?;
+        if let Some(error) = response.get("error") {
+            return Err(CoreBridgeError::HandshakeRejected(error.to_string()));
+        }
+        let result = response.get("result").ok_or_else(|| {
+            CoreBridgeError::HandshakeRejected("health result is missing".to_owned())
+        })?;
+        if result.get("status").and_then(Value::as_str) != Some("ok")
+            || result.get("service").and_then(Value::as_str) != Some(CORE_SERVICE)
+        {
+            return Err(CoreBridgeError::HandshakeRejected(result.to_string()));
+        }
+        let actual = result
+            .get("protocol")
+            .and_then(Value::as_str)
+            .unwrap_or("missing");
+        if actual != CORE_PROTOCOL {
+            return Err(CoreBridgeError::ProtocolMismatch {
+                expected: CORE_PROTOCOL.to_owned(),
+                actual: actual.to_owned(),
+            });
+        }
+        Ok(())
     }
 
     pub fn call(&self, request: Value) -> Result<Value, CoreBridgeError> {

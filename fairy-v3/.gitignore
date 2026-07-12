@@ -17,6 +17,8 @@ desktop/test-results/
 
 # Rust and Tauri
 **/target/
+desktop/src-tauri/binaries/*.exe
+desktop/src-tauri/runtime/git/
 
 # Local configuration and credentials
 .env
