@@ -33,6 +33,8 @@ function Workspace({ client }: AppProps) {
         conversationId={conversationId}
         profile={profile}
         health={health}
+        turn={model.mode === "chat" ? model.chatTurn : null}
+        events={model.mode === "chat" ? model.chatEvents : []}
       >
         <WorkspaceShell model={model} />
       </VoiceController>

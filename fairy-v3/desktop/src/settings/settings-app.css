@@ -171,6 +171,7 @@ select {
 .settings-range-row small { color: #a8d7ef; }
 .settings-health-row > span:last-child { max-width: 55%; color: #919894; text-align: right; }
 .settings-health-row > span[data-tone="success"] { color: #7fd6b4; }
+.settings-health-row > span[data-tone="error"] { color: #ff8f82; }
 
 .settings-provider-list,
 .settings-extension-list { display: grid; padding: 10px 0; border-bottom: 1px solid #2c302e; }

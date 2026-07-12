@@ -195,6 +195,11 @@ const routes = {
   "messages.list": (params) =>
     getWithQuery("/v1/messages", params, ["conversation_id", "limit", "cursor"]),
   "voice.synthesize": (params) => post("/v1/voice/speech", params),
+  "voice.sessions.start": (params) => post("/v1/voice/sessions", params),
+  "voice.sessions.get": (params) =>
+    get(`/v1/voice/sessions/${pathParameter(params, "session_id")}`),
+  "voice.sessions.cancel": (params) =>
+    remove(`/v1/voice/sessions/${pathParameter(params, "session_id")}`),
   "voice.transcribe": (params) => post("/v1/voice/transcriptions", params),
   "memory.observations.create": (params) => post("/v1/memory/observations", params),
   "memory.observations.list": (params) =>

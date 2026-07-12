@@ -11,12 +11,20 @@ import {
 } from "react";
 
 import type {
+  AssistantTurn,
   CoreClient,
+  EventEnvelope,
   Message,
   ProviderHealth,
   ProviderProfile,
   VoiceAudio,
+  VoiceSessionStartInput,
 } from "../core/client";
+import {
+  DESKTOP_PREFERENCES_EVENT,
+  type DesktopPreferences,
+} from "../settings/client";
+import { nativeVoiceAvailable, startNativeVoice } from "./nativeVoice";
 import { SentenceQueue } from "./sentenceQueue";
 
 const MAX_RECORDING_BYTES = 20 * 1024 * 1024;
@@ -32,6 +40,7 @@ export interface RecordingSession {
 }
 
 export interface AudioPlayback {
+  readyForNext?: Promise<void>;
   finished: Promise<void>;
   stop(): void;
 }
@@ -40,6 +49,7 @@ export interface VoiceEnvironment {
   supported: boolean;
   startRecording(): Promise<RecordingSession>;
   startPlayback(wav: Uint8Array): AudioPlayback;
+  startNativePlayback?(input: VoiceSessionStartInput): Promise<AudioPlayback>;
 }
 
 interface VoiceControllerProps {
@@ -47,17 +57,22 @@ interface VoiceControllerProps {
   conversationId: string | null;
   profile: ProviderProfile | null;
   health: ProviderHealth | null;
+  turn?: AssistantTurn | null;
+  events?: EventEnvelope[];
   environment?: VoiceEnvironment;
   children: ReactNode;
 }
 
 type RecordingState = "idle" | "requesting" | "recording" | "transcribing";
+type PlaybackState = "idle" | "preparing" | "speaking" | "failed";
 
 interface VoiceContextValue {
   sttAvailable: boolean;
   ttsAvailable: boolean;
   recordingState: RecordingState;
   speakingMessageId: string | null;
+  speakingTurnId: string | null;
+  playbackState: PlaybackState;
   statusMessage: string | null;
   startRecording(onTranscript: (text: string) => void): Promise<void>;
   stopRecording(): Promise<void>;
@@ -72,6 +87,8 @@ export function VoiceController({
   conversationId,
   profile,
   health,
+  turn = null,
+  events = [],
   environment: configuredEnvironment,
   children,
 }: VoiceControllerProps) {
@@ -81,13 +98,22 @@ export function VoiceController({
   );
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null);
+  const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [autoPlay, setAutoPlay] = useState(false);
   const recordingRef = useRef<RecordingSession | null>(null);
   const transcriptRef = useRef<((text: string) => void) | null>(null);
   const playbackRef = useRef<AudioPlayback | null>(null);
   const voiceRequestRef = useRef<AbortController | null>(null);
   const playbackEpoch = useRef(0);
   const sentenceQueue = useRef(new SentenceQueue());
+  const autoTurnRef = useRef<string | null>(null);
+  const autoEventIds = useRef(new Set<string>());
+  const autoCoordinates = useRef(new Set<string>());
+  const autoChunkIndex = useRef(0);
+  const autoFlushed = useRef(false);
+  const autoQueue = useRef(Promise.resolve());
   const providerAvailable =
     profile !== null &&
     profile.enabled &&
@@ -98,8 +124,10 @@ export function VoiceController({
     conversationId !== null &&
     providerAvailable &&
     profile.capabilities.includes("stt");
+  const nativeTtsAvailable = environment.startNativePlayback !== undefined;
   const ttsAvailable =
-    environment.supported && providerAvailable && profile.capabilities.includes("tts");
+    nativeTtsAvailable ||
+    (environment.supported && providerAvailable && profile?.capabilities.includes("tts") === true);
 
   const stopSpeaking = useCallback(() => {
     playbackEpoch.current += 1;
@@ -108,6 +136,17 @@ export function VoiceController({
     playbackRef.current?.stop();
     playbackRef.current = null;
     setSpeakingMessageId(null);
+    setSpeakingTurnId(null);
+    setPlaybackState("idle");
+  }, []);
+
+  useEffect(() => {
+    const update = (event: Event) => {
+      const preferences = (event as CustomEvent<DesktopPreferences>).detail;
+      setAutoPlay(preferences.voice_auto_play_chat);
+    };
+    window.addEventListener(DESKTOP_PREFERENCES_EVENT, update);
+    return () => window.removeEventListener(DESKTOP_PREFERENCES_EVENT, update);
   }, []);
 
   const startRecording = useCallback(
@@ -168,7 +207,6 @@ export function VoiceController({
     async (message: Message) => {
       if (
         !ttsAvailable ||
-        profile === null ||
         message.role !== "assistant" ||
         message.visibility !== "user" ||
         message.turn_id === null
@@ -192,7 +230,31 @@ export function VoiceController({
       ];
       setStatusMessage(null);
       setSpeakingMessageId(message.id);
+      setSpeakingTurnId(turnId);
+      setPlaybackState("preparing");
+      let playbackFailed = false;
       try {
+        if (environment.startNativePlayback !== undefined) {
+          const playback = await environment.startNativePlayback({
+            task_id: message.task_id,
+            turn_id: turnId,
+            message_id: message.id,
+            start_offset: 0,
+            end_offset: Array.from(message.content).length,
+            idempotency_key: voiceIdempotencyKey(message.id),
+          });
+          if (epoch !== playbackEpoch.current) {
+            playback.stop();
+            return;
+          }
+          playbackRef.current = playback;
+          setPlaybackState("speaking");
+          await playback.finished;
+          if (epoch !== playbackEpoch.current) return;
+          playbackRef.current = null;
+          return;
+        }
+        if (profile === null) throw new Error("Speech provider unavailable");
         for (const chunk of chunks) {
           if (epoch !== playbackEpoch.current) return;
           const response = await client.voice.synthesize(
@@ -212,24 +274,120 @@ export function VoiceController({
           if (epoch !== playbackEpoch.current) return;
           const playback = environment.startPlayback(wav);
           playbackRef.current = playback;
+          setPlaybackState("speaking");
           await playback.finished;
           if (epoch !== playbackEpoch.current) return;
           playbackRef.current = null;
         }
       } catch (error) {
         if (epoch === playbackEpoch.current) {
+          playbackFailed = true;
           setStatusMessage(errorMessage(error, "Speech playback failed"));
+          setPlaybackState("failed");
         }
       } finally {
         if (epoch === playbackEpoch.current) {
           playbackRef.current = null;
           voiceRequestRef.current = null;
           setSpeakingMessageId(null);
+          if (!playbackFailed) {
+            setSpeakingTurnId(null);
+            setPlaybackState("idle");
+          }
         }
       }
     },
     [client.voice, environment, profile, stopSpeaking, ttsAvailable],
   );
+
+  useEffect(() => {
+    if (!autoPlay || environment.startNativePlayback === undefined || turn === null) return;
+    if (autoTurnRef.current !== turn.id) {
+      if (autoTurnRef.current !== null) stopSpeaking();
+      autoTurnRef.current = turn.id;
+      autoEventIds.current.clear();
+      autoCoordinates.current.clear();
+      autoChunkIndex.current = 0;
+      autoFlushed.current = false;
+      sentenceQueue.current.reset(turn.id);
+    }
+    const chunks = events
+      .filter((event) => event.event_type === "assistant.message.delta")
+      .filter((event) => event.payload.turn_id === turn.id)
+      .sort((left, right) =>
+        numericPayload(left, "model_round") - numericPayload(right, "model_round") ||
+        numericPayload(left, "chunk_index") - numericPayload(right, "chunk_index") ||
+        left.cursor - right.cursor,
+      )
+      .flatMap((event) => {
+        const modelRound = event.payload.model_round;
+        const sourceChunk = event.payload.chunk_index;
+        if (
+          autoEventIds.current.has(event.id) ||
+          typeof event.payload.text !== "string" ||
+          typeof modelRound !== "number" ||
+          typeof sourceChunk !== "number"
+        ) {
+          return [];
+        }
+        const coordinate = `${modelRound}:${sourceChunk}`;
+        autoEventIds.current.add(event.id);
+        if (autoCoordinates.current.has(coordinate)) return [];
+        autoCoordinates.current.add(coordinate);
+        const chunkIndex = autoChunkIndex.current;
+        autoChunkIndex.current += 1;
+        return sentenceQueue.current.push(turn.id, {
+          modelRound: 0,
+          chunkIndex,
+          text: event.payload.text,
+        });
+      });
+    if (turn.status === "completed" && !autoFlushed.current) {
+      autoFlushed.current = true;
+      chunks.push(...sentenceQueue.current.flush(turn.id));
+    }
+    for (const chunk of chunks) {
+      const epoch = playbackEpoch.current;
+      autoQueue.current = autoQueue.current.then(async () => {
+        if (epoch !== playbackEpoch.current || environment.startNativePlayback === undefined) return;
+        setSpeakingMessageId(`auto:${turn.id}`);
+        setSpeakingTurnId(turn.id);
+        setPlaybackState("preparing");
+        const playback = await environment.startNativePlayback({
+          task_id: turn.task_id,
+          turn_id: turn.id,
+          message_id: null,
+          start_offset: chunk.startOffset,
+          end_offset: chunk.endOffset,
+          idempotency_key: `desktop-voice:auto:${turn.id}:${chunk.startOffset}:${chunk.endOffset}`,
+        });
+        if (epoch !== playbackEpoch.current) {
+          playback.stop();
+          return;
+        }
+        playbackRef.current = playback;
+        setPlaybackState("speaking");
+        await (playback.readyForNext ?? playback.finished);
+        if (epoch === playbackEpoch.current) {
+          void playback.finished.then(() => {
+            if (epoch === playbackEpoch.current && playbackRef.current === playback) {
+              playbackRef.current = null;
+              setSpeakingMessageId(null);
+              setSpeakingTurnId(null);
+              setPlaybackState("idle");
+            }
+          });
+        }
+      }).catch((error) => {
+        if (epoch === playbackEpoch.current) {
+          playbackRef.current = null;
+          setSpeakingMessageId(null);
+          setPlaybackState("failed");
+          setStatusMessage(errorMessage(error, "Speech playback failed"));
+        }
+      });
+    }
+  }, [autoPlay, environment, events, stopSpeaking, turn]);
 
   useEffect(
     () => () => {
@@ -247,6 +405,8 @@ export function VoiceController({
       ttsAvailable,
       recordingState,
       speakingMessageId,
+      speakingTurnId,
+      playbackState,
       statusMessage:
         statusMessage ??
         (!environment.supported
@@ -264,6 +424,8 @@ export function VoiceController({
       recordingState,
       speak,
       speakingMessageId,
+      speakingTurnId,
+      playbackState,
       startRecording,
       statusMessage,
       stopRecording,
@@ -274,6 +436,11 @@ export function VoiceController({
   );
 
   return <VoiceContext.Provider value={value}>{children}</VoiceContext.Provider>;
+}
+
+export function useVoicePlaybackState(turnId: string): PlaybackState {
+  const voice = useContext(VoiceContext);
+  return voice?.speakingTurnId === turnId ? voice.playbackState : "idle";
 }
 
 export function VoiceRecordControl({
@@ -462,11 +629,25 @@ function defaultVoiceEnvironment(): VoiceEnvironment {
     navigator.mediaDevices?.getUserMedia !== undefined &&
     typeof MediaRecorder !== "undefined" &&
     typeof Audio !== "undefined";
-  return {
+  const environment: VoiceEnvironment = {
     supported,
     startRecording: () => startBrowserRecording(),
     startPlayback: (wav) => startBrowserPlayback(wav),
   };
+  if (nativeVoiceAvailable()) environment.startNativePlayback = startNativeVoice;
+  return environment;
+}
+
+function voiceIdempotencyKey(messageId: string): string {
+  const nonce = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `desktop-voice:${messageId}:${nonce}`;
+}
+
+function numericPayload(event: EventEnvelope, key: string): number {
+  const value = event.payload[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER;
 }
 
 async function startBrowserRecording(): Promise<RecordingSession> {

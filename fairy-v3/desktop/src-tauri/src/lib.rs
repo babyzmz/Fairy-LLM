@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use fairy_core_bridge::{CoreBridge, CoreBridgeError, CoreLaunchSpec};
 use serde_json::{json, Value};
+use tauri::ipc::{Channel, Response};
 use tauri::{Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
@@ -12,11 +13,16 @@ use desktop_preferences::{
 };
 use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStore};
 use provider_credentials::ProviderCredentialStore;
+use voice_worker::{
+    bundled_voice_launch, development_voice_launch, prepared_test_session, PreparedVoiceSession,
+    VoiceStreamEvent, VoiceStreamInput, VoiceWorkerManager,
+};
 
 pub mod capture;
 pub mod desktop_preferences;
 pub mod provider_configuration;
 pub mod provider_credentials;
+pub mod voice_worker;
 
 #[derive(Debug)]
 pub struct WindowScopeError;
@@ -49,6 +55,18 @@ pub fn authorize_preferences_reader(label: &str) -> Result<(), WindowScopeError>
     } else {
         Err(WindowScopeError)
     }
+}
+
+pub fn authorize_voice_health_window(label: &str) -> Result<(), WindowScopeError> {
+    if ["main", "settings"].contains(&label) {
+        Ok(())
+    } else {
+        Err(WindowScopeError)
+    }
+}
+
+pub fn authorize_voice_settings_window(label: &str) -> Result<(), WindowScopeError> {
+    authorize_settings_window(label)
 }
 
 pub fn settings_method_allowed(method: &str) -> bool {
@@ -103,6 +121,7 @@ pub fn bridge_failure_response(id: Value, error: &CoreBridgeError) -> Value {
 
 struct DesktopState {
     core: Arc<Mutex<Option<CoreBridge>>>,
+    voice: Arc<VoiceWorkerManager>,
     preferences: Mutex<()>,
     data_dir: PathBuf,
     desktop_program: PathBuf,
@@ -311,6 +330,165 @@ async fn open_settings_window(window: WebviewWindow) -> Result<(), String> {
     settings.set_focus().map_err(|error| error.to_string())
 }
 
+fn deserialize_core_result<T: serde::de::DeserializeOwned>(response: Value) -> Result<T, String> {
+    if let Some(result) = response.get("result") {
+        return serde_json::from_value(result.clone())
+            .map_err(|_| "CORE_PROTOCOL_ERROR".to_owned());
+    }
+    Err(response
+        .pointer("/error/data/error_code")
+        .and_then(Value::as_str)
+        .unwrap_or("CORE_PROTOCOL_ERROR")
+        .to_owned())
+}
+
+#[tauri::command]
+async fn voice_worker_health(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    authorize_voice_health_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let voice = Arc::clone(&state.voice);
+    tauri::async_runtime::spawn_blocking(move || voice.health())
+        .await
+        .map_err(|_| "VOICE_WORKER_INTERRUPTED".to_owned())?
+        .map_err(|error| error.public_code().to_owned())
+}
+
+#[tauri::command]
+async fn voice_model_install(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Value, String> {
+    authorize_voice_settings_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let voice = Arc::clone(&state.voice);
+    tauri::async_runtime::spawn_blocking(move || voice.install_model())
+        .await
+        .map_err(|_| "VOICE_WORKER_INTERRUPTED".to_owned())?
+        .map_err(|error| error.public_code().to_owned())
+}
+
+#[tauri::command]
+async fn voice_session_start(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: VoiceStreamInput,
+    audio: Channel<Response>,
+    events: Channel<VoiceStreamEvent>,
+) -> Result<PreparedVoiceSession, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let response = call_core(
+        &state,
+        json!({
+            "jsonrpc": "2.0",
+            "id": "native-voice-start",
+            "method": "voice.sessions.start",
+            "params": input,
+        }),
+    )
+    .await;
+    let session: PreparedVoiceSession = deserialize_core_result(response)?;
+    let worker_session = session.clone();
+    let voice = Arc::clone(&state.voice);
+    let failure_events = events.clone();
+    tauri::async_runtime::spawn(async move {
+        let failed_session_id = worker_session.id.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            voice.stream(worker_session, audio, events)
+        })
+        .await;
+        let error_code = match result {
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => error.public_code().to_owned(),
+            Err(_) => "VOICE_WORKER_INTERRUPTED".to_owned(),
+        };
+        let _ = failure_events.send(VoiceStreamEvent::Failed {
+            session_id: failed_session_id,
+            error_code,
+            message: "Fairy voice playback could not start.".to_owned(),
+        });
+    });
+    Ok(session)
+}
+
+#[tauri::command]
+async fn voice_session_cancel(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    session_id: String,
+) -> Result<PreparedVoiceSession, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let voice = Arc::clone(&state.voice);
+    let worker_session_id = session_id.clone();
+    let worker_result =
+        tauri::async_runtime::spawn_blocking(move || voice.cancel(&worker_session_id))
+            .await
+            .map_err(|_| "VOICE_WORKER_INTERRUPTED".to_owned())?;
+    let response = call_core(
+        &state,
+        json!({
+            "jsonrpc": "2.0",
+            "id": "native-voice-cancel",
+            "method": "voice.sessions.cancel",
+            "params": { "session_id": session_id },
+        }),
+    )
+    .await;
+    let session = deserialize_core_result(response)?;
+    worker_result.map_err(|error| error.public_code().to_owned())?;
+    Ok(session)
+}
+
+#[tauri::command]
+async fn voice_test_start(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    audio: Channel<Response>,
+    events: Channel<VoiceStreamEvent>,
+) -> Result<PreparedVoiceSession, String> {
+    authorize_voice_settings_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let session = prepared_test_session().map_err(|error| error.public_code().to_owned())?;
+    let worker_session = session.clone();
+    let failed_session_id = session.id.clone();
+    let voice = Arc::clone(&state.voice);
+    let failure_events = events.clone();
+    tauri::async_runtime::spawn(async move {
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            voice.stream(worker_session, audio, events)
+        })
+        .await;
+        let error_code = match result {
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => error.public_code().to_owned(),
+            Err(_) => "VOICE_WORKER_INTERRUPTED".to_owned(),
+        };
+        let _ = failure_events.send(VoiceStreamEvent::Failed {
+            session_id: failed_session_id,
+            error_code,
+            message: "Fairy voice test could not start.".to_owned(),
+        });
+    });
+    Ok(session)
+}
+
+#[tauri::command]
+async fn voice_test_cancel(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    session_id: String,
+) -> Result<(), String> {
+    authorize_voice_settings_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let voice = Arc::clone(&state.voice);
+    tauri::async_runtime::spawn_blocking(move || voice.cancel(&session_id))
+        .await
+        .map_err(|_| "VOICE_WORKER_INTERRUPTED".to_owned())?
+        .map_err(|error| error.public_code().to_owned())
+}
+
 #[tauri::command]
 async fn select_project_folder(
     window: WebviewWindow,
@@ -429,8 +607,19 @@ pub fn run() {
             let launch = configured_core_launch(&data_dir, &desktop_program, &resource_dir)
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
             let bridge = CoreBridge::spawn_verified(launch)?;
+            let voice_launch = if cfg!(debug_assertions) {
+                development_voice_launch(&data_dir)
+            } else {
+                bundled_voice_launch(&data_dir, &resource_dir, &desktop_program)
+            };
+            let voice = Arc::new(VoiceWorkerManager::new(voice_launch));
+            let warming_voice = Arc::clone(&voice);
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = warming_voice.health();
+            });
             app.manage(DesktopState {
                 core: Arc::new(Mutex::new(Some(bridge))),
+                voice,
                 preferences: Mutex::new(()),
                 data_dir,
                 desktop_program,
@@ -460,6 +649,12 @@ pub fn run() {
             desktop_preferences_get,
             desktop_preferences_update,
             open_settings_window,
+            voice_worker_health,
+            voice_model_install,
+            voice_session_start,
+            voice_session_cancel,
+            voice_test_start,
+            voice_test_cancel,
             select_project_folder,
             capture::list_capture_surfaces,
             capture::capture_surface

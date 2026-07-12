@@ -1,7 +1,8 @@
 use fairy_core_bridge::CoreBridgeError;
 use fairy_desktop_v3::{
     authorize_core_rpc_window, authorize_preferences_reader, authorize_settings_window,
-    auxiliary_window_policy, bridge_failure_response, settings_method_allowed,
+    authorize_voice_health_window, authorize_voice_settings_window, auxiliary_window_policy,
+    bridge_failure_response, settings_method_allowed,
 };
 use serde_json::json;
 
@@ -12,6 +13,17 @@ fn only_the_main_window_can_call_core_rpc() {
     assert!(authorize_core_rpc_window("guide").is_err());
     assert!(authorize_core_rpc_window("preview").is_err());
     assert!(authorize_core_rpc_window("settings").is_err());
+}
+
+#[test]
+fn voice_host_commands_keep_session_and_model_access_out_of_auxiliary_windows() {
+    assert!(authorize_voice_health_window("main").is_ok());
+    assert!(authorize_voice_health_window("settings").is_ok());
+    assert!(authorize_voice_health_window("pet").is_err());
+    assert!(authorize_voice_health_window("guide").is_err());
+    assert!(authorize_voice_settings_window("settings").is_ok());
+    assert!(authorize_voice_settings_window("main").is_err());
+    assert!(authorize_voice_settings_window("pet").is_err());
 }
 
 #[test]

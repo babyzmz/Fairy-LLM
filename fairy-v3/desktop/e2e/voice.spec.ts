@@ -29,15 +29,15 @@ test("records audio through Core and inserts the transcript into the composer", 
   expect(request.params.audio_base64).toBe("Zml4dHVyZS1yZWNvcmRpbmc=");
 });
 
-test("speaks a durable assistant message through ledger-bound sentence ranges", async ({
+test("streams a durable assistant message through a native voice session", async ({
   page,
 }) => {
   await page.getByRole("button", { name: "Speak message" }).click();
 
   await expect
-    .poll(async () => (await voiceCalls(page, "voice.synthesize")).length)
+    .poll(async () => (await voiceCalls(page, "voice.sessions.start")).length)
     .toBe(1);
-  const [request] = await voiceCalls(page, "voice.synthesize");
+  const [request] = await voiceCalls(page, "voice.sessions.start");
   expect(request.params).toMatchObject({
     task_id: "0198f4de-0114-7000-8000-000000000011",
     turn_id: "0198f4de-0114-7000-8000-000000000012",
@@ -46,6 +46,7 @@ test("speaks a durable assistant message through ledger-bound sentence ranges", 
     end_offset: 23,
   });
   expect(request.params).not.toHaveProperty("text");
+  expect(request.params).not.toHaveProperty("profile_id");
 });
 
 test("shows a denied microphone state without sending audio", async ({ page }) => {

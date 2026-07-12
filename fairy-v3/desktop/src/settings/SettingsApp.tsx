@@ -11,6 +11,7 @@ import {
   MonitorCog,
   Palette,
   PawPrint,
+  Play,
   Plus,
   RefreshCw,
   Search,
@@ -32,7 +33,13 @@ import type {
   ProviderProfile,
   Skill,
 } from "../core/client";
-import { applyDesktopPreferences, type DesktopPreferences, type SettingsClient } from "./client";
+import { startNativeVoiceTest } from "../voice/nativeVoice";
+import {
+  applyDesktopPreferences,
+  type DesktopPreferences,
+  type SettingsClient,
+  type VoiceWorkerHealth,
+} from "./client";
 import "./settings-app.css";
 
 type CategoryId =
@@ -73,6 +80,7 @@ interface SettingsData {
   capabilities: CapabilityManifest;
   skills: Skill[];
   servers: McpServer[];
+  voiceHealth: VoiceWorkerHealth;
 }
 
 export function SettingsApp({ client }: { client: SettingsClient }) {
@@ -85,7 +93,7 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [preferences, providers, health, status, permissions, capabilities, skills, servers] =
+      const [preferences, providers, health, status, permissions, capabilities, skills, servers, voiceHealth] =
         await Promise.all([
           client.preferences.get(),
           client.providers.list(),
@@ -95,6 +103,7 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
           client.permissions.capabilities(),
           client.extensions.skills(),
           client.extensions.servers(),
+          client.voice.health().catch(() => unavailableVoiceHealth()),
         ]);
       setData({
         preferences,
@@ -106,6 +115,7 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
         capabilities,
         skills: skills.items,
         servers: servers.items,
+        voiceHealth,
       });
       applyDesktopPreferences(preferences);
     } catch (caught) {
@@ -236,7 +246,30 @@ function SettingsCategory(props: {
       <SettingToggle label="Auto-play pet replies" checked={data.preferences.voice_auto_play_pet} disabled={busy} onChange={(value) => void updatePreferences({ voice_auto_play_pet: value })} />
       <SettingRange label="Volume" value={data.preferences.voice_volume_percent} min={0} max={100} suffix="%" disabled={busy} onCommit={(value) => void updatePreferences({ voice_volume_percent: value })} />
       <SettingRange label="Speech rate" value={data.preferences.voice_rate_percent} min={50} max={200} suffix="%" disabled={busy} onCommit={(value) => void updatePreferences({ voice_rate_percent: value })} />
-      <HealthRow icon={<Volume2 size={17} />} label="Fairy Voice Worker" status="Installed model health is checked when voice starts" tone="neutral" />
+      <HealthRow
+        icon={<Volume2 size={17} />}
+        label="Fairy Voice Worker"
+        status={voiceHealthLabel(data.voiceHealth)}
+        tone={data.voiceHealth.status === "ready" ? "success" : data.voiceHealth.status === "warming" ? "neutral" : "error"}
+      />
+      <div className="settings-section-command">
+        <span>{data.voiceHealth.device_name ?? "A CUDA GPU is required"}</span>
+        {data.voiceHealth.status === "ready" ? (
+          <button className="secondary-command" type="button" disabled={busy} onClick={() => void props.act(async () => {
+            const playback = await startNativeVoiceTest();
+            await playback.finished;
+          })}>
+            <Play size={14} /> Test Fairy voice
+          </button>
+        ) : data.voiceHealth.status === "warming" ? null : (
+          <button className="secondary-command" type="button" disabled={busy || !data.voiceHealth.cuda_available} onClick={() => void props.act(async () => {
+            await props.client.voice.installModel();
+            await props.reload();
+          })}>
+            <RefreshCw size={14} /> {data.voiceHealth.model_installed ? "Retry voice runtime" : "Install voice model"}
+          </button>
+        )}
+      </div>
     </Category>;
     case "permissions": return <PermissionsPanel {...props} />;
     case "extensions": return <ExtensionsPanel {...props} />;
@@ -352,7 +385,7 @@ function SettingRange({ label, value, min, max, suffix, disabled, onCommit }: { 
   return <label className="settings-row settings-range-row"><span><strong>{label}</strong><small>{draft}{suffix}</small></span><input type="range" min={min} max={max} value={draft} disabled={disabled} onChange={(event) => setDraft(Number(event.target.value))} onPointerUp={() => onCommit(draft)} onKeyUp={() => onCommit(draft)} /></label>;
 }
 
-function HealthRow({ icon, label, status, tone }: { icon: React.ReactNode; label: string; status: string; tone: "neutral" | "success" }) {
+function HealthRow({ icon, label, status, tone }: { icon: React.ReactNode; label: string; status: string; tone: "neutral" | "success" | "error" }) {
   return <div className="settings-row settings-health-row"><span className="settings-row-copy">{icon}<strong>{label}</strong></span><span data-tone={tone}>{status}</span></div>;
 }
 
@@ -366,3 +399,27 @@ function extensionKey(server: McpServer, action: string, value: boolean) {
 
 function titleCase(value: string) { return `${value.charAt(0).toUpperCase()}${value.slice(1)}`; }
 function messageOf(value: unknown) { return value instanceof Error ? value.message : "Settings request failed"; }
+
+function unavailableVoiceHealth(): VoiceWorkerHealth {
+  return {
+    status: "unavailable",
+    model_repository: "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+    model_installed: false,
+    model_ready: false,
+    model_digest: null,
+    prompt_ready: false,
+    cuda_available: false,
+    tensorrt_available: false,
+    backend: null,
+    device_name: null,
+    sample_rate: 24_000,
+    error_code: "VOICE_WORKER_UNAVAILABLE",
+  };
+}
+
+function voiceHealthLabel(health: VoiceWorkerHealth): string {
+  if (health.status === "ready") return `Ready at ${health.sample_rate / 1000} kHz`;
+  if (health.status === "warming") return "Warming model";
+  if (health.status === "model_missing") return "Model not installed";
+  return health.error_code ?? "Voice unavailable";
+}

@@ -19,6 +19,7 @@ import type {
 import { CoreRpcError, type InvokeFunction } from "../core/tauriTransport";
 
 export type ThemePreference = "system" | "dark" | "light";
+export const DESKTOP_PREFERENCES_EVENT = "fairy-desktop-preferences";
 
 export interface DesktopPreferences {
   schema_version: number;
@@ -42,6 +43,26 @@ export interface DesktopPreferences {
   pet_always_on_top: boolean;
   pet_muted: boolean;
   developer_mode: boolean;
+}
+
+export interface VoiceWorkerHealth {
+  status: "ready" | "warming" | "model_missing" | "prompt_missing" | "cuda_unavailable" | "acceleration_unavailable" | "error" | "unavailable";
+  model_repository: string;
+  model_installed: boolean;
+  model_ready: boolean;
+  model_digest: string | null;
+  prompt_ready: boolean;
+  cuda_available: boolean;
+  tensorrt_available: boolean;
+  backend: string | null;
+  device_name: string | null;
+  sample_rate: number;
+  error_code: string | null;
+}
+
+export interface VoiceModelInstallResult {
+  installed: boolean;
+  manifest_digest: string;
 }
 
 interface JsonRpcSuccess<T> {
@@ -108,6 +129,11 @@ export class SettingsClient {
     delete: (input: McpServerDeleteInput) => this.call("mcp.servers.delete", input),
   };
 
+  readonly voice = {
+    health: () => this.invoke<VoiceWorkerHealth>("voice_worker_health"),
+    installModel: () => this.invoke<VoiceModelInstallResult>("voice_model_install"),
+  };
+
   constructor(private readonly invoke: InvokeFunction) {}
 
   private async call<M extends CoreMethodName>(
@@ -142,4 +168,9 @@ export function applyDesktopPreferences(preferences: DesktopPreferences): void {
   } catch {
     // Rust preferences remain authoritative when browser storage is unavailable.
   }
+  window.dispatchEvent(
+    new CustomEvent<DesktopPreferences>(DESKTOP_PREFERENCES_EVENT, {
+      detail: preferences,
+    }),
+  );
 }

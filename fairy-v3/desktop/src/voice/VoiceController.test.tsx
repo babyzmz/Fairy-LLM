@@ -4,11 +4,14 @@ import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  AssistantTurn,
+  EventEnvelope,
   Message,
   ProviderHealth,
   ProviderProfile,
   VoiceAudio,
 } from "../core/client";
+import { DESKTOP_PREFERENCES_EVENT, type DesktopPreferences } from "../settings/client";
 import {
   type AudioPlayback,
   type RecordingSession,
@@ -168,6 +171,61 @@ describe("VoiceController", () => {
 
     await waitFor(() => expect(capturedSignal?.aborted).toBe(true));
   });
+
+  it("auto-plays only stable durable delta ranges through native voice", async () => {
+    const startNativePlayback = vi.fn(async () => ({
+      finished: Promise.resolve(),
+      stop: vi.fn(),
+    }));
+    const turn = {
+      id: "turn-live",
+      task_id: "task-1",
+      status: "running",
+    } as AssistantTurn;
+    const events = [
+      {
+        id: "event-1",
+        cursor: 1,
+        event_type: "assistant.message.delta",
+        payload: {
+          turn_id: turn.id,
+          model_round: 0,
+          chunk_index: 1,
+          text: "A stable sentence.",
+        },
+      } as unknown as EventEnvelope,
+    ];
+    render(
+      <VoiceController
+        client={voiceClient()}
+        conversationId="conversation-1"
+        profile={provider()}
+        health={health()}
+        environment={environment({ startNativePlayback })}
+        turn={turn}
+        events={events}
+      >
+        <span>voice surface</span>
+      </VoiceController>,
+    );
+
+    fireEvent(
+      window,
+      new CustomEvent<DesktopPreferences>(DESKTOP_PREFERENCES_EVENT, {
+        detail: { voice_auto_play_chat: true } as DesktopPreferences,
+      }),
+    );
+
+    await waitFor(() => expect(startNativePlayback).toHaveBeenCalledTimes(1));
+    expect(startNativePlayback).toHaveBeenCalledWith({
+      task_id: "task-1",
+      turn_id: "turn-live",
+      message_id: null,
+      start_offset: 0,
+      end_offset: 18,
+      idempotency_key: "desktop-voice:auto:turn-live:0:18",
+    });
+  });
 });
 
 function renderVoice(
@@ -213,7 +271,7 @@ function voiceClient(
 }
 
 function environment(overrides: Partial<VoiceEnvironment> = {}): VoiceEnvironment {
-  return {
+  const result: VoiceEnvironment = {
     supported: true,
     startRecording:
       overrides.startRecording ??
@@ -224,6 +282,10 @@ function environment(overrides: Partial<VoiceEnvironment> = {}): VoiceEnvironmen
       overrides.startPlayback ??
       vi.fn(() => ({ finished: Promise.resolve(), stop: vi.fn() })),
   };
+  if (overrides.startNativePlayback !== undefined) {
+    result.startNativePlayback = overrides.startNativePlayback;
+  }
+  return result;
 }
 
 function provider(

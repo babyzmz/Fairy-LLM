@@ -9,6 +9,7 @@ import {
 import { useMemo, useState } from "react";
 
 import type { AssistantTurn, EventEnvelope } from "../core/client";
+import { useVoicePlaybackState } from "../voice/VoiceController";
 
 export interface PublicActivity {
   id: string;
@@ -25,9 +26,14 @@ interface ActivityRailProps {
 export function ActivityRail({ turn, events }: ActivityRailProps) {
   const [expanded, setExpanded] = useState(false);
   const activities = useMemo(() => publicActivities(turn, events), [events, turn]);
-  const current = activities.at(-1) ?? fallbackActivity(turn);
-  const previous = activities.length > 1 ? (activities.at(-2) ?? null) : null;
-  const terminal = ["completed", "cancelled", "failed"].includes(turn.status);
+  const voiceState = useVoicePlaybackState(turn.id);
+  const voiceActivity = transientVoiceActivity(turn, voiceState);
+  const visibleActivities = voiceActivity === null ? activities : [...activities, voiceActivity];
+  const current = visibleActivities.at(-1) ?? fallbackActivity(turn);
+  const previous = visibleActivities.length > 1 ? (visibleActivities.at(-2) ?? null) : null;
+  const terminal =
+    ["completed", "cancelled", "failed"].includes(turn.status) &&
+    !["preparing", "speaking"].includes(voiceState);
 
   return (
     <section
@@ -49,7 +55,7 @@ export function ActivityRail({ turn, events }: ActivityRailProps) {
       </button>
       {expanded ? (
         <ol className="activity-history">
-          {activities.map((activity) => (
+          {visibleActivities.map((activity) => (
             <li key={activity.id}>
               <ActivityIcon tone={activity.tone} active={false} />
               <span>{activity.label}</span>
@@ -60,6 +66,25 @@ export function ActivityRail({ turn, events }: ActivityRailProps) {
       ) : null}
     </section>
   );
+}
+
+function transientVoiceActivity(
+  turn: AssistantTurn,
+  state: ReturnType<typeof useVoicePlaybackState>,
+): PublicActivity | null {
+  if (state === "idle") return null;
+  const labels = {
+    preparing: ["Preparing voice", "active"],
+    speaking: ["Speaking reply", "active"],
+    failed: ["Voice playback failed", "error"],
+  } as const;
+  const [label, tone] = labels[state];
+  return {
+    id: `voice:${turn.id}:${state}`,
+    label,
+    tone,
+    createdAt: turn.updated_at,
+  };
 }
 
 export function publicActivities(

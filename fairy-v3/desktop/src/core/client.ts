@@ -47,6 +47,7 @@ import type {
   VersionAcceptInput,
   VersionListInput,
   VoiceSynthesizeInput,
+  VoiceSessionStartInput,
   VoiceTranscribeInput,
 } from "./contracts";
 
@@ -273,6 +274,14 @@ export class CoreClient {
       this.transport.call("voice.transcribe", input),
     synthesize: (input: VoiceSynthesizeInput, signal?: AbortSignal) =>
       this.transport.call("voice.synthesize", input, { signal }),
+    sessions: {
+      start: (input: VoiceSessionStartInput) =>
+        this.transport.call("voice.sessions.start", input),
+      get: (sessionId: string) =>
+        this.transport.call("voice.sessions.get", { session_id: sessionId }),
+      cancel: (sessionId: string) =>
+        this.transport.call("voice.sessions.cancel", { session_id: sessionId }),
+    },
   };
 
   readonly memory = {

@@ -121,6 +121,11 @@ from fairy_core.contracts.models import (
     VoiceTranscriptModel,
 )
 from fairy_core.contracts.transcript import MessagePageModel
+from fairy_core.contracts.voice_sessions import (
+    VoiceSessionIdInput,
+    VoiceSessionModel,
+    VoiceSessionStartInput,
+)
 from fairy_core.system_actions.models import SystemActionExecution, SystemActionRequest
 
 
@@ -459,6 +464,21 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "voice.synthesize",
             VoiceSynthesizeInput,
             VoiceAudioModel,
+        ),
+        "voice.sessions.cancel": CoreMethod(
+            "voice.sessions.cancel",
+            VoiceSessionIdInput,
+            VoiceSessionModel,
+        ),
+        "voice.sessions.get": CoreMethod(
+            "voice.sessions.get",
+            VoiceSessionIdInput,
+            VoiceSessionModel,
+        ),
+        "voice.sessions.start": CoreMethod(
+            "voice.sessions.start",
+            VoiceSessionStartInput,
+            VoiceSessionModel,
         ),
         "voice.transcribe": CoreMethod(
             "voice.transcribe",

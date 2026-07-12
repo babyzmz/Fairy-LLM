@@ -6656,6 +6656,169 @@
         "title": "VoiceAudioModel",
         "type": "object"
       },
+      "VoiceSessionModel": {
+        "additionalProperties": false,
+        "properties": {
+          "cancelled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled At"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "end_offset": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000.0,
+            "title": "End Offset",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id"
+          },
+          "scope_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Scope Digest",
+            "type": "string"
+          },
+          "source_cursor": {
+            "minimum": 0.0,
+            "title": "Source Cursor",
+            "type": "integer"
+          },
+          "start_offset": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Start Offset",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/VoiceSessionStatus"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "validated_text": {
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Validated Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "conversation_id",
+          "turn_id",
+          "message_id",
+          "start_offset",
+          "end_offset",
+          "validated_text",
+          "source_cursor",
+          "scope_digest",
+          "status",
+          "created_at"
+        ],
+        "title": "VoiceSessionModel",
+        "type": "object"
+      },
+      "VoiceSessionStartInput": {
+        "additionalProperties": false,
+        "properties": {
+          "end_offset": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000.0,
+            "title": "End Offset",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id"
+          },
+          "start_offset": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Start Offset",
+            "type": "integer"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "turn_id",
+          "start_offset",
+          "end_offset",
+          "idempotency_key"
+        ],
+        "title": "VoiceSessionStartInput",
+        "type": "object"
+      },
+      "VoiceSessionStatus": {
+        "enum": [
+          "prepared",
+          "cancelled"
+        ],
+        "title": "VoiceSessionStatus",
+        "type": "string"
+      },
       "VoiceSynthesizeInput": {
         "additionalProperties": false,
         "properties": {
@@ -11987,6 +12150,187 @@
           }
         ],
         "summary": "Get Version"
+      }
+    },
+    "/v1/voice/sessions": {
+      "post": {
+        "operationId": "voice.sessions.start",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceSessionStartInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceSessionModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start Voice Session"
+      }
+    },
+    "/v1/voice/sessions/{session_id}": {
+      "delete": {
+        "operationId": "voice.sessions.cancel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceSessionModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel Voice Session"
+      },
+      "get": {
+        "operationId": "voice.sessions.get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceSessionModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Voice Session"
       }
     },
     "/v1/voice/speech": {

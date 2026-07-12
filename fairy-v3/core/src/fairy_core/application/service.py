@@ -98,6 +98,7 @@ from fairy_core.contracts.models import (
     VoiceSynthesizeInput,
     VoiceTranscribeInput,
 )
+from fairy_core.contracts.voice_sessions import VoiceSessionIdInput, VoiceSessionStartInput
 from fairy_core.documents.application import DocumentApplication, DocumentToolExecutor
 from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
 from fairy_core.domain.errors import (
@@ -395,6 +396,9 @@ class CoreService:
             "versions.get": self._get_version,
             "versions.list": self._list_versions,
             "voice.synthesize": self._synthesize_voice,
+            "voice.sessions.cancel": self._cancel_voice_session,
+            "voice.sessions.get": self._get_voice_session,
+            "voice.sessions.start": self._start_voice_session,
             "voice.transcribe": self._transcribe_voice,
         }
         if self._handlers.keys() != CORE_METHODS.keys():
@@ -579,6 +583,15 @@ class CoreService:
 
     def _synthesize_voice(self, request: BaseModel) -> Any:
         return self._voice_application.synthesize(cast(VoiceSynthesizeInput, request))
+
+    def _start_voice_session(self, request: BaseModel) -> Any:
+        return self._voice_application.start_session(cast(VoiceSessionStartInput, request))
+
+    def _get_voice_session(self, request: BaseModel) -> Any:
+        return self._voice_application.get_session(cast(VoiceSessionIdInput, request))
+
+    def _cancel_voice_session(self, request: BaseModel) -> Any:
+        return self._voice_application.cancel_session(cast(VoiceSessionIdInput, request))
 
     def _execute_system_action(self, request: BaseModel) -> Any:
         if self._system_action_application is None:

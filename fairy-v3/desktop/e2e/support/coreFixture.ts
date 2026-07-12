@@ -621,9 +621,21 @@ async function installCoreFixture(page: Page) {
       const tauriWindow = window as unknown as {
         __TAURI_INTERNALS__: {
           invoke(command: string, args: Record<string, unknown>): Promise<unknown>;
+          transformCallback(callback: (payload: unknown) => void): number;
+          unregisterCallback(callbackId: number): void;
         };
       };
+      let callbackId = 0;
+      const callbacks = new Map<number, (payload: unknown) => void>();
       tauriWindow.__TAURI_INTERNALS__ = {
+        transformCallback(callback) {
+          callbackId += 1;
+          callbacks.set(callbackId, callback);
+          return callbackId;
+        },
+        unregisterCallback(id) {
+          callbacks.delete(id);
+        },
         async invoke(command, args) {
           if (command === "list_capture_surfaces") {
             fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
@@ -702,6 +714,33 @@ async function installCoreFixture(page: Page) {
             });
             return desktopPreferences;
           }
+          if (command === "voice_session_start") {
+            const input = args.input as Record<string, unknown>;
+            const events = args.events as {
+              onmessage(payload: Record<string, unknown>): void;
+            };
+            const audio = args.audio as { onmessage(payload: ArrayBuffer): void };
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: "voice.sessions.start",
+              params: input,
+            });
+            const sessionId = "0198f4de-0114-7000-8000-000000000099";
+            events.onmessage({
+              type: "started",
+              session_id: sessionId,
+              sample_rate: 24_000,
+              channels: 1,
+              scope_digest: "a".repeat(64),
+            });
+            audio.onmessage(new Int16Array([0, 0]).buffer);
+            events.onmessage({
+              type: "completed",
+              session_id: sessionId,
+              pcm_bytes: 4,
+            });
+            return { id: sessionId };
+          }
+          if (command === "voice_session_cancel") return null;
           if (command === "open_settings_window") {
             fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
               method: "desktop.settings.open",

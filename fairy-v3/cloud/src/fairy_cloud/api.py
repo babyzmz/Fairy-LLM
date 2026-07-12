@@ -89,10 +89,6 @@ from fairy_core.contracts.models import (
     VersionListInput,
     VersionModel,
     VersionPageModel,
-    VoiceAudioModel,
-    VoiceSynthesizeInput,
-    VoiceTranscribeInput,
-    VoiceTranscriptModel,
 )
 from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.domain.errors import DomainError, IdempotencyConflictError, VersionConflictError
@@ -124,6 +120,7 @@ from fairy_cloud.sync.contracts import (
 )
 from fairy_cloud.sync.models import SyncedEvent
 from fairy_cloud.sync.ports import SyncStore
+from fairy_cloud.voice_routes import install_voice_routes
 
 _MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
 EVENT_POLL_SECONDS = 0.025
@@ -781,21 +778,7 @@ def create_cloud_app(
     def execute_system_action(request: SystemActionRequest) -> dict[str, Any]:
         return invoke("system.actions.execute", request.model_dump(mode="json"))
 
-    @protected.post(
-        "/voice/transcriptions",
-        operation_id="voice.transcribe",
-        response_model=VoiceTranscriptModel,
-    )
-    async def transcribe_voice(request: VoiceTranscribeInput) -> dict[str, Any]:
-        return await invoke_async("voice.transcribe", request.model_dump(mode="json"))
-
-    @protected.post(
-        "/voice/speech",
-        operation_id="voice.synthesize",
-        response_model=VoiceAudioModel,
-    )
-    async def synthesize_voice(request: VoiceSynthesizeInput) -> dict[str, Any]:
-        return await invoke_async("voice.synthesize", request.model_dump(mode="json"))
+    install_voice_routes(protected, invoke=invoke, invoke_async=invoke_async)
 
     @protected.post(
         "/memory/observations",

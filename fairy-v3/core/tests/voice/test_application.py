@@ -8,14 +8,16 @@ import pytest
 from fairy_core.application.core import CoreApplication
 from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.models import Message, MessageRole, MessageVisibility
+from fairy_core.commanding import EventVisibility
 from fairy_core.commanding.policy import PolicyEngine
-from fairy_core.commanding.registry import build_default_registry
+from fairy_core.commanding.registry import RiskLevel, build_default_registry
 from fairy_core.contracts.models import (
     ExecutionTarget,
     TaskCreate,
     VoiceSynthesizeInput,
     VoiceTranscribeInput,
 )
+from fairy_core.contracts.voice_sessions import VoiceSessionIdInput, VoiceSessionStartInput
 from fairy_core.domain.errors import CapabilityUnavailableError
 from fairy_core.domain.models import OperationMode, WorkspaceType
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
@@ -85,9 +87,107 @@ def test_synthesis_reads_only_a_public_assistant_message_slice(tmp_path: Path) -
         fixture.application.synthesize(
             request.model_copy(update={"message_id": fixture.user_message_id})
         )
+
+
+def test_native_voice_session_is_scope_bound_idempotent_and_cancellable(tmp_path: Path) -> None:
+    fixture = voice_fixture(tmp_path)
+    request = VoiceSessionStartInput(
+        task_id=fixture.task_id,
+        turn_id=fixture.turn_id,
+        message_id=fixture.assistant_message_id,
+        start_offset=0,
+        end_offset=6,
+        idempotency_key="voice:session:first",
+    )
+
+    session = fixture.application.start_session(request)
+
+    assert session.validated_text == "First."
+    assert session.status == "prepared"
+    assert len(session.scope_digest) == 64
+    assert fixture.application.start_session(request).id == session.id
+    assert fixture.application.get_session(VoiceSessionIdInput(session_id=session.id)) == session
+
+    cancelled = fixture.application.cancel_session(
+        VoiceSessionIdInput(session_id=session.id)
+    )
+    assert cancelled.status == "cancelled"
+    assert cancelled.cancelled_at is not None
+    assert (
+        fixture.application.cancel_session(VoiceSessionIdInput(session_id=session.id))
+        == cancelled
+    )
+    with pytest.raises(ValueError, match="idempotency"):
+        fixture.application.start_session(
+            request.model_copy(update={"start_offset": 7, "end_offset": 13})
+        )
+    with pytest.raises(ValueError, match="assistant"):
+        fixture.application.start_session(
+            request.model_copy(
+                update={
+                    "message_id": fixture.user_message_id,
+                    "idempotency_key": "voice:session:user",
+                }
+            )
+        )
     with pytest.raises(ValueError, match="range"):
         fixture.application.synthesize(
             request.model_copy(update={"start_offset": 0, "end_offset": 1000})
+        )
+
+
+def test_streaming_voice_session_reconstructs_only_durable_public_deltas(tmp_path: Path) -> None:
+    fixture = voice_fixture(tmp_path)
+    with fixture.unit_of_work_factory() as unit_of_work:
+        task = unit_of_work.state.get_task(fixture.task_id)
+        assert task is not None
+        run = unit_of_work.commands.create_run(
+            command_name="model.generate",
+            actor="assistant",
+            scope=fixture.core.scope_for_task(unit_of_work.state, task),
+            input_payload={"turn_id": str(fixture.turn_id)},
+            risk_level=RiskLevel.LOW,
+            idempotency_key="voice:streaming:run",
+        )
+        for chunk_index, text in enumerate(("Live ", "sentence."), start=1):
+            unit_of_work.commands.append_event(
+                run_id=run.id,
+                event_type="assistant.message.delta",
+                visibility=EventVisibility.USER,
+                message="Assistant response updated",
+                payload={
+                    "turn_id": str(fixture.turn_id),
+                    "model_round": 0,
+                    "chunk_index": chunk_index,
+                    "text": text,
+                },
+            )
+        unit_of_work.commit()
+
+    session = fixture.application.start_session(
+        VoiceSessionStartInput(
+            task_id=fixture.task_id,
+            turn_id=fixture.turn_id,
+            message_id=None,
+            start_offset=0,
+            end_offset=14,
+            idempotency_key="voice:streaming:sentence",
+        )
+    )
+
+    assert session.message_id is None
+    assert session.validated_text == "Live sentence."
+    assert session.source_cursor > 0
+    with pytest.raises(ValueError, match="durable assistant output"):
+        fixture.application.start_session(
+            VoiceSessionStartInput(
+                task_id=fixture.task_id,
+                turn_id=fixture.turn_id,
+                message_id=None,
+                start_offset=0,
+                end_offset=15,
+                idempotency_key="voice:streaming:untrusted-tail",
+            )
         )
 
 
@@ -186,6 +286,7 @@ class VoiceFixture:
         turn_id,
         user_message_id,
         assistant_message_id,
+        core,
     ) -> None:
         self.application = application
         self.unit_of_work_factory = unit_of_work_factory
@@ -195,6 +296,7 @@ class VoiceFixture:
         self.turn_id = turn_id
         self.user_message_id = user_message_id
         self.assistant_message_id = assistant_message_id
+        self.core = core
 
 
 def voice_fixture(tmp_path: Path) -> VoiceFixture:
@@ -277,6 +379,7 @@ def voice_fixture(tmp_path: Path) -> VoiceFixture:
         turn_id=turn.id,
         user_message_id=user_message.id,
         assistant_message_id=assistant.id,
+        core=core,
     )
 
 

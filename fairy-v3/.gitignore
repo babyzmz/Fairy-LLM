@@ -22,6 +22,7 @@ desktop/debug.log
 **/target/
 desktop/src-tauri/binaries/*.exe
 desktop/src-tauri/runtime/git/
+desktop/src-tauri/runtime/voice-worker/
 
 # Local configuration and credentials
 .env

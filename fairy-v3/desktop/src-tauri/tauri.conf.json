@@ -81,7 +81,11 @@
     "active": true,
     "icon": ["icons/icon.ico"],
     "externalBin": ["binaries/fairy-core"],
-    "resources": ["runtime/git"],
+    "resources": {
+      "runtime/git": "runtime/git",
+      "runtime/voice-worker": "runtime/voice-worker",
+      "../../voice-worker/assets": "runtime/voice-assets"
+    },
     "targets": "all"
   }
 }

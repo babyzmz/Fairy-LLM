@@ -1,0 +1,35 @@
+[project]
+name = "fairy-voice-worker"
+version = "0.1.0"
+description = "Trusted local CosyVoice 3 PCM streaming worker for Fairy V3"
+requires-python = ">=3.10,<3.14"
+dependencies = []
+
+[project.scripts]
+fairy-voice-worker = "fairy_voice_worker.server:main"
+
+[build-system]
+requires = ["hatchling==1.28.0"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+build = [
+  "pyinstaller==6.16.0",
+]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.15.21",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fairy_voice_worker"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN"]

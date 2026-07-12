@@ -1134,6 +1134,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/voice/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Voice Session */
+        post: operations["voice.sessions.start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/voice/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Voice Session */
+        get: operations["voice.sessions.get"];
+        put?: never;
+        post?: never;
+        /** Cancel Voice Session */
+        delete: operations["voice.sessions.cancel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/voice/speech": {
         parameters: {
             query?: never;
@@ -3601,6 +3636,75 @@ export interface components {
              */
             turn_id: string;
         };
+        /** VoiceSessionModel */
+        VoiceSessionModel: {
+            /** Cancelled At */
+            cancelled_at?: string | null;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** End Offset */
+            end_offset: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Message Id */
+            message_id: string | null;
+            /** Scope Digest */
+            scope_digest: string;
+            /** Source Cursor */
+            source_cursor: number;
+            /** Start Offset */
+            start_offset: number;
+            status: components["schemas"]["VoiceSessionStatus"];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+            /** Validated Text */
+            validated_text: string;
+        };
+        /** VoiceSessionStartInput */
+        VoiceSessionStartInput: {
+            /** End Offset */
+            end_offset: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Message Id */
+            message_id?: string | null;
+            /** Start Offset */
+            start_offset: number;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+        };
+        /**
+         * VoiceSessionStatus
+         * @enum {string}
+         */
+        VoiceSessionStatus: "prepared" | "cancelled";
         /** VoiceSynthesizeInput */
         VoiceSynthesizeInput: {
             /** End Offset */
@@ -6235,6 +6339,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VersionModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "voice.sessions.start": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoiceSessionStartInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceSessionModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "voice.sessions.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceSessionModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "voice.sessions.cancel": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceSessionModel"];
                 };
             };
             /** @description Validation Error */

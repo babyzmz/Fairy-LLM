@@ -133,6 +133,12 @@ export type VersionListInput = NonNullable<
 >;
 export type VersionPage = Schemas["VersionPageModel"];
 export type VoiceAudio = Schemas["VoiceAudioModel"];
+export type VoiceSession = Schemas["VoiceSessionModel"];
+export interface VoiceSessionIdInput {
+  session_id: string;
+}
+export type VoiceSessionStartInput = Schemas["VoiceSessionStartInput"];
+export type VoiceSessionStatus = Schemas["VoiceSessionStatus"];
 export type VoiceSynthesizeInput = Schemas["VoiceSynthesizeInput"];
 export type VoiceTranscript = Schemas["VoiceTranscriptModel"];
 export type VoiceTranscribeInput = Schemas["VoiceTranscribeInput"];
@@ -253,6 +259,9 @@ export interface CoreMethodMap {
   };
   "messages.list": { params: MessageListInput; result: MessagePage };
   "voice.synthesize": { params: VoiceSynthesizeInput; result: VoiceAudio };
+  "voice.sessions.start": { params: VoiceSessionStartInput; result: VoiceSession };
+  "voice.sessions.get": { params: VoiceSessionIdInput; result: VoiceSession };
+  "voice.sessions.cancel": { params: VoiceSessionIdInput; result: VoiceSession };
   "voice.transcribe": { params: VoiceTranscribeInput; result: VoiceTranscript };
   "events.subscribe": { params: { cursor: number }; result: EventBatch };
   "memory.observations.create": {
