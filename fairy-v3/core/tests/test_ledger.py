@@ -533,7 +533,7 @@ def test_stale_worker_cannot_append_an_event_after_reclaim(tmp_path: Path) -> No
         lease_owner="worker-b",
         lease_fence=second_claim.lease_fence,
     )
-    assert current_event.payload == {"percent": 50}
+    assert current_event.payload == {"command_name": "review.test", "percent": 50}
 
 
 def test_stale_worker_cannot_transition_after_reclaim(tmp_path: Path) -> None:

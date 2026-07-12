@@ -28,6 +28,66 @@ describe("assistantDeltaText", () => {
 });
 
 describe("useAssistantTurn", () => {
+  it("projects the user message before task creation returns", async () => {
+    let resolveTask: ((value: never) => void) | null = null;
+    const createTask = vi.fn(
+      () => new Promise<never>((resolve) => { resolveTask = resolve; }),
+    );
+    const { result } = renderHook(() =>
+      useAssistantTurn({
+        client: assistantClient({ createTask }),
+        conversationId,
+        profileId: "openrouter-free",
+        operationMode: "answer",
+        events: [],
+      }),
+    );
+
+    act(() => { void result.current.send("Visible immediately", []); });
+
+    expect(result.current.pendingUserMessage).toMatchObject({
+      content: "Visible immediately",
+      status: "sending",
+    });
+    expect(result.current.isBusy).toBe(true);
+    expect(resolveTask).not.toBeNull();
+  });
+
+  it("keeps a failed optimistic message available for edit", async () => {
+    const file = new File(["draft"], "draft.txt", { type: "text/plain" });
+    const { result } = renderHook(() =>
+      useAssistantTurn({
+        client: assistantClient({
+          createTask: async () => { throw new Error("Core unavailable"); },
+        }),
+        conversationId,
+        profileId: "openrouter-free",
+        operationMode: "answer",
+        events: [],
+      }),
+    );
+
+    let failure: unknown = null;
+    await act(async () => {
+      try {
+        await result.current.send("Keep this", [file]);
+      } catch (caught) {
+        failure = caught;
+      }
+    });
+    expect(failure).toBeInstanceOf(Error);
+    expect(result.current.pendingUserMessage).toMatchObject({
+      content: "Keep this",
+      status: "failed",
+      error: "Core unavailable",
+    });
+
+    let draft = null;
+    act(() => { draft = result.current.takePendingForEdit(); });
+    expect(draft).toMatchObject({ value: "Keep this", files: [file] });
+    expect(result.current.pendingUserMessage).toBeNull();
+  });
+
   it("creates a task, imports attachments, creates the turn, and runs it in order", async () => {
     const order: string[] = [];
     const created = assistantTurn({ status: "created" });
@@ -69,8 +129,8 @@ describe("useAssistantTurn", () => {
         });
         return created;
       },
-      runTurn: async () => {
-        order.push("run");
+      startTurn: async () => {
+        order.push("start");
         return completed;
       },
     });
@@ -110,7 +170,7 @@ describe("useAssistantTurn", () => {
       );
     });
 
-    expect(order).toEqual(["task", "document", "turn", "run"]);
+    expect(order).toEqual(["task", "document", "turn", "start"]);
     expect(result.current.turn).toEqual(completed);
     expect(result.current.isBusy).toBe(false);
     expect(onTaskCreated).toHaveBeenCalledWith(taskId);
@@ -131,7 +191,7 @@ describe("useAssistantTurn", () => {
     const client = assistantClient({
       createTask: async () => ({ task: { id: taskId } }) as never,
       createTurn: async () => running,
-      runTurn: vi.fn(async (id: string) =>
+      startTurn: vi.fn(async (id: string) =>
         id === retried.id ? completed : new Promise<AssistantTurn>(() => undefined),
       ),
       cancelTurn,
@@ -171,7 +231,7 @@ describe("useAssistantTurn", () => {
     const client = assistantClient({
       createTask: async () => ({ task: { id: taskId } }) as never,
       createTurn: async () => created,
-      runTurn: async () => new Promise<AssistantTurn>(() => undefined),
+      startTurn: async () => new Promise<AssistantTurn>(() => undefined),
     });
     const events = [
       deltaEvent("event-a", 1, turnId, 0, 0, "One "),
@@ -205,7 +265,7 @@ describe("useAssistantTurn", () => {
     const client = assistantClient({
       createTask: async () => ({ task: { id: taskId } }) as never,
       createTurn: async () => assistantTurn({ status: "running" }),
-      runTurn: async () => completed,
+      startTurn: async () => completed,
     });
     const { result } = renderHook(() =>
       useAssistantTurn({
@@ -223,20 +283,17 @@ describe("useAssistantTurn", () => {
     expect(result.current.streamedText).toBe("");
   });
 
-  it("resumes a waiting turn after the durable approval event", async () => {
-    const waiting = assistantTurn({ status: "waiting_for_tool" });
+  it("settles from a durable terminal event after start returns", async () => {
+    const created = assistantTurn({ status: "created" });
     const completed = assistantTurn({
       status: "completed",
       completed_at: "2026-07-11T00:00:04Z",
     });
-    const runTurn = vi
-      .fn<AssistantTurnClient["assistant"]["turns"]["run"]>()
-      .mockResolvedValueOnce(waiting)
-      .mockResolvedValueOnce(completed);
     const client = assistantClient({
       createTask: async () => ({ task: { id: taskId } }) as never,
-      createTurn: async () => assistantTurn(),
-      runTurn,
+      createTurn: async () => created,
+      startTurn: async () => created,
+      getTurn: async () => completed,
     });
     const { result, rerender } = renderHook(
       ({ events }: { events: EventEnvelope[] }) =>
@@ -250,22 +307,52 @@ describe("useAssistantTurn", () => {
       { initialProps: { events: [] as EventEnvelope[] } },
     );
 
-    await act(async () => result.current.send("Notify me", []));
-    expect(result.current.turn?.status).toBe("waiting_for_tool");
-
+    await act(async () => result.current.send("Finish asynchronously", []));
+    expect(result.current.isBusy).toBe(true);
     rerender({
-      events: [
-        {
-          ...deltaEvent("approval-event", 7, turnId, 1, 1, ""),
-          event_type: "approval.decided",
-          message: "Approval decision recorded",
-          payload: { approval_id: "approval-1", decision: "approved" },
-        },
-      ],
+      events: [{
+        ...deltaEvent("terminal", 20, turnId, 1, 1, ""),
+        event_type: "assistant.turn.completed",
+        payload: { turn_id: turnId, message_id: "message-1" },
+      }],
     });
 
     await waitFor(() => expect(result.current.turn).toEqual(completed));
-    expect(runTurn).toHaveBeenCalledTimes(2);
+    expect(result.current.isBusy).toBe(false);
+  });
+
+  it("resumes a waiting turn after an explicit approval action", async () => {
+    const waiting = assistantTurn({ status: "waiting_for_tool" });
+    const completed = assistantTurn({
+      status: "completed",
+      completed_at: "2026-07-11T00:00:04Z",
+    });
+    const startTurn = vi
+      .fn<AssistantTurnClient["assistant"]["turns"]["start"]>()
+      .mockResolvedValueOnce(waiting)
+      .mockResolvedValueOnce(completed);
+    const client = assistantClient({
+      createTask: async () => ({ task: { id: taskId } }) as never,
+      createTurn: async () => assistantTurn(),
+      startTurn,
+    });
+    const { result } = renderHook(() =>
+      useAssistantTurn({
+        client,
+        conversationId,
+        profileId: "openrouter-free",
+        operationMode: "answer",
+        events: [],
+      }),
+    );
+
+    await act(async () => result.current.send("Notify me", []));
+    expect(result.current.turn?.status).toBe("waiting_for_tool");
+
+    await act(async () => result.current.resume());
+
+    await waitFor(() => expect(result.current.turn).toEqual(completed));
+    expect(startTurn).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -273,7 +360,8 @@ interface ClientOverrides {
   createTask?: AssistantTurnClient["tasks"]["create"];
   importDocument?: AssistantTurnClient["documents"]["import"];
   createTurn?: AssistantTurnClient["assistant"]["turns"]["create"];
-  runTurn?: AssistantTurnClient["assistant"]["turns"]["run"];
+  getTurn?: AssistantTurnClient["assistant"]["turns"]["get"];
+  startTurn?: AssistantTurnClient["assistant"]["turns"]["start"];
   cancelTurn?: AssistantTurnClient["assistant"]["turns"]["cancel"];
   retryTurn?: AssistantTurnClient["assistant"]["turns"]["retry"];
 }
@@ -289,7 +377,8 @@ function assistantClient(overrides: ClientOverrides): AssistantTurnClient {
     assistant: {
       turns: {
         create: overrides.createTurn ?? (async () => assistantTurn()),
-        run: overrides.runTurn ?? (async () => assistantTurn({ status: "completed" })),
+        get: overrides.getTurn ?? (async () => assistantTurn({ status: "completed" })),
+        start: overrides.startTurn ?? (async () => assistantTurn({ status: "completed" })),
         cancel:
           overrides.cancelTurn ?? (async () => assistantTurn({ status: "cancelled" })),
         retry: overrides.retryTurn ?? (async () => assistantTurn()),

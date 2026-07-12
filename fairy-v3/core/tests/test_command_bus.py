@@ -145,7 +145,11 @@ def test_bus_records_synchronous_executor_lifecycle(tmp_path: Path) -> None:
     running = bus.start(submitted.run.id)
     succeeded = bus.complete(
         running.id,
-        output={"passed": 12},
+        output={
+            "passed": 12,
+            "public_summary": "12 checks passed",
+            "model_content": "private executor details",
+        },
         lease_owner=running.lease_owner,
         lease_fence=running.lease_fence,
     )
@@ -157,7 +161,17 @@ def test_bus_records_synchronous_executor_lifecycle(tmp_path: Path) -> None:
         "command.output",
         "command.succeeded",
     ]
-    assert events[-2].payload == {"passed": 12}
+    assert events[-2].payload == {
+        "command_name": "review.test",
+        "passed": 12,
+        "public_summary": "12 checks passed",
+        "model_content": "private executor details",
+    }
+    assert events[-1].payload == {
+        "command_name": "review.test",
+        "status": "succeeded",
+        "public_summary": "12 checks passed",
+    }
 
 
 def test_bus_records_executor_failure_without_exposing_exception_details(tmp_path: Path) -> None:
@@ -186,7 +200,10 @@ def test_bus_records_executor_failure_without_exposing_exception_details(tmp_pat
     assert failed.status is CommandStatus.FAILED
     failure_event = ledger.events_after(cursor=0)[-2]
     assert failure_event.event_type == "command.failure"
-    assert failure_event.payload == {"error_code": "WORKER_INTERRUPTED"}
+    assert failure_event.payload == {
+        "command_name": "review.test",
+        "error_code": "WORKER_INTERRUPTED",
+    }
 
 
 def test_stale_worker_cannot_complete_a_reclaimed_run(tmp_path: Path) -> None:

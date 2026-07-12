@@ -359,7 +359,14 @@ class SqlAlchemyCommandLedger:
                 event_type=f"command.{status.value}",
                 visibility=EventVisibility.USER,
                 message=f"Command {status.value}",
-                payload={"status": status.value},
+                payload={
+                    "status": status.value,
+                    **(
+                        {"public_summary": payload["public_summary"]}
+                        if isinstance(payload.get("public_summary"), str)
+                        else {}
+                    ),
+                },
             )
         return self._run_from_row(updated)
 
@@ -575,6 +582,7 @@ class SqlAlchemyCommandLedger:
         message: str,
         payload: dict[str, Any],
     ) -> EventEnvelope:
+        public_payload = {**payload, "command_name": run["command_name"]}
         sequence_statement = self._insert(task_event_sequences).values(
             tenant_id=self._tenant_id,
             task_id=run["task_id"],
@@ -612,7 +620,7 @@ class SqlAlchemyCommandLedger:
                 event_type=event_type,
                 visibility=visibility.value,
                 message=message,
-                payload=dict(payload),
+                payload=public_payload,
                 created_at=created_at,
             )
             .returning(domain_events.c.cursor)
@@ -631,7 +639,7 @@ class SqlAlchemyCommandLedger:
             event_type=event_type,
             visibility=visibility,
             message=message,
-            payload=dict(payload),
+            payload=public_payload,
             schema_version=1,
             created_at=created_at,
         )

@@ -7,6 +7,7 @@ from uuid import UUID
 from fairy_core.assistant.candidates import ToolCandidate, arguments_for_definition
 from fairy_core.assistant.context import AssistantContextBuilder
 from fairy_core.assistant.durable_context import durable_tool_context
+from fairy_core.assistant.events import append_message_created
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
@@ -350,6 +351,16 @@ class AssistantApplication:
                 raise RuntimeError("model generation command is not queued")
             running = bus.start(dispatch.run.id)
             if started:
+                user_message = unit_of_work.assistant.message_for_turn(
+                    turn.id,
+                    MessageRole.USER,
+                )
+                if user_message is not None:
+                    append_message_created(
+                        unit_of_work.commands,
+                        run=running,
+                        message=user_message,
+                    )
                 unit_of_work.commands.append_event(
                     run_id=running.id,
                     event_type="assistant.turn.started",
@@ -988,6 +999,7 @@ class AssistantApplication:
                 task.transition_to(TaskStatus.REVIEWING)
                 task.transition_to(TaskStatus.READY)
                 unit_of_work.state.save_task(task)
+            append_message_created(unit_of_work.commands, run=run, message=message)
             unit_of_work.commands.append_event(
                 run_id=run.id,
                 event_type="assistant.turn.completed",

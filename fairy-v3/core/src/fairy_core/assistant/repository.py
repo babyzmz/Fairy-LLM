@@ -148,6 +148,25 @@ class SqlAlchemyAssistantRepository:
         )
         return self._message_from_row(row) if row is not None else None
 
+    def message_for_turn(self, turn_id: UUID, role: MessageRole) -> Message | None:
+        normalized_role = MessageRole(role)
+        with self._session.read() as connection:
+            row = (
+                connection.execute(
+                    select(assistant_messages)
+                    .where(
+                        assistant_messages.c.tenant_id == self._tenant_id,
+                        assistant_messages.c.turn_id == str(turn_id),
+                        assistant_messages.c.role == normalized_role.value,
+                    )
+                    .order_by(assistant_messages.c.sequence, assistant_messages.c.id)
+                    .limit(1)
+                )
+                .mappings()
+                .first()
+            )
+        return self._message_from_row(row) if row is not None else None
+
     def next_message_sequence(self, conversation_id: UUID) -> int:
         statement = self._insert(assistant_message_sequences).values(
             tenant_id=self._tenant_id,

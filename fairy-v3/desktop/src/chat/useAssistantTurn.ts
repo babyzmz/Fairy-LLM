@@ -12,8 +12,27 @@ export interface AssistantTurnClient {
   tasks: Pick<CoreClient["tasks"], "create">;
   documents: Pick<CoreClient["documents"], "import">;
   assistant: {
-    turns: Pick<CoreClient["assistant"]["turns"], "create" | "run" | "cancel" | "retry">;
+    turns: Pick<
+      CoreClient["assistant"]["turns"],
+      "create" | "get" | "start" | "cancel" | "retry"
+    >;
   };
+}
+
+export interface AssistantDraft {
+  id: string;
+  value: string;
+  files: File[];
+  images: PendingImageAttachment[];
+}
+
+export interface OptimisticUserMessage {
+  id: string;
+  content: string;
+  createdAt: string;
+  attachmentCount: number;
+  status: "sending" | "failed";
+  error: string | null;
 }
 
 interface UseAssistantTurnOptions {
@@ -31,6 +50,7 @@ interface AssistantTurnState {
   isBusy: boolean;
   error: string | null;
   streamedText: string;
+  pendingUserMessage: OptimisticUserMessage | null;
   send(
     value: string,
     files: File[],
@@ -39,6 +59,9 @@ interface AssistantTurnState {
   cancel(): Promise<void>;
   resume(): Promise<void>;
   retry(): Promise<void>;
+  retryPending(): Promise<void>;
+  deletePending(): void;
+  takePendingForEdit(): AssistantDraft | null;
   reset(): void;
 }
 
@@ -65,38 +88,47 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
   const [turn, setTurn] = useState<AssistantTurn | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingUserMessage, setPendingUserMessage] =
+    useState<OptimisticUserMessage | null>(null);
   const operationRef = useRef(0);
   const busyRef = useRef(false);
-  const approvalEventCursorRef = useRef(0);
+  const statusEventCursorRef = useRef(0);
+  const pendingDraftRef = useRef<AssistantDraft | null>(null);
 
   const settle = useCallback(async () => {
     await options.onSettled?.();
   }, [options]);
 
-  const send = useCallback(
-    async (
-      value: string,
-      files: File[],
-      images: PendingImageAttachment[] = [],
-    ) => {
+  const executeDraft = useCallback(
+    async (draft: AssistantDraft) => {
       if (busyRef.current) throw new Error("An assistant turn is already running");
       const conversationId = required(options.conversationId, "Conversation is unavailable");
       const profileId = required(options.profileId, "Model provider is unavailable");
       const operation = ++operationRef.current;
+      pendingDraftRef.current = draft;
+      setPendingUserMessage({
+        id: draft.id,
+        content: draft.value,
+        createdAt: new Date().toISOString(),
+        attachmentCount: draft.files.length + draft.images.length,
+        status: "sending",
+        error: null,
+      });
       busyRef.current = true;
       setIsBusy(true);
       setError(null);
       setTurn(null);
+      let committed = false;
       try {
         const taskContext = await options.client.tasks.create({
           conversation_id: conversationId,
-          user_request: value,
+          user_request: draft.value,
           operation_mode: options.operationMode,
           execution_target: "local",
           idempotency_key: idempotencyKey("task"),
         });
         options.onTaskCreated?.(taskContext.task.id);
-        for (const file of files) {
+        for (const file of draft.files) {
           await options.client.documents.import({
             task_id: taskContext.task.id,
             filename: file.name,
@@ -111,7 +143,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
           task_id: taskContext.task.id,
           profile_id: profileId,
           idempotency_key: idempotencyKey("assistant"),
-          image_attachments: images.map((image) => ({
+          image_attachments: draft.images.map((image) => ({
             media_type: image.media_type,
             png_base64: image.png_base64,
             content_hash: image.content_hash,
@@ -123,21 +155,57 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
           })),
         });
         if (operation !== operationRef.current) return;
+        committed = true;
         setTurn(created);
-        const completed = await options.client.assistant.turns.run(created.id);
-        if (operation === operationRef.current) setTurn(completed);
-      } catch (caught) {
-        if (operation === operationRef.current) setError(errorMessage(caught));
-        throw caught;
-      } finally {
-        if (operation === operationRef.current) {
+        const started = await options.client.assistant.turns.start(created.id);
+        if (operation !== operationRef.current) return;
+        setTurn(started);
+        if (!isActive(started)) {
           busyRef.current = false;
           setIsBusy(false);
-          await settle();
         }
+        await settle();
+        if (operation === operationRef.current) {
+          pendingDraftRef.current = null;
+          setPendingUserMessage(null);
+        }
+      } catch (caught) {
+        if (operation === operationRef.current) {
+          const message = errorMessage(caught);
+          setError(message);
+          busyRef.current = false;
+          setIsBusy(false);
+          if (committed) {
+            pendingDraftRef.current = null;
+            setPendingUserMessage(null);
+            await settle();
+          } else {
+            setPendingUserMessage((current) =>
+              current?.id === draft.id
+                ? { ...current, status: "failed", error: message }
+                : current,
+            );
+          }
+        }
+        throw caught;
       }
     },
     [options, settle],
+  );
+
+  const send = useCallback(
+    (
+      value: string,
+      files: File[],
+      images: PendingImageAttachment[] = [],
+    ) =>
+      executeDraft({
+        id: idempotencyKey("optimistic-message"),
+        value,
+        files: [...files],
+        images: [...images],
+      }),
+    [executeDraft],
   );
 
   const cancel = useCallback(async () => {
@@ -167,34 +235,50 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     setIsBusy(true);
     setError(null);
     try {
-      const completed = await options.client.assistant.turns.run(turn.id);
-      if (operation === operationRef.current) setTurn(completed);
+      const started = await options.client.assistant.turns.start(turn.id);
+      if (operation === operationRef.current) {
+        setTurn(started);
+        if (!isActive(started)) {
+          busyRef.current = false;
+          setIsBusy(false);
+          await settle();
+        }
+      }
     } catch (caught) {
-      if (operation === operationRef.current) setError(errorMessage(caught));
-      throw caught;
-    } finally {
       if (operation === operationRef.current) {
         busyRef.current = false;
         setIsBusy(false);
-        await settle();
+        setError(errorMessage(caught));
       }
+      throw caught;
     }
   }, [options.client.assistant.turns, settle, turn]);
 
   useEffect(() => {
-    if (turn?.status !== "waiting_for_tool" || busyRef.current) return;
-    const decision = [...options.events]
-      .reverse()
-      .find(
-        (event) =>
-          event.event_type === "approval.decided" &&
-          event.task_id === turn.task_id &&
-          event.cursor > approvalEventCursorRef.current,
-      );
-    if (decision === undefined) return;
-    approvalEventCursorRef.current = decision.cursor;
-    void resume().catch(() => undefined);
-  }, [options.events, resume, turn]);
+    if (turn === null) return;
+    const statusEvent = [...options.events].reverse().find(
+      (event) =>
+        event.task_id === turn.task_id &&
+        event.cursor > statusEventCursorRef.current &&
+        STATUS_EVENT_TYPES.has(event.event_type),
+    );
+    if (statusEvent === undefined) return;
+    statusEventCursorRef.current = statusEvent.cursor;
+    const operation = operationRef.current;
+    void options.client.assistant.turns
+      .get(turn.id)
+      .then(async (current) => {
+        if (operation !== operationRef.current) return;
+        setTurn(current);
+        const active = isActive(current);
+        busyRef.current = active;
+        setIsBusy(active);
+        if (!active) await settle();
+      })
+      .catch((caught) => {
+        if (operation === operationRef.current) setError(errorMessage(caught));
+      });
+  }, [options.client.assistant.turns, options.events, settle, turn]);
 
   const retry = useCallback(async () => {
     if (turn === null || !isTerminal(turn)) {
@@ -212,19 +296,44 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
       });
       if (operation !== operationRef.current) return;
       setTurn(created);
-      const completed = await options.client.assistant.turns.run(created.id);
-      if (operation === operationRef.current) setTurn(completed);
+      const started = await options.client.assistant.turns.start(created.id);
+      if (operation === operationRef.current) {
+        setTurn(started);
+        if (!isActive(started)) {
+          busyRef.current = false;
+          setIsBusy(false);
+          await settle();
+        }
+      }
     } catch (caught) {
-      if (operation === operationRef.current) setError(errorMessage(caught));
-      throw caught;
-    } finally {
       if (operation === operationRef.current) {
         busyRef.current = false;
         setIsBusy(false);
-        await settle();
+        setError(errorMessage(caught));
       }
+      throw caught;
     }
   }, [options.client.assistant.turns, settle, turn]);
+
+  const retryPending = useCallback(async () => {
+    const draft = pendingDraftRef.current;
+    if (draft === null) return;
+    await executeDraft(draft);
+  }, [executeDraft]);
+
+  const deletePending = useCallback(() => {
+    pendingDraftRef.current = null;
+    setPendingUserMessage(null);
+    setError(null);
+  }, []);
+
+  const takePendingForEdit = useCallback((): AssistantDraft | null => {
+    const draft = pendingDraftRef.current;
+    pendingDraftRef.current = null;
+    setPendingUserMessage(null);
+    setError(null);
+    return draft;
+  }, []);
 
   const reset = useCallback(() => {
     ++operationRef.current;
@@ -232,6 +341,8 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     setTurn(null);
     setIsBusy(false);
     setError(null);
+    pendingDraftRef.current = null;
+    setPendingUserMessage(null);
   }, []);
 
   const streamedText = useMemo(
@@ -239,7 +350,34 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     [options.events, turn?.id],
   );
 
-  return { turn, isBusy, error, streamedText, send, cancel, resume, retry, reset };
+  return {
+    turn,
+    isBusy,
+    error,
+    streamedText,
+    pendingUserMessage,
+    send,
+    cancel,
+    resume,
+    retry,
+    retryPending,
+    deletePending,
+    takePendingForEdit,
+    reset,
+  };
+}
+
+const STATUS_EVENT_TYPES = new Set([
+  "assistant.turn.started",
+  "assistant.turn.completed",
+  "assistant.turn.cancelled",
+  "assistant.turn.failed",
+  "command.waiting_approval",
+  "approval.requested",
+]);
+
+function isActive(turn: AssistantTurn): boolean {
+  return turn.status === "created" || turn.status === "running";
 }
 
 export function assistantDeltaText(

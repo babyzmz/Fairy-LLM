@@ -387,7 +387,7 @@ function createClient(
     scratch?: boolean;
     createTask?: WorkspaceClient["tasks"]["create"];
     createTurn?: WorkspaceClient["assistant"]["turns"]["create"];
-    runTurn?: WorkspaceClient["assistant"]["turns"]["run"];
+    runTurn?: WorkspaceClient["assistant"]["turns"]["start"];
     permissions?: WorkspaceClient["permissions"];
     capabilities?: WorkspaceClient["capabilities"];
     listMessages?: WorkspaceClient["messages"]["list"];
@@ -511,7 +511,8 @@ function createClient(
     assistant: {
       turns: {
         create: options.createTurn ?? (async () => { throw new Error("not used"); }),
-        run: options.runTurn ?? (async () => { throw new Error("not used"); }),
+        get: async () => completedTurn,
+        start: options.runTurn ?? (async () => { throw new Error("not used"); }),
         cancel: async () => completedTurn,
         retry: async () => completedTurn,
       },
@@ -523,6 +524,9 @@ function createClient(
       synthesize: async () => {
         throw new Error("not used");
       },
+    },
+    systemActions: {
+      execute: async () => ({} as never),
     },
     events: {
       subscribe: () => visibleEvents(),

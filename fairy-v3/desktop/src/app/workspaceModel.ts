@@ -1,7 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { type AssistantTurnClient, useAssistantTurn } from "../chat/useAssistantTurn";
+import {
+  type AssistantDraft,
+  type AssistantTurnClient,
+  type OptimisticUserMessage,
+  useAssistantTurn,
+} from "../chat/useAssistantTurn";
 import type {
   Approval,
   AssistantTurn,
@@ -58,6 +63,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   documents: Pick<CoreClient["documents"], "import" | "list" | "search" | "delete">;
   memory: Pick<CoreClient["memory"], "search" | "forget">;
   voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
+  systemActions: Pick<CoreClient["systemActions"], "execute">;
   events: Pick<CoreClient["events"], "subscribe">;
 }
 
@@ -80,6 +86,7 @@ export interface WorkspaceModel {
   approvals: Approval[];
   chatApprovals: Approval[];
   events: EventEnvelope[];
+  chatEvents: EventEnvelope[];
   presenceEvents: EventEnvelope[];
   messages: Message[];
   providers: ProviderProfile[];
@@ -98,6 +105,7 @@ export interface WorkspaceModel {
   capabilities: CapabilityManifest | null;
   chatTurn: AssistantTurn | null;
   chatStreamedText: string;
+  chatPendingUserMessage: OptimisticUserMessage | null;
   chatBusy: boolean;
   chatError: string | null;
   projectTurn: AssistantTurn | null;
@@ -141,6 +149,11 @@ export interface WorkspaceModel {
   ): Promise<void>;
   cancelChatTurn(): Promise<void>;
   retryChatTurn(): Promise<void>;
+  retryPendingChatMessage(): Promise<void>;
+  deletePendingChatMessage(): void;
+  takePendingChatMessageForEdit(): AssistantDraft | null;
+  copyMessage(taskId: string, content: string): Promise<void>;
+  openMessageLink(taskId: string, url: string): Promise<void>;
   cancelProjectTurn(): Promise<void>;
   decideApproval(approvalId: string, approved: boolean): Promise<void>;
   startPreview(): Promise<void>;
@@ -385,7 +398,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           if (event.visibility !== "internal") {
             setAllEvents((current) => appendEvent(current, event));
           }
-          if (terminalAssistantEvents.has(event.event_type)) {
+          if (terminalAssistantEvents.has(event.event_type) || event.event_type === "message.created") {
             void queryClient.invalidateQueries({ queryKey: [...workspaceKey, "messages"] });
             void queryClient.invalidateQueries({ queryKey: [...workspaceKey, "tasks"] });
           } else if (event.event_type !== "assistant.message.delta") {
@@ -777,6 +790,22 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           idempotency_key: `desktop:memory-forget:${targetId}:${crypto.randomUUID()}`,
         }));
       },
+      async copyMessage(taskId: string, content: string) {
+        await runAction(() => client.systemActions.execute({
+          task_id: taskId,
+          action: { type: "copy_text", text: content },
+          idempotency_key: `desktop:message-copy:${crypto.randomUUID()}`,
+          user_confirmed: true,
+        }));
+      },
+      async openMessageLink(taskId: string, url: string) {
+        await runAction(() => client.systemActions.execute({
+          task_id: taskId,
+          action: { type: "open_url", url },
+          idempotency_key: `desktop:message-link:${crypto.randomUUID()}`,
+          user_confirmed: true,
+        }));
+      },
     }),
     [
       chatAssistant,
@@ -855,6 +884,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     events: allEvents.filter(
       (event) => event.task_id === selectedTask?.id && event.visibility === "user",
     ),
+    chatEvents: allEvents.filter(
+      (event) =>
+        event.conversation_id === selectedChatConversation?.id &&
+        event.visibility === "user",
+    ),
     presenceEvents: allEvents.filter((event) => event.visibility === "user"),
     messages,
     providers,
@@ -873,6 +907,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     capabilities: capabilitiesQuery.data ?? null,
     chatTurn: chatAssistant.turn,
     chatStreamedText: chatAssistant.streamedText,
+    chatPendingUserMessage: chatAssistant.pendingUserMessage,
     chatBusy: chatAssistant.isBusy,
     chatError: chatAssistant.error,
     projectTurn: projectAssistant.turn,
@@ -908,6 +943,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     sendProjectMessage: projectAssistant.send,
     cancelChatTurn: chatAssistant.cancel,
     retryChatTurn: chatAssistant.retry,
+    retryPendingChatMessage: chatAssistant.retryPending,
+    deletePendingChatMessage: chatAssistant.deletePending,
+    takePendingChatMessageForEdit: chatAssistant.takePendingForEdit,
+    copyMessage: actions.copyMessage,
+    openMessageLink: actions.openMessageLink,
     cancelProjectTurn: projectAssistant.cancel,
     decideApproval: actions.decideApproval,
     startPreview: actions.startPreview,

@@ -7,6 +7,7 @@ from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
     Message,
+    MessageRole,
     MessageVisibility,
     ToolInvocation,
     ToolInvocationStatus,
@@ -34,6 +35,8 @@ class AssistantRepository(Protocol):
     def append_message(self, message: Message) -> None: ...
 
     def get_message(self, message_id: UUID) -> Message | None: ...
+
+    def message_for_turn(self, turn_id: UUID, role: MessageRole) -> Message | None: ...
 
     def next_message_sequence(self, conversation_id: UUID) -> int: ...
 

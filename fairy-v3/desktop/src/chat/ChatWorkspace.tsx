@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type {
   Approval,
   AssistantTurn,
+  EventEnvelope,
   Message,
   ProviderHealth,
   ProviderProfile,
@@ -13,12 +14,16 @@ import { ProviderSettings } from "../settings/ProviderSettings";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
+import type { AssistantDraft, OptimisticUserMessage } from "./useAssistantTurn";
 import { parseSlashCommand, slashCommandHelp } from "./slashCommands";
+import "./streaming.css";
 
 export interface ChatWorkspaceProps {
   conversationAvailable: boolean;
   messages: Message[];
+  events: EventEnvelope[];
   streamedText: string;
+  pendingUserMessage: OptimisticUserMessage | null;
   turn: AssistantTurn | null;
   approvals: Approval[];
   providers: ProviderProfile[];
@@ -48,11 +53,17 @@ export interface ChatWorkspaceProps {
   ): Promise<void>;
   onCancel(): Promise<void>;
   onRetry(): Promise<void>;
+  onRetryPending(): Promise<void>;
+  onDeletePending(): void;
+  onTakePendingForEdit(): AssistantDraft | null;
+  onCopyMessage(taskId: string, content: string): Promise<void>;
+  onOpenMessageLink(taskId: string, url: string): Promise<void>;
   onDecision(approvalId: string, approved: boolean): Promise<void>;
 }
 
 export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [notice, setNotice] = useState<string | null>(null);
+  const [composerDraft, setComposerDraft] = useState<AssistantDraft | null>(null);
   const selectedProvider = props.providers.find(
     (provider) => provider.id === props.selectedProfileId,
   );
@@ -181,9 +192,19 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       {props.conversationAvailable ? (
         <MessageList
           messages={props.messages}
+          events={props.events}
           streamedText={props.streamedText}
           turn={props.turn}
+          pendingUserMessage={props.pendingUserMessage}
           developerMode={props.developerMode}
+          onRetryPending={props.onRetryPending}
+          onDeletePending={props.onDeletePending}
+          onEditPending={() => {
+            const draft = props.onTakePendingForEdit();
+            if (draft !== null) setComposerDraft(draft);
+          }}
+          onCopy={props.onCopyMessage}
+          onOpenLink={props.onOpenMessageLink}
         />
       ) : (
         <div className="message-list message-list-empty">
@@ -244,6 +265,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         disabled={props.offline || !providerAvailable || !props.conversationAvailable}
         isBusy={props.isBusy}
         visionAvailable={selectedProvider?.capabilities.includes("vision") ?? false}
+        draft={composerDraft}
         onSubmit={submit}
         onStop={props.onCancel}
       />

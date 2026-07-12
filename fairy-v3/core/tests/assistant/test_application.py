@@ -139,6 +139,12 @@ def test_scratch_turn_persists_context_deltas_message_and_completion(
             "assistant.message.delta",
             "assistant.turn.completed",
         ]
+        message_events = [event for event in events if event["event_type"] == "message.created"]
+        assert [event["payload"]["role"] for event in message_events] == [
+            "user",
+            "assistant",
+        ]
+        assert all("content" not in event["payload"] for event in message_events)
         assert provider.requests[0].messages[-1].content == "Explain Fairy without tools"
         assert provider.requests[0].tools[0].name == "direct_answer"
         assert provider.requests[0].max_output_tokens <= 4_096

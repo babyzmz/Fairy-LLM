@@ -31,6 +31,52 @@ describe("ChatWorkspace", () => {
     expect(screen.getByLabelText("Message Fairy")).toHaveFocus();
   });
 
+  it("does not send while a Chinese IME composition is being confirmed", async () => {
+    const props = workspaceProps();
+    render(<ChatWorkspace {...props} />);
+    const composer = screen.getByLabelText("Message Fairy");
+    fireEvent.change(composer, { target: { value: "中文输入" } });
+
+    fireEvent.keyDown(composer, { key: "Enter", isComposing: true });
+    expect(props.onSend).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(composer, { key: "Enter", isComposing: false });
+    await waitFor(() => expect(props.onSend).toHaveBeenCalledWith("中文输入", [], []));
+  });
+
+  it("renders safe GFM and routes links and copy through controlled actions", async () => {
+    const user = userEvent.setup();
+    const content = [
+      "| Name | Value |",
+      "| --- | --- |",
+      "| Fairy | Ready |",
+      "",
+      "[OpenAI](https://openai.com)",
+      "",
+      "```ts",
+      "const ready = true;",
+      "```",
+      "<script>unsafe</script>",
+    ].join("\n");
+    const props = workspaceProps({
+      messages: [{ ...MESSAGES[1], content }],
+    });
+    render(<ChatWorkspace {...props} />);
+
+    expect(screen.getByRole("table")).toBeVisible();
+    expect(screen.queryByText("unsafe")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "OpenAI" }));
+    expect(props.onOpenMessageLink).toHaveBeenCalledWith(
+      MESSAGES[1].task_id,
+      "https://openai.com",
+    );
+    await user.click(screen.getByRole("button", { name: "Copy code" }));
+    expect(props.onCopyMessage).toHaveBeenCalledWith(
+      MESSAGES[1].task_id,
+      "const ready = true;",
+    );
+  });
+
   it("keeps durable tool protocol messages inside developer mode", () => {
     const toolMessage: Message = {
       ...MESSAGES[0],
@@ -218,7 +264,9 @@ function workspaceProps(
   return {
     conversationAvailable: true,
     messages: MESSAGES,
+    events: [],
     streamedText: "",
+    pendingUserMessage: null,
     turn: TURN,
     approvals: [],
     providers: PROVIDERS,
@@ -255,6 +303,11 @@ function workspaceProps(
     onSend: vi.fn(async () => undefined),
     onCancel: vi.fn(async () => undefined),
     onRetry: vi.fn(async () => undefined),
+    onRetryPending: vi.fn(async () => undefined),
+    onDeletePending: vi.fn(),
+    onTakePendingForEdit: vi.fn(() => null),
+    onCopyMessage: vi.fn(async () => undefined),
+    onOpenMessageLink: vi.fn(async () => undefined),
     onDecision: vi.fn(async () => undefined),
     ...props,
   };

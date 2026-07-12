@@ -330,6 +330,7 @@ async function installCoreFixture(page: Page) {
       let approvalVisible = false;
       let approvalDecision: "pending" | "approved" | "rejected" = "pending";
       let messages = [scratchMessage, toolMessage];
+      let latestUserRequest = "";
       fixtureWindow.__FAIRY_PUSH_EVENT__ = (message) => {
         const startedAt = performance.now();
         const cursor = (events.at(-1)?.cursor ?? 0) + 1;
@@ -566,7 +567,8 @@ async function installCoreFixture(page: Page) {
         "documents.search": { items: [] },
         "documents.delete": {},
         "assistant.turns.create": { ...completedTurn, status: "created" },
-        "assistant.turns.run": completedTurn,
+        "assistant.turns.get": completedTurn,
+        "assistant.turns.start": completedTurn,
         "assistant.turns.cancel": { ...completedTurn, status: "cancelled" },
         "assistant.turns.retry": { ...completedTurn, status: "created" },
         "conversations.create": scratchConversation,
@@ -675,6 +677,9 @@ async function installCoreFixture(page: Page) {
               },
             };
           }
+          if (request.method === "tasks.create") {
+            await new Promise((resolve) => window.setTimeout(resolve, 180));
+          }
           const result =
             request.method === "projects.list"
               ? { items: [{ ...project }], next_cursor: null }
@@ -700,6 +705,7 @@ async function installCoreFixture(page: Page) {
               : request.method === "tasks.create"
                 ? (() => {
                     const userRequest = String(request.params.user_request ?? "");
+                    latestUserRequest = userRequest;
                     approvalScenario = userRequest === "Request a governed notification";
                     approvalVisible = false;
                     approvalDecision = "pending";
@@ -707,10 +713,35 @@ async function installCoreFixture(page: Page) {
                     return { task: { ...scratchTask, user_request: userRequest } };
                   })()
               : request.method === "assistant.turns.create"
-                ? { ...completedTurn, status: "created", completed_at: null }
-              : request.method === "assistant.turns.run"
                 ? (() => {
-                    if (!approvalScenario) return completedTurn;
+                    messages = [
+                      ...messages,
+                      {
+                        ...scratchMessage,
+                        id: "0198f4de-0114-7000-8000-000000000030",
+                        task_id: id.scratchTask,
+                        turn_id: id.turn,
+                        sequence: 3,
+                        role: "user",
+                        content: latestUserRequest,
+                      },
+                    ];
+                    return { ...completedTurn, status: "created", completed_at: null };
+                  })()
+              : request.method === "assistant.turns.start"
+                ? (() => {
+                    if (!approvalScenario) {
+                      messages = [
+                        ...messages,
+                        {
+                          ...resumedMessage,
+                          id: "0198f4de-0114-7000-8000-000000000031",
+                          sequence: 4,
+                          content: "Fixture streamed response completed",
+                        },
+                      ];
+                      return completedTurn;
+                    }
                     if (approvalDecision === "pending") {
                       approvalVisible = true;
                       return waitingTurn;

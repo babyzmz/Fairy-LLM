@@ -232,7 +232,9 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
           <ChatWorkspace
             conversationAvailable={model.selectedChatConversation !== null}
             messages={model.messages}
+            events={model.chatEvents}
             streamedText={model.chatStreamedText}
+            pendingUserMessage={model.chatPendingUserMessage}
             turn={model.chatTurn}
             approvals={model.chatApprovals}
             providers={model.providers}
@@ -256,6 +258,11 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             onSend={model.sendChatMessage}
             onCancel={model.cancelChatTurn}
             onRetry={model.retryChatTurn}
+            onRetryPending={model.retryPendingChatMessage}
+            onDeletePending={model.deletePendingChatMessage}
+            onTakePendingForEdit={model.takePendingChatMessageForEdit}
+            onCopyMessage={model.copyMessage}
+            onOpenMessageLink={model.openMessageLink}
             onDecision={model.decideApproval}
           />
         ) : model.state === "ready" ? (

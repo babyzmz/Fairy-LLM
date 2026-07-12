@@ -1,11 +1,12 @@
 import { Paperclip, Send, Square, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   CaptureControl,
   type PendingImageAttachment,
 } from "../perception/CaptureControl";
 import { VoiceRecordControl } from "../voice/VoiceController";
+import type { AssistantDraft } from "./useAssistantTurn";
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const ACCEPTED_DOCUMENTS = ".txt,.md,.markdown,.html,.htm,.pdf,.docx";
@@ -14,6 +15,7 @@ interface ComposerProps {
   disabled: boolean;
   isBusy: boolean;
   visionAvailable: boolean;
+  draft?: AssistantDraft | null;
   onSubmit(
     value: string,
     files: File[],
@@ -26,6 +28,7 @@ export function Composer({
   disabled,
   isBusy,
   visionAvailable,
+  draft = null,
   onSubmit,
   onStop,
 }: ComposerProps) {
@@ -41,6 +44,14 @@ export function Composer({
     !disabled &&
     !effectiveBusy &&
     (value.trim().length > 0 || files.length > 0 || capture !== null);
+
+  useEffect(() => {
+    if (draft === null) return;
+    setValue(draft.value);
+    setFiles(draft.files);
+    setCapture(draft.images[0] ?? null);
+    inputRef.current?.focus();
+  }, [draft]);
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -135,7 +146,7 @@ export function Composer({
             disabled={disabled}
             onChange={(event) => setValue(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
                 void submit();
               }

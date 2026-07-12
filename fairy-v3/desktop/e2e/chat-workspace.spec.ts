@@ -58,6 +58,23 @@ test("tool protocol is visible only in developer mode", async ({ page }) => {
   await expect(page.getByText(/fixture provider payload/)).toBeVisible();
 });
 
+test("a user message appears before Core task creation returns", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Chat" }).click();
+  const composer = page.getByLabel("Message Fairy");
+  await composer.fill("Visible before Core confirms");
+  await page.getByRole("button", { name: "Send message" }).click();
+
+  await expect(
+    page.getByLabel("Conversation messages").getByText("Visible before Core confirms"),
+  ).toBeVisible();
+  await expect(page.getByText("Sending", { exact: true })).toBeVisible();
+  await expect(page.getByText("Fixture streamed response completed")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Fairy activity" })).toContainText(
+    "Response ready",
+  );
+});
+
 test("reduced motion disables repeated chat activity animation", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 640, height: 700 });
@@ -136,5 +153,5 @@ test("approved assistant tools resume the durable turn exactly once", async ({ p
     approval_id: "0198f4de-0114-7000-8000-000000000017",
     approved: true,
   });
-  expect(calls.filter((call) => call.method === "assistant.turns.run")).toHaveLength(2);
+  expect(calls.filter((call) => call.method === "assistant.turns.start")).toHaveLength(2);
 });
