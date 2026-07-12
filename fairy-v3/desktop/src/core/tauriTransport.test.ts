@@ -49,6 +49,29 @@ describe("TauriCoreTransport", () => {
     });
   });
 
+  it("keeps OpenRouter credentials on host-only commands", async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      configured: true,
+      model_id: "tencent/hy3:free",
+    });
+    const transport = new TauriCoreTransport(invoke);
+
+    await expect(
+      transport.providerOpenRouterConfigure({
+        api_key: "private-test-key",
+        model_id: "tencent/hy3:free",
+      }),
+    ).resolves.toEqual({ configured: true, model_id: "tencent/hy3:free" });
+
+    expect(invoke).toHaveBeenCalledWith("provider_openrouter_configure", {
+      input: {
+        api_key: "private-test-key",
+        model_id: "tencent/hy3:free",
+      },
+    });
+    expect(invoke).not.toHaveBeenCalledWith("core_rpc", expect.anything());
+  });
+
   it("rejects malformed local Preview envelopes", async () => {
     const id = "0198f4de-0114-7000-8000-000000000001";
     const invoke = vi.fn().mockResolvedValue({

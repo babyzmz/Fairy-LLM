@@ -197,6 +197,32 @@ describe("useAssistantTurn", () => {
     expect(result.current.isBusy).toBe(true);
   });
 
+  it("removes the stream projection after the durable turn completes", async () => {
+    const completed = assistantTurn({
+      status: "completed",
+      completed_at: "2026-07-11T00:00:04Z",
+    });
+    const client = assistantClient({
+      createTask: async () => ({ task: { id: taskId } }) as never,
+      createTurn: async () => assistantTurn({ status: "running" }),
+      runTurn: async () => completed,
+    });
+    const { result } = renderHook(() =>
+      useAssistantTurn({
+        client,
+        conversationId,
+        profileId: "openrouter-free",
+        operationMode: "answer",
+        events: [deltaEvent("event-a", 1, turnId, 0, 0, "Durable response")],
+      }),
+    );
+
+    await act(async () => result.current.send("Complete", []));
+
+    expect(result.current.turn).toEqual(completed);
+    expect(result.current.streamedText).toBe("");
+  });
+
   it("resumes a waiting turn after the durable approval event", async () => {
     const waiting = assistantTurn({ status: "waiting_for_tool" });
     const completed = assistantTurn({

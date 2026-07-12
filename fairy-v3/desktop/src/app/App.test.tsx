@@ -472,6 +472,9 @@ function createClient(
     providers: {
       list: async () => ({ items: [provider] }),
       health: async () => ({ items: [providerHealth] }),
+      openRouterStatus: async () => ({ configured: true, model_id: provider.model_id }),
+      configureOpenRouter: async (input) => ({ configured: true, model_id: input.model_id }),
+      deleteOpenRouter: async () => ({ configured: false, model_id: null }),
     },
     skills: {
       list: async () => ({ items: [] }),

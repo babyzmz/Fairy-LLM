@@ -1,15 +1,21 @@
-import { Check, Settings2, X } from "lucide-react";
+import { Check, KeyRound, Settings2, Trash2, X } from "lucide-react";
 import { useState } from "react";
 
 import type { ProviderHealth, ProviderProfile } from "../core/client";
+import "./provider-settings.css";
 
 interface ProviderSettingsProps {
   providers: ProviderProfile[];
   health: ProviderHealth[];
   selectedProfileId: string | null;
   developerMode: boolean;
+  openRouterConfigured?: boolean;
+  openRouterModelId?: string | null;
+  busy?: boolean;
   onProfileChange(profileId: string): void;
   onDeveloperModeChange(enabled: boolean): void;
+  onConfigureOpenRouter?(apiKey: string, modelId: string): Promise<void>;
+  onDeleteOpenRouter?(): Promise<void>;
 }
 
 export function ProviderSettings({
@@ -17,10 +23,19 @@ export function ProviderSettings({
   health,
   selectedProfileId,
   developerMode,
+  openRouterConfigured = false,
+  openRouterModelId = null,
+  busy = false,
   onProfileChange,
   onDeveloperModeChange,
+  onConfigureOpenRouter,
+  onDeleteOpenRouter,
 }: ProviderSettingsProps) {
   const [open, setOpen] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [modelId, setModelId] = useState(
+    openRouterModelId ?? "tencent/hy3:free",
+  );
   const statuses = new Map(health.map((item) => [item.profile_id, item]));
 
   return (
@@ -97,6 +112,64 @@ export function ProviderSettings({
               );
             })}
           </div>
+          {onConfigureOpenRouter ? (
+            <form
+              className="provider-setup"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void onConfigureOpenRouter(apiKey, modelId).then(() => setApiKey(""));
+              }}
+            >
+              <div className="provider-setup-heading">
+                <KeyRound size={15} />
+                <strong>OpenRouter</strong>
+                <span>{openRouterConfigured ? "Configured" : "Not configured"}</span>
+              </div>
+              <label>
+                <span>API key</span>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={apiKey}
+                  placeholder={openRouterConfigured ? "Enter a new key to replace" : "sk-or-v1-..."}
+                  required
+                  disabled={busy}
+                  onChange={(event) => setApiKey(event.target.value)}
+                />
+              </label>
+              <label>
+                <span>Model ID</span>
+                <input
+                  list="openrouter-free-models"
+                  value={modelId}
+                  required
+                  disabled={busy}
+                  onChange={(event) => setModelId(event.target.value)}
+                />
+                <datalist id="openrouter-free-models">
+                  <option value="tencent/hy3:free" />
+                  <option value="nvidia/nemotron-3-ultra-550b-a55b:free" />
+                </datalist>
+              </label>
+              <div className="provider-setup-actions">
+                <button className="primary-command" type="submit" disabled={busy || apiKey.trim() === ""}>
+                  <KeyRound size={14} /> Save and connect
+                </button>
+                {openRouterConfigured && onDeleteOpenRouter ? (
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label="Remove OpenRouter credential"
+                    title="Remove OpenRouter credential"
+                    disabled={busy}
+                    onClick={() => void onDeleteOpenRouter()}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                ) : null}
+              </div>
+            </form>
+          ) : null}
           <label className="developer-toggle">
             <input
               type="checkbox"

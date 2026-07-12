@@ -28,10 +28,14 @@ export interface ChatWorkspaceProps {
   isActing: boolean;
   offline: boolean;
   developerMode: boolean;
+  openRouterConfigured?: boolean;
+  openRouterModelId?: string | null;
   error: string | null;
   slashCommands: SlashCommandMetadata[];
   onProfileChange(profileId: string): void;
   onDeveloperModeChange(enabled: boolean): void;
+  onConfigureOpenRouter?(apiKey: string, modelId: string): Promise<void>;
+  onDeleteOpenRouter?(): Promise<void>;
   onNewConversation(): Promise<void>;
   onSwitchProject(): void;
   onPermissionChange(
@@ -149,8 +153,13 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
             health={props.providerHealth}
             selectedProfileId={props.selectedProfileId}
             developerMode={props.developerMode}
+            openRouterConfigured={props.openRouterConfigured}
+            openRouterModelId={props.openRouterModelId}
+            busy={props.isActing}
             onProfileChange={props.onProfileChange}
             onDeveloperModeChange={props.onDeveloperModeChange}
+            onConfigureOpenRouter={props.onConfigureOpenRouter}
+            onDeleteOpenRouter={props.onDeleteOpenRouter}
           />
           <button
             className="icon-button"

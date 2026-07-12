@@ -1,9 +1,11 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProviderHealth, ProviderProfile } from "../core/client";
 import { ProviderSettings } from "./ProviderSettings";
+
+afterEach(cleanup);
 
 describe("ProviderSettings", () => {
   it("shows credential state without exposing secret material", () => {
@@ -25,6 +27,38 @@ describe("ProviderSettings", () => {
     expect(document.body.textContent).not.toContain("sk-or-v1-");
     fireEvent.click(screen.getByRole("checkbox", { name: "Developer mode" }));
     expect(onDeveloperModeChange).toHaveBeenCalledWith(true);
+  });
+
+  it("configures OpenRouter without retaining or displaying the submitted key", async () => {
+    const configure = vi.fn(async () => undefined);
+    render(
+      <ProviderSettings
+        providers={[]}
+        health={[]}
+        selectedProfileId={null}
+        developerMode={false}
+        openRouterConfigured={false}
+        onProfileChange={vi.fn()}
+        onDeveloperModeChange={vi.fn()}
+        onConfigureOpenRouter={configure}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Provider settings" }));
+    fireEvent.change(screen.getByLabelText("API key"), {
+      target: { value: "sk-or-v1-private-test-value" },
+    });
+    fireEvent.change(screen.getByLabelText("Model ID"), {
+      target: { value: "tencent/hy3:free" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save and connect" }));
+
+    expect(configure).toHaveBeenCalledWith(
+      "sk-or-v1-private-test-value",
+      "tencent/hy3:free",
+    );
+    await vi.waitFor(() => expect(screen.getByLabelText("API key")).toHaveValue(""));
+    expect(document.body.textContent).not.toContain("sk-or-v1-private-test-value");
   });
 });
 

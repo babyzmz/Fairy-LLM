@@ -106,8 +106,13 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
                 health={model.providerHealth}
                 selectedProfileId={model.selectedProfileId}
                 developerMode={model.developerMode}
+                openRouterConfigured={model.openRouterStatus?.configured}
+                openRouterModelId={model.openRouterStatus?.model_id}
+                busy={model.isActing}
                 onProfileChange={model.selectProfile}
                 onDeveloperModeChange={model.setDeveloperMode}
+                onConfigureOpenRouter={model.configureOpenRouter}
+                onDeleteOpenRouter={model.deleteOpenRouter}
               />
             ) : null}
             <ExtensionSettings
@@ -162,10 +167,14 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             isActing={model.isActing}
             offline={false}
             developerMode={model.developerMode}
+            openRouterConfigured={model.openRouterStatus?.configured ?? false}
+            openRouterModelId={model.openRouterStatus?.model_id ?? null}
             error={model.chatError}
             slashCommands={model.capabilities?.slash_commands ?? []}
             onProfileChange={model.selectProfile}
             onDeveloperModeChange={model.setDeveloperMode}
+            onConfigureOpenRouter={model.configureOpenRouter}
+            onDeleteOpenRouter={model.deleteOpenRouter}
             onNewConversation={model.createChatConversation}
             onSwitchProject={() => model.setMode("project")}
             onPermissionChange={model.setPermissionProfile}

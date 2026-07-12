@@ -17,6 +17,7 @@ import type {
   Project,
   ProviderHealth,
   ProviderProfile,
+  OpenRouterConfigurationStatus,
   RuntimeHealth,
   Skill,
   Task,
@@ -39,7 +40,10 @@ export interface WorkspaceClient extends AssistantTurnClient {
   previews: Pick<CoreClient["previews"], "resolve" | "start" | "stop">;
   capabilities: Pick<CoreClient["capabilities"], "get">;
   permissions: Pick<CoreClient["permissions"], "get" | "update">;
-  providers: Pick<CoreClient["providers"], "list" | "health">;
+  providers: Pick<
+    CoreClient["providers"],
+    "list" | "health" | "openRouterStatus" | "configureOpenRouter" | "deleteOpenRouter"
+  >;
   skills: Pick<CoreClient["skills"], "list">;
   mcp: {
     servers: Pick<
@@ -74,6 +78,7 @@ export interface WorkspaceModel {
   messages: Message[];
   providers: ProviderProfile[];
   providerHealth: ProviderHealth[];
+  openRouterStatus: OpenRouterConfigurationStatus | null;
   skills: Skill[];
   mcpServers: McpServer[];
   selectedProfileId: string | null;
@@ -102,6 +107,8 @@ export interface WorkspaceModel {
   deleteMcpServer(serverId: string): Promise<void>;
   setDeveloperMode(enabled: boolean): void;
   selectProfile(profileId: string): void;
+  configureOpenRouter(apiKey: string, modelId: string): Promise<void>;
+  deleteOpenRouter(): Promise<void>;
   selectProject(projectId: string): void;
   selectConversation(conversationId: string): void;
   selectChatConversation(conversationId: string): void;
@@ -217,6 +224,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const providerHealthQuery = useQuery({
     queryKey: [...workspaceKey, "provider-health"],
     queryFn: () => client.providers.health(),
+    enabled: healthQuery.isSuccess,
+    retry: false,
+  });
+  const openRouterStatusQuery = useQuery({
+    queryKey: [...workspaceKey, "openrouter-status"],
+    queryFn: () => client.providers.openRouterStatus(),
     enabled: healthQuery.isSuccess,
     retry: false,
   });
@@ -466,6 +479,23 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     [capabilitiesQuery.data?.command_metadata, permissionsQuery.data, persistPermissions],
   );
 
+  const configureOpenRouter = useCallback(
+    async (apiKey: string, modelId: string): Promise<void> => {
+      const status = await runAction(() =>
+        client.providers.configureOpenRouter({ api_key: apiKey, model_id: modelId }),
+      );
+      queryClient.setQueryData([...workspaceKey, "openrouter-status"], status);
+      setProfileSelection("openrouter");
+    },
+    [client.providers, queryClient, runAction, setProfileSelection],
+  );
+
+  const deleteOpenRouter = useCallback(async (): Promise<void> => {
+    const status = await runAction(() => client.providers.deleteOpenRouter());
+    queryClient.setQueryData([...workspaceKey, "openrouter-status"], status);
+    setProfileSelection(null);
+  }, [client.providers, queryClient, runAction, setProfileSelection]);
+
   const configureMcpServer = useCallback(
     async (input: McpServerDraft): Promise<void> => {
       const current = mcpServersQuery.data?.items.find(
@@ -709,6 +739,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     conversationsQuery.error,
     providersQuery.error,
     providerHealthQuery.error,
+    openRouterStatusQuery.error,
     skillsQuery.error,
     mcpServersQuery.error,
     tasksQuery.error,
@@ -728,7 +759,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       (projectsQuery.isPending ||
         conversationsQuery.isPending ||
         providersQuery.isPending ||
-        providerHealthQuery.isPending)) ||
+        providerHealthQuery.isPending ||
+        openRouterStatusQuery.isPending)) ||
     (healthQuery.isSuccess && (skillsQuery.isPending || mcpServersQuery.isPending)) ||
     (selectedProject !== null && conversationsQuery.isPending) ||
     (selectedConversation !== null && tasksQuery.isPending) ||
@@ -766,6 +798,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     messages,
     providers,
     providerHealth,
+    openRouterStatus: openRouterStatusQuery.data ?? null,
     skills: skillsQuery.data?.items ?? [],
     mcpServers: mcpServersQuery.data?.items ?? [],
     selectedProfileId,
@@ -794,6 +827,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     deleteMcpServer,
     setDeveloperMode,
     selectProfile: setProfileSelection,
+    configureOpenRouter,
+    deleteOpenRouter,
     selectProject: actions.selectProject,
     selectConversation: actions.selectConversation,
     selectChatConversation: setChatConversationSelection,

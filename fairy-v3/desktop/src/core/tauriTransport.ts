@@ -4,6 +4,10 @@ import type {
   CoreMethodName,
   CoreTransport,
 } from "./client";
+import type {
+  OpenRouterConfigurationInput,
+  OpenRouterConfigurationStatus,
+} from "./client";
 import { parseMemoryResult } from "./memoryValidation";
 import { parseRuntimeResult } from "./runtimeValidation";
 
@@ -51,6 +55,20 @@ export class TauriCoreTransport implements CoreTransport {
   private requestId = 0;
 
   constructor(private readonly invoke: InvokeFunction) {}
+
+  providerOpenRouterStatus(): Promise<OpenRouterConfigurationStatus> {
+    return this.invoke("provider_openrouter_status");
+  }
+
+  providerOpenRouterConfigure(
+    input: OpenRouterConfigurationInput,
+  ): Promise<OpenRouterConfigurationStatus> {
+    return this.invoke("provider_openrouter_configure", { input });
+  }
+
+  providerOpenRouterDelete(): Promise<OpenRouterConfigurationStatus> {
+    return this.invoke("provider_openrouter_delete");
+  }
 
   async call<M extends CoreMethodName>(
     method: M,

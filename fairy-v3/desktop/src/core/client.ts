@@ -53,6 +53,16 @@ export interface CoreCallOptions {
   signal?: AbortSignal;
 }
 
+export interface OpenRouterConfigurationInput {
+  api_key: string;
+  model_id: string;
+}
+
+export interface OpenRouterConfigurationStatus {
+  configured: boolean;
+  model_id: string | null;
+}
+
 export interface CoreTransport {
   call<M extends CoreMethodName>(
     method: M,
@@ -64,6 +74,12 @@ export interface CoreTransport {
     cursor: number,
     options?: EventSubscriptionOptions,
   ): AsyncIterable<EventEnvelope>;
+
+  providerOpenRouterStatus?(): Promise<OpenRouterConfigurationStatus>;
+  providerOpenRouterConfigure?(
+    input: OpenRouterConfigurationInput,
+  ): Promise<OpenRouterConfigurationStatus>;
+  providerOpenRouterDelete?(): Promise<OpenRouterConfigurationStatus>;
 }
 
 export class CoreClient {
@@ -130,6 +146,10 @@ export class CoreClient {
           ? {}
           : ({ profile_id: profileId } satisfies ProviderHealthInput),
       ),
+    openRouterStatus: () => this.requireProviderHost("status")(),
+    configureOpenRouter: (input: OpenRouterConfigurationInput) =>
+      this.requireProviderHost("configure")(input),
+    deleteOpenRouter: () => this.requireProviderHost("delete")(),
   };
 
   readonly skills = {
@@ -274,6 +294,24 @@ export class CoreClient {
 
   health() {
     return this.transport.call("health", {});
+  }
+
+  private requireProviderHost(operation: "status"): () => Promise<OpenRouterConfigurationStatus>;
+  private requireProviderHost(operation: "delete"): () => Promise<OpenRouterConfigurationStatus>;
+  private requireProviderHost(
+    operation: "configure",
+  ): (input: OpenRouterConfigurationInput) => Promise<OpenRouterConfigurationStatus>;
+  private requireProviderHost(operation: "status" | "configure" | "delete") {
+    const selected =
+      operation === "status"
+        ? this.transport.providerOpenRouterStatus
+        : operation === "configure"
+          ? this.transport.providerOpenRouterConfigure
+          : this.transport.providerOpenRouterDelete;
+    if (selected === undefined) {
+      throw new Error("Provider credential management requires the Fairy desktop host");
+    }
+    return selected.bind(this.transport);
   }
 
   private subscribeToEvents(

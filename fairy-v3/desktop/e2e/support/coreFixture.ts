@@ -343,6 +343,10 @@ async function installCoreFixture(page: Page) {
         revision: 0,
         updated_at: "2026-07-11T00:00:00Z",
       };
+      let openRouterStatus = {
+        configured: true,
+        model_id: "openrouter/free" as string | null,
+      };
       let mcpServer = {
         server_id: "docs",
         display_name: "Document server",
@@ -604,6 +608,18 @@ async function installCoreFixture(page: Page) {
               content_hash: capturePngHash,
               captured_at_ms: 1_784_000_000_000,
             };
+          }
+          if (command === "provider_openrouter_status") {
+            return openRouterStatus;
+          }
+          if (command === "provider_openrouter_configure") {
+            const input = args.input as { model_id: string };
+            openRouterStatus = { configured: true, model_id: input.model_id };
+            return openRouterStatus;
+          }
+          if (command === "provider_openrouter_delete") {
+            openRouterStatus = { configured: false, model_id: null };
+            return openRouterStatus;
           }
           if (command !== "core_rpc") {
             throw new Error(`Unexpected Tauri command: ${command}`);
