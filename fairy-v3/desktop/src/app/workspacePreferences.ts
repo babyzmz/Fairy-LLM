@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export function readEventCursor(): number {
   try {
@@ -39,6 +39,7 @@ export function usePersistedSelection(
     },
     [key],
   );
+  useStorageSync(key, (next) => setValue(next));
   return [value, update];
 }
 
@@ -66,6 +67,9 @@ export function usePersistedEnum<T extends string>(
     },
     [key],
   );
+  useStorageSync(key, (next) => {
+    if (next !== null && allowed.includes(next as T)) setValue(next as T);
+  });
   return [value, update];
 }
 
@@ -92,5 +96,18 @@ export function usePersistedBoolean(
     },
     [key],
   );
+  useStorageSync(key, (next) => {
+    if (next === "true" || next === "false") setValue(next === "true");
+  });
   return [value, update];
+}
+
+function useStorageSync(key: string, update: (value: string | null) => void): void {
+  useEffect(() => {
+    const listener = (event: StorageEvent) => {
+      if (event.key === key) update(event.newValue);
+    };
+    window.addEventListener("storage", listener);
+    return () => window.removeEventListener("storage", listener);
+  }, [key, update]);
 }

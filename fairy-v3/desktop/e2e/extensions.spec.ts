@@ -4,17 +4,16 @@ import { installWorkspaceFixture } from "./support/coreFixture";
 
 test.beforeEach(async ({ page }) => {
   await installWorkspaceFixture(page);
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Task Timeline" })).toBeVisible();
+  await page.goto("/?surface=settings");
+  await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
 });
 
 test("reviews governed skills and accepts an MCP schema with conservative defaults", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 1000, height: 760 });
-  await page.getByRole("button", { name: "Extensions" }).click();
+  await page.getByRole("button", { name: /Skills \/ MCP/ }).click();
   await expect(page.getByText("Fairy Docs")).toBeVisible();
-  await expect(page.getByText("Fairy Labs")).toBeVisible();
 
   await page.getByRole("tab", { name: /MCP/u }).click();
   await expect(page.getByText("Document server")).toBeVisible();
@@ -24,8 +23,8 @@ test("reviews governed skills and accepts an MCP schema with conservative defaul
   await page.screenshot({ path: testInfo.outputPath("extensions-desktop.png") });
   await page.getByRole("button", { name: "Accept reviewed schema" }).click();
 
-  const panel = page.getByLabel("Extensions panel");
-  await expect(panel.getByText("ready", { exact: true })).toBeVisible();
+  const panel = page.locator(".settings-category");
+  await expect(panel.getByRole("checkbox", { name: "Enable Document server" })).toBeChecked();
   await expect(panel.getByText("Pending tool review")).toHaveCount(0);
   const calls = await page.evaluate(() =>
     (window as unknown as { __FAIRY_FIXTURE_CALLS__: Array<{ method: string }> })

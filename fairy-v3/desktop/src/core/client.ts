@@ -86,9 +86,19 @@ export interface CoreTransport {
   ): Promise<OpenRouterConfigurationStatus>;
   providerOpenRouterDelete?(): Promise<OpenRouterConfigurationStatus>;
   selectProjectFolder?(): Promise<string | null>;
+  openSettingsWindow?(): Promise<void>;
 }
 
 export class CoreClient {
+  readonly desktop = {
+    openSettings: () => {
+      if (this.transport.openSettingsWindow === undefined) {
+        throw new Error("Settings require the Fairy desktop host");
+      }
+      return this.transport.openSettingsWindow();
+    },
+  };
+
   readonly projects = {
     create: (input: ProjectCreateInput) => this.transport.call("projects.create", input),
     import: (input: ProjectImportInput) => this.transport.call("projects.import", input),

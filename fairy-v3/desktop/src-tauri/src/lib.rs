@@ -4,13 +4,17 @@ use std::sync::{Arc, Mutex};
 
 use fairy_core_bridge::{CoreBridge, CoreBridgeError, CoreLaunchSpec};
 use serde_json::{json, Value};
-use tauri::{Manager, State, WebviewWindow};
+use tauri::{Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
+use desktop_preferences::{
+    DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore, DesktopPreferencesUpdate,
+};
 use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStore};
 use provider_credentials::ProviderCredentialStore;
 
 pub mod capture;
+pub mod desktop_preferences;
 pub mod provider_configuration;
 pub mod provider_credentials;
 
@@ -29,6 +33,41 @@ pub fn authorize_core_rpc_window(label: &str) -> Result<(), WindowScopeError> {
     } else {
         Err(WindowScopeError)
     }
+}
+
+pub fn authorize_settings_window(label: &str) -> Result<(), WindowScopeError> {
+    if label == "settings" {
+        Ok(())
+    } else {
+        Err(WindowScopeError)
+    }
+}
+
+pub fn authorize_preferences_reader(label: &str) -> Result<(), WindowScopeError> {
+    if ["main", "settings", "pet"].contains(&label) {
+        Ok(())
+    } else {
+        Err(WindowScopeError)
+    }
+}
+
+pub fn settings_method_allowed(method: &str) -> bool {
+    matches!(
+        method,
+        "health"
+            | "capabilities.get"
+            | "permissions.get"
+            | "permissions.update"
+            | "providers.list"
+            | "providers.health"
+            | "skills.list"
+            | "mcp.servers.list"
+            | "mcp.servers.configure"
+            | "mcp.servers.discover"
+            | "mcp.servers.accept"
+            | "mcp.servers.set_enabled"
+            | "mcp.servers.delete"
+    )
 }
 
 pub fn auxiliary_window_policy(label: &str) -> Option<AuxiliaryWindowPolicy> {
@@ -64,32 +103,28 @@ pub fn bridge_failure_response(id: Value, error: &CoreBridgeError) -> Value {
 
 struct DesktopState {
     core: Arc<Mutex<Option<CoreBridge>>>,
+    preferences: Mutex<()>,
     data_dir: PathBuf,
     desktop_program: PathBuf,
     resource_dir: PathBuf,
 }
 
-#[tauri::command]
-async fn core_rpc(
-    window: WebviewWindow,
-    state: State<'_, DesktopState>,
-    request: Value,
-) -> Result<Value, String> {
-    let request_id = request.get("id").cloned().unwrap_or(Value::Null);
-    if authorize_core_rpc_window(window.label()).is_err() {
-        return Ok(json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "error": {
-                "code": -32001,
-                "message": "Window is not authorized to access Fairy Core",
-                "data": { "error_code": "SCOPE_MISMATCH" }
-            }
-        }));
-    }
+fn scope_failure_response(id: Value, message: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": -32001,
+            "message": message,
+            "data": { "error_code": "SCOPE_MISMATCH" }
+        }
+    })
+}
 
+async fn call_core(state: &DesktopState, request: Value) -> Value {
+    let request_id = request.get("id").cloned().unwrap_or(Value::Null);
     let core = Arc::clone(&state.core);
-    let response = match tauri::async_runtime::spawn_blocking(move || {
+    match tauri::async_runtime::spawn_blocking(move || {
         let guard = core.lock().map_err(|_| CoreBridgeError::LockPoisoned)?;
         guard
             .as_ref()
@@ -109,8 +144,49 @@ async fn core_rpc(
                 "data": { "error_code": "WORKER_INTERRUPTED" }
             }
         }),
-    };
-    Ok(response)
+    }
+}
+
+#[tauri::command]
+async fn core_rpc(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    request: Value,
+) -> Result<Value, String> {
+    let request_id = request.get("id").cloned().unwrap_or(Value::Null);
+    if authorize_core_rpc_window(window.label()).is_err() {
+        return Ok(scope_failure_response(
+            request_id,
+            "Window is not authorized to access Fairy Core",
+        ));
+    }
+    Ok(call_core(&state, request).await)
+}
+
+#[tauri::command]
+async fn settings_rpc(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    request: Value,
+) -> Result<Value, String> {
+    let request_id = request.get("id").cloned().unwrap_or(Value::Null);
+    if authorize_settings_window(window.label()).is_err() {
+        return Ok(scope_failure_response(
+            request_id,
+            "Window is not authorized to access settings methods",
+        ));
+    }
+    let method = request
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !settings_method_allowed(method) {
+        return Ok(scope_failure_response(
+            request_id,
+            "Method is outside the settings allow list",
+        ));
+    }
+    Ok(call_core(&state, request).await)
 }
 
 #[derive(serde::Deserialize)]
@@ -130,7 +206,11 @@ async fn provider_openrouter_status(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<OpenRouterStatus, String> {
-    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    if authorize_settings_window(window.label()).is_err()
+        && authorize_core_rpc_window(window.label()).is_err()
+    {
+        return Err("Window is not authorized".to_owned());
+    }
     let configuration = ProviderConfigurationStore::new(&state.data_dir)
         .load_openrouter()
         .map_err(|error| error.to_string())?;
@@ -147,7 +227,7 @@ async fn provider_openrouter_configure(
     state: State<'_, DesktopState>,
     input: OpenRouterConfigureInput,
 ) -> Result<OpenRouterStatus, String> {
-    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    authorize_settings_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
     let credentials = ProviderCredentialStore::new(&state.data_dir);
     let configurations = ProviderConfigurationStore::new(&state.data_dir);
     let configuration = configurations
@@ -168,7 +248,7 @@ async fn provider_openrouter_delete(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<OpenRouterStatus, String> {
-    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    authorize_settings_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
     ProviderCredentialStore::new(&state.data_dir)
         .delete_openrouter()
         .map_err(|error| error.to_string())?;
@@ -180,6 +260,55 @@ async fn provider_openrouter_delete(
         configured: false,
         model_id: None,
     })
+}
+
+#[tauri::command]
+async fn desktop_preferences_get(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<DesktopPreferences, String> {
+    authorize_preferences_reader(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    DesktopPreferencesStore::new(&state.data_dir)
+        .load()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn desktop_preferences_update(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    input: DesktopPreferencesUpdate,
+) -> Result<DesktopPreferences, String> {
+    authorize_settings_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let _guard = state
+        .preferences
+        .lock()
+        .map_err(|_| "Desktop preferences lock is unavailable".to_owned())?;
+    let next = DesktopPreferencesStore::new(&state.data_dir)
+        .update(input)
+        .map_err(|error| match error {
+            DesktopPreferencesError::RevisionConflict => "PREFERENCES_REVISION_CONFLICT".to_owned(),
+            other => other.to_string(),
+        })?;
+    app.emit("desktop-preferences-changed", &next)
+        .map_err(|error| error.to_string())?;
+    Ok(next)
+}
+
+#[tauri::command]
+async fn open_settings_window(window: WebviewWindow) -> Result<(), String> {
+    if !["main", "pet", "settings"].contains(&window.label()) {
+        return Err("Window is not authorized".to_owned());
+    }
+    let settings = window
+        .app_handle()
+        .get_webview_window("settings")
+        .ok_or_else(|| "Settings window is unavailable".to_owned())?;
+    settings.show().map_err(|error| error.to_string())?;
+    settings.unminimize().map_err(|error| error.to_string())?;
+    settings.set_focus().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -302,6 +431,7 @@ pub fn run() {
             let bridge = CoreBridge::spawn_verified(launch)?;
             app.manage(DesktopState {
                 core: Arc::new(Mutex::new(Some(bridge))),
+                preferences: Mutex::new(()),
                 data_dir,
                 desktop_program,
                 resource_dir,
@@ -323,9 +453,13 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             core_rpc,
+            settings_rpc,
             provider_openrouter_status,
             provider_openrouter_configure,
             provider_openrouter_delete,
+            desktop_preferences_get,
+            desktop_preferences_update,
+            open_settings_window,
             select_project_folder,
             capture::list_capture_surfaces,
             capture::capture_surface

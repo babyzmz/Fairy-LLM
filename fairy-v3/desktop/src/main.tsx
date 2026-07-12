@@ -32,6 +32,20 @@ async function mountSurface() {
     return;
   }
 
+  if (surface === "settings") {
+    const [{ invoke }, { SettingsApp }, { SettingsClient }] = await Promise.all([
+      import("@tauri-apps/api/core"),
+      import("./settings/SettingsApp"),
+      import("./settings/client"),
+    ]);
+    createRoot(rootElement).render(
+      <StrictMode>
+        <SettingsApp client={new SettingsClient(invoke)} />
+      </StrictMode>,
+    );
+    return;
+  }
+
   if (!isTauri()) {
     const { DesktopHostRequired } = await import("./host/DesktopHostRequired");
     createRoot(rootElement).render(

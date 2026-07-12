@@ -37,6 +37,15 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+:root[data-reduced-motion="true"] *,
+:root[data-reduced-motion="true"] *::before,
+:root[data-reduced-motion="true"] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
 .workspace-shell {
   --history-sidebar-width: 250px;
   width: 100%;
@@ -80,7 +89,7 @@ button:disabled {
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-rows: minmax(58px, auto) 42px minmax(0, 1fr);
+  grid-template-rows: minmax(58px, auto) auto minmax(0, 1fr);
   overflow: hidden;
 }
 

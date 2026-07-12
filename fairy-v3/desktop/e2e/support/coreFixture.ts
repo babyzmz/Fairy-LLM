@@ -370,6 +370,29 @@ async function installCoreFixture(page: Page) {
         configured: true,
         model_id: "openrouter/free" as string | null,
       };
+      let desktopPreferences = {
+        schema_version: 1,
+        revision: 0,
+        language: "system",
+        launch_at_startup: false,
+        minimize_to_tray: true,
+        theme: "system",
+        reduced_motion: false,
+        compact_density: false,
+        selected_profile_id: "openrouter-free" as string | null,
+        voice_auto_play_chat: false,
+        voice_auto_play_pet: true,
+        voice_volume_percent: 80,
+        voice_rate_percent: 100,
+        permission_cloud_profile: "standard",
+        memory_enabled: true,
+        memory_retention_days: 90,
+        analytics_enabled: false,
+        pet_enabled: true,
+        pet_always_on_top: true,
+        pet_muted: false,
+        developer_mode: false,
+      };
       let mcpServer = {
         server_id: "docs",
         display_name: "Document server",
@@ -658,10 +681,38 @@ async function installCoreFixture(page: Page) {
             openRouterStatus = { configured: false, model_id: null };
             return openRouterStatus;
           }
+          if (command === "desktop_preferences_get") {
+            return desktopPreferences;
+          }
+          if (command === "desktop_preferences_update") {
+            const input = args.input as {
+              expected_revision: number;
+              preferences: typeof desktopPreferences;
+            };
+            if (input.expected_revision !== desktopPreferences.revision) {
+              throw new Error("PREFERENCES_REVISION_CONFLICT");
+            }
+            desktopPreferences = {
+              ...input.preferences,
+              revision: desktopPreferences.revision + 1,
+            };
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: "desktop.preferences.update",
+              params: input as unknown as Record<string, unknown>,
+            });
+            return desktopPreferences;
+          }
+          if (command === "open_settings_window") {
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: "desktop.settings.open",
+              params: {},
+            });
+            return null;
+          }
           if (command === "select_project_folder") {
             return "C:\\Projects\\fixture";
           }
-          if (command !== "core_rpc") {
+          if (command !== "core_rpc" && command !== "settings_rpc") {
             throw new Error(`Unexpected Tauri command: ${command}`);
           }
           const request = args.request as {

@@ -10,6 +10,7 @@ import {
   PinOff,
   Plus,
   Search,
+  Settings,
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -147,6 +148,13 @@ export function HistorySidebar({ model, onCreateProject }: HistorySidebarProps) 
           )}
         </HistoryGroup>
       </div>
+
+      <footer className="history-footer">
+        <button type="button" aria-label="Open settings" title="Settings" onClick={() => void model.openSettings()}>
+          <Settings size={16} />
+          <span>Settings</span>
+        </button>
+      </footer>
 
       {menu !== null ? (
         <HistoryMenu

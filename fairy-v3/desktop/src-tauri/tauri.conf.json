@@ -40,6 +40,17 @@
         "shadow": false
       },
       {
+        "label": "settings",
+        "title": "Fairy Settings",
+        "url": "index.html?surface=settings",
+        "width": 980,
+        "height": 720,
+        "minWidth": 760,
+        "minHeight": 560,
+        "resizable": true,
+        "visible": false
+      },
+      {
         "label": "guide",
         "title": "Fairy Guide",
         "url": "index.html?surface=guide",

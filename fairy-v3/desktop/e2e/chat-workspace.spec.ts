@@ -50,12 +50,9 @@ for (const viewport of [
 }
 
 test("tool protocol is visible only in developer mode", async ({ page }) => {
-  await page.goto("/");
+  await enableDeveloperMode(page);
   await openScratchChat(page);
 
-  await expect(page.locator("body")).not.toContainText("fixture provider payload");
-  await page.getByRole("button", { name: "Provider settings" }).click();
-  await page.getByRole("checkbox", { name: "Developer mode" }).check();
   await expect(page.getByText(/fixture provider payload/)).toBeVisible();
 });
 
@@ -92,17 +89,16 @@ test("reduced motion disables repeated chat activity animation", async ({ page }
   expect(animation.iterations === "1" || animation.duration === "0s").toBe(true);
 });
 
-test("provider settings stay inside the narrow workspace and expose no secret", async ({
+test("model settings stay inside the narrow settings window and expose no secret", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 640, height: 700 });
-  await page.goto("/");
-  await openScratchChat(page);
-  await page.getByRole("button", { name: "Provider settings" }).click();
+  await page.setViewportSize({ width: 760, height: 700 });
+  await page.goto("/?surface=settings");
+  await page.getByRole("button", { name: /Models/ }).click();
 
-  const panel = page.getByLabel("Provider settings panel");
+  const panel = page.locator(".settings-category");
   await expect(panel).toBeVisible();
-  await expect(panel).toContainText("Credential configured");
+  await expect(panel).toContainText("Connected");
   await expect(page.locator("body")).not.toContainText("sk-or-v1-");
   const bounds = await panel.evaluate((element) => {
     const rectangle = element.getBoundingClientRect();
@@ -162,4 +158,11 @@ async function openScratchChat(page: import("@playwright/test").Page) {
     .getByLabel("History navigation")
     .getByRole("button", { name: "Scratch chat", exact: true })
     .click();
+}
+
+async function enableDeveloperMode(page: import("@playwright/test").Page) {
+  await page.goto("/?surface=settings");
+  await page.getByRole("button", { name: /Advanced/ }).click();
+  await page.getByRole("checkbox", { name: "Developer mode" }).check();
+  await page.goto("/");
 }

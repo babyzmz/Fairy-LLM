@@ -61,13 +61,23 @@ describe("WorkspaceShell", () => {
     const model = workspaceModel();
     render(<WorkspaceShell model={model} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Manage projects" }));
+    fireEvent.click(screen.getByRole("button", { name: "New project" }));
     fireEvent.click(screen.getByRole("button", { name: "Choose project folder" }));
 
     await waitFor(() =>
       expect(screen.getByLabelText("Folder path")).toHaveValue("C:\\Projects\\selected"),
     );
     expect(model.selectProjectFolder).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the sidebar gear only to open the independent settings window", () => {
+    const model = workspaceModel();
+    render(<WorkspaceShell model={model} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    expect(model.openSettings).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Execution controls" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Provider settings" })).not.toBeInTheDocument();
   });
 
   it("opens chat actions from a right click and pins through revisioned Core actions", () => {
@@ -202,5 +212,6 @@ function workspaceModel(): WorkspaceModel {
     acceptVersion: vi.fn(async () => undefined),
     discardVersion: vi.fn(async () => undefined),
     retryWorkspace: vi.fn(async () => undefined),
+    openSettings: vi.fn(async () => undefined),
   };
 }

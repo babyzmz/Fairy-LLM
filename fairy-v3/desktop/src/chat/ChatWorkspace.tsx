@@ -10,7 +10,6 @@ import type {
   ProviderProfile,
   SlashCommandMetadata,
 } from "../core/client";
-import { ProviderSettings } from "../settings/ProviderSettings";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
@@ -33,14 +32,8 @@ export interface ChatWorkspaceProps {
   isActing: boolean;
   offline: boolean;
   developerMode: boolean;
-  openRouterConfigured?: boolean;
-  openRouterModelId?: string | null;
   error: string | null;
   slashCommands: SlashCommandMetadata[];
-  onProfileChange(profileId: string): void;
-  onDeveloperModeChange(enabled: boolean): void;
-  onConfigureOpenRouter?(apiKey: string, modelId: string): Promise<void>;
-  onDeleteOpenRouter?(): Promise<void>;
   onNewConversation(): Promise<void>;
   onSwitchProject(): void;
   onPermissionChange(
@@ -159,19 +152,6 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           >
             {statusLabel}
           </span>
-          <ProviderSettings
-            providers={props.providers}
-            health={props.providerHealth}
-            selectedProfileId={props.selectedProfileId}
-            developerMode={props.developerMode}
-            openRouterConfigured={props.openRouterConfigured}
-            openRouterModelId={props.openRouterModelId}
-            busy={props.isActing}
-            onProfileChange={props.onProfileChange}
-            onDeveloperModeChange={props.onDeveloperModeChange}
-            onConfigureOpenRouter={props.onConfigureOpenRouter}
-            onDeleteOpenRouter={props.onDeleteOpenRouter}
-          />
           <button
             className="icon-button"
             type="button"

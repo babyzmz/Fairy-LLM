@@ -45,6 +45,7 @@ export type WorkspaceMode = "project" | "chat";
 export type PermissionProfile = "observe" | "standard" | "autonomous";
 
 export interface WorkspaceClient extends AssistantTurnClient {
+  desktop: Pick<CoreClient["desktop"], "openSettings">;
   health: CoreClient["health"];
   projects: Pick<CoreClient["projects"], "list" | "create" | "import" | "selectFolder">;
   conversations: Pick<
@@ -184,6 +185,7 @@ export interface WorkspaceModel {
   acceptVersion(): Promise<void>;
   discardVersion(): Promise<void>;
   retryWorkspace(): Promise<void>;
+  openSettings(): Promise<void>;
 }
 
 const workspaceKey = ["workspace"] as const;
@@ -1071,6 +1073,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       setActionErrorCode(null);
       await queryClient.resetQueries({ queryKey: workspaceKey });
     },
+    openSettings: () => client.desktop.openSettings(),
   };
 }
 

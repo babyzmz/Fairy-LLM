@@ -7,8 +7,8 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("sandbox health disables only capabilities that require it", async ({ page }) => {
-  await page.goto("/?sandboxUnavailable=1");
-  await page.getByRole("button", { name: "Execution controls" }).click();
+  await page.goto("/?surface=settings&sandboxUnavailable=1");
+  await page.getByRole("button", { name: /Execution permissions/ }).click();
 
   await expect(page.getByText("Sandbox unavailable", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "run.sandboxed" })).toBeDisabled();
@@ -16,16 +16,16 @@ test("sandbox health disables only capabilities that require it", async ({ page 
 });
 
 test("permission conflicts reload the latest Core revision", async ({ page }) => {
-  await page.goto("/?permissionConflict=1");
-  await page.getByRole("button", { name: "Execution controls" }).click();
-  await page.getByText("Autonomous", { exact: true }).click();
+  await page.goto("/?surface=settings&permissionConflict=1");
+  await page.getByRole("button", { name: /Execution permissions/ }).click();
+  await page.getByRole("radio", { name: "Autonomous" }).click();
 
   await expect(
     page.getByText(
-      "Permissions changed on another device. Latest settings loaded; review and retry.",
+      "Settings changed on another device. Latest values loaded; review and retry.",
     ),
   ).toBeVisible();
-  await expect(page.getByLabel("Workspace status")).toContainText("observe");
+  await expect(page.getByRole("radio", { name: "Observe" })).toBeChecked();
 
   const updates = await fixtureCalls(page, "permissions.update");
   expect(updates).toHaveLength(1);

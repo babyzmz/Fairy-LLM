@@ -295,8 +295,6 @@ function workspaceProps(
         available: true,
       },
     ],
-    onProfileChange: vi.fn(),
-    onDeveloperModeChange: vi.fn(),
     onNewConversation: vi.fn(async () => undefined),
     onSwitchProject: vi.fn(),
     onPermissionChange: vi.fn(async () => undefined),

@@ -39,7 +39,7 @@ test("release shell and durable event delivery stay inside performance budgets",
   expect(p95).toBeLessThanOrEqual(100);
 });
 
-test("release workspace exposes project, chat, preview, provider, and developer flows", async ({
+test("release workspace exposes project, chat, preview, settings, and developer flows", async ({
   page,
 }) => {
   await page.goto("/");
@@ -47,17 +47,19 @@ test("release workspace exposes project, chat, preview, provider, and developer 
   await expect(page.getByLabel("Workspace status")).toContainText("Core ready");
   await expect(page.getByLabel("Workspace status")).toContainText("LOCAL ONLY");
   await expect(page.getByTitle("Task preview")).toBeVisible();
-  await page.getByRole("button", { name: "Manage projects" }).click();
+  await page.getByRole("button", { name: "New project" }).click();
   await expect(page.getByRole("complementary", { name: "Project manager" })).toBeVisible();
   await page.getByRole("button", { name: "Choose project folder" }).click();
   await expect(page.getByLabel("Folder path")).toHaveValue("C:\\Projects\\fixture");
   await page.getByRole("button", { name: "Close project manager" }).click();
-  await page.getByRole("button", { name: "Knowledge" }).click();
-  await expect(page.getByLabel("Knowledge panel")).toContainText("fixture-notes.md");
-  await page.getByRole("button", { name: "Close knowledge" }).click();
-  await page.getByRole("button", { name: "Provider settings" }).click();
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await page.goto("/?surface=settings");
+  await page.getByRole("button", { name: /Advanced/ }).click();
   await page.getByRole("checkbox", { name: "Developer mode" }).check();
-  await page.getByRole("button", { name: "Close provider settings" }).click();
+  await page.getByRole("button", { name: /Models/ }).click();
+  await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("sk-or-v1-");
+  await page.goto("/");
   await expect(page.getByLabel("Developer details")).toBeVisible();
 
   await page
@@ -65,11 +67,7 @@ test("release workspace exposes project, chat, preview, provider, and developer 
     .getByRole("button", { name: "Scratch chat", exact: true })
     .click();
   await expect(page.getByText("Scratch chat is durable")).toBeVisible();
-  await page.getByRole("button", { name: "Provider settings" }).click();
-  await expect(page.getByLabel("Provider settings panel")).toContainText(
-    "Credential configured",
-  );
-  await expect(page.locator("body")).not.toContainText("sk-or-v1-");
+  await expect(page.getByRole("button", { name: "Open settings" })).toBeVisible();
 });
 
 test("permission changes persist through Core without client sandbox authority", async ({

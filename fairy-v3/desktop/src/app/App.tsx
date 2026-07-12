@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { PresenceBridge } from "../presence/PresenceBridge";
 import { VoiceController } from "../voice/VoiceController";
+import { DesktopPreferencesBridge } from "../settings/DesktopPreferencesBridge";
 
 import { WorkspaceShell } from "./WorkspaceShell";
 import { type WorkspaceClient, useWorkspaceModel } from "./workspaceModel";
@@ -25,6 +26,7 @@ function Workspace({ client }: AppProps) {
       : model.selectedConversation?.id ?? null;
   return (
     <>
+      <DesktopPreferencesBridge />
       <PresenceBridge events={model.presenceEvents} />
       <VoiceController
         client={client}

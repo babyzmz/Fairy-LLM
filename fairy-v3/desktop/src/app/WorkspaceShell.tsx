@@ -14,10 +14,6 @@ import { useState } from "react";
 
 import { ChatWorkspace } from "../chat/ChatWorkspace";
 import { Composer } from "../chat/Composer";
-import { ProviderSettings } from "../settings/ProviderSettings";
-import { ExecutionControls } from "../settings/ExecutionControls";
-import { ExtensionSettings } from "../settings/ExtensionSettings";
-import { KnowledgeSettings } from "../settings/KnowledgeSettings";
 import { HistorySidebar } from "./HistorySidebar";
 import { PreviewPanel } from "./PreviewPanel";
 import { TaskTimeline } from "./TaskTimeline";
@@ -45,117 +41,32 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
 
       <div className="workspace-body">
         <ContextBar model={model} />
-        <div className="mode-bar">
-          <span className="mode-label">{model.mode === "chat" ? "Chat" : "Project"}</span>
-          <div className="mode-controls">
-            {model.mode === "project" ? (
-              <div className="project-control">
-                <button
-                  className={`icon-button ${projectManagerOpen ? "active" : ""}`}
-                  type="button"
-                  aria-label="Manage projects"
-                  title="Manage projects"
-                  aria-expanded={projectManagerOpen}
-                  onClick={() => setProjectManagerOpen((current) => !current)}
-                >
-                  <FolderPlus size={16} />
-                </button>
-                {projectManagerOpen ? (
-                  <aside className="project-manager" aria-label="Project manager">
-                    <header>
-                      <div>
-                        <span className="eyebrow">Workspace</span>
-                        <h2>Projects</h2>
-                      </div>
-                      <button
-                        className="icon-button"
-                        type="button"
-                        aria-label="Close project manager"
-                        title="Close project manager"
-                        onClick={() => setProjectManagerOpen(false)}
-                      >
-                        <X size={16} />
-                      </button>
-                    </header>
-                    <ProjectSetup
-                      projectName={projectName}
-                      importPath={importPath}
-                      isActing={model.isActing}
-                      onProjectName={setProjectName}
-                      onImportPath={setImportPath}
-                      onSelectFolder={async () => {
-                        const selected = await model.selectProjectFolder();
-                        if (selected !== null) setImportPath(selected);
-                      }}
-                      onCreate={async () => {
-                        const name = projectName.trim();
-                        if (!name) return;
-                        await model.createProject(name);
-                        setProjectName("");
-                        setProjectManagerOpen(false);
-                      }}
-                      onImport={async () => {
-                        const path = importPath.trim();
-                        const name = projectName.trim() || folderName(path);
-                        if (!path || !name) return;
-                        await model.importProject(name, path);
-                        setProjectName("");
-                        setImportPath("");
-                        setProjectManagerOpen(false);
-                      }}
-                    />
-                  </aside>
-                ) : null}
-              </div>
-            ) : null}
-            {model.mode === "project" ? (
-              <ProviderSettings
-                providers={model.providers}
-                health={model.providerHealth}
-                selectedProfileId={model.selectedProfileId}
-                developerMode={model.developerMode}
-                openRouterConfigured={model.openRouterStatus?.configured}
-                openRouterModelId={model.openRouterStatus?.model_id}
-                busy={model.isActing}
-                onProfileChange={model.selectProfile}
-                onDeveloperModeChange={model.setDeveloperMode}
-                onConfigureOpenRouter={model.configureOpenRouter}
-                onDeleteOpenRouter={model.deleteOpenRouter}
+        {projectManagerOpen ? (
+          <div className="workspace-project-manager">
+            <aside className="project-manager" aria-label="Project manager">
+              <header>
+                <div><span className="eyebrow">Workspace</span><h2>Projects</h2></div>
+                <button className="icon-button" type="button" aria-label="Close project manager" title="Close project manager" onClick={() => setProjectManagerOpen(false)}><X size={16} /></button>
+              </header>
+              <ProjectSetup
+                projectName={projectName}
+                importPath={importPath}
+                isActing={model.isActing}
+                onProjectName={setProjectName}
+                onImportPath={setImportPath}
+                onSelectFolder={async () => { const selected = await model.selectProjectFolder(); if (selected !== null) setImportPath(selected); }}
+                onCreate={async () => { const name = projectName.trim(); if (!name) return; await model.createProject(name); setProjectName(""); setProjectManagerOpen(false); }}
+                onImport={async () => { const path = importPath.trim(); const name = projectName.trim() || folderName(path); if (!path || !name) return; await model.importProject(name, path); setProjectName(""); setImportPath(""); setProjectManagerOpen(false); }}
               />
-            ) : null}
-            <ExtensionSettings
-              skills={model.skills}
-              servers={model.mcpServers}
-              disabled={model.state === "offline" || model.isActing}
-              discoveryAvailable={model.selectedTask !== null || model.chatTurn !== null}
-              onConfigure={model.configureMcpServer}
-              onDiscover={model.discoverMcpServer}
-              onAccept={model.acceptMcpServer}
-              onEnabledChange={model.setMcpServerEnabled}
-              onDelete={model.deleteMcpServer}
-            />
-            <KnowledgeSettings
-              available={model.selectedTask !== null || model.chatTurn !== null}
-              disabled={model.state === "offline" || model.isActing}
-              onListDocuments={model.listDocuments}
-              onSearchDocuments={model.searchDocuments}
-              onDeleteDocument={model.deleteDocument}
-              onSearchMemory={model.searchMemory}
-              onForgetMemory={model.forgetMemory}
-            />
-            <ExecutionControls
-              settings={model.permissionSettings}
-              manifest={model.capabilities}
-              disabled={model.state === "offline" || model.isActing}
-              onProfileChange={model.setPermissionProfile}
-              onCapabilityChange={model.setCapabilityEnabled}
-            />
+            </aside>
           </div>
-        </div>
-
-        {model.actionError || model.errorMessage || model.projectError ? (
-          <RecoveryNotice model={model} />
         ) : null}
+
+        <div className="workspace-notice-slot">
+          {model.actionError || model.errorMessage || model.projectError ? (
+            <RecoveryNotice model={model} />
+          ) : null}
+        </div>
 
         {model.state === "loading" || model.state === "offline" ? (
           <EmptyWorkspace
@@ -186,14 +97,8 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             isActing={model.isActing}
             offline={false}
             developerMode={model.developerMode}
-            openRouterConfigured={model.openRouterStatus?.configured ?? false}
-            openRouterModelId={model.openRouterStatus?.model_id ?? null}
             error={model.chatError}
             slashCommands={model.capabilities?.slash_commands ?? []}
-            onProfileChange={model.selectProfile}
-            onDeveloperModeChange={model.setDeveloperMode}
-            onConfigureOpenRouter={model.configureOpenRouter}
-            onDeleteOpenRouter={model.deleteOpenRouter}
             onNewConversation={model.createChatConversation}
             onSwitchProject={() => model.setMode("project")}
             onPermissionChange={model.setPermissionProfile}

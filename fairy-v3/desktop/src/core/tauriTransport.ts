@@ -74,6 +74,10 @@ export class TauriCoreTransport implements CoreTransport {
     return this.invoke("select_project_folder");
   }
 
+  openSettingsWindow(): Promise<void> {
+    return this.invoke("open_settings_window");
+  }
+
   async call<M extends CoreMethodName>(
     method: M,
     params: CoreMethodMap[M]["params"],

@@ -15,6 +15,19 @@
   box-shadow: 0 18px 44px rgb(0 0 0 / 38%);
 }
 
+.workspace-project-manager {
+  position: absolute;
+  z-index: 30;
+  top: 46px;
+  right: 12px;
+}
+
+.workspace-project-manager .project-manager {
+  position: relative;
+  top: auto;
+  right: auto;
+}
+
 .project-manager header {
   display: flex;
   align-items: center;
