@@ -15,7 +15,7 @@ for (const viewport of [
   }, testInfo) => {
     await page.setViewportSize(viewport);
     await page.goto("/");
-    await page.getByRole("tab", { name: "Chat" }).click();
+    await openScratchChat(page);
 
     await expect(page.getByRole("heading", { name: "Chat" })).toBeVisible();
     await expect(page.getByText("Scratch chat is durable")).toBeVisible();
@@ -51,16 +51,17 @@ for (const viewport of [
 
 test("tool protocol is visible only in developer mode", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("tab", { name: "Chat" }).click();
+  await openScratchChat(page);
 
   await expect(page.locator("body")).not.toContainText("fixture provider payload");
-  await page.getByRole("button", { name: "Developer mode" }).click();
+  await page.getByRole("button", { name: "Provider settings" }).click();
+  await page.getByRole("checkbox", { name: "Developer mode" }).check();
   await expect(page.getByText(/fixture provider payload/)).toBeVisible();
 });
 
 test("a user message appears before Core task creation returns", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("tab", { name: "Chat" }).click();
+  await openScratchChat(page);
   const composer = page.getByLabel("Message Fairy");
   await composer.fill("Visible before Core confirms");
   await page.getByRole("button", { name: "Send message" }).click();
@@ -79,9 +80,9 @@ test("reduced motion disables repeated chat activity animation", async ({ page }
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 640, height: 700 });
   await page.goto("/");
-  await page.getByRole("tab", { name: "Chat" }).click();
+  await openScratchChat(page);
 
-  const animation = await page.locator(".brand-button svg").evaluate((element) => {
+  const animation = await page.locator(".history-mark").evaluate((element) => {
     const style = getComputedStyle(element);
     return {
       duration: style.animationDuration,
@@ -96,7 +97,7 @@ test("provider settings stay inside the narrow workspace and expose no secret", 
 }) => {
   await page.setViewportSize({ width: 640, height: 700 });
   await page.goto("/");
-  await page.getByRole("tab", { name: "Chat" }).click();
+  await openScratchChat(page);
   await page.getByRole("button", { name: "Provider settings" }).click();
 
   const panel = page.getByLabel("Provider settings panel");
@@ -123,7 +124,7 @@ test("provider settings stay inside the narrow workspace and expose no secret", 
 test("approved assistant tools resume the durable turn exactly once", async ({ page }) => {
   await page.setViewportSize({ width: 880, height: 680 });
   await page.goto("/");
-  await page.getByRole("tab", { name: "Chat" }).click();
+  await openScratchChat(page);
 
   const composer = page.getByLabel("Message Fairy");
   await composer.fill("Request a governed notification");
@@ -155,3 +156,10 @@ test("approved assistant tools resume the durable turn exactly once", async ({ p
   });
   expect(calls.filter((call) => call.method === "assistant.turns.start")).toHaveLength(2);
 });
+
+async function openScratchChat(page: import("@playwright/test").Page) {
+  await page
+    .getByLabel("History navigation")
+    .getByRole("button", { name: "Scratch chat", exact: true })
+    .click();
+}

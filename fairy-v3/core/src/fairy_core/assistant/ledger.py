@@ -7,6 +7,7 @@ from uuid import UUID
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
+    ImportedMessage,
     Message,
     MessageRole,
     MessageVisibility,
@@ -166,11 +167,11 @@ class AssistantLedgerApplication:
         conversation_id: UUID,
         limit: int,
         cursor: str | None,
-    ) -> StatePage[Message]:
+    ) -> StatePage[Message | ImportedMessage]:
         with self._unit_of_work_factory() as unit_of_work:
             if unit_of_work.state.get_conversation(conversation_id) is None:
                 raise KeyError(f"conversation not found: {conversation_id}")
-            return unit_of_work.assistant.list_messages(
+            return unit_of_work.assistant.list_transcript(
                 conversation_id=conversation_id,
                 limit=limit,
                 cursor=cursor,

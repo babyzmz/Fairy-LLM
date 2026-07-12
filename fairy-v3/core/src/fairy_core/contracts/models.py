@@ -379,6 +379,10 @@ class ConversationModel(ContractModel):
     active_draft_version_id: UUID | None
     active_task_id: UUID | None
     active_preview_id: UUID | None
+    title: str
+    pinned_at: datetime | None
+    deleted_at: datetime | None
+    revision: int = Field(ge=0)
     created_at: datetime
     updated_at: datetime
 
@@ -395,6 +399,9 @@ class TaskModel(ContractModel):
     memory_snapshot_id: UUID | None
     memory_snapshot_hash: str | None = Field(pattern=r"^[0-9a-f]{64}$")
     status: TaskStatus
+    display_title: str
+    pinned_at: datetime | None
+    metadata_revision: int = Field(ge=0)
     created_at: datetime
     updated_at: datetime
 
@@ -625,11 +632,6 @@ class MessageModel(ContractModel):
     visibility: PublicMessageVisibilityModel
     content: str = Field(min_length=1, max_length=1_000_000)
     created_at: datetime
-
-
-class MessagePageModel(ContractModel):
-    items: tuple[MessageModel, ...]
-    next_cursor: str | None
 
 
 class AssistantTurnModel(ContractModel):

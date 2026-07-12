@@ -252,6 +252,9 @@ def test_memory_contracts_reject_inconsistent_bindings_and_content_hashes(tmp_pa
         memory_snapshot_id=None,
         memory_snapshot_hash=None,
         status="created",
+        display_title="Answer",
+        pinned_at=None,
+        metadata_revision=0,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
     )

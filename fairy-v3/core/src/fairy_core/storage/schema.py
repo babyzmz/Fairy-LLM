@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
     Column,
-    DateTime,
     ForeignKeyConstraint,
     Index,
     Integer,
@@ -20,35 +17,14 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.engine import Dialect
-from sqlalchemy.types import TypeDecorator
 
 from fairy_core.persistence.tenant import TENANT_ID_LENGTH
+from fairy_core.storage.history_schema import build_history_tables
+from fairy_core.storage.types import UTCDateTime
 
 ID_LENGTH = 36
 
 state_metadata = MetaData()
-
-
-class UTCDateTime(TypeDecorator[datetime]):
-    impl = DateTime
-    cache_ok = True
-
-    def load_dialect_impl(self, dialect: Dialect):
-        return dialect.type_descriptor(DateTime(timezone=dialect.name != "sqlite"))
-
-    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            raise ValueError("datetime values must include a timezone")
-        normalized = value.astimezone(UTC)
-        return normalized.replace(tzinfo=None) if dialect.name == "sqlite" else normalized
-
-    def process_result_value(self, value: datetime | None, _dialect: Dialect) -> datetime | None:
-        if value is None:
-            return None
-        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _tenant_id() -> Column[str]:
@@ -189,6 +165,10 @@ conversations = Table(
     Column("active_draft_version_id", String(ID_LENGTH)),
     Column("active_task_id", String(ID_LENGTH)),
     Column("active_preview_id", String(ID_LENGTH)),
+    Column("title", String(200), nullable=False, server_default="New conversation"),
+    Column("pinned_at", UTCDateTime()),
+    Column("deleted_at", UTCDateTime()),
+    Column("revision", BigInteger, nullable=False, server_default="0"),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
     PrimaryKeyConstraint("tenant_id", "id", name="pk_core_conversations"),
@@ -241,6 +221,9 @@ tasks = Table(
     Column("memory_snapshot_id", String(ID_LENGTH)),
     Column("memory_snapshot_hash", String(64)),
     Column("status", String(32), nullable=False),
+    Column("display_title", String(200), nullable=False, server_default="Task"),
+    Column("pinned_at", UTCDateTime()),
+    Column("metadata_revision", BigInteger, nullable=False, server_default="0"),
     Column("idempotency_key", String(512), nullable=False),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
@@ -492,6 +475,17 @@ assistant_messages = Table(
         ],
         name="fk_core_assistant_messages_turn_scope",
     ),
+)
+
+assistant_imported_messages, conversation_moves = build_history_tables(
+    metadata=state_metadata,
+    tenant_id_column=_tenant_id,
+    id_column=_id,
+    conversations=conversations,
+    assistant_messages=assistant_messages,
+    projects=projects,
+    utc_datetime=UTCDateTime,
+    id_length=ID_LENGTH,
 )
 
 assistant_tool_invocations = Table(

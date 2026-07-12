@@ -3,15 +3,19 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceShell } from "./WorkspaceShell";
+import type { Conversation } from "../core/client";
 import type { WorkspaceModel } from "./workspaceModel";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.localStorage.clear();
+});
 
 describe("WorkspaceShell", () => {
   it("keeps context, task timeline, preview, and composer visible", () => {
     render(<WorkspaceShell model={workspaceModel()} />);
 
-    expect(screen.getByRole("banner")).toHaveTextContent("FAIRY");
+    expect(screen.getByLabelText("History navigation")).toHaveTextContent("Fairy");
     expect(screen.getByRole("banner")).toHaveTextContent("Core ready");
     expect(screen.getByRole("heading", { name: "Task Timeline" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Preview" })).toBeVisible();
@@ -42,15 +46,15 @@ describe("WorkspaceShell", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Active Version was not overwritten");
   });
 
-  it("routes the segmented mode controls through the workspace model", () => {
+  it("uses fixed expandable history groups instead of segmented mode controls", () => {
     const model = workspaceModel();
     render(<WorkspaceShell model={model} />);
 
-    fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
-    fireEvent.click(screen.getByRole("button", { name: "Conversations" }));
+    expect(screen.queryByRole("tab", { name: "Chat" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Chats" }));
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
 
-    expect(model.setMode).toHaveBeenNthCalledWith(1, "chat");
-    expect(model.setMode).toHaveBeenNthCalledWith(2, "chat");
+    expect(model.createChatConversation).toHaveBeenCalledOnce();
   });
 
   it("keeps project creation available and fills the native folder selection", async () => {
@@ -64,6 +68,35 @@ describe("WorkspaceShell", () => {
       expect(screen.getByLabelText("Folder path")).toHaveValue("C:\\Projects\\selected"),
     );
     expect(model.selectProjectFolder).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens chat actions from a right click and pins through revisioned Core actions", () => {
+    const chat: Conversation = {
+      id: "019f566f-f8b4-7000-8000-000000000001",
+      project_id: null,
+      workspace_type: "chat_scratch",
+      base_version_id: null,
+      active_draft_version_id: null,
+      active_task_id: null,
+      active_preview_id: null,
+      title: "Research notes",
+      pinned_at: null,
+      deleted_at: null,
+      revision: 3,
+      created_at: "2026-07-12T00:00:00Z",
+      updated_at: "2026-07-12T00:00:00Z",
+    };
+    const model = { ...workspaceModel(), chatConversations: [chat] };
+    render(<WorkspaceShell model={model} />);
+
+    fireEvent.contextMenu(
+      screen.getByTitle("Research notes"),
+    );
+    expect(screen.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Move to project" })).toBeVisible();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Pin" }));
+
+    expect(model.setConversationPinned).toHaveBeenCalledWith(chat, true);
   });
 });
 
@@ -86,8 +119,10 @@ function workspaceModel(): WorkspaceModel {
     developerMode: false,
     projects: [],
     conversations: [],
+    projectConversations: [],
     chatConversations: [],
     tasks: [],
+    allTasks: [],
     versions: [],
     approvals: [],
     chatApprovals: [],
@@ -142,6 +177,13 @@ function workspaceModel(): WorkspaceModel {
     importProject: vi.fn(async () => undefined),
     selectProjectFolder: vi.fn(async () => "C:\\Projects\\selected"),
     createChatConversation: vi.fn(async () => undefined),
+    renameConversation: vi.fn(async () => undefined),
+    setConversationPinned: vi.fn(async () => undefined),
+    deleteConversation: vi.fn(async () => undefined),
+    moveConversationToProject: vi.fn(async () => undefined),
+    renameTask: vi.fn(async () => undefined),
+    setTaskPinned: vi.fn(async () => undefined),
+    archiveTask: vi.fn(async () => undefined),
     createTask: vi.fn(async () => undefined),
     sendChatMessage: vi.fn(async () => undefined),
     sendProjectMessage: vi.fn(async () => undefined),

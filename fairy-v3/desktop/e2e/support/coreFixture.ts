@@ -134,6 +134,10 @@ async function installCoreFixture(page: Page) {
         active_draft_version_id: id.version,
         active_task_id: id.task,
         active_preview_id: id.preview,
+        title: "Project conversation",
+        pinned_at: null,
+        deleted_at: null,
+        revision: 0,
         created_at: timestamp,
         updated_at: timestamp,
       };
@@ -149,6 +153,9 @@ async function installCoreFixture(page: Page) {
         memory_snapshot_id: null,
         memory_snapshot_hash: null,
         status: initialTaskStatus,
+        display_title: "Tighten the project overview",
+        pinned_at: null,
+        metadata_revision: 0,
         created_at: timestamp,
         updated_at: timestamp,
       };
@@ -160,6 +167,10 @@ async function installCoreFixture(page: Page) {
         active_draft_version_id: null,
         active_task_id: null,
         active_preview_id: null,
+        title: "Scratch chat",
+        pinned_at: null,
+        deleted_at: null,
+        revision: 0,
         created_at: timestamp,
         updated_at: timestamp,
       };
@@ -175,6 +186,9 @@ async function installCoreFixture(page: Page) {
         memory_snapshot_id: null,
         memory_snapshot_hash: null,
         status: "ready",
+        display_title: "Fixture chat request",
+        pinned_at: null,
+        metadata_revision: 0,
         created_at: timestamp,
         updated_at: timestamp,
       };

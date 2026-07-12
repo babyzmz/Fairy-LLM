@@ -6,7 +6,10 @@ import type {
   AssistantTurnRetryInput,
   ChangesetProposal,
   ConversationCreateInput,
+  ConversationDeleteInput,
   ConversationListInput,
+  ConversationMoveToProjectInput,
+  ConversationUpdateInput,
   CoreMethodMap,
   CoreMethodName,
   DocumentDeleteInput,
@@ -38,7 +41,9 @@ import type {
   ProviderHealthInput,
   SystemActionRequest,
   TaskCreateInput,
+  TaskArchiveInput,
   TaskListInput,
+  TaskMetadataUpdateInput,
   VersionAcceptInput,
   VersionListInput,
   VoiceSynthesizeInput,
@@ -105,13 +110,22 @@ export class CoreClient {
       this.transport.call("conversations.get", { conversation_id: conversationId }),
     list: (input: ConversationListInput = {}) =>
       this.transport.call("conversations.list", input),
+    update: (input: ConversationUpdateInput) =>
+      this.transport.call("conversations.update", input),
+    delete: (input: ConversationDeleteInput) =>
+      this.transport.call("conversations.delete", input),
+    moveToProject: (input: ConversationMoveToProjectInput) =>
+      this.transport.call("conversations.move_to_project", input),
   };
 
   readonly tasks = {
+    archive: (input: TaskArchiveInput) => this.transport.call("tasks.archive", input),
     create: (input: TaskCreateInput) => this.transport.call("tasks.create", input),
     get: (taskId: string) => this.transport.call("tasks.get", { task_id: taskId }),
     list: (input: TaskListInput = {}) => this.transport.call("tasks.list", input),
     review: (taskId: string) => this.transport.call("tasks.review", { task_id: taskId }),
+    updateMetadata: (input: TaskMetadataUpdateInput) =>
+      this.transport.call("tasks.update_metadata", input),
   };
 
   readonly changesets = {

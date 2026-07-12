@@ -157,6 +157,70 @@ class Message:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ImportedMessage:
+    id: UUID
+    conversation_id: UUID
+    task_id: UUID
+    turn_id: UUID | None
+    sequence: int
+    role: MessageRole
+    visibility: MessageVisibility
+    content: str
+    created_at: datetime
+    source_conversation_id: UUID
+    source_message_id: UUID
+    source_hash: str
+    imported_at: datetime = field(default_factory=_now)
+
+    @classmethod
+    def from_message(
+        cls,
+        *,
+        destination_conversation_id: UUID,
+        sequence: int,
+        source: Message,
+    ) -> ImportedMessage:
+        payload = {
+            "content": source.content,
+            "conversation_id": str(source.conversation_id),
+            "created_at": source.created_at.isoformat(),
+            "id": str(source.id),
+            "role": source.role.value,
+            "sequence": source.sequence,
+            "task_id": str(source.task_id),
+            "turn_id": str(source.turn_id) if source.turn_id else None,
+            "visibility": source.visibility.value,
+        }
+        source_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return cls(
+            id=new_id(),
+            conversation_id=destination_conversation_id,
+            task_id=source.task_id,
+            turn_id=source.turn_id,
+            sequence=sequence,
+            role=source.role,
+            visibility=source.visibility,
+            content=source.content,
+            created_at=source.created_at,
+            source_conversation_id=source.conversation_id,
+            source_message_id=source.id,
+            source_hash=source_hash,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationMove:
+    idempotency_key: str
+    source_conversation_id: UUID
+    destination_conversation_id: UUID
+    target_project_id: UUID
+    imported_count: int
+    created_at: datetime = field(default_factory=_now)
+
+
 @dataclass(slots=True)
 class AssistantTurn:
     id: UUID

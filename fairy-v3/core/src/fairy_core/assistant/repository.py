@@ -18,6 +18,8 @@ from sqlalchemy.engine import Connection, Engine, RowMapping
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
+    ConversationMove,
+    ImportedMessage,
     Message,
     MessageRole,
     MessageVisibility,
@@ -31,10 +33,12 @@ from fairy_core.persistence.session import SqlAlchemySession
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.storage.pagination import StatePage, validate_limit
 from fairy_core.storage.schema import (
+    assistant_imported_messages,
     assistant_message_sequences,
     assistant_messages,
     assistant_tool_invocations,
     assistant_turns,
+    conversation_moves,
 )
 
 _ACTIVE_TURN_STATUSES = (
@@ -139,6 +143,26 @@ class SqlAlchemyAssistantRepository:
         with self._session.write() as connection:
             connection.execute(insert(assistant_messages).values(**values))
 
+    def append_imported_message(self, message: ImportedMessage) -> None:
+        values = {
+            "tenant_id": self._tenant_id,
+            "id": str(message.id),
+            "conversation_id": str(message.conversation_id),
+            "task_id": str(message.task_id),
+            "turn_id": str(message.turn_id) if message.turn_id else None,
+            "sequence": message.sequence,
+            "role": message.role.value,
+            "visibility": message.visibility.value,
+            "content": message.content,
+            "created_at": message.created_at,
+            "source_conversation_id": str(message.source_conversation_id),
+            "source_message_id": str(message.source_message_id),
+            "source_hash": message.source_hash,
+            "imported_at": message.imported_at,
+        }
+        with self._session.write() as connection:
+            connection.execute(insert(assistant_imported_messages).values(**values))
+
     def get_message(self, message_id: UUID) -> Message | None:
         row = self._first(
             select(assistant_messages).where(
@@ -234,6 +258,113 @@ class SqlAlchemyAssistantRepository:
         return StatePage(
             items=tuple(self._message_from_row(row) for row in page_rows),
             next_cursor=next_cursor,
+        )
+
+    def list_transcript(
+        self,
+        *,
+        conversation_id: UUID,
+        limit: int,
+        cursor: str | None,
+        allowed_visibilities: frozenset[MessageVisibility] | None = None,
+    ) -> StatePage[Message | ImportedMessage]:
+        validate_limit(limit)
+        after_sequence = _decode_message_cursor(
+            cursor,
+            conversation_id=conversation_id,
+            allowed_visibilities=allowed_visibilities,
+        )
+        native = self._transcript_rows(
+            assistant_messages,
+            conversation_id=conversation_id,
+            after_sequence=after_sequence,
+            limit=limit,
+            allowed_visibilities=allowed_visibilities,
+        )
+        imported = self._transcript_rows(
+            assistant_imported_messages,
+            conversation_id=conversation_id,
+            after_sequence=after_sequence,
+            limit=limit,
+            allowed_visibilities=allowed_visibilities,
+        )
+        combined = sorted(
+            [*(self._message_from_row(row) for row in native),
+             *(self._imported_message_from_row(row) for row in imported)],
+            key=lambda item: (item.sequence, str(item.id)),
+        )
+        page_items = combined[:limit]
+        next_cursor = None
+        if len(combined) > limit:
+            next_cursor = _encode_message_cursor(
+                conversation_id=conversation_id,
+                sequence=page_items[-1].sequence,
+                allowed_visibilities=allowed_visibilities,
+            )
+        return StatePage(items=tuple(page_items), next_cursor=next_cursor)
+
+    def _transcript_rows(
+        self,
+        table: Table,
+        *,
+        conversation_id: UUID,
+        after_sequence: int,
+        limit: int,
+        allowed_visibilities: frozenset[MessageVisibility] | None,
+    ) -> list[RowMapping]:
+        predicates = [
+            table.c.tenant_id == self._tenant_id,
+            table.c.conversation_id == str(conversation_id),
+            table.c.sequence > after_sequence,
+        ]
+        if allowed_visibilities is not None:
+            if not allowed_visibilities:
+                return []
+            predicates.append(
+                table.c.visibility.in_(value.value for value in allowed_visibilities)
+            )
+        with self._session.read() as connection:
+            return list(
+                connection.execute(
+                    select(table)
+                    .where(*predicates)
+                    .order_by(table.c.sequence, table.c.id)
+                    .limit(limit + 1)
+                )
+                .mappings()
+                .all()
+            )
+
+    def save_conversation_move(self, move: ConversationMove) -> None:
+        with self._session.write() as connection:
+            connection.execute(
+                insert(conversation_moves).values(
+                    tenant_id=self._tenant_id,
+                    idempotency_key=move.idempotency_key,
+                    source_conversation_id=str(move.source_conversation_id),
+                    destination_conversation_id=str(move.destination_conversation_id),
+                    target_project_id=str(move.target_project_id),
+                    imported_count=move.imported_count,
+                    created_at=move.created_at,
+                )
+            )
+
+    def find_conversation_move(self, idempotency_key: str) -> ConversationMove | None:
+        row = self._first(
+            select(conversation_moves).where(
+                conversation_moves.c.tenant_id == self._tenant_id,
+                conversation_moves.c.idempotency_key == idempotency_key,
+            )
+        )
+        if row is None:
+            return None
+        return ConversationMove(
+            idempotency_key=row["idempotency_key"],
+            source_conversation_id=UUID(row["source_conversation_id"]),
+            destination_conversation_id=UUID(row["destination_conversation_id"]),
+            target_project_id=UUID(row["target_project_id"]),
+            imported_count=int(row["imported_count"]),
+            created_at=_datetime(row["created_at"]),
         )
 
     def save_tool_invocation(self, invocation: ToolInvocation) -> None:
@@ -529,6 +660,24 @@ class SqlAlchemyAssistantRepository:
             visibility=MessageVisibility(row["visibility"]),
             content=row["content"],
             created_at=_datetime(row["created_at"]),
+        )
+
+    @staticmethod
+    def _imported_message_from_row(row: Mapping[str, Any]) -> ImportedMessage:
+        return ImportedMessage(
+            id=UUID(row["id"]),
+            conversation_id=UUID(row["conversation_id"]),
+            task_id=UUID(row["task_id"]),
+            turn_id=UUID(row["turn_id"]) if row["turn_id"] else None,
+            sequence=int(row["sequence"]),
+            role=MessageRole(row["role"]),
+            visibility=MessageVisibility(row["visibility"]),
+            content=row["content"],
+            created_at=_datetime(row["created_at"]),
+            source_conversation_id=UUID(row["source_conversation_id"]),
+            source_message_id=UUID(row["source_message_id"]),
+            source_hash=row["source_hash"],
+            imported_at=_datetime(row["imported_at"]),
         )
 
     @staticmethod

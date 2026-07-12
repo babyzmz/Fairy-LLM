@@ -8,6 +8,12 @@ import pytest
 
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.errors import ApprovalRequiredError
+from fairy_core.assistant.models import (
+    ImportedMessage,
+    Message,
+    MessageRole,
+    MessageVisibility,
+)
 from fairy_core.commanding import CommandStatus, SqlAlchemyCommandLedger
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
@@ -17,7 +23,11 @@ from fairy_core.contracts.models import (
     FileMutation,
     TaskCreate,
 )
-from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
+from fairy_core.domain.errors import (
+    IdempotencyConflictError,
+    InvalidTransitionError,
+    VersionConflictError,
+)
 from fairy_core.domain.execution import ApprovalDecision, ChangesetStatus
 from fairy_core.domain.models import (
     OperationMode,
@@ -103,6 +113,103 @@ def test_project_task_creation_builds_isolated_version_and_scope(tmp_path: Path)
     assert task_context.task.memory_snapshot_hash is not None
     assert task_context.scope.memory_snapshot_id == task_context.task.memory_snapshot_id
     assert task_context.scope.memory_snapshot_hash == task_context.task.memory_snapshot_hash
+
+
+def test_scratch_conversation_moves_to_project_as_immutable_transcript(
+    tmp_path: Path,
+) -> None:
+    app, _ledger, factory = _build_application(
+        tmp_path,
+        FileSystemWorkspaceProvisioner(tmp_path / "managed"),
+    )
+    project = app.create_project(name="Atlas", residency=ProjectResidency.LOCAL_ONLY)
+    scratch = app.create_conversation(
+        project_id=None,
+        workspace_type=WorkspaceType.CHAT_SCRATCH,
+    )
+    scratch = app.update_conversation_metadata(
+        conversation_id=scratch.id,
+        title="Research notes",
+        pinned=True,
+        expected_revision=0,
+    )
+    task_context = app.create_task(
+        TaskCreate(
+            conversation_id=scratch.id,
+            user_request="Compare the options",
+            operation_mode=OperationMode.ANSWER,
+            execution_target=ExecutionTarget.LOCAL,
+            idempotency_key="scratch-task",
+        )
+    )
+    with factory() as unit_of_work:
+        task = unit_of_work.state.get_task(task_context.task.id)
+        assert task is not None
+        task.status = TaskStatus.FAILED
+        unit_of_work.state.save_task(task)
+        for role, content in (
+            (MessageRole.USER, "Compare the options"),
+            (MessageRole.ASSISTANT, "Option A is safer."),
+        ):
+            unit_of_work.assistant.append_message(
+                Message.create(
+                    conversation_id=scratch.id,
+                    task_id=task.id,
+                    turn_id=None,
+                    sequence=unit_of_work.assistant.next_message_sequence(scratch.id),
+                    role=role,
+                    visibility=MessageVisibility.USER,
+                    content=content,
+                )
+            )
+        unit_of_work.commit()
+
+    moved = app.move_conversation_to_project(
+        conversation_id=scratch.id,
+        target_project_id=project.project.id,
+        expected_revision=scratch.revision,
+        user_confirmed=True,
+        idempotency_key="move:research-notes",
+    )
+    replayed = app.move_conversation_to_project(
+        conversation_id=scratch.id,
+        target_project_id=project.project.id,
+        expected_revision=scratch.revision,
+        user_confirmed=True,
+        idempotency_key="move:research-notes",
+    )
+
+    assert moved.imported_count == 2
+    assert moved.source_conversation.deleted_at is not None
+    assert moved.destination_conversation.project_id == project.project.id
+    assert moved.destination_conversation.title == "Research notes"
+    assert replayed.destination_conversation.id == moved.destination_conversation.id
+    with factory() as unit_of_work:
+        transcript = unit_of_work.assistant.list_transcript(
+            conversation_id=moved.destination_conversation.id,
+            limit=100,
+            cursor=None,
+            allowed_visibilities=frozenset({MessageVisibility.USER}),
+        )
+        visible = unit_of_work.state.list_conversations(
+            project_id=None,
+            limit=100,
+            cursor=None,
+        )
+    assert [item.content for item in transcript.items] == [
+        "Compare the options",
+        "Option A is safer.",
+    ]
+    assert all(isinstance(item, ImportedMessage) for item in transcript.items)
+    assert all(len(item.source_hash) == 64 for item in transcript.items)
+    assert scratch.id not in {item.id for item in visible.items}
+    with pytest.raises(VersionConflictError):
+        app.update_conversation_metadata(
+            conversation_id=moved.destination_conversation.id,
+            title="Stale title",
+            pinned=None,
+            expected_revision=99,
+        )
 
 
 def test_task_create_is_idempotent_and_does_not_fork_twice(tmp_path: Path) -> None:

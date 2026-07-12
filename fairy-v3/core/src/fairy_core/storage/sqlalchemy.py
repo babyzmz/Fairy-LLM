@@ -55,6 +55,10 @@ def _datetime(value: datetime | str) -> datetime:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
+def _optional_datetime(value: datetime | str | None) -> datetime | None:
+    return _datetime(value) if value is not None else None
+
+
 class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
     """Tenant-scoped Core state persisted through a caller-owned SQLAlchemy engine."""
 
@@ -128,10 +132,39 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
                 "active_preview_id": (
                     str(conversation.active_preview_id) if conversation.active_preview_id else None
                 ),
+                "title": conversation.title,
+                "pinned_at": conversation.pinned_at,
+                "deleted_at": conversation.deleted_at,
+                "revision": conversation.revision,
                 "created_at": conversation.created_at,
                 "updated_at": conversation.updated_at,
             },
         )
+
+    def update_conversation_metadata(
+        self,
+        conversation: Conversation,
+        *,
+        expected_revision: int,
+    ) -> None:
+        with self._session.write() as connection:
+            result = connection.execute(
+                update(conversations)
+                .where(
+                    conversations.c.tenant_id == self._tenant_id,
+                    conversations.c.id == str(conversation.id),
+                    conversations.c.revision == expected_revision,
+                )
+                .values(
+                    title=conversation.title,
+                    pinned_at=conversation.pinned_at,
+                    deleted_at=conversation.deleted_at,
+                    revision=conversation.revision,
+                    updated_at=conversation.updated_at,
+                )
+            )
+        if result.rowcount != 1:
+            raise VersionConflictError("Conversation metadata changed concurrently")
 
     def get_conversation(self, conversation_id: UUID) -> Conversation | None:
         row = self._get_by_id(conversations, conversation_id)
@@ -190,11 +223,34 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
                 ),
                 "memory_snapshot_hash": task.memory_snapshot_hash,
                 "status": task.status.value,
+                "display_title": task.display_title,
+                "pinned_at": task.pinned_at,
+                "metadata_revision": task.metadata_revision,
                 "idempotency_key": idempotency_key,
                 "created_at": task.created_at,
                 "updated_at": task.updated_at,
             },
         )
+
+    def update_task_metadata(self, task: Task, *, expected_revision: int) -> None:
+        with self._session.write() as connection:
+            result = connection.execute(
+                update(tasks)
+                .where(
+                    tasks.c.tenant_id == self._tenant_id,
+                    tasks.c.id == str(task.id),
+                    tasks.c.metadata_revision == expected_revision,
+                )
+                .values(
+                    display_title=task.display_title,
+                    pinned_at=task.pinned_at,
+                    metadata_revision=task.metadata_revision,
+                    status=task.status.value,
+                    updated_at=task.updated_at,
+                )
+            )
+        if result.rowcount != 1:
+            raise VersionConflictError("Task metadata changed concurrently")
 
     def get_task(self, task_id: UUID) -> Task | None:
         row = self._get_by_id(tasks, task_id)
@@ -540,6 +596,10 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
             active_draft_version_id=_uuid(row["active_draft_version_id"]),
             active_task_id=_uuid(row["active_task_id"]),
             active_preview_id=_uuid(row["active_preview_id"]),
+            title=row["title"],
+            pinned_at=_optional_datetime(row["pinned_at"]),
+            deleted_at=_optional_datetime(row["deleted_at"]),
+            revision=int(row["revision"]),
             created_at=_datetime(row["created_at"]),
             updated_at=_datetime(row["updated_at"]),
         )
@@ -571,6 +631,9 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
             memory_snapshot_id=_uuid(row["memory_snapshot_id"]),
             memory_snapshot_hash=row["memory_snapshot_hash"],
             status=TaskStatus(row["status"]),
+            display_title=row["display_title"],
+            pinned_at=_optional_datetime(row["pinned_at"]),
+            metadata_revision=int(row["metadata_revision"]),
             created_at=_datetime(row["created_at"]),
             updated_at=_datetime(row["updated_at"]),
         )

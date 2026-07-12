@@ -20,8 +20,8 @@ test("minimum desktop window renders the durable workspace without overflow", as
     "allow-forms allow-scripts",
   );
   await expect(page.getByText("Developer diagnostic")).toHaveCount(0);
-  await expect(page.getByLabel("Workspace telemetry")).toContainText("standard");
-  await expect(page.getByLabel("Workspace telemetry")).toContainText("Core ready");
+  await expect(page.getByLabel("Workspace status")).toContainText("standard");
+  await expect(page.getByLabel("Workspace status")).toContainText("Core ready");
 
   const layout = await measureLayout(page);
   expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);

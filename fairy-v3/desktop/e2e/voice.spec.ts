@@ -6,7 +6,10 @@ test.beforeEach(async ({ page }) => {
   await installWorkspaceFixture(page);
   await page.setViewportSize({ width: 880, height: 680 });
   await page.goto("/");
-  await page.getByRole("tab", { name: "Chat" }).click();
+  await page
+    .getByLabel("History navigation")
+    .getByRole("button", { name: "Scratch chat", exact: true })
+    .click();
 });
 
 test("records audio through Core and inserts the transcript into the composer", async ({

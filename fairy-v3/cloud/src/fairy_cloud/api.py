@@ -61,7 +61,6 @@ from fairy_core.contracts.models import (
     MemorySnapshotModel,
     MemoryTombstoneModel,
     MessageListInput,
-    MessagePageModel,
     PendingChangesetModel,
     PreviewContextModel,
     PreviewModel,
@@ -95,6 +94,7 @@ from fairy_core.contracts.models import (
     VoiceTranscribeInput,
     VoiceTranscriptModel,
 )
+from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.domain.errors import DomainError, IdempotencyConflictError, VersionConflictError
 from fairy_core.memory.models import MemoryNamespace
 from fairy_core.system_actions.models import SystemActionExecution, SystemActionRequest
@@ -109,6 +109,7 @@ from starlette.types import Lifespan
 
 from fairy_cloud.auth import AuthenticationError, DenyAllAuthenticator
 from fairy_cloud.auth.models import Authenticator, RequestIdentity
+from fairy_cloud.history_routes import install_history_routes
 from fairy_cloud.mcp.routes import install_extension_routes
 from fairy_cloud.runtime.proxy import CloudPreviewProxy
 from fairy_cloud.storage.objects import (
@@ -1115,6 +1116,7 @@ def create_cloud_app(
             await asyncio.sleep(event_poll_seconds)
 
     install_extension_routes(protected, invoke)
+    install_history_routes(protected, invoke)
     operation_ids = {
         route.operation_id
         for route in (*app.routes, *protected.routes)

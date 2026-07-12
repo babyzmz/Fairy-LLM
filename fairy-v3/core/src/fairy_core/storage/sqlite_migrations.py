@@ -24,6 +24,7 @@ _SNAPSHOT_BINDING_REVISION = "20260711_task_snapshot_binding"
 _GENERIC_APPROVAL_REVISION = "20260711_generic_approval"
 _CHECKPOINT_EVIDENCE_REVISION = "20260712_checkpoint_evidence"
 _MCP_REQUEST_RESULTS_REVISION = "20260712_mcp_request_results"
+_HISTORY_METADATA_REVISION = "20260712_history_metadata"
 
 
 def _datetime(value: str | None) -> datetime | None:
@@ -186,6 +187,62 @@ def migrate_task_snapshot_binding(engine: Engine) -> None:
             ),
             {
                 "revision": _SNAPSHOT_BINDING_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_history_metadata(engine: Engine) -> None:
+    """Add revision-fenced Conversation and Task history metadata."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _HISTORY_METADATA_REVISION},
+        ).first():
+            return
+        inspector = inspect(connection)
+        tables = set(inspector.get_table_names())
+        if "core_conversations" in tables:
+            columns = {column["name"] for column in inspector.get_columns("core_conversations")}
+            additions = {
+                "title": "VARCHAR(200) NOT NULL DEFAULT 'New conversation'",
+                "pinned_at": "DATETIME",
+                "deleted_at": "DATETIME",
+                "revision": "BIGINT NOT NULL DEFAULT 0",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE core_conversations ADD COLUMN {name} {definition}"
+                    )
+        if "core_tasks" in tables:
+            columns = {column["name"] for column in inspector.get_columns("core_tasks")}
+            additions = {
+                "display_title": "VARCHAR(200) NOT NULL DEFAULT 'Task'",
+                "pinned_at": "DATETIME",
+                "metadata_revision": "BIGINT NOT NULL DEFAULT 0",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE core_tasks ADD COLUMN {name} {definition}"
+                    )
+            connection.exec_driver_sql(
+                "UPDATE core_tasks SET display_title = substr(user_request, 1, 200) "
+                "WHERE display_title = 'Task'"
+            )
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {
+                "revision": _HISTORY_METADATA_REVISION,
                 "applied_at": datetime.now(UTC).isoformat(),
             },
         )

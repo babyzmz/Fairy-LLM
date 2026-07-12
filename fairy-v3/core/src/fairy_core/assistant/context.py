@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from fairy_core.assistant.models import (
     AssistantTurn,
+    ImportedMessage,
     Message,
     MessageRole,
     MessageVisibility,
@@ -133,11 +134,11 @@ class AssistantContextBuilder:
         )
 
     @staticmethod
-    def _messages(repository, conversation_id) -> tuple[Message, ...]:
-        items: list[Message] = []
+    def _messages(repository, conversation_id) -> tuple[Message | ImportedMessage, ...]:
+        items: list[Message | ImportedMessage] = []
         cursor: str | None = None
         while True:
-            page = repository.list_messages(
+            page = repository.list_transcript(
                 conversation_id=conversation_id,
                 limit=100,
                 cursor=cursor,
@@ -184,7 +185,7 @@ class AssistantContextBuilder:
     @staticmethod
     def _bounded_history(
         system: ModelMessage,
-        history: tuple[Message, ...],
+        history: tuple[Message | ImportedMessage, ...],
         *,
         task_id,
         images: tuple[ModelImage, ...],

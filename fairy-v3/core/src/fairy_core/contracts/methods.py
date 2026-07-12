@@ -19,6 +19,14 @@ from fairy_core.contracts.extensions import (
     McpServerSetEnabledInput,
     SkillPageModel,
 )
+from fairy_core.contracts.history import (
+    ConversationDeleteInput,
+    ConversationMoveResultModel,
+    ConversationMoveToProjectInput,
+    ConversationUpdateInput,
+    TaskArchiveInput,
+    TaskMetadataUpdateInput,
+)
 from fairy_core.contracts.models import (
     ApprovalDecisionResultModel,
     ApprovalPageModel,
@@ -74,7 +82,6 @@ from fairy_core.contracts.models import (
     MemorySnapshotModel,
     MemoryTombstoneModel,
     MessageListInput,
-    MessagePageModel,
     PendingChangesetModel,
     PreviewContextModel,
     PreviewIdInput,
@@ -113,6 +120,7 @@ from fairy_core.contracts.models import (
     VoiceTranscribeInput,
     VoiceTranscriptModel,
 )
+from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.system_actions.models import SystemActionExecution, SystemActionRequest
 
 
@@ -203,6 +211,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             ConversationCreate,
             ConversationModel,
         ),
+        "conversations.delete": CoreMethod(
+            "conversations.delete",
+            ConversationDeleteInput,
+            ConversationModel,
+        ),
         "conversations.get": CoreMethod(
             "conversations.get",
             ConversationIdInput,
@@ -212,6 +225,16 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "conversations.list",
             ConversationListInput,
             ConversationPageModel,
+        ),
+        "conversations.move_to_project": CoreMethod(
+            "conversations.move_to_project",
+            ConversationMoveToProjectInput,
+            ConversationMoveResultModel,
+        ),
+        "conversations.update": CoreMethod(
+            "conversations.update",
+            ConversationUpdateInput,
+            ConversationModel,
         ),
         "events.subscribe": CoreMethod(
             "events.subscribe",
@@ -410,10 +433,16 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             EmptyInput,
             SkillPageModel,
         ),
+        "tasks.archive": CoreMethod("tasks.archive", TaskArchiveInput, TaskModel),
         "tasks.create": CoreMethod("tasks.create", TaskCreate, TaskContextModel),
         "tasks.get": CoreMethod("tasks.get", TaskIdInput, TaskModel),
         "tasks.list": CoreMethod("tasks.list", TaskListInput, TaskPageModel),
         "tasks.review": CoreMethod("tasks.review", TaskIdInput, CheckpointModel),
+        "tasks.update_metadata": CoreMethod(
+            "tasks.update_metadata",
+            TaskMetadataUpdateInput,
+            TaskModel,
+        ),
         "versions.accept": CoreMethod(
             "versions.accept",
             VersionAcceptInput,

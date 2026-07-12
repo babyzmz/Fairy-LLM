@@ -907,6 +907,32 @@
         "title": "ConversationCreate",
         "type": "object"
       },
+      "ConversationDeleteInput": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "user_confirmed": {
+            "title": "User Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "expected_revision",
+          "user_confirmed"
+        ],
+        "title": "ConversationDeleteInput",
+        "type": "object"
+      },
       "ConversationModel": {
         "additionalProperties": false,
         "properties": {
@@ -963,10 +989,34 @@
             "title": "Created At",
             "type": "string"
           },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "pinned_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned At"
           },
           "project_id": {
             "anyOf": [
@@ -979,6 +1029,15 @@
               }
             ],
             "title": "Project Id"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
           },
           "updated_at": {
             "format": "date-time",
@@ -997,10 +1056,76 @@
           "active_draft_version_id",
           "active_task_id",
           "active_preview_id",
+          "title",
+          "pinned_at",
+          "deleted_at",
+          "revision",
           "created_at",
           "updated_at"
         ],
         "title": "ConversationModel",
+        "type": "object"
+      },
+      "ConversationMoveResultModel": {
+        "additionalProperties": false,
+        "properties": {
+          "destination_conversation": {
+            "$ref": "#/components/schemas/ConversationModel"
+          },
+          "imported_count": {
+            "minimum": 0.0,
+            "title": "Imported Count",
+            "type": "integer"
+          },
+          "source_conversation": {
+            "$ref": "#/components/schemas/ConversationModel"
+          }
+        },
+        "required": [
+          "source_conversation",
+          "destination_conversation",
+          "imported_count"
+        ],
+        "title": "ConversationMoveResultModel",
+        "type": "object"
+      },
+      "ConversationMoveToProjectInput": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "target_project_id": {
+            "format": "uuid",
+            "title": "Target Project Id",
+            "type": "string"
+          },
+          "user_confirmed": {
+            "title": "User Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "target_project_id",
+          "expected_revision",
+          "user_confirmed",
+          "idempotency_key"
+        ],
+        "title": "ConversationMoveToProjectInput",
         "type": "object"
       },
       "ConversationPageModel": {
@@ -1030,6 +1155,51 @@
           "next_cursor"
         ],
         "title": "ConversationPageModel",
+        "type": "object"
+      },
+      "ConversationUpdateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "pinned": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "expected_revision"
+        ],
+        "title": "ConversationUpdateInput",
         "type": "object"
       },
       "CopyTextAction": {
@@ -1749,6 +1919,103 @@
         ],
         "title": "ImagePersistence",
         "type": "string"
+      },
+      "ImportedMessageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 1000000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "imported_at": {
+            "format": "date-time",
+            "title": "Imported At",
+            "type": "string"
+          },
+          "read_only": {
+            "const": true,
+            "default": true,
+            "title": "Read Only",
+            "type": "boolean"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MessageRole"
+          },
+          "sequence": {
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "source_conversation_id": {
+            "format": "uuid",
+            "title": "Source Conversation Id",
+            "type": "string"
+          },
+          "source_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Source Hash",
+            "type": "string"
+          },
+          "source_message_id": {
+            "format": "uuid",
+            "title": "Source Message Id",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Id"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/PublicMessageVisibilityModel"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "task_id",
+          "turn_id",
+          "sequence",
+          "role",
+          "visibility",
+          "content",
+          "created_at",
+          "source_conversation_id",
+          "source_message_id",
+          "source_hash",
+          "imported_at"
+        ],
+        "title": "ImportedMessageModel",
+        "type": "object"
       },
       "ManagedDocumentModel": {
         "additionalProperties": false,
@@ -3977,7 +4244,14 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/MessageModel"
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/MessageModel"
+                },
+                {
+                  "$ref": "#/components/schemas/ImportedMessageModel"
+                }
+              ]
             },
             "title": "Items",
             "type": "array"
@@ -5551,6 +5825,27 @@
         "title": "SystemSettings",
         "type": "string"
       },
+      "TaskArchiveInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "expected_revision"
+        ],
+        "title": "TaskArchiveInput",
+        "type": "object"
+      },
       "TaskContextModel": {
         "additionalProperties": false,
         "properties": {
@@ -5616,6 +5911,51 @@
         "title": "TaskCreate",
         "type": "object"
       },
+      "TaskMetadataUpdateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "display_title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Title"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "pinned": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "expected_revision"
+        ],
+        "title": "TaskMetadataUpdateInput",
+        "type": "object"
+      },
       "TaskModel": {
         "additionalProperties": false,
         "properties": {
@@ -5639,6 +5979,10 @@
           "created_at": {
             "format": "date-time",
             "title": "Created At",
+            "type": "string"
+          },
+          "display_title": {
+            "title": "Display Title",
             "type": "string"
           },
           "execution_target": {
@@ -5673,8 +6017,25 @@
             ],
             "title": "Memory Snapshot Id"
           },
+          "metadata_revision": {
+            "minimum": 0.0,
+            "title": "Metadata Revision",
+            "type": "integer"
+          },
           "operation_mode": {
             "$ref": "#/components/schemas/OperationMode"
+          },
+          "pinned_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned At"
           },
           "project_id": {
             "anyOf": [
@@ -5725,6 +6086,9 @@
           "memory_snapshot_id",
           "memory_snapshot_hash",
           "status",
+          "display_title",
+          "pinned_at",
+          "metadata_revision",
           "created_at",
           "updated_at"
         ],
@@ -7488,6 +7852,75 @@
       }
     },
     "/v1/conversations/{conversation_id}": {
+      "delete": {
+        "operationId": "conversations.delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationDeleteInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Conversation"
+      },
       "get": {
         "operationId": "conversations.get",
         "parameters": [
@@ -7546,6 +7979,146 @@
           }
         ],
         "summary": "Get Conversation"
+      },
+      "put": {
+        "operationId": "conversations.update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationUpdateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Conversation"
+      }
+    },
+    "/v1/conversations/{conversation_id}/move-to-project": {
+      "post": {
+        "operationId": "conversations.move_to_project",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationMoveToProjectInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationMoveResultModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Move Conversation To Project"
       }
     },
     "/v1/documents": {
@@ -10957,6 +11530,148 @@
           }
         ],
         "summary": "Accept Version"
+      }
+    },
+    "/v1/tasks/{task_id}/archive": {
+      "post": {
+        "operationId": "tasks.archive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskArchiveInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Archive Task"
+      }
+    },
+    "/v1/tasks/{task_id}/metadata": {
+      "put": {
+        "operationId": "tasks.update_metadata",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskMetadataUpdateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Task Metadata"
       }
     },
     "/v1/tasks/{task_id}/review": {

@@ -25,7 +25,7 @@ test("permission conflicts reload the latest Core revision", async ({ page }) =>
       "Permissions changed on another device. Latest settings loaded; review and retry.",
     ),
   ).toBeVisible();
-  await expect(page.getByLabel("Workspace telemetry")).toContainText("observe");
+  await expect(page.getByLabel("Workspace status")).toContainText("observe");
 
   const updates = await fixtureCalls(page, "permissions.update");
   expect(updates).toHaveLength(1);

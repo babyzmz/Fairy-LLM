@@ -44,8 +44,8 @@ test("release workspace exposes project, chat, preview, provider, and developer 
 }) => {
   await page.goto("/");
 
-  await expect(page.getByLabel("Workspace telemetry")).toContainText("Core ready");
-  await expect(page.getByLabel("Workspace telemetry")).toContainText("LOCAL ONLY");
+  await expect(page.getByLabel("Workspace status")).toContainText("Core ready");
+  await expect(page.getByLabel("Workspace status")).toContainText("LOCAL ONLY");
   await expect(page.getByTitle("Task preview")).toBeVisible();
   await page.getByRole("button", { name: "Manage projects" }).click();
   await expect(page.getByRole("complementary", { name: "Project manager" })).toBeVisible();
@@ -55,10 +55,15 @@ test("release workspace exposes project, chat, preview, provider, and developer 
   await page.getByRole("button", { name: "Knowledge" }).click();
   await expect(page.getByLabel("Knowledge panel")).toContainText("fixture-notes.md");
   await page.getByRole("button", { name: "Close knowledge" }).click();
-  await page.getByRole("button", { name: "Developer mode" }).click();
+  await page.getByRole("button", { name: "Provider settings" }).click();
+  await page.getByRole("checkbox", { name: "Developer mode" }).check();
+  await page.getByRole("button", { name: "Close provider settings" }).click();
   await expect(page.getByLabel("Developer details")).toBeVisible();
 
-  await page.getByRole("tab", { name: "Chat" }).click();
+  await page
+    .getByLabel("History navigation")
+    .getByRole("button", { name: "Scratch chat", exact: true })
+    .click();
   await expect(page.getByText("Scratch chat is durable")).toBeVisible();
   await page.getByRole("button", { name: "Provider settings" }).click();
   await expect(page.getByLabel("Provider settings panel")).toContainText(
@@ -71,11 +76,14 @@ test("permission changes persist through Core without client sandbox authority",
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("tab", { name: "Chat" }).click();
+  await page
+    .getByLabel("History navigation")
+    .getByRole("button", { name: "Scratch chat", exact: true })
+    .click();
   await page.getByLabel("Message Fairy").fill("/permission autonomous");
   await page.getByRole("button", { name: "Send message" }).click();
 
-  await expect(page.getByLabel("Workspace telemetry")).toContainText("autonomous");
+  await expect(page.getByLabel("Workspace status")).toContainText("autonomous");
   const update = await page.evaluate(() => {
     const fixtureWindow = window as typeof window & {
       __FAIRY_FIXTURE_CALLS__: Array<{

@@ -1,16 +1,12 @@
 import {
   Boxes,
   Cloud,
-  Code2,
   FolderInput,
   FolderOpen,
   FolderPlus,
-  MessageSquareText,
   Play,
   RefreshCw,
-  Settings,
   ShieldCheck,
-  Sparkles,
   WifiOff,
   X,
 } from "lucide-react";
@@ -22,9 +18,10 @@ import { ProviderSettings } from "../settings/ProviderSettings";
 import { ExecutionControls } from "../settings/ExecutionControls";
 import { ExtensionSettings } from "../settings/ExtensionSettings";
 import { KnowledgeSettings } from "../settings/KnowledgeSettings";
+import { HistorySidebar } from "./HistorySidebar";
 import { PreviewPanel } from "./PreviewPanel";
 import { TaskTimeline } from "./TaskTimeline";
-import type { WorkspaceModel, WorkspaceMode } from "./workspaceModel";
+import type { WorkspaceModel } from "./workspaceModel";
 import "./workspace.css";
 import "./project-manager.css";
 
@@ -44,67 +41,12 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
 
   return (
     <div className="workspace-shell" data-workspace-state={model.state}>
-      <nav className="primary-rail" aria-label="Primary navigation">
-        <button
-          className="brand-button"
-          type="button"
-          aria-label="Fairy home"
-          title="Fairy home"
-          onClick={() => model.setMode("chat")}
-        >
-          <Sparkles size={21} />
-        </button>
-        <div className="rail-actions">
-          <ModeRailButton
-            mode="project"
-            current={model.mode}
-            label="Project workspace"
-            onSelect={model.setMode}
-          />
-          <ModeRailButton
-            mode="chat"
-            current={model.mode}
-            label="Conversations"
-            onSelect={model.setMode}
-          />
-        </div>
-        <div className="rail-actions rail-bottom">
-          <button
-            className={`rail-button ${model.developerMode ? "active" : ""}`}
-            type="button"
-            aria-label="Developer mode"
-            aria-pressed={model.developerMode}
-            title="Developer mode"
-            onClick={() => model.setDeveloperMode(!model.developerMode)}
-          >
-            <Settings size={19} />
-          </button>
-        </div>
-      </nav>
+      <HistorySidebar model={model} onCreateProject={() => setProjectManagerOpen(true)} />
 
       <div className="workspace-body">
         <ContextBar model={model} />
         <div className="mode-bar">
-          <div className="mode-tabs" role="tablist" aria-label="Workspace mode">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={model.mode === "chat"}
-              className={model.mode === "chat" ? "active" : ""}
-              onClick={() => model.setMode("chat")}
-            >
-              <MessageSquareText size={14} /> Chat
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={model.mode === "project"}
-              className={model.mode === "project" ? "active" : ""}
-              onClick={() => model.setMode("project")}
-            >
-              <Boxes size={14} /> Project
-            </button>
-          </div>
+          <span className="mode-label">{model.mode === "chat" ? "Chat" : "Project"}</span>
           <div className="mode-controls">
             {model.mode === "project" ? (
               <div className="project-control">
@@ -344,49 +286,19 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
 }
 
 function ContextBar({ model }: { model: WorkspaceModel }) {
+  const path = model.mode === "chat"
+    ? model.selectedChatConversation?.title ?? "New chat"
+    : [
+        model.selectedProject?.name,
+        model.selectedConversation?.title,
+        model.selectedTask?.display_title,
+      ].filter(Boolean).join(" / ") || "Projects";
   return (
     <header className="context-bar" role="banner">
       <div className="context-identity">
-        <span className="fairy-wordmark">FAIRY</span>
-        {model.mode === "project" ? (
-          <>
-            <label className="context-select">
-              <span className="sr-only">Select project</span>
-              <select
-                aria-label="Select project"
-                value={model.selectedProject?.id ?? ""}
-                disabled={model.projects.length === 0}
-                onChange={(event) => model.selectProject(event.target.value)}
-              >
-                {model.projects.length === 0 ? <option value="">No project</option> : null}
-                {model.projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <span className="context-separator">/</span>
-            <ConversationSelect
-              label="Select conversation"
-              conversations={model.conversations}
-              value={model.selectedConversation?.id ?? ""}
-              onChange={model.selectConversation}
-            />
-          </>
-        ) : (
-          <ConversationSelect
-            label="Select chat conversation"
-            conversations={model.chatConversations}
-            value={model.selectedChatConversation?.id ?? ""}
-            onChange={model.selectChatConversation}
-          />
-        )}
+        <span className="context-path" title={path}>{path}</span>
       </div>
-      <div className="telemetry-strip" aria-label="Workspace telemetry">
-        <span className="telemetry-item">
-          <Code2 size={14} /> {model.mode === "project" ? versionLabel(model) : "scratch"}
-        </span>
+      <div className="telemetry-strip" aria-label="Workspace status">
         <span className="telemetry-item">
           <Play size={14} /> {model.selectedTask?.execution_target ?? "local"}
         </span>
@@ -404,63 +316,6 @@ function ContextBar({ model }: { model: WorkspaceModel }) {
         </span>
       </div>
     </header>
-  );
-}
-
-function ConversationSelect({
-  label,
-  conversations,
-  value,
-  onChange,
-}: {
-  label: string;
-  conversations: WorkspaceModel["conversations"];
-  value: string;
-  onChange(value: string): void;
-}) {
-  return (
-    <label className="context-select context-conversation">
-      <span className="sr-only">{label}</span>
-      <select
-        aria-label={label}
-        value={value}
-        disabled={conversations.length === 0}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {conversations.length === 0 ? <option value="">No conversation</option> : null}
-        {conversations.map((conversation, index) => (
-          <option key={conversation.id} value={conversation.id}>
-            Conversation {index + 1}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function ModeRailButton({
-  mode,
-  current,
-  label,
-  onSelect,
-}: {
-  mode: WorkspaceMode;
-  current: WorkspaceMode;
-  label: string;
-  onSelect(mode: WorkspaceMode): void;
-}) {
-  const Icon = mode === "project" ? Boxes : MessageSquareText;
-  return (
-    <button
-      className={`rail-button ${current === mode ? "active" : ""}`}
-      type="button"
-      aria-label={label}
-      aria-current={current === mode ? "page" : undefined}
-      title={label}
-      onClick={() => onSelect(mode)}
-    >
-      <Icon size={19} />
-    </button>
   );
 }
 
@@ -611,11 +466,6 @@ function ProjectSetup({
       </div>
     </div>
   );
-}
-
-function versionLabel(model: WorkspaceModel): string {
-  if (model.selectedVersion === null) return "no version";
-  return model.selectedVersion.visibility.replaceAll("_", " ");
 }
 
 function selectedProviderAvailable(model: WorkspaceModel): boolean {

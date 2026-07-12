@@ -6,6 +6,8 @@ from uuid import UUID
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
+    ConversationMove,
+    ImportedMessage,
     Message,
     MessageRole,
     MessageVisibility,
@@ -34,6 +36,8 @@ class AssistantRepository(Protocol):
 
     def append_message(self, message: Message) -> None: ...
 
+    def append_imported_message(self, message: ImportedMessage) -> None: ...
+
     def get_message(self, message_id: UUID) -> Message | None: ...
 
     def message_for_turn(self, turn_id: UUID, role: MessageRole) -> Message | None: ...
@@ -48,6 +52,19 @@ class AssistantRepository(Protocol):
         cursor: str | None,
         allowed_visibilities: frozenset[MessageVisibility] | None = None,
     ) -> StatePage[Message]: ...
+
+    def list_transcript(
+        self,
+        *,
+        conversation_id: UUID,
+        limit: int,
+        cursor: str | None,
+        allowed_visibilities: frozenset[MessageVisibility] | None = None,
+    ) -> StatePage[Message | ImportedMessage]: ...
+
+    def save_conversation_move(self, move: ConversationMove) -> None: ...
+
+    def find_conversation_move(self, idempotency_key: str) -> ConversationMove | None: ...
 
     def save_tool_invocation(self, invocation: ToolInvocation) -> None: ...
 

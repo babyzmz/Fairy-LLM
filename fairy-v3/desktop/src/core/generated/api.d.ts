@@ -235,8 +235,27 @@ export interface paths {
         };
         /** Get Conversation */
         get: operations["conversations.get"];
-        put?: never;
+        /** Update Conversation */
+        put: operations["conversations.update"];
         post?: never;
+        /** Delete Conversation */
+        delete: operations["conversations.delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/move-to-project": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move Conversation To Project */
+        post: operations["conversations.move_to_project"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1013,6 +1032,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/{task_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Task */
+        post: operations["tasks.archive"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{task_id}/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Task Metadata */
+        put: operations["tasks.update_metadata"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/{task_id}/review": {
         parameters: {
             query?: never;
@@ -1499,6 +1552,18 @@ export interface components {
             project_id: string | null;
             workspace_type: components["schemas"]["WorkspaceType"];
         };
+        /** ConversationDeleteInput */
+        ConversationDeleteInput: {
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** User Confirmed */
+            user_confirmed: boolean;
+        };
         /** ConversationModel */
         ConversationModel: {
             /** Active Draft Version Id */
@@ -1514,13 +1579,21 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Deleted At */
+            deleted_at: string | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
+            /** Pinned At */
+            pinned_at: string | null;
             /** Project Id */
             project_id: string | null;
+            /** Revision */
+            revision: number;
+            /** Title */
+            title: string;
             /**
              * Updated At
              * Format: date-time
@@ -1528,12 +1601,52 @@ export interface components {
             updated_at: string;
             workspace_type: components["schemas"]["WorkspaceType"];
         };
+        /** ConversationMoveResultModel */
+        ConversationMoveResultModel: {
+            destination_conversation: components["schemas"]["ConversationModel"];
+            /** Imported Count */
+            imported_count: number;
+            source_conversation: components["schemas"]["ConversationModel"];
+        };
+        /** ConversationMoveToProjectInput */
+        ConversationMoveToProjectInput: {
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Target Project Id
+             * Format: uuid
+             */
+            target_project_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+        };
         /** ConversationPageModel */
         ConversationPageModel: {
             /** Items */
             items: components["schemas"]["ConversationModel"][];
             /** Next Cursor */
             next_cursor: string | null;
+        };
+        /** ConversationUpdateInput */
+        ConversationUpdateInput: {
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Pinned */
+            pinned?: boolean | null;
+            /** Title */
+            title?: string | null;
         };
         /** CopyTextAction */
         CopyTextAction: {
@@ -1824,6 +1937,60 @@ export interface components {
          * @enum {string}
          */
         ImagePersistence: "ephemeral" | "conversation";
+        /** ImportedMessageModel */
+        ImportedMessageModel: {
+            /** Content */
+            content: string;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            imported_at: string;
+            /**
+             * Read Only
+             * @default true
+             * @constant
+             */
+            read_only: true;
+            role: components["schemas"]["MessageRole"];
+            /** Sequence */
+            sequence: number;
+            /**
+             * Source Conversation Id
+             * Format: uuid
+             */
+            source_conversation_id: string;
+            /** Source Hash */
+            source_hash: string;
+            /**
+             * Source Message Id
+             * Format: uuid
+             */
+            source_message_id: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Turn Id */
+            turn_id: string | null;
+            visibility: components["schemas"]["PublicMessageVisibilityModel"];
+        };
         /** ManagedDocumentModel */
         ManagedDocumentModel: {
             /** Byte Length */
@@ -2575,7 +2742,7 @@ export interface components {
         /** MessagePageModel */
         MessagePageModel: {
             /** Items */
-            items: components["schemas"]["MessageModel"][];
+            items: (components["schemas"]["MessageModel"] | components["schemas"]["ImportedMessageModel"])[];
             /** Next Cursor */
             next_cursor: string | null;
         };
@@ -3131,6 +3298,16 @@ export interface components {
          * @enum {string}
          */
         SystemSettings: "display" | "microphone" | "notifications" | "sound";
+        /** TaskArchiveInput */
+        TaskArchiveInput: {
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
         /** TaskContextModel */
         TaskContextModel: {
             scope: components["schemas"]["ScopeContractModel"];
@@ -3151,6 +3328,20 @@ export interface components {
             /** User Request */
             user_request: string;
         };
+        /** TaskMetadataUpdateInput */
+        TaskMetadataUpdateInput: {
+            /** Display Title */
+            display_title?: string | null;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Pinned */
+            pinned?: boolean | null;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+        };
         /** TaskModel */
         TaskModel: {
             /** Base Version Id */
@@ -3165,6 +3356,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Display Title */
+            display_title: string;
             execution_target: components["schemas"]["ExecutionTarget"];
             /**
              * Id
@@ -3175,7 +3368,11 @@ export interface components {
             memory_snapshot_hash: string | null;
             /** Memory Snapshot Id */
             memory_snapshot_id: string | null;
+            /** Metadata Revision */
+            metadata_revision: number;
             operation_mode: components["schemas"]["OperationMode"];
+            /** Pinned At */
+            pinned_at: string | null;
             /** Project Id */
             project_id: string | null;
             status: components["schemas"]["TaskStatus"];
@@ -3989,6 +4186,117 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "conversations.update": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationUpdateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "conversations.delete": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationDeleteInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "conversations.move_to_project": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationMoveToProjectInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationMoveResultModel"];
                 };
             };
             /** @description Validation Error */
@@ -5717,6 +6025,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "tasks.archive": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskArchiveInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "tasks.update_metadata": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskMetadataUpdateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskModel"];
                 };
             };
             /** @description Validation Error */

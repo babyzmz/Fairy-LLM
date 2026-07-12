@@ -25,10 +25,14 @@ export type ChangesetProposal = Schemas["ChangesetProposal"];
 export type Checkpoint = Schemas["CheckpointModel"];
 export type Conversation = Schemas["ConversationModel"];
 export type ConversationCreateInput = Schemas["ConversationCreate"];
+export type ConversationDeleteInput = Schemas["ConversationDeleteInput"];
 export type ConversationListInput = NonNullable<
   operations["conversations.list"]["parameters"]["query"]
 >;
+export type ConversationMoveResult = Schemas["ConversationMoveResultModel"];
+export type ConversationMoveToProjectInput = Schemas["ConversationMoveToProjectInput"];
 export type ConversationPage = Schemas["ConversationPageModel"];
+export type ConversationUpdateInput = Schemas["ConversationUpdateInput"];
 export type Document = Schemas["ManagedDocumentModel"];
 export type DocumentChunk = Schemas["DocumentChunkModel"];
 export type DocumentContext = Schemas["DocumentContextModel"];
@@ -75,7 +79,10 @@ export type McpServerDiscoverInput = Schemas["McpServerDiscoverInput"];
 export type McpServerPage = Schemas["McpServerPageModel"];
 export type McpServerSetEnabledInput = Schemas["McpServerSetEnabledInput"];
 export type McpToolPolicyInput = Schemas["McpToolPolicyInput"];
-export type Message = Schemas["MessageModel"];
+export type NativeMessage = Schemas["MessageModel"];
+export type ImportedMessage = Schemas["ImportedMessageModel"];
+export type ConversationTranscriptItem = NativeMessage | ImportedMessage;
+export type Message = ConversationTranscriptItem;
 export type MessageListInput = NonNullable<
   operations["messages.list"]["parameters"]["query"]
 >;
@@ -111,11 +118,13 @@ export type SystemActionRequest = Schemas["SystemActionRequest"];
 export type SystemAction = SystemActionRequest["action"];
 export type SystemSettings = Schemas["SystemSettings"];
 export type Task = Schemas["TaskModel"];
+export type TaskArchiveInput = Schemas["TaskArchiveInput"];
 export type TaskContext = Schemas["TaskContextModel"];
 export type TaskCreateInput = Schemas["TaskCreate"];
 export type TaskListInput = NonNullable<
   operations["tasks.list"]["parameters"]["query"]
 >;
+export type TaskMetadataUpdateInput = Schemas["TaskMetadataUpdateInput"];
 export type TaskPage = Schemas["TaskPageModel"];
 export type Version = Schemas["VersionModel"];
 export type VersionAcceptInput = Schemas["VersionAcceptInput"];
@@ -147,11 +156,17 @@ export interface CoreMethodMap {
   "projects.get": { params: { project_id: string }; result: Project };
   "projects.list": { params: ProjectListInput; result: ProjectPage };
   "conversations.create": { params: ConversationCreateInput; result: Conversation };
+  "conversations.delete": { params: ConversationDeleteInput; result: Conversation };
   "conversations.get": { params: { conversation_id: string }; result: Conversation };
   "conversations.list": {
     params: ConversationListInput;
     result: ConversationPage;
   };
+  "conversations.move_to_project": {
+    params: ConversationMoveToProjectInput;
+    result: ConversationMoveResult;
+  };
+  "conversations.update": { params: ConversationUpdateInput; result: Conversation };
   "documents.import": { params: DocumentImportInput; result: DocumentContext };
   "documents.list": { params: DocumentListInput; result: DocumentPage };
   "documents.get": {
@@ -160,10 +175,12 @@ export interface CoreMethodMap {
   };
   "documents.search": { params: DocumentSearchInput; result: DocumentSearchPage };
   "documents.delete": { params: DocumentDeleteInput; result: DocumentContext };
+  "tasks.archive": { params: TaskArchiveInput; result: Task };
   "tasks.create": { params: TaskCreateInput; result: TaskContext };
   "tasks.get": { params: { task_id: string }; result: Task };
   "tasks.list": { params: TaskListInput; result: TaskPage };
   "tasks.review": { params: { task_id: string }; result: Checkpoint };
+  "tasks.update_metadata": { params: TaskMetadataUpdateInput; result: Task };
   "changesets.propose": { params: ChangesetProposal; result: PendingChangeset };
   "approvals.decide": { params: ApprovalDecisionInput; result: ApprovalDecisionResult };
   "approvals.list": { params: ApprovalListInput; result: ApprovalPage };

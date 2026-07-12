@@ -36,7 +36,10 @@ class CollectionStateStoreMixin:
         limit: int,
         cursor: str | None,
     ) -> StatePage[Conversation]:
-        filters = (conversations.c.project_id == str(project_id),) if project_id is not None else ()
+        filters = (
+            *((conversations.c.project_id == str(project_id),) if project_id is not None else ()),
+            conversations.c.deleted_at.is_(None),
+        )
         rows, next_cursor = self._page_rows(
             conversations,
             collection="conversations",

@@ -5,7 +5,10 @@ import { installWorkspaceFixture } from "./support/coreFixture";
 test.beforeEach(async ({ page }) => {
   await installWorkspaceFixture(page);
   await page.goto("/");
-  await page.getByRole("tab", { name: "Chat" }).click();
+  await page
+    .getByLabel("History navigation")
+    .getByRole("button", { name: "Scratch chat", exact: true })
+    .click();
   await expect(page.getByRole("heading", { name: "Chat" })).toBeVisible();
 });
 

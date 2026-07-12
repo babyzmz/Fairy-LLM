@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -51,6 +51,10 @@ const conversation: Conversation = {
   active_draft_version_id: null,
   active_task_id: ID.task,
   active_preview_id: null,
+  title: "Project conversation",
+  pinned_at: null,
+  deleted_at: null,
+  revision: 0,
   created_at: timestamp,
   updated_at: timestamp,
 };
@@ -66,6 +70,9 @@ const task: Task = {
   memory_snapshot_id: null,
   memory_snapshot_hash: null,
   status: "executing",
+  display_title: "Tighten the project overview",
+  pinned_at: null,
+  metadata_revision: 0,
   created_at: timestamp,
   updated_at: timestamp,
 };
@@ -87,6 +94,10 @@ const scratchConversation: Conversation = {
   active_draft_version_id: null,
   active_task_id: null,
   active_preview_id: null,
+  title: "New conversation",
+  pinned_at: null,
+  deleted_at: null,
+  revision: 0,
   created_at: timestamp,
   updated_at: timestamp,
 };
@@ -154,13 +165,15 @@ describe("App", () => {
     render(<App client={client} />);
 
     expect(screen.getByRole("banner")).toHaveTextContent("Core starting");
-    expect(await screen.findByRole("option", { name: "Atlas Console" })).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByLabelText("History navigation")).toHaveTextContent("Atlas Console"),
+    );
     expect(await screen.findByText("Scope resolved")).toBeVisible();
     expect(screen.queryByText("Developer diagnostic")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Task Timeline" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Preview" })).toBeVisible();
-    expect(screen.getByLabelText("Workspace telemetry")).toHaveTextContent("Core ready");
-    expect(screen.getByLabelText("Workspace telemetry")).toHaveTextContent("standard");
+    expect(screen.getByLabelText("Workspace status")).toHaveTextContent("Core ready");
+    expect(screen.getByLabelText("Workspace status")).toHaveTextContent("standard");
     expect(document.body).not.toHaveTextContent("NORTHSTAR");
     expect(document.body).not.toHaveTextContent("$12");
     expect(document.body.textContent).not.toMatch(/[璺鈥]/u);
@@ -371,7 +384,7 @@ describe("App", () => {
       ),
     ).toBeVisible();
     await vi.waitFor(() =>
-      expect(screen.getByLabelText("Workspace telemetry")).toHaveTextContent("observe"),
+      expect(screen.getByLabelText("Workspace status")).toHaveTextContent("observe"),
     );
     expect(get.mock.calls.length).toBeGreaterThan(readsBeforeConflict);
     expect(update).toHaveBeenCalledTimes(1);
@@ -410,6 +423,13 @@ function createClient(
         next_cursor: null,
       }),
       create: async () => scratchConversation,
+      update: async () => scratchConversation,
+      delete: async () => scratchConversation,
+      moveToProject: async () => ({
+        source_conversation: scratchConversation,
+        destination_conversation: conversation,
+        imported_count: 0,
+      }),
     },
     tasks: {
       list: async () => ({ items: [task], next_cursor: null }),
@@ -417,6 +437,8 @@ function createClient(
       review: async () => {
         throw new Error("not used");
       },
+      updateMetadata: async () => task,
+      archive: async () => task,
     },
     approvals: {
       list: async () => ({ items: options.approvals ?? [], next_cursor: null }),

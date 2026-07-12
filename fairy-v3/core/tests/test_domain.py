@@ -86,6 +86,54 @@ def test_task_rejects_invalid_status_transition() -> None:
         task.transition_to(TaskStatus.READY)
 
 
+def test_conversation_metadata_is_revision_fenced_and_deleted_state_is_terminal() -> None:
+    conversation = Conversation.create(
+        project_id=None,
+        workspace_type=WorkspaceType.CHAT_SCRATCH,
+        base_version_id=None,
+    )
+    conversation.update_metadata(
+        title="Pinned notes",
+        pinned=True,
+        expected_revision=0,
+    )
+
+    assert conversation.title == "Pinned notes"
+    assert conversation.pinned_at is not None
+    assert conversation.revision == 1
+    with pytest.raises(VersionConflictError):
+        conversation.update_metadata(title="Stale", pinned=None, expected_revision=0)
+    conversation.delete(expected_revision=1)
+    assert conversation.deleted_at is not None
+    assert conversation.pinned_at is None
+    with pytest.raises(InvalidTransitionError, match="deleted"):
+        conversation.update_metadata(title="Too late", pinned=None, expected_revision=2)
+
+
+def test_task_metadata_is_revision_fenced_and_only_terminal_tasks_archive() -> None:
+    task = Task.create(
+        project_id=new_id(),
+        conversation_id=new_id(),
+        user_request="Build it",
+        operation_mode=OperationMode.CREATE_NEW_VERSION,
+        base_version_id=new_id(),
+        execution_target="local",
+    )
+    task.update_metadata(display_title="Build release", pinned=True, expected_revision=0)
+
+    assert task.display_title == "Build release"
+    assert task.metadata_revision == 1
+    with pytest.raises(VersionConflictError):
+        task.update_metadata(display_title="Stale", pinned=None, expected_revision=0)
+    with pytest.raises(InvalidTransitionError):
+        task.archive(expected_revision=1)
+    task.status = TaskStatus.READY
+    task.archive(expected_revision=1)
+    assert task.status is TaskStatus.ARCHIVED
+    assert task.pinned_at is None
+    assert task.metadata_revision == 2
+
+
 def test_task_memory_snapshot_binding_is_idempotent_but_cannot_be_replaced() -> None:
     task = Task.create(
         project_id=new_id(),

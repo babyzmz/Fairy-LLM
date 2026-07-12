@@ -162,6 +162,10 @@ class Conversation:
     active_draft_version_id: UUID | None = None
     active_task_id: UUID | None = None
     active_preview_id: UUID | None = None
+    title: str = "New conversation"
+    pinned_at: datetime | None = None
+    deleted_at: datetime | None = None
+    revision: int = 0
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
 
@@ -172,17 +176,53 @@ class Conversation:
         project_id: UUID | None,
         workspace_type: WorkspaceType,
         base_version_id: UUID | None,
+        title: str = "New conversation",
     ) -> Conversation:
         if workspace_type is WorkspaceType.PROJECT_CHAT and project_id is None:
             raise ValueError("project_chat requires project_id")
         if workspace_type is WorkspaceType.CHAT_SCRATCH and project_id is not None:
             raise ValueError("chat_scratch cannot bind project_id")
+        normalized_title = title.strip()
+        if not normalized_title or len(normalized_title) > 200:
+            raise ValueError("Conversation title must contain 1 to 200 characters")
         return cls(
             id=new_id(),
             project_id=project_id,
             workspace_type=workspace_type,
             base_version_id=base_version_id,
+            title=normalized_title,
         )
+
+    def update_metadata(
+        self,
+        *,
+        title: str | None,
+        pinned: bool | None,
+        expected_revision: int,
+    ) -> None:
+        if expected_revision != self.revision:
+            raise VersionConflictError("Conversation metadata changed concurrently")
+        if self.deleted_at is not None:
+            raise InvalidTransitionError("deleted Conversation cannot be updated")
+        if title is not None:
+            normalized = title.strip()
+            if not normalized or len(normalized) > 200:
+                raise ValueError("Conversation title must contain 1 to 200 characters")
+            self.title = normalized
+        if pinned is not None:
+            self.pinned_at = _now() if pinned else None
+        self.revision += 1
+        self.updated_at = _now()
+
+    def delete(self, *, expected_revision: int) -> None:
+        if expected_revision != self.revision:
+            raise VersionConflictError("Conversation metadata changed concurrently")
+        if self.deleted_at is not None:
+            raise InvalidTransitionError("Conversation is already deleted")
+        self.deleted_at = _now()
+        self.pinned_at = None
+        self.revision += 1
+        self.updated_at = self.deleted_at
 
 
 @dataclass(slots=True)
@@ -198,10 +238,15 @@ class Task:
     memory_snapshot_id: UUID | None = None
     memory_snapshot_hash: str | None = None
     status: TaskStatus = TaskStatus.CREATED
+    display_title: str = ""
+    pinned_at: datetime | None = None
+    metadata_revision: int = 0
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
 
     def __post_init__(self) -> None:
+        if not self.display_title:
+            self.display_title = self.user_request[:200]
         if (self.memory_snapshot_id is None) != (self.memory_snapshot_hash is None):
             raise ValueError("memory Snapshot ID and hash must be both present")
         if (
@@ -259,6 +304,32 @@ class Task:
             raise InvalidTransitionError(f"cannot transition Task from {self.status} to {status}")
         self.status = status
         self.updated_at = _now()
+
+    def update_metadata(
+        self,
+        *,
+        display_title: str | None,
+        pinned: bool | None,
+        expected_revision: int,
+    ) -> None:
+        if expected_revision != self.metadata_revision:
+            raise VersionConflictError("Task metadata changed concurrently")
+        if display_title is not None:
+            normalized = display_title.strip()
+            if not normalized or len(normalized) > 200:
+                raise ValueError("Task display title must contain 1 to 200 characters")
+            self.display_title = normalized
+        if pinned is not None:
+            self.pinned_at = _now() if pinned else None
+        self.metadata_revision += 1
+        self.updated_at = _now()
+
+    def archive(self, *, expected_revision: int) -> None:
+        if expected_revision != self.metadata_revision:
+            raise VersionConflictError("Task metadata changed concurrently")
+        self.transition_to(TaskStatus.ARCHIVED)
+        self.pinned_at = None
+        self.metadata_revision += 1
 
 
 @dataclass(slots=True)

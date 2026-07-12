@@ -33,6 +33,13 @@ import type {
 } from "../core/client";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
 import type { McpServerDraft } from "../settings/extensionTypes";
+import {
+  readEventCursor,
+  usePersistedBoolean,
+  usePersistedEnum,
+  usePersistedSelection,
+  writeEventCursor,
+} from "./workspacePreferences";
 
 export type WorkspaceMode = "project" | "chat";
 export type PermissionProfile = "observe" | "standard" | "autonomous";
@@ -40,8 +47,14 @@ export type PermissionProfile = "observe" | "standard" | "autonomous";
 export interface WorkspaceClient extends AssistantTurnClient {
   health: CoreClient["health"];
   projects: Pick<CoreClient["projects"], "list" | "create" | "import" | "selectFolder">;
-  conversations: Pick<CoreClient["conversations"], "list" | "create">;
-  tasks: Pick<CoreClient["tasks"], "list" | "create" | "review">;
+  conversations: Pick<
+    CoreClient["conversations"],
+    "list" | "create" | "update" | "delete" | "moveToProject"
+  >;
+  tasks: Pick<
+    CoreClient["tasks"],
+    "list" | "create" | "review" | "updateMetadata" | "archive"
+  >;
   approvals: Pick<CoreClient["approvals"], "list" | "decide">;
   versions: Pick<CoreClient["versions"], "list" | "accept" | "discard">;
   runtimes: Pick<CoreClient["runtimes"], "health">;
@@ -80,8 +93,10 @@ export interface WorkspaceModel {
   developerMode: boolean;
   projects: Project[];
   conversations: Conversation[];
+  projectConversations: Conversation[];
   chatConversations: Conversation[];
   tasks: Task[];
+  allTasks: Task[];
   versions: Version[];
   approvals: Approval[];
   chatApprovals: Approval[];
@@ -136,6 +151,13 @@ export interface WorkspaceModel {
   importProject(name: string, sourcePath: string): Promise<void>;
   selectProjectFolder(): Promise<string | null>;
   createChatConversation(): Promise<void>;
+  renameConversation(conversation: Conversation, title: string): Promise<void>;
+  setConversationPinned(conversation: Conversation, pinned: boolean): Promise<void>;
+  deleteConversation(conversation: Conversation): Promise<void>;
+  moveConversationToProject(conversation: Conversation, project: Project): Promise<void>;
+  renameTask(task: Task, title: string): Promise<void>;
+  setTaskPinned(task: Task, pinned: boolean): Promise<void>;
+  archiveTask(task: Task): Promise<void>;
   createTask(userRequest: string): Promise<void>;
   sendChatMessage(
     value: string,
@@ -267,6 +289,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const conversations = allConversations.filter(
     (conversation) => conversation.project_id === selectedProject?.id,
   );
+  const projectConversations = allConversations.filter(
+    (conversation) => conversation.workspace_type === "project_chat",
+  );
   const chatConversations = allConversations.filter(
     (conversation) =>
       conversation.project_id === null && conversation.workspace_type === "chat_scratch",
@@ -287,13 +312,15 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const selectedProfileId = selectedProfile?.id ?? null;
 
   const tasksQuery = useQuery({
-    queryKey: [...workspaceKey, "tasks", selectedConversation?.id],
-    queryFn: () =>
-      client.tasks.list({ conversation_id: requireId(selectedConversation?.id) }),
-    enabled: selectedConversation !== null,
+    queryKey: [...workspaceKey, "tasks"],
+    queryFn: () => client.tasks.list({ limit: 100 }),
+    enabled: healthQuery.isSuccess,
     retry: false,
   });
-  const tasks = tasksQuery.data?.items ?? [];
+  const allTasks = tasksQuery.data?.items ?? [];
+  const tasks = allTasks.filter(
+    (task) => task.conversation_id === selectedConversation?.id,
+  );
   const selectedTask = selectedItem(tasks, taskSelection);
   const messagesQuery = useQuery({
     queryKey: [...workspaceKey, "messages", selectedChatConversation?.id],
@@ -689,6 +716,79 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         setChatTaskId(null);
         chatAssistant.reset();
       },
+      async renameConversation(conversation: Conversation, title: string) {
+        await runAction(() =>
+          client.conversations.update({
+            conversation_id: conversation.id,
+            title,
+            expected_revision: conversation.revision,
+          }),
+        );
+      },
+      async setConversationPinned(conversation: Conversation, pinned: boolean) {
+        await runAction(() =>
+          client.conversations.update({
+            conversation_id: conversation.id,
+            pinned,
+            expected_revision: conversation.revision,
+          }),
+        );
+      },
+      async deleteConversation(conversation: Conversation) {
+        await runAction(() =>
+          client.conversations.delete({
+            conversation_id: conversation.id,
+            expected_revision: conversation.revision,
+            user_confirmed: true,
+          }),
+        );
+        if (chatConversationSelection === conversation.id) {
+          setChatConversationSelection(null);
+          setChatTaskId(null);
+          chatAssistant.reset();
+        }
+      },
+      async moveConversationToProject(conversation: Conversation, project: Project) {
+        const result = await runAction(() =>
+          client.conversations.moveToProject({
+            conversation_id: conversation.id,
+            target_project_id: project.id,
+            expected_revision: conversation.revision,
+            user_confirmed: true,
+            idempotency_key: `desktop:conversation-move:${conversation.id}:${project.id}`,
+          }),
+        );
+        setProjectSelection(project.id);
+        setConversationSelection(result.destination_conversation.id);
+        setTaskSelection(null);
+        setMode("project");
+      },
+      async renameTask(task: Task, title: string) {
+        await runAction(() =>
+          client.tasks.updateMetadata({
+            task_id: task.id,
+            display_title: title,
+            expected_revision: task.metadata_revision,
+          }),
+        );
+      },
+      async setTaskPinned(task: Task, pinned: boolean) {
+        await runAction(() =>
+          client.tasks.updateMetadata({
+            task_id: task.id,
+            pinned,
+            expected_revision: task.metadata_revision,
+          }),
+        );
+      },
+      async archiveTask(task: Task) {
+        await runAction(() =>
+          client.tasks.archive({
+            task_id: task.id,
+            expected_revision: task.metadata_revision,
+          }),
+        );
+      },
       async decideApproval(approvalId: string, approved: boolean) {
         const result = await runAction(() =>
           client.approvals.decide({
@@ -809,6 +909,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     }),
     [
       chatAssistant,
+      chatConversationSelection,
       chatTaskId,
       client,
       previewQuery.data?.preview,
@@ -818,6 +919,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       selectedTask,
       setChatConversationSelection,
       setConversationSelection,
+      setMode,
       setProjectSelection,
       setTaskSelection,
     ],
@@ -876,8 +978,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     developerMode,
     projects,
     conversations,
+    projectConversations,
     chatConversations,
     tasks,
+    allTasks,
     versions,
     approvals,
     chatApprovals,
@@ -938,6 +1042,13 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     importProject: actions.importProject,
     selectProjectFolder,
     createChatConversation: actions.createChatConversation,
+    renameConversation: actions.renameConversation,
+    setConversationPinned: actions.setConversationPinned,
+    deleteConversation: actions.deleteConversation,
+    moveConversationToProject: actions.moveConversationToProject,
+    renameTask: actions.renameTask,
+    setTaskPinned: actions.setTaskPinned,
+    archiveTask: actions.archiveTask,
     createTask: (userRequest) => projectAssistant.send(userRequest, []),
     sendChatMessage: chatAssistant.send,
     sendProjectMessage: projectAssistant.send,
@@ -1060,99 +1171,4 @@ function canonicalValue(value: unknown): unknown {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, item]) => [key, canonicalValue(item)]),
   );
-}
-
-function readEventCursor(): number {
-  try {
-    const cursor = Number.parseInt(window.localStorage.getItem("fairy.events.cursor") ?? "0", 10);
-    return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function writeEventCursor(cursor: number): void {
-  try {
-    window.localStorage.setItem("fairy.events.cursor", String(cursor));
-  } catch {
-    // Event delivery remains correct in memory when persistence is unavailable.
-  }
-}
-
-function usePersistedSelection(
-  key: string,
-): [string | null, (value: string | null) => void] {
-  const [value, setValue] = useState<string | null>(() => {
-    try {
-      return window.localStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  });
-  const update = useCallback(
-    (next: string | null) => {
-      setValue(next);
-      try {
-        if (next === null) window.localStorage.removeItem(key);
-        else window.localStorage.setItem(key, next);
-      } catch {
-        // Selection persistence is optional; Core remains authoritative.
-      }
-    },
-    [key],
-  );
-  return [value, update];
-}
-
-function usePersistedEnum<T extends string>(
-  key: string,
-  fallback: T,
-  allowed: readonly T[],
-): [T, (value: T) => void] {
-  const [value, setValue] = useState<T>(() => {
-    try {
-      const stored = window.localStorage.getItem(key) as T | null;
-      return stored !== null && allowed.includes(stored) ? stored : fallback;
-    } catch {
-      return fallback;
-    }
-  });
-  const update = useCallback(
-    (next: T) => {
-      setValue(next);
-      try {
-        window.localStorage.setItem(key, next);
-      } catch {
-        // Preference persistence is optional.
-      }
-    },
-    [key],
-  );
-  return [value, update];
-}
-
-function usePersistedBoolean(
-  key: string,
-  fallback: boolean,
-): [boolean, (value: boolean) => void] {
-  const [value, setValue] = useState(() => {
-    try {
-      const stored = window.localStorage.getItem(key);
-      return stored === null ? fallback : stored === "true";
-    } catch {
-      return fallback;
-    }
-  });
-  const update = useCallback(
-    (next: boolean) => {
-      setValue(next);
-      try {
-        window.localStorage.setItem(key, String(next));
-      } catch {
-        // Preference persistence is optional.
-      }
-    },
-    [key],
-  );
-  return [value, update];
 }

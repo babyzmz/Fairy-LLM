@@ -38,10 +38,21 @@ const routes = {
   "projects.list": (params) =>
     getWithQuery("/v1/projects", params, ["limit", "cursor"]),
   "conversations.create": (params) => post("/v1/conversations", params),
+  "conversations.delete": (params) =>
+    remove(`/v1/conversations/${pathParameter(params, "conversation_id")}`, params),
   "conversations.get": (params) =>
     get(`/v1/conversations/${pathParameter(params, "conversation_id")}`),
   "conversations.list": (params) =>
     getWithQuery("/v1/conversations", params, ["limit", "cursor", "project_id"]),
+  "conversations.move_to_project": (params) =>
+    post(
+      `/v1/conversations/${pathParameter(params, "conversation_id")}/move-to-project`,
+      params,
+    ),
+  "conversations.update": (params) =>
+    put(`/v1/conversations/${pathParameter(params, "conversation_id")}`, params),
+  "tasks.archive": (params) =>
+    post(`/v1/tasks/${pathParameter(params, "task_id")}/archive`, params),
   "tasks.create": (params) => post("/v1/tasks", params),
   "tasks.get": (params) => get(`/v1/tasks/${pathParameter(params, "task_id")}`),
   "tasks.list": (params) =>
@@ -53,6 +64,8 @@ const routes = {
     ]),
   "tasks.review": (params) =>
     post(`/v1/tasks/${pathParameter(params, "task_id")}/review`),
+  "tasks.update_metadata": (params) =>
+    put(`/v1/tasks/${pathParameter(params, "task_id")}/metadata`, params),
   "changesets.propose": (params) => post("/v1/changesets", params),
   "approvals.decide": (params) =>
     post(
@@ -384,6 +397,14 @@ function get(path: string): RequestDescriptor {
 
 function post(path: string, body?: unknown): RequestDescriptor {
   return { method: "POST", path, body };
+}
+
+function put(path: string, body?: unknown): RequestDescriptor {
+  return { method: "PUT", path, body };
+}
+
+function remove(path: string, body?: unknown): RequestDescriptor {
+  return { method: "DELETE", path, body };
 }
 
 function putWithIdempotency(path: string, params: RuntimeParams): RequestDescriptor {

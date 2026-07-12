@@ -39,6 +39,13 @@ from fairy_core.contracts.extensions import (
     McpServerDiscoverInput,
     McpServerSetEnabledInput,
 )
+from fairy_core.contracts.history import (
+    ConversationDeleteInput,
+    ConversationMoveToProjectInput,
+    ConversationUpdateInput,
+    TaskArchiveInput,
+    TaskMetadataUpdateInput,
+)
 from fairy_core.contracts.methods import CORE_METHODS, EventSubscribeInput
 from fairy_core.contracts.models import (
     ArtifactIdInput,
@@ -331,8 +338,11 @@ class CoreService:
             "capabilities.get": self._get_capabilities,
             "changesets.propose": self._propose_changeset,
             "conversations.create": self._create_conversation,
+            "conversations.delete": self._delete_conversation,
             "conversations.get": self._get_conversation,
             "conversations.list": self._list_conversations,
+            "conversations.move_to_project": self._move_conversation_to_project,
+            "conversations.update": self._update_conversation,
             "documents.delete": self._delete_document,
             "documents.get": self._get_document,
             "documents.import": self._import_document,
@@ -374,10 +384,12 @@ class CoreService:
             "runtimes.health": self._runtime_health,
             "skills.list": self._list_skills,
             "system.actions.execute": self._execute_system_action,
+            "tasks.archive": self._archive_task,
             "tasks.create": self._create_task,
             "tasks.get": self._get_task,
             "tasks.list": self._list_tasks,
             "tasks.review": self._review_task,
+            "tasks.update_metadata": self._update_task_metadata,
             "versions.accept": self._accept_version,
             "versions.discard": self._discard_version,
             "versions.get": self._get_version,
@@ -886,6 +898,23 @@ class CoreService:
             raise KeyError(f"conversation not found: {validated.conversation_id}")
         return conversation
 
+    def _update_conversation(self, request: BaseModel) -> Any:
+        validated = cast(ConversationUpdateInput, request)
+        return self._application.update_conversation_metadata(
+            conversation_id=validated.conversation_id,
+            title=validated.title,
+            pinned=validated.pinned,
+            expected_revision=validated.expected_revision,
+        )
+
+    def _delete_conversation(self, request: BaseModel) -> Any:
+        validated = cast(ConversationDeleteInput, request)
+        return self._application.delete_conversation(
+            conversation_id=validated.conversation_id,
+            expected_revision=validated.expected_revision,
+            user_confirmed=validated.user_confirmed,
+        )
+
     def _list_conversations(self, request: BaseModel) -> Any:
         validated = cast(ConversationListInput, request)
         with self._unit_of_work_factory() as unit_of_work:
@@ -895,8 +924,25 @@ class CoreService:
                 cursor=validated.cursor,
             )
 
+    def _move_conversation_to_project(self, request: BaseModel) -> Any:
+        validated = cast(ConversationMoveToProjectInput, request)
+        return self._application.move_conversation_to_project(
+            conversation_id=validated.conversation_id,
+            target_project_id=validated.target_project_id,
+            expected_revision=validated.expected_revision,
+            user_confirmed=validated.user_confirmed,
+            idempotency_key=validated.idempotency_key,
+        )
+
     def _create_task(self, request: BaseModel) -> Any:
         return self._application.create_task(cast(TaskCreate, request))
+
+    def _archive_task(self, request: BaseModel) -> Any:
+        validated = cast(TaskArchiveInput, request)
+        return self._application.archive_task(
+            task_id=validated.task_id,
+            expected_revision=validated.expected_revision,
+        )
 
     def _get_task(self, request: BaseModel) -> Any:
         return self._application.get_task(cast(TaskIdInput, request).task_id)
@@ -910,6 +956,15 @@ class CoreService:
                 limit=validated.limit,
                 cursor=validated.cursor,
             )
+
+    def _update_task_metadata(self, request: BaseModel) -> Any:
+        validated = cast(TaskMetadataUpdateInput, request)
+        return self._application.update_task_metadata(
+            task_id=validated.task_id,
+            display_title=validated.display_title,
+            pinned=validated.pinned,
+            expected_revision=validated.expected_revision,
+        )
 
     def _review_task(self, request: BaseModel) -> Any:
         task_id = cast(TaskIdInput, request).task_id

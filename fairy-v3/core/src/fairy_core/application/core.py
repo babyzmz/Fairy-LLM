@@ -1,16 +1,24 @@
 from __future__ import annotations
 
-import hashlib
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 
+from fairy_core.application import snapshot_support as snapshot
 from fairy_core.application.approval import ApprovalApplication
+from fairy_core.application.contexts import (
+    PendingChangeset,
+    ProjectContext,
+    TaskContext,
+)
+from fairy_core.application.contexts import (
+    TaskIntent as _TaskIntent,
+)
 from fairy_core.application.errors import ApprovalRequiredError
+from fairy_core.application.history import ConversationMoveContext, HistoryApplication
 from fairy_core.application.recoverable_command import start_recoverable_core_command
 from fairy_core.application.replay_validation import (
     normalize_idempotency_key,
@@ -46,42 +54,10 @@ from fairy_core.domain.models import (
     VersionVisibility,
     WorkspaceType,
 )
-from fairy_core.memory.retrieval_ports import MemorySnapshotBuilder
-from fairy_core.memory.snapshot_builder import DeterministicMemorySnapshotBuilder
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
 from fairy_core.storage import StateStore
 from fairy_core.workspace.index import ProjectIndexer
 from fairy_core.workspace.ports import WorkspaceProvisioner
-
-
-@dataclass(frozen=True, slots=True)
-class ProjectContext:
-    project: Project
-    initial_version: Version
-
-
-@dataclass(frozen=True, slots=True)
-class TaskContext:
-    task: Task
-    target_version: Version | None
-    scope: ScopeContract
-
-
-@dataclass(frozen=True, slots=True)
-class PendingChangeset:
-    changeset: Changeset
-    approval: Approval
-
-
-@dataclass(frozen=True, slots=True)
-class _TaskIntent:
-    task: Task
-    conversation: Conversation
-    target_version: Version | None
-    running: CommandRun
-
-
-SnapshotBuilderFactory = Callable[[CoreUnitOfWork], MemorySnapshotBuilder]
 
 
 class CoreApplication:
@@ -92,7 +68,7 @@ class CoreApplication:
         workspace_provisioner: WorkspaceProvisioner,
         registry: ToolRegistry,
         policy: PolicyEngine,
-        snapshot_builder_factory: SnapshotBuilderFactory | None = None,
+        snapshot_builder_factory: snapshot.SnapshotBuilderFactory | None = None,
         project_indexer: ProjectIndexer | None = None,
         execution_policy: ExecutionPolicyResolver | None = None,
     ) -> None:
@@ -105,7 +81,8 @@ class CoreApplication:
         self._approvals = ApprovalApplication(
             unit_of_work_factory=unit_of_work_factory,
         )
-        self._snapshot_builder_factory = snapshot_builder_factory or self._default_snapshot_builder
+        self._history = HistoryApplication(unit_of_work_factory)
+        self._snapshot_builder_factory = snapshot_builder_factory or snapshot.build_default_snapshot
 
     def create_project(
         self,
@@ -274,6 +251,69 @@ class CoreApplication:
             unit_of_work.state.save_conversation(conversation)
             unit_of_work.commit()
         return conversation
+
+    def update_conversation_metadata(
+        self,
+        *,
+        conversation_id: UUID,
+        title: str | None,
+        pinned: bool | None,
+        expected_revision: int,
+    ) -> Conversation:
+        return self._history.update_conversation(
+            conversation_id=conversation_id,
+            title=title,
+            pinned=pinned,
+            expected_revision=expected_revision,
+        )
+
+    def delete_conversation(
+        self,
+        *,
+        conversation_id: UUID,
+        expected_revision: int,
+        user_confirmed: bool,
+    ) -> Conversation:
+        return self._history.delete_conversation(
+            conversation_id=conversation_id,
+            expected_revision=expected_revision,
+            user_confirmed=user_confirmed,
+        )
+
+    def move_conversation_to_project(
+        self,
+        *,
+        conversation_id: UUID,
+        target_project_id: UUID,
+        expected_revision: int,
+        user_confirmed: bool,
+        idempotency_key: str,
+    ) -> ConversationMoveContext:
+        return self._history.move_to_project(
+            conversation_id=conversation_id,
+            target_project_id=target_project_id,
+            expected_revision=expected_revision,
+            user_confirmed=user_confirmed,
+            idempotency_key=idempotency_key,
+        )
+
+    def update_task_metadata(
+        self,
+        *,
+        task_id: UUID,
+        display_title: str | None,
+        pinned: bool | None,
+        expected_revision: int,
+    ) -> Task:
+        return self._history.update_task(
+            task_id=task_id,
+            display_title=display_title,
+            pinned=pinned,
+            expected_revision=expected_revision,
+        )
+
+    def archive_task(self, *, task_id: UUID, expected_revision: int) -> Task:
+        return self._history.archive_task(task_id=task_id, expected_revision=expected_revision)
 
     def create_task(self, request: TaskCreate) -> TaskContext:
         idempotency_key = normalize_idempotency_key(request.idempotency_key)
@@ -451,14 +491,14 @@ class CoreApplication:
                     },
                     idempotency_key=f"{idempotency_key}:memory-snapshot",
                 )
-                snapshot = self._snapshot_builder_factory(unit_of_work).build(
+                built_snapshot = self._snapshot_builder_factory(unit_of_work).build(
                     scope=unbound_context.scope,
                     query=task.user_request,
                     source_watermark_cursor=source_watermark_cursor,
                 )
                 persisted_snapshot = unit_of_work.snapshots.append(
-                    snapshot,
-                    request_fingerprint=self._snapshot_request_fingerprint(task.id),
+                    built_snapshot,
+                    request_fingerprint=snapshot.snapshot_request_fingerprint(task.id),
                 )
                 task.bind_memory_snapshot(
                     persisted_snapshot.id,
@@ -1110,19 +1150,6 @@ class CoreApplication:
             policy=self._policy,
             ledger=ledger,
         )
-
-    @staticmethod
-    def _default_snapshot_builder(
-        unit_of_work: CoreUnitOfWork,
-    ) -> MemorySnapshotBuilder:
-        return DeterministicMemorySnapshotBuilder(
-            memory_repository=unit_of_work.memory,
-            search_index=unit_of_work.memory_search,
-        )
-
-    @staticmethod
-    def _snapshot_request_fingerprint(task_id: UUID) -> str:
-        return hashlib.sha256(f"task:{task_id}:memory-snapshot:v1".encode()).hexdigest()
 
     @staticmethod
     def _require_project(state: StateStore, project_id: UUID) -> Project:

@@ -254,6 +254,9 @@ function task(): Task {
     memory_snapshot_id: null,
     memory_snapshot_hash: null,
     status: "previewing",
+    display_title: "Build preview",
+    pinned_at: null,
+    metadata_revision: 0,
     created_at: timestamp,
     updated_at: timestamp,
   };
