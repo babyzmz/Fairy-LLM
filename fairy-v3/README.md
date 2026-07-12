@@ -135,3 +135,14 @@ Run only the dependency and layer boundary gate with:
 ```powershell
 uv run --project core python scripts/check_boundaries.py .
 ```
+
+Build the signed-ready Windows installer inputs with:
+
+```powershell
+cd desktop
+npm run tauri build
+```
+
+This produces MSI and NSIS bundles containing the generated Core sidecar and
+pinned MinGit runtime. Signing credentials are deployment secrets and are not
+stored in the repository.

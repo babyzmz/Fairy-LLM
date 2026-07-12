@@ -68,6 +68,7 @@
   },
   "bundle": {
     "active": true,
+    "icon": ["icons/icon.ico"],
     "externalBin": ["binaries/fairy-core"],
     "resources": ["runtime/git"],
     "targets": "all"

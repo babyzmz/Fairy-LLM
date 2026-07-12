@@ -14,6 +14,9 @@
 desktop/dist/
 desktop/playwright-report/
 desktop/test-results/
+desktop/.playwright-cli/
+desktop/output/
+desktop/debug.log
 
 # Rust and Tauri
 **/target/

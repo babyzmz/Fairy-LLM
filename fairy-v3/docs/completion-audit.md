@@ -27,12 +27,12 @@ silently downgraded tests.
 
 | Requirement | Status | Implementation | Executable evidence |
 | --- | --- | --- | --- |
-| 1. Core Foundation | Proven | `core/src/fairy_core/domain`, `application`, `commanding`, `storage`, `runtime`, `memory`, `workspace`, and typed contracts define Project, Conversation, Task, Version, Workspace, Changeset, Approval, CommandRun/Event, Runtime, Preview, Artifact, Checkpoint, and Hermes Memory. | Core full suite: 572 passed; state, execution, storage, memory, workspace, and contract suites. |
+| 1. Core Foundation | Proven | `core/src/fairy_core/domain`, `application`, `commanding`, `storage`, `runtime`, `memory`, `workspace`, and typed contracts define Project, Conversation, Task, Version, Workspace, Changeset, Approval, CommandRun/Event, Runtime, Preview, Artifact, Checkpoint, and Hermes Memory. | Core full suite: 574 passed; state, execution, storage, memory, workspace, and contract suites. |
 | 2. Command, permission, and recovery authority | Proven | One thread-safe `ToolRegistry` generates Agent tools, capability manifest, policy metadata, and Slash availability. Device/cloud profiles and toggles are Core-owned. All model-visible schemas are closed. | `test_policy.py`, `test_execution_settings.py`, `test_command_bus.py`, `test_ledger.py`, `test_persistence_recovery.py`, and assistant approval/recovery tests. |
 | 3. Local project closure | Proven for static and simulated execution; Environment-blocked for real WSL | Imported sources are copied to managed Git; each Task gets an isolated worktree. Changesets, dependency templates, Review, Preview, Checkpoint, accept, and discard are Core-orchestrated. WSL execution requires attestation and has no host fallback. | `test_local_project_loop.py`, `execution/test_project_closure.py`, Rust managed-workspace/static-Preview tests, sandbox simulation tests. `wsl.exe` has no installed WSL environment, so the real attestation gate did not run. |
 | 4. Cloud and multi-device | Environment-blocked | PostgreSQL schema/leases/outbox, S3 object adapter, REST/SSE, optimistic Project revision, candidate conflict retention, execution worker, Runtime worker, and private Preview gateway are implemented. No Redis or NATS is present. | Cloud unit/contract suite: 109 passed; offline full Alembic upgrade/downgrade and one-head checks pass. The 27 live PostgreSQL/S3/OCI integration tests were not executed because Docker is unavailable. |
 | 5. Complete non-Legacy capabilities | Proven | Scratch/project assistant, local/cloud provider profiles, governed web/research/information, documents/RAG, Hermes, perception, voice, Presence/Pet, Slash Commands, typed system actions, Skills, and MCP all use Core contracts. | Capability matrix below; Core, Capabilities, Rust, Vitest, and Playwright suites. |
-| 6. New desktop experience | Proven | React/Tauri renders Task Timeline + Preview, Context/telemetry state, approval/version decisions, lazy Developer Mode, chat, voice, capture, Presence/Pet, provider, execution, and extension settings. Reduced Motion is enforced. | Production Playwright workspace, release, chat, voice, perception, Presence, execution-control, and extension workflows. |
+| 6. New desktop experience | Proven | React/Tauri renders Task Timeline + Preview, Context/telemetry state, approval/version decisions, lazy Developer Mode, chat, voice, capture, Presence/Pet, provider, Knowledge, execution, and extension settings. Reduced Motion is enforced. | Production Playwright workspace, release, chat, voice, perception, Presence, Knowledge, execution-control, and extension workflows. |
 
 ## Public Contracts
 
@@ -103,6 +103,9 @@ silently downgraded tests.
 - Docker CLI: not found.
 - Docker Desktop executable: not found.
 - Podman CLI: not found.
+- A Docker Desktop 4.81.0 `winget` installation was downloaded and its vendor
+  hash verified, but the required administrator authorization was cancelled;
+  the installer exited `4294967291` and no Docker service was created.
 - Result: PostgreSQL 18.4, S3, forced RLS, OCI execution/Runtime, container
   Chromium, bwrap/seccomp, and live two-device tests were not executed.
 - `wsl.exe`: present, but Windows reports that WSL is not installed and no
@@ -122,20 +125,20 @@ It exited successfully with:
 
 - repository boundary, Ruff format, and Ruff lint gates passed;
 - Sandbox Runner: 45 passed, 1 POSIX process-group case skipped on Windows;
-- Core: 572 passed in 60.74 seconds;
+- Core: 574 passed;
 - Capabilities: 104 passed;
 - Cloud: 109 passed and 27 Docker integration tests deselected;
 - Alembic: offline upgrade from base through `20260712_0017` and full downgrade
   from head to base passed; deployment tests confirmed one linear head;
 - Rust: workspace format, Clippy with warnings denied, and all workspace tests
   passed;
-- Desktop: 19 Vitest files / 75 tests and 23 production Playwright workflows
+- Desktop: 21 Vitest files / 87 tests and 25 production Playwright workflows
   passed;
 - TypeScript and Vite production build passed;
 - shell interactive and event-to-UI p95 browser tests passed their 1.5-second
   and 100ms limits;
-- composed Core readiness was 1127.2ms against 3000ms;
-- conservative initial renderer gzip was 140.1KiB across 14 files against
+- composed Core readiness was 1089.5ms against 3000ms;
+- conservative initial renderer gzip was 145.1KiB across 17 files against
   800KiB;
 - generated OpenAPI/TypeScript hashes were unchanged after regeneration; and
 - `git diff --check` passed.
@@ -144,13 +147,27 @@ Docker was deliberately selected off because no Docker runtime exists on this
 host. The command printed the PostgreSQL/S3/OCI skip rather than reporting it
 as a pass. WSL verification likewise printed its explicit skip.
 
+## Desktop Bundle Evidence
+
+`npm run tauri build` completed after the Windows bundle icon was made
+explicit. It compiled the optimized Tauri application, bundled the Core
+sidecar and pinned MinGit runtime, and produced both Windows installers:
+
+- `Fairy_0.1.0_x64_en-US.msi`: 77,573,739 bytes, SHA-256
+  `9025E12D9E2CF8C4C51638CB47ED28177675FA38B082E7B04F604E23BA8BDF41`;
+- `Fairy_0.1.0_x64-setup.exe`: 61,652,022 bytes, SHA-256
+  `BF21D7252F3906D28E5462D1ECD9AE9FD23A547A8B89D7CAF5C474891C3E6B44`.
+
+The first bundle attempt correctly failed because Tauri could not resolve a
+Windows `.ico`; the explicit `icons/icon.ico` bundle configuration fixed that
+release-only defect. Installer artifacts remain ignored build outputs.
+
 ## Git Evidence
 
-`git diff --check` passes. The final `git add --all -- .` attempt failed before
-staging because this desktop session cannot create
-`.git/worktrees/fairy-v3/index.lock` (`Permission denied`). No final commit was
-created, and the working-tree changes remain intact. This Git metadata
-restriction is the only unfinished plan action.
+`git diff --check` passes. Tasks 50 through 56 were each independently staged,
+verified, and committed on `codex/fairy-v3`; the earlier worktree index-lock
+restriction no longer reproduces. Task 57 records the final audit and release
+artifacts after its environment-backed gates.
 
 The authoritative release command is:
 
