@@ -46,7 +46,7 @@ hosts the Rust local worker. Project import, worktrees, Changesets, approval,
 review, Preview, checkpoint, accept/discard, artifacts, capabilities, and
 resumable events all cross Core and the Command Bus. React renders the actual
 Task Timeline, Preview, scratch chat, provider settings, voice, perception,
-Presence, Pet, and Guide surfaces through generated contracts.
+Workspace, Settings, and the programmatic Fairy Pet through generated contracts.
 
 Assistant execution is Task-bound and durable. Messages, Turns, Tool
 Invocations, model rounds, public deltas, cancellation, retry, and lease-aware

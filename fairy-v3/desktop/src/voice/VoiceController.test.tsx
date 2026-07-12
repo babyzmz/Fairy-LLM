@@ -226,6 +226,57 @@ describe("VoiceController", () => {
       idempotency_key: "desktop-voice:auto:turn-live:0:18",
     });
   });
+
+  it("uses the pet auto-play preference and stops immediately when the pet is muted", async () => {
+    const stop = vi.fn();
+    const startNativePlayback = vi.fn(async () => ({
+      finished: new Promise<void>(() => undefined),
+      stop,
+    }));
+    const turn = {
+      id: "turn-pet",
+      task_id: "task-pet",
+      status: "running",
+    } as AssistantTurn;
+    const events = [{
+      id: "event-pet",
+      cursor: 1,
+      event_type: "assistant.message.delta",
+      payload: {
+        turn_id: turn.id,
+        model_round: 0,
+        chunk_index: 0,
+        text: "Pet reply sentence.",
+      },
+    } as unknown as EventEnvelope];
+    render(
+      <VoiceController
+        client={voiceClient()}
+        conversationId="conversation-1"
+        profile={provider()}
+        health={health()}
+        environment={environment({ startNativePlayback })}
+        turn={turn}
+        events={events}
+        petTaskId="task-pet"
+      >
+        <span>pet voice surface</span>
+      </VoiceController>,
+    );
+
+    await waitFor(() => expect(startNativePlayback).toHaveBeenCalledOnce());
+    fireEvent(
+      window,
+      new CustomEvent<DesktopPreferences>(DESKTOP_PREFERENCES_EVENT, {
+        detail: {
+          voice_auto_play_chat: false,
+          voice_auto_play_pet: true,
+          pet_muted: true,
+        } as DesktopPreferences,
+      }),
+    );
+    await waitFor(() => expect(stop).toHaveBeenCalledOnce());
+  });
 });
 
 function renderVoice(

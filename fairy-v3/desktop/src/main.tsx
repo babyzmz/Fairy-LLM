@@ -22,16 +22,6 @@ async function mountSurface() {
     return;
   }
 
-  if (surface === "guide") {
-    const { GuideApp } = await import("./guide/GuideApp");
-    createRoot(rootElement).render(
-      <StrictMode>
-        <GuideApp />
-      </StrictMode>,
-    );
-    return;
-  }
-
   if (surface === "settings") {
     const [{ invoke }, { SettingsApp }, { SettingsClient }] = await Promise.all([
       import("@tauri-apps/api/core"),

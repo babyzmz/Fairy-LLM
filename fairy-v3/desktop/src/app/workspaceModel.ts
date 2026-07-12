@@ -40,6 +40,12 @@ import {
   usePersistedSelection,
   writeEventCursor,
 } from "./workspacePreferences";
+import {
+  equalOverrides,
+  extensionUpdateKey,
+  permissionUpdateKey,
+  requireMcpServer,
+} from "./workspaceCommandKeys";
 
 export type WorkspaceMode = "project" | "chat";
 export type PermissionProfile = "observe" | "standard" | "autonomous";
@@ -127,6 +133,7 @@ export interface WorkspaceModel {
   projectTurn: AssistantTurn | null;
   projectBusy: boolean;
   projectError: string | null;
+  petTaskId: string | null;
   setMode(mode: WorkspaceMode): void;
   setPermissionProfile(profile: PermissionProfile): Promise<void>;
   setCapabilityEnabled(name: string, enabled: boolean): Promise<void>;
@@ -152,6 +159,7 @@ export interface WorkspaceModel {
   importProject(name: string, sourcePath: string): Promise<void>;
   selectProjectFolder(): Promise<string | null>;
   createChatConversation(): Promise<void>;
+  createPetChatConversation(): Promise<void>;
   renameConversation(conversation: Conversation, title: string): Promise<void>;
   setConversationPinned(conversation: Conversation, pinned: boolean): Promise<void>;
   deleteConversation(conversation: Conversation): Promise<void>;
@@ -170,6 +178,7 @@ export interface WorkspaceModel {
     files: File[],
     images?: PendingImageAttachment[],
   ): Promise<void>;
+  sendPetMessage(value: string): Promise<void>;
   cancelChatTurn(): Promise<void>;
   retryChatTurn(): Promise<void>;
   retryPendingChatMessage(): Promise<void>;
@@ -228,6 +237,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const [actionErrorCode, setActionErrorCode] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
   const [chatTaskId, setChatTaskId] = useState<string | null>(null);
+  const [petTaskId, setPetTaskId] = useState<string | null>(null);
+  const petSubmissionRef = useRef(false);
+  const petConversationIdRef = useRef<string | null>(null);
 
   const healthQuery = useQuery({
     queryKey: [...workspaceKey, "health"],
@@ -400,7 +412,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     profileId: selectedProfileId,
     operationMode: "answer",
     events: allEvents,
-    onTaskCreated: setChatTaskId,
+    onTaskCreated(taskId) {
+      setChatTaskId(taskId);
+      if (petSubmissionRef.current) setPetTaskId(taskId);
+    },
     onSettled: invalidateWorkspace,
   });
   const projectAssistant = useAssistantTurn({
@@ -716,6 +731,23 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         );
         setChatConversationSelection(conversation.id);
         setChatTaskId(null);
+        setPetTaskId(null);
+        petConversationIdRef.current = null;
+        setMode("chat");
+        chatAssistant.reset();
+      },
+      async createPetChatConversation() {
+        const conversation = await runAction(() =>
+          client.conversations.create({
+            project_id: null,
+            workspace_type: "chat_scratch",
+          }),
+        );
+        petConversationIdRef.current = conversation.id;
+        setChatConversationSelection(conversation.id);
+        setChatTaskId(null);
+        setPetTaskId(null);
+        setMode("chat");
         chatAssistant.reset();
       },
       async renameConversation(conversation: Conversation, title: string) {
@@ -764,6 +796,31 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         setConversationSelection(result.destination_conversation.id);
         setTaskSelection(null);
         setMode("project");
+      },
+      async sendPetMessage(value: string) {
+        const text = value.trim();
+        if (text.length === 0) return;
+        let conversationId = petConversationIdRef.current ?? selectedChatConversation?.id ?? null;
+        if (conversationId === null) {
+          const conversation = await runAction(() =>
+            client.conversations.create({
+              project_id: null,
+              workspace_type: "chat_scratch",
+            }),
+          );
+          conversationId = conversation.id;
+          setChatConversationSelection(conversation.id);
+          setChatTaskId(null);
+          chatAssistant.reset();
+        }
+        setMode("chat");
+        petSubmissionRef.current = true;
+        try {
+          await chatAssistant.sendToConversation(conversationId, text, []);
+        } finally {
+          petSubmissionRef.current = false;
+          petConversationIdRef.current = null;
+        }
       },
       async renameTask(task: Task, title: string) {
         await runAction(() =>
@@ -918,6 +975,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       projectAssistant,
       runAction,
       selectedProject,
+      selectedChatConversation,
       selectedTask,
       setChatConversationSelection,
       setConversationSelection,
@@ -1019,6 +1077,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     projectTurn: projectAssistant.turn,
     projectBusy: projectAssistant.isBusy,
     projectError: projectAssistant.error,
+    petTaskId,
     setMode,
     setPermissionProfile,
     setCapabilityEnabled,
@@ -1044,6 +1103,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     importProject: actions.importProject,
     selectProjectFolder,
     createChatConversation: actions.createChatConversation,
+    createPetChatConversation: actions.createPetChatConversation,
     renameConversation: actions.renameConversation,
     setConversationPinned: actions.setConversationPinned,
     deleteConversation: actions.deleteConversation,
@@ -1054,6 +1114,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     createTask: (userRequest) => projectAssistant.send(userRequest, []),
     sendChatMessage: chatAssistant.send,
     sendProjectMessage: projectAssistant.send,
+    sendPetMessage: actions.sendPetMessage,
     cancelChatTurn: chatAssistant.cancel,
     retryChatTurn: chatAssistant.retry,
     retryPendingChatMessage: chatAssistant.retryPending,
@@ -1114,64 +1175,4 @@ function coreErrorCode(error: unknown): string | null {
     return null;
   }
   return typeof error.errorCode === "string" ? error.errorCode : null;
-}
-
-function equalOverrides(
-  left: Record<string, boolean>,
-  right: Record<string, boolean>,
-): boolean {
-  const leftEntries = Object.entries(left).sort(([a], [b]) => a.localeCompare(b));
-  const rightEntries = Object.entries(right).sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
-}
-
-function permissionUpdateKey(
-  revision: number,
-  profile: PermissionProfile,
-  overrides: Record<string, boolean>,
-): string {
-  const canonical = JSON.stringify({
-    profile,
-    overrides: Object.entries(overrides).sort(([a], [b]) => a.localeCompare(b)),
-  });
-  let hash = 0xcbf29ce484222325n;
-  for (const byte of new TextEncoder().encode(canonical)) {
-    hash ^= BigInt(byte);
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-  }
-  return `permissions:${revision}:${hash.toString(16).padStart(16, "0")}`;
-}
-
-function requireMcpServer(
-  servers: McpServer[] | undefined,
-  serverId: string,
-): McpServer {
-  const server = servers?.find((item) => item.server_id === serverId);
-  if (server === undefined) throw new Error("MCP server is unavailable");
-  return server;
-}
-
-function extensionUpdateKey(
-  operation: string,
-  serverId: string,
-  revision: number,
-  payload: unknown,
-): string {
-  const canonical = JSON.stringify(canonicalValue(payload));
-  let hash = 0xcbf29ce484222325n;
-  for (const byte of new TextEncoder().encode(canonical)) {
-    hash ^= BigInt(byte);
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-  }
-  return `mcp:${serverId}:${operation}:${revision}:${hash.toString(16).padStart(16, "0")}`;
-}
-
-function canonicalValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => [key, canonicalValue(item)]),
-  );
 }

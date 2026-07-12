@@ -56,6 +56,12 @@ interface AssistantTurnState {
     files: File[],
     images?: PendingImageAttachment[],
   ): Promise<void>;
+  sendToConversation(
+    conversationId: string,
+    value: string,
+    files: File[],
+    images?: PendingImageAttachment[],
+  ): Promise<void>;
   cancel(): Promise<void>;
   resume(): Promise<void>;
   retry(): Promise<void>;
@@ -100,9 +106,12 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
   }, [options]);
 
   const executeDraft = useCallback(
-    async (draft: AssistantDraft) => {
+    async (draft: AssistantDraft, conversationOverride?: string) => {
       if (busyRef.current) throw new Error("An assistant turn is already running");
-      const conversationId = required(options.conversationId, "Conversation is unavailable");
+      const conversationId = required(
+        conversationOverride ?? options.conversationId,
+        "Conversation is unavailable",
+      );
       const profileId = required(options.profileId, "Model provider is unavailable");
       const operation = ++operationRef.current;
       pendingDraftRef.current = draft;
@@ -205,6 +214,25 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
         files: [...files],
         images: [...images],
       }),
+    [executeDraft],
+  );
+
+  const sendToConversation = useCallback(
+    (
+      conversationId: string,
+      value: string,
+      files: File[],
+      images: PendingImageAttachment[] = [],
+    ) =>
+      executeDraft(
+        {
+          id: idempotencyKey("optimistic-message"),
+          value,
+          files: [...files],
+          images: [...images],
+        },
+        conversationId,
+      ),
     [executeDraft],
   );
 
@@ -357,6 +385,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     streamedText,
     pendingUserMessage,
     send,
+    sendToConversation,
     cancel,
     resume,
     retry,

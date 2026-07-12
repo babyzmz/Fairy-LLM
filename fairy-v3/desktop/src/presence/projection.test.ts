@@ -65,11 +65,22 @@ describe("PresenceProjection", () => {
   it.each([
     ["internal event", event("command.running", { visibility: "internal" })],
     ["developer event", event("command.running", { visibility: "developer" })],
-    ["model delta", event("assistant.message.delta")],
     ["unknown event", event("tool.secret_arguments")],
   ])("ignores %s", (_label, incoming) => {
     const initial = PresenceProjection.initial();
     expect(PresenceProjection.reduce(initial, incoming)).toBe(initial);
+  });
+
+  it("maps public model deltas to streaming without projecting generated text", () => {
+    const state = PresenceProjection.reduce(
+      PresenceProjection.initial(),
+      event("assistant.message.delta", {
+        payload: { text: "private generated text" },
+      }),
+    );
+    expect(state.work_state).toBe("streaming");
+    expect(state.status_text).toBe("Writing the reply");
+    expect(JSON.stringify(state)).not.toContain("private generated text");
   });
 
   it("deduplicates cursors and projects failure without copying its message", () => {

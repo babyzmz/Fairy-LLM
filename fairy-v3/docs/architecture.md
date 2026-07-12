@@ -267,12 +267,15 @@ labelled untrusted, and persisted as Task-owned report Artifacts.
 
 ### Presence surfaces
 
-Workspace, Presence, and Guide are separate Tauri windows and separately
-loaded React surfaces. Presence receives a fixed cross-window projection of
-public durable events, stores only local visual preferences and monitor
-position, and uses canned status text. Window capabilities are minimal;
-Presence and Guide do not instantiate CoreClient or receive Scope, model, or
-project state.
+Workspace, Settings, and the Fairy Pet are separate Tauri windows with
+separately loaded React surfaces. The Pet renders its floating core entirely
+with Canvas 2D and receives only a bounded projection of public durable events,
+an optional bounded scratch-chat reply, and transient voice playback state. It
+stores only monitor position and visual preferences, uses canned status text,
+and routes quick input to a scratch Conversation through the main window. The
+Pet does not instantiate CoreClient or receive Scope, model, approval, or
+project state. Its native commands are restricted to three pet preferences,
+anchored window resizing, Settings routing, and application exit.
 
 ## Permission model
 

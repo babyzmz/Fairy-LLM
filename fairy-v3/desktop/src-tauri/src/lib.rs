@@ -10,6 +10,7 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 
 use desktop_preferences::{
     DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore, DesktopPreferencesUpdate,
+    PetPreferencesUpdate,
 };
 use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStore};
 use provider_credentials::ProviderCredentialStore;
@@ -57,6 +58,14 @@ pub fn authorize_preferences_reader(label: &str) -> Result<(), WindowScopeError>
     }
 }
 
+pub fn authorize_pet_window(label: &str) -> Result<(), WindowScopeError> {
+    if label == "pet" {
+        Ok(())
+    } else {
+        Err(WindowScopeError)
+    }
+}
+
 pub fn authorize_voice_health_window(label: &str) -> Result<(), WindowScopeError> {
     if ["main", "settings"].contains(&label) {
         Ok(())
@@ -94,11 +103,35 @@ pub fn auxiliary_window_policy(label: &str) -> Option<AuxiliaryWindowPolicy> {
             ignore_cursor_events: false,
             focusable: true,
         }),
-        "guide" => Some(AuxiliaryWindowPolicy {
-            ignore_cursor_events: true,
-            focusable: false,
-        }),
         _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PetWindowFrame {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+pub fn anchored_pet_frame(
+    current: PetWindowFrame,
+    target_width: u32,
+    target_height: u32,
+    monitor: PetWindowFrame,
+) -> PetWindowFrame {
+    let right = i64::from(current.x) + i64::from(current.width);
+    let bottom = i64::from(current.y) + i64::from(current.height);
+    let minimum_x = i64::from(monitor.x);
+    let minimum_y = i64::from(monitor.y);
+    let maximum_x = minimum_x + i64::from(monitor.width.saturating_sub(target_width));
+    let maximum_y = minimum_y + i64::from(monitor.height.saturating_sub(target_height));
+    PetWindowFrame {
+        x: (right - i64::from(target_width)).clamp(minimum_x, maximum_x) as i32,
+        y: (bottom - i64::from(target_height)).clamp(minimum_y, maximum_y) as i32,
+        width: target_width,
+        height: target_height,
     }
 }
 
@@ -311,9 +344,98 @@ async fn desktop_preferences_update(
             DesktopPreferencesError::RevisionConflict => "PREFERENCES_REVISION_CONFLICT".to_owned(),
             other => other.to_string(),
         })?;
+    apply_pet_window_preferences(&app, &next)?;
     app.emit("desktop-preferences-changed", &next)
         .map_err(|error| error.to_string())?;
     Ok(next)
+}
+
+#[tauri::command]
+async fn pet_preferences_update(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    input: PetPreferencesUpdate,
+) -> Result<DesktopPreferences, String> {
+    authorize_pet_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let _guard = state
+        .preferences
+        .lock()
+        .map_err(|_| "Desktop preferences lock is unavailable".to_owned())?;
+    let next = DesktopPreferencesStore::new(&state.data_dir)
+        .update_pet(input)
+        .map_err(|error| match error {
+            DesktopPreferencesError::RevisionConflict => "PREFERENCES_REVISION_CONFLICT".to_owned(),
+            other => other.to_string(),
+        })?;
+    apply_pet_window_preferences(&app, &next)?;
+    app.emit("desktop-preferences-changed", &next)
+        .map_err(|error| error.to_string())?;
+    Ok(next)
+}
+
+#[tauri::command]
+async fn pet_window_set_expanded(window: WebviewWindow, expanded: bool) -> Result<(), String> {
+    authorize_pet_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let scale = window.scale_factor().map_err(|error| error.to_string())?;
+    let current_position = window.outer_position().map_err(|error| error.to_string())?;
+    let current_size = window.outer_size().map_err(|error| error.to_string())?;
+    let monitor = window
+        .current_monitor()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Pet monitor is unavailable".to_owned())?;
+    let (logical_width, logical_height) = if expanded {
+        (420.0, 360.0)
+    } else {
+        (176.0, 176.0)
+    };
+    let target_width = (logical_width * scale).round() as u32;
+    let target_height = (logical_height * scale).round() as u32;
+    let frame = anchored_pet_frame(
+        PetWindowFrame {
+            x: current_position.x,
+            y: current_position.y,
+            width: current_size.width,
+            height: current_size.height,
+        },
+        target_width,
+        target_height,
+        PetWindowFrame {
+            x: monitor.position().x,
+            y: monitor.position().y,
+            width: monitor.size().width,
+            height: monitor.size().height,
+        },
+    );
+    window
+        .set_size(tauri::PhysicalSize::new(frame.width, frame.height))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_position(tauri::PhysicalPosition::new(frame.x, frame.y))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn pet_exit(window: WebviewWindow) -> Result<(), String> {
+    authorize_pet_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    window.app_handle().exit(0);
+    Ok(())
+}
+
+fn apply_pet_window_preferences(
+    app: &tauri::AppHandle,
+    preferences: &DesktopPreferences,
+) -> Result<(), String> {
+    let pet = app
+        .get_webview_window("pet")
+        .ok_or_else(|| "Pet window is unavailable".to_owned())?;
+    pet.set_always_on_top(preferences.pet_always_on_top)
+        .map_err(|error| error.to_string())?;
+    if preferences.pet_enabled {
+        pet.show().map_err(|error| error.to_string())
+    } else {
+        pet.hide().map_err(|error| error.to_string())
+    }
 }
 
 #[tauri::command]
@@ -617,6 +739,7 @@ pub fn run() {
             tauri::async_runtime::spawn_blocking(move || {
                 let _ = warming_voice.health();
             });
+            let preferences = DesktopPreferencesStore::new(&data_dir).load()?;
             app.manage(DesktopState {
                 core: Arc::new(Mutex::new(Some(bridge))),
                 voice,
@@ -625,7 +748,7 @@ pub fn run() {
                 desktop_program,
                 resource_dir,
             });
-            for label in ["pet", "guide"] {
+            for label in ["pet"] {
                 let Some(policy) = auxiliary_window_policy(label) else {
                     continue;
                 };
@@ -634,10 +757,9 @@ pub fn run() {
                 };
                 window.set_ignore_cursor_events(policy.ignore_cursor_events)?;
                 window.set_focusable(policy.focusable)?;
-                if label == "guide" {
-                    window.show()?;
-                }
             }
+            apply_pet_window_preferences(app.handle(), &preferences)
+                .map_err(std::io::Error::other)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -648,6 +770,9 @@ pub fn run() {
             provider_openrouter_delete,
             desktop_preferences_get,
             desktop_preferences_update,
+            pet_preferences_update,
+            pet_window_set_expanded,
+            pet_exit,
             open_settings_window,
             voice_worker_health,
             voice_model_install,

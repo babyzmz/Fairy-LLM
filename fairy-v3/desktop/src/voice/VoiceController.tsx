@@ -59,6 +59,7 @@ interface VoiceControllerProps {
   health: ProviderHealth | null;
   turn?: AssistantTurn | null;
   events?: EventEnvelope[];
+  petTaskId?: string | null;
   environment?: VoiceEnvironment;
   children: ReactNode;
 }
@@ -89,6 +90,7 @@ export function VoiceController({
   health,
   turn = null,
   events = [],
+  petTaskId = null,
   environment: configuredEnvironment,
   children,
 }: VoiceControllerProps) {
@@ -101,7 +103,9 @@ export function VoiceController({
   const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [autoPlay, setAutoPlay] = useState(false);
+  const [autoPlayChat, setAutoPlayChat] = useState(false);
+  const [autoPlayPet, setAutoPlayPet] = useState(true);
+  const [petMuted, setPetMuted] = useState(false);
   const recordingRef = useRef<RecordingSession | null>(null);
   const transcriptRef = useRef<((text: string) => void) | null>(null);
   const playbackRef = useRef<AudioPlayback | null>(null);
@@ -143,11 +147,17 @@ export function VoiceController({
   useEffect(() => {
     const update = (event: Event) => {
       const preferences = (event as CustomEvent<DesktopPreferences>).detail;
-      setAutoPlay(preferences.voice_auto_play_chat);
+      setAutoPlayChat(preferences.voice_auto_play_chat);
+      setAutoPlayPet(preferences.voice_auto_play_pet);
+      setPetMuted(preferences.pet_muted);
     };
     window.addEventListener(DESKTOP_PREFERENCES_EVENT, update);
     return () => window.removeEventListener(DESKTOP_PREFERENCES_EVENT, update);
   }, []);
+
+  useEffect(() => {
+    if (petMuted && turn?.task_id === petTaskId) stopSpeaking();
+  }, [petMuted, petTaskId, stopSpeaking, turn?.task_id]);
 
   const startRecording = useCallback(
     async (onTranscript: (text: string) => void) => {
@@ -301,6 +311,10 @@ export function VoiceController({
   );
 
   useEffect(() => {
+    const autoPlay =
+      turn !== null && turn.task_id === petTaskId
+        ? autoPlayPet && !petMuted
+        : autoPlayChat;
     if (!autoPlay || environment.startNativePlayback === undefined || turn === null) return;
     if (autoTurnRef.current !== turn.id) {
       if (autoTurnRef.current !== null) stopSpeaking();
@@ -387,7 +401,7 @@ export function VoiceController({
         }
       });
     }
-  }, [autoPlay, environment, events, stopSpeaking, turn]);
+  }, [autoPlayChat, autoPlayPet, environment, events, petMuted, petTaskId, stopSpeaking, turn]);
 
   useEffect(
     () => () => {
@@ -441,6 +455,14 @@ export function VoiceController({
 export function useVoicePlaybackState(turnId: string): PlaybackState {
   const voice = useContext(VoiceContext);
   return voice?.speakingTurnId === turnId ? voice.playbackState : "idle";
+}
+
+export function useVoicePresence(): { speaking: boolean; stopSpeaking(): void } {
+  const voice = useContext(VoiceContext);
+  return {
+    speaking: voice?.playbackState === "preparing" || voice?.playbackState === "speaking",
+    stopSpeaking: voice?.stopSpeaking ?? (() => undefined),
+  };
 }
 
 export function VoiceRecordControl({

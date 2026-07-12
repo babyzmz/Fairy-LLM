@@ -1,17 +1,17 @@
 import "@testing-library/jest-dom/vitest";
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { DesktopPreferences } from "../settings/client";
 import type { PresenceChannel } from "./channel";
-import type { PresenceProjectionState } from "./projection";
+import type { PetHost } from "./petHost";
 import type { PresenceWindowPort, StorageLike } from "./persistence";
-
+import type { PresenceProjectionState } from "./projection";
 import { PresenceApp } from "./PresenceApp";
 
-const position = { x: 12, y: 12 };
-const size = { width: 180, height: 220 };
+const NOW = Date.parse("2026-07-11T08:00:01.000Z");
 const monitor = {
   id: "primary:0:0:1920:1080",
   x: 0,
@@ -27,7 +27,10 @@ function channelHarness() {
   const channel: PresenceChannel = {
     publishProjection: vi.fn(),
     requestProjection: vi.fn(),
-    requestWorkspaceToggle: vi.fn(),
+    requestWorkspaceOpen: vi.fn(),
+    requestNewChat: vi.fn(),
+    requestChatSend: vi.fn(),
+    requestVoiceStop: vi.fn(),
     onProjection(next) {
       listener = next;
       return () => {
@@ -45,22 +48,18 @@ function channelHarness() {
   };
 }
 
-function projection(
-  overrides: Partial<PresenceProjectionState> = {},
-): PresenceProjectionState {
+function projection(overrides: Partial<PresenceProjectionState> = {}): PresenceProjectionState {
   return {
     activity: "ready",
+    work_state: "ready",
     status_text: "Ready for review",
     last_cursor: 4,
     last_event_id: "event-4",
     updated_at_ms: Date.parse("2026-07-11T08:00:00.000Z"),
     recent_activity_ms: [Date.parse("2026-07-11T08:00:00.000Z")],
-    notice: {
-      id: "notice-4",
-      tone: "info",
-      text: "Preview is ready",
-    },
-    reply: { id: "reply-4", text: "The task update is ready" },
+    notice: null,
+    reply: null,
+    speaking: false,
     ...overrides,
   };
 }
@@ -68,11 +67,52 @@ function projection(
 function windowPort(): PresenceWindowPort {
   return {
     monitors: vi.fn(async () => [monitor]),
-    position: vi.fn(async () => position),
-    size: vi.fn(async () => size),
+    position: vi.fn(async () => ({ x: 12, y: 12 })),
+    size: vi.fn(async () => ({ width: 176, height: 176 })),
     setPosition: vi.fn(async () => undefined),
     startDragging: vi.fn(async () => undefined),
     onMoved: vi.fn(async () => () => undefined),
+  };
+}
+
+function preferences(): DesktopPreferences {
+  return {
+    schema_version: 1,
+    revision: 0,
+    language: "system",
+    launch_at_startup: false,
+    minimize_to_tray: true,
+    theme: "system",
+    reduced_motion: false,
+    compact_density: false,
+    selected_profile_id: null,
+    voice_auto_play_chat: false,
+    voice_auto_play_pet: true,
+    voice_volume_percent: 80,
+    voice_rate_percent: 100,
+    permission_cloud_profile: "standard",
+    memory_enabled: true,
+    memory_retention_days: 90,
+    analytics_enabled: false,
+    pet_enabled: true,
+    pet_always_on_top: true,
+    pet_muted: false,
+    developer_mode: false,
+  };
+}
+
+function petHost(): PetHost {
+  let current = preferences();
+  return {
+    getPreferences: vi.fn(async () => current),
+    updatePreferences: vi.fn(async (input) => {
+      current = { ...current, ...input, revision: current.revision + 1 };
+      return current;
+    }),
+    onPreferences: vi.fn(async () => () => undefined),
+    setExpanded: vi.fn(async () => undefined),
+    openSettings: vi.fn(async () => undefined),
+    exit: vi.fn(async () => undefined),
   };
 }
 
@@ -86,96 +126,123 @@ function memoryStorage(initial?: string): StorageLike {
   };
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("PresenceApp", () => {
-  it("reveals local controls on hover and starts native drag at five pixels", async () => {
-    const user = userEvent.setup();
+  it("opens quick chat on click and the workspace on double click", () => {
+    vi.useFakeTimers();
     const harness = channelHarness();
-    const port = windowPort();
     render(
       <PresenceApp
         channel={harness.channel}
+        host={petHost()}
+        storage={memoryStorage()}
+        windowPort={windowPort()}
+      />,
+    );
+
+    const core = screen.getByRole("button", { name: "Fairy companion" });
+    fireEvent.click(core);
+    act(() => vi.advanceTimersByTime(220));
+    expect(screen.getByRole("textbox", { name: "Quick message to Fairy" })).toBeVisible();
+    fireEvent.doubleClick(core);
+    expect(harness.channel.requestWorkspaceOpen).toHaveBeenCalledOnce();
+  });
+
+  it("starts native dragging only after five pixels", () => {
+    const port = windowPort();
+    render(
+      <PresenceApp
+        channel={channelHarness().channel}
+        host={petHost()}
         storage={memoryStorage()}
         windowPort={port}
       />,
     );
-
     const surface = screen.getByTestId("presence-surface");
-    expect(screen.queryByRole("toolbar", { name: "Presence controls" })).toBeNull();
-    await user.hover(surface);
-    expect(screen.getByRole("toolbar", { name: "Presence controls" })).toBeVisible();
-
-    fireEvent.pointerDown(surface, { clientX: 10, clientY: 10 });
+    fireEvent.pointerDown(surface, { button: 0, clientX: 10, clientY: 10 });
     fireEvent.pointerMove(surface, { clientX: 13, clientY: 13 });
     expect(port.startDragging).not.toHaveBeenCalled();
     fireEvent.pointerMove(surface, { clientX: 15, clientY: 10 });
-    expect(port.startDragging).toHaveBeenCalledTimes(1);
+    expect(port.startDragging).toHaveBeenCalledOnce();
   });
 
-  it("supports quiet mode, dismissible notices, closable replies, and scale", async () => {
+  it("renders closable replies and dismissible approval notices", async () => {
     const user = userEvent.setup();
     const harness = channelHarness();
-    const storage = memoryStorage();
     render(
       <PresenceApp
         channel={harness.channel}
-        storage={storage}
+        host={petHost()}
+        now={() => NOW}
+        storage={memoryStorage()}
         windowPort={windowPort()}
-        now={() => Date.parse("2026-07-11T08:00:01.000Z")}
       />,
     );
 
-    harness.emit(projection());
-    expect(await screen.findByRole("alert")).toHaveTextContent("Preview is ready");
-    expect(screen.getByRole("status")).toHaveTextContent("The task update is ready");
-
+    act(() => harness.emit(projection({
+      reply: { id: "reply-4", text: "A streamed answer", kind: "scratch", streaming: true },
+    })));
+    expect(screen.getByRole("status")).toHaveTextContent("A streamed answer");
     await user.click(screen.getByRole("button", { name: "Close reply" }));
-    expect(screen.queryByText("The task update is ready")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Dismiss notice" }));
-    expect(screen.queryByText("Preview is ready")).toBeNull();
+    expect(screen.queryByText("A streamed answer")).toBeNull();
 
-    await user.hover(screen.getByTestId("presence-surface"));
-    fireEvent.click(screen.getByRole("button", { name: "Enable quiet mode" }));
-    expect(JSON.parse(storage.getItem("settings") ?? "{}").quiet_mode).toBe(true);
-    expect(screen.getByTestId("presence-surface")).toHaveAttribute(
-      "data-quiet",
-      "true",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Increase Presence scale" }));
-    expect(screen.getByTestId("presence-surface")).toHaveStyle({
-      "--presence-scale": "1.1",
-    });
+    act(() => harness.emit(projection({
+      activity: "needs_attention",
+      work_state: "awaiting_confirmation",
+      status_text: "Waiting for your decision",
+      notice: { id: "notice-4", tone: "critical", text: "An approval needs your decision" },
+    })));
+    expect(screen.getByRole("alert")).toHaveTextContent("An approval needs your decision");
+    await user.click(screen.getByRole("button", { name: "Dismiss notice" }));
+    expect(screen.queryByText("An approval needs your decision")).toBeNull();
   });
 
-  it("applies the reduced-motion override without changing domain state", () => {
+  it("does not submit while a Chinese IME composition is active", () => {
+    vi.useFakeTimers();
     const harness = channelHarness();
     render(
       <PresenceApp
         channel={harness.channel}
-        storage={memoryStorage(
-          JSON.stringify({
-            positions: {},
-            last_monitor_id: null,
-            scale: 1,
-            quiet_mode: false,
-            dismissed_notice_ids: [],
-            reduced_motion_override: "reduce",
-          }),
-        )}
+        host={petHost()}
+        storage={memoryStorage()}
         windowPort={windowPort()}
       />,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Fairy companion" }));
+    act(() => vi.advanceTimersByTime(220));
+    const input = screen.getByRole("textbox", { name: "Quick message to Fairy" });
+    fireEvent.change(input, { target: { value: "你好 Fairy" } });
+    fireEvent.compositionStart(input);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(harness.channel.requestChatSend).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(input);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(harness.channel.requestChatSend).toHaveBeenCalledWith("你好 Fairy");
+  });
 
+  it("applies the reduced-motion override", () => {
+    render(
+      <PresenceApp
+        channel={channelHarness().channel}
+        host={petHost()}
+        storage={memoryStorage(JSON.stringify({
+          positions: {},
+          last_monitor_id: null,
+          scale: 1,
+          quiet_mode: false,
+          dismissed_notice_ids: [],
+          reduced_motion_override: "reduce",
+        }))}
+        windowPort={windowPort()}
+      />,
+    );
     expect(screen.getByTestId("presence-surface")).toHaveAttribute(
       "data-reduced-motion",
       "true",
-    );
-    fireEvent.mouseEnter(screen.getByTestId("presence-surface"));
-    fireEvent.click(screen.getByRole("button", { name: "Motion preference: reduce" }));
-    expect(screen.getByTestId("presence-surface")).toHaveAttribute(
-      "data-reduced-motion",
-      "false",
     );
   });
 });

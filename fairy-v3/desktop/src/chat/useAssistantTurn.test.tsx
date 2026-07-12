@@ -53,6 +53,38 @@ describe("useAssistantTurn", () => {
     expect(resolveTask).not.toBeNull();
   });
 
+  it("can bind a pet-origin turn to an explicitly selected scratch conversation", async () => {
+    const petConversationId = "00000000-0000-4000-8000-000000000099";
+    const createTask = vi.fn<AssistantTurnClient["tasks"]["create"]>(
+      async () => ({ task: { id: taskId } }) as never,
+    );
+    const { result } = renderHook(() =>
+      useAssistantTurn({
+        client: assistantClient({ createTask }),
+        conversationId: null,
+        profileId: "openrouter-free",
+        operationMode: "answer",
+        events: [],
+      }),
+    );
+
+    await act(async () => {
+      await result.current.sendToConversation(
+        petConversationId,
+        "Scratch only",
+        [],
+      );
+    });
+
+    expect(createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversation_id: petConversationId,
+        operation_mode: "answer",
+        user_request: "Scratch only",
+      }),
+    );
+  });
+
   it("keeps a failed optimistic message available for edit", async () => {
     const file = new File(["draft"], "draft.txt", { type: "text/plain" });
     const { result } = renderHook(() =>

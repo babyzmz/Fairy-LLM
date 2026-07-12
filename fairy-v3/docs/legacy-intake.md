@@ -20,13 +20,13 @@ behavior, but it must not import or transplant legacy implementation modules.
 
 | Area | Copy as asset | Rebuild as behavior | Black-box acceptance |
 | --- | --- | --- | --- |
-| Presence | Existing Fairy visual media only | Separate Presence and Workspace windows; avatar hover input; 5 px drag threshold; 20 px edge snap; position and Quiet Mode persistence; dismissible non-critical notices; closable reply bubble | Multi-monitor placement, open/hide Workspace, hover input, notice dismissal, reply bubble retention, reduced motion |
-| Companion | Doctrine documents and character copy | Ambient Presence derived from durable visible state; scene, density, AFK, and attending projections; Companion never calls an LLM or owns project state | Presence protocol, density governor, scene state machine, short-memory policy, passive screen watcher boundaries |
+| Fairy Pet | No runtime character image | Separate programmatic Canvas Pet and Workspace windows; click input; 5 px drag threshold; edge snap; monitor position; bounded notices and reply cards; typed right-click commands | Multi-monitor placement, anchored expand/collapse, scratch quick chat, card dismissal, Canvas pixels, Reduced Motion |
+| Companion | Doctrine documents and character copy | Ambient state derived from durable public events; Companion never calls an LLM, owns project state, or decides approvals | Projection schema, state priority, AFK/density behavior, strict Core/voice/capture boundaries |
 | Voice | `fairy_clone_core.wav` and matching transcript after license/provenance recording | A dedicated voice service; sentence-boundary TTS queue driven by public text deltas; cancellation and duplicate suppression; standard WAV contract | STT/TTS health, first-audio latency, ordered chunks, cancellation, disabled-device behavior |
 | Web research | No legacy code | Search/fetch primitives, research execution, and evidence synthesis as three layers; provider diagnostics; canonical `specs`, `compare`, `release`, and `web_brief` artifacts | URL and redirect safety, cache policy, binary handling, evidence citations, provider fallback, no-tool direct answer |
 | Assistant routing | Persona copy and Doctrine only | Model-led intent understanding, tool-necessity judgment, candidate tools, and explicit fallback; `direct_answer` is always available | Weather, news, project memory, system status, ordinary chat, empty/failed tool fallback, no keyword-forced route |
 | Local models | No model weight in Git | Provider profiles for local and OpenAI-compatible models; health and capability negotiation | Local unavailable, fallback, cancellation, streaming, model asset missing |
-| Desktop surfaces | Approved icons and character media only | Tauri Workspace, Presence, Guide, and runtime supervision with command/projection boundaries | Window capability isolation, click-through Guide that never clicks, Windows scaling, offline mode |
+| Desktop surfaces | Approved native application icon only | Tauri Workspace, Settings, and programmatic Fairy Pet with command/projection boundaries | Window capability isolation, Windows scaling, Reduced Motion, offline mode |
 
 ## Explicitly rejected
 
@@ -71,9 +71,9 @@ fairy-v3/
 Tests remain package-owned until a genuinely cross-package executable suite
 exists. Empty future-facing directory trees are not kept as placeholders.
 
-Within the desktop renderer, Presence owns one domain boundary. Its avatar,
-reply bubble, projections, and hooks must not be split between generic
-components, pet, and companion folders. Voice owns one boundary and exposes no
+Within the desktop renderer, the Fairy Pet owns one domain boundary. Its Canvas,
+reply cards, projection, window host, and local interaction code stay in
+`presence/`. Voice owns one boundary and exposes no
 duplicate runtime wrappers.
 
 Within Core, each external dependency is reached through a port. Storage,

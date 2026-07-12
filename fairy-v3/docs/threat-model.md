@@ -104,9 +104,10 @@ and independently verified worker attestations/results.
 27. Make screen capture an explicit user action. Bind image bytes, dimensions,
     media type, and hash to one Turn; label OCR/vision text as untrusted and
     remove ephemeral bytes after terminal completion, cancellation, or failure.
-28. Keep Presence and Guide outside CoreClient. Send only fixed projections of
-    public events over the cross-window channel; reject arbitrary text, Scope,
-    project data, approvals, and execution requests.
+28. Keep the Fairy Pet outside CoreClient. Accept only schema-validated public
+    projections and typed scratch-chat/window/voice requests over the
+    cross-window channel. Bound reply text, reject Scope and project data, and
+    make approval notices open the main window instead of deciding anything.
 29. Validate Outbox delivery against the shared EventEnvelope plus exact tenant
     and event identity. Give projection handlers event ID, attempt, and lease
     fence; a stale worker cannot acknowledge a newer claim.

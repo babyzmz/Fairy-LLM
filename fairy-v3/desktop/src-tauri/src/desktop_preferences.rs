@@ -75,6 +75,14 @@ pub struct DesktopPreferencesUpdate {
     pub preferences: DesktopPreferences,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PetPreferencesUpdate {
+    pub expected_revision: u64,
+    pub voice_auto_play_pet: Option<bool>,
+    pub pet_muted: Option<bool>,
+    pub pet_always_on_top: Option<bool>,
+}
+
 #[derive(Debug, Error)]
 pub enum DesktopPreferencesError {
     #[error("desktop preferences revision conflict")]
@@ -119,6 +127,30 @@ impl DesktopPreferencesStore {
         let mut next = update.preferences;
         next.schema_version = SCHEMA_VERSION;
         next.revision = current.revision + 1;
+        validate(&next)?;
+        self.write_atomic(&next)?;
+        Ok(next)
+    }
+
+    pub fn update_pet(
+        &self,
+        update: PetPreferencesUpdate,
+    ) -> Result<DesktopPreferences, DesktopPreferencesError> {
+        let current = self.load()?;
+        if current.revision != update.expected_revision {
+            return Err(DesktopPreferencesError::RevisionConflict);
+        }
+        let mut next = current;
+        if let Some(value) = update.voice_auto_play_pet {
+            next.voice_auto_play_pet = value;
+        }
+        if let Some(value) = update.pet_muted {
+            next.pet_muted = value;
+        }
+        if let Some(value) = update.pet_always_on_top {
+            next.pet_always_on_top = value;
+        }
+        next.revision += 1;
         validate(&next)?;
         self.write_atomic(&next)?;
         Ok(next)
@@ -221,7 +253,7 @@ fn replace_file(source: &Path, destination: &Path) -> Result<(), std::io::Error>
 mod tests {
     use super::{
         DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore,
-        DesktopPreferencesUpdate,
+        DesktopPreferencesUpdate, PetPreferencesUpdate,
     };
 
     #[test]
@@ -251,5 +283,26 @@ mod tests {
             conflict,
             Err(DesktopPreferencesError::RevisionConflict)
         ));
+    }
+
+    #[test]
+    fn pet_update_can_only_change_companion_preferences() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        let saved = store
+            .update_pet(PetPreferencesUpdate {
+                expected_revision: 0,
+                voice_auto_play_pet: Some(false),
+                pet_muted: Some(true),
+                pet_always_on_top: Some(false),
+            })
+            .expect("save pet preferences");
+
+        assert_eq!(saved.revision, 1);
+        assert!(!saved.voice_auto_play_pet);
+        assert!(saved.pet_muted);
+        assert!(!saved.pet_always_on_top);
+        assert!(!saved.developer_mode);
+        assert_eq!(saved.permission_cloud_profile, "standard");
     }
 }

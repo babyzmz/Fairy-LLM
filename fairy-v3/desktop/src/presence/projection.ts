@@ -9,6 +9,14 @@ export type PresenceActivity =
   | "ready"
   | "needs_attention";
 export type PresenceDensity = "quiet" | "normal" | "busy";
+export type PresenceWorkState =
+  | "idle"
+  | "analyzing"
+  | "tool"
+  | "streaming"
+  | "awaiting_confirmation"
+  | "ready"
+  | "error";
 
 export interface PresenceNotice {
   id: string;
@@ -19,10 +27,13 @@ export interface PresenceNotice {
 export interface PresenceReply {
   id: string;
   text: string;
+  kind: "scratch" | "task_notice";
+  streaming: boolean;
 }
 
 export interface PresenceProjectionState {
   activity: PresenceActivity;
+  work_state: PresenceWorkState;
   status_text: string;
   last_cursor: number;
   last_event_id: string | null;
@@ -30,6 +41,7 @@ export interface PresenceProjectionState {
   recent_activity_ms: number[];
   notice: PresenceNotice | null;
   reply: PresenceReply | null;
+  speaking: boolean;
 }
 
 export interface PresenceView extends PresenceProjectionState {
@@ -40,6 +52,7 @@ const PRESENCE_STATUS_TEXTS = [
   "Standing by",
   "Reviewing your request",
   "Preparing the next step",
+  "Writing the reply",
   "Resuming interrupted work",
   "Working in the project",
   "Preparing the preview",
@@ -65,6 +78,15 @@ export const presenceProjectionStateSchema = z
       "ready",
       "needs_attention",
     ]),
+    work_state: z.enum([
+      "idle",
+      "analyzing",
+      "tool",
+      "streaming",
+      "awaiting_confirmation",
+      "ready",
+      "error",
+    ]),
     status_text: z.enum(PRESENCE_STATUS_TEXTS),
     last_cursor: z.number().int().nonnegative(),
     last_event_id: z.string().max(128).nullable(),
@@ -81,10 +103,13 @@ export const presenceProjectionStateSchema = z
     reply: z
       .object({
         id: z.string().min(1).max(160),
-        text: z.literal("The task update is ready"),
+        text: z.string().min(1).max(1_200),
+        kind: z.enum(["scratch", "task_notice"]),
+        streaming: z.boolean(),
       })
       .strict()
       .nullable(),
+    speaking: z.boolean(),
   })
   .strict()
   .refine((value) => value.notice === null || value.reply === null, {
@@ -96,6 +121,7 @@ const DENSITY_WINDOW_MS = 30_000;
 
 interface ProjectionRule {
   activity: PresenceActivity;
+  workState: PresenceWorkState;
   statusText: string;
   notice?: Omit<PresenceNotice, "id">;
   replyText?: string;
@@ -104,68 +130,88 @@ interface ProjectionRule {
 const RULES: Readonly<Record<string, ProjectionRule>> = Object.freeze({
   "assistant.turn.started": {
     activity: "attending",
+    workState: "analyzing",
     statusText: "Reviewing your request",
   },
   "command.created": {
     activity: "attending",
+    workState: "analyzing",
     statusText: "Preparing the next step",
   },
   "command.reclaimed": {
     activity: "attending",
+    workState: "analyzing",
     statusText: "Resuming interrupted work",
   },
   "command.running": {
     activity: "working",
+    workState: "tool",
     statusText: "Working in the project",
   },
   "preview.starting": {
     activity: "working",
+    workState: "tool",
     statusText: "Preparing the preview",
   },
   "preview.ready": {
     activity: "ready",
+    workState: "ready",
     statusText: "Preview ready",
     notice: { tone: "info", text: "Preview is ready" },
   },
   "approval.requested": {
     activity: "needs_attention",
+    workState: "awaiting_confirmation",
     statusText: "Waiting for your decision",
     notice: { tone: "critical", text: "An approval needs your decision" },
   },
   "command.waiting_approval": {
     activity: "needs_attention",
+    workState: "awaiting_confirmation",
     statusText: "Waiting for your decision",
     notice: { tone: "critical", text: "An approval needs your decision" },
   },
   "system.action.completed": {
     activity: "ready",
+    workState: "ready",
     statusText: "System action complete",
+  },
+  "assistant.message.delta": {
+    activity: "working",
+    workState: "streaming",
+    statusText: "Writing the reply",
   },
   "assistant.turn.completed": {
     activity: "ready",
+    workState: "ready",
     statusText: "Ready for review",
     replyText: "The task update is ready",
   },
   "assistant.turn.cancelled": {
     activity: "ambient",
+    workState: "idle",
     statusText: "Standing by",
   },
   "preview.stopped": {
     activity: "ambient",
+    workState: "idle",
     statusText: "Standing by",
   },
   "assistant.turn.failed": {
     activity: "needs_attention",
+    workState: "error",
     statusText: "Needs attention",
     notice: { tone: "critical", text: "Fairy needs your attention" },
   },
   "command.failure": {
     activity: "needs_attention",
+    workState: "error",
     statusText: "Needs attention",
     notice: { tone: "critical", text: "Fairy needs your attention" },
   },
   "preview.failed": {
     activity: "needs_attention",
+    workState: "error",
     statusText: "Needs attention",
     notice: { tone: "critical", text: "Preview could not be prepared" },
   },
@@ -174,6 +220,7 @@ const RULES: Readonly<Record<string, ProjectionRule>> = Object.freeze({
 function initialPresenceProjection(): PresenceProjectionState {
   return {
     activity: "ambient",
+    work_state: "idle",
     status_text: "Standing by",
     last_cursor: 0,
     last_event_id: null,
@@ -181,6 +228,7 @@ function initialPresenceProjection(): PresenceProjectionState {
     recent_activity_ms: [],
     notice: null,
     reply: null,
+    speaking: false,
   };
 }
 
@@ -200,6 +248,7 @@ function reducePresenceProjection(
     .slice(-12);
   return {
     activity: rule.activity,
+    work_state: rule.workState,
     status_text: rule.statusText,
     last_cursor: event.cursor,
     last_event_id: event.id,
@@ -210,7 +259,13 @@ function reducePresenceProjection(
     reply:
       rule.replyText === undefined
         ? null
-        : { id: eventKey, text: rule.replyText },
+        : {
+            id: eventKey,
+            text: rule.replyText,
+            kind: "task_notice",
+            streaming: false,
+          },
+    speaking: false,
   };
 }
 
@@ -250,6 +305,7 @@ export function derivePresenceView(
     return {
       ...state,
       activity: "ambient",
+      work_state: "idle",
       status_text: "Standing by",
       density,
       notice,
