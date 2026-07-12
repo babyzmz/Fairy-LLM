@@ -242,6 +242,7 @@ describe("CoreClient", () => {
       expected_cancellation_revision: 0,
     });
     await client.assistant.turns.run(id);
+    await client.assistant.turns.start(id);
     await client.assistant.turns.retry({
       turn_id: id,
       idempotency_key: "turn-1-retry",
@@ -309,6 +310,7 @@ describe("CoreClient", () => {
       "assistant.turns.get",
       "assistant.turns.cancel",
       "assistant.turns.run",
+      "assistant.turns.start",
       "assistant.turns.retry",
       "messages.list",
     ]);

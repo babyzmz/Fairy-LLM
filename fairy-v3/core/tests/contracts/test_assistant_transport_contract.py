@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from fairy_core.contracts.methods import CORE_METHODS
-from fairy_core.contracts.models import AssistantTurnRunInput
+from fairy_core.contracts.models import AssistantTurnRunInput, AssistantTurnStartInput
 from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.transports.stdio import build_local_dispatcher
 from tests.assistant.support import ScriptedProvider
@@ -29,7 +29,15 @@ def test_run_input_rejects_all_client_supplied_scope_fields() -> None:
             AssistantTurnRunInput.model_validate({**payload, forbidden: "forged"})
 
 
-def test_jsonrpc_exposes_run_and_retry_over_the_shared_catalog(tmp_path: Path) -> None:
+def test_start_input_rejects_all_client_supplied_scope_fields() -> None:
+    payload = {"turn_id": "00000000-0000-0000-0000-000000000001"}
+    assert set(AssistantTurnStartInput.model_validate(payload).model_dump()) == {"turn_id"}
+    with pytest.raises(ValidationError):
+        AssistantTurnStartInput.model_validate({**payload, "scope_digest": "forged"})
+
+
+def test_jsonrpc_exposes_start_run_and_retry_over_the_shared_catalog(tmp_path: Path) -> None:
+    assert "assistant.turns.start" in CORE_METHODS
     assert "assistant.turns.run" in CORE_METHODS
     assert "assistant.turns.retry" in CORE_METHODS
     provider = ScriptedProvider(

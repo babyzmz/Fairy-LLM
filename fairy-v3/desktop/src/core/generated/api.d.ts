@@ -157,6 +157,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/assistant/turns/{turn_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Assistant Turn */
+        post: operations["assistant.turns.start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/capabilities": {
         parameters: {
             query?: never;
@@ -1316,6 +1333,14 @@ export interface components {
         };
         /** AssistantTurnRunInput */
         AssistantTurnRunInput: {
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+        };
+        /** AssistantTurnStartInput */
+        AssistantTurnStartInput: {
             /**
              * Turn Id
              * Format: uuid
@@ -3748,6 +3773,43 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AssistantTurnRunInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssistantTurnModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "assistant.turns.start": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssistantTurnStartInput"];
             };
         };
         responses: {

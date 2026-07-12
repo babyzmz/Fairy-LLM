@@ -23,6 +23,7 @@ from fairy_core.contracts.models import (
     AssistantTurnModel,
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
+    AssistantTurnStartInput,
     ChangesetProposal,
     CheckpointModel,
     ConversationCreate,
@@ -288,6 +289,13 @@ def create_cloud_app(
                 },
             )
 
+    def require_turn_match(path_turn_id: UUID, body_turn_id: UUID) -> None:
+        if body_turn_id != path_turn_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "turn id mismatch"},
+            )
+
     @app.get("/v1/health", operation_id="health", response_model=HealthModel)
     def health() -> dict[str, Any]:
         return invoke("health", {})
@@ -483,12 +491,20 @@ def create_cloud_app(
         turn_id: UUID,
         request: AssistantTurnCancelInput,
     ) -> dict[str, Any]:
-        if request.turn_id != turn_id:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "SCOPE_MISMATCH", "message": "turn id mismatch"},
-            )
+        require_turn_match(turn_id, request.turn_id)
         return invoke("assistant.turns.cancel", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/assistant/turns/{turn_id}/start",
+        operation_id="assistant.turns.start",
+        response_model=AssistantTurnModel,
+    )
+    def start_assistant_turn(
+        turn_id: UUID,
+        request: AssistantTurnStartInput,
+    ) -> dict[str, Any]:
+        require_turn_match(turn_id, request.turn_id)
+        return invoke("assistant.turns.start", request.model_dump(mode="json"))
 
     @protected.post(
         "/assistant/turns/{turn_id}/run",
@@ -499,11 +515,7 @@ def create_cloud_app(
         turn_id: UUID,
         request: AssistantTurnRunInput,
     ) -> dict[str, Any]:
-        if request.turn_id != turn_id:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "SCOPE_MISMATCH", "message": "turn id mismatch"},
-            )
+        require_turn_match(turn_id, request.turn_id)
         return await invoke_async(
             "assistant.turns.run",
             request.model_dump(mode="json"),
@@ -522,11 +534,7 @@ def create_cloud_app(
             Header(alias="Idempotency-Key", min_length=1, max_length=512),
         ],
     ) -> dict[str, Any]:
-        if request.turn_id != turn_id:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "SCOPE_MISMATCH", "message": "turn id mismatch"},
-            )
+        require_turn_match(turn_id, request.turn_id)
         require_idempotency_match(request.idempotency_key, idempotency_key)
         return invoke("assistant.turns.retry", request.model_dump(mode="json"))
 

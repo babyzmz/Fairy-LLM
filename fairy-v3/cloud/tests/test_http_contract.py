@@ -459,6 +459,10 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
                 "expected_cancellation_revision": 0,
             },
         )
+        started_terminal = await client.post(
+            f"/v1/assistant/turns/{created['id']}/start",
+            json={"turn_id": created["id"]},
+        )
         retry_body = {
             "turn_id": created["id"],
             "idempotency_key": "http:assistant:turn:retry",
@@ -484,6 +488,8 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
     assert cancelled.json()["status"] == "cancelled"
     assert stale_cancel.status_code == 409
     assert stale_cancel.json()["detail"]["code"] == "INVALID_STATE_TRANSITION"
+    assert started_terminal.status_code == 200
+    assert started_terminal.json()["status"] == "cancelled"
     assert retried.json()["status"] == "created"
     assert run.status_code == 200
     assert run.json()["status"] == "failed"

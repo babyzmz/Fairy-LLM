@@ -232,6 +232,7 @@ describe("CloudCoreTransport", () => {
       idempotency_key: "preview:stop",
     });
     await transport.call("assistant.turns.run", { turn_id: "turn/1" });
+    await transport.call("assistant.turns.start", { turn_id: "turn/1" });
     await transport.call("assistant.turns.retry", {
       turn_id: "turn/1",
       idempotency_key: "turn:retry",
@@ -329,6 +330,7 @@ describe("CloudCoreTransport", () => {
         `https://cloud.fairy.test/v1/previews/${PREVIEW.id}/stop`,
       ],
       ["POST", "https://cloud.fairy.test/v1/assistant/turns/turn%2F1/run"],
+      ["POST", "https://cloud.fairy.test/v1/assistant/turns/turn%2F1/start"],
       ["POST", "https://cloud.fairy.test/v1/assistant/turns/turn%2F1/retry"],
       ["POST", "https://cloud.fairy.test/v1/documents/import"],
       [
@@ -352,14 +354,14 @@ describe("CloudCoreTransport", () => {
     expect(requests[0]?.headers.get("X-Fairy-Device-ID")).toBe("device-1");
     expect(requests[14]?.headers.get("Idempotency-Key")).toBe("preview:start");
     expect(requests[15]?.headers.get("Idempotency-Key")).toBe("preview:stop");
-    expect(requests[17]?.headers.get("Idempotency-Key")).toBe("turn:retry");
-    expect(requests[18]?.headers.get("Idempotency-Key")).toBe("documents:import");
-    expect(requests[22]?.headers.get("Idempotency-Key")).toBe("documents:delete");
-    expect(requests[25]?.headers.get("Idempotency-Key")).toBe("system:reveal");
+    expect(requests[18]?.headers.get("Idempotency-Key")).toBe("turn:retry");
+    expect(requests[19]?.headers.get("Idempotency-Key")).toBe("documents:import");
+    expect(requests[23]?.headers.get("Idempotency-Key")).toBe("documents:delete");
+    expect(requests[26]?.headers.get("Idempotency-Key")).toBe("system:reveal");
     expect(requests[5]?.headers.get("Idempotency-Key")).toBe(
       "permissions:cloud:standard",
     );
-    await expect(requests[24]?.json()).resolves.not.toHaveProperty("text");
+    await expect(requests[25]?.json()).resolves.not.toHaveProperty("text");
     expect(requests[3]?.headers.has("Content-Type")).toBe(false);
     await expect(requests[5]?.json()).resolves.toEqual({
       profile: "standard",
@@ -367,7 +369,7 @@ describe("CloudCoreTransport", () => {
       expected_revision: 0,
       idempotency_key: "permissions:cloud:standard",
     });
-    await expect(requests[25]?.json()).resolves.toEqual({
+    await expect(requests[26]?.json()).resolves.toEqual({
       task_id: "task-1",
       action: { type: "reveal_path", relative_path: "README.md" },
       idempotency_key: "system:reveal",

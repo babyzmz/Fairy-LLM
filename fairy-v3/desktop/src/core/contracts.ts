@@ -16,6 +16,7 @@ export type AssistantTurnCancelInput = Schemas["AssistantTurnCancelInput"];
 export type AssistantTurnCreateInput = Schemas["AssistantTurnCreateInput"];
 export type AssistantTurnRetryInput = Schemas["AssistantTurnRetryInput"];
 export type AssistantTurnRunInput = Schemas["AssistantTurnRunInput"];
+export type AssistantTurnStartInput = Schemas["AssistantTurnStartInput"];
 export type CapabilityManifest = Schemas["CapabilityManifestModel"];
 export type SlashCommandMetadata = Schemas["SlashCommandMetadataModel"];
 export type ToolDefinitionMetadata = Schemas["ToolDefinitionMetadataModel"];
@@ -223,6 +224,10 @@ export interface CoreMethodMap {
   };
   "assistant.turns.run": {
     params: AssistantTurnRunInput;
+    result: AssistantTurn;
+  };
+  "assistant.turns.start": {
+    params: AssistantTurnStartInput;
     result: AssistantTurn;
   };
   "assistant.turns.retry": {

@@ -218,6 +218,10 @@ class AssistantTurnRunInput(AssistantTurnIdInput):
     pass
 
 
+class AssistantTurnStartInput(AssistantTurnIdInput):
+    pass
+
+
 class AssistantTurnRetryInput(AssistantTurnIdInput):
     idempotency_key: str = Field(min_length=1, max_length=512)
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from threading import RLock
 from typing import Any, cast
 from uuid import UUID
@@ -46,6 +48,7 @@ from fairy_core.contracts.models import (
     AssistantTurnIdInput,
     AssistantTurnRetryInput,
     AssistantTurnRunInput,
+    AssistantTurnStartInput,
     ChangesetProposal,
     ConversationCreate,
     ConversationIdInput,
@@ -138,6 +141,9 @@ class CoreResponseValidationError(RuntimeError):
         self.method = method
         self.validation_error = error
         super().__init__(f"Core method returned an invalid response: {method}")
+
+
+logger = logging.getLogger(__name__)
 
 
 class CoreService:
@@ -305,6 +311,11 @@ class CoreService:
             tool_executor=effective_tool_executor,
             execution_policy=self._execution_policy,
         )
+        self._assistant_executor = ThreadPoolExecutor(
+            max_workers=4,
+            thread_name_prefix="fairy-assistant",
+        )
+        self._assistant_executor_closed = False
         self._finalizer = finalize(self, on_close) if on_close is not None else None
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
             "approvals.decide": self._decide_approval,
@@ -316,6 +327,7 @@ class CoreService:
             "assistant.turns.get": self._get_assistant_turn,
             "assistant.turns.retry": self._retry_assistant_turn,
             "assistant.turns.run": self._run_assistant_turn,
+            "assistant.turns.start": self._start_assistant_turn,
             "capabilities.get": self._get_capabilities,
             "changesets.propose": self._propose_changeset,
             "conversations.create": self._create_conversation,
@@ -378,8 +390,11 @@ class CoreService:
 
     def close(self) -> None:
         with self._turn_cancellation_lock:
+            self._assistant_executor_closed = True
             for cancellation in self._turn_cancellations.values():
                 cancellation.cancel()
+        self._assistant_executor.shutdown(wait=True, cancel_futures=True)
+        with self._turn_cancellation_lock:
             self._turn_cancellations.clear()
         self._image_attachments.close()
         self._provider_registry.close()
@@ -676,7 +691,46 @@ class CoreService:
             return self._assistant_application.run_turn(turn_id, cancellation)
         finally:
             with self._turn_cancellation_lock:
-                self._turn_cancellations.pop(turn_id, None)
+                if self._turn_cancellations.get(turn_id) is cancellation:
+                    self._turn_cancellations.pop(turn_id, None)
+
+    def _start_assistant_turn(self, request: BaseModel) -> Any:
+        self._refresh_extensions()
+        turn_id = cast(AssistantTurnStartInput, request).turn_id
+        turn = self._assistant_ledger.get_turn(turn_id)
+        if turn.status in {
+            AssistantTurnStatus.COMPLETED,
+            AssistantTurnStatus.CANCELLED,
+            AssistantTurnStatus.FAILED,
+        }:
+            return turn
+        cancellation = CancellationToken()
+        with self._turn_cancellation_lock:
+            if self._assistant_executor_closed:
+                raise RuntimeError("Core service is closing")
+            if turn_id in self._turn_cancellations:
+                return self._assistant_ledger.get_turn(turn_id)
+            self._turn_cancellations[turn_id] = cancellation
+            self._assistant_executor.submit(
+                self._run_assistant_turn_in_background,
+                turn_id,
+                cancellation,
+            )
+        return self._assistant_ledger.get_turn(turn_id)
+
+    def _run_assistant_turn_in_background(
+        self,
+        turn_id: UUID,
+        cancellation: CancellationToken,
+    ) -> None:
+        try:
+            self._assistant_application.run_turn(turn_id, cancellation)
+        except Exception:
+            logger.exception("Assistant Turn %s failed in the background Runner", turn_id)
+        finally:
+            with self._turn_cancellation_lock:
+                if self._turn_cancellations.get(turn_id) is cancellation:
+                    self._turn_cancellations.pop(turn_id, None)
 
     def _retry_assistant_turn(self, request: BaseModel) -> Any:
         validated = cast(AssistantTurnRetryInput, request)

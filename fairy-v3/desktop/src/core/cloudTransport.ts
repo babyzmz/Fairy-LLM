@@ -169,6 +169,11 @@ const routes = {
       `/v1/assistant/turns/${pathParameter(params, "turn_id")}/run`,
       params,
     ),
+  "assistant.turns.start": (params) =>
+    post(
+      `/v1/assistant/turns/${pathParameter(params, "turn_id")}/start`,
+      params,
+    ),
   "assistant.turns.retry": (params) =>
     postWithIdempotency(
       `/v1/assistant/turns/${pathParameter(params, "turn_id")}/retry`,

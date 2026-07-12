@@ -1,13 +1,57 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event
+from time import monotonic, sleep
 
+from fairy_core.commanding.settings import StaticSandboxHealthProvider
 from fairy_core.providers import (
+    CancellationToken,
     ModelDelta,
+    ModelRequest,
     ProviderRegistry,
 )
 from fairy_core.transports.stdio import build_local_service
 from tests.assistant.support import ScriptedProvider
+
+
+class BlockingProvider(ScriptedProvider):
+    def __init__(self) -> None:
+        super().__init__([])
+        self.started = Event()
+        self.release = Event()
+
+    def stream(self, request: ModelRequest, cancellation: CancellationToken):
+        self.requests.append(request)
+        self.started.set()
+        while not self.release.wait(0.01):
+            cancellation.raise_if_cancelled()
+        cancellation.raise_if_cancelled()
+        yield ModelDelta.text(profile_id="scripted", sequence=1, text="streamed")
+        yield ModelDelta.done(profile_id="scripted", sequence=2, finish_reason="stop")
+
+
+def _wait_for_turn(service, turn_id: str, *statuses: str) -> dict[str, object]:
+    deadline = monotonic() + 3
+    while monotonic() < deadline:
+        turn = service.invoke("assistant.turns.get", {"turn_id": turn_id})
+        if turn["status"] in statuses:
+            return turn
+        sleep(0.01)
+    raise AssertionError(f"Assistant Turn did not reach {statuses}")
+
+
+def _wait_for_event(service, event_type: str, turn_id: str) -> list[dict[str, object]]:
+    deadline = monotonic() + 3
+    while monotonic() < deadline:
+        events = service.invoke("events.subscribe", {"cursor": 0})["items"]
+        if any(
+            event["event_type"] == event_type and event["payload"].get("turn_id") == turn_id
+            for event in events
+        ):
+            return events
+        sleep(0.01)
+    raise AssertionError(f"Assistant event did not appear: {event_type}")
 
 
 def _scratch_task(service, request: str) -> dict[str, object]:
@@ -100,6 +144,82 @@ def test_scratch_turn_persists_context_deltas_message_and_completion(
         assert provider.requests[0].max_output_tokens <= 4_096
         assert task["memory_snapshot_id"] == created["memory_snapshot_id"]
     finally:
+        service.close()
+
+
+def test_start_returns_while_runner_streams_and_deduplicates_work(tmp_path: Path) -> None:
+    provider = BlockingProvider()
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((provider,)),
+        sandbox_health_provider=StaticSandboxHealthProvider({"local": True}),
+    )
+    try:
+        task = _scratch_task(service, "Stream this turn")
+        turn = _turn(service, task, "turn:async")
+
+        started = service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
+        replayed = service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
+
+        assert started["status"] in {"created", "running"}
+        assert replayed["id"] == turn["id"]
+        assert provider.started.wait(1)
+        live_events = service.invoke("events.subscribe", {"cursor": 0})["items"]
+        assert any(
+            event["event_type"] == "assistant.turn.started"
+            and event["payload"].get("turn_id") == turn["id"]
+            for event in live_events
+        )
+
+        provider.release.set()
+        completed = _wait_for_turn(service, str(turn["id"]), "completed")
+        messages = service.invoke(
+            "messages.list",
+            {"conversation_id": task["conversation_id"]},
+        )["items"]
+
+        assert completed["status"] == "completed"
+        assert len(provider.requests) == 1
+        assert [(message["role"], message["content"]) for message in messages] == [
+            ("user", "Stream this turn"),
+            ("assistant", "streamed"),
+        ]
+    finally:
+        provider.release.set()
+        service.close()
+
+
+def test_running_async_turn_can_be_cancelled_while_event_queries_continue(
+    tmp_path: Path,
+) -> None:
+    provider = BlockingProvider()
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((provider,)),
+        sandbox_health_provider=StaticSandboxHealthProvider({"local": True}),
+    )
+    try:
+        task = _scratch_task(service, "Cancel the background turn")
+        turn = _turn(service, task, "turn:async-cancel")
+        service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
+        assert provider.started.wait(1)
+        running = _wait_for_turn(service, str(turn["id"]), "running")
+
+        cancelled = service.invoke(
+            "assistant.turns.cancel",
+            {
+                "turn_id": turn["id"],
+                "expected_cancellation_revision": running["cancellation_revision"],
+            },
+        )
+        terminal = _wait_for_turn(service, str(turn["id"]), "cancelled")
+        events = _wait_for_event(service, "assistant.turn.cancelled", str(turn["id"]))
+
+        assert cancelled["status"] == "cancelled"
+        assert terminal["status"] == "cancelled"
+        assert any(event["event_type"] == "assistant.turn.cancelled" for event in events)
+    finally:
+        provider.release.set()
         service.close()
 
 
