@@ -552,6 +552,19 @@ async function installCoreFixture(page: Page) {
         "messages.list": { items: [scratchMessage, toolMessage], next_cursor: null },
         "tasks.create": { task: scratchTask },
         "documents.import": {},
+        "documents.list": {
+          items: [{
+            document: {
+              id: "0198f4de-0114-7000-8000-000000000101",
+              filename: "fixture-notes.md",
+              media_type: "text/markdown",
+              byte_length: 128,
+            },
+            revision: {},
+          }],
+        },
+        "documents.search": { items: [] },
+        "documents.delete": {},
         "assistant.turns.create": { ...completedTurn, status: "created" },
         "assistant.turns.run": completedTurn,
         "assistant.turns.cancel": { ...completedTurn, status: "cancelled" },

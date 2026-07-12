@@ -20,6 +20,7 @@ import { Composer } from "../chat/Composer";
 import { ProviderSettings } from "../settings/ProviderSettings";
 import { ExecutionControls } from "../settings/ExecutionControls";
 import { ExtensionSettings } from "../settings/ExtensionSettings";
+import { KnowledgeSettings } from "../settings/KnowledgeSettings";
 import { PreviewPanel } from "./PreviewPanel";
 import { TaskTimeline } from "./TaskTimeline";
 import type { WorkspaceModel, WorkspaceMode } from "./workspaceModel";
@@ -189,6 +190,15 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               onAccept={model.acceptMcpServer}
               onEnabledChange={model.setMcpServerEnabled}
               onDelete={model.deleteMcpServer}
+            />
+            <KnowledgeSettings
+              available={model.selectedTask !== null || model.chatTurn !== null}
+              disabled={model.state === "offline" || model.isActing}
+              onListDocuments={model.listDocuments}
+              onSearchDocuments={model.searchDocuments}
+              onDeleteDocument={model.deleteDocument}
+              onSearchMemory={model.searchMemory}
+              onForgetMemory={model.forgetMemory}
             />
             <ExecutionControls
               settings={model.permissionSettings}

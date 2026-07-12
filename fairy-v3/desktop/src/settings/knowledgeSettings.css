@@ -1,0 +1,10 @@
+.knowledge-control { position: relative; }
+.knowledge-settings { width: min(430px, calc(100vw - 78px)); }
+.knowledge-search { display: grid; grid-template-columns: 1fr 34px; gap: 8px; }
+.knowledge-search input { min-width: 0; }
+.knowledge-list { display: grid; gap: 6px; overflow: auto; max-height: min(430px, 55vh); }
+.knowledge-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 10px; border: 1px solid var(--line); }
+.knowledge-row > div:first-child { min-width: 0; display: grid; gap: 4px; }
+.knowledge-row strong, .knowledge-row p { overflow-wrap: anywhere; }
+.knowledge-row span { color: var(--muted); font-size: 12px; }
+.memory-row p { margin: 0; white-space: pre-wrap; }

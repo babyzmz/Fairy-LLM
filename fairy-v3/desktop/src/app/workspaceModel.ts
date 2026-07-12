@@ -8,9 +8,12 @@ import type {
   CapabilityManifest,
   Conversation,
   CoreClient,
+  DocumentContext,
+  DocumentSearchHit,
   EventEnvelope,
   ExecutionSettings,
   Message,
+  MemorySearchHit,
   McpServer,
   McpToolPolicyInput,
   PreviewContext,
@@ -52,6 +55,8 @@ export interface WorkspaceClient extends AssistantTurnClient {
     >;
   };
   messages: Pick<CoreClient["messages"], "list">;
+  documents: Pick<CoreClient["documents"], "import" | "list" | "search" | "delete">;
+  memory: Pick<CoreClient["memory"], "search" | "forget">;
   voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
   events: Pick<CoreClient["events"], "subscribe">;
 }
@@ -105,6 +110,11 @@ export interface WorkspaceModel {
   acceptMcpServer(serverId: string, tools: McpToolPolicyInput[]): Promise<void>;
   setMcpServerEnabled(serverId: string, enabled: boolean): Promise<void>;
   deleteMcpServer(serverId: string): Promise<void>;
+  listDocuments(): Promise<DocumentContext[]>;
+  searchDocuments(query: string): Promise<DocumentSearchHit[]>;
+  deleteDocument(documentId: string): Promise<void>;
+  searchMemory(query: string): Promise<MemorySearchHit[]>;
+  forgetMemory(targetKind: "observation" | "claim", targetId: string): Promise<void>;
   setDeveloperMode(enabled: boolean): void;
   selectProfile(profileId: string): void;
   configureOpenRouter(apiKey: string, modelId: string): Promise<void>;
@@ -724,9 +734,45 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           await client.versions.discard(selectedTask.id);
         });
       },
+      async listDocuments() {
+        const taskId = requireId(selectedTask?.id ?? chatTaskId);
+        const page = await client.documents.list({ task_id: taskId, limit: 100 });
+        return page.items;
+      },
+      async searchDocuments(query: string) {
+        const taskId = requireId(selectedTask?.id ?? chatTaskId);
+        const page = await client.documents.search({ task_id: taskId, query, limit: 20 });
+        return page.items;
+      },
+      async deleteDocument(documentId: string) {
+        const taskId = requireId(selectedTask?.id ?? chatTaskId);
+        await runAction(() => client.documents.delete({
+          task_id: taskId,
+          document_id: documentId,
+          user_confirmed: true,
+          idempotency_key: `desktop:document-delete:${documentId}:${crypto.randomUUID()}`,
+        }));
+      },
+      async searchMemory(query: string) {
+        const taskId = requireId(selectedTask?.id ?? chatTaskId);
+        const page = await client.memory.search({ task_id: taskId, query, limit: 20 });
+        return page.items;
+      },
+      async forgetMemory(targetKind: "observation" | "claim", targetId: string) {
+        const taskId = requireId(selectedTask?.id ?? chatTaskId);
+        await runAction(() => client.memory.forget({
+          task_id: taskId,
+          target_kind: targetKind,
+          target_id: targetId,
+          reason: "User requested removal from the desktop Knowledge panel.",
+          user_confirmed: true,
+          idempotency_key: `desktop:memory-forget:${targetId}:${crypto.randomUUID()}`,
+        }));
+      },
     }),
     [
       chatAssistant,
+      chatTaskId,
       client,
       previewQuery.data?.preview,
       projectAssistant,
@@ -831,6 +877,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     acceptMcpServer,
     setMcpServerEnabled,
     deleteMcpServer,
+    listDocuments: actions.listDocuments,
+    searchDocuments: actions.searchDocuments,
+    deleteDocument: actions.deleteDocument,
+    searchMemory: actions.searchMemory,
+    forgetMemory: actions.forgetMemory,
     setDeveloperMode,
     selectProfile: setProfileSelection,
     configureOpenRouter,

@@ -500,6 +500,13 @@ function createClient(
     },
     documents: {
       import: async () => ({} as never),
+      list: async () => ({ items: [] }),
+      search: async () => ({ items: [] }),
+      delete: async () => ({} as never),
+    },
+    memory: {
+      search: async () => ({ items: [] }),
+      forget: async () => ({} as never),
     },
     assistant: {
       turns: {

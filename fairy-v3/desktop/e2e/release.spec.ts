@@ -51,6 +51,9 @@ test("release workspace exposes project, chat, preview, provider, and developer 
   await page.getByRole("button", { name: "Choose project folder" }).click();
   await expect(page.getByLabel("Folder path")).toHaveValue("C:\\Projects\\fixture");
   await page.getByRole("button", { name: "Close project manager" }).click();
+  await page.getByRole("button", { name: "Knowledge" }).click();
+  await expect(page.getByLabel("Knowledge panel")).toContainText("fixture-notes.md");
+  await page.getByRole("button", { name: "Close knowledge" }).click();
   await page.getByRole("button", { name: "Developer mode" }).click();
   await expect(page.getByLabel("Developer details")).toBeVisible();
 
