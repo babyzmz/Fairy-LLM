@@ -289,8 +289,10 @@ class SqlAlchemyAssistantRepository:
             allowed_visibilities=allowed_visibilities,
         )
         combined = sorted(
-            [*(self._message_from_row(row) for row in native),
-             *(self._imported_message_from_row(row) for row in imported)],
+            [
+                *(self._message_from_row(row) for row in native),
+                *(self._imported_message_from_row(row) for row in imported),
+            ],
             key=lambda item: (item.sequence, str(item.id)),
         )
         page_items = combined[:limit]
@@ -320,9 +322,7 @@ class SqlAlchemyAssistantRepository:
         if allowed_visibilities is not None:
             if not allowed_visibilities:
                 return []
-            predicates.append(
-                table.c.visibility.in_(value.value for value in allowed_visibilities)
-            )
+            predicates.append(table.c.visibility.in_(value.value for value in allowed_visibilities))
         with self._session.read() as connection:
             return list(
                 connection.execute(

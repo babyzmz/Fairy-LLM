@@ -4,7 +4,6 @@ import {
   Check,
   ChevronRight,
   Eye,
-  Gauge,
   KeyRound,
   Languages,
   Mic2,
@@ -23,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { m } from "motion/react";
 
 import type {
   CapabilityManifest,
@@ -199,7 +199,7 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
         </button>
       </aside>
 
-      <section className="settings-content">
+      <m.section className="settings-content" key={visibleCategory} initial={{ opacity: 0.4, x: 8 }} animate={{ opacity: 1, x: 0 }}>
         {error ? <div className="settings-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}><X size={14} /></button></div> : null}
         {data === null ? <div className="settings-loading" role="status"><span className="settings-spinner" />Connecting to Fairy Core</div> : (
           <SettingsCategory
@@ -213,7 +213,7 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
             updateData={setData}
           />
         )}
-      </section>
+      </m.section>
     </main>
   );
 }
@@ -286,7 +286,6 @@ function SettingsCategory(props: {
     </Category>;
     case "advanced": return <Category title="Advanced" subtitle="Diagnostics and developer tools">
       <SettingToggle label="Developer mode" checked={data.preferences.developer_mode} disabled={busy} onChange={(value) => void updatePreferences({ developer_mode: value })} />
-      <HealthRow icon={<Gauge size={17} />} label="Preferences revision" status={String(data.preferences.revision)} tone="neutral" />
       <HealthRow icon={<ShieldCheck size={17} />} label="Settings capability" status="Restricted settings methods only" tone="success" />
     </Category>;
   }
@@ -342,7 +341,7 @@ function ExtensionsPanel(props: Parameters<typeof SettingsCategory>[0]) {
     {tab === "skills" ? <div className="settings-extension-list">{data.skills.map((skill) => <div className="settings-extension-row" key={`${skill.name}@${skill.version}`}><span className={`settings-health-dot ${skill.available ? "available" : "unavailable"}`} /><div><strong>{skill.name}</strong><small>{skill.description}</small></div><code>{skill.version}</code></div>)}</div> : <>
       <div className="settings-section-command"><span>{data.servers.length} configured servers</span><button className="secondary-command" type="button" onClick={() => setAdding((value) => !value)}>{adding ? <X size={14} /> : <Plus size={14} />}{adding ? "Cancel" : "Add server"}</button></div>
       {adding ? <McpForm busy={busy} onSave={(input) => act(async () => { await client.extensions.configure(input); setAdding(false); await reload(); })} /> : null}
-      <div className="settings-extension-list">{data.servers.map((server) => <section className="settings-mcp-server" key={server.server_id}><div className="settings-extension-row"><span className={`settings-health-dot ${server.enabled ? "available" : "unknown"}`} /><div><strong>{server.display_name}</strong><small>{server.transport} · revision {server.revision}</small></div><label className="compact-switch"><input type="checkbox" aria-label={`Enable ${server.display_name}`} checked={server.enabled} disabled={busy || server.accepted_schema_digest === null} onChange={(event) => void act(async () => { await client.extensions.setEnabled({ server_id: server.server_id, expected_revision: server.revision, enabled: event.target.checked, idempotency_key: extensionKey(server, "enabled", event.target.checked) }); await reload(); })} /><span /></label><button className="danger-icon" type="button" aria-label={`Delete ${server.display_name}`} title={`Delete ${server.display_name}`} disabled={busy} onClick={() => { if (!window.confirm(`Delete MCP server “${server.display_name}”?`)) return; void act(async () => { await client.extensions.delete({ server_id: server.server_id, expected_revision: server.revision, idempotency_key: extensionKey(server, "delete", true) }); await reload(); }); }}><Trash2 size={14} /></button></div>{server.pending_schema_digest !== null && server.pending_schema_digest !== server.accepted_schema_digest ? <PendingMcpReview server={server} busy={busy} onAccept={(tools) => act(async () => { await client.extensions.accept({ server_id: server.server_id, expected_revision: server.revision, schema_digest: server.pending_schema_digest as string, enabled: true, tools, idempotency_key: extensionKey(server, "accept", true) }); await reload(); })} /> : null}</section>)}</div>
+      <div className="settings-extension-list">{data.servers.map((server) => <section className="settings-mcp-server" key={server.server_id}><div className="settings-extension-row"><span className={`settings-health-dot ${server.enabled ? "available" : "unknown"}`} /><div><strong>{server.display_name}</strong><small>{server.transport}</small></div><label className="compact-switch"><input type="checkbox" aria-label={`Enable ${server.display_name}`} checked={server.enabled} disabled={busy || server.accepted_schema_digest === null} onChange={(event) => void act(async () => { await client.extensions.setEnabled({ server_id: server.server_id, expected_revision: server.revision, enabled: event.target.checked, idempotency_key: extensionKey(server, "enabled", event.target.checked) }); await reload(); })} /><span /></label><button className="danger-icon" type="button" aria-label={`Delete ${server.display_name}`} title={`Delete ${server.display_name}`} disabled={busy} onClick={() => { if (!window.confirm(`Delete MCP server “${server.display_name}”?`)) return; void act(async () => { await client.extensions.delete({ server_id: server.server_id, expected_revision: server.revision, idempotency_key: extensionKey(server, "delete", true) }); await reload(); }); }}><Trash2 size={14} /></button></div>{server.pending_schema_digest !== null && server.pending_schema_digest !== server.accepted_schema_digest ? <PendingMcpReview server={server} busy={busy} onAccept={(tools) => act(async () => { await client.extensions.accept({ server_id: server.server_id, expected_revision: server.revision, schema_digest: server.pending_schema_digest as string, enabled: true, tools, idempotency_key: extensionKey(server, "accept", true) }); await reload(); })} /> : null}</section>)}</div>
     </>}
   </Category>;
 }

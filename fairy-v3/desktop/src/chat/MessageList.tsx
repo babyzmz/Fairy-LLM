@@ -9,6 +9,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
+import { m } from "motion/react";
 
 import type { AssistantTurn, EventEnvelope, Message } from "../core/client";
 import { VoiceSpeakControl } from "../voice/VoiceController";
@@ -104,7 +105,7 @@ export function MessageList({
         </>
       ) : null}
       {streamedText ? (
-        <article className="message-row message-assistant message-streaming">
+        <m.article initial={{ opacity: 0.4, y: 6 }} animate={{ opacity: 1, y: 0 }} className="message-row message-assistant message-streaming">
           <div className="message-avatar" aria-hidden="true">
             <LoaderCircle className="spin" size={16} />
           </div>
@@ -121,7 +122,7 @@ export function MessageList({
             />
             <span className="streaming-cursor" aria-hidden="true" />
           </div>
-        </article>
+        </m.article>
       ) : null}
       {showJump ? (
         <button
@@ -153,7 +154,9 @@ function MessageRow({
   onOpenLink(taskId: string, url: string): Promise<void>;
 }) {
   return (
-    <article
+    <m.article
+      initial={{ opacity: 0.4, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
       className={`message-row message-${message.role}`}
       data-message-sequence={message.sequence}
     >
@@ -187,7 +190,7 @@ function MessageRow({
           </div>
         ) : null}
       </div>
-    </article>
+    </m.article>
   );
 }
 
@@ -203,7 +206,7 @@ function PendingMessageRow({
   onDelete(): void;
 }) {
   return (
-    <article className={`message-row message-user message-pending message-${message.status}`}>
+    <m.article initial={{ opacity: 0.4, y: 6 }} animate={{ opacity: 1, y: 0 }} className={`message-row message-user message-pending message-${message.status}`}>
       <div className="message-avatar" aria-hidden="true">
         {message.status === "sending" ? <LoaderCircle className="spin" size={16} /> : <CircleUserRound size={16} />}
       </div>
@@ -225,7 +228,7 @@ function PendingMessageRow({
           </div>
         ) : null}
       </div>
-    </article>
+    </m.article>
   );
 }
 

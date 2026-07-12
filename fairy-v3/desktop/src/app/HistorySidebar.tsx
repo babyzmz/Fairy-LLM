@@ -14,6 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { m } from "motion/react";
 
 import type { Conversation, Project, Task } from "../core/client";
 import type { WorkspaceModel } from "./workspaceModel";
@@ -207,7 +208,7 @@ function HistoryGroup({
           <Plus size={14} />
         </button>
       </div>
-      {open ? <div className="history-group-content">{children}</div> : null}
+      {open ? <m.div className="history-group-content" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}>{children}</m.div> : null}
     </section>
   );
 }

@@ -1,21 +1,12 @@
-import {
-  Boxes,
-  Cloud,
-  FolderInput,
-  FolderOpen,
-  FolderPlus,
-  Play,
-  RefreshCw,
-  ShieldCheck,
-  WifiOff,
-  X,
-} from "lucide-react";
+import { X } from "lucide-react";
 import { useState } from "react";
 
 import { ChatWorkspace } from "../chat/ChatWorkspace";
 import { Composer } from "../chat/Composer";
 import { HistorySidebar } from "./HistorySidebar";
+import { ContextBar } from "./ContextBar";
 import { PreviewPanel } from "./PreviewPanel";
+import { EmptyWorkspace, folderName, ProjectSetup, RecoveryNotice } from "./ProjectWorkspaceStates";
 import { TaskTimeline } from "./TaskTimeline";
 import type { WorkspaceModel } from "./workspaceModel";
 import "./workspace.css";
@@ -129,6 +120,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
                 context={model.preview}
                 runtimeHealth={model.runtimeHealth}
                 isActing={model.isActing}
+                developerMode={model.developerMode}
                 onStart={model.startPreview}
                 onStop={model.stopPreview}
                 onReview={model.reviewTask}
@@ -190,188 +182,6 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
   );
 }
 
-function ContextBar({ model }: { model: WorkspaceModel }) {
-  const path = model.mode === "chat"
-    ? model.selectedChatConversation?.title ?? "New chat"
-    : [
-        model.selectedProject?.name,
-        model.selectedConversation?.title,
-        model.selectedTask?.display_title,
-      ].filter(Boolean).join(" / ") || "Projects";
-  return (
-    <header className="context-bar" role="banner">
-      <div className="context-identity">
-        <span className="context-path" title={path}>{path}</span>
-      </div>
-      <div className="telemetry-strip" aria-label="Workspace status">
-        <span className="telemetry-item">
-          <Play size={14} /> {model.selectedTask?.execution_target ?? "local"}
-        </span>
-        <span className="telemetry-item">
-          <Cloud size={14} /> {model.selectedProject?.residency === "synced" ? "SYNCED" : "LOCAL ONLY"}
-        </span>
-        <span className="telemetry-item">
-          <ShieldCheck size={14} /> {model.permissionProfile ?? "unavailable"}
-        </span>
-        <span
-          className={`telemetry-item ${model.state === "offline" ? "offline" : "online"}`}
-        >
-          {model.state === "offline" ? <WifiOff size={14} /> : <Cloud size={14} />}
-          {model.statusLabel}
-        </span>
-      </div>
-    </header>
-  );
-}
-
-interface EmptyWorkspaceProps {
-  state: WorkspaceModel["state"];
-  projectName: string;
-  importPath: string;
-  isActing: boolean;
-  onProjectName(value: string): void;
-  onImportPath(value: string): void;
-  onSelectFolder(): Promise<void>;
-  onCreate(): Promise<void>;
-  onImport(): Promise<void>;
-  onRetry(): Promise<void>;
-}
-
-function EmptyWorkspace({
-  state,
-  projectName,
-  importPath,
-  isActing,
-  onProjectName,
-  onImportPath,
-  onSelectFolder,
-  onCreate,
-  onImport,
-  onRetry,
-}: EmptyWorkspaceProps) {
-  if (state === "loading") {
-    return (
-      <section className="workspace-state" aria-label="Loading workspace">
-        <span className="state-pulse" />
-        <h1>Opening Fairy</h1>
-        <p>Connecting to Core</p>
-      </section>
-    );
-  }
-  if (state === "offline") {
-    return (
-      <section className="workspace-state workspace-state-offline" aria-label="Core offline">
-        <WifiOff size={25} />
-        <h1>Core offline</h1>
-        <p>Local workspace data is unavailable</p>
-        <button className="secondary-command" type="button" onClick={() => void onRetry()}>
-          <RefreshCw size={15} /> Retry Core
-        </button>
-      </section>
-    );
-  }
-  return (
-    <section className="workspace-state workspace-create" aria-label="Create or import project">
-      <div className="create-heading">
-        <Boxes size={25} />
-        <h1>Projects</h1>
-      </div>
-      <ProjectSetup
-        projectName={projectName}
-        importPath={importPath}
-        isActing={isActing}
-        onProjectName={onProjectName}
-        onImportPath={onImportPath}
-        onSelectFolder={onSelectFolder}
-        onCreate={onCreate}
-        onImport={onImport}
-      />
-    </section>
-  );
-}
-
-function RecoveryNotice({ model }: { model: WorkspaceModel }) {
-  const code = model.actionErrorCode;
-  const title = code === "VERSION_CONFLICT"
-    ? "Version conflict preserved"
-    : code === "WORKER_INTERRUPTED"
-      ? "Worker interrupted"
-      : "Workspace request failed";
-  const detail = code === "VERSION_CONFLICT"
-    ? "The candidate version remains separate. Active Version was not overwritten."
-    : model.actionError ?? model.errorMessage ?? model.projectError;
-  return (
-    <div className="workspace-error recovery-notice" role="alert">
-      <div><strong>{title}</strong><span>{detail}</span></div>
-      <button className="icon-button" type="button" aria-label="Retry workspace" title="Retry workspace" onClick={() => void model.retryWorkspace()}><RefreshCw size={15} /></button>
-    </div>
-  );
-}
-
-function ProjectSetup({
-  projectName,
-  importPath,
-  isActing,
-  onProjectName,
-  onImportPath,
-  onSelectFolder,
-  onCreate,
-  onImport,
-}: Omit<EmptyWorkspaceProps, "state" | "onRetry">) {
-  return (
-    <div className="project-setup">
-      <div className="create-controls">
-        <label>
-          <span>Project name</span>
-          <input
-            value={projectName}
-            onChange={(event) => onProjectName(event.target.value)}
-            placeholder="New project"
-          />
-        </label>
-        <button
-          className="primary-command"
-          type="button"
-          disabled={!projectName.trim() || isActing}
-          onClick={() => void onCreate()}
-        >
-          <FolderPlus size={15} /> Create project
-        </button>
-      </div>
-      <div className="create-controls import-controls">
-        <div className="folder-field">
-          <label htmlFor="project-folder-path">Folder path</label>
-          <div>
-            <input
-              id="project-folder-path"
-              value={importPath}
-              onChange={(event) => onImportPath(event.target.value)}
-              placeholder="C:\\Projects\\example"
-            />
-            <button
-              className="icon-button"
-              type="button"
-              aria-label="Choose project folder"
-              title="Choose project folder"
-              disabled={isActing}
-              onClick={() => void onSelectFolder()}
-            >
-              <FolderOpen size={16} />
-            </button>
-          </div>
-        </div>
-        <button
-          className="secondary-command"
-          type="button"
-          disabled={!importPath.trim() || isActing}
-          onClick={() => void onImport()}
-        >
-          <FolderInput size={15} /> Import folder
-        </button>
-      </div>
-    </div>
-  );
-}
 
 function selectedProviderAvailable(model: WorkspaceModel): boolean {
   const provider = model.providers.find((item) => item.id === model.selectedProfileId);
@@ -384,8 +194,4 @@ function selectedProviderAvailable(model: WorkspaceModel): boolean {
     (!provider.credential_required || provider.credential_configured) &&
     health?.status !== "unavailable"
   );
-}
-
-function folderName(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? "Imported project";
 }

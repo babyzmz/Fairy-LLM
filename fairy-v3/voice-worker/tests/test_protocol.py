@@ -36,6 +36,7 @@ def test_cosyvoice_cannot_download_an_unverified_model_at_runtime() -> None:
     _install_frozen_runtime_guards()
     with pytest.raises(RuntimeError, match="downloads are disabled"):
         sys.modules["modelscope"].snapshot_download("untrusted/model")  # type: ignore[attr-defined]
+
     def original() -> str:
         return "unchanged"
 

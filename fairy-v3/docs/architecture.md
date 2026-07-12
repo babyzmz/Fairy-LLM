@@ -305,8 +305,11 @@ Active Version promotion cannot be disabled by a permission profile.
 Project mode uses a Task Timeline and Preview split view. A persistent context
 bar displays Project, Conversation, Version, execution target, permission
 profile, and synchronization status. Developer details are lazy-loaded in a
-drawer. Functional scan lines, telemetry rails, and HUD motion communicate
-real state and honor reduced-motion settings. Release gates use a production
+drawer only when Developer Mode is enabled. One `LazyMotion` provider supplies
+bounded message, Activity Rail, history, Settings, and Pet transitions; pulse
+and scan effects appear only for real execution or Preview state and all
+surfaces honor Reduced Motion. Workspace contracts, Context Bar/project state,
+and command-key helpers live outside the workspace orchestration hook. Release gates use a production
 build and enforce a 1.5-second shell interactive budget, 3-second composed Core
 readiness, 100ms ledger-event-to-UI p95, and 800KiB conservative renderer gzip
 ceiling.

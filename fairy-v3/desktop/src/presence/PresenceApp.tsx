@@ -21,6 +21,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { m } from "motion/react";
 
 import { type DesktopPreferences } from "../settings/client";
 import { createPresenceChannel, type PresenceChannel } from "./channel";
@@ -294,7 +295,7 @@ export function PresenceApp({
     >
       <section className="presence-panel" data-visible={String(expanded)}>
         {!menuOpen && view.notice !== null ? (
-          <aside className={`presence-card notice ${view.notice.tone}`} role="alert">
+          <m.aside initial={{ opacity: 0, y: 6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} className={`presence-card notice ${view.notice.tone}`} role="alert">
             <div>
               <strong>{view.status_text}</strong>
               <span>{view.notice.text}</span>
@@ -307,11 +308,11 @@ export function PresenceApp({
                 Review in Fairy
               </button>
             ) : null}
-          </aside>
+          </m.aside>
         ) : null}
 
         {!menuOpen && reply !== null ? (
-          <aside className="presence-card reply" role="status">
+          <m.aside initial={{ opacity: 0, y: 6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} className="presence-card reply" role="status">
             <div>
               <strong>{reply.streaming ? "Fairy is replying" : "Fairy"}</strong>
               <span>{reply.text}</span>
@@ -319,7 +320,7 @@ export function PresenceApp({
             <button aria-label="Close reply" onClick={() => setClosedReplyId(reply.id)} title="Close" type="button">
               <X size={14} />
             </button>
-          </aside>
+          </m.aside>
         ) : null}
 
         {inputOpen ? (
@@ -352,7 +353,7 @@ export function PresenceApp({
         ) : null}
 
         {menuOpen ? (
-          <div aria-label="Fairy menu" className="presence-menu" role="menu">
+          <m.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} aria-label="Fairy menu" className="presence-menu" role="menu">
             <MenuButton icon={<MessageSquarePlus size={15} />} label="New chat" onClick={() => {
               channel.requestNewChat();
               setMenuOpen(false);
@@ -368,7 +369,7 @@ export function PresenceApp({
             <MenuButton icon={<Settings size={15} />} label="Settings" onClick={() => void host.openSettings()} />
             <MenuButton icon={<RotateCcw size={15} />} label="Reset position" onClick={() => void resetPosition(windowPort, settingsRef.current)} />
             <MenuButton danger icon={<LogOut size={15} />} label="Exit Fairy" onClick={() => void host.exit()} />
-          </div>
+          </m.div>
         ) : null}
       </section>
 

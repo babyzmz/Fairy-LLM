@@ -36,11 +36,15 @@ def main() -> None:
             raise SystemExit(f"resource asset {index} has an invalid field set")
         asset_id = required_text(asset, "id", index)
         source_path = PurePosixPath(required_text(asset, "source_path", index))
-        destination_path = PurePosixPath(required_text(asset, "destination_path", index))
+        destination_path = PurePosixPath(
+            required_text(asset, "destination_path", index)
+        )
         if source_path.is_absolute() or ".." in source_path.parts:
             raise SystemExit(f"resource asset {asset_id} has an unsafe source_path")
         if destination_path.is_absolute() or ".." in destination_path.parts:
-            raise SystemExit(f"resource asset {asset_id} has an unsafe destination_path")
+            raise SystemExit(
+                f"resource asset {asset_id} has an unsafe destination_path"
+            )
         if asset_id in ids or destination_path.as_posix() in destinations:
             raise SystemExit(f"resource asset {asset_id} is duplicated")
         ids.add(asset_id)
@@ -55,7 +59,10 @@ def main() -> None:
             required_text(asset, field, index)
 
         destination = (RESOURCE_ROOT / Path(*destination_path.parts)).resolve()
-        if not destination.is_relative_to(RESOURCE_ROOT.resolve()) or not destination.is_file():
+        if (
+            not destination.is_relative_to(RESOURCE_ROOT.resolve())
+            or not destination.is_file()
+        ):
             raise SystemExit(f"resource asset {asset_id} destination is missing")
         content = destination.read_bytes()
         if len(content) != asset.get("byte_length"):

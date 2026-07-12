@@ -108,14 +108,11 @@ def test_native_voice_session_is_scope_bound_idempotent_and_cancellable(tmp_path
     assert fixture.application.start_session(request).id == session.id
     assert fixture.application.get_session(VoiceSessionIdInput(session_id=session.id)) == session
 
-    cancelled = fixture.application.cancel_session(
-        VoiceSessionIdInput(session_id=session.id)
-    )
+    cancelled = fixture.application.cancel_session(VoiceSessionIdInput(session_id=session.id))
     assert cancelled.status == "cancelled"
     assert cancelled.cancelled_at is not None
     assert (
-        fixture.application.cancel_session(VoiceSessionIdInput(session_id=session.id))
-        == cancelled
+        fixture.application.cancel_session(VoiceSessionIdInput(session_id=session.id)) == cancelled
     )
     with pytest.raises(ValueError, match="idempotency"):
         fixture.application.start_session(

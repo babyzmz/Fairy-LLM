@@ -1,6 +1,7 @@
-import { StrictMode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { isTauri } from "@tauri-apps/api/core";
+import { AppMotion } from "./motion/AppMotion";
 
 const root = document.getElementById("root");
 if (root === null) {
@@ -8,17 +9,17 @@ if (root === null) {
 }
 const rootElement = root;
 
+function renderSurface(surface: ReactNode) {
+  createRoot(rootElement).render(<StrictMode><AppMotion>{surface}</AppMotion></StrictMode>);
+}
+
 async function mountSurface() {
   const surface = new URLSearchParams(window.location.search).get("surface");
   document.documentElement.dataset.surface = surface ?? "workspace";
 
   if (surface === "presence") {
     const { PresenceApp } = await import("./presence/PresenceApp");
-    createRoot(rootElement).render(
-      <StrictMode>
-        <PresenceApp />
-      </StrictMode>,
-    );
+    renderSurface(<PresenceApp />);
     return;
   }
 
@@ -28,21 +29,13 @@ async function mountSurface() {
       import("./settings/SettingsApp"),
       import("./settings/client"),
     ]);
-    createRoot(rootElement).render(
-      <StrictMode>
-        <SettingsApp client={new SettingsClient(invoke)} />
-      </StrictMode>,
-    );
+    renderSurface(<SettingsApp client={new SettingsClient(invoke)} />);
     return;
   }
 
   if (!isTauri()) {
     const { DesktopHostRequired } = await import("./host/DesktopHostRequired");
-    createRoot(rootElement).render(
-      <StrictMode>
-        <DesktopHostRequired />
-      </StrictMode>,
-    );
+    renderSurface(<DesktopHostRequired />);
     return;
   }
 
@@ -53,11 +46,7 @@ async function mountSurface() {
     import("./core/tauriTransport"),
   ]);
   const client = new CoreClient(new TauriCoreTransport(invoke));
-  createRoot(rootElement).render(
-    <StrictMode>
-      <App client={client} />
-    </StrictMode>,
-  );
+  renderSurface(<App client={client} />);
 }
 
 void mountSurface();

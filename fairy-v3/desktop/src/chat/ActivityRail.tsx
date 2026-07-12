@@ -7,6 +7,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { m } from "motion/react";
 
 import type { AssistantTurn, EventEnvelope } from "../core/client";
 import { useVoicePlaybackState } from "../voice/VoiceController";
@@ -54,7 +55,7 @@ export function ActivityRail({ turn, events }: ActivityRailProps) {
         <ChevronDown className={expanded ? "activity-chevron expanded" : "activity-chevron"} size={14} />
       </button>
       {expanded ? (
-        <ol className="activity-history">
+        <m.ol className="activity-history" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}>
           {visibleActivities.map((activity) => (
             <li key={activity.id}>
               <ActivityIcon tone={activity.tone} active={false} />
@@ -62,7 +63,7 @@ export function ActivityRail({ turn, events }: ActivityRailProps) {
               <time dateTime={activity.createdAt}>{formatTime(activity.createdAt)}</time>
             </li>
           ))}
-        </ol>
+        </m.ol>
       ) : null}
     </section>
   );

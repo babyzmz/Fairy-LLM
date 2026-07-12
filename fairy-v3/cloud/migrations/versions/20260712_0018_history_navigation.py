@@ -40,8 +40,7 @@ def upgrade() -> None:
         sa.Column("display_title", sa.String(200), nullable=False, server_default="Task"),
     )
     op.execute(
-        "UPDATE core_tasks SET display_title = left(user_request, 200) "
-        "WHERE display_title = 'Task'"
+        "UPDATE core_tasks SET display_title = left(user_request, 200) WHERE display_title = 'Task'"
     )
     op.add_column(
         "core_tasks",

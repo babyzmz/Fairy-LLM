@@ -18,6 +18,7 @@ interface PreviewPanelProps {
   context: PreviewContext | null;
   runtimeHealth: RuntimeHealth | null;
   isActing: boolean;
+  developerMode?: boolean;
   onStart(): Promise<void>;
   onStop(): Promise<void>;
   onReview(): Promise<void>;
@@ -30,6 +31,7 @@ export function PreviewPanel({
   context,
   runtimeHealth,
   isActing,
+  developerMode = false,
   onStart,
   onStop,
   onReview,
@@ -73,7 +75,7 @@ export function PreviewPanel({
               <Square size={15} />
             </button>
           ) : null}
-          <button
+          {developerMode ? <button
             className={`icon-button ${developerOpen ? "active" : ""}`}
             type="button"
             aria-label="Toggle developer details"
@@ -82,7 +84,7 @@ export function PreviewPanel({
             onClick={() => setDeveloperOpen((open) => !open)}
           >
             <PanelRightOpen size={16} />
-          </button>
+          </button> : null}
         </div>
       </div>
 
@@ -97,11 +99,6 @@ export function PreviewPanel({
         })}
         {safeUrl !== null && preview?.status === "ready" ? (
           <>
-            <div className="preview-telemetry preview-telemetry-left">
-              {runtime?.port === null || runtime?.port === undefined
-                ? "LOOPBACK"
-                : `PORT ${runtime.port}`}
-            </div>
             <a
               className="preview-external"
               href={safeUrl}
@@ -152,7 +149,7 @@ export function PreviewPanel({
         ) : null}
       </div>
 
-      {developerOpen ? (
+      {developerMode && developerOpen ? (
         <aside className="developer-drawer" aria-label="Developer details">
           <span className="eyebrow">
             <Code2 size={12} /> DEVELOPER MODE

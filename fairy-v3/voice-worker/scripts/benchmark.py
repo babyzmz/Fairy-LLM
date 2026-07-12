@@ -182,18 +182,14 @@ def main() -> None:
         "first_frame_p95_ms": percentile95(
             [measurement.first_frame_ms for measurement in first_samples]
         ),
-        "first_frame_samples_ms": [
-            measurement.first_frame_ms for measurement in first_samples
-        ],
+        "first_frame_samples_ms": [measurement.first_frame_ms for measurement in first_samples],
         "second": asdict(second),
         "estimated_prefetched_gap_ms": estimated_gap,
         "cancel_response_ms": cancel_ms,
     }
     print(json.dumps(result, indent=2, sort_keys=True))
     if args.enforce and (
-        result["first_frame_p95_ms"] > 450
-        or estimated_gap >= 80
-        or cancel_ms > 100
+        result["first_frame_p95_ms"] > 450 or estimated_gap >= 80 or cancel_ms > 100
     ):
         raise SystemExit(1)
 
