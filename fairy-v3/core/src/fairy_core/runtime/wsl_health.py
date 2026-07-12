@@ -26,6 +26,7 @@ _REQUIRED_CONFIG = {
     "interop.appendWindowsPath": False,
 }
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_UV_VERSION = re.compile(r"^uv 0\.11\.28(?: \([A-Za-z0-9_-]+\))?$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,7 +174,8 @@ class WslSandboxHealthProbe:
             or toolchain.get("node") != "v24.18.0"
             or toolchain.get("pnpm") != "10.34.4"
             or toolchain.get("yarn") != "1.22.22"
-            or toolchain.get("uv") != "uv 0.11.28"
+            or not isinstance(toolchain.get("uv"), str)
+            or _UV_VERSION.fullmatch(toolchain["uv"]) is None
         ):
             return "FairySandbox toolchain attestation does not match"
         if values.get("bwrap_path") != "/usr/bin/bwrap":

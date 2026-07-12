@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 from fairy_capabilities.documents import CompositeDocumentParser, ManagedFileDocumentStore
 from fairy_core.application.service import CoreService
+from fairy_core.commanding.settings import StaticSandboxHealthProvider
 from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.contracts.models import ErrorCode
 from fairy_core.mcp.ports import McpError
@@ -207,6 +208,7 @@ def app(tmp_path: Path):
             tmp_path / "cloud",
             document_parser=CompositeDocumentParser(),
             document_blob_store=ManagedFileDocumentStore(tmp_path / "cloud" / "documents"),
+            sandbox_health_provider=StaticSandboxHealthProvider(),
         ),
         authenticator=StaticTokenAuthenticator({"test-token": identity}),
     )

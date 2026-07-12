@@ -134,6 +134,24 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
     assert "FK_CORE_MCP_SERVER_UPDATES_SERVER" not in ddl
 
 
+def test_event_outbox_migration_executes_asyncpg_ddl_one_command_at_a_time() -> None:
+    migration = (
+        CLOUD_ROOT / "migrations" / "versions" / "20260710_0004_event_outbox.py"
+    ).read_text(encoding="utf-8")
+
+    for statement in (
+        "_CREATE_OUTBOX_FUNCTION",
+        "_CREATE_OUTBOX_TRIGGER",
+        "_DROP_OUTBOX_TRIGGER",
+        "_DROP_OUTBOX_FUNCTION",
+    ):
+        assert f"op.execute(sa.text({statement}))" in migration
+    function_ddl = migration.split('_CREATE_OUTBOX_FUNCTION = r"""', 1)[1].split('"""', 1)[0]
+    trigger_ddl = migration.split('_CREATE_OUTBOX_TRIGGER = """', 1)[1].split('"""', 1)[0]
+    assert "CREATE TRIGGER" not in function_ddl
+    assert "CREATE FUNCTION" not in trigger_ddl
+
+
 def test_execution_settings_migration_has_reversible_ddl() -> None:
     output = io.StringIO()
     config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
@@ -299,6 +317,16 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
     )
     assert "fairy-postgres:/var/lib/postgresql" in services["postgres"]["volumes"]
     assert services["object-store"]["environment"]["S3_BUCKET"] == "fairy-objects"
+    assert services["object-store"]["healthcheck"]["test"][-1] == (
+        "http://localhost:9333/cluster/status"
+    )
+    for worker in ("execution", "runtime"):
+        assert services[worker]["cap_drop"] == ["ALL"]
+        assert services[worker]["read_only"] is True
+        assert services[worker]["security_opt"] == [
+            "no-new-privileges:true",
+            "seccomp:unconfined",
+        ]
     assert all(
         "healthcheck" in services[name]
         for name in {
@@ -329,7 +357,6 @@ def test_compose_uses_supported_brokerless_development_services() -> None:
     ]
     assert services["execution"]["read_only"] is True
     assert services["execution"]["cap_drop"] == ["ALL"]
-    assert services["execution"]["security_opt"] == ["no-new-privileges:true"]
     assert services["execution"]["volumes"] == [
         "fairy-dependencies:/var/lib/fairy-sandbox/dependencies"
     ]

@@ -69,7 +69,7 @@ def _attestation(**overrides: object) -> str:
             "npm": "11.16.0",
             "pnpm": "10.34.4",
             "yarn": "1.22.22",
-            "uv": "uv 0.11.28",
+            "uv": "uv 0.11.28 (x86_64-unknown-linux-gnu)",
         },
         "files": {
             "runner": {"uid": 0, "mode": 0o755},

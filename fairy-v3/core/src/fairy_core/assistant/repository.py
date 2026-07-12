@@ -317,6 +317,7 @@ class SqlAlchemyAssistantRepository:
                     select(
                         assistant_tool_invocations.c.command_run_id,
                         assistant_tool_invocations.c.turn_id,
+                        assistant_tool_invocations.c.status,
                     ).where(
                         assistant_tool_invocations.c.tenant_id == self._tenant_id,
                         assistant_tool_invocations.c.command_run_id.is_not(None),
@@ -331,7 +332,16 @@ class SqlAlchemyAssistantRepository:
                 .mappings()
                 .all()
             )
-            linked_run_ids = tuple(str(row["command_run_id"]) for row in invocation_rows)
+            queued_run_ids = tuple(
+                str(row["command_run_id"])
+                for row in invocation_rows
+                if row["status"] == ToolInvocationStatus.QUEUED.value
+            )
+            running_run_ids = tuple(
+                str(row["command_run_id"])
+                for row in invocation_rows
+                if row["status"] == ToolInvocationStatus.RUNNING.value
+            )
             run_predicates = [
                 and_(
                     command_runs.c.status == CommandStatus.RUNNING.value,
@@ -339,8 +349,29 @@ class SqlAlchemyAssistantRepository:
                     command_runs.c.lease_until > now,
                 )
             ]
-            if linked_run_ids:
-                run_predicates.append(command_runs.c.id.in_(linked_run_ids))
+            if queued_run_ids:
+                run_predicates.append(
+                    and_(
+                        command_runs.c.id.in_(queued_run_ids),
+                        command_runs.c.status.in_(
+                            (
+                                CommandStatus.CREATED.value,
+                                CommandStatus.QUEUED.value,
+                                CommandStatus.WAITING_APPROVAL.value,
+                                CommandStatus.RUNNING.value,
+                            )
+                        ),
+                    )
+                )
+            if running_run_ids:
+                run_predicates.append(
+                    and_(
+                        command_runs.c.id.in_(running_run_ids),
+                        command_runs.c.status == CommandStatus.RUNNING.value,
+                        command_runs.c.lease_until.is_not(None),
+                        command_runs.c.lease_until > now,
+                    )
+                )
             runs = (
                 connection.execute(
                     select(

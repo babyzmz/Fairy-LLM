@@ -38,6 +38,19 @@ def test_installer_imports_a_verified_wsl2_rootfs_without_host_path_mounts() -> 
     assert '"curl", "gnupg"' in source
     assert '"/var/lib/fairy-sandbox/dependencies"' in source
     assert '"/var/lib/fairy-sandbox/runtimes"' in source
+    assert "function Test-WslUser" in source
+    assert '$ErrorActionPreference = "Continue"' in source
+    assert 'if (-not (Test-WslUser -User "fairy"))' in source
+    assert (
+        source.count('$HealthDocument.toolchain.uv -notmatch "^uv 0\\.11\\.28(?: |$)"')
+        == 1
+    )
+    assert (
+        source.count(
+            '$RuntimeHealthDocument.toolchain.uv -notmatch "^uv 0\\.11\\.28(?: |$)"'
+        )
+        == 1
+    )
     assert "RedirectStandardInput" in source
     assert '"/usr/local/lib", "/usr/local/bin"' in source
     assert "--unregister" not in source
@@ -53,6 +66,7 @@ def test_wsl_toolchain_is_version_pinned_and_signature_verified() -> None:
     assert 'PNPM_VERSION="10.34.4"' in source
     assert 'YARN_VERSION="1.22.22"' in source
     assert 'UV_VERSION="0.11.28"' in source
+    assert "uv --version | cut -d ' ' -f 1-2" in source
     assert "SHASUMS256.txt.sig" in source
     assert "gpg --batch --verify" in source
     assert "sha256sum --check --strict" in source
@@ -65,3 +79,5 @@ def test_release_gate_runs_runner_tests_and_requires_real_execution_with_wsl() -
     assert "verify_wsl_sandbox.py" in source
     required_gate = source[source.index("if ($RequireWslSandbox)") :]
     assert "verify_wsl_sandbox.py" in required_gate
+    assert "json.dumps(dict(" in required_gate
+    assert "available=health.available" in required_gate

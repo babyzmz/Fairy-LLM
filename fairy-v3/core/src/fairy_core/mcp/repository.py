@@ -92,14 +92,15 @@ class SqlAlchemyMcpServerRepository:
     def save(self, record: McpServerRecord, *, expected_revision: int) -> None:
         values = _record_values(record)
         if expected_revision == 0:
-            result = self._connection.execute(
+            inserted = self._connection.execute(
                 self._insert(mcp_servers)
                 .values(tenant_id=self._tenant_id, **values)
                 .on_conflict_do_nothing(
                     index_elements=[mcp_servers.c.tenant_id, mcp_servers.c.server_id]
                 )
-            )
-            if result.rowcount == 1:
+                .returning(mcp_servers.c.server_id)
+            ).scalar_one_or_none()
+            if inserted is not None:
                 return
         else:
             result = self._connection.execute(
@@ -152,8 +153,9 @@ class SqlAlchemyMcpServerRepository:
                     mcp_server_updates.c.idempotency_key,
                 ]
             )
-        )
-        if reserved.rowcount == 1:
+            .returning(mcp_server_updates.c.idempotency_key)
+        ).scalar_one_or_none()
+        if reserved is not None:
             return None
         row = self._request(canonical_key)
         if row is None:

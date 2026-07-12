@@ -53,11 +53,16 @@ def test_postgres_sync_conflict_outbox_and_fencing() -> None:
 async def _run_scenario(dsn: str) -> None:
     suffix = uuid4().hex
     user_id = f"user-{suffix}"
-    project_id = f"project-{suffix}"
+    project_id = str(uuid4())
+    conversation_id = str(uuid4())
     event_id = str(uuid4())
     run_id = str(uuid4())
     decision_event_id = str(uuid4())
-    resource_id = f"task-{suffix}"
+    resource_id = str(uuid4())
+    version_a = str(uuid4())
+    candidate_id = str(uuid4())
+    version_c = str(uuid4())
+    version_d = str(uuid4())
     engine = create_async_engine(dsn)
     store = PostgresSyncStore(engine)
     tenant_id = tenant_id_for_user(user_id)
@@ -69,7 +74,7 @@ async def _run_scenario(dsn: str) -> None:
             user_id=user_id,
             device_id="device-a",
             project_id=project_id,
-            conversation_id=f"conversation-{suffix}",
+            conversation_id=conversation_id,
             task_id=resource_id,
             task_sequence=1,
             schema_version=1,
@@ -82,7 +87,7 @@ async def _run_scenario(dsn: str) -> None:
             user_id=user_id,
             device_id="device-a",
             project_id=project_id,
-            conversation_id=f"conversation-{suffix}",
+            conversation_id=conversation_id,
             task_id=resource_id,
             task_sequence=1,
             schema_version=1,
@@ -97,7 +102,7 @@ async def _run_scenario(dsn: str) -> None:
                 user_id=user_id,
                 device_id="device-a",
                 project_id=project_id,
-                conversation_id=f"conversation-{suffix}",
+                conversation_id=conversation_id,
                 task_id=resource_id,
                 task_sequence=1,
                 schema_version=1,
@@ -111,7 +116,7 @@ async def _run_scenario(dsn: str) -> None:
                 user_id=user_id,
                 device_id="device-a",
                 project_id=project_id,
-                conversation_id=f"conversation-{suffix}",
+                conversation_id=conversation_id,
                 task_id=resource_id,
                 task_sequence=1,
                 schema_version=1,
@@ -125,30 +130,29 @@ async def _run_scenario(dsn: str) -> None:
         promoted = await store.promote_version(
             user_id=user_id,
             project_id=project_id,
-            version_id=f"version-a-{suffix}",
+            version_id=version_a,
             expected_revision=0,
             manifest={"snapshot": "a"},
             decision_event_id=decision_event_id,
             device_id="device-a",
-            conversation_id=f"conversation-{suffix}",
+            conversation_id=conversation_id,
             task_id=resource_id,
-            task_sequence=1,
+            task_sequence=2,
         )
         assert promoted.revision == 1
         replayed = await store.promote_version(
             user_id=user_id,
             project_id=project_id,
-            version_id=f"version-a-{suffix}",
+            version_id=version_a,
             expected_revision=0,
             manifest={"snapshot": "a"},
             decision_event_id=decision_event_id,
             device_id="device-a",
-            conversation_id=f"conversation-{suffix}",
+            conversation_id=conversation_id,
             task_id=resource_id,
-            task_sequence=1,
+            task_sequence=2,
         )
         assert replayed.revision == 1
-        candidate_id = f"version-b-{suffix}"
         with pytest.raises(VersionConflictError):
             await store.promote_version(
                 user_id=user_id,
@@ -175,14 +179,14 @@ async def _run_scenario(dsn: str) -> None:
             store.promote_version(
                 user_id=user_id,
                 project_id=project_id,
-                version_id=f"version-c-{suffix}",
+                version_id=version_c,
                 expected_revision=1,
                 manifest={"snapshot": "c"},
             ),
             store.promote_version(
                 user_id=user_id,
                 project_id=project_id,
-                version_id=f"version-d-{suffix}",
+                version_id=version_d,
                 expected_revision=1,
                 manifest={"snapshot": "d"},
             ),

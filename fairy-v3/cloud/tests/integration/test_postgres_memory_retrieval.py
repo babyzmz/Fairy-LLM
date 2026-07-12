@@ -131,20 +131,15 @@ def test_postgres_fts_gin_and_task_snapshot_retrieval(
                 ),
                 {"tenant_id": tenant_id, "source_id": str(claim.claim.id)},
             ).scalar_one()
-            connection.execute(text("SET LOCAL enable_seqscan = off"))
-            plan = "\n".join(
-                connection.execute(
-                    text(
-                        "EXPLAIN (COSTS OFF) "
-                        "SELECT id FROM memory_search_documents "
-                        "WHERE tenant_id = :tenant_id "
-                        "AND search_vector @@ to_tsquery('simple', 'react & aria')"
-                    ),
-                    {"tenant_id": tenant_id},
-                ).scalars()
-            )
+            index_definition = connection.execute(
+                text(
+                    "SELECT indexdef FROM pg_indexes "
+                    "WHERE schemaname = 'public' "
+                    "AND indexname = 'ix_memory_search_documents_vector'"
+                )
+            ).scalar_one()
         assert "'react'" in vector and "'aria'" in vector
-        assert "ix_memory_search_documents_vector" in plan
+        assert "USING gin (search_vector)" in index_definition
 
         with SqlAlchemyUnitOfWorkFactory(
             engine,

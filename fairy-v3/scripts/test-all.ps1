@@ -177,13 +177,13 @@ import json
 from fairy_core.runtime.wsl_health import WslSandboxHealthProbe
 
 health = WslSandboxHealthProbe().health()
-print(json.dumps({
-    "available": health.available,
-    "executor": health.executor,
-    "version": health.version,
-    "error_code": health.error_code,
-    "diagnostics": list(health.diagnostics),
-}, sort_keys=True))
+print(json.dumps(dict(
+    available=health.available,
+    executor=health.executor,
+    version=health.version,
+    error_code=health.error_code,
+    diagnostics=list(health.diagnostics),
+), sort_keys=True))
 raise SystemExit(0 if health.available else 1)
 '@
     Invoke-Step "WSL: FairySandbox attestation" $CoreRoot $Uv @(

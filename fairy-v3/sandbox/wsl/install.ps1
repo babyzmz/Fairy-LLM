@@ -32,6 +32,24 @@ function Invoke-Wsl {
     }
 }
 
+function Test-WslUser {
+    param([Parameter(Mandatory = $true)][string]$User)
+
+    # Windows PowerShell promotes native stderr to an error record when the
+    # script-wide preference is Stop. A missing user is an expected probe result.
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $Wsl.Source --distribution FairySandbox --user root --exec (
+            "/usr/bin/id"
+        ) --user $User *> $null
+        return $LASTEXITCODE -eq 0
+    }
+    finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
+}
+
 function Write-WslFile {
     param(
         [Parameter(Mandatory = $true)][byte[]]$Content,
@@ -127,8 +145,7 @@ Invoke-Wsl @(
     "python3-venv", "xz-utils"
 )
 
-& $Wsl.Source --distribution FairySandbox --user root --exec /usr/bin/id --user fairy *> $null
-if ($LASTEXITCODE -ne 0) {
+if (-not (Test-WslUser -User "fairy")) {
     Invoke-Wsl @(
         "--distribution", "FairySandbox", "--user", "root", "--exec",
         "/usr/sbin/useradd", "--create-home", "--shell", "/usr/sbin/nologin", "fairy"
@@ -205,7 +222,7 @@ if (
     $HealthDocument.toolchain.node -ne "v24.18.0" -or
     $HealthDocument.toolchain.pnpm -ne "10.34.4" -or
     $HealthDocument.toolchain.yarn -ne "1.22.22" -or
-    $HealthDocument.toolchain.uv -ne "uv 0.11.28"
+    $HealthDocument.toolchain.uv -notmatch "^uv 0\.11\.28(?: |$)"
 ) {
     throw "FairySandbox returned an invalid health document"
 }
@@ -224,7 +241,7 @@ if (
     $RuntimeHealthDocument.toolchain.node -ne "v24.18.0" -or
     $RuntimeHealthDocument.toolchain.pnpm -ne "10.34.4" -or
     $RuntimeHealthDocument.toolchain.yarn -ne "1.22.22" -or
-    $RuntimeHealthDocument.toolchain.uv -ne "uv 0.11.28" -or
+    $RuntimeHealthDocument.toolchain.uv -notmatch "^uv 0\.11\.28(?: |$)" -or
     $RuntimeHealthDocument.config.'automount.enabled' -ne $false -or
     $RuntimeHealthDocument.config.'automount.mountFsTab' -ne $false -or
     $RuntimeHealthDocument.config.'interop.enabled' -ne $false -or

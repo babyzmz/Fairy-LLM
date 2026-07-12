@@ -28,6 +28,7 @@ from fairy_core.runtime.ports import RuntimeExecutor
 from fairy_core.runtime.unavailable import UnavailableRuntimeExecutor
 
 _DISTRO = "FairySandbox"
+_UV_VERSION = re.compile(r"^uv 0\.11\.28(?: \([A-Za-z0-9_-]+\))?$")
 _USER = "fairy"
 _RUNNER = "/usr/local/bin/fairy-runtime-supervisor"
 _EXECUTOR = "wsl_fairy_runtime"
@@ -140,7 +141,8 @@ class WslRuntimeHealthProbe:
                 or toolchain.get("node") != "v24.18.0"
                 or toolchain.get("pnpm") != "10.34.4"
                 or toolchain.get("yarn") != "1.22.22"
-                or toolchain.get("uv") != "uv 0.11.28"
+                or not isinstance(toolchain.get("uv"), str)
+                or _UV_VERSION.fullmatch(toolchain["uv"]) is None
             ):
                 return _unavailable_health("Runtime supervisor attestation is invalid")
         except (OSError, subprocess.SubprocessError, ValueError):

@@ -603,7 +603,7 @@ async def _insert_tenant_project_event(
                 :tenant_id, :artifact_id, :project_id, :conversation_id, :task_id,
                 :version_id, 'preview_manifest', 'conversation', :storage_location,
                 'application/json', 2, :content_hash,
-                jsonb_build_object('marker', :marker), now()
+                jsonb_build_object('marker', CAST(:marker AS text)), now()
             )
             """
         ),

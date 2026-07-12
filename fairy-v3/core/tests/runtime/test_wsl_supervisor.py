@@ -179,7 +179,7 @@ def test_wsl_runtime_health_requires_disabled_mounts_and_interop(tmp_path: Path)
             "npm": "11.16.0",
             "pnpm": "10.34.4",
             "yarn": "1.22.22",
-            "uv": "uv 0.11.28",
+            "uv": "uv 0.11.28 (x86_64-unknown-linux-gnu)",
         },
         "config": {
             "automount.enabled": False,

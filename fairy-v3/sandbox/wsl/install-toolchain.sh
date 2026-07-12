@@ -56,4 +56,4 @@ ln --symbolic --force /opt/fairy-python-toolchain/bin/uv /usr/local/bin/uv
 test "$(/usr/local/bin/node --version)" = "v${NODE_VERSION}"
 test "$(/usr/local/bin/pnpm --version)" = "${PNPM_VERSION}"
 test "$(/usr/local/bin/yarn --version)" = "${YARN_VERSION}"
-test "$(/usr/local/bin/uv --version)" = "uv ${UV_VERSION}"
+test "$(/usr/local/bin/uv --version | cut -d ' ' -f 1-2)" = "uv ${UV_VERSION}"

@@ -14,14 +14,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.execute(sa.text(_CREATE_OUTBOX_FUNCTION))
     op.execute(sa.text(_CREATE_OUTBOX_TRIGGER))
 
 
 def downgrade() -> None:
     op.execute(sa.text(_DROP_OUTBOX_TRIGGER))
+    op.execute(sa.text(_DROP_OUTBOX_FUNCTION))
 
 
-_CREATE_OUTBOX_TRIGGER = r"""
+_CREATE_OUTBOX_FUNCTION = r"""
 CREATE FUNCTION fairy_enqueue_domain_event()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -59,7 +61,9 @@ BEGIN
     RETURN NEW;
 END;
 $fairy$;
+"""
 
+_CREATE_OUTBOX_TRIGGER = """
 CREATE TRIGGER trg_domain_event_outbox
 AFTER INSERT ON domain_events
 FOR EACH ROW
@@ -68,5 +72,8 @@ EXECUTE FUNCTION fairy_enqueue_domain_event();
 
 _DROP_OUTBOX_TRIGGER = """
 DROP TRIGGER IF EXISTS trg_domain_event_outbox ON domain_events;
+"""
+
+_DROP_OUTBOX_FUNCTION = """
 DROP FUNCTION IF EXISTS fairy_enqueue_domain_event();
 """

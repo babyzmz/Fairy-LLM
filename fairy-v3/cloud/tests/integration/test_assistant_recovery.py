@@ -128,7 +128,9 @@ def test_postgres_recovers_each_durable_assistant_phase_without_duplicate_effect
             if crash_phase == "tool_dispatched":
                 invocation = ToolInvocation.create(
                     turn=persisted,
+                    model_round=1,
                     sequence=1,
+                    provider_call_id="call-recovery-1",
                     tool_name=tool_name,
                     scope_digest=scope.scope_digest,
                     arguments=payload,
