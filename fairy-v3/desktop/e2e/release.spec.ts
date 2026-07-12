@@ -45,6 +45,7 @@ test("release workspace exposes project, chat, preview, provider, and developer 
   await page.goto("/");
 
   await expect(page.getByLabel("Workspace telemetry")).toContainText("Core ready");
+  await expect(page.getByLabel("Workspace telemetry")).toContainText("LOCAL ONLY");
   await expect(page.getByTitle("Task preview")).toBeVisible();
   await page.getByRole("button", { name: "Manage projects" }).click();
   await expect(page.getByRole("complementary", { name: "Project manager" })).toBeVisible();

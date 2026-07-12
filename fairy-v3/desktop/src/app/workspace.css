@@ -221,6 +221,22 @@ button:disabled {
   font-size: 12px;
 }
 
+.recovery-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recovery-notice > div {
+  display: grid;
+  gap: 3px;
+}
+
+.recovery-notice span {
+  overflow-wrap: anywhere;
+}
+
 .workspace-main {
   min-width: 0;
   min-height: 0;

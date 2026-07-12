@@ -7,6 +7,7 @@ import {
   FolderPlus,
   MessageSquareText,
   Play,
+  RefreshCw,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -211,9 +212,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
         </div>
 
         {model.actionError || model.errorMessage || model.projectError ? (
-          <div className="workspace-error" role="alert">
-            {model.actionError ?? model.errorMessage ?? model.projectError}
-          </div>
+          <RecoveryNotice model={model} />
         ) : null}
 
         {model.state === "loading" || model.state === "offline" ? (
@@ -227,6 +226,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             onSelectFolder={async () => undefined}
             onCreate={async () => undefined}
             onImport={async () => undefined}
+            onRetry={model.retryWorkspace}
           />
         ) : model.mode === "chat" ? (
           <ChatWorkspace
@@ -328,6 +328,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
                 // The model exposes the durable action error.
               }
             }}
+            onRetry={model.retryWorkspace}
           />
         )}
       </div>
@@ -381,6 +382,9 @@ function ContextBar({ model }: { model: WorkspaceModel }) {
         </span>
         <span className="telemetry-item">
           <Play size={14} /> {model.selectedTask?.execution_target ?? "local"}
+        </span>
+        <span className="telemetry-item">
+          <Cloud size={14} /> {model.selectedProject?.residency === "synced" ? "SYNCED" : "LOCAL ONLY"}
         </span>
         <span className="telemetry-item">
           <ShieldCheck size={14} /> {model.permissionProfile ?? "unavailable"}
@@ -463,6 +467,7 @@ interface EmptyWorkspaceProps {
   onSelectFolder(): Promise<void>;
   onCreate(): Promise<void>;
   onImport(): Promise<void>;
+  onRetry(): Promise<void>;
 }
 
 function EmptyWorkspace({
@@ -475,6 +480,7 @@ function EmptyWorkspace({
   onSelectFolder,
   onCreate,
   onImport,
+  onRetry,
 }: EmptyWorkspaceProps) {
   if (state === "loading") {
     return (
@@ -491,6 +497,9 @@ function EmptyWorkspace({
         <WifiOff size={25} />
         <h1>Core offline</h1>
         <p>Local workspace data is unavailable</p>
+        <button className="secondary-command" type="button" onClick={() => void onRetry()}>
+          <RefreshCw size={15} /> Retry Core
+        </button>
       </section>
     );
   }
@@ -514,6 +523,24 @@ function EmptyWorkspace({
   );
 }
 
+function RecoveryNotice({ model }: { model: WorkspaceModel }) {
+  const code = model.actionErrorCode;
+  const title = code === "VERSION_CONFLICT"
+    ? "Version conflict preserved"
+    : code === "WORKER_INTERRUPTED"
+      ? "Worker interrupted"
+      : "Workspace request failed";
+  const detail = code === "VERSION_CONFLICT"
+    ? "The candidate version remains separate. Active Version was not overwritten."
+    : model.actionError ?? model.errorMessage ?? model.projectError;
+  return (
+    <div className="workspace-error recovery-notice" role="alert">
+      <div><strong>{title}</strong><span>{detail}</span></div>
+      <button className="icon-button" type="button" aria-label="Retry workspace" title="Retry workspace" onClick={() => void model.retryWorkspace()}><RefreshCw size={15} /></button>
+    </div>
+  );
+}
+
 function ProjectSetup({
   projectName,
   importPath,
@@ -523,7 +550,7 @@ function ProjectSetup({
   onSelectFolder,
   onCreate,
   onImport,
-}: Omit<EmptyWorkspaceProps, "state">) {
+}: Omit<EmptyWorkspaceProps, "state" | "onRetry">) {
   return (
     <div className="project-setup">
       <div className="create-controls">

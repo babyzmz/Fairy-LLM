@@ -67,6 +67,7 @@ export interface WorkspaceModel {
   statusLabel: string;
   errorMessage: string | null;
   actionError: string | null;
+  actionErrorCode: string | null;
   isActing: boolean;
   permissionProfile: PermissionProfile | null;
   permissionSettings: ExecutionSettings | null;
@@ -147,6 +148,7 @@ export interface WorkspaceModel {
   reviewTask(): Promise<void>;
   acceptVersion(): Promise<void>;
   discardVersion(): Promise<void>;
+  retryWorkspace(): Promise<void>;
 }
 
 const workspaceKey = ["workspace"] as const;
@@ -186,6 +188,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const [allEvents, setAllEvents] = useState<EventEnvelope[]>([]);
   const eventCursor = useRef(readEventCursor());
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionErrorCode, setActionErrorCode] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
   const [chatTaskId, setChatTaskId] = useState<string | null>(null);
 
@@ -394,10 +397,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
                 ),
             });
           }
-          setActionError(null);
         }
       } catch (error) {
-        if (!controller.signal.aborted) setActionError(errorMessage(error));
+        if (!controller.signal.aborted) {
+          setActionError(errorMessage(error));
+          setActionErrorCode(coreErrorCode(error));
+        }
       }
     })();
     return () => controller.abort();
@@ -407,12 +412,14 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     async <T,>(operation: () => Promise<T>): Promise<T> => {
       setIsActing(true);
       setActionError(null);
+      setActionErrorCode(null);
       try {
         const result = await operation();
         await invalidateWorkspace();
         return result;
       } catch (error) {
         setActionError(errorMessage(error));
+        setActionErrorCode(coreErrorCode(error));
         throw error;
       } finally {
         setIsActing(false);
@@ -458,6 +465,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           "Permissions changed on another device. Latest settings loaded; review and retry.",
         );
         setActionError(conflict.message);
+        setActionErrorCode("PERMISSION_CONFLICT");
         throw conflict;
       }
     },
@@ -832,6 +840,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       state === "offline" ? "Core offline" : state === "loading" ? "Core starting" : "Core ready",
     errorMessage: queryError === null ? null : errorMessage(queryError),
     actionError,
+    actionErrorCode,
     isActing,
     permissionProfile,
     permissionSettings: permissionsQuery.data ?? null,
@@ -906,6 +915,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     reviewTask: actions.reviewTask,
     acceptVersion: actions.acceptVersion,
     discardVersion: actions.discardVersion,
+    retryWorkspace: async () => {
+      setActionError(null);
+      setActionErrorCode(null);
+      await queryClient.resetQueries({ queryKey: workspaceKey });
+    },
   };
 }
 

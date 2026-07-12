@@ -18,15 +18,28 @@ describe("WorkspaceShell", () => {
     expect(screen.getByLabelText("Message Fairy")).toBeVisible();
   });
 
-  it("renders the offline state without sample project truth", () => {
+  it("renders the offline state without sample project truth and retries Core", () => {
+    const model = { ...workspaceModel(), state: "offline" as const, statusLabel: "Core offline" };
     render(
-      <WorkspaceShell
-        model={{ ...workspaceModel(), state: "offline", statusLabel: "Core offline" }}
-      />,
+      <WorkspaceShell model={model} />,
     );
 
     expect(screen.getByRole("heading", { name: "Core offline" })).toBeVisible();
     expect(screen.queryByText("Homepage revision")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry Core" }));
+    expect(model.retryWorkspace).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a conflicted candidate instead of implying an overwrite", () => {
+    const model = {
+      ...workspaceModel(),
+      actionError: "stale project revision",
+      actionErrorCode: "VERSION_CONFLICT",
+    };
+    render(<WorkspaceShell model={model} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Version conflict preserved");
+    expect(screen.getByRole("alert")).toHaveTextContent("Active Version was not overwritten");
   });
 
   it("routes the segmented mode controls through the workspace model", () => {
@@ -61,6 +74,7 @@ function workspaceModel(): WorkspaceModel {
     statusLabel: "Core ready",
     errorMessage: null,
     actionError: null,
+    actionErrorCode: null,
     isActing: false,
     permissionProfile: "standard",
     permissionSettings: {
@@ -138,5 +152,6 @@ function workspaceModel(): WorkspaceModel {
     reviewTask: vi.fn(async () => undefined),
     acceptVersion: vi.fn(async () => undefined),
     discardVersion: vi.fn(async () => undefined),
+    retryWorkspace: vi.fn(async () => undefined),
   };
 }
