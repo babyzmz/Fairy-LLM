@@ -49,6 +49,8 @@ import type {
   VoiceSynthesizeInput,
   VoiceSessionStartInput,
   VoiceTranscribeInput,
+  WorkspaceFileReadInput,
+  WorkspaceVersionInput,
 } from "./contracts";
 
 export const DEFAULT_EVENT_POLL_MS = 25;
@@ -162,6 +164,10 @@ export class CoreClient {
   readonly workspaces = {
     get: (workspaceId: string) =>
       this.transport.call("workspaces.get", { workspace_id: workspaceId }),
+    listFiles: (input: WorkspaceVersionInput) =>
+      this.transport.call("workspaces.files.list", input),
+    readFile: (input: WorkspaceFileReadInput) =>
+      this.transport.call("workspaces.files.read", input),
   };
 
   readonly capabilities = {

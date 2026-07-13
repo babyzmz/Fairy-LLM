@@ -167,6 +167,13 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     (task) => task.conversation_id === selectedConversation?.id,
   );
   const selectedTask = selectedItem(tasks, taskSelection);
+  const chatTasks = allTasks.filter(
+    (task) => task.conversation_id === selectedChatConversation?.id,
+  );
+  const workspaceTask =
+    mode === "chat"
+      ? chatTasks.find((task) => task.id === chatTaskId) ?? chatTasks.at(-1) ?? null
+      : selectedTask;
   const messagesQuery = useQuery({
     queryKey: [...workspaceKey, "messages", selectedChatConversation?.id],
     queryFn: () =>
@@ -209,34 +216,49 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   });
   const chatApprovals = chatApprovalsQuery.data?.items ?? [];
   const selectedWorkspaceQuery = useQuery({
-    queryKey: [...workspaceKey, "workspace", selectedTask?.workspace_id],
-    queryFn: () => client.workspaces.get(requireId(selectedTask?.workspace_id)),
-    enabled: selectedTask !== null,
+    queryKey: [...workspaceKey, "workspace", workspaceTask?.workspace_id],
+    queryFn: () => client.workspaces.get(requireId(workspaceTask?.workspace_id)),
+    enabled: workspaceTask !== null,
     retry: false,
   });
   const previewQuery = useQuery({
     queryKey: [
       ...workspaceKey,
       "preview",
-      selectedTask?.id,
-      selectedTask?.target_version_id,
+      workspaceTask?.id,
+      workspaceTask?.target_version_id,
     ],
     queryFn: () =>
       client.previews.resolve({
-        task_id: requireId(selectedTask?.id),
-        workspace_id: requireId(selectedTask?.workspace_id),
-        version_id: requireId(selectedTask?.target_version_id),
+        task_id: requireId(workspaceTask?.id),
+        workspace_id: requireId(workspaceTask?.workspace_id),
+        version_id: requireId(workspaceTask?.target_version_id),
       }),
     enabled:
-      selectedTask !== null &&
-      selectedTask.target_version_id !== null &&
+      workspaceTask !== null &&
+      workspaceTask.target_version_id !== null &&
       selectedWorkspaceQuery.isSuccess,
     retry: false,
   });
   const runtimeHealthQuery = useQuery({
-    queryKey: [...workspaceKey, "runtime-health", selectedTask?.id],
-    queryFn: () => client.runtimes.health(requireId(selectedTask?.id)),
-    enabled: selectedTask !== null,
+    queryKey: [...workspaceKey, "runtime-health", workspaceTask?.id],
+    queryFn: () => client.runtimes.health(requireId(workspaceTask?.id)),
+    enabled: workspaceTask !== null,
+    retry: false,
+  });
+  const workspaceFilesQuery = useQuery({
+    queryKey: [
+      ...workspaceKey,
+      "files",
+      workspaceTask?.workspace_id,
+      workspaceTask?.target_version_id,
+    ],
+    queryFn: () =>
+      client.workspaces.listFiles({
+        workspace_id: requireId(workspaceTask?.workspace_id),
+        version_id: requireId(workspaceTask?.target_version_id),
+      }),
+    enabled: workspaceTask?.target_version_id !== null && workspaceTask !== null,
     retry: false,
   });
   const capabilitiesQuery = useQuery({
@@ -710,19 +732,19 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         }
       },
       async startPreview() {
-        if (selectedTask === null) throw new Error("Task is unavailable");
+        if (workspaceTask === null) throw new Error("Task is unavailable");
         const workspace = selectedWorkspaceQuery.data;
-        const versionId = selectedTask.target_version_id;
+        const versionId = workspaceTask.target_version_id;
         if (workspace === undefined || versionId === null) {
           throw new Error("Workspace Version is unavailable");
         }
         await runAction(() =>
           client.previews.start({
-            task_id: selectedTask.id,
-            workspace_id: selectedTask.workspace_id,
+            task_id: workspaceTask.id,
+            workspace_id: workspaceTask.workspace_id,
             version_id: versionId,
             expected_workspace_revision: workspace.revision,
-            idempotency_key: `desktop:preview:${selectedTask.id}`,
+            idempotency_key: `desktop:preview:${workspaceTask.id}`,
           }),
         );
       },
@@ -730,13 +752,13 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         const activePreview = previewQuery.data?.preview;
         const workspace = selectedWorkspaceQuery.data;
         if (activePreview === undefined || activePreview === null) return;
-        if (selectedTask === null || workspace === undefined) return;
+        if (workspaceTask === null || workspace === undefined) return;
         await runAction(() =>
           client.previews.stop({
             preview_id: activePreview.id,
-            task_id: selectedTask.id,
-            workspace_id: selectedTask.workspace_id,
-            version_id: requireId(selectedTask.target_version_id),
+            task_id: workspaceTask.id,
+            workspace_id: workspaceTask.workspace_id,
+            version_id: requireId(workspaceTask.target_version_id),
             expected_workspace_revision: workspace.revision,
             idempotency_key: `desktop:preview:${activePreview.id}:stop`,
           }),
@@ -832,6 +854,30 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           user_confirmed: true,
         }));
       },
+      async readWorkspaceFile(path: string) {
+        if (workspaceTask === null) throw new Error("Workspace is unavailable");
+        return client.workspaces.readFile({
+          workspace_id: workspaceTask.workspace_id,
+          version_id: requireId(workspaceTask.target_version_id),
+          path,
+        });
+      },
+      async revealWorkspaceFile(path: string) {
+        if (workspaceTask === null) throw new Error("Workspace is unavailable");
+        await runAction(() =>
+          client.systemActions.execute({
+            task_id: workspaceTask.id,
+            action: { type: "reveal_path", relative_path: path },
+            idempotency_key: `desktop:workspace-reveal:${workspaceTask.id}:${path}`,
+            user_confirmed: true,
+          }),
+        );
+      },
+      async refreshWorkspaceFiles() {
+        await queryClient.invalidateQueries({
+          queryKey: [...workspaceKey, "files"],
+        });
+      },
     }),
     [
       chatAssistant,
@@ -844,6 +890,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       selectedProject,
       selectedChatConversation,
       selectedTask,
+      workspaceTask,
+      queryClient,
       setChatConversationSelection,
       setConversationSelection,
       setMode,
@@ -867,6 +915,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     chatApprovalsQuery.error,
     previewQuery.error,
     runtimeHealthQuery.error,
+    workspaceFilesQuery.error,
     permissionsQuery.error,
     capabilitiesQuery.error,
   );
@@ -932,9 +981,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     selectedConversation,
     selectedChatConversation,
     selectedTask,
+    workspaceTask,
     selectedVersion,
     preview: previewQuery.data ?? null,
     runtimeHealth: runtimeHealthQuery.data ?? null,
+    workspaceFiles: workspaceFilesQuery.data?.items ?? [],
+    workspaceFilesLoading: workspaceFilesQuery.isPending && workspaceFilesQuery.isEnabled,
     capabilities: capabilitiesQuery.data ?? null,
     chatTurn: chatAssistant.turn,
     chatStreamedText: chatAssistant.streamedText,
@@ -998,6 +1050,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     takePendingChatMessageForEdit: chatAssistant.takePendingForEdit,
     copyMessage: actions.copyMessage,
     openMessageLink: actions.openMessageLink,
+    readWorkspaceFile: actions.readWorkspaceFile,
+    revealWorkspaceFile: actions.revealWorkspaceFile,
+    refreshWorkspaceFiles: actions.refreshWorkspaceFiles,
     cancelProjectTurn: projectAssistant.cancel,
     decideApproval: actions.decideApproval,
     startPreview: actions.startPreview,

@@ -19,6 +19,7 @@ interface PreviewPanelProps {
   runtimeHealth: RuntimeHealth | null;
   isActing: boolean;
   developerMode?: boolean;
+  showVersionActions?: boolean;
   onStart(): Promise<void>;
   onStop(): Promise<void>;
   onReview(): Promise<void>;
@@ -32,6 +33,7 @@ export function PreviewPanel({
   runtimeHealth,
   isActing,
   developerMode = false,
+  showVersionActions = true,
   onStart,
   onStop,
   onReview,
@@ -56,7 +58,10 @@ export function PreviewPanel({
     task !== null && task !== undefined && ["executing", "previewing"].includes(task.status);
 
   return (
-    <section className="preview-pane" aria-labelledby="preview-heading">
+    <section
+      className={`preview-pane${showVersionActions ? "" : " preview-pane-compact"}`}
+      aria-labelledby="preview-heading"
+    >
       <div className="preview-toolbar">
         <div>
           <span className="eyebrow">{preview?.visibility ?? "TASK OUTPUT"}</span>
@@ -114,7 +119,7 @@ export function PreviewPanel({
         ) : null}
       </div>
 
-      <div className="version-decision-bar">
+      {showVersionActions ? <div className="version-decision-bar">
         <span>{decisionLabel(task, preview?.status ?? null)}</span>
         {!terminalDecision ? (
           <div>
@@ -147,7 +152,7 @@ export function PreviewPanel({
           </button>
           </div>
         ) : null}
-      </div>
+      </div> : null}
 
       {developerMode && developerOpen ? (
         <aside className="developer-drawer" aria-label="Developer details">

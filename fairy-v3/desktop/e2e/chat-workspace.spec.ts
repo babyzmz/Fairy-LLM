@@ -56,6 +56,18 @@ test("tool protocol is visible only in developer mode", async ({ page }) => {
   await expect(page.getByText(/fixture provider payload/)).toBeVisible();
 });
 
+test("ordinary chat exposes the shared workspace file inspector", async ({ page }) => {
+  await page.setViewportSize({ width: 880, height: 680 });
+  await page.goto("/");
+  await openScratchChat(page);
+
+  await expect(page.getByLabel("Workspace inspector")).toBeVisible();
+  await page.getByRole("tab", { name: /Files/ }).click();
+  await page.getByRole("button", { name: "main.ts" }).click();
+  await expect(page.getByText("console.log('Fairy');")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Use this version" })).toHaveCount(0);
+});
+
 test("a user message appears before Core task creation returns", async ({ page }) => {
   await page.goto("/");
   await openScratchChat(page);

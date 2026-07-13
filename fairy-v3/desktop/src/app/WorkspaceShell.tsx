@@ -5,7 +5,7 @@ import { ChatWorkspace } from "../chat/ChatWorkspace";
 import { Composer } from "../chat/Composer";
 import { HistorySidebar } from "./HistorySidebar";
 import { ContextBar } from "./ContextBar";
-import { PreviewPanel } from "./PreviewPanel";
+import { WorkspaceInspector } from "./WorkspaceInspector";
 import { EmptyWorkspace, folderName, ProjectSetup, RecoveryNotice } from "./ProjectWorkspaceStates";
 import { TaskTimeline } from "./TaskTimeline";
 import type { WorkspaceModel } from "./workspaceModel";
@@ -73,36 +73,39 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             onRetry={model.retryWorkspace}
           />
         ) : model.mode === "chat" ? (
-          <ChatWorkspace
-            conversationAvailable={model.selectedChatConversation !== null}
-            messages={model.messages}
-            events={model.chatEvents}
-            streamedText={model.chatStreamedText}
-            pendingUserMessage={model.chatPendingUserMessage}
-            turn={model.chatTurn}
-            approvals={model.chatApprovals}
-            providers={model.providers}
-            providerHealth={model.providerHealth}
-            selectedProfileId={model.selectedProfileId}
-            isBusy={model.chatBusy}
-            isActing={model.isActing}
-            offline={false}
-            developerMode={model.developerMode}
-            error={model.chatError}
-            slashCommands={model.capabilities?.slash_commands ?? []}
-            onNewConversation={model.createChatConversation}
-            onSwitchProject={() => model.setMode("project")}
-            onPermissionChange={model.setPermissionProfile}
-            onSend={model.sendChatMessage}
-            onCancel={model.cancelChatTurn}
-            onRetry={model.retryChatTurn}
-            onRetryPending={model.retryPendingChatMessage}
-            onDeletePending={model.deletePendingChatMessage}
-            onTakePendingForEdit={model.takePendingChatMessageForEdit}
-            onCopyMessage={model.copyMessage}
-            onOpenMessageLink={model.openMessageLink}
-            onDecision={model.decideApproval}
-          />
+          <div className="unified-workspace unified-workspace-chat">
+            <ChatWorkspace
+              conversationAvailable={model.selectedChatConversation !== null}
+              messages={model.messages}
+              events={model.chatEvents}
+              streamedText={model.chatStreamedText}
+              pendingUserMessage={model.chatPendingUserMessage}
+              turn={model.chatTurn}
+              approvals={model.chatApprovals}
+              providers={model.providers}
+              providerHealth={model.providerHealth}
+              selectedProfileId={model.selectedProfileId}
+              isBusy={model.chatBusy}
+              isActing={model.isActing}
+              offline={false}
+              developerMode={model.developerMode}
+              error={model.chatError}
+              slashCommands={model.capabilities?.slash_commands ?? []}
+              onNewConversation={model.createChatConversation}
+              onSwitchProject={() => model.setMode("project")}
+              onPermissionChange={model.setPermissionProfile}
+              onSend={model.sendChatMessage}
+              onCancel={model.cancelChatTurn}
+              onRetry={model.retryChatTurn}
+              onRetryPending={model.retryPendingChatMessage}
+              onDeletePending={model.deletePendingChatMessage}
+              onTakePendingForEdit={model.takePendingChatMessageForEdit}
+              onCopyMessage={model.copyMessage}
+              onOpenMessageLink={model.openMessageLink}
+              onDecision={model.decideApproval}
+            />
+            <WorkspaceInspector model={model} />
+          </div>
         ) : model.state === "ready" ? (
           <section className="project-workspace" aria-label="Project workspace">
             <main className="workspace-main">
@@ -115,18 +118,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
                 onSelectTask={model.selectTask}
                 onDecision={model.decideApproval}
               />
-              <PreviewPanel
-                task={model.selectedTask}
-                context={model.preview}
-                runtimeHealth={model.runtimeHealth}
-                isActing={model.isActing}
-                developerMode={model.developerMode}
-                onStart={model.startPreview}
-                onStop={model.stopPreview}
-                onReview={model.reviewTask}
-                onAccept={model.acceptVersion}
-                onDiscard={model.discardVersion}
-              />
+              <WorkspaceInspector model={model} />
             </main>
             <Composer
               disabled={

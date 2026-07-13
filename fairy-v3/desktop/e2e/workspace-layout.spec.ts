@@ -19,6 +19,10 @@ test("minimum desktop window renders the durable workspace without overflow", as
     "sandbox",
     "allow-forms allow-scripts",
   );
+  await page.getByRole("tab", { name: /Files/ }).click();
+  await page.getByRole("button", { name: "main.ts" }).click();
+  await expect(page.getByText("console.log('Fairy');")).toBeVisible();
+  await page.getByRole("tab", { name: "Preview" }).click();
   await expect(page.getByText("Developer diagnostic")).toHaveCount(0);
   await expect(page.getByLabel("Workspace status")).toContainText("standard");
   await expect(page.getByLabel("Workspace status")).toContainText("Core ready");

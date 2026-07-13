@@ -26,6 +26,8 @@ import type {
   Skill,
   Task,
   Version,
+  WorkspaceFile,
+  WorkspaceFileContent,
 } from "../core/client";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
 import type { McpServerDraft } from "../settings/extensionTypes";
@@ -50,7 +52,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   >;
   approvals: Pick<CoreClient["approvals"], "list" | "decide">;
   versions: Pick<CoreClient["versions"], "list" | "accept" | "discard">;
-  workspaces: Pick<CoreClient["workspaces"], "get">;
+  workspaces: Pick<CoreClient["workspaces"], "get" | "listFiles" | "readFile">;
   runtimes: Pick<CoreClient["runtimes"], "health">;
   previews: Pick<CoreClient["previews"], "resolve" | "start" | "stop">;
   capabilities: Pick<CoreClient["capabilities"], "get">;
@@ -115,9 +117,12 @@ export interface WorkspaceModel {
   selectedConversation: Conversation | null;
   selectedChatConversation: Conversation | null;
   selectedTask: Task | null;
+  workspaceTask: Task | null;
   selectedVersion: Version | null;
   preview: PreviewContext | null;
   runtimeHealth: RuntimeHealth | null;
+  workspaceFiles: WorkspaceFile[];
+  workspaceFilesLoading: boolean;
   capabilities: CapabilityManifest | null;
   chatTurn: AssistantTurn | null;
   chatStreamedText: string;
@@ -189,6 +194,9 @@ export interface WorkspaceModel {
   takePendingChatMessageForEdit(): AssistantDraft | null;
   copyMessage(taskId: string, content: string): Promise<void>;
   openMessageLink(taskId: string, url: string): Promise<void>;
+  readWorkspaceFile(path: string): Promise<WorkspaceFileContent>;
+  revealWorkspaceFile(path: string): Promise<void>;
+  refreshWorkspaceFiles(): Promise<void>;
   cancelProjectTurn(): Promise<void>;
   decideApproval(approvalId: string, approved: boolean): Promise<void>;
   startPreview(): Promise<void>;

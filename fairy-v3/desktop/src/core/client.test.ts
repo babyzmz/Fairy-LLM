@@ -91,6 +91,8 @@ describe("CoreClient", () => {
     });
     await client.versions.discard(id);
     await client.workspaces.get(id);
+    await client.workspaces.listFiles({ workspace_id: id, version_id: id });
+    await client.workspaces.readFile({ workspace_id: id, version_id: id, path: "README.md" });
     await client.runtimes.get(id);
     await client.runtimes.health(id);
     await client.systemActions.execute({
@@ -284,6 +286,8 @@ describe("CoreClient", () => {
       "versions.accept",
       "versions.discard",
       "workspaces.get",
+      "workspaces.files.list",
+      "workspaces.files.read",
       "runtimes.get",
       "runtimes.health",
       "system.actions.execute",
@@ -331,7 +335,7 @@ describe("CoreClient", () => {
     ]);
     expect(transport.requests[3]?.params).toEqual({ project_id: id });
     expect(transport.requests[11]?.params).toEqual({ task_id: id });
-    expect(transport.requests[21]?.params).toEqual({ task_id: id });
+    expect(transport.requests[23]?.params).toEqual({ task_id: id });
   });
 
   it("uses the transport-native resumable event subscription", async () => {

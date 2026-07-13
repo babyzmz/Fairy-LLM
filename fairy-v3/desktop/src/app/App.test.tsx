@@ -176,6 +176,7 @@ describe("App", () => {
     expect(await screen.findByText("Scope resolved")).toBeVisible();
     expect(screen.queryByText("Developer diagnostic")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Task Timeline" })).toBeVisible();
+    await userEvent.click(screen.getByRole("tab", { name: "Preview" }));
     expect(screen.getByRole("heading", { name: "Preview" })).toBeVisible();
     expect(screen.getByLabelText("Workspace status")).toHaveTextContent("Core ready");
     expect(screen.getByLabelText("Workspace status")).toHaveTextContent("standard");
@@ -421,6 +422,16 @@ function createClient(
         created_at: timestamp,
         updated_at: timestamp,
       }),
+      listFiles: async (input) => ({
+        workspace_id: input.workspace_id,
+        version_id: input.version_id ?? ID.version,
+        generation: 1,
+        source_hash: "workspace-source",
+        items: [],
+      }),
+      readFile: async () => {
+        throw new Error("not used");
+      },
     },
     runtimes: {
       health: async () => ({

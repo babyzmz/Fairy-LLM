@@ -110,6 +110,7 @@ async function installCoreFixture(page: Page) {
         approval: "0198f4de-0114-7000-8000-000000000017",
         resumedMessage: "0198f4de-0114-7000-8000-000000000018",
         checkpoint: "0198f4de-0114-7000-8000-000000000019",
+        scratchVersion: "0198f4de-0114-7000-8000-000000000021",
       };
       const timestamp = "2026-07-11T00:00:00Z";
       const initialTaskStatus =
@@ -118,6 +119,7 @@ async function installCoreFixture(page: Page) {
           : "ready";
       let project = {
         id: id.project,
+        workspace_id: id.project,
         name: "Atlas Console",
         residency: "local_only",
         active_version_id: id.version,
@@ -129,6 +131,7 @@ async function installCoreFixture(page: Page) {
       const conversation = {
         id: id.conversation,
         project_id: id.project,
+        workspace_id: id.project,
         workspace_type: "project_chat",
         base_version_id: id.version,
         active_draft_version_id: id.version,
@@ -144,6 +147,7 @@ async function installCoreFixture(page: Page) {
       let task = {
         id: id.task,
         project_id: id.project,
+        workspace_id: id.project,
         conversation_id: id.conversation,
         user_request: "Tighten the project overview",
         operation_mode: "continue_current_chat_draft",
@@ -162,9 +166,10 @@ async function installCoreFixture(page: Page) {
       const scratchConversation = {
         id: id.scratchConversation,
         project_id: null,
+        workspace_id: id.scratchConversation,
         workspace_type: "chat_scratch",
         base_version_id: null,
-        active_draft_version_id: null,
+        active_draft_version_id: id.scratchVersion,
         active_task_id: null,
         active_preview_id: null,
         title: "Scratch chat",
@@ -177,12 +182,13 @@ async function installCoreFixture(page: Page) {
       const scratchTask = {
         id: id.scratchTask,
         project_id: null,
+        workspace_id: id.scratchConversation,
         conversation_id: id.scratchConversation,
         user_request: "Fixture chat request",
         operation_mode: "answer",
         base_version_id: null,
         execution_target: "local",
-        target_version_id: null,
+        target_version_id: id.scratchVersion,
         memory_snapshot_id: null,
         memory_snapshot_hash: null,
         status: "ready",
@@ -256,6 +262,7 @@ async function installCoreFixture(page: Page) {
       const version = {
         id: id.version,
         project_id: id.project,
+        workspace_id: id.project,
         source_conversation_id: id.conversation,
         source_task_id: id.task,
         parent_version_id: null,
@@ -266,6 +273,7 @@ async function installCoreFixture(page: Page) {
       const runtime = {
         id: id.runtime,
         project_id: id.project,
+        workspace_id: id.project,
         conversation_id: id.conversation,
         task_id: id.task,
         version_id: id.version,
@@ -275,6 +283,18 @@ async function installCoreFixture(page: Page) {
         executor: "rust_local_worker",
         executor_handle: "preview-fixture",
         port: 43125,
+        graph: {
+          public_service_id: "web",
+          services: [
+            {
+              service_id: "web",
+              adapter: "static",
+              cwd: ".",
+              readiness_path: "/",
+              depends_on: [],
+            },
+          ],
+        },
         status: "running",
         health: "healthy",
         error_code: null,
@@ -286,6 +306,7 @@ async function installCoreFixture(page: Page) {
       const preview = {
         id: id.preview,
         project_id: id.project,
+        workspace_id: id.project,
         conversation_id: id.conversation,
         task_id: id.task,
         version_id: id.version,
@@ -440,6 +461,43 @@ async function installCoreFixture(page: Page) {
         "tasks.list": { items: [task], next_cursor: null },
         "versions.list": { items: [version], next_cursor: null },
         "approvals.list": { items: [], next_cursor: null },
+        "workspaces.get": {
+          id: id.project,
+          active_version_id: id.version,
+          active_preview_id: id.preview,
+          revision: 1,
+          max_files: 200,
+          max_bytes: 20 * 1024 * 1024,
+          created_at: timestamp,
+          updated_at: timestamp,
+        },
+        "workspaces.files.list": {
+          workspace_id: id.project,
+          version_id: id.version,
+          generation: 1,
+          source_hash: "fixture-workspace",
+          items: [
+            {
+              path: "src/main.ts",
+              byte_length: 22,
+              content_hash: "fixture-main",
+              kind: "source",
+              language: "typescript",
+            },
+          ],
+        },
+        "workspaces.files.read": {
+          file: {
+            path: "src/main.ts",
+            byte_length: 22,
+            content_hash: "fixture-main",
+            kind: "source",
+            language: "typescript",
+          },
+          media_type: "text/plain",
+          text: "console.log('Fairy');",
+          content_base64: null,
+        },
         "previews.resolve": { task, runtime, preview },
         "runtimes.health": {
           executor: {
@@ -788,9 +846,30 @@ async function installCoreFixture(page: Page) {
             request.method === "projects.list"
               ? { items: [{ ...project }], next_cursor: null }
               : request.method === "tasks.list"
-                ? { items: [{ ...task }], next_cursor: null }
+                ? { items: [{ ...task }, { ...scratchTask }], next_cursor: null }
+              : request.method === "workspaces.get"
+                ? {
+                    ...(results["workspaces.get"] as Record<string, unknown>),
+                    id: request.params.workspace_id,
+                    active_version_id:
+                      request.params.workspace_id === id.scratchConversation
+                        ? id.scratchVersion
+                        : id.version,
+                    active_preview_id:
+                      request.params.workspace_id === id.scratchConversation
+                        ? null
+                        : id.preview,
+                  }
+              : request.method === "workspaces.files.list"
+                ? {
+                    ...(results["workspaces.files.list"] as Record<string, unknown>),
+                    workspace_id: request.params.workspace_id,
+                    version_id: request.params.version_id,
+                  }
               : request.method === "previews.resolve"
-                ? { task: { ...task }, runtime: { ...runtime }, preview: { ...preview } }
+                ? request.params.task_id === id.scratchTask
+                  ? null
+                  : { task: { ...task }, runtime: { ...runtime }, preview: { ...preview } }
               : request.method === "voice.synthesize"
               ? {
                   task_id: request.params.task_id,

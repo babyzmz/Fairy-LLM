@@ -230,6 +230,10 @@ button:disabled {
   background: #1a1b1b;
 }
 
+.preview-pane-compact {
+  grid-template-rows: 60px minmax(0, 1fr);
+}
+
 .pane-header,
 .preview-toolbar,
 .version-decision-bar {
@@ -747,6 +751,234 @@ h2 {
   flex-direction: column;
   overflow: hidden;
   background: #151616;
+}
+
+.unified-workspace {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  overflow: hidden;
+}
+
+.unified-workspace-chat {
+  grid-template-columns: minmax(420px, 58%) minmax(360px, 42%);
+}
+
+.workspace-inspector {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 42px minmax(0, 1fr);
+  overflow: hidden;
+  border-left: 1px solid #353736;
+  background: #171918;
+}
+
+.workspace-inspector-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border-bottom: 1px solid #353736;
+  background: #181a19;
+}
+
+.workspace-inspector-tabs button {
+  min-width: 92px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-right: 1px solid #353736;
+  border-bottom: 2px solid transparent;
+  color: #9fa7a2;
+  background: transparent;
+  cursor: pointer;
+}
+
+.workspace-inspector-tabs button[aria-selected="true"] {
+  border-bottom-color: #64d9d0;
+  color: #eef7f4;
+  background: #202321;
+}
+
+.workspace-inspector-tabs button span {
+  min-width: 18px;
+  padding: 2px 5px;
+  border-radius: 8px;
+  color: #b9c5c0;
+  background: #303432;
+  font: 600 10px/1 "Cascadia Mono", monospace;
+}
+
+.workspace-inspector-content,
+.workspace-files,
+.workspace-files-body,
+.workspace-file-tree,
+.workspace-file-viewer {
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-inspector-content {
+  overflow: hidden;
+}
+
+.workspace-inspector-content > * {
+  width: 100%;
+  height: 100%;
+}
+
+.workspace-files {
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr);
+  overflow: hidden;
+  background: #151616;
+}
+
+.workspace-files-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #353736;
+}
+
+.workspace-files-toolbar label {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid #424643;
+  background: #111212;
+}
+
+.workspace-files-toolbar input {
+  min-width: 0;
+  width: 100%;
+  height: 29px;
+  border: 0;
+  outline: 0;
+  color: #e8eeeb;
+  background: transparent;
+}
+
+.workspace-files-body {
+  display: grid;
+  grid-template-columns: minmax(150px, 34%) minmax(0, 66%);
+  overflow: hidden;
+}
+
+.workspace-file-tree {
+  overflow: auto;
+  border-right: 1px solid #353736;
+  background: #181a19;
+}
+
+.workspace-file-tree button {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-right: 8px;
+  border: 0;
+  color: #bfc6c2;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-file-tree button:hover,
+.workspace-file-tree button.selected {
+  color: #f0f7f4;
+  background: #282c2a;
+}
+
+.workspace-file-tree button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-file-viewer {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.workspace-file-viewer > header {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #353736;
+  background: #1b1d1c;
+}
+
+.workspace-file-viewer > header > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-file-viewer header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-file-viewer header span {
+  flex: 0 0 auto;
+  color: #8e9691;
+  font: 500 10px/1 "Cascadia Mono", monospace;
+}
+
+.workspace-file-text {
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  color: #d7dfdb;
+  background: #111212;
+  font: 12px/1.55 "Cascadia Mono", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workspace-file-image {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow: auto;
+  background: #202220;
+}
+
+.workspace-file-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.workspace-files-empty,
+.workspace-file-placeholder,
+.workspace-file-error {
+  min-height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 18px;
+  color: #8f9692;
+  text-align: center;
+}
+
+.workspace-file-error {
+  color: #ff9f96;
 }
 
 .chat-toolbar {
@@ -1348,6 +1580,18 @@ h2 {
 
   .preview-pane {
     min-height: 440px;
+  }
+
+  .unified-workspace-chat {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(420px, 1fr) minmax(360px, 0.8fr);
+    overflow-y: auto;
+  }
+
+  .workspace-inspector {
+    min-height: 360px;
+    border-top: 1px solid #353736;
+    border-left: 0;
   }
 
   .telemetry-item:nth-child(2) {

@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceShell } from "./WorkspaceShell";
-import type { Conversation } from "../core/client";
+import type { Conversation, Task, WorkspaceFile } from "../core/client";
 import type { WorkspaceModel } from "./workspaceModel";
 
 afterEach(() => {
@@ -12,14 +12,51 @@ afterEach(() => {
 });
 
 describe("WorkspaceShell", () => {
-  it("keeps context, task timeline, preview, and composer visible", () => {
-    render(<WorkspaceShell model={workspaceModel()} />);
+  it("keeps context, task timeline, workspace inspector, and composer visible", () => {
+    const model = workspaceModel();
+    model.selectedTask = workspaceTask();
+    model.workspaceTask = model.selectedTask;
+    render(<WorkspaceShell model={model} />);
 
     expect(screen.getByLabelText("History navigation")).toHaveTextContent("Fairy");
     expect(screen.getByRole("banner")).toHaveTextContent("Core ready");
     expect(screen.getByRole("heading", { name: "Task Timeline" })).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
     expect(screen.getByRole("heading", { name: "Preview" })).toBeVisible();
     expect(screen.getByLabelText("Message Fairy")).toBeVisible();
+  });
+
+  it("keeps an empty workspace inspector collapsed", () => {
+    render(<WorkspaceShell model={workspaceModel()} />);
+
+    expect(screen.queryByLabelText("Workspace inspector")).not.toBeInTheDocument();
+  });
+
+  it("shows the same Files inspector in ordinary chat", async () => {
+    const file: WorkspaceFile = {
+      path: "src/main.ts",
+      byte_length: 22,
+      content_hash: "main-hash",
+      kind: "source",
+      language: "typescript",
+    };
+    const model = workspaceModel();
+    model.mode = "chat";
+    model.workspaceTask = workspaceTask();
+    model.workspaceFiles = [file];
+    model.readWorkspaceFile = vi.fn(async () => ({
+      file,
+      media_type: "text/plain",
+      text: "console.log('Fairy');",
+      content_base64: null,
+    }));
+
+    render(<WorkspaceShell model={model} />);
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
+    fireEvent.click(screen.getByRole("button", { name: "main.ts" }));
+
+    await waitFor(() => expect(screen.getByText("console.log('Fairy');")).toBeVisible());
+    expect(screen.queryByText("Use this version")).not.toBeInTheDocument();
   });
 
   it("renders the offline state without sample project truth and retries Core", () => {
@@ -151,9 +188,12 @@ function workspaceModel(): WorkspaceModel {
     selectedConversation: null,
     selectedChatConversation: null,
     selectedTask: null,
+    workspaceTask: null,
     selectedVersion: null,
     preview: null,
     runtimeHealth: null,
+    workspaceFiles: [],
+    workspaceFilesLoading: false,
     capabilities: null,
     chatTurn: null,
     chatStreamedText: "",
@@ -208,6 +248,11 @@ function workspaceModel(): WorkspaceModel {
     takePendingChatMessageForEdit: vi.fn(() => null),
     copyMessage: vi.fn(async () => undefined),
     openMessageLink: vi.fn(async () => undefined),
+    readWorkspaceFile: vi.fn(async () => {
+      throw new Error("not used");
+    }),
+    revealWorkspaceFile: vi.fn(async () => undefined),
+    refreshWorkspaceFiles: vi.fn(async () => undefined),
     cancelProjectTurn: vi.fn(async () => undefined),
     decideApproval: vi.fn(async () => undefined),
     startPreview: vi.fn(async () => undefined),
@@ -217,5 +262,27 @@ function workspaceModel(): WorkspaceModel {
     discardVersion: vi.fn(async () => undefined),
     retryWorkspace: vi.fn(async () => undefined),
     openSettings: vi.fn(async () => undefined),
+  };
+}
+
+function workspaceTask(): Task {
+  return {
+    id: "019f566f-f8b4-7000-8000-000000000010",
+    project_id: null,
+    workspace_id: "019f566f-f8b4-7000-8000-000000000011",
+    conversation_id: "019f566f-f8b4-7000-8000-000000000012",
+    user_request: "Build a workspace",
+    operation_mode: "continue_current_chat_draft",
+    base_version_id: null,
+    execution_target: "local",
+    target_version_id: "019f566f-f8b4-7000-8000-000000000013",
+    memory_snapshot_id: null,
+    memory_snapshot_hash: null,
+    status: "executing",
+    display_title: "Build a workspace",
+    pinned_at: null,
+    metadata_revision: 0,
+    created_at: "2026-07-13T00:00:00Z",
+    updated_at: "2026-07-13T00:00:00Z",
   };
 }
