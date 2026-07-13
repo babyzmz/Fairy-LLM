@@ -1,0 +1,80 @@
+import { describe, expect, it, vi } from "vitest";
+
+import type { DesktopPreferences } from "../../settings/client";
+import {
+  createPresenceRenderSettingsChannel,
+  safeRenderSettingsFromPreferences,
+} from "./renderSettings";
+
+describe("presence render settings", () => {
+  it("projects only bounded renderer fields from desktop preferences", () => {
+    const projected = safeRenderSettingsFromPreferences(preferences());
+    expect(projected).toEqual({
+      schema_version: 1,
+      mode: "liquid",
+      size_scale: 1.25,
+      opacity: 0.84,
+      motion_enabled: false,
+      particles_enabled: true,
+    });
+    expect(projected).not.toHaveProperty("selected_profile_id");
+    expect(projected).not.toHaveProperty("pet_anchor");
+  });
+
+  it("rejects malformed messages and closes the isolated port", () => {
+    const port = {
+      onmessage: null as ((event: MessageEvent<unknown>) => void) | null,
+      postMessage: vi.fn(),
+      close: vi.fn(),
+    };
+    const channel = createPresenceRenderSettingsChannel(() => port);
+    const listener = vi.fn();
+    channel.onSettings(listener);
+    port.onmessage?.({ data: {
+      kind: "render-settings.snapshot",
+      settings: { schema_version: 1, mode: "liquid", size_scale: 99 },
+    } } as MessageEvent<unknown>);
+    expect(listener).not.toHaveBeenCalled();
+
+    channel.request();
+    expect(port.postMessage).toHaveBeenCalledWith({ kind: "render-settings.request" });
+    channel.close();
+    expect(port.close).toHaveBeenCalledOnce();
+  });
+});
+
+function preferences(): DesktopPreferences {
+  return {
+    schema_version: 2,
+    revision: 7,
+    language: "system",
+    launch_at_startup: false,
+    minimize_to_tray: true,
+    theme: "system",
+    reduced_motion: false,
+    compact_density: false,
+    selected_profile_id: "private-provider",
+    voice_auto_play_chat: false,
+    voice_auto_play_pet: true,
+    voice_volume_percent: 80,
+    voice_rate_percent: 100,
+    permission_cloud_profile: "standard",
+    memory_enabled: true,
+    memory_retention_days: 90,
+    analytics_enabled: false,
+    pet_enabled: true,
+    pet_always_on_top: true,
+    pet_muted: false,
+    pet_size_percent: 125,
+    pet_opacity_percent: 84,
+    pet_motion_enabled: false,
+    pet_particles_enabled: true,
+    pet_hover_enabled: true,
+    pet_hover_dwell_ms: 250,
+    pet_do_not_disturb: false,
+    pet_remember_position: true,
+    pet_renderer_mode: "liquid",
+    pet_anchor: { monitor_id: "primary", x_ratio: 0.5, y_ratio: 0.5 },
+    developer_mode: false,
+  };
+}

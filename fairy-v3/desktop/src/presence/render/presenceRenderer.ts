@@ -10,6 +10,9 @@ export interface PresenceRenderSnapshot {
   voice_level: number;
   sleeping: boolean;
   reduced_motion: boolean;
+  size_scale: number;
+  opacity: number;
+  particles_enabled: boolean;
 }
 
 export type PresenceRendererStatus =

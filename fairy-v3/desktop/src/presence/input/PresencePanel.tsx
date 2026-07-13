@@ -3,6 +3,7 @@ import {
   CircleAlert,
   LoaderCircle,
   LogOut,
+  GripVertical,
   MessageSquarePlus,
   MonitorUp,
   Pin,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
   useRef,
@@ -32,6 +34,9 @@ export interface PresencePanelActions {
   closeSubmission(): void;
   dismissNotice(): void;
   exit(): void;
+  movePointerDown(event: ReactPointerEvent<HTMLButtonElement>): void;
+  movePointerMove(event: ReactPointerEvent<HTMLButtonElement>): void;
+  movePointerUp(event: ReactPointerEvent<HTMLButtonElement>): void;
   newChat(): void;
   openMain(): void;
   openReview(): void;
@@ -42,6 +47,7 @@ export interface PresencePanelActions {
   send(text: string): void;
   setInputOpen(open: boolean): void;
   setMenuOpen(open: boolean): void;
+  showMoveGrip(): void;
   toggleAlwaysOnTop(): void;
   toggleAutoPlay(): void;
   toggleMuted(): void;
@@ -65,6 +71,7 @@ interface PresencePanelProps {
   inputOpen: boolean;
   interactive?: boolean;
   menuOpen: boolean;
+  moving?: boolean;
   muted: boolean;
   reply: PresenceReply | null;
   submission: PresenceSubmissionCard | null;
@@ -80,6 +87,7 @@ export function PresencePanel({
   inputOpen,
   interactive = true,
   menuOpen,
+  moving = false,
   muted,
   reply,
   submission,
@@ -272,7 +280,19 @@ export function PresencePanel({
       ) : null}
 
       {inputOpen ? (
-        <form className="presence-input" onSubmit={submit}>
+        <form className="presence-input" data-moving={String(moving)} onSubmit={submit}>
+          <button
+            aria-label="Move Fairy"
+            className="presence-move-grip"
+            onPointerCancel={actions.movePointerUp}
+            onPointerDown={actions.movePointerDown}
+            onPointerMove={actions.movePointerMove}
+            onPointerUp={actions.movePointerUp}
+            title="Move Fairy"
+            type="button"
+          >
+            <GripVertical size={15} />
+          </button>
           <textarea
             aria-label="Quick message to Fairy"
             ref={textarea}
@@ -303,6 +323,7 @@ export function PresencePanel({
           />
           <button
             aria-label="Send quick message"
+            className="presence-send-button"
             disabled={!interactive || draft.trim() === "" || submitting}
             title="Send"
             type="submit"
@@ -356,6 +377,11 @@ export function PresencePanel({
             icon={<Settings size={15} />}
             label="Settings"
             onClick={actions.openSettings}
+          />
+          <MenuButton
+            icon={<GripVertical size={15} />}
+            label="Move Fairy"
+            onClick={actions.showMoveGrip}
           />
           <MenuButton
             icon={<RotateCcw size={15} />}

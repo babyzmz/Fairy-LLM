@@ -18,6 +18,12 @@ import {
   createPresenceVoiceLevelSource,
   type PresenceVoiceLevelSource,
 } from "../transport/voiceLevelEvents";
+import {
+  createPresenceRenderSettingsChannel,
+  DEFAULT_PRESENCE_RENDER_SETTINGS,
+  type PresenceRenderSettings,
+  type PresenceRenderSettingsChannel,
+} from "../transport/renderSettings";
 import { PresenceRendererCanvas } from "./PresenceRendererCanvas";
 import "../presence.css";
 import "./presence-render.css";
@@ -25,6 +31,7 @@ import "./presence-render.css";
 interface PresenceRenderAppProps {
   channel?: PresenceChannel;
   interactionSource?: PresenceInteractionSource;
+  renderSettingsChannel?: PresenceRenderSettingsChannel;
   voiceLevelSource?: PresenceVoiceLevelSource;
   now?: () => number;
 }
@@ -32,6 +39,7 @@ interface PresenceRenderAppProps {
 export function PresenceRenderApp({
   channel: suppliedChannel,
   interactionSource: suppliedInteractionSource,
+  renderSettingsChannel: suppliedRenderSettingsChannel,
   voiceLevelSource: suppliedVoiceLevelSource,
   now = Date.now,
 }: PresenceRenderAppProps) {
@@ -42,12 +50,18 @@ export function PresenceRenderApp({
   const [voiceLevelSource] = useState(
     () => suppliedVoiceLevelSource ?? createPresenceVoiceLevelSource(),
   );
+  const [renderSettingsChannel] = useState(
+    () => suppliedRenderSettingsChannel ?? createPresenceRenderSettingsChannel(),
+  );
   const [projection, setProjection] = useState<PresenceProjectionState>(() =>
     PresenceProjection.initial(),
   );
   const [clock, setClock] = useState(() => now());
   const [interaction, setInteraction] = useState<PresenceInteractionSnapshot | null>(null);
   const [voiceLevel, setVoiceLevel] = useState(0);
+  const [renderSettings, setRenderSettings] = useState<PresenceRenderSettings>(
+    DEFAULT_PRESENCE_RENDER_SETTINGS,
+  );
 
   useEffect(() => {
     const stop = channel.onProjection((next) => {
@@ -62,6 +76,17 @@ export function PresenceRenderApp({
     if (suppliedChannel !== undefined) return;
     return () => channel.close();
   }, [channel, suppliedChannel]);
+
+  useEffect(() => {
+    const stop = renderSettingsChannel.onSettings(setRenderSettings);
+    renderSettingsChannel.request();
+    return stop;
+  }, [renderSettingsChannel]);
+
+  useEffect(() => {
+    if (suppliedRenderSettingsChannel !== undefined) return;
+    return () => renderSettingsChannel.close();
+  }, [renderSettingsChannel, suppliedRenderSettingsChannel]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(now()), 30_000);
@@ -99,6 +124,7 @@ export function PresenceRenderApp({
   });
   const reducedMotion =
     interaction?.reduced_motion === true ||
+    !renderSettings.motion_enabled ||
     (typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   return (
@@ -114,6 +140,7 @@ export function PresenceRenderApp({
       data-testid="presence-render-surface"
     >
       <PresenceRendererCanvas
+        requestedMode={renderSettings.mode}
         snapshot={{
           interaction,
           reduced_motion: reducedMotion,
@@ -121,6 +148,9 @@ export function PresenceRenderApp({
           speaking: projection.speaking,
           voice_level: projection.speaking ? voiceLevel : 0,
           work_state: view.work_state,
+          size_scale: renderSettings.size_scale,
+          opacity: renderSettings.opacity,
+          particles_enabled: renderSettings.particles_enabled,
         }}
       />
     </main>

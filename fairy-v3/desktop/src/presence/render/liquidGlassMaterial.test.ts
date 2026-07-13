@@ -43,6 +43,9 @@ function renderSnapshot(
     voice_level: 0,
     sleeping: false,
     reduced_motion: false,
+    size_scale: 1,
+    opacity: 0.92,
+    particles_enabled: true,
   };
 }
 
@@ -82,6 +85,8 @@ describe("Liquid Glass material", () => {
   it("keeps desktop capture out of the shader contract", () => {
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("bezierBridgeDistance");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("smoothMinimum");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uSizeScale");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uOpacity");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toMatch(/sampler2D|texture2D|texture\s*\(/);
   });
 });

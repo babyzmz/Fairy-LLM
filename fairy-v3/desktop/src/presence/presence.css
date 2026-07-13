@@ -208,7 +208,7 @@ textarea:focus-visible {
 
 .presence-input {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: 28px minmax(0, 1fr) 32px;
   align-items: end;
   gap: 7px;
   padding: 9px;
@@ -234,7 +234,7 @@ textarea:focus-visible {
   color: #7f9491;
 }
 
-.presence-input > button {
+.presence-send-button {
   background: #25649a;
   color: #f6fbff;
 }

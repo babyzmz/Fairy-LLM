@@ -1,13 +1,17 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import type { DesktopPreferences } from "../../settings/client";
+import type {
+  DesktopPreferences,
+  PetAnchorPreference,
+} from "../../settings/client";
 
 export interface PetPreferencePatch {
   expected_revision: number;
   voice_auto_play_pet?: boolean;
   pet_muted?: boolean;
   pet_always_on_top?: boolean;
+  pet_anchor?: PetAnchorPreference;
 }
 
 export interface PetHost {
@@ -15,10 +19,15 @@ export interface PetHost {
   updatePreferences(input: PetPreferencePatch): Promise<DesktopPreferences>;
   onPreferences(listener: (preferences: DesktopPreferences) => void): Promise<() => void>;
   onInputRequested(listener: () => void): Promise<() => void>;
+  onNewChatRequested(listener: () => void): Promise<() => void>;
   setExpanded(expanded: boolean): Promise<void>;
   setInputLayout(layout: PetInputLayout): Promise<void>;
   setInputInteractive(interactive: boolean): Promise<void>;
   requestInputFocus(): Promise<void>;
+  beginGroupDrag(): Promise<void>;
+  moveGroupDrag(deltaX: number, deltaY: number): Promise<void>;
+  endGroupDrag(expectedRevision: number): Promise<DesktopPreferences>;
+  resetPosition(expectedRevision: number): Promise<DesktopPreferences>;
   openMain(): Promise<void>;
   openSettings(): Promise<void>;
   exit(): Promise<void>;
@@ -39,12 +48,25 @@ export function createDefaultPetHost(): PetHost {
     async onInputRequested(listener) {
       return listen("presence-input-requested", listener);
     },
+    async onNewChatRequested(listener) {
+      return listen("presence-new-chat-requested", listener);
+    },
     setExpanded: (expanded) =>
       invoke("pet_input_set_layout", { layout: expanded ? "expanded" : "hidden" }),
     setInputLayout: (layout) => invoke("pet_input_set_layout", { layout }),
     setInputInteractive: (interactive) =>
       invoke("pet_input_set_interactive", { interactive }),
     requestInputFocus: () => invoke("pet_input_request_focus"),
+    beginGroupDrag: () => invoke("pet_window_group_begin_drag"),
+    moveGroupDrag: (deltaX, deltaY) =>
+      invoke("pet_window_group_move", {
+        deltaX: Math.round(deltaX),
+        deltaY: Math.round(deltaY),
+      }),
+    endGroupDrag: (expectedRevision) =>
+      invoke("pet_window_group_end_drag", { expectedRevision }),
+    resetPosition: (expectedRevision) =>
+      invoke("pet_window_group_reset_position", { expectedRevision }),
     openMain: () => invoke("open_main_window"),
     openSettings: () => invoke("open_settings_window"),
     exit: () => invoke("pet_exit"),
@@ -69,6 +91,7 @@ function createBrowserPetHost(): PetHost {
         ...(input.pet_always_on_top === undefined
           ? {}
           : { pet_always_on_top: input.pet_always_on_top }),
+        ...(input.pet_anchor === undefined ? {} : { pet_anchor: input.pet_anchor }),
       };
       for (const listener of listeners) listener(preferences);
       return preferences;
@@ -80,10 +103,27 @@ function createBrowserPetHost(): PetHost {
     async onInputRequested() {
       return () => undefined;
     },
+    async onNewChatRequested() {
+      return () => undefined;
+    },
     async setExpanded() {},
     async setInputLayout() {},
     async setInputInteractive() {},
     async requestInputFocus() {},
+    async beginGroupDrag() {},
+    async moveGroupDrag() {},
+    async endGroupDrag() {
+      preferences = { ...preferences, revision: preferences.revision + 1 };
+      return preferences;
+    },
+    async resetPosition() {
+      preferences = {
+        ...preferences,
+        revision: preferences.revision + 1,
+        pet_anchor: null,
+      };
+      return preferences;
+    },
     async openMain() {},
     async openSettings() {},
     async exit() {},
@@ -92,7 +132,7 @@ function createBrowserPetHost(): PetHost {
 
 function browserPreferences(): DesktopPreferences {
   return {
-    schema_version: 1,
+    schema_version: 2,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -112,6 +152,16 @@ function browserPreferences(): DesktopPreferences {
     pet_enabled: true,
     pet_always_on_top: true,
     pet_muted: false,
+    pet_size_percent: 100,
+    pet_opacity_percent: 92,
+    pet_motion_enabled: true,
+    pet_particles_enabled: true,
+    pet_hover_enabled: true,
+    pet_hover_dwell_ms: 250,
+    pet_do_not_disturb: false,
+    pet_remember_position: true,
+    pet_renderer_mode: "auto",
+    pet_anchor: null,
     developer_mode: false,
   };
 }

@@ -131,16 +131,23 @@ export function drawFairyFrame(
   state: FairyVisualState,
   gaze: { x: number; y: number },
   time: number,
+  options: {
+    opacity?: number;
+    particles?: boolean;
+    sizeScale?: number;
+  } = {},
 ): void {
   const width = canvas.width;
   const height = canvas.height;
   const scale = width / Math.max(1, canvas.clientWidth);
   const centerX = width / 2 + gaze.x * 4 * scale;
   const centerY = height / 2 + gaze.y * 3 * scale + Math.sin(time * 1.2) * 1.2 * scale;
-  const radius = Math.min(width, height) * 0.32;
+  const radius = Math.min(width, height) * 0.32 * (options.sizeScale ?? 1);
   const stateStyle = STYLES[state];
   const phase = time * stateStyle.speed;
   context.clearRect(0, 0, width, height);
+  context.save();
+  context.globalAlpha = options.opacity ?? 1;
 
   const aura = context.createRadialGradient(centerX, centerY, radius * 0.15, centerX, centerY, radius * 1.5);
   aura.addColorStop(0, colorWithAlpha(stateStyle.accent, 0.18 + stateStyle.energy * 0.08));
@@ -151,12 +158,15 @@ export function drawFairyFrame(
   context.arc(centerX, centerY, radius * 1.5, 0, Math.PI * 2);
   context.fill();
 
-  drawParticles(context, centerX, centerY, radius, phase, stateStyle);
+  if (options.particles ?? true) {
+    drawParticles(context, centerX, centerY, radius, phase, stateStyle);
+  }
   drawShell(context, centerX, centerY, radius, phase, stateStyle);
   drawRings(context, centerX, centerY, radius, phase, stateStyle);
   drawCore(context, centerX, centerY, radius, gaze, phase, stateStyle);
   drawOrbitLight(context, centerX, centerY, radius, phase, stateStyle);
   drawStateMark(context, centerX, centerY, radius, phase, state, stateStyle);
+  context.restore();
 }
 
 function drawShell(

@@ -129,6 +129,27 @@ test("model settings stay inside the narrow settings window and expose no secret
   expect(bounds.bottom).toBeLessThanOrEqual(bounds.height);
 });
 
+test("Liquid Glass pet settings persist without overflowing the settings window", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 980, height: 720 });
+  await page.goto("/?surface=settings");
+  await page.getByRole("button", { name: /^Pet/ }).click();
+
+  const renderer = page.getByRole("combobox", { name: "Renderer" });
+  await renderer.selectOption("compatibility");
+  await expect(renderer).toHaveValue("compatibility");
+  await page.getByRole("checkbox", { name: "Do not disturb" }).check();
+  await expect(page.getByRole("checkbox", { name: "Do not disturb" })).toBeChecked();
+  await expect(page.getByRole("slider", { name: "Size" })).toHaveAttribute("min", "75");
+  await expect(page.getByRole("slider", { name: "Opacity" })).toHaveAttribute("max", "100");
+  expect(await page.evaluate(() => ({
+    horizontal: Math.max(0, document.documentElement.scrollWidth - innerWidth),
+    vertical: Math.max(0, document.documentElement.scrollHeight - innerHeight),
+  }))).toEqual({ horizontal: 0, vertical: 0 });
+  await page.screenshot({ path: testInfo.outputPath("pet-settings.png") });
+});
+
 test("approved assistant tools resume the durable turn exactly once", async ({ page }) => {
   await page.setViewportSize({ width: 880, height: 680 });
   await page.goto("/");

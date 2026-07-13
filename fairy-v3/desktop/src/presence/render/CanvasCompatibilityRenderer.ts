@@ -74,6 +74,11 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
       visualStateForSnapshot(this.snapshot),
       gaze,
       this.snapshot.reduced_motion ? 0 : now / 1_000,
+      {
+        opacity: this.snapshot.opacity,
+        particles: this.snapshot.particles_enabled,
+        sizeScale: this.snapshot.size_scale,
+      },
     );
     this.canvas.dataset.rendered = "true";
   }

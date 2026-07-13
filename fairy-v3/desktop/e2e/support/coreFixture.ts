@@ -336,7 +336,7 @@ async function installCoreFixture(page: Page) {
         visibility: "user",
         message: "Preview is ready",
         payload: {},
-        schema_version: 1,
+        schema_version: 2,
         created_at: timestamp,
       };
       const events = [event];
@@ -392,7 +392,7 @@ async function installCoreFixture(page: Page) {
         model_id: "openrouter/free" as string | null,
       };
       let desktopPreferences = {
-        schema_version: 1,
+        schema_version: 2,
         revision: 0,
         language: "system",
         launch_at_startup: false,
@@ -412,6 +412,16 @@ async function installCoreFixture(page: Page) {
         pet_enabled: true,
         pet_always_on_top: true,
         pet_muted: false,
+        pet_size_percent: 100,
+        pet_opacity_percent: 92,
+        pet_motion_enabled: true,
+        pet_particles_enabled: true,
+        pet_hover_enabled: true,
+        pet_hover_dwell_ms: 250,
+        pet_do_not_disturb: false,
+        pet_remember_position: true,
+        pet_renderer_mode: "auto",
+        pet_anchor: null,
         developer_mode: false,
       };
       let mcpServer = {

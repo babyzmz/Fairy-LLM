@@ -80,7 +80,7 @@ function windowPort(): PresenceWindowPort {
 
 function preferences(): DesktopPreferences {
   return {
-    schema_version: 1,
+    schema_version: 2,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -100,6 +100,16 @@ function preferences(): DesktopPreferences {
     pet_enabled: true,
     pet_always_on_top: true,
     pet_muted: false,
+    pet_size_percent: 100,
+    pet_opacity_percent: 92,
+    pet_motion_enabled: true,
+    pet_particles_enabled: true,
+    pet_hover_enabled: true,
+    pet_hover_dwell_ms: 250,
+    pet_do_not_disturb: false,
+    pet_remember_position: true,
+    pet_renderer_mode: "auto",
+    pet_anchor: null,
     developer_mode: false,
   };
 }
@@ -114,10 +124,15 @@ function petHost(): PetHost {
     }),
     onPreferences: vi.fn(async () => () => undefined),
     onInputRequested: vi.fn(async () => () => undefined),
+    onNewChatRequested: vi.fn(async () => () => undefined),
     setExpanded: vi.fn(async () => undefined),
     setInputLayout: vi.fn(async () => undefined),
     setInputInteractive: vi.fn(async () => undefined),
     requestInputFocus: vi.fn(async () => undefined),
+    beginGroupDrag: vi.fn(async () => undefined),
+    moveGroupDrag: vi.fn(async () => undefined),
+    endGroupDrag: vi.fn(async () => current),
+    resetPosition: vi.fn(async () => current),
     openMain: vi.fn(async () => undefined),
     openSettings: vi.fn(async () => undefined),
     exit: vi.fn(async () => undefined),

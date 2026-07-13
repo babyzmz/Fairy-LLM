@@ -19,7 +19,14 @@ import type {
 import { CoreRpcError, type InvokeFunction } from "../core/tauriTransport";
 
 export type ThemePreference = "system" | "dark" | "light";
+export type PetRendererMode = "auto" | "liquid" | "compatibility";
 export const DESKTOP_PREFERENCES_EVENT = "fairy-desktop-preferences";
+
+export interface PetAnchorPreference {
+  monitor_id: string;
+  x_ratio: number;
+  y_ratio: number;
+}
 
 export interface DesktopPreferences {
   schema_version: number;
@@ -42,6 +49,16 @@ export interface DesktopPreferences {
   pet_enabled: boolean;
   pet_always_on_top: boolean;
   pet_muted: boolean;
+  pet_size_percent: number;
+  pet_opacity_percent: number;
+  pet_motion_enabled: boolean;
+  pet_particles_enabled: boolean;
+  pet_hover_enabled: boolean;
+  pet_hover_dwell_ms: number;
+  pet_do_not_disturb: boolean;
+  pet_remember_position: boolean;
+  pet_renderer_mode: PetRendererMode;
+  pet_anchor: PetAnchorPreference | null;
   developer_mode: boolean;
 }
 

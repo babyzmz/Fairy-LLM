@@ -31,9 +31,9 @@
 
 .presence-input-window[data-layout="compact"] .presence-input {
   height: 62px;
-  grid-template-columns: minmax(0, 1fr) 38px;
+  grid-template-columns: 28px minmax(0, 1fr) 38px;
   align-items: center;
-  padding: 6px 7px 6px 15px;
+  padding: 6px 7px;
   border-radius: 28px;
   border-color: transparent;
   background: transparent;
@@ -49,10 +49,22 @@
   white-space: nowrap;
 }
 
-.presence-input-window[data-layout="compact"] .presence-input > button {
+.presence-input-window[data-layout="compact"] .presence-send-button {
   width: 36px;
   height: 36px;
   border-radius: 50%;
+}
+
+.presence-input-window .presence-move-grip {
+  cursor: grab;
+  color: #a4b6b3;
+  touch-action: none;
+}
+
+.presence-input-window .presence-input[data-moving="true"] .presence-move-grip {
+  cursor: grabbing;
+  color: #9de2d0;
+  background: #293231;
 }
 
 .presence-input-window[data-layout="expanded"] .presence-card,

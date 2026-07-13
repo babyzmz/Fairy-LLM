@@ -1,6 +1,7 @@
 use fairy_desktop_v3::presence_coordinator::{
-    resolve_presence_placement, select_work_area, CursorBand, CursorTracker, ExpansionDirection,
-    PhysicalFrame, PhysicalPoint,
+    anchor_from_ratios, anchor_ratios, configured_cursor_band, resolve_presence_placement,
+    resolve_presence_placement_for_anchor, select_work_area, CursorBand, CursorTracker,
+    ExpansionDirection, PhysicalFrame, PhysicalPoint,
 };
 
 #[test]
@@ -123,4 +124,58 @@ fn disconnected_monitor_falls_back_to_the_nearest_remaining_work_area() {
         Some(primary),
     );
     assert_eq!(select_work_area(PhysicalPoint { x: 0, y: 0 }, &[]), None);
+}
+
+#[test]
+fn physical_anchor_round_trips_across_negative_monitor_coordinates() {
+    let work_area = PhysicalFrame {
+        x: -2560,
+        y: -220,
+        width: 2560,
+        height: 1400,
+    };
+    let anchor = PhysicalPoint { x: -640, y: 830 };
+    let (x_ratio, y_ratio) = anchor_ratios(anchor, work_area);
+    assert!((x_ratio - 0.75).abs() < 0.001);
+    assert!((y_ratio - 0.75).abs() < 0.001);
+    assert_eq!(anchor_from_ratios(work_area, x_ratio, y_ratio), anchor);
+}
+
+#[test]
+fn requested_anchor_is_preserved_when_dpi_and_edge_force_left_expansion() {
+    let work_area = PhysicalFrame {
+        x: 0,
+        y: 0,
+        width: 3840,
+        height: 2080,
+    };
+    let placement = resolve_presence_placement_for_anchor(
+        PhysicalPoint { x: 3600, y: 1500 },
+        (960, 390),
+        work_area,
+        1.5,
+        Some(ExpansionDirection::Right),
+    );
+    assert_eq!(placement.expansion_direction, ExpansionDirection::Left);
+    assert_eq!(placement.anchor, PhysicalPoint { x: 3600, y: 1500 });
+    assert!(placement.render_frame.x >= work_area.x);
+    assert!(placement.render_frame.y >= work_area.y);
+}
+
+#[test]
+fn hover_preferences_gate_activation_without_hiding_cursor_metrics() {
+    let mut tracker = CursorTracker::default();
+    let anchor = PhysicalPoint { x: 0, y: 0 };
+    let first = tracker.observe(PhysicalPoint { x: 40, y: 0 }, 1_000, anchor, 1.0);
+    let settled = tracker.observe(PhysicalPoint { x: 40, y: 0 }, 1_300, anchor, 1.0);
+    assert_eq!(configured_cursor_band(first, true, 250), CursorBand::Aware);
+    assert_eq!(
+        configured_cursor_band(settled, true, 250),
+        CursorBand::Active
+    );
+    assert_eq!(
+        configured_cursor_band(settled, false, 250),
+        CursorBand::Outside
+    );
+    assert_eq!(settled.band, CursorBand::Active);
 }

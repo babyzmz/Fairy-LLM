@@ -13,6 +13,9 @@ function snapshot(
     voice_level: 0,
     sleeping: false,
     reduced_motion: false,
+    size_scale: 1,
+    opacity: 0.92,
+    particles_enabled: true,
     ...overrides,
   };
 }

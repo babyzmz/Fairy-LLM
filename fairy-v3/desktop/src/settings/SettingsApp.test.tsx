@@ -59,6 +59,34 @@ describe("SettingsApp", () => {
     expect(screen.getByRole("button", { name: /Voice/ })).toBeVisible();
     expect(screen.queryByRole("button", { name: /Models/ })).not.toBeInTheDocument();
   });
+
+  it("persists the complete Liquid Glass pet settings through the same revision fence", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+    await userEvent.click(screen.getByRole("button", { name: /^Pet/ }));
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Renderer" }), "compatibility");
+    await vi.waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Renderer" })).toHaveValue("compatibility");
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Do not disturb" }));
+    await vi.waitFor(() => {
+      expect(screen.getByRole("checkbox", { name: "Do not disturb" })).toBeChecked();
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Remember position" }));
+
+    await vi.waitFor(() => {
+      const updates = invoke.mock.calls.filter(([command]) => command === "desktop_preferences_update");
+      expect(updates.length).toBeGreaterThanOrEqual(3);
+    });
+    const updates = invoke.mock.calls
+      .filter(([command]) => command === "desktop_preferences_update")
+      .map(([, args]) => (args as { input: { preferences: DesktopPreferences } }).input.preferences);
+    expect(updates.some((preferences) => preferences.pet_renderer_mode === "compatibility")).toBe(true);
+    expect(updates.some((preferences) => preferences.pet_do_not_disturb)).toBe(true);
+    expect(updates.at(-1)?.pet_remember_position).toBe(false);
+  });
 });
 
 function settingsInvoke() {
@@ -101,7 +129,7 @@ function rpcRequest(invoke: ReturnType<typeof settingsInvoke>, method: string) {
 
 function defaultPreferences(): DesktopPreferences {
   return {
-    schema_version: 1,
+    schema_version: 2,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -121,6 +149,16 @@ function defaultPreferences(): DesktopPreferences {
     pet_enabled: true,
     pet_always_on_top: true,
     pet_muted: false,
+    pet_size_percent: 100,
+    pet_opacity_percent: 92,
+    pet_motion_enabled: true,
+    pet_particles_enabled: true,
+    pet_hover_enabled: true,
+    pet_hover_dwell_ms: 250,
+    pet_do_not_disturb: false,
+    pet_remember_position: true,
+    pet_renderer_mode: "auto",
+    pet_anchor: null,
     developer_mode: false,
   };
 }

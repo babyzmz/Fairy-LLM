@@ -72,6 +72,8 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
         uParticleSeed: { value: 23 },
         uPulseSpeed: { value: 0.42 },
         uSpeechLevel: { value: 0 },
+        uSizeScale: { value: initialSnapshot.size_scale },
+        uOpacity: { value: initialSnapshot.opacity },
       },
     });
     this.scene.add(new THREE.Mesh(this.geometry, this.material));
@@ -155,15 +157,27 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     const style = liquidVisualStyleForSnapshot(this.snapshot);
     this.material.uniforms.uAccent.value.set(...style.accent);
     this.material.uniforms.uEnergy.value = style.energy;
-    this.material.uniforms.uParticleCount.value = style.particle_count;
     this.material.uniforms.uParticleSeed.value = style.particle_seed;
     this.material.uniforms.uPulseSpeed.value = style.pulse_speed;
+    this.material.uniforms.uSizeScale.value = this.snapshot.size_scale;
+    this.material.uniforms.uOpacity.value = this.snapshot.opacity;
+    this.material.uniforms.uParticleCount.value = this.snapshot.particles_enabled
+      ? style.particle_count
+      : 0;
+    const sizeShift = Math.max(0, 72 * this.snapshot.size_scale + 4 - 96);
+    const expansionSign = interaction?.placement.expansion_direction === "left" ? -1 : 1;
     if (interaction === null) {
-      this.material.uniforms.uAnchor.value.set(96 * this.dpr, 130 * this.dpr);
+      this.material.uniforms.uAnchor.value.set(
+        (96 + sizeShift) * this.dpr,
+        130 * this.dpr,
+      );
       return;
     }
     const localX = interaction.placement.anchor.x - interaction.placement.render_frame.x;
     const localY = interaction.placement.anchor.y - interaction.placement.render_frame.y;
-    this.material.uniforms.uAnchor.value.set(localX, this.height * this.dpr - localY);
+    this.material.uniforms.uAnchor.value.set(
+      (localX + sizeShift * expansionSign) * this.dpr,
+      this.height * this.dpr - localY * this.dpr,
+    );
   }
 }

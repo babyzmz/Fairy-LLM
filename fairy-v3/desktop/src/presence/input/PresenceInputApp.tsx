@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import type { DesktopPreferences } from "../../settings/client";
 import type { PresenceInteractionSnapshot } from "../domain/interaction";
@@ -29,6 +35,11 @@ import {
   createPresenceInteractionSource,
   type PresenceInteractionSource,
 } from "../transport/interactionEvents";
+import {
+  createPresenceRenderSettingsChannel,
+  safeRenderSettingsFromPreferences,
+  type PresenceRenderSettingsChannel,
+} from "../transport/renderSettings";
 import { presenceInputGate } from "./inputGate";
 import {
   PresencePanel,
@@ -41,6 +52,7 @@ interface PresenceInputAppProps {
   channel?: PresenceChannel;
   host?: PetHost;
   interactionSource?: PresenceInteractionSource;
+  renderSettingsChannel?: PresenceRenderSettingsChannel;
   now?: () => number;
   storage?: StorageLike;
 }
@@ -56,10 +68,22 @@ interface PresenceSubmissionState {
   failure: PresenceSubmissionFailure | null;
 }
 
+interface PetDragPointer {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  deltaX: number;
+  deltaY: number;
+  frame: number | null;
+  ready: Promise<void>;
+  queue: Promise<void>;
+}
+
 export function PresenceInputApp({
   channel: suppliedChannel,
   host: suppliedHost,
   interactionSource: suppliedInteractionSource,
+  renderSettingsChannel: suppliedRenderSettingsChannel,
   now = Date.now,
   storage = window.localStorage,
 }: PresenceInputAppProps) {
@@ -68,10 +92,15 @@ export function PresenceInputApp({
   const [interactionSource] = useState(
     () => suppliedInteractionSource ?? createPresenceInteractionSource(),
   );
+  const [renderSettingsChannel] = useState(
+    () => suppliedRenderSettingsChannel ?? createPresenceRenderSettingsChannel(),
+  );
   const [projection, setProjection] = useState<PresenceProjectionState>(() =>
     PresenceProjection.initial(),
   );
   const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
+  const preferencesRef = useRef(preferences);
+  preferencesRef.current = preferences;
   const [settings, setSettings] = useState<PresenceSettings>(() =>
     loadPresenceSettings(storage),
   );
@@ -86,8 +115,12 @@ export function PresenceInputApp({
   const [interaction, setInteraction] = useState<PresenceInteractionSnapshot | null>(null);
   const [hoverSuppressed, setHoverSuppressed] = useState(false);
   const [focusRequest, setFocusRequest] = useState(0);
+  const [moving, setMoving] = useState(false);
   const presentationQueue = useRef(Promise.resolve());
   const appliedFocusRequest = useRef(0);
+  const previouslyMuted = useRef(false);
+  const legacyPositionMigrationAttempted = useRef(false);
+  const dragPointer = useRef<PetDragPointer | null>(null);
 
   useEffect(() => {
     const stop = channel.onProjection((next) => {
@@ -115,6 +148,7 @@ export function PresenceInputApp({
     let disposed = false;
     let stopPreferences: (() => void) | undefined;
     let stopInput: (() => void) | undefined;
+    let stopNewChat: (() => void) | undefined;
     void host.getPreferences().then((value) => {
       if (!disposed) setPreferences(value);
     }).catch(() => undefined);
@@ -134,12 +168,72 @@ export function PresenceInputApp({
       if (disposed) stop();
       else stopInput = stop;
     });
+    void host.onNewChatRequested(() => {
+      if (disposed) return;
+      channel.requestNewChat();
+      setMenuOpen(false);
+      setHoverSuppressed(false);
+      setManualInputOpen(true);
+      setFocusRequest((value) => value + 1);
+    }).then((stop) => {
+      if (disposed) stop();
+      else stopNewChat = stop;
+    });
     return () => {
       disposed = true;
       stopPreferences?.();
       stopInput?.();
+      stopNewChat?.();
     };
-  }, [host]);
+  }, [channel, host]);
+
+  useEffect(() => {
+    if (preferences === null || legacyPositionMigrationAttempted.current) return;
+    legacyPositionMigrationAttempted.current = true;
+    const monitorId = settings.last_monitor_id;
+    const position = monitorId === null ? undefined : settings.positions[monitorId];
+    if (
+      preferences.pet_anchor !== null ||
+      !preferences.pet_remember_position ||
+      monitorId === null ||
+      position === undefined
+    ) {
+      return;
+    }
+    void host.updatePreferences({
+      expected_revision: preferences.revision,
+      pet_anchor: {
+        monitor_id: monitorId,
+        x_ratio: position.x_ratio,
+        y_ratio: position.y_ratio,
+      },
+    }).then((saved) => {
+      preferencesRef.current = saved;
+      setPreferences(saved);
+    }).catch(() => undefined);
+  }, [host, preferences, settings.last_monitor_id, settings.positions]);
+
+  useEffect(() => {
+    const muted = preferences?.pet_muted ?? false;
+    if (muted && !previouslyMuted.current) channel.requestVoiceStop();
+    previouslyMuted.current = muted;
+  }, [channel, preferences?.pet_muted]);
+
+  useEffect(() => {
+    if (preferences !== null) {
+      renderSettingsChannel.publish(safeRenderSettingsFromPreferences(preferences));
+    }
+    return renderSettingsChannel.onRequest(() => {
+      if (preferences !== null) {
+        renderSettingsChannel.publish(safeRenderSettingsFromPreferences(preferences));
+      }
+    });
+  }, [preferences, renderSettingsChannel]);
+
+  useEffect(() => {
+    if (suppliedRenderSettingsChannel !== undefined) return;
+    return () => renderSettingsChannel.close();
+  }, [renderSettingsChannel, suppliedRenderSettingsChannel]);
 
   useEffect(() => {
     let disposed = false;
@@ -173,7 +267,7 @@ export function PresenceInputApp({
 
   const view = derivePresenceView(projection, {
     now_ms: clock,
-    quiet_mode: false,
+    quiet_mode: preferences?.pet_do_not_disturb ?? false,
     dismissed_notice_ids: settings.dismissed_notice_ids,
   });
   const reply = view.reply?.id === closedReplyId ? null : view.reply;
@@ -231,17 +325,22 @@ export function PresenceInputApp({
 
   const updatePetPreferences = useCallback(
     async (patch: Omit<PetPreferencePatch, "expected_revision">) => {
-      if (preferences === null) return;
+      const current = preferencesRef.current;
+      if (current === null) return;
       try {
-        setPreferences(await host.updatePreferences({
-          expected_revision: preferences.revision,
+        const saved = await host.updatePreferences({
+          expected_revision: current.revision,
           ...patch,
-        }));
+        });
+        preferencesRef.current = saved;
+        setPreferences(saved);
       } catch {
-        setPreferences(await host.getPreferences());
+        const saved = await host.getPreferences();
+        preferencesRef.current = saved;
+        setPreferences(saved);
       }
     },
-    [host, preferences],
+    [host],
   );
 
   function dismissNotice() {
@@ -299,12 +398,105 @@ export function PresenceInputApp({
     sendMessage(submission.text);
   }
 
+  function movePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!surfaceInteractive || dragPointer.current !== null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.currentTarget.setPointerCapture === "function") {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    const ready = host.beginGroupDrag();
+    dragPointer.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      deltaX: 0,
+      deltaY: 0,
+      frame: null,
+      ready,
+      queue: ready,
+    };
+    setMoving(true);
+  }
+
+  function movePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = dragPointer.current;
+    if (drag === null || drag.pointerId !== event.pointerId) return;
+    drag.deltaX = event.clientX - drag.startX;
+    drag.deltaY = event.clientY - drag.startY;
+    if (drag.frame !== null) return;
+    drag.frame = window.requestAnimationFrame(() => {
+      const current = dragPointer.current;
+      if (current === null || current.pointerId !== drag.pointerId) return;
+      current.frame = null;
+      current.queue = current.queue.then(() =>
+        host.moveGroupDrag(current.deltaX, current.deltaY)
+      ).catch(() => undefined);
+    });
+  }
+
+  function movePointerUp(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = dragPointer.current;
+    if (drag === null || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (
+      typeof event.currentTarget.hasPointerCapture === "function" &&
+      event.currentTarget.hasPointerCapture(event.pointerId)
+    ) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (drag.frame !== null) window.cancelAnimationFrame(drag.frame);
+    dragPointer.current = null;
+    setMoving(false);
+    const currentPreferences = preferencesRef.current;
+    void drag.ready
+      .then(async () => {
+        await drag.queue.catch(() => undefined);
+        try {
+          await host.moveGroupDrag(drag.deltaX, drag.deltaY);
+        } finally {
+          return currentPreferences === null
+            ? host.getPreferences()
+            : host.endGroupDrag(currentPreferences.revision);
+        }
+      })
+      .then((saved) => {
+        preferencesRef.current = saved;
+        setPreferences(saved);
+      })
+      .catch(async () => {
+        const saved = await host.getPreferences().catch(() => null);
+        if (saved !== null) {
+          preferencesRef.current = saved;
+          setPreferences(saved);
+        }
+      });
+  }
+
+  function resetPosition() {
+    const current = preferencesRef.current;
+    if (current === null) return;
+    setMenuOpen(false);
+    void host.resetPosition(current.revision).then((saved) => {
+      preferencesRef.current = saved;
+      setPreferences(saved);
+    }).catch(async () => {
+      const saved = await host.getPreferences().catch(() => null);
+      if (saved !== null) {
+        preferencesRef.current = saved;
+        setPreferences(saved);
+      }
+    });
+  }
+
   return (
     <main
       className="presence-input-window"
       data-content-visible={String(contentVisible)}
       data-interactive={String(surfaceInteractive)}
       data-layout={layout}
+      data-moving={String(moving)}
       data-reduced-motion={String(
         interaction?.reduced_motion === true || preferences?.reduced_motion === true
       )}
@@ -333,6 +525,9 @@ export function PresenceInputApp({
           closeSubmission: () => setSubmission(null),
           dismissNotice,
           exit: () => void host.exit(),
+          movePointerDown,
+          movePointerMove,
+          movePointerUp,
           newChat: () => channel.requestNewChat(),
           openMain: () => {
             channel.requestWorkspaceOpen();
@@ -344,11 +539,16 @@ export function PresenceInputApp({
           },
           openSettings: () => void host.openSettings(),
           requestInputFocus: () => void host.requestInputFocus(),
-          resetPosition: () => undefined,
+          resetPosition,
           retrySubmission,
           send: sendMessage,
           setInputOpen,
           setMenuOpen,
+          showMoveGrip: () => {
+            setMenuOpen(false);
+            setHoverSuppressed(false);
+            setManualInputOpen(true);
+          },
           toggleAlwaysOnTop: () =>
             void updatePetPreferences({ pet_always_on_top: !alwaysOnTop }),
           toggleAutoPlay: () =>
@@ -365,6 +565,7 @@ export function PresenceInputApp({
         inputOpen={inputOpen}
         interactive={surfaceInteractive}
         menuOpen={menuOpen}
+        moving={moving}
         muted={muted}
         reply={reply}
         submission={submissionCard}

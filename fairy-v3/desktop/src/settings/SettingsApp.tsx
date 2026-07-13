@@ -66,7 +66,7 @@ const categories: readonly {
   { id: "permissions", label: "Execution permissions", keywords: "observe standard autonomous sandbox capability cloud", icon: ShieldCheck },
   { id: "extensions", label: "Skills / MCP", keywords: "skills tools servers extension", icon: Sparkles },
   { id: "knowledge", label: "Knowledge & privacy", keywords: "memory retention analytics privacy", icon: Brain },
-  { id: "pet", label: "Pet", keywords: "presence companion mute always top", icon: PawPrint },
+  { id: "pet", label: "Pet", keywords: "presence companion mute always top liquid glass renderer hover particles opacity size", icon: PawPrint },
   { id: "advanced", label: "Advanced", keywords: "developer diagnostics logs", icon: SlidersHorizontal },
 ];
 
@@ -283,6 +283,15 @@ function SettingsCategory(props: {
       <SettingToggle label="Enable Fairy pet" checked={data.preferences.pet_enabled} disabled={busy} onChange={(value) => void updatePreferences({ pet_enabled: value })} />
       <SettingToggle label="Always on top" checked={data.preferences.pet_always_on_top} disabled={busy} onChange={(value) => void updatePreferences({ pet_always_on_top: value })} />
       <SettingToggle label="Mute pet" checked={data.preferences.pet_muted} disabled={busy} onChange={(value) => void updatePreferences({ pet_muted: value })} />
+      <SettingSelect icon={<PawPrint size={17} />} label="Renderer" value={data.preferences.pet_renderer_mode} disabled={busy} onChange={(value) => void updatePreferences({ pet_renderer_mode: value as DesktopPreferences["pet_renderer_mode"] })} options={[{ value: "auto", label: "Automatic" }, { value: "liquid", label: "Liquid Glass" }, { value: "compatibility", label: "Compatibility" }]} />
+      <SettingRange label="Size" value={data.preferences.pet_size_percent} min={75} max={150} step={5} suffix="%" disabled={busy} onCommit={(value) => void updatePreferences({ pet_size_percent: value })} />
+      <SettingRange label="Opacity" value={data.preferences.pet_opacity_percent} min={40} max={100} step={2} suffix="%" disabled={busy} onCommit={(value) => void updatePreferences({ pet_opacity_percent: value })} />
+      <SettingToggle label="Animate liquid motion" checked={data.preferences.pet_motion_enabled} disabled={busy} onChange={(value) => void updatePreferences({ pet_motion_enabled: value })} />
+      <SettingToggle label="Show particles" checked={data.preferences.pet_particles_enabled} disabled={busy} onChange={(value) => void updatePreferences({ pet_particles_enabled: value })} />
+      <SettingToggle label="Expand on hover" checked={data.preferences.pet_hover_enabled} disabled={busy} onChange={(value) => void updatePreferences({ pet_hover_enabled: value })} />
+      <SettingRange label="Hover dwell" value={data.preferences.pet_hover_dwell_ms} min={100} max={1000} step={50} suffix=" ms" disabled={busy || !data.preferences.pet_hover_enabled} onCommit={(value) => void updatePreferences({ pet_hover_dwell_ms: value })} />
+      <SettingToggle label="Do not disturb" checked={data.preferences.pet_do_not_disturb} disabled={busy} onChange={(value) => void updatePreferences({ pet_do_not_disturb: value })} />
+      <SettingToggle label="Remember position" checked={data.preferences.pet_remember_position} disabled={busy} onChange={(value) => void updatePreferences({ pet_remember_position: value })} />
     </Category>;
     case "advanced": return <Category title="Advanced" subtitle="Diagnostics and developer tools">
       <SettingToggle label="Developer mode" checked={data.preferences.developer_mode} disabled={busy} onChange={(value) => void updatePreferences({ developer_mode: value })} />
@@ -378,10 +387,10 @@ function SettingSelect({ icon, label, value, options, disabled, onChange }: { ic
   return <label className="settings-row settings-select-row"><span className="settings-row-copy">{icon}<strong>{label}</strong></span><select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>;
 }
 
-function SettingRange({ label, value, min, max, suffix, disabled, onCommit }: { label: string; value: number; min: number; max: number; suffix: string; disabled: boolean; onCommit(value: number): void }) {
+function SettingRange({ label, value, min, max, step = 1, suffix, disabled, onCommit }: { label: string; value: number; min: number; max: number; step?: number; suffix: string; disabled: boolean; onCommit(value: number): void }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
-  return <label className="settings-row settings-range-row"><span><strong>{label}</strong><small>{draft}{suffix}</small></span><input type="range" min={min} max={max} value={draft} disabled={disabled} onChange={(event) => setDraft(Number(event.target.value))} onPointerUp={() => onCommit(draft)} onKeyUp={() => onCommit(draft)} /></label>;
+  return <label className="settings-row settings-range-row"><span><strong>{label}</strong><small>{draft}{suffix}</small></span><input type="range" min={min} max={max} step={step} value={draft} disabled={disabled} onChange={(event) => setDraft(Number(event.target.value))} onPointerUp={() => onCommit(draft)} onKeyUp={() => onCommit(draft)} /></label>;
 }
 
 function HealthRow({ icon, label, status, tone }: { icon: React.ReactNode; label: string; status: string; tone: "neutral" | "success" | "error" }) {

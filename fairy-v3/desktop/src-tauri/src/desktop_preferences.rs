@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const PREFERENCES_FILE: &str = "preferences/desktop.json";
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -16,7 +16,23 @@ pub enum ThemePreference {
     Light,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PetRendererMode {
+    #[default]
+    Auto,
+    Liquid,
+    Compatibility,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PetAnchorPreference {
+    pub monitor_id: String,
+    pub x_ratio: f64,
+    pub y_ratio: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct DesktopPreferences {
     pub schema_version: u32,
     pub revision: u64,
@@ -38,6 +54,26 @@ pub struct DesktopPreferences {
     pub pet_enabled: bool,
     pub pet_always_on_top: bool,
     pub pet_muted: bool,
+    #[serde(default = "default_pet_size_percent")]
+    pub pet_size_percent: u8,
+    #[serde(default = "default_pet_opacity_percent")]
+    pub pet_opacity_percent: u8,
+    #[serde(default = "default_true")]
+    pub pet_motion_enabled: bool,
+    #[serde(default = "default_true")]
+    pub pet_particles_enabled: bool,
+    #[serde(default = "default_true")]
+    pub pet_hover_enabled: bool,
+    #[serde(default = "default_pet_hover_dwell_ms")]
+    pub pet_hover_dwell_ms: u16,
+    #[serde(default)]
+    pub pet_do_not_disturb: bool,
+    #[serde(default = "default_true")]
+    pub pet_remember_position: bool,
+    #[serde(default)]
+    pub pet_renderer_mode: PetRendererMode,
+    #[serde(default)]
+    pub pet_anchor: Option<PetAnchorPreference>,
     pub developer_mode: bool,
 }
 
@@ -64,6 +100,16 @@ impl Default for DesktopPreferences {
             pet_enabled: true,
             pet_always_on_top: true,
             pet_muted: false,
+            pet_size_percent: default_pet_size_percent(),
+            pet_opacity_percent: default_pet_opacity_percent(),
+            pet_motion_enabled: true,
+            pet_particles_enabled: true,
+            pet_hover_enabled: true,
+            pet_hover_dwell_ms: default_pet_hover_dwell_ms(),
+            pet_do_not_disturb: false,
+            pet_remember_position: true,
+            pet_renderer_mode: PetRendererMode::Auto,
+            pet_anchor: None,
             developer_mode: false,
         }
     }
@@ -81,6 +127,9 @@ pub struct PetPreferencesUpdate {
     pub voice_auto_play_pet: Option<bool>,
     pub pet_muted: Option<bool>,
     pub pet_always_on_top: Option<bool>,
+    pub pet_anchor: Option<PetAnchorPreference>,
+    #[serde(default)]
+    pub clear_pet_anchor: bool,
 }
 
 #[derive(Debug, Error)]
@@ -111,7 +160,26 @@ impl DesktopPreferencesStore {
             return Ok(DesktopPreferences::default());
         }
         let bytes = fs::read(&self.path)?;
-        let preferences: DesktopPreferences = serde_json::from_slice(&bytes)?;
+        let schema_version = serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("schema_version")
+                    .and_then(serde_json::Value::as_u64)
+            });
+        let legacy = schema_version == Some(1);
+        let mut preferences = match serde_json::from_slice::<DesktopPreferences>(&bytes) {
+            Ok(preferences) => preferences,
+            Err(_) if legacy => return Ok(DesktopPreferences::default()),
+            Err(error) => return Err(error.into()),
+        };
+        if legacy {
+            preferences.schema_version = SCHEMA_VERSION;
+            if validate(&preferences).is_err() || self.write_atomic(&preferences).is_err() {
+                return Ok(DesktopPreferences::default());
+            }
+            return Ok(preferences);
+        }
         validate(&preferences)?;
         Ok(preferences)
     }
@@ -149,6 +217,12 @@ impl DesktopPreferencesStore {
         }
         if let Some(value) = update.pet_always_on_top {
             next.pet_always_on_top = value;
+        }
+        if let Some(value) = update.pet_anchor {
+            next.pet_anchor = Some(value);
+        }
+        if update.clear_pet_anchor {
+            next.pet_anchor = None;
         }
         next.revision += 1;
         validate(&next)?;
@@ -207,6 +281,33 @@ fn validate(preferences: &DesktopPreferences) -> Result<(), DesktopPreferencesEr
             "memory retention must be between 1 and 3650 days".to_owned(),
         ));
     }
+    if !(75..=150).contains(&preferences.pet_size_percent) {
+        return Err(DesktopPreferencesError::Invalid(
+            "pet size must be between 75 and 150 percent".to_owned(),
+        ));
+    }
+    if !(40..=100).contains(&preferences.pet_opacity_percent) {
+        return Err(DesktopPreferencesError::Invalid(
+            "pet opacity must be between 40 and 100 percent".to_owned(),
+        ));
+    }
+    if !(100..=1_000).contains(&preferences.pet_hover_dwell_ms) {
+        return Err(DesktopPreferencesError::Invalid(
+            "pet hover dwell must be between 100 and 1000 milliseconds".to_owned(),
+        ));
+    }
+    if let Some(anchor) = &preferences.pet_anchor {
+        if anchor.monitor_id.is_empty() || anchor.monitor_id.len() > 200 {
+            return Err(DesktopPreferencesError::Invalid(
+                "pet anchor monitor is invalid".to_owned(),
+            ));
+        }
+        if !(0.0..=1.0).contains(&anchor.x_ratio) || !(0.0..=1.0).contains(&anchor.y_ratio) {
+            return Err(DesktopPreferencesError::Invalid(
+                "pet anchor ratios must be between 0 and 1".to_owned(),
+            ));
+        }
+    }
     if !["observe", "standard", "autonomous"]
         .contains(&preferences.permission_cloud_profile.as_str())
     {
@@ -215,6 +316,22 @@ fn validate(preferences: &DesktopPreferences) -> Result<(), DesktopPreferencesEr
         ));
     }
     Ok(())
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+const fn default_pet_size_percent() -> u8 {
+    100
+}
+
+const fn default_pet_opacity_percent() -> u8 {
+    92
+}
+
+const fn default_pet_hover_dwell_ms() -> u16 {
+    250
 }
 
 #[cfg(windows)]
@@ -253,7 +370,7 @@ fn replace_file(source: &Path, destination: &Path) -> Result<(), std::io::Error>
 mod tests {
     use super::{
         DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore,
-        DesktopPreferencesUpdate, PetPreferencesUpdate,
+        DesktopPreferencesUpdate, PetAnchorPreference, PetPreferencesUpdate,
     };
 
     #[test]
@@ -295,6 +412,12 @@ mod tests {
                 voice_auto_play_pet: Some(false),
                 pet_muted: Some(true),
                 pet_always_on_top: Some(false),
+                pet_anchor: Some(PetAnchorPreference {
+                    monitor_id: "primary:0:0:1920:1040".to_owned(),
+                    x_ratio: 0.8,
+                    y_ratio: 0.7,
+                }),
+                clear_pet_anchor: false,
             })
             .expect("save pet preferences");
 
@@ -302,7 +425,55 @@ mod tests {
         assert!(!saved.voice_auto_play_pet);
         assert!(saved.pet_muted);
         assert!(!saved.pet_always_on_top);
+        assert_eq!(
+            saved.pet_anchor.as_ref().map(|anchor| anchor.x_ratio),
+            Some(0.8)
+        );
         assert!(!saved.developer_mode);
         assert_eq!(saved.permission_cloud_profile, "standard");
+    }
+
+    #[test]
+    fn version_one_preferences_migrate_without_losing_existing_pet_values() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        let path = directory.path().join("preferences/desktop.json");
+        std::fs::create_dir_all(path.parent().expect("preferences parent"))
+            .expect("create preferences parent");
+        let mut legacy =
+            serde_json::to_value(DesktopPreferences::default()).expect("serialize defaults");
+        let object = legacy.as_object_mut().expect("preferences object");
+        object.insert("schema_version".to_owned(), serde_json::json!(1));
+        object.insert("voice_auto_play_pet".to_owned(), serde_json::json!(false));
+        object.insert("pet_always_on_top".to_owned(), serde_json::json!(false));
+        object.insert("pet_muted".to_owned(), serde_json::json!(true));
+        for field in [
+            "pet_size_percent",
+            "pet_opacity_percent",
+            "pet_motion_enabled",
+            "pet_particles_enabled",
+            "pet_hover_enabled",
+            "pet_hover_dwell_ms",
+            "pet_do_not_disturb",
+            "pet_remember_position",
+            "pet_renderer_mode",
+            "pet_anchor",
+        ] {
+            object.remove(field);
+        }
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&legacy).expect("legacy bytes"),
+        )
+        .expect("write legacy preferences");
+
+        let migrated = store.load().expect("migrate preferences");
+        assert_eq!(migrated.schema_version, 2);
+        assert!(!migrated.voice_auto_play_pet);
+        assert!(!migrated.pet_always_on_top);
+        assert!(migrated.pet_muted);
+        assert_eq!(migrated.pet_size_percent, 100);
+        assert_eq!(migrated.pet_renderer_mode, super::PetRendererMode::Auto);
+        assert_eq!(store.load().expect("reload migrated"), migrated);
     }
 }

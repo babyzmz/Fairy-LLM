@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 use fairy_core_bridge::{CoreBridge, CoreBridgeError, CoreLaunchSpec};
 use serde_json::{json, Value};
 use tauri::ipc::{Channel, Response};
+use tauri::menu::{CheckMenuItem, MenuBuilder, MenuItem};
+use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
@@ -12,7 +14,11 @@ use desktop_preferences::{
     DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore, DesktopPreferencesUpdate,
     PetPreferencesUpdate,
 };
-use presence_coordinator::PresenceCoordinatorHandle;
+use presence_coordinator::{
+    anchor_from_ratios, anchor_ratios, resolve_presence_placement,
+    resolve_presence_placement_for_anchor, select_work_area, ExpansionDirection, PhysicalFrame,
+    PhysicalPoint, PresenceCoordinatorConfig, PresenceCoordinatorHandle, PresenceWindowPlacement,
+};
 use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStore};
 use provider_credentials::ProviderCredentialStore;
 use voice_worker::{
@@ -30,6 +36,43 @@ pub mod voice_worker;
 
 pub const PET_RENDER_LABEL: &str = "pet-render";
 pub const PET_INPUT_LABEL: &str = "pet-input";
+const TRAY_ASK_ID: &str = "fairy.tray.ask";
+const TRAY_NEW_CHAT_ID: &str = "fairy.tray.new_chat";
+const TRAY_AUTO_PLAY_ID: &str = "fairy.tray.auto_play";
+const TRAY_MUTED_ID: &str = "fairy.tray.muted";
+const TRAY_ALWAYS_ON_TOP_ID: &str = "fairy.tray.always_on_top";
+const TRAY_OPEN_ID: &str = "fairy.tray.open";
+const TRAY_SETTINGS_ID: &str = "fairy.tray.settings";
+const TRAY_RESET_ID: &str = "fairy.tray.reset";
+const TRAY_EXIT_ID: &str = "fairy.tray.exit";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FairyTrayAction {
+    Ask,
+    NewChat,
+    ToggleAutoPlay,
+    ToggleMuted,
+    ToggleAlwaysOnTop,
+    Open,
+    Settings,
+    Reset,
+    Exit,
+}
+
+pub fn fairy_tray_action(menu_id: &str) -> Option<FairyTrayAction> {
+    match menu_id {
+        TRAY_ASK_ID => Some(FairyTrayAction::Ask),
+        TRAY_NEW_CHAT_ID => Some(FairyTrayAction::NewChat),
+        TRAY_AUTO_PLAY_ID => Some(FairyTrayAction::ToggleAutoPlay),
+        TRAY_MUTED_ID => Some(FairyTrayAction::ToggleMuted),
+        TRAY_ALWAYS_ON_TOP_ID => Some(FairyTrayAction::ToggleAlwaysOnTop),
+        TRAY_OPEN_ID => Some(FairyTrayAction::Open),
+        TRAY_SETTINGS_ID => Some(FairyTrayAction::Settings),
+        TRAY_RESET_ID => Some(FairyTrayAction::Reset),
+        TRAY_EXIT_ID => Some(FairyTrayAction::Exit),
+        _ => None,
+    }
+}
 
 #[derive(Debug)]
 pub struct WindowScopeError;
@@ -192,6 +235,28 @@ struct DesktopState {
     desktop_program: PathBuf,
     resource_dir: PathBuf,
     presence: PresenceCoordinatorHandle,
+    pet_drag: Mutex<Option<PetGroupDragSession>>,
+}
+
+struct FairyTrayState {
+    _tray: TrayIcon,
+    auto_play: CheckMenuItem<tauri::Wry>,
+    muted: CheckMenuItem<tauri::Wry>,
+    always_on_top: CheckMenuItem<tauri::Wry>,
+}
+
+#[derive(Clone, Debug)]
+struct PresenceMonitor {
+    id: String,
+    work_area: PhysicalFrame,
+    scale_factor: f64,
+    is_primary: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PetGroupDragSession {
+    start_anchor: PhysicalPoint,
+    current_placement: PresenceWindowPlacement,
 }
 
 fn scope_failure_response(id: Value, message: &str) -> Value {
@@ -377,10 +442,11 @@ async fn desktop_preferences_update(
             DesktopPreferencesError::RevisionConflict => "PREFERENCES_REVISION_CONFLICT".to_owned(),
             other => other.to_string(),
         })?;
-    state.presence.set_reduced_motion(next.reduced_motion);
+    state.presence.set_preferences(coordinator_config(&next));
     apply_pet_window_preferences(&app, &next)?;
     app.emit("desktop-preferences-changed", &next)
         .map_err(|error| error.to_string())?;
+    sync_tray_preferences(&app, &next);
     Ok(next)
 }
 
@@ -393,6 +459,20 @@ async fn pet_preferences_update(
 ) -> Result<DesktopPreferences, String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
+    let anchor_changed = input.pet_anchor.is_some() || input.clear_pet_anchor;
+    let next = persist_pet_preferences(&app, &state, input)?;
+    if anchor_changed && next.pet_remember_position {
+        let placement = place_pet_windows(&app, &next)?;
+        state.presence.set_latest_placement(placement);
+    }
+    Ok(next)
+}
+
+fn persist_pet_preferences(
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+    input: PetPreferencesUpdate,
+) -> Result<DesktopPreferences, String> {
     let _guard = state
         .preferences
         .lock()
@@ -403,9 +483,154 @@ async fn pet_preferences_update(
             DesktopPreferencesError::RevisionConflict => "PREFERENCES_REVISION_CONFLICT".to_owned(),
             other => other.to_string(),
         })?;
-    apply_pet_window_preferences(&app, &next)?;
+    state.presence.set_preferences(coordinator_config(&next));
+    apply_pet_window_preferences(app, &next)?;
     app.emit("desktop-preferences-changed", &next)
         .map_err(|error| error.to_string())?;
+    sync_tray_preferences(app, &next);
+    Ok(next)
+}
+
+#[tauri::command]
+async fn pet_window_group_begin_drag(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let app = window.app_handle();
+    let placement = current_pet_placement(app, state.presence.latest_placement())?;
+    let mut drag = state
+        .pet_drag
+        .lock()
+        .map_err(|_| "Pet drag lock is unavailable".to_owned())?;
+    *drag = Some(PetGroupDragSession {
+        start_anchor: placement.anchor,
+        current_placement: placement,
+    });
+    state.presence.set_repositioning(true);
+    Ok(())
+}
+
+#[tauri::command]
+async fn pet_window_group_move(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    delta_x: i32,
+    delta_y: i32,
+) -> Result<(), String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let app = window.app_handle();
+    let render = app
+        .get_webview_window(PET_RENDER_LABEL)
+        .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
+    let monitors = presence_monitors(&render)?;
+    let mut drag = state
+        .pet_drag
+        .lock()
+        .map_err(|_| "Pet drag lock is unavailable".to_owned())?;
+    let session = drag
+        .as_mut()
+        .ok_or_else(|| "Pet drag has not started".to_owned())?;
+    let desired_anchor = PhysicalPoint {
+        x: session.start_anchor.x.saturating_add(delta_x),
+        y: session.start_anchor.y.saturating_add(delta_y),
+    };
+    let monitor = monitor_for_anchor(&monitors, desired_anchor)
+        .ok_or_else(|| "No monitor is available".to_owned())?;
+    let render_size = render_size_for_scale(monitor.scale_factor);
+    let placement = resolve_presence_placement_for_anchor(
+        desired_anchor,
+        render_size,
+        monitor.work_area,
+        monitor.scale_factor,
+        Some(session.current_placement.expansion_direction),
+    );
+    move_pet_window_group(app, &placement)?;
+    session.current_placement = placement;
+    state.presence.set_latest_placement(placement);
+    Ok(())
+}
+
+#[tauri::command]
+async fn pet_window_group_end_drag(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    expected_revision: u64,
+) -> Result<DesktopPreferences, String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let session = state
+        .pet_drag
+        .lock()
+        .map_err(|_| "Pet drag lock is unavailable".to_owned())?
+        .take();
+    state.presence.set_repositioning(false);
+    let placement = session
+        .map(|value| value.current_placement)
+        .or_else(|| state.presence.latest_placement())
+        .ok_or_else(|| "Pet placement is unavailable".to_owned())?;
+    let current = DesktopPreferencesStore::new(&state.data_dir)
+        .load()
+        .map_err(|error| error.to_string())?;
+    if !current.pet_remember_position {
+        return Ok(current);
+    }
+    let render = app
+        .get_webview_window(PET_RENDER_LABEL)
+        .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
+    let monitor = presence_monitors(&render)?
+        .into_iter()
+        .find(|candidate| candidate.work_area == placement.monitor_work_area)
+        .ok_or_else(|| "Pet monitor is unavailable".to_owned())?;
+    let (x_ratio, y_ratio) = anchor_ratios(placement.anchor, monitor.work_area);
+    persist_pet_preferences(
+        &app,
+        &state,
+        PetPreferencesUpdate {
+            expected_revision,
+            voice_auto_play_pet: None,
+            pet_muted: None,
+            pet_always_on_top: None,
+            pet_anchor: Some(desktop_preferences::PetAnchorPreference {
+                monitor_id: monitor.id,
+                x_ratio,
+                y_ratio,
+            }),
+            clear_pet_anchor: false,
+        },
+    )
+}
+
+#[tauri::command]
+async fn pet_window_group_reset_position(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    expected_revision: u64,
+) -> Result<DesktopPreferences, String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    state.presence.set_repositioning(false);
+    if let Ok(mut drag) = state.pet_drag.lock() {
+        *drag = None;
+    }
+    let next = persist_pet_preferences(
+        &app,
+        &state,
+        PetPreferencesUpdate {
+            expected_revision,
+            voice_auto_play_pet: None,
+            pet_muted: None,
+            pet_always_on_top: None,
+            pet_anchor: None,
+            clear_pet_anchor: true,
+        },
+    )?;
+    let placement = place_pet_windows(&app, &next)?;
+    state.presence.set_latest_placement(placement);
     Ok(next)
 }
 
@@ -486,10 +711,7 @@ async fn pet_input_set_layout(
 }
 
 #[tauri::command]
-async fn pet_input_set_interactive(
-    window: WebviewWindow,
-    interactive: bool,
-) -> Result<(), String> {
+async fn pet_input_set_interactive(window: WebviewWindow, interactive: bool) -> Result<(), String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
     if interactive {
@@ -597,6 +819,369 @@ fn apply_pet_window_preferences(
         render.hide().map_err(|error| error.to_string())?;
         input.hide().map_err(|error| error.to_string())
     }
+}
+
+fn coordinator_config(preferences: &DesktopPreferences) -> PresenceCoordinatorConfig {
+    PresenceCoordinatorConfig {
+        reduced_motion: preferences.reduced_motion || !preferences.pet_motion_enabled,
+        hover_enabled: preferences.pet_hover_enabled,
+        hover_dwell_ms: preferences.pet_hover_dwell_ms,
+    }
+}
+
+fn presence_monitors(render: &WebviewWindow) -> Result<Vec<PresenceMonitor>, String> {
+    let primary = render
+        .primary_monitor()
+        .map_err(|error| error.to_string())?;
+    render
+        .available_monitors()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|monitor| {
+            let work = monitor.work_area();
+            let work_area = PhysicalFrame {
+                x: work.position.x,
+                y: work.position.y,
+                width: work.size.width,
+                height: work.size.height,
+            };
+            let id = format!(
+                "{}:{}:{}:{}:{}",
+                monitor.name().map_or("monitor", String::as_str),
+                work_area.x,
+                work_area.y,
+                work_area.width,
+                work_area.height,
+            );
+            let is_primary = primary.as_ref().is_some_and(|candidate| {
+                candidate.position() == monitor.position() && candidate.size() == monitor.size()
+            });
+            Ok(PresenceMonitor {
+                id,
+                work_area,
+                scale_factor: monitor.scale_factor(),
+                is_primary,
+            })
+        })
+        .collect()
+}
+
+fn monitor_for_anchor(
+    monitors: &[PresenceMonitor],
+    anchor: PhysicalPoint,
+) -> Option<&PresenceMonitor> {
+    let work_areas = monitors
+        .iter()
+        .map(|monitor| monitor.work_area)
+        .collect::<Vec<_>>();
+    let selected = select_work_area(anchor, &work_areas)?;
+    monitors
+        .iter()
+        .find(|monitor| monitor.work_area == selected)
+}
+
+fn render_size_for_scale(scale_factor: f64) -> (u32, u32) {
+    let scale = scale_factor.clamp(0.5, 4.0);
+    (
+        (640.0 * scale).round() as u32,
+        (260.0 * scale).round() as u32,
+    )
+}
+
+fn default_pet_anchor(monitor: &PresenceMonitor) -> PhysicalPoint {
+    let margin = (104.0 * monitor.scale_factor.clamp(0.5, 4.0)).round() as i64;
+    PhysicalPoint {
+        x: (monitor.work_area.right() - margin) as i32,
+        y: (monitor.work_area.bottom() - margin) as i32,
+    }
+}
+
+fn place_pet_windows(
+    app: &tauri::AppHandle,
+    preferences: &DesktopPreferences,
+) -> Result<PresenceWindowPlacement, String> {
+    let render = app
+        .get_webview_window(PET_RENDER_LABEL)
+        .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
+    let monitors = presence_monitors(&render)?;
+    let remembered = preferences
+        .pet_remember_position
+        .then_some(preferences.pet_anchor.as_ref())
+        .flatten();
+    let monitor = remembered
+        .and_then(|anchor| {
+            monitors
+                .iter()
+                .find(|monitor| monitor.id == anchor.monitor_id)
+        })
+        .or_else(|| monitors.iter().find(|monitor| monitor.is_primary))
+        .or_else(|| monitors.first())
+        .ok_or_else(|| "No monitor is available".to_owned())?;
+    let anchor = remembered
+        .filter(|anchor| anchor.monitor_id == monitor.id)
+        .map(|anchor| anchor_from_ratios(monitor.work_area, anchor.x_ratio, anchor.y_ratio))
+        .unwrap_or_else(|| default_pet_anchor(monitor));
+    let direction = if anchor.x
+        >= monitor.work_area.x + i32::try_from(monitor.work_area.width / 2).unwrap_or(i32::MAX)
+    {
+        ExpansionDirection::Left
+    } else {
+        ExpansionDirection::Right
+    };
+    let placement = resolve_presence_placement_for_anchor(
+        anchor,
+        render_size_for_scale(monitor.scale_factor),
+        monitor.work_area,
+        monitor.scale_factor,
+        Some(direction),
+    );
+    move_pet_window_group(app, &placement)?;
+    Ok(placement)
+}
+
+fn current_pet_placement(
+    app: &tauri::AppHandle,
+    previous: Option<PresenceWindowPlacement>,
+) -> Result<PresenceWindowPlacement, String> {
+    let render = app
+        .get_webview_window(PET_RENDER_LABEL)
+        .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
+    let position = render.outer_position().map_err(|error| error.to_string())?;
+    let size = render.outer_size().map_err(|error| error.to_string())?;
+    let frame = PhysicalFrame {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    };
+    let monitors = presence_monitors(&render)?;
+    let provisional = previous.map_or(
+        PhysicalPoint {
+            x: position
+                .x
+                .saturating_add(i32::try_from(size.width / 2).unwrap_or(i32::MAX)),
+            y: position
+                .y
+                .saturating_add(i32::try_from(size.height / 2).unwrap_or(i32::MAX)),
+        },
+        |placement| placement.anchor,
+    );
+    let monitor = monitor_for_anchor(&monitors, provisional)
+        .ok_or_else(|| "No monitor is available".to_owned())?;
+    Ok(resolve_presence_placement(
+        frame,
+        monitor.work_area,
+        monitor.scale_factor,
+        previous.map(|placement| placement.expansion_direction),
+    ))
+}
+
+fn move_pet_window_group(
+    app: &tauri::AppHandle,
+    placement: &PresenceWindowPlacement,
+) -> Result<(), String> {
+    let render = app
+        .get_webview_window(PET_RENDER_LABEL)
+        .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
+    render
+        .set_size(tauri::PhysicalSize::new(
+            placement.render_frame.width,
+            placement.render_frame.height,
+        ))
+        .map_err(|error| error.to_string())?;
+    render
+        .set_position(tauri::PhysicalPosition::new(
+            placement.render_frame.x,
+            placement.render_frame.y,
+        ))
+        .map_err(|error| error.to_string())?;
+    let Some(input) = app.get_webview_window(PET_INPUT_LABEL) else {
+        return Ok(());
+    };
+    if !input.is_visible().unwrap_or(false) {
+        return Ok(());
+    }
+    let input_size = input.outer_size().map_err(|error| error.to_string())?;
+    let was_expanded =
+        input_size.height > (100.0 * placement.scale_factor.clamp(0.5, 4.0)).round() as u32;
+    let (width, height) = if was_expanded {
+        (
+            (420.0 * placement.scale_factor).round() as u32,
+            (360.0 * placement.scale_factor).round() as u32,
+        )
+    } else {
+        (
+            (372.0 * placement.scale_factor).round() as u32,
+            (72.0 * placement.scale_factor).round() as u32,
+        )
+    };
+    let compact_height = (72.0 * placement.scale_factor).round() as u32;
+    let frame = placement.input_frame(width, height, compact_height);
+    input
+        .set_size(tauri::PhysicalSize::new(frame.width, frame.height))
+        .map_err(|error| error.to_string())?;
+    input
+        .set_position(tauri::PhysicalPosition::new(frame.x, frame.y))
+        .map_err(|error| error.to_string())
+}
+
+fn build_fairy_tray(
+    app: &tauri::App,
+    preferences: &DesktopPreferences,
+) -> Result<FairyTrayState, tauri::Error> {
+    let ask = MenuItem::with_id(app, TRAY_ASK_ID, "Ask Fairy", true, None::<&str>)?;
+    let new_chat = MenuItem::with_id(app, TRAY_NEW_CHAT_ID, "New chat", true, None::<&str>)?;
+    let auto_play = CheckMenuItem::with_id(
+        app,
+        TRAY_AUTO_PLAY_ID,
+        "Auto-play replies",
+        true,
+        preferences.voice_auto_play_pet,
+        None::<&str>,
+    )?;
+    let muted = CheckMenuItem::with_id(
+        app,
+        TRAY_MUTED_ID,
+        "Mute",
+        true,
+        preferences.pet_muted,
+        None::<&str>,
+    )?;
+    let always_on_top = CheckMenuItem::with_id(
+        app,
+        TRAY_ALWAYS_ON_TOP_ID,
+        "Always on top",
+        true,
+        preferences.pet_always_on_top,
+        None::<&str>,
+    )?;
+    let open = MenuItem::with_id(app, TRAY_OPEN_ID, "Open Fairy", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, TRAY_SETTINGS_ID, "Settings", true, None::<&str>)?;
+    let reset = MenuItem::with_id(app, TRAY_RESET_ID, "Reset position", true, None::<&str>)?;
+    let exit = MenuItem::with_id(app, TRAY_EXIT_ID, "Exit Fairy", true, None::<&str>)?;
+    let menu = MenuBuilder::new(app)
+        .item(&ask)
+        .item(&new_chat)
+        .separator()
+        .item(&auto_play)
+        .item(&muted)
+        .item(&always_on_top)
+        .separator()
+        .item(&open)
+        .item(&settings)
+        .item(&reset)
+        .separator()
+        .item(&exit)
+        .build()?;
+    let mut builder = TrayIconBuilder::with_id("fairy")
+        .menu(&menu)
+        .tooltip("Fairy")
+        .on_menu_event(handle_tray_menu_event);
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon);
+    }
+    let tray = builder.build(app)?;
+    Ok(FairyTrayState {
+        _tray: tray,
+        auto_play,
+        muted,
+        always_on_top,
+    })
+}
+
+fn handle_tray_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
+    let Some(action) = fairy_tray_action(event.id().as_ref()) else {
+        return;
+    };
+    match action {
+        FairyTrayAction::Ask => {
+            if app.get_webview_window(PET_INPUT_LABEL).is_none()
+                || app
+                    .emit_to(PET_INPUT_LABEL, "presence-input-requested", ())
+                    .is_err()
+            {
+                let _ = main_window(app).and_then(|window| show_and_focus(&window));
+            }
+        }
+        FairyTrayAction::NewChat => {
+            if app.get_webview_window(PET_INPUT_LABEL).is_none()
+                || app
+                    .emit_to(PET_INPUT_LABEL, "presence-new-chat-requested", ())
+                    .is_err()
+            {
+                let _ = main_window(app).and_then(|window| show_and_focus(&window));
+            }
+        }
+        FairyTrayAction::ToggleAutoPlay
+        | FairyTrayAction::ToggleMuted
+        | FairyTrayAction::ToggleAlwaysOnTop => {
+            let _ = toggle_pet_preference_from_tray(app, action);
+        }
+        FairyTrayAction::Open => {
+            let _ = main_window(app).and_then(|window| show_and_focus(&window));
+        }
+        FairyTrayAction::Settings => {
+            let _ = settings_window(app).and_then(|window| show_and_focus(&window));
+        }
+        FairyTrayAction::Reset => {
+            let _ = reset_pet_position_from_tray(app);
+        }
+        FairyTrayAction::Exit => app.exit(0),
+    }
+}
+
+fn toggle_pet_preference_from_tray(
+    app: &tauri::AppHandle,
+    action: FairyTrayAction,
+) -> Result<DesktopPreferences, String> {
+    let state = app.state::<DesktopState>();
+    let current = DesktopPreferencesStore::new(&state.data_dir)
+        .load()
+        .map_err(|error| error.to_string())?;
+    let update = PetPreferencesUpdate {
+        expected_revision: current.revision,
+        voice_auto_play_pet: (action == FairyTrayAction::ToggleAutoPlay)
+            .then_some(!current.voice_auto_play_pet),
+        pet_muted: (action == FairyTrayAction::ToggleMuted).then_some(!current.pet_muted),
+        pet_always_on_top: (action == FairyTrayAction::ToggleAlwaysOnTop)
+            .then_some(!current.pet_always_on_top),
+        pet_anchor: None,
+        clear_pet_anchor: false,
+    };
+    persist_pet_preferences(app, state.inner(), update)
+}
+
+fn reset_pet_position_from_tray(app: &tauri::AppHandle) -> Result<DesktopPreferences, String> {
+    let state = app.state::<DesktopState>();
+    let current = DesktopPreferencesStore::new(&state.data_dir)
+        .load()
+        .map_err(|error| error.to_string())?;
+    let next = persist_pet_preferences(
+        app,
+        state.inner(),
+        PetPreferencesUpdate {
+            expected_revision: current.revision,
+            voice_auto_play_pet: None,
+            pet_muted: None,
+            pet_always_on_top: None,
+            pet_anchor: None,
+            clear_pet_anchor: true,
+        },
+    )?;
+    let placement = place_pet_windows(app, &next)?;
+    state.presence.set_latest_placement(placement);
+    Ok(next)
+}
+
+fn sync_tray_preferences(app: &tauri::AppHandle, preferences: &DesktopPreferences) {
+    let Some(tray) = app.try_state::<FairyTrayState>() else {
+        return;
+    };
+    let _ = tray.auto_play.set_checked(preferences.voice_auto_play_pet);
+    let _ = tray.muted.set_checked(preferences.pet_muted);
+    let _ = tray
+        .always_on_top
+        .set_checked(preferences.pet_always_on_top);
 }
 
 #[tauri::command]
@@ -895,17 +1480,6 @@ pub fn run() {
                 let _ = warming_voice.health();
             });
             let preferences = DesktopPreferencesStore::new(&data_dir).load()?;
-            let presence =
-                PresenceCoordinatorHandle::start(app.handle().clone(), preferences.reduced_motion);
-            app.manage(DesktopState {
-                core: Arc::new(Mutex::new(Some(bridge))),
-                voice,
-                preferences: Mutex::new(()),
-                data_dir,
-                desktop_program,
-                resource_dir,
-                presence,
-            });
             for label in [PET_RENDER_LABEL, PET_INPUT_LABEL] {
                 let Some(policy) = auxiliary_window_policy(label) else {
                     continue;
@@ -916,6 +1490,26 @@ pub fn run() {
                 window.set_ignore_cursor_events(policy.ignore_cursor_events)?;
                 window.set_focusable(policy.focusable)?;
             }
+            let initial_placement =
+                place_pet_windows(app.handle(), &preferences).map_err(std::io::Error::other)?;
+            let presence = PresenceCoordinatorHandle::start(
+                app.handle().clone(),
+                coordinator_config(&preferences),
+            );
+            presence.set_latest_placement(initial_placement);
+            app.manage(DesktopState {
+                core: Arc::new(Mutex::new(Some(bridge))),
+                voice,
+                preferences: Mutex::new(()),
+                data_dir,
+                desktop_program,
+                resource_dir,
+                presence,
+                pet_drag: Mutex::new(None),
+            });
+            let tray = build_fairy_tray(app, &preferences)?;
+            app.manage(tray);
+            sync_tray_preferences(app.handle(), &preferences);
             apply_pet_window_preferences(app.handle(), &preferences)
                 .map_err(std::io::Error::other)?;
             Ok(())
@@ -932,6 +1526,10 @@ pub fn run() {
             pet_input_set_layout,
             pet_input_set_interactive,
             pet_input_request_focus,
+            pet_window_group_begin_drag,
+            pet_window_group_move,
+            pet_window_group_end_drag,
+            pet_window_group_reset_position,
             pet_exit,
             open_main_window,
             open_settings_window,

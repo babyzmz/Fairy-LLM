@@ -72,7 +72,7 @@ function projection(overrides: Partial<PresenceProjectionState> = {}): PresenceP
 
 function preferences(): DesktopPreferences {
   return {
-    schema_version: 1,
+    schema_version: 2,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -92,6 +92,16 @@ function preferences(): DesktopPreferences {
     pet_enabled: true,
     pet_always_on_top: true,
     pet_muted: false,
+    pet_size_percent: 100,
+    pet_opacity_percent: 92,
+    pet_motion_enabled: true,
+    pet_particles_enabled: true,
+    pet_hover_enabled: true,
+    pet_hover_dwell_ms: 250,
+    pet_do_not_disturb: false,
+    pet_remember_position: true,
+    pet_renderer_mode: "auto",
+    pet_anchor: null,
     developer_mode: false,
   };
 }
@@ -108,10 +118,15 @@ function hostHarness() {
         inputListener = null;
       };
     }),
+    onNewChatRequested: vi.fn(async () => () => undefined),
     setExpanded: vi.fn(async () => undefined),
     setInputLayout: vi.fn(async () => undefined),
     setInputInteractive: vi.fn(async () => undefined),
     requestInputFocus: vi.fn(async () => undefined),
+    beginGroupDrag: vi.fn(async () => undefined),
+    moveGroupDrag: vi.fn(async () => undefined),
+    endGroupDrag: vi.fn(async () => preferences()),
+    resetPosition: vi.fn(async () => preferences()),
     openMain: vi.fn(async () => undefined),
     openSettings: vi.fn(async () => undefined),
     exit: vi.fn(async () => undefined),
@@ -450,6 +465,65 @@ describe("dual presence surfaces", () => {
     fireEvent.click(screen.getByRole("button", { name: "Review in Fairy" }));
     expect(channel.channel.requestWorkspaceOpen).toHaveBeenCalledOnce();
     expect(host.host.openMain).toHaveBeenCalledOnce();
+  });
+
+  it("migrates a legacy monitor-relative position without deleting local data", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    const legacy = JSON.stringify({
+      positions: {
+        "DISPLAY-2:-1920:0:1920:1040": { x_ratio: 0.25, y_ratio: 0.75 },
+      },
+      last_monitor_id: "DISPLAY-2:-1920:0:1920:1040",
+      scale: 1,
+      quiet_mode: false,
+      dismissed_notice_ids: [],
+      reduced_motion_override: "system",
+    });
+    const legacyStorage: StorageLike = {
+      getItem: vi.fn(() => legacy),
+      setItem: vi.fn(),
+    };
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={legacyStorage}
+      />,
+    );
+
+    await waitFor(() => expect(host.host.updatePreferences).toHaveBeenCalledWith({
+      expected_revision: 0,
+      pet_anchor: {
+        monitor_id: "DISPLAY-2:-1920:0:1920:1040",
+        x_ratio: 0.25,
+        y_ratio: 0.75,
+      },
+    }));
+    expect(legacyStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("moves the native window group only from the visible grip", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+    act(() => host.requestInput());
+    const grip = await screen.findByRole("button", { name: "Move Fairy" });
+    fireEvent.pointerDown(grip, { pointerId: 4, clientX: 10, clientY: 20 });
+    fireEvent.pointerMove(grip, { pointerId: 4, clientX: 48, clientY: 35 });
+    fireEvent.pointerUp(grip, { pointerId: 4, clientX: 48, clientY: 35 });
+
+    await waitFor(() => expect(host.host.beginGroupDrag).toHaveBeenCalledOnce());
+    await waitFor(() => expect(host.host.moveGroupDrag).toHaveBeenCalledWith(38, 15));
+    await waitFor(() => expect(host.host.endGroupDrag).toHaveBeenCalledWith(0));
   });
 });
 

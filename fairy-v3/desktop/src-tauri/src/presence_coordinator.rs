@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -20,6 +20,23 @@ const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const HIDDEN_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const PLACEMENT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PresenceCoordinatorConfig {
+    pub reduced_motion: bool,
+    pub hover_enabled: bool,
+    pub hover_dwell_ms: u16,
+}
+
+impl Default for PresenceCoordinatorConfig {
+    fn default() -> Self {
+        Self {
+            reduced_motion: false,
+            hover_enabled: true,
+            hover_dwell_ms: 250,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct PhysicalPoint {
     pub x: i32,
@@ -35,11 +52,11 @@ pub struct PhysicalFrame {
 }
 
 impl PhysicalFrame {
-    fn right(self) -> i64 {
+    pub fn right(self) -> i64 {
         i64::from(self.x) + i64::from(self.width)
     }
 
-    fn bottom(self) -> i64 {
+    pub fn bottom(self) -> i64 {
         i64::from(self.y) + i64::from(self.height)
     }
 
@@ -254,6 +271,63 @@ pub fn resolve_presence_placement(
     }
 }
 
+pub fn resolve_presence_placement_for_anchor(
+    anchor: PhysicalPoint,
+    render_size: (u32, u32),
+    work_area: PhysicalFrame,
+    scale_factor: f64,
+    previous_direction: Option<ExpansionDirection>,
+) -> PresenceWindowPlacement {
+    let scale = scale_factor.clamp(0.5, 4.0);
+    let direction = previous_direction.unwrap_or(ExpansionDirection::Right);
+    let anchor_x_offset = (CORE_ANCHOR_X * scale).round() as i64;
+    let anchor_y_offset = (CORE_ANCHOR_Y * scale).round() as i64;
+    let frame = PhysicalFrame {
+        x: match direction {
+            ExpansionDirection::Right => i64::from(anchor.x) - anchor_x_offset,
+            ExpansionDirection::Left => {
+                i64::from(anchor.x) - i64::from(render_size.0) + anchor_x_offset
+            }
+        } as i32,
+        y: (i64::from(anchor.y) - anchor_y_offset) as i32,
+        width: render_size.0,
+        height: render_size.1,
+    };
+    resolve_presence_placement(frame, work_area, scale, Some(direction))
+}
+
+pub fn anchor_ratios(anchor: PhysicalPoint, work_area: PhysicalFrame) -> (f64, f64) {
+    let width = f64::from(work_area.width.max(1));
+    let height = f64::from(work_area.height.max(1));
+    (
+        ((f64::from(anchor.x) - f64::from(work_area.x)) / width).clamp(0.0, 1.0),
+        ((f64::from(anchor.y) - f64::from(work_area.y)) / height).clamp(0.0, 1.0),
+    )
+}
+
+pub fn anchor_from_ratios(work_area: PhysicalFrame, x_ratio: f64, y_ratio: f64) -> PhysicalPoint {
+    PhysicalPoint {
+        x: (f64::from(work_area.x) + x_ratio.clamp(0.0, 1.0) * f64::from(work_area.width)).round()
+            as i32,
+        y: (f64::from(work_area.y) + y_ratio.clamp(0.0, 1.0) * f64::from(work_area.height)).round()
+            as i32,
+    }
+}
+
+pub fn configured_cursor_band(
+    cursor: CursorMetrics,
+    hover_enabled: bool,
+    hover_dwell_ms: u64,
+) -> CursorBand {
+    if !hover_enabled {
+        CursorBand::Outside
+    } else if cursor.band == CursorBand::Active && cursor.dwell_ms < hover_dwell_ms {
+        CursorBand::Aware
+    } else {
+        cursor.band
+    }
+}
+
 pub fn select_work_area(
     anchor: PhysicalPoint,
     work_areas: &[PhysicalFrame],
@@ -279,16 +353,25 @@ pub struct PresenceCoordinatorHandle {
     latest_placement: Arc<RwLock<Option<PresenceWindowPlacement>>>,
     shutdown: Arc<AtomicBool>,
     reduced_motion: Arc<AtomicBool>,
+    hover_enabled: Arc<AtomicBool>,
+    hover_dwell_ms: Arc<AtomicU64>,
+    repositioning: Arc<AtomicBool>,
 }
 
 impl PresenceCoordinatorHandle {
-    pub fn start(app: tauri::AppHandle, reduced_motion: bool) -> Self {
+    pub fn start(app: tauri::AppHandle, config: PresenceCoordinatorConfig) -> Self {
         let latest_placement = Arc::new(RwLock::new(None));
         let shutdown = Arc::new(AtomicBool::new(false));
-        let reduced_motion = Arc::new(AtomicBool::new(reduced_motion));
+        let reduced_motion = Arc::new(AtomicBool::new(config.reduced_motion));
+        let hover_enabled = Arc::new(AtomicBool::new(config.hover_enabled));
+        let hover_dwell_ms = Arc::new(AtomicU64::new(u64::from(config.hover_dwell_ms)));
+        let repositioning = Arc::new(AtomicBool::new(false));
         let thread_placement = Arc::clone(&latest_placement);
         let thread_shutdown = Arc::clone(&shutdown);
         let thread_reduced_motion = Arc::clone(&reduced_motion);
+        let thread_hover_enabled = Arc::clone(&hover_enabled);
+        let thread_hover_dwell_ms = Arc::clone(&hover_dwell_ms);
+        let thread_repositioning = Arc::clone(&repositioning);
         let _ = thread::Builder::new()
             .name("fairy-presence-coordinator".to_owned())
             .spawn(move || {
@@ -297,12 +380,18 @@ impl PresenceCoordinatorHandle {
                     thread_placement,
                     thread_shutdown,
                     thread_reduced_motion,
+                    thread_hover_enabled,
+                    thread_hover_dwell_ms,
+                    thread_repositioning,
                 )
             });
         Self {
             latest_placement,
             shutdown,
             reduced_motion,
+            hover_enabled,
+            hover_dwell_ms,
+            repositioning,
         }
     }
 
@@ -312,6 +401,25 @@ impl PresenceCoordinatorHandle {
 
     pub fn set_reduced_motion(&self, reduced_motion: bool) {
         self.reduced_motion.store(reduced_motion, Ordering::Release);
+    }
+
+    pub fn set_preferences(&self, config: PresenceCoordinatorConfig) {
+        self.reduced_motion
+            .store(config.reduced_motion, Ordering::Release);
+        self.hover_enabled
+            .store(config.hover_enabled, Ordering::Release);
+        self.hover_dwell_ms
+            .store(u64::from(config.hover_dwell_ms), Ordering::Release);
+    }
+
+    pub fn set_repositioning(&self, repositioning: bool) {
+        self.repositioning.store(repositioning, Ordering::Release);
+    }
+
+    pub fn set_latest_placement(&self, placement: PresenceWindowPlacement) {
+        if let Ok(mut value) = self.latest_placement.write() {
+            *value = Some(placement);
+        }
     }
 }
 
@@ -326,6 +434,9 @@ fn run_coordinator(
     latest_placement: Arc<RwLock<Option<PresenceWindowPlacement>>>,
     shutdown: Arc<AtomicBool>,
     reduced_motion: Arc<AtomicBool>,
+    hover_enabled: Arc<AtomicBool>,
+    hover_dwell_ms: Arc<AtomicU64>,
+    repositioning: Arc<AtomicBool>,
 ) {
     let started = Instant::now();
     let mut tracker = CursorTracker::default();
@@ -343,6 +454,13 @@ fn run_coordinator(
             interaction.suspend(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
             thread::sleep(HIDDEN_POLL_INTERVAL);
             continue;
+        }
+        if repositioning.load(Ordering::Acquire) {
+            if let Ok(value) = latest_placement.read() {
+                if value.is_some() {
+                    placement = *value;
+                }
+            }
         }
         if placement.is_none() || placement_refreshed_at.elapsed() >= PLACEMENT_REFRESH_INTERVAL {
             if let Some(next) = refresh_placement(&app, &render, placement) {
@@ -365,16 +483,20 @@ fn run_coordinator(
             current_placement.scale_factor,
         );
         let reduced_motion = reduced_motion.load(Ordering::Acquire);
+        let hover_enabled = hover_enabled.load(Ordering::Acquire);
+        let hover_dwell_ms = hover_dwell_ms.load(Ordering::Acquire);
+        let repositioning = repositioning.load(Ordering::Acquire);
         let (pointer_over_input, input_focused) = input_pointer_state(&app, point);
+        let effective_cursor_band = configured_cursor_band(cursor, hover_enabled, hover_dwell_ms);
         let phase = interaction.advance(PresenceInteractionSignal {
             sampled_at_ms,
-            cursor_band: cursor.band,
+            cursor_band: effective_cursor_band,
             cursor_speed_px_s: cursor.speed_px_s,
             pointer_over_input,
             input_focused,
             reduced_motion,
             suspended: false,
-            repositioning: false,
+            repositioning,
         });
         sequence = sequence.saturating_add(1);
         let snapshot = PresenceInteractionSnapshot {

@@ -185,7 +185,7 @@ test("pet input reuses one streaming turn and keeps voice and approval isolated"
 
 test("hover input stays passive until the 520ms interaction gate", async ({
   browser,
-}) => {
+}, testInfo) => {
   const context = await browser.newContext({ viewport: { width: 372, height: 72 } });
   const page = await context.newPage();
   await page.goto("/?surface=pet-input");
@@ -220,6 +220,85 @@ test("hover input stays passive until the 520ms interaction gate", async ({
   await expect(input).not.toBeFocused();
   await input.click();
   await expect(input).toBeFocused();
+  const grip = page.getByRole("button", { name: "Move Fairy" });
+  await expect(grip).toBeVisible();
+  const bounds = await grip.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.mouse.move((bounds?.x ?? 0) + 5, (bounds?.y ?? 0) + 5);
+  await page.mouse.down();
+  await expect(surface).toHaveAttribute("data-moving", "true");
+  await page.mouse.move((bounds?.x ?? 0) + 24, (bounds?.y ?? 0) + 14);
+  await page.mouse.up();
+  await expect(surface).toHaveAttribute("data-moving", "false");
+  expect(await overflow(page)).toEqual({ horizontal: 0, vertical: 0 });
+  await page.screenshot({
+    path: testInfo.outputPath("pet-input-grip.png"),
+    omitBackground: true,
+  });
+  await context.close();
+});
+
+test("render settings switch modes through the safe companion-only channel", async ({
+  browser,
+}, testInfo) => {
+  const context = await browser.newContext({ viewport: { width: 640, height: 260 } });
+  const page = await context.newPage();
+  await page.goto("/?surface=pet-render");
+  await expect(page.getByTestId("presence-renderer")).toHaveAttribute(
+    "data-renderer",
+    "liquid",
+  );
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel("fairy.presence.render-settings.v1");
+    channel.postMessage({
+      kind: "render-settings.snapshot",
+      settings: {
+        schema_version: 1,
+        mode: "compatibility",
+        size_scale: 0.75,
+        opacity: 0.4,
+        motion_enabled: false,
+        particles_enabled: false,
+      },
+    });
+    window.setTimeout(() => channel.close(), 100);
+  });
+  await expect(page.getByTestId("presence-renderer")).toHaveAttribute(
+    "data-renderer",
+    "compatibility",
+  );
+  await expect(page.getByTestId("presence-render-surface")).toHaveAttribute(
+    "data-reduced-motion",
+    "true",
+  );
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel("fairy.presence.render-settings.v1");
+    channel.postMessage({
+      kind: "render-settings.snapshot",
+      settings: {
+        schema_version: 1,
+        mode: "liquid",
+        size_scale: 1.5,
+        opacity: 1,
+        motion_enabled: true,
+        particles_enabled: false,
+      },
+    });
+    window.setTimeout(() => channel.close(), 100);
+  });
+  await expect(page.getByTestId("presence-renderer")).toHaveAttribute(
+    "data-renderer",
+    "liquid",
+  );
+  await advanceInteraction(page, "right", 96);
+  const screenshot = await page.screenshot({
+    path: testInfo.outputPath("pet-render-size-150.png"),
+    omitBackground: true,
+  });
+  const pixels = PNG.sync.read(screenshot);
+  expect(alphaAt(pixels, 0, 130)).toBeLessThanOrEqual(4);
+  expect(alphaAt(pixels, 639, 130)).toBeLessThanOrEqual(4);
+  expect(alphaAt(pixels, 112, 130)).toBeGreaterThan(20);
   await context.close();
 });
 
