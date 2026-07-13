@@ -12,6 +12,7 @@ from uuid import UUID
 from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import ScopeContract, Task
+from fairy_core.providers.models import ProviderAttemptStatus, ProviderErrorCategory
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _MAX_MESSAGE_LENGTH = 1_000_000
@@ -53,6 +54,63 @@ class ToolInvocationStatus(StrEnum):
     FAILED = "failed"
     REJECTED = "rejected"
     CANCELLED = "cancelled"
+
+
+@dataclass(slots=True)
+class ProviderAttempt:
+    id: UUID
+    turn_id: UUID
+    task_id: UUID
+    model_round: int
+    attempt_number: int
+    profile_id: str
+    status: ProviderAttemptStatus = ProviderAttemptStatus.STARTED
+    error_category: ProviderErrorCategory | None = None
+    usage: dict[str, int] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=_now)
+    completed_at: datetime | None = None
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        turn: AssistantTurn,
+        model_round: int,
+        attempt_number: int,
+        profile_id: str,
+    ) -> ProviderAttempt:
+        if isinstance(model_round, bool) or model_round < 1:
+            raise ValueError("provider attempt model_round must be positive")
+        if isinstance(attempt_number, bool) or attempt_number < 1:
+            raise ValueError("provider attempt number must be positive")
+        return cls(
+            id=new_id(),
+            turn_id=turn.id,
+            task_id=turn.task_id,
+            model_round=model_round,
+            attempt_number=attempt_number,
+            profile_id=_required_text(profile_id, "profile_id", maximum=255),
+        )
+
+    def succeed(self, usage: dict[str, int]) -> None:
+        if self.status is not ProviderAttemptStatus.STARTED:
+            raise InvalidTransitionError("provider attempt is already terminal")
+        self.status = ProviderAttemptStatus.SUCCEEDED
+        self.usage = _normalized_usage(usage)
+        self.completed_at = _now()
+
+    def fail(
+        self,
+        *,
+        error_category: ProviderErrorCategory,
+        usage: dict[str, int],
+    ) -> None:
+        if self.status is not ProviderAttemptStatus.STARTED:
+            raise InvalidTransitionError("provider attempt is already terminal")
+        self.status = ProviderAttemptStatus.FAILED
+        self.error_category = ProviderErrorCategory(error_category)
+        self.usage = _normalized_usage(usage)
+        self.completed_at = _now()
 
 
 _TURN_TRANSITIONS: dict[AssistantTurnStatus, frozenset[AssistantTurnStatus]] = {
@@ -465,12 +523,22 @@ def _require_digest(value: str, name: str) -> None:
         raise ValueError(f"{name} must be a lowercase SHA-256 digest")
 
 
+def _normalized_usage(usage: dict[str, int]) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for name, value in usage.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("provider attempt usage must contain non-negative integers")
+        result[_required_text(name, "usage name", maximum=128)] = value
+    return result
+
+
 __all__ = [
     "AssistantTurn",
     "AssistantTurnStatus",
     "Message",
     "MessageRole",
     "MessageVisibility",
+    "ProviderAttempt",
     "ToolInvocation",
     "ToolInvocationStatus",
 ]

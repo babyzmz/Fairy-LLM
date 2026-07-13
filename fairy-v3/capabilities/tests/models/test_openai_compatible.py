@@ -19,7 +19,8 @@ from fairy_core.providers import (
     ProviderKind,
     ProviderProfile,
     ProviderProtocolError,
-    ProviderUnavailableError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
     SecretValue,
 )
 
@@ -328,7 +329,7 @@ def test_stream_serializes_task_bound_png_as_an_inline_multimodal_part() -> None
                 429,
                 json={"error": {"message": "upstream-secret-detail"}},
             ),
-            ProviderUnavailableError,
+            ProviderRateLimitError,
         ),
         (
             httpx.Response(
@@ -368,7 +369,7 @@ def test_stream_translates_timeout_without_leaking_request() -> None:
         client=httpx.Client(transport=httpx.MockTransport(timeout)),
     )
 
-    with pytest.raises(ProviderUnavailableError, match="timed out") as captured:
+    with pytest.raises(ProviderTimeoutError, match="timed out") as captured:
         tuple(provider.stream(_request(), CancellationToken()))
     assert "fixture-secret" not in str(captured.value)
 

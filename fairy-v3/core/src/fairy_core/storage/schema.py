@@ -404,6 +404,42 @@ assistant_turns = Table(
     ),
 )
 
+assistant_provider_attempts = Table(
+    "core_assistant_provider_attempts",
+    state_metadata,
+    _tenant_id(),
+    _id(),
+    Column("turn_id", String(ID_LENGTH), nullable=False),
+    Column("task_id", String(ID_LENGTH), nullable=False),
+    Column("model_round", BigInteger, nullable=False),
+    Column("attempt_number", BigInteger, nullable=False),
+    Column("profile_id", String(255), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("error_category", String(32)),
+    Column("usage", JSON, nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("completed_at", UTCDateTime()),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_assistant_provider_attempts"),
+    UniqueConstraint(
+        "tenant_id",
+        "turn_id",
+        "model_round",
+        "attempt_number",
+        name="uq_core_assistant_provider_attempts_turn_round_number",
+    ),
+    CheckConstraint("model_round > 0", name="ck_core_provider_attempts_model_round"),
+    CheckConstraint("attempt_number > 0", name="ck_core_provider_attempts_number"),
+    CheckConstraint(
+        "status IN ('started', 'succeeded', 'failed')",
+        name="ck_core_provider_attempts_status",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "turn_id", "task_id"],
+        [assistant_turns.c.tenant_id, assistant_turns.c.id, assistant_turns.c.task_id],
+        name="fk_core_provider_attempts_turn_task",
+    ),
+)
+
 assistant_message_sequences = Table(
     "core_assistant_message_sequences",
     state_metadata,
@@ -1111,6 +1147,13 @@ Index(
     assistant_turns.c.tenant_id,
     assistant_turns.c.task_id,
     assistant_turns.c.created_at,
+)
+Index(
+    "ix_core_provider_attempts_tenant_turn",
+    assistant_provider_attempts.c.tenant_id,
+    assistant_provider_attempts.c.turn_id,
+    assistant_provider_attempts.c.model_round,
+    assistant_provider_attempts.c.attempt_number,
 )
 Index(
     "ix_core_assistant_messages_tenant_conversation",

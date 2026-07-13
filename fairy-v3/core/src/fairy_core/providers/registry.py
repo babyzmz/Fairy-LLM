@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 from fairy_core.providers.models import (
     ModelDelta,
+    ModelDeltaKind,
     ModelRequest,
+    ProviderAttemptEvent,
+    ProviderAttemptStatus,
+    ProviderErrorCategory,
     ProviderHealth,
     ProviderProfile,
     PublicProviderProfile,
@@ -12,9 +16,19 @@ from fairy_core.providers.models import (
 from fairy_core.providers.ports import (
     CancellationToken,
     ModelProvider,
+    ProviderAuthenticationError,
+    ProviderCancelledError,
+    ProviderContentRejectedError,
+    ProviderContextLengthError,
+    ProviderError,
+    ProviderNetworkError,
     ProviderProtocolError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
     ProviderUnavailableError,
 )
+
+AttemptObserver = Callable[[ProviderAttemptEvent], None]
 
 
 class ProviderRegistry:
@@ -51,27 +65,75 @@ class ProviderRegistry:
         self,
         request: ModelRequest,
         cancellation: CancellationToken,
+        *,
+        on_attempt: AttemptObserver | None = None,
     ) -> Iterator[ModelDelta]:
         cancellation.raise_if_cancelled()
-        provider = self._require_provider(request.profile_id)
-        self._validate_request(provider, request)
-        emitted = False
-        try:
-            for delta in self._validated_stream(provider, request, cancellation):
-                emitted = True
-                yield delta
-        except ProviderUnavailableError:
-            if emitted or provider.profile.fallback_profile_id is None:
-                raise
+        primary = self._require_provider(request.profile_id)
+        candidates = [primary, primary]
+        if primary.profile.fallback_profile_id is not None:
+            candidates.append(self._require_provider(primary.profile.fallback_profile_id))
+        last_error: ProviderError | None = None
+        for attempt_number, provider in enumerate(candidates, start=1):
             cancellation.raise_if_cancelled()
-            fallback = self._require_provider(provider.profile.fallback_profile_id)
-            fallback_request = request.for_profile(fallback.profile.id)
-            self._validate_request(fallback, fallback_request)
-            yield from self._validated_stream(
-                fallback,
-                fallback_request,
-                cancellation,
+            attempt_request = request.for_profile(provider.profile.id)
+            self._validate_request(provider, attempt_request)
+            _notify_attempt(
+                on_attempt,
+                ProviderAttemptEvent(
+                    profile_id=provider.profile.id,
+                    attempt_number=attempt_number,
+                    status=ProviderAttemptStatus.STARTED,
+                ),
             )
+            emitted = False
+            usage: dict[str, int] = {}
+            try:
+                for delta in self._validated_stream(provider, attempt_request, cancellation):
+                    emitted = True
+                    if delta.kind is ModelDeltaKind.USAGE:
+                        for key, value in delta.usage.items():
+                            usage[key] = usage.get(key, 0) + value
+                    yield delta
+                _notify_attempt(
+                    on_attempt,
+                    ProviderAttemptEvent(
+                        profile_id=provider.profile.id,
+                        attempt_number=attempt_number,
+                        status=ProviderAttemptStatus.SUCCEEDED,
+                        usage=usage,
+                    ),
+                )
+                return
+            except ProviderCancelledError:
+                _notify_attempt(
+                    on_attempt,
+                    ProviderAttemptEvent(
+                        profile_id=provider.profile.id,
+                        attempt_number=attempt_number,
+                        status=ProviderAttemptStatus.FAILED,
+                        error_category=ProviderErrorCategory.CANCELLED,
+                        usage=usage,
+                    ),
+                )
+                raise
+            except ProviderError as error:
+                last_error = error
+                category = _error_category(error)
+                _notify_attempt(
+                    on_attempt,
+                    ProviderAttemptEvent(
+                        profile_id=provider.profile.id,
+                        attempt_number=attempt_number,
+                        status=ProviderAttemptStatus.FAILED,
+                        error_category=category,
+                        usage=usage,
+                    ),
+                )
+                if emitted or not _retryable(category):
+                    raise
+        assert last_error is not None
+        raise last_error
 
     @staticmethod
     def _validated_stream(
@@ -135,3 +197,38 @@ class ProviderRegistry:
                 raise ValueError("provider fallback cycle is not allowed")
             visited.add(current)
             current = self._providers[current].profile.fallback_profile_id
+
+
+def _notify_attempt(observer: AttemptObserver | None, event: ProviderAttemptEvent) -> None:
+    if observer is not None:
+        observer(event)
+
+
+def _error_category(error: ProviderError) -> ProviderErrorCategory:
+    if isinstance(error, ProviderAuthenticationError):
+        return ProviderErrorCategory.AUTHENTICATION
+    if isinstance(error, ProviderRateLimitError):
+        return ProviderErrorCategory.RATE_LIMIT
+    if isinstance(error, ProviderTimeoutError):
+        return ProviderErrorCategory.TIMEOUT
+    if isinstance(error, ProviderProtocolError):
+        return ProviderErrorCategory.PROTOCOL
+    if isinstance(error, ProviderContextLengthError):
+        return ProviderErrorCategory.CONTEXT_LENGTH
+    if isinstance(error, ProviderContentRejectedError):
+        return ProviderErrorCategory.CONTENT_REJECTED
+    if isinstance(error, ProviderNetworkError):
+        return ProviderErrorCategory.NETWORK
+    if isinstance(error, ProviderUnavailableError):
+        return ProviderErrorCategory.UNAVAILABLE
+    return ProviderErrorCategory.UNKNOWN
+
+
+def _retryable(category: ProviderErrorCategory) -> bool:
+    return category in {
+        ProviderErrorCategory.RATE_LIMIT,
+        ProviderErrorCategory.TIMEOUT,
+        ProviderErrorCategory.PROTOCOL,
+        ProviderErrorCategory.NETWORK,
+        ProviderErrorCategory.UNAVAILABLE,
+    }

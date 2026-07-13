@@ -130,8 +130,44 @@ def test_registry_falls_back_only_before_the_first_delta() -> None:
     deltas = tuple(registry.stream(_request("primary"), CancellationToken()))
 
     assert [(delta.profile_id, delta.text) for delta in deltas] == [("fallback", "Recovered")]
-    assert primary.calls == 1
+    assert primary.calls == 2
     assert fallback.calls == 1
+
+
+def test_registry_reports_each_retry_and_fallback_attempt() -> None:
+    primary = FakeProvider(
+        _profile("primary", fallback="fallback"),
+        [ProviderUnavailableError("primary unavailable")],
+    )
+    fallback = FakeProvider(_profile("fallback"), [_text("fallback", 1, "Recovered")])
+    events = []
+
+    result = tuple(
+        ProviderRegistry((primary, fallback)).stream(
+            _request("primary"),
+            CancellationToken(),
+            on_attempt=events.append,
+        )
+    )
+
+    assert result[0].text == "Recovered"
+    assert [event.status.value for event in events] == [
+        "started",
+        "failed",
+        "started",
+        "failed",
+        "started",
+        "succeeded",
+    ]
+    assert [event.profile_id for event in events] == [
+        "primary",
+        "primary",
+        "primary",
+        "primary",
+        "fallback",
+        "fallback",
+    ]
+    assert events[1].error_category.value == "unavailable"
 
     partial = FakeProvider(
         _profile("partial", fallback="fallback"),

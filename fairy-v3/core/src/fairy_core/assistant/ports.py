@@ -11,6 +11,7 @@ from fairy_core.assistant.models import (
     Message,
     MessageRole,
     MessageVisibility,
+    ProviderAttempt,
     ToolInvocation,
     ToolInvocationStatus,
 )
@@ -33,6 +34,12 @@ class AssistantRepository(Protocol):
     def get_turn(self, turn_id: UUID) -> AssistantTurn | None: ...
 
     def find_turn_by_idempotency_key(self, idempotency_key: str) -> AssistantTurn | None: ...
+
+    def save_provider_attempt(self, attempt: ProviderAttempt) -> None: ...
+
+    def update_provider_attempt(self, attempt: ProviderAttempt) -> None: ...
+
+    def list_provider_attempts(self, turn_id: UUID) -> tuple[ProviderAttempt, ...]: ...
 
     def append_message(self, message: Message) -> None: ...
 

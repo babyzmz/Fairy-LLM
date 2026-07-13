@@ -16,6 +16,7 @@ from fairy_core.assistant.models import (
     Message,
     MessageRole,
     MessageVisibility,
+    ProviderAttempt,
     ToolInvocation,
 )
 from fairy_core.commanding.bus import CommandBus, CommandRequest
@@ -34,6 +35,7 @@ from fairy_core.domain.models import (
 )
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
+from fairy_core.providers import ProviderErrorCategory
 
 _SNAPSHOT_HASH = "a" * 64
 
@@ -121,12 +123,24 @@ def test_repository_persists_turn_messages_and_tool_invocations(tmp_path: Path) 
         scope_digest=turn.scope_digest,
         arguments={"timezone": "Australia/Sydney"},
     )
+    attempt = ProviderAttempt.create(
+        turn=turn,
+        model_round=1,
+        attempt_number=1,
+        profile_id="local-default",
+    )
 
     with factory() as unit_of_work:
         unit_of_work.assistant.save_turn(turn)
         unit_of_work.assistant.append_message(user_message)
         unit_of_work.assistant.append_message(assistant_message)
         unit_of_work.assistant.save_tool_invocation(invocation)
+        unit_of_work.assistant.save_provider_attempt(attempt)
+        unit_of_work.commit()
+
+    attempt.fail(error_category=ProviderErrorCategory.TIMEOUT, usage={"input_tokens": 5})
+    with factory() as unit_of_work:
+        unit_of_work.assistant.update_provider_attempt(attempt)
         unit_of_work.commit()
 
     with factory() as unit_of_work:
@@ -142,6 +156,7 @@ def test_repository_persists_turn_messages_and_tool_invocations(tmp_path: Path) 
             cursor=first_page.next_cursor,
         )
         invocations = unit_of_work.assistant.list_tool_invocations(turn.id)
+        attempts = unit_of_work.assistant.list_provider_attempts(turn.id)
 
     assert restored == turn
     assert first_page.items == (user_message,)
@@ -149,6 +164,7 @@ def test_repository_persists_turn_messages_and_tool_invocations(tmp_path: Path) 
     assert second_page.items == (assistant_message,)
     assert second_page.next_cursor is None
     assert invocations == (invocation,)
+    assert attempts == (attempt,)
 
 
 def test_repository_is_tenant_scoped_and_cursor_is_conversation_bound(tmp_path: Path) -> None:

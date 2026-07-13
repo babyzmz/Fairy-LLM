@@ -43,6 +43,34 @@ class ModelDeltaKind(StrEnum):
     DONE = "done"
 
 
+class ProviderAttemptStatus(StrEnum):
+    STARTED = "started"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class ProviderErrorCategory(StrEnum):
+    AUTHENTICATION = "authentication"
+    RATE_LIMIT = "rate_limit"
+    TIMEOUT = "timeout"
+    PROTOCOL = "protocol"
+    CONTEXT_LENGTH = "context_length"
+    CONTENT_REJECTED = "content_rejected"
+    NETWORK = "network"
+    UNAVAILABLE = "unavailable"
+    CANCELLED = "cancelled"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderAttemptEvent:
+    profile_id: str
+    attempt_number: int
+    status: ProviderAttemptStatus
+    error_category: ProviderErrorCategory | None = None
+    usage: Mapping[str, int] = field(default_factory=dict)
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderProfile:
     id: str

@@ -14,6 +14,7 @@ from fairy_core.assistant.models import (
     Message,
     MessageRole,
     MessageVisibility,
+    ProviderAttempt,
     ToolInvocation,
     ToolInvocationStatus,
 )
@@ -42,9 +43,19 @@ from fairy_core.providers import (
     ModelRequest,
     ModelRole,
     ModelToolCall,
+    ProviderAttemptEvent,
+    ProviderAttemptStatus,
+    ProviderAuthenticationError,
     ProviderCancelledError,
+    ProviderContentRejectedError,
+    ProviderContextLengthError,
     ProviderError,
+    ProviderErrorCategory,
+    ProviderNetworkError,
+    ProviderProtocolError,
+    ProviderRateLimitError,
     ProviderRegistry,
+    ProviderTimeoutError,
     ProviderUnavailableError,
 )
 
@@ -128,7 +139,11 @@ class AssistantApplication:
                 }
                 candidates: dict[str, ToolCandidate] = {}
                 round_text: list[str] = []
-                for delta in self._providers.stream(request, cancellation):
+                for delta in self._providers.stream(
+                    request,
+                    cancellation,
+                    on_attempt=self._provider_attempt_observer(turn_id, model_round),
+                ):
                     cancellation.raise_if_cancelled()
                     self._ensure_turn_active(turn_id)
                     if delta.kind is ModelDeltaKind.TEXT:
@@ -252,11 +267,53 @@ class AssistantApplication:
             )
         except (ProviderCancelledError, McpCancelledError):
             return self._cancel_turn(turn_id, current_run)
+        except ProviderAuthenticationError:
+            return self._fail_turn(
+                turn_id,
+                current_run,
+                error_code="PROVIDER_AUTHENTICATION_FAILED",
+            )
+        except ProviderRateLimitError:
+            return self._fail_turn(
+                turn_id,
+                current_run,
+                error_code="PROVIDER_RATE_LIMITED",
+            )
+        except ProviderTimeoutError:
+            return self._fail_turn(
+                turn_id,
+                current_run,
+                error_code="PROVIDER_TIMEOUT",
+            )
+        except ProviderProtocolError:
+            return self._fail_turn(
+                turn_id,
+                current_run,
+                error_code="PROVIDER_PROTOCOL_ERROR",
+            )
+        except ProviderContextLengthError:
+            return self._fail_turn(
+                turn_id,
+                current_run,
+                error_code="PROVIDER_CONTEXT_LENGTH_EXCEEDED",
+            )
+        except ProviderContentRejectedError:
+            return self._fail_turn(
+                turn_id,
+                current_run,
+                error_code="PROVIDER_CONTENT_REJECTED",
+            )
+        except ProviderNetworkError:
+            return self._fail_turn(
+                turn_id,
+                current_run,
+                error_code="PROVIDER_NETWORK_ERROR",
+            )
         except ProviderUnavailableError:
             return self._fail_turn(
                 turn_id,
                 current_run,
-                error_code="CAPABILITY_NOT_AVAILABLE",
+                error_code="PROVIDER_UNAVAILABLE",
             )
         except ProviderError:
             return self._fail_turn(
@@ -291,6 +348,61 @@ class AssistantApplication:
             AssistantTurnStatus.FAILED,
         }:
             self._image_attachments.release(turn_id)
+
+    def _provider_attempt_observer(self, turn_id: UUID, model_round: int):
+        attempts: dict[int, ProviderAttempt] = {}
+        with self._unit_of_work_factory() as unit_of_work:
+            existing = unit_of_work.assistant.list_provider_attempts(turn_id)
+            round_attempts = tuple(
+                attempt for attempt in existing if attempt.model_round == model_round
+            )
+            interrupted = False
+            for attempt in round_attempts:
+                if attempt.status is ProviderAttemptStatus.STARTED:
+                    attempt.fail(
+                        error_category=ProviderErrorCategory.UNKNOWN,
+                        usage=dict(attempt.usage),
+                    )
+                    unit_of_work.assistant.update_provider_attempt(attempt)
+                    interrupted = True
+            if interrupted:
+                unit_of_work.commit()
+        attempt_offset = max(
+            (attempt.attempt_number for attempt in round_attempts),
+            default=0,
+        )
+
+        def observe(event: ProviderAttemptEvent) -> None:
+            if event.status is ProviderAttemptStatus.STARTED:
+                with self._unit_of_work_factory() as unit_of_work:
+                    turn = _require_turn(unit_of_work, turn_id)
+                    attempt = ProviderAttempt.create(
+                        turn=turn,
+                        model_round=model_round,
+                        attempt_number=attempt_offset + event.attempt_number,
+                        profile_id=event.profile_id,
+                    )
+                    unit_of_work.assistant.save_provider_attempt(attempt)
+                    unit_of_work.commit()
+                attempts[event.attempt_number] = attempt
+                return
+            attempt = attempts.get(event.attempt_number)
+            if attempt is None:
+                raise RuntimeError("Provider Attempt terminal event has no durable start")
+            if event.status is ProviderAttemptStatus.SUCCEEDED:
+                attempt.succeed(dict(event.usage))
+            else:
+                if event.error_category is None:
+                    raise RuntimeError("failed Provider Attempt has no error category")
+                attempt.fail(
+                    error_category=event.error_category,
+                    usage=dict(event.usage),
+                )
+            with self._unit_of_work_factory() as unit_of_work:
+                unit_of_work.assistant.update_provider_attempt(attempt)
+                unit_of_work.commit()
+
+        return observe
 
     def _start_model_round(
         self,

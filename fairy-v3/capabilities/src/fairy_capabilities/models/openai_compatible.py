@@ -11,10 +11,16 @@ from fairy_core.providers import (
     ModelDelta,
     ModelRequest,
     ModelRole,
+    ProviderAuthenticationError,
+    ProviderContentRejectedError,
+    ProviderContextLengthError,
     ProviderHealth,
     ProviderHealthStatus,
+    ProviderNetworkError,
     ProviderProfile,
     ProviderProtocolError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
     ProviderUnavailableError,
     SecretValue,
 )
@@ -107,9 +113,7 @@ class OpenAICompatibleProvider:
                 timeout=self.profile.timeout_seconds,
             ) as response:
                 if not 200 <= response.status_code < 300:
-                    raise ProviderUnavailableError(
-                        f"provider request failed ({_status_error_code(response.status_code)})"
-                    )
+                    raise _response_error(response)
                 for line in response.iter_lines():
                     cancellation.raise_if_cancelled()
                     stripped = line.strip()
@@ -129,7 +133,7 @@ class OpenAICompatibleProvider:
                         return
                     payload = _parse_frame(data)
                     if payload.get("error") is not None:
-                        raise ProviderUnavailableError("provider stream reported an error")
+                        raise _stream_error(payload)
                     choices = payload.get("choices", ())
                     if not isinstance(choices, list):
                         raise ProviderProtocolError("provider frame choices must be a list")
@@ -196,9 +200,9 @@ class OpenAICompatibleProvider:
         except (ProviderProtocolError, ProviderUnavailableError):
             raise
         except httpx.TimeoutException as error:
-            raise ProviderUnavailableError("provider request timed out") from error
+            raise ProviderTimeoutError("provider request timed out") from error
         except httpx.HTTPError as error:
-            raise ProviderUnavailableError("provider transport failed") from error
+            raise ProviderNetworkError("provider transport failed") from error
 
     def _headers(self) -> dict[str, str]:
         headers = {
@@ -355,3 +359,45 @@ def _status_error_code(status_code: int) -> str:
     if status_code >= 500:
         return "PROVIDER_UPSTREAM_ERROR"
     return "PROVIDER_REQUEST_REJECTED"
+
+
+def _response_error(response: httpx.Response) -> Exception:
+    code = _safe_error_code(response)
+    if response.status_code in {401, 403}:
+        return ProviderAuthenticationError("provider authentication failed")
+    if response.status_code == 429:
+        return ProviderRateLimitError("provider rate limit exceeded")
+    if response.status_code in {408, 504}:
+        return ProviderTimeoutError("provider request timed out")
+    if code in {"context_length_exceeded", "max_tokens_exceeded"}:
+        return ProviderContextLengthError("provider context length exceeded")
+    if code in {"content_filter", "content_policy_violation"}:
+        return ProviderContentRejectedError("provider rejected the requested content")
+    if response.status_code >= 500:
+        return ProviderNetworkError("provider upstream is unavailable")
+    return ProviderUnavailableError(
+        f"provider request failed ({_status_error_code(response.status_code)})"
+    )
+
+
+def _stream_error(payload: Mapping[str, Any]) -> Exception:
+    raw = payload.get("error")
+    code = raw.get("code") if isinstance(raw, dict) else None
+    normalized = str(code).strip().lower() if code is not None else ""
+    if normalized in {"context_length_exceeded", "max_tokens_exceeded"}:
+        return ProviderContextLengthError("provider context length exceeded")
+    if normalized in {"content_filter", "content_policy_violation"}:
+        return ProviderContentRejectedError("provider rejected the requested content")
+    if normalized in {"rate_limit_exceeded", "rate_limited"}:
+        return ProviderRateLimitError("provider rate limit exceeded")
+    return ProviderNetworkError("provider stream reported an error")
+
+
+def _safe_error_code(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except (ValueError, json.JSONDecodeError):
+        return ""
+    raw = payload.get("error") if isinstance(payload, dict) else None
+    code = raw.get("code") if isinstance(raw, dict) else None
+    return str(code).strip().lower() if code is not None else ""

@@ -23,6 +23,7 @@ from fairy_core.assistant.models import (
     Message,
     MessageRole,
     MessageVisibility,
+    ProviderAttempt,
     ToolInvocation,
     ToolInvocationStatus,
 )
@@ -36,6 +37,7 @@ from fairy_core.storage.schema import (
     assistant_imported_messages,
     assistant_message_sequences,
     assistant_messages,
+    assistant_provider_attempts,
     assistant_tool_invocations,
     assistant_turns,
     conversation_moves,
@@ -126,6 +128,53 @@ class SqlAlchemyAssistantRepository:
             )
         )
         return self._turn_from_row(row) if row is not None else None
+
+    def save_provider_attempt(self, attempt: ProviderAttempt) -> None:
+        with self._session.write() as connection:
+            connection.execute(
+                insert(assistant_provider_attempts).values(
+                    tenant_id=self._tenant_id,
+                    **self._provider_attempt_values(attempt),
+                )
+            )
+
+    def update_provider_attempt(self, attempt: ProviderAttempt) -> None:
+        with self._session.write() as connection:
+            result = connection.execute(
+                update(assistant_provider_attempts)
+                .where(
+                    assistant_provider_attempts.c.tenant_id == self._tenant_id,
+                    assistant_provider_attempts.c.id == str(attempt.id),
+                    assistant_provider_attempts.c.status == "started",
+                )
+                .values(
+                    status=attempt.status.value,
+                    error_category=(
+                        attempt.error_category.value
+                        if attempt.error_category is not None
+                        else None
+                    ),
+                    usage=dict(attempt.usage),
+                    completed_at=attempt.completed_at,
+                )
+            )
+        if result.rowcount != 1:
+            raise InvalidTransitionError("Provider Attempt changed concurrently")
+
+    def list_provider_attempts(self, turn_id: UUID) -> tuple[ProviderAttempt, ...]:
+        with self._session.read() as connection:
+            rows = connection.execute(
+                select(assistant_provider_attempts)
+                .where(
+                    assistant_provider_attempts.c.tenant_id == self._tenant_id,
+                    assistant_provider_attempts.c.turn_id == str(turn_id),
+                )
+                .order_by(
+                    assistant_provider_attempts.c.model_round,
+                    assistant_provider_attempts.c.attempt_number,
+                )
+            ).mappings().all()
+        return tuple(self._provider_attempt_from_row(row) for row in rows)
 
     def append_message(self, message: Message) -> None:
         values = {
@@ -645,6 +694,46 @@ class SqlAlchemyAssistantRepository:
             created_at=_datetime(row["created_at"]),
             updated_at=_datetime(row["updated_at"]),
             started_at=_optional_datetime(row["started_at"]),
+            completed_at=_optional_datetime(row["completed_at"]),
+        )
+
+    @staticmethod
+    def _provider_attempt_values(attempt: ProviderAttempt) -> dict[str, object]:
+        return {
+            "id": str(attempt.id),
+            "turn_id": str(attempt.turn_id),
+            "task_id": str(attempt.task_id),
+            "model_round": attempt.model_round,
+            "attempt_number": attempt.attempt_number,
+            "profile_id": attempt.profile_id,
+            "status": attempt.status.value,
+            "error_category": (
+                attempt.error_category.value if attempt.error_category is not None else None
+            ),
+            "usage": dict(attempt.usage),
+            "created_at": attempt.created_at,
+            "completed_at": attempt.completed_at,
+        }
+
+    @staticmethod
+    def _provider_attempt_from_row(row: Mapping[str, Any]) -> ProviderAttempt:
+        from fairy_core.providers import ProviderAttemptStatus, ProviderErrorCategory
+
+        return ProviderAttempt(
+            id=UUID(row["id"]),
+            turn_id=UUID(row["turn_id"]),
+            task_id=UUID(row["task_id"]),
+            model_round=int(row["model_round"]),
+            attempt_number=int(row["attempt_number"]),
+            profile_id=row["profile_id"],
+            status=ProviderAttemptStatus(row["status"]),
+            error_category=(
+                ProviderErrorCategory(row["error_category"])
+                if row["error_category"] is not None
+                else None
+            ),
+            usage={name: int(value) for name, value in row["usage"].items()},
+            created_at=_datetime(row["created_at"]),
             completed_at=_optional_datetime(row["completed_at"]),
         )
 

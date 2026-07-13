@@ -20,6 +20,30 @@ class ProviderUnavailableError(ProviderError):
     pass
 
 
+class ProviderAuthenticationError(ProviderError):
+    pass
+
+
+class ProviderRateLimitError(ProviderError):
+    pass
+
+
+class ProviderTimeoutError(ProviderError):
+    pass
+
+
+class ProviderContextLengthError(ProviderError):
+    pass
+
+
+class ProviderContentRejectedError(ProviderError):
+    pass
+
+
+class ProviderNetworkError(ProviderError):
+    pass
+
+
 class ProviderProtocolError(ProviderError):
     pass
 
