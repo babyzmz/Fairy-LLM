@@ -51,6 +51,7 @@ class TaskWorkspace:
     editable_files: tuple[str, ...]
     reference_files: tuple[str, ...]
     constraints: Mapping[str, Any]
+    workspace_id: UUID | None = None
     generation: int = 1
     created_at: datetime = field(default_factory=_now)
 
@@ -58,8 +59,8 @@ class TaskWorkspace:
         root = self.root.resolve(strict=True)
         if not root.is_dir():
             raise ValueError("Task Workspace root must be a directory")
-        if (self.project_id is None) != (self.version_id is None):
-            raise ValueError("project and Version bindings must both be present or absent")
+        if self.workspace_id is None:
+            object.__setattr__(self, "workspace_id", self.project_id or self.conversation_id)
         if self.generation < 1:
             raise ValueError("Task Workspace generation must be positive")
         editable = tuple(dict.fromkeys(_relative_path(value) for value in self.editable_files))
@@ -100,14 +101,17 @@ class ProjectFile:
 
 @dataclass(frozen=True, slots=True)
 class ProjectIndex:
-    project_id: UUID
+    project_id: UUID | None
     version_id: UUID
     generation: int
     source_hash: str
     files: tuple[ProjectFile, ...]
+    workspace_id: UUID | None = None
     created_at: datetime = field(default_factory=_now)
 
     def __post_init__(self) -> None:
+        if self.workspace_id is None:
+            object.__setattr__(self, "workspace_id", self.project_id or self.version_id)
         if self.generation < 1:
             raise ValueError("Project Index generation must be positive")
         if _DIGEST.fullmatch(self.source_hash) is None:

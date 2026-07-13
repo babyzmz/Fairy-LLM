@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fairy_core.domain.models import Conversation, ScopeContract, Task, Version
+from fairy_core.domain.models import Conversation, ScopeContract, Task, Version, WorkspaceType
 from fairy_core.workspace.ports import WorkspaceProvisioner
 
 
@@ -13,20 +13,18 @@ def build_task_scope(
 ) -> ScopeContract:
     if target_version is not None:
         root = target_version.project_root
-        read_scope = (
-            "project_canonical",
-            "current_conversation",
-            "user_profile",
-            "task_episode",
-            "current_version",
-        )
-        network_policy = "project_safe"
+        read_scope = ("current_conversation", "user_profile", "task_episode", "current_version")
     else:
         root = workspaces.scratch_path(conversation.id, task.id).resolve(strict=False)
         read_scope = ("current_conversation", "user_profile", "task_episode")
+    if conversation.workspace_type is WorkspaceType.PROJECT_CHAT:
+        read_scope = ("project_canonical", *read_scope)
+        network_policy = "project_safe"
+    else:
         network_policy = "open_web_safe"
     return ScopeContract.create(
         workspace_type=conversation.workspace_type,
+        workspace_id=task.workspace_id,
         project_id=task.project_id,
         conversation_id=conversation.id,
         task_id=task.id,

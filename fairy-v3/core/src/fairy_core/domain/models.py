@@ -61,6 +61,32 @@ class TaskStatus(StrEnum):
     FAILED = "failed"
 
 
+@dataclass(slots=True)
+class Workspace:
+    id: UUID
+    active_version_id: UUID | None = None
+    active_preview_id: UUID | None = None
+    revision: int = 0
+    max_files: int = 200
+    max_bytes: int = 20 * 1024 * 1024
+    created_at: datetime = field(default_factory=_now)
+    updated_at: datetime = field(default_factory=_now)
+
+    @classmethod
+    def create(cls, *, workspace_id: UUID | None = None) -> Workspace:
+        return cls(id=workspace_id or new_id())
+
+    def accept_version(self, version_id: UUID, *, expected_revision: int) -> None:
+        if expected_revision != self.revision:
+            raise VersionConflictError(
+                f"expected workspace revision {expected_revision}, "
+                f"current revision is {self.revision}"
+            )
+        self.active_version_id = version_id
+        self.revision += 1
+        self.updated_at = _now()
+
+
 _TASK_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
     TaskStatus.CREATED: frozenset({TaskStatus.RESOLVING_SCOPE}),
     TaskStatus.RESOLVING_SCOPE: frozenset(
@@ -129,6 +155,7 @@ class Project:
     id: UUID
     name: str
     residency: ProjectResidency
+    workspace_id: UUID = field(default_factory=new_id)
     active_version_id: UUID | None = None
     active_preview_id: UUID | None = None
     revision: int = 0
@@ -140,7 +167,13 @@ class Project:
         normalized = name.strip()
         if not normalized:
             raise ValueError("project name is required")
-        return cls(id=new_id(), name=normalized, residency=residency)
+        project_id = new_id()
+        return cls(
+            id=project_id,
+            name=normalized,
+            residency=residency,
+            workspace_id=project_id,
+        )
 
     def accept_version(self, version_id: UUID, *, expected_revision: int) -> None:
         if expected_revision != self.revision:
@@ -159,6 +192,7 @@ class Conversation:
     project_id: UUID | None
     workspace_type: WorkspaceType
     base_version_id: UUID | None
+    workspace_id: UUID | None = None
     active_draft_version_id: UUID | None = None
     active_task_id: UUID | None = None
     active_preview_id: UUID | None = None
@@ -169,6 +203,10 @@ class Conversation:
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
 
+    def __post_init__(self) -> None:
+        if self.workspace_id is None:
+            self.workspace_id = self.project_id or self.id
+
     @classmethod
     def create(
         cls,
@@ -176,6 +214,7 @@ class Conversation:
         project_id: UUID | None,
         workspace_type: WorkspaceType,
         base_version_id: UUID | None,
+        workspace_id: UUID | None = None,
         title: str = "New conversation",
     ) -> Conversation:
         if workspace_type is WorkspaceType.PROJECT_CHAT and project_id is None:
@@ -190,6 +229,7 @@ class Conversation:
             project_id=project_id,
             workspace_type=workspace_type,
             base_version_id=base_version_id,
+            workspace_id=workspace_id,
             title=normalized_title,
         )
 
@@ -234,6 +274,7 @@ class Task:
     operation_mode: OperationMode
     base_version_id: UUID | None
     execution_target: str
+    workspace_id: UUID | None = None
     target_version_id: UUID | None = None
     memory_snapshot_id: UUID | None = None
     memory_snapshot_hash: str | None = None
@@ -245,6 +286,8 @@ class Task:
     updated_at: datetime = field(default_factory=_now)
 
     def __post_init__(self) -> None:
+        if self.workspace_id is None:
+            self.workspace_id = self.project_id or self.conversation_id
         if not self.display_title:
             self.display_title = self.user_request[:200]
         if (self.memory_snapshot_id is None) != (self.memory_snapshot_hash is None):
@@ -265,6 +308,7 @@ class Task:
         operation_mode: OperationMode,
         base_version_id: UUID | None,
         execution_target: str,
+        workspace_id: UUID | None = None,
     ) -> Task:
         request = user_request.strip()
         if not request:
@@ -279,6 +323,7 @@ class Task:
             operation_mode=operation_mode,
             base_version_id=base_version_id,
             execution_target=execution_target,
+            workspace_id=workspace_id,
         )
 
     def bind_target_version(self, version_id: UUID) -> None:
@@ -335,25 +380,31 @@ class Task:
 @dataclass(slots=True)
 class Version:
     id: UUID
-    project_id: UUID
+    project_id: UUID | None
     source_conversation_id: UUID | None
     source_task_id: UUID | None
     parent_version_id: UUID | None
     project_root: Path
     visibility: VersionVisibility
+    workspace_id: UUID | None = None
     created_at: datetime = field(default_factory=_now)
+
+    def __post_init__(self) -> None:
+        if self.workspace_id is None:
+            self.workspace_id = self.project_id or self.source_conversation_id or self.id
 
     @classmethod
     def create(
         cls,
         *,
         version_id: UUID | None = None,
-        project_id: UUID,
+        project_id: UUID | None,
         source_conversation_id: UUID | None,
         source_task_id: UUID | None,
         parent_version_id: UUID | None,
         project_root: Path,
         visibility: VersionVisibility,
+        workspace_id: UUID | None = None,
     ) -> Version:
         return cls(
             id=version_id or new_id(),
@@ -363,6 +414,7 @@ class Version:
             parent_version_id=parent_version_id,
             project_root=project_root.resolve(strict=False),
             visibility=visibility,
+            workspace_id=workspace_id,
         )
 
 
@@ -384,6 +436,7 @@ class ScopeContract:
     memory_write_scope: tuple[str, ...]
     memory_snapshot_id: UUID | None
     memory_snapshot_hash: str | None
+    workspace_id: UUID
     scope_digest: str
 
     @classmethod
@@ -406,6 +459,7 @@ class ScopeContract:
         memory_write_scope: tuple[str, ...],
         memory_snapshot_id: UUID | None = None,
         memory_snapshot_hash: str | None = None,
+        workspace_id: UUID | None = None,
     ) -> ScopeContract:
         if (memory_snapshot_id is None) != (memory_snapshot_hash is None):
             raise ValueError("memory_snapshot_id and memory_snapshot_hash must be both present")
@@ -417,8 +471,10 @@ class ScopeContract:
         root = project_root.resolve(strict=False)
         allowed = tuple(path.resolve(strict=False) for path in allowed_write_paths)
         forbidden = tuple(path.resolve(strict=False) for path in forbidden_write_paths)
+        resolved_workspace_id = workspace_id or project_id or conversation_id
         digest_payload = {
             "workspace_type": workspace_type.value,
+            "workspace_id": str(resolved_workspace_id),
             "project_id": str(project_id) if project_id else None,
             "conversation_id": str(conversation_id),
             "task_id": str(task_id),
@@ -455,5 +511,6 @@ class ScopeContract:
             memory_write_scope=memory_write_scope,
             memory_snapshot_id=memory_snapshot_id,
             memory_snapshot_hash=memory_snapshot_hash,
+            workspace_id=resolved_workspace_id,
             scope_digest=hashlib.sha256(encoded).hexdigest(),
         )

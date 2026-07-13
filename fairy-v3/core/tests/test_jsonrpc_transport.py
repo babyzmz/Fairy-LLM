@@ -453,7 +453,10 @@ def test_public_method_manifest_is_stable() -> None:
             "voice.synthesize",
             "voice.sessions.cancel",
             "voice.sessions.get",
-            "voice.sessions.start",
-            "voice.transcribe",
-        }
+                "voice.sessions.start",
+                "voice.transcribe",
+                "workspaces.files.list",
+                "workspaces.files.read",
+                "workspaces.get",
+            }
     )

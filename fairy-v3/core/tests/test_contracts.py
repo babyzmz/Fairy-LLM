@@ -240,9 +240,11 @@ def test_projection_health_contract_requires_bounded_watermarks() -> None:
 
 
 def test_memory_contracts_reject_inconsistent_bindings_and_content_hashes(tmp_path) -> None:
+    workspace_id = new_id()
     task = TaskModel(
         id=new_id(),
         project_id=None,
+        workspace_id=workspace_id,
         conversation_id=new_id(),
         user_request="Answer",
         operation_mode=OperationMode.ANSWER,
@@ -264,6 +266,7 @@ def test_memory_contracts_reject_inconsistent_bindings_and_content_hashes(tmp_pa
     scope_payload = {
         "workspace_type": "chat_scratch",
         "project_id": None,
+        "workspace_id": workspace_id,
         "conversation_id": task.conversation_id,
         "task_id": task.id,
         "operation_mode": OperationMode.ANSWER,

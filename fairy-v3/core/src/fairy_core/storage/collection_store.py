@@ -56,6 +56,7 @@ class CollectionStateStoreMixin:
     def list_versions(
         self,
         *,
+        workspace_id: UUID | None,
         project_id: UUID | None,
         conversation_id: UUID | None,
         task_id: UUID | None,
@@ -65,6 +66,7 @@ class CollectionStateStoreMixin:
         filters = tuple(
             predicate
             for value, predicate in (
+                (workspace_id, versions.c.workspace_id == str(workspace_id)),
                 (project_id, versions.c.project_id == str(project_id)),
                 (
                     conversation_id,
@@ -75,6 +77,7 @@ class CollectionStateStoreMixin:
             if value is not None
         )
         scope = {
+            "workspace_id": _scope_id(workspace_id),
             "project_id": _scope_id(project_id),
             "conversation_id": _scope_id(conversation_id),
             "task_id": _scope_id(task_id),

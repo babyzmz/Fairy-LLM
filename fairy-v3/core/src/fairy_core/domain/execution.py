@@ -98,7 +98,8 @@ _CHANGESET_TRANSITIONS: dict[ChangesetStatus, frozenset[ChangesetStatus]] = {
 @dataclass(slots=True)
 class Changeset:
     id: UUID
-    project_id: UUID
+    project_id: UUID | None
+    workspace_id: UUID
     conversation_id: UUID
     task_id: UUID
     version_id: UUID
@@ -116,7 +117,8 @@ class Changeset:
     def create(
         cls,
         *,
-        project_id: UUID,
+        project_id: UUID | None,
+        workspace_id: UUID,
         conversation_id: UUID,
         task_id: UUID,
         version_id: UUID,
@@ -133,6 +135,7 @@ class Changeset:
         return cls(
             id=new_id(),
             project_id=project_id,
+            workspace_id=workspace_id,
             conversation_id=conversation_id,
             task_id=task_id,
             version_id=version_id,

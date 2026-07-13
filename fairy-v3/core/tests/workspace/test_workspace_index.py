@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -113,6 +114,7 @@ def test_task_workspace_and_project_index_are_bound_once_and_deterministic(
 
         rebuilt = ProjectIndexer().build(
             project_id=workspace.project_id,
+            workspace_id=workspace.workspace_id,
             version_id=workspace.version_id,
             root=workspace.root,
             generation=2,
@@ -157,6 +159,7 @@ def test_project_index_rejects_stale_generation_and_escaped_symlinks(tmp_path: P
             assert current is not None
             replacement = ProjectIndexer().build(
                 project_id=current.project_id,
+                workspace_id=current.workspace_id,
                 version_id=current.version_id,
                 root=Path(version["project_root"]),
                 generation=current.generation + 1,
@@ -171,7 +174,7 @@ def test_project_index_rejects_stale_generation_and_escaped_symlinks(tmp_path: P
         service.close()
 
 
-def test_scratch_task_persists_a_versionless_workspace_binding(tmp_path: Path) -> None:
+def test_scratch_task_persists_a_versioned_workspace_binding(tmp_path: Path) -> None:
     service = build_local_service(tmp_path / "data")
     try:
         conversation = service.invoke(
@@ -194,7 +197,108 @@ def test_scratch_task_persists_a_versionless_workspace_binding(tmp_path: Path) -
 
         assert workspace is not None
         assert workspace.project_id is None
-        assert workspace.version_id is None
+        assert workspace.workspace_id == UUID(conversation["workspace_id"])
+        assert workspace.version_id is not None
         assert workspace.root.is_dir()
+    finally:
+        service.close()
+
+
+def test_scratch_workspace_applies_and_reads_a_changeset_without_a_project(
+    tmp_path: Path,
+) -> None:
+    service = build_local_service(tmp_path / "data")
+    try:
+        conversation = service.invoke(
+            "conversations.create",
+            {"project_id": None, "workspace_type": "chat_scratch"},
+        )
+        context = service.invoke(
+            "tasks.create",
+            {
+                "conversation_id": conversation["id"],
+                "user_request": "Create a greeting file",
+                "operation_mode": "continue_current_chat_draft",
+                "execution_target": "local",
+                "idempotency_key": "workspace:scratch-changeset-task",
+            },
+        )
+        pending = service.invoke(
+            "changesets.propose",
+            {
+                "task_id": context["task"]["id"],
+                "files": [{"path": "hello.txt", "content": "hello Fairy\n"}],
+                "reason": "Create the requested greeting",
+                "idempotency_key": "workspace:scratch-changeset",
+            },
+        )
+        applied = service.invoke(
+            "approvals.decide",
+            {"approval_id": pending["approval"]["id"], "approved": True},
+        )["changeset"]
+
+        workspace_id = conversation["workspace_id"]
+        version_id = context["target_version"]["id"]
+        files = service.invoke(
+            "workspaces.files.list",
+            {"workspace_id": workspace_id, "version_id": version_id},
+        )
+        content = service.invoke(
+            "workspaces.files.read",
+            {
+                "workspace_id": workspace_id,
+                "version_id": version_id,
+                "path": "hello.txt",
+            },
+        )
+
+        assert applied["project_id"] is None
+        assert applied["workspace_id"] == workspace_id
+        assert [item["path"] for item in files["items"]] == ["hello.txt"]
+        assert content["text"] == "hello Fairy\n"
+        assert content["content_base64"] is None
+    finally:
+        service.close()
+
+
+def test_autonomous_scratch_changeset_applies_without_user_approval(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path / "data")
+    try:
+        service.invoke(
+            "permissions.update",
+            {
+                "profile": "autonomous",
+                "capability_overrides": {},
+                "expected_revision": 0,
+                "idempotency_key": "workspace:autonomous-settings",
+            },
+        )
+        conversation = service.invoke(
+            "conversations.create",
+            {"project_id": None, "workspace_type": "chat_scratch"},
+        )
+        context = service.invoke(
+            "tasks.create",
+            {
+                "conversation_id": conversation["id"],
+                "user_request": "Create an autonomous file",
+                "operation_mode": "continue_current_chat_draft",
+                "execution_target": "local",
+                "idempotency_key": "workspace:autonomous-task",
+            },
+        )
+        pending = service.invoke(
+            "changesets.propose",
+            {
+                "task_id": context["task"]["id"],
+                "files": [{"path": "auto.txt", "content": "applied\n"}],
+                "reason": "Exercise autonomous changeset policy",
+                "idempotency_key": "workspace:autonomous-changeset",
+            },
+        )
+
+        assert pending["changeset"]["status"] == "applied"
+        assert pending["approval"]["decision"] == "approved"
+        assert pending["approval"]["decided_by"] == "policy:autonomous"
     finally:
         service.close()

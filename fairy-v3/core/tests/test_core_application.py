@@ -502,10 +502,12 @@ def test_scratch_task_receives_only_conversation_scratch_scope(tmp_path: Path) -
     )
 
     assert task.task.project_id is None
-    assert task.target_version is None
+    assert task.target_version is not None
+    assert task.target_version.workspace_id == conversation.workspace_id
+    assert task.scope.workspace_id == conversation.workspace_id
     assert task.scope.workspace_type is WorkspaceType.CHAT_SCRATCH
     assert task.scope.memory_write_scope == ("current_conversation_draft",)
-    assert "scratch" in str(task.scope.project_root)
+    assert str(conversation.workspace_id) in str(task.scope.project_root)
 
 
 def test_project_and_task_workspace_side_effects_are_durable_commands(tmp_path: Path) -> None:

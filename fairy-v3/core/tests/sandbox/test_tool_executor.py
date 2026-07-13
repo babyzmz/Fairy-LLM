@@ -258,7 +258,7 @@ def test_sandbox_archive_rejects_a_file_changed_after_project_indexing(
         service.close()
 
 
-def test_scratch_sandbox_uses_an_empty_managed_archive_and_scope_network(
+def test_scratch_sandbox_uses_its_managed_version_and_scope_network(
     tmp_path: Path,
 ) -> None:
     provider = _provider()
@@ -298,11 +298,11 @@ def test_scratch_sandbox_uses_an_empty_managed_archive_and_scope_network(
         assert completed["status"] == "completed"
         request = executor.requests[0]
         assert request.project_id is None
-        assert request.version_id is None
+        assert str(request.version_id) == context["target_version"]["id"]
         assert request.network_policy.value == "public"
         with zipfile.ZipFile(io.BytesIO(request.workspace_archive)) as archive:
-            assert archive.namelist() == [".fairy-scratch"]
-            assert archive.read(".fairy-scratch") == b""
+            assert archive.namelist() == [".fairy-project-empty"]
+            assert archive.read(".fairy-project-empty") == b""
     finally:
         service.close()
 

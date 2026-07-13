@@ -14,10 +14,10 @@ from fairy_core.assistant.models import (
     Message,
     MessageRole,
     MessageVisibility,
-    ProviderAttempt,
     ToolInvocation,
     ToolInvocationStatus,
 )
+from fairy_core.assistant.provider_attempts import ProviderAttemptRecorder
 from fairy_core.assistant.tools import (
     DIRECT_ANSWER_TOOL_NAME,
     ToolCandidateError,
@@ -26,6 +26,7 @@ from fairy_core.assistant.tools import (
     direct_answer,
     tool_message_content,
 )
+from fairy_core.assistant.turn_reader import AssistantTurnReader, require_task, require_turn
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.bus import CommandBus, CommandRequest
 from fairy_core.commanding.policy import PolicyEngine
@@ -43,14 +44,11 @@ from fairy_core.providers import (
     ModelRequest,
     ModelRole,
     ModelToolCall,
-    ProviderAttemptEvent,
-    ProviderAttemptStatus,
     ProviderAuthenticationError,
     ProviderCancelledError,
     ProviderContentRejectedError,
     ProviderContextLengthError,
     ProviderError,
-    ProviderErrorCategory,
     ProviderNetworkError,
     ProviderProtocolError,
     ProviderRateLimitError,
@@ -84,6 +82,8 @@ class AssistantApplication:
         self._image_attachments = image_attachments
         self._tool_executor = tool_executor or UnavailableToolExecutor()
         self._execution_policy = execution_policy or ExecutionPolicyResolver()
+        self._provider_attempts = ProviderAttemptRecorder(unit_of_work_factory)
+        self._turns = AssistantTurnReader(unit_of_work_factory)
         self._context = AssistantContextBuilder(
             unit_of_work_factory=unit_of_work_factory,
             registry=registry,
@@ -97,7 +97,7 @@ class AssistantApplication:
         turn_id: UUID,
         cancellation: CancellationToken,
     ) -> AssistantTurn:
-        turn = self._get_turn(turn_id)
+        turn = self._turns.get(turn_id)
         if turn.status in {
             AssistantTurnStatus.COMPLETED,
             AssistantTurnStatus.CANCELLED,
@@ -107,7 +107,7 @@ class AssistantApplication:
             return turn
         all_text: list[str] = []
         usage: dict[str, int] = {}
-        tool_count = self._tool_count(turn_id)
+        tool_count = self._turns.tool_count(turn_id)
         current_run: CommandRun | None = None
         chunk_index = 0
         model_round_start = 1
@@ -115,7 +115,7 @@ class AssistantApplication:
         try:
             if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
                 if self._resume_pending_tool(turn_id, cancellation):
-                    return self._get_turn(turn_id)
+                    return self._turns.get(turn_id)
                 self._resume_after_tools(turn_id)
                 ephemeral_context.extend(self._durable_tool_context(turn_id))
                 model_round_start = self._next_model_round(turn_id)
@@ -142,10 +142,10 @@ class AssistantApplication:
                 for delta in self._providers.stream(
                     request,
                     cancellation,
-                    on_attempt=self._provider_attempt_observer(turn_id, model_round),
+                    on_attempt=self._provider_attempts.observer(turn_id, model_round),
                 ):
                     cancellation.raise_if_cancelled()
-                    self._ensure_turn_active(turn_id)
+                    self._turns.require_active(turn_id)
                     if delta.kind is ModelDeltaKind.TEXT:
                         assert delta.text is not None
                         if sum(map(len, all_text)) + len(delta.text) > _MAX_ASSISTANT_CHARACTERS:
@@ -235,7 +235,7 @@ class AssistantApplication:
                             offered_definitions=offered_definitions,
                         )
                         if waiting:
-                            return self._get_turn(turn_id)
+                            return self._turns.get(turn_id)
                         assert tool_message is not None
                         ephemeral_context.append(
                             ModelMessage.create(
@@ -335,74 +335,7 @@ class AssistantApplication:
             )
             raise
         finally:
-            self._release_terminal_images(turn_id)
-
-    def _release_terminal_images(self, turn_id: UUID) -> None:
-        try:
-            turn = self._get_turn(turn_id)
-        except KeyError:
-            return
-        if turn.status in {
-            AssistantTurnStatus.COMPLETED,
-            AssistantTurnStatus.CANCELLED,
-            AssistantTurnStatus.FAILED,
-        }:
-            self._image_attachments.release(turn_id)
-
-    def _provider_attempt_observer(self, turn_id: UUID, model_round: int):
-        attempts: dict[int, ProviderAttempt] = {}
-        with self._unit_of_work_factory() as unit_of_work:
-            existing = unit_of_work.assistant.list_provider_attempts(turn_id)
-            round_attempts = tuple(
-                attempt for attempt in existing if attempt.model_round == model_round
-            )
-            interrupted = False
-            for attempt in round_attempts:
-                if attempt.status is ProviderAttemptStatus.STARTED:
-                    attempt.fail(
-                        error_category=ProviderErrorCategory.UNKNOWN,
-                        usage=dict(attempt.usage),
-                    )
-                    unit_of_work.assistant.update_provider_attempt(attempt)
-                    interrupted = True
-            if interrupted:
-                unit_of_work.commit()
-        attempt_offset = max(
-            (attempt.attempt_number for attempt in round_attempts),
-            default=0,
-        )
-
-        def observe(event: ProviderAttemptEvent) -> None:
-            if event.status is ProviderAttemptStatus.STARTED:
-                with self._unit_of_work_factory() as unit_of_work:
-                    turn = _require_turn(unit_of_work, turn_id)
-                    attempt = ProviderAttempt.create(
-                        turn=turn,
-                        model_round=model_round,
-                        attempt_number=attempt_offset + event.attempt_number,
-                        profile_id=event.profile_id,
-                    )
-                    unit_of_work.assistant.save_provider_attempt(attempt)
-                    unit_of_work.commit()
-                attempts[event.attempt_number] = attempt
-                return
-            attempt = attempts.get(event.attempt_number)
-            if attempt is None:
-                raise RuntimeError("Provider Attempt terminal event has no durable start")
-            if event.status is ProviderAttemptStatus.SUCCEEDED:
-                attempt.succeed(dict(event.usage))
-            else:
-                if event.error_category is None:
-                    raise RuntimeError("failed Provider Attempt has no error category")
-                attempt.fail(
-                    error_category=event.error_category,
-                    usage=dict(event.usage),
-                )
-            with self._unit_of_work_factory() as unit_of_work:
-                unit_of_work.assistant.update_provider_attempt(attempt)
-                unit_of_work.commit()
-
-        return observe
+            self._turns.release_terminal_images(turn_id, self._image_attachments)
 
     def _start_model_round(
         self,
@@ -410,8 +343,8 @@ class AssistantApplication:
         model_round: int,
     ) -> tuple[AssistantTurn, CommandRun]:
         with self._unit_of_work_factory() as unit_of_work:
-            turn = _require_turn(unit_of_work, turn_id)
-            task = _require_task(unit_of_work, turn.task_id)
+            turn = require_turn(unit_of_work, turn_id)
+            task = require_task(unit_of_work, turn.task_id)
             scope = self._scope_resolver(unit_of_work.state, task)
             started = turn.status is AssistantTurnStatus.CREATED
             if started:
@@ -495,7 +428,7 @@ class AssistantApplication:
         text: str,
     ) -> None:
         with self._unit_of_work_factory() as unit_of_work:
-            turn = _require_turn(unit_of_work, turn_id)
+            turn = require_turn(unit_of_work, turn_id)
             if turn.status is not AssistantTurnStatus.RUNNING:
                 raise ProviderCancelledError("Assistant Turn is no longer running")
             unit_of_work.commands.append_event(
@@ -522,7 +455,7 @@ class AssistantApplication:
         candidate_count: int,
     ) -> None:
         with self._unit_of_work_factory() as unit_of_work:
-            turn = _require_turn(unit_of_work, turn_id)
+            turn = require_turn(unit_of_work, turn_id)
             expected_status = turn.status
             expected_revision = turn.cancellation_revision
             turn.wait_for_tool()
@@ -550,7 +483,7 @@ class AssistantApplication:
         offered_definitions: dict[str, object],
     ) -> tuple[bool, Message | None]:
         cancellation.raise_if_cancelled()
-        self._ensure_turn_waiting_for_tool(turn_id)
+        self._turns.require_waiting_for_tool(turn_id)
         if candidate.name is None:
             message = self._append_tool_message(
                 turn_id=turn_id,
@@ -583,8 +516,8 @@ class AssistantApplication:
             return False, message
 
         with self._unit_of_work_factory() as unit_of_work:
-            turn = _require_turn(unit_of_work, turn_id)
-            task = _require_task(unit_of_work, turn.task_id)
+            turn = require_turn(unit_of_work, turn_id)
+            task = require_task(unit_of_work, turn.task_id)
             scope = self._scope_resolver(unit_of_work.state, task)
             invocation = ToolInvocation.create(
                 turn=turn,
@@ -713,7 +646,7 @@ class AssistantApplication:
     ) -> Message:
         try:
             cancellation.raise_if_cancelled()
-            self._ensure_turn_waiting_for_tool(turn_id)
+            self._turns.require_waiting_for_tool(turn_id)
             current_definition = self._registry.get(definition.name)
             if (
                 current_definition is None
@@ -733,7 +666,7 @@ class AssistantApplication:
             else:
                 result = self._tool_executor.execute(definition, scope, arguments)
             cancellation.raise_if_cancelled()
-            self._ensure_turn_waiting_for_tool(turn_id)
+            self._turns.require_waiting_for_tool(turn_id)
         except (ProviderCancelledError, McpCancelledError):
             self._cancel_running_tool(invocation, running)
             raise
@@ -770,7 +703,7 @@ class AssistantApplication:
             return message
 
         with self._unit_of_work_factory() as unit_of_work:
-            persisted_turn = _require_turn(unit_of_work, turn_id)
+            persisted_turn = require_turn(unit_of_work, turn_id)
             if (
                 cancellation.is_cancelled
                 or persisted_turn.status is not AssistantTurnStatus.WAITING_FOR_TOOL
@@ -816,7 +749,7 @@ class AssistantApplication:
     ) -> bool:
         cancellation.raise_if_cancelled()
         with self._unit_of_work_factory() as unit_of_work:
-            turn = _require_turn(unit_of_work, turn_id)
+            turn = require_turn(unit_of_work, turn_id)
             if turn.status is not AssistantTurnStatus.WAITING_FOR_TOOL:
                 raise ValueError("Assistant Turn is not waiting for a tool")
             pending = [
@@ -870,7 +803,7 @@ class AssistantApplication:
                     )
                 unit_of_work.commit()
                 return False
-            task = _require_task(unit_of_work, turn.task_id)
+            task = require_task(unit_of_work, turn.task_id)
             scope = self._scope_resolver(unit_of_work.state, task)
 
             if command.status is CommandStatus.WAITING_APPROVAL:
@@ -1047,7 +980,7 @@ class AssistantApplication:
         content: str,
         rejected: bool,
     ) -> Message:
-        turn = _require_turn(unit_of_work, turn_id)
+        turn = require_turn(unit_of_work, turn_id)
         message = Message.create(
             conversation_id=turn.conversation_id,
             task_id=turn.task_id,
@@ -1067,7 +1000,7 @@ class AssistantApplication:
 
     def _resume_after_tools(self, turn_id: UUID) -> None:
         with self._unit_of_work_factory() as unit_of_work:
-            turn = _require_turn(unit_of_work, turn_id)
+            turn = require_turn(unit_of_work, turn_id)
             expected_status = turn.status
             expected_revision = turn.cancellation_revision
             turn.resume()
@@ -1087,8 +1020,8 @@ class AssistantApplication:
         usage: dict[str, int],
     ) -> AssistantTurn:
         with self._unit_of_work_factory() as unit_of_work:
-            turn = _require_turn(unit_of_work, turn_id)
-            task = _require_task(unit_of_work, turn.task_id)
+            turn = require_turn(unit_of_work, turn_id)
+            task = require_task(unit_of_work, turn.task_id)
             message = Message.create(
                 conversation_id=turn.conversation_id,
                 task_id=turn.task_id,
@@ -1140,7 +1073,7 @@ class AssistantApplication:
         run: CommandRun | None,
     ) -> AssistantTurn:
         with self._unit_of_work_factory() as unit_of_work:
-            turn = _require_turn(unit_of_work, turn_id)
+            turn = require_turn(unit_of_work, turn_id)
             if turn.status is not AssistantTurnStatus.CANCELLED:
                 expected_status = turn.status
                 expected_revision = turn.cancellation_revision
@@ -1180,7 +1113,7 @@ class AssistantApplication:
                             else None
                         ),
                     )
-            task = _require_task(unit_of_work, turn.task_id)
+            task = require_task(unit_of_work, turn.task_id)
             if task.status in {
                 TaskStatus.PLANNING,
                 TaskStatus.AWAITING_APPROVAL,
@@ -1203,7 +1136,7 @@ class AssistantApplication:
         error_code: str,
     ) -> AssistantTurn:
         with self._unit_of_work_factory() as unit_of_work:
-            turn = _require_turn(unit_of_work, turn_id)
+            turn = require_turn(unit_of_work, turn_id)
             if turn.status not in {
                 AssistantTurnStatus.COMPLETED,
                 AssistantTurnStatus.CANCELLED,
@@ -1238,7 +1171,7 @@ class AssistantApplication:
                         lease_owner=run.lease_owner,
                         lease_fence=run.lease_fence,
                     )
-            task = _require_task(unit_of_work, turn.task_id)
+            task = require_task(unit_of_work, turn.task_id)
             if task.status in {
                 TaskStatus.PLANNING,
                 TaskStatus.AWAITING_APPROVAL,
@@ -1253,44 +1186,12 @@ class AssistantApplication:
             unit_of_work.commit()
         return turn
 
-    def _ensure_turn_active(self, turn_id: UUID) -> None:
-        turn = self._get_turn(turn_id)
-        if turn.status is not AssistantTurnStatus.RUNNING:
-            raise ProviderCancelledError("Assistant Turn is no longer running")
-
-    def _ensure_turn_waiting_for_tool(self, turn_id: UUID) -> None:
-        turn = self._get_turn(turn_id)
-        if turn.status is not AssistantTurnStatus.WAITING_FOR_TOOL:
-            raise ProviderCancelledError("Assistant Turn is no longer waiting for a tool")
-
-    def _tool_count(self, turn_id: UUID) -> int:
-        with self._unit_of_work_factory() as unit_of_work:
-            return len(unit_of_work.assistant.list_tool_invocations(turn_id))
-
-    def _get_turn(self, turn_id: UUID) -> AssistantTurn:
-        with self._unit_of_work_factory() as unit_of_work:
-            return _require_turn(unit_of_work, turn_id)
-
     def _command_bus(self, ledger) -> CommandBus:
         return CommandBus(
             registry=self._registry,
             policy=self._policy,
             ledger=ledger,
         )
-
-
-def _require_turn(unit_of_work, turn_id: UUID) -> AssistantTurn:
-    turn = unit_of_work.assistant.get_turn(turn_id)
-    if turn is None:
-        raise KeyError(f"Assistant Turn not found: {turn_id}")
-    return turn
-
-
-def _require_task(unit_of_work, task_id: UUID):
-    task = unit_of_work.state.get_task(task_id)
-    if task is None:
-        raise KeyError(f"task not found: {task_id}")
-    return task
 
 
 __all__ = ["AssistantApplication"]

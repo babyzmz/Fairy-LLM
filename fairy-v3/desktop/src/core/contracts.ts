@@ -132,6 +132,13 @@ export type VersionListInput = NonNullable<
   operations["versions.list"]["parameters"]["query"]
 >;
 export type VersionPage = Schemas["VersionPageModel"];
+export type Workspace = Schemas["WorkspaceModel"];
+export type WorkspaceFile = Schemas["WorkspaceFileModel"];
+export type WorkspaceFileContent = Schemas["WorkspaceFileContentModel"];
+export type WorkspaceFilePage = Schemas["WorkspaceFilePageModel"];
+export type WorkspaceIdInput = { workspace_id: string };
+export type WorkspaceVersionInput = WorkspaceIdInput & { version_id?: string | null };
+export type WorkspaceFileReadInput = WorkspaceVersionInput & { path: string };
 export type VoiceAudio = Schemas["VoiceAudioModel"];
 export type VoiceSession = Schemas["VoiceSessionModel"];
 export interface VoiceSessionIdInput {
@@ -263,6 +270,15 @@ export interface CoreMethodMap {
   "voice.sessions.get": { params: VoiceSessionIdInput; result: VoiceSession };
   "voice.sessions.cancel": { params: VoiceSessionIdInput; result: VoiceSession };
   "voice.transcribe": { params: VoiceTranscribeInput; result: VoiceTranscript };
+  "workspaces.get": { params: WorkspaceIdInput; result: Workspace };
+  "workspaces.files.list": {
+    params: WorkspaceVersionInput;
+    result: WorkspaceFilePage;
+  };
+  "workspaces.files.read": {
+    params: WorkspaceFileReadInput;
+    result: WorkspaceFileContent;
+  };
   "events.subscribe": { params: { cursor: number }; result: EventBatch };
   "memory.observations.create": {
     params: MemoryObserveInput;

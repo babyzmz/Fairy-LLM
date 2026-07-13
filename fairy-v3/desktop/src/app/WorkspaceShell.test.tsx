@@ -84,6 +84,7 @@ describe("WorkspaceShell", () => {
     const chat: Conversation = {
       id: "019f566f-f8b4-7000-8000-000000000001",
       project_id: null,
+      workspace_id: "019f566f-f8b4-7000-8000-000000000001",
       workspace_type: "chat_scratch",
       base_version_id: null,
       active_draft_version_id: null,

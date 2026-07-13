@@ -125,6 +125,7 @@ class TaskListInput(CollectionPageInput):
 
 
 class VersionListInput(CollectionPageInput):
+    workspace_id: UUID | None = None
     project_id: UUID | None = None
     conversation_id: UUID | None = None
     task_id: UUID | None = None
@@ -364,6 +365,7 @@ class ProjectModel(ContractModel):
     id: UUID
     name: str
     residency: ProjectResidency
+    workspace_id: UUID
     active_version_id: UUID | None
     active_preview_id: UUID | None
     revision: int = Field(ge=0)
@@ -374,6 +376,7 @@ class ProjectModel(ContractModel):
 class ConversationModel(ContractModel):
     id: UUID
     project_id: UUID | None
+    workspace_id: UUID
     workspace_type: WorkspaceType
     base_version_id: UUID | None
     active_draft_version_id: UUID | None
@@ -390,6 +393,7 @@ class ConversationModel(ContractModel):
 class TaskModel(ContractModel):
     id: UUID
     project_id: UUID | None
+    workspace_id: UUID
     conversation_id: UUID
     user_request: str
     operation_mode: OperationMode
@@ -416,7 +420,8 @@ class TaskModel(ContractModel):
 
 class VersionModel(ContractModel):
     id: UUID
-    project_id: UUID
+    project_id: UUID | None
+    workspace_id: UUID
     source_conversation_id: UUID | None
     source_task_id: UUID | None
     parent_version_id: UUID | None
@@ -697,6 +702,7 @@ class ArtifactPageModel(ContractModel):
 class ScopeContractModel(ContractModel):
     workspace_type: WorkspaceType
     project_id: UUID | None
+    workspace_id: UUID
     conversation_id: UUID
     task_id: UUID
     operation_mode: OperationMode
@@ -724,7 +730,8 @@ class ScopeContractModel(ContractModel):
 
 class ChangesetModel(ContractModel):
     id: UUID
-    project_id: UUID
+    project_id: UUID | None
+    workspace_id: UUID
     conversation_id: UUID
     task_id: UUID
     version_id: UUID
@@ -1186,9 +1193,6 @@ def _mutable_json(value: Any) -> Any:
     return value
 
 
-def _validate_memory_snapshot_pair(
-    snapshot_id: UUID | None,
-    snapshot_hash: str | None,
-) -> None:
+def _validate_memory_snapshot_pair(snapshot_id: UUID | None, snapshot_hash: str | None) -> None:
     if (snapshot_id is None) != (snapshot_hash is None):
         raise ValueError("memory Snapshot ID and hash must be both present")

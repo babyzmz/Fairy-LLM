@@ -47,6 +47,7 @@ def _seed_graph(
     project = replace(
         Project.create(name=label, residency=ProjectResidency.SYNCED),
         id=_uuid(identity_offset + 1),
+        workspace_id=_uuid(identity_offset + 1),
         created_at=_CREATED_AT,
         updated_at=_CREATED_AT,
     )
@@ -163,6 +164,7 @@ def test_collection_queries_are_tenant_scoped_filtered_and_stably_paged(
         cursor=None,
     ).items == (graph_a1.task,)
     assert tenant_a.list_versions(
+        workspace_id=graph_a1.project.workspace_id,
         project_id=graph_a1.project.id,
         conversation_id=graph_a1.conversation.id,
         task_id=graph_a1.task.id,

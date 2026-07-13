@@ -86,6 +86,7 @@ const routes = {
     getWithQuery("/v1/versions", params, [
       "limit",
       "cursor",
+      "workspace_id",
       "project_id",
       "conversation_id",
       "task_id",
@@ -99,6 +100,20 @@ const routes = {
     method: "DELETE",
     path: `/v1/tasks/${pathParameter(params, "task_id")}/version`,
   }),
+  "workspaces.get": (params) =>
+    get(`/v1/workspaces/${pathParameter(params, "workspace_id")}`),
+  "workspaces.files.list": (params) =>
+    getWithQuery(
+      `/v1/workspaces/${pathParameter(params, "workspace_id")}/files`,
+      params,
+      ["version_id"],
+    ),
+  "workspaces.files.read": (params) =>
+    getWithQuery(
+      `/v1/workspaces/${pathParameter(params, "workspace_id")}/file-content`,
+      params,
+      ["path", "version_id"],
+    ),
   "capabilities.get": () => get("/v1/capabilities"),
   "permissions.get": () => get("/v1/permissions"),
   "permissions.update": (params) => putWithIdempotency("/v1/permissions", params),

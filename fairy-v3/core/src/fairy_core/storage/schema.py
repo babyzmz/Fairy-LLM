@@ -15,11 +15,12 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
-    text,
 )
 
 from fairy_core.persistence.tenant import TENANT_ID_LENGTH
+from fairy_core.storage.assistant_attempt_schema import build_assistant_attempt_tables
 from fairy_core.storage.history_schema import build_history_tables
+from fairy_core.storage.index_schema import build_state_indexes
 from fairy_core.storage.types import UTCDateTime
 
 ID_LENGTH = 36
@@ -35,6 +36,25 @@ def _id() -> Column[str]:
     return Column("id", String(ID_LENGTH), primary_key=True)
 
 
+workspaces = Table(
+    "core_workspaces",
+    state_metadata,
+    _tenant_id(),
+    _id(),
+    Column("active_version_id", String(ID_LENGTH)),
+    Column("active_preview_id", String(ID_LENGTH)),
+    Column("revision", BigInteger, nullable=False),
+    Column("max_files", BigInteger, nullable=False),
+    Column("max_bytes", BigInteger, nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    Column("updated_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_workspaces"),
+    CheckConstraint("revision >= 0", name="ck_core_workspaces_revision"),
+    CheckConstraint("max_files > 0", name="ck_core_workspaces_max_files"),
+    CheckConstraint("max_bytes > 0", name="ck_core_workspaces_max_bytes"),
+)
+
+
 projects = Table(
     "core_projects",
     state_metadata,
@@ -42,12 +62,18 @@ projects = Table(
     _id(),
     Column("name", String(255), nullable=False),
     Column("residency", String(32), nullable=False),
+    Column("workspace_id", String(ID_LENGTH), nullable=False),
     Column("active_version_id", String(ID_LENGTH)),
     Column("active_preview_id", String(ID_LENGTH)),
     Column("revision", BigInteger, nullable=False),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
     PrimaryKeyConstraint("tenant_id", "id", name="pk_core_projects"),
+    ForeignKeyConstraint(
+        ["tenant_id", "workspace_id"],
+        [workspaces.c.tenant_id, workspaces.c.id],
+        name="fk_core_projects_workspace",
+    ),
 )
 
 execution_settings = Table(
@@ -160,6 +186,7 @@ conversations = Table(
     _tenant_id(),
     _id(),
     Column("project_id", String(ID_LENGTH)),
+    Column("workspace_id", String(ID_LENGTH), nullable=False),
     Column("workspace_type", String(32), nullable=False),
     Column("base_version_id", String(ID_LENGTH)),
     Column("active_draft_version_id", String(ID_LENGTH)),
@@ -178,6 +205,11 @@ conversations = Table(
         name="fk_core_conversations_project",
         ondelete="CASCADE",
     ),
+    ForeignKeyConstraint(
+        ["tenant_id", "workspace_id"],
+        [workspaces.c.tenant_id, workspaces.c.id],
+        name="fk_core_conversations_workspace",
+    ),
 )
 
 versions = Table(
@@ -185,7 +217,8 @@ versions = Table(
     state_metadata,
     _tenant_id(),
     _id(),
-    Column("project_id", String(ID_LENGTH), nullable=False),
+    Column("project_id", String(ID_LENGTH)),
+    Column("workspace_id", String(ID_LENGTH), nullable=False),
     Column("source_conversation_id", String(ID_LENGTH)),
     Column("source_task_id", String(ID_LENGTH)),
     Column("parent_version_id", String(ID_LENGTH)),
@@ -197,6 +230,12 @@ versions = Table(
         ["tenant_id", "project_id"],
         [projects.c.tenant_id, projects.c.id],
         name="fk_core_versions_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "workspace_id"],
+        [workspaces.c.tenant_id, workspaces.c.id],
+        name="fk_core_versions_workspace",
         ondelete="CASCADE",
     ),
     ForeignKeyConstraint(
@@ -212,6 +251,7 @@ tasks = Table(
     _tenant_id(),
     _id(),
     Column("project_id", String(ID_LENGTH)),
+    Column("workspace_id", String(ID_LENGTH), nullable=False),
     Column("conversation_id", String(ID_LENGTH), nullable=False),
     Column("user_request", String, nullable=False),
     Column("operation_mode", String(64), nullable=False),
@@ -241,6 +281,12 @@ tasks = Table(
         ondelete="CASCADE",
     ),
     ForeignKeyConstraint(
+        ["tenant_id", "workspace_id"],
+        [workspaces.c.tenant_id, workspaces.c.id],
+        name="fk_core_tasks_workspace",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
         ["tenant_id", "conversation_id"],
         [conversations.c.tenant_id, conversations.c.id],
         name="fk_core_tasks_conversation",
@@ -254,6 +300,7 @@ task_workspaces = Table(
     _tenant_id(),
     Column("task_id", String(ID_LENGTH), primary_key=True),
     Column("project_id", String(ID_LENGTH)),
+    Column("workspace_id", String(ID_LENGTH), nullable=False),
     Column("conversation_id", String(ID_LENGTH), nullable=False),
     Column("version_id", String(ID_LENGTH)),
     Column("root", String(4096), nullable=False),
@@ -264,11 +311,6 @@ task_workspaces = Table(
     Column("created_at", UTCDateTime(), nullable=False),
     PrimaryKeyConstraint("tenant_id", "task_id", name="pk_core_task_workspaces"),
     CheckConstraint("generation > 0", name="ck_core_task_workspaces_generation"),
-    CheckConstraint(
-        "(project_id IS NULL AND version_id IS NULL) OR "
-        "(project_id IS NOT NULL AND version_id IS NOT NULL)",
-        name="ck_core_task_workspaces_project_version",
-    ),
     ForeignKeyConstraint(
         ["tenant_id", "task_id"],
         [tasks.c.tenant_id, tasks.c.id],
@@ -279,6 +321,12 @@ task_workspaces = Table(
         ["tenant_id", "project_id"],
         [projects.c.tenant_id, projects.c.id],
         name="fk_core_task_workspaces_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "workspace_id"],
+        [workspaces.c.tenant_id, workspaces.c.id],
+        name="fk_core_task_workspaces_workspace",
         ondelete="CASCADE",
     ),
     ForeignKeyConstraint(
@@ -300,7 +348,8 @@ project_indexes = Table(
     state_metadata,
     _tenant_id(),
     Column("version_id", String(ID_LENGTH), primary_key=True),
-    Column("project_id", String(ID_LENGTH), nullable=False),
+    Column("project_id", String(ID_LENGTH)),
+    Column("workspace_id", String(ID_LENGTH), nullable=False),
     Column("generation", BigInteger, nullable=False),
     Column("source_hash", String(64), nullable=False),
     Column("files", JSON, nullable=False),
@@ -322,6 +371,12 @@ project_indexes = Table(
         ["tenant_id", "project_id"],
         [projects.c.tenant_id, projects.c.id],
         name="fk_core_project_indexes_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "workspace_id"],
+        [workspaces.c.tenant_id, workspaces.c.id],
+        name="fk_core_project_indexes_workspace",
         ondelete="CASCADE",
     ),
 )
@@ -404,62 +459,10 @@ assistant_turns = Table(
     ),
 )
 
-assistant_provider_attempts = Table(
-    "core_assistant_provider_attempts",
+assistant_provider_attempts, assistant_message_sequences = build_assistant_attempt_tables(
     state_metadata,
-    _tenant_id(),
-    _id(),
-    Column("turn_id", String(ID_LENGTH), nullable=False),
-    Column("task_id", String(ID_LENGTH), nullable=False),
-    Column("model_round", BigInteger, nullable=False),
-    Column("attempt_number", BigInteger, nullable=False),
-    Column("profile_id", String(255), nullable=False),
-    Column("status", String(32), nullable=False),
-    Column("error_category", String(32)),
-    Column("usage", JSON, nullable=False),
-    Column("created_at", UTCDateTime(), nullable=False),
-    Column("completed_at", UTCDateTime()),
-    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_assistant_provider_attempts"),
-    UniqueConstraint(
-        "tenant_id",
-        "turn_id",
-        "model_round",
-        "attempt_number",
-        name="uq_core_assistant_provider_attempts_turn_round_number",
-    ),
-    CheckConstraint("model_round > 0", name="ck_core_provider_attempts_model_round"),
-    CheckConstraint("attempt_number > 0", name="ck_core_provider_attempts_number"),
-    CheckConstraint(
-        "status IN ('started', 'succeeded', 'failed')",
-        name="ck_core_provider_attempts_status",
-    ),
-    ForeignKeyConstraint(
-        ["tenant_id", "turn_id", "task_id"],
-        [assistant_turns.c.tenant_id, assistant_turns.c.id, assistant_turns.c.task_id],
-        name="fk_core_provider_attempts_turn_task",
-    ),
-)
-
-assistant_message_sequences = Table(
-    "core_assistant_message_sequences",
-    state_metadata,
-    _tenant_id(),
-    Column("conversation_id", String(ID_LENGTH), primary_key=True),
-    Column("last_sequence", BigInteger, nullable=False),
-    PrimaryKeyConstraint(
-        "tenant_id",
-        "conversation_id",
-        name="pk_core_assistant_message_sequences",
-    ),
-    CheckConstraint(
-        "last_sequence > 0",
-        name="ck_core_assistant_message_sequences_positive",
-    ),
-    ForeignKeyConstraint(
-        ["tenant_id", "conversation_id"],
-        [conversations.c.tenant_id, conversations.c.id],
-        name="fk_core_assistant_message_sequences_conversation",
-    ),
+    assistant_turns=assistant_turns,
+    conversations=conversations,
 )
 
 assistant_messages = Table(
@@ -592,7 +595,8 @@ changesets = Table(
     state_metadata,
     _tenant_id(),
     _id(),
-    Column("project_id", String(ID_LENGTH), nullable=False),
+    Column("project_id", String(ID_LENGTH)),
+    Column("workspace_id", String(ID_LENGTH), nullable=False),
     Column("conversation_id", String(ID_LENGTH), nullable=False),
     Column("task_id", String(ID_LENGTH), nullable=False),
     Column("version_id", String(ID_LENGTH), nullable=False),
@@ -615,6 +619,12 @@ changesets = Table(
         ["tenant_id", "project_id"],
         [projects.c.tenant_id, projects.c.id],
         name="fk_core_changesets_project",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
+        ["tenant_id", "workspace_id"],
+        [workspaces.c.tenant_id, workspaces.c.id],
+        name="fk_core_changesets_workspace",
         ondelete="CASCADE",
     ),
     ForeignKeyConstraint(
@@ -1138,99 +1148,25 @@ research_evidence = Table(
     ),
 )
 
-Index("ix_core_projects_tenant_updated", projects.c.tenant_id, projects.c.updated_at)
-Index("ix_core_conversations_tenant_project", conversations.c.tenant_id, conversations.c.project_id)
-Index("ix_core_versions_tenant_project", versions.c.tenant_id, versions.c.project_id)
-Index("ix_core_tasks_tenant_status", tasks.c.tenant_id, tasks.c.status, tasks.c.created_at)
-Index(
-    "ix_core_assistant_turns_tenant_task",
-    assistant_turns.c.tenant_id,
-    assistant_turns.c.task_id,
-    assistant_turns.c.created_at,
-)
-Index(
-    "ix_core_provider_attempts_tenant_turn",
-    assistant_provider_attempts.c.tenant_id,
-    assistant_provider_attempts.c.turn_id,
-    assistant_provider_attempts.c.model_round,
-    assistant_provider_attempts.c.attempt_number,
-)
-Index(
-    "ix_core_assistant_messages_tenant_conversation",
-    assistant_messages.c.tenant_id,
-    assistant_messages.c.conversation_id,
-    assistant_messages.c.sequence,
-)
-Index(
-    "ix_core_assistant_tool_invocations_tenant_turn",
-    assistant_tool_invocations.c.tenant_id,
-    assistant_tool_invocations.c.turn_id,
-    assistant_tool_invocations.c.sequence,
-)
-Index("ix_core_changesets_tenant_task", changesets.c.tenant_id, changesets.c.task_id)
-Index("ix_core_approvals_tenant_task", approvals.c.tenant_id, approvals.c.task_id)
-Index("ix_core_checkpoints_tenant_task", checkpoints.c.tenant_id, checkpoints.c.task_id)
-Index(
-    "ix_core_runtime_sessions_tenant_task",
-    runtime_sessions.c.tenant_id,
-    runtime_sessions.c.task_id,
-    runtime_sessions.c.created_at,
-)
-Index(
-    "ix_core_preview_sessions_tenant_conversation",
-    preview_sessions.c.tenant_id,
-    preview_sessions.c.conversation_id,
-    preview_sessions.c.created_at,
-)
-Index(
-    "uq_core_preview_sessions_active_task",
-    preview_sessions.c.tenant_id,
-    preview_sessions.c.task_id,
-    unique=True,
-    sqlite_where=text("status IN ('created', 'starting', 'ready', 'stopping')"),
-    postgresql_where=text("status IN ('created', 'starting', 'ready', 'stopping')"),
-)
-Index(
-    "ix_core_artifacts_tenant_task",
-    artifacts.c.tenant_id,
-    artifacts.c.task_id,
-    artifacts.c.created_at,
-)
-Index(
-    "ix_core_documents_tenant_conversation",
-    documents.c.tenant_id,
-    documents.c.conversation_id,
-    documents.c.status,
-    documents.c.created_at,
-)
-Index(
-    "ix_core_documents_tenant_project",
-    documents.c.tenant_id,
-    documents.c.project_id,
-    documents.c.status,
-    documents.c.created_at,
-)
-Index(
-    "ix_core_document_revisions_tenant_document",
-    document_revisions.c.tenant_id,
-    document_revisions.c.document_id,
-    document_revisions.c.revision,
-)
-Index(
-    "ix_core_document_chunks_tenant_document",
-    document_chunks.c.tenant_id,
-    document_chunks.c.document_id,
-    document_chunks.c.revision,
-    document_chunks.c.ordinal,
-)
-Index(
-    "uq_core_document_chunks_fts_rowid",
-    document_chunks.c.fts_rowid,
-    unique=True,
-)
-Index(
-    "ix_core_research_evidence_tenant_artifact",
-    research_evidence.c.tenant_id,
-    research_evidence.c.artifact_id,
-    research_evidence.c.ordinal,
+build_state_indexes(
+    {
+        "projects": projects,
+        "conversations": conversations,
+        "versions": versions,
+        "tasks": tasks,
+        "assistant_turns": assistant_turns,
+        "assistant_provider_attempts": assistant_provider_attempts,
+        "assistant_messages": assistant_messages,
+        "assistant_tool_invocations": assistant_tool_invocations,
+        "changesets": changesets,
+        "approvals": approvals,
+        "checkpoints": checkpoints,
+        "runtime_sessions": runtime_sessions,
+        "preview_sessions": preview_sessions,
+        "artifacts": artifacts,
+        "documents": documents,
+        "document_revisions": document_revisions,
+        "document_chunks": document_chunks,
+        "research_evidence": research_evidence,
+    }
 )

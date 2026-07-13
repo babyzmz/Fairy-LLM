@@ -389,6 +389,7 @@ def test_execution_records_survive_restart_with_explicit_ownership(tmp_path: Pat
     task.bind_target_version(version.id)
     changeset = Changeset.create(
         project_id=project.id,
+        workspace_id=project.workspace_id,
         conversation_id=conversation.id,
         task_id=task.id,
         version_id=version.id,

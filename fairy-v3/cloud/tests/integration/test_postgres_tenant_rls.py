@@ -427,10 +427,24 @@ async def _insert_tenant_project_event(
     await connection.execute(
         text(
             """
-            INSERT INTO core_projects (
-                tenant_id, id, name, residency, revision, created_at, updated_at
+            INSERT INTO core_workspaces (
+                tenant_id, id, revision, max_files, max_bytes, created_at, updated_at
             ) VALUES (
-                :tenant_id, :project_id, :project_id, 'synced', 0, now(), now()
+                :tenant_id, :project_id, 0, 200, 20971520, now(), now()
+            )
+            """
+        ),
+        {"tenant_id": tenant_id, "project_id": project_id},
+    )
+    await connection.execute(
+        text(
+            """
+            INSERT INTO core_projects (
+                tenant_id, id, name, residency, workspace_id,
+                revision, created_at, updated_at
+            ) VALUES (
+                :tenant_id, :project_id, :project_id, 'synced', :project_id,
+                0, now(), now()
             )
             """
         ),
@@ -440,10 +454,10 @@ async def _insert_tenant_project_event(
         text(
             """
             INSERT INTO core_conversations (
-                tenant_id, id, project_id, workspace_type,
+                tenant_id, id, project_id, workspace_id, workspace_type,
                 created_at, updated_at
             ) VALUES (
-                :tenant_id, :conversation_id, :project_id, 'project_chat',
+                :tenant_id, :conversation_id, :project_id, :project_id, 'project_chat',
                 now(), now()
             )
             """
@@ -458,11 +472,11 @@ async def _insert_tenant_project_event(
         text(
             """
             INSERT INTO core_tasks (
-                tenant_id, id, project_id, conversation_id, user_request,
+                tenant_id, id, project_id, workspace_id, conversation_id, user_request,
                 operation_mode, target_version_id, execution_target, status,
                 idempotency_key, created_at, updated_at
             ) VALUES (
-                :tenant_id, :task_id, :project_id, :conversation_id, 'Preview',
+                :tenant_id, :task_id, :project_id, :project_id, :conversation_id, 'Preview',
                 'continue_current_draft', :version_id, 'local', 'executing',
                 'task:rls', now(), now()
             )
@@ -480,10 +494,10 @@ async def _insert_tenant_project_event(
         text(
             """
             INSERT INTO core_versions (
-                tenant_id, id, project_id, source_conversation_id,
+                tenant_id, id, project_id, workspace_id, source_conversation_id,
                 source_task_id, project_root, visibility, created_at
             ) VALUES (
-                :tenant_id, :version_id, :project_id, :conversation_id,
+                :tenant_id, :version_id, :project_id, :project_id, :conversation_id,
                 :task_id, :project_root, 'chat_draft', now()
             )
             """
@@ -529,11 +543,11 @@ async def _insert_tenant_project_event(
         text(
             """
             INSERT INTO core_task_workspaces (
-                tenant_id, task_id, project_id, conversation_id, version_id,
+                tenant_id, task_id, project_id, workspace_id, conversation_id, version_id,
                 root, editable_files, reference_files, constraints, generation,
                 created_at
             ) VALUES (
-                :tenant_id, :task_id, :project_id, :conversation_id, :version_id,
+                :tenant_id, :task_id, :project_id, :project_id, :conversation_id, :version_id,
                 :project_root, '["**/*"]', '[]', '{}', 1, now()
             )
             """
@@ -551,10 +565,10 @@ async def _insert_tenant_project_event(
         text(
             """
             INSERT INTO core_project_indexes (
-                tenant_id, version_id, project_id, generation, source_hash,
+                tenant_id, version_id, project_id, workspace_id, generation, source_hash,
                 files, created_at, updated_at
             ) VALUES (
-                :tenant_id, :version_id, :project_id, 1, :source_hash,
+                :tenant_id, :version_id, :project_id, :project_id, 1, :source_hash,
                 '[]', now(), now()
             )
             """

@@ -28,6 +28,7 @@ from fairy_core.domain.models import (
     TaskStatus,
     Version,
     VersionVisibility,
+    Workspace,
     WorkspaceType,
 )
 from fairy_core.persistence.session import SqlAlchemySession
@@ -43,6 +44,7 @@ from fairy_core.storage.schema import (
     state_metadata,
     tasks,
     versions,
+    workspaces,
 )
 
 
@@ -88,13 +90,62 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
     def close(self) -> None:
         self._session.close()
 
+    def save_workspace(self, workspace: Workspace) -> None:
+        self._upsert(
+            workspaces,
+            {
+                "id": str(workspace.id),
+                "active_version_id": (
+                    str(workspace.active_version_id) if workspace.active_version_id else None
+                ),
+                "active_preview_id": (
+                    str(workspace.active_preview_id) if workspace.active_preview_id else None
+                ),
+                "revision": workspace.revision,
+                "max_files": workspace.max_files,
+                "max_bytes": workspace.max_bytes,
+                "created_at": workspace.created_at,
+                "updated_at": workspace.updated_at,
+            },
+        )
+
+    def get_workspace(self, workspace_id: UUID) -> Workspace | None:
+        row = self._get_by_id(workspaces, workspace_id)
+        return self._workspace_from_row(row) if row is not None else None
+
+    def _ensure_workspace(
+        self,
+        workspace_id: UUID,
+        *,
+        active_version_id: UUID | None = None,
+        active_preview_id: UUID | None = None,
+        revision: int = 0,
+    ) -> None:
+        if self.get_workspace(workspace_id) is not None:
+            return
+        self.save_workspace(
+            Workspace(
+                id=workspace_id,
+                active_version_id=active_version_id,
+                active_preview_id=active_preview_id,
+                revision=revision,
+            )
+        )
+
     def save_project(self, project: Project) -> None:
+        self._ensure_workspace(
+            project.workspace_id,
+            active_version_id=project.active_version_id,
+            active_preview_id=project.active_preview_id,
+            revision=project.revision,
+        )
         self._upsert(
             projects,
             {
                 "id": str(project.id),
                 "name": project.name,
                 "residency": project.residency.value,
+                "workspace_id": str(project.workspace_id),
                 "active_version_id": (
                     str(project.active_version_id) if project.active_version_id else None
                 ),
@@ -112,11 +163,14 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
         return self._project_from_row(row) if row is not None else None
 
     def save_conversation(self, conversation: Conversation) -> None:
+        assert conversation.workspace_id is not None
+        self._ensure_workspace(conversation.workspace_id)
         self._upsert(
             conversations,
             {
                 "id": str(conversation.id),
                 "project_id": str(conversation.project_id) if conversation.project_id else None,
+                "workspace_id": str(conversation.workspace_id),
                 "workspace_type": conversation.workspace_type.value,
                 "base_version_id": (
                     str(conversation.base_version_id) if conversation.base_version_id else None
@@ -171,11 +225,14 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
         return self._conversation_from_row(row) if row is not None else None
 
     def save_version(self, version: Version) -> None:
+        assert version.workspace_id is not None
+        self._ensure_workspace(version.workspace_id)
         self._upsert(
             versions,
             {
                 "id": str(version.id),
-                "project_id": str(version.project_id),
+                "project_id": str(version.project_id) if version.project_id else None,
+                "workspace_id": str(version.workspace_id),
                 "source_conversation_id": (
                     str(version.source_conversation_id) if version.source_conversation_id else None
                 ),
@@ -194,6 +251,8 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
         return self._version_from_row(row) if row is not None else None
 
     def save_task(self, task: Task, *, idempotency_key: str | None = None) -> None:
+        assert task.workspace_id is not None
+        self._ensure_workspace(task.workspace_id)
         if idempotency_key is None:
             with self._session.read() as connection:
                 existing = connection.execute(
@@ -210,6 +269,7 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
             {
                 "id": str(task.id),
                 "project_id": str(task.project_id) if task.project_id else None,
+                "workspace_id": str(task.workspace_id),
                 "conversation_id": str(task.conversation_id),
                 "user_request": task.user_request,
                 "operation_mode": task.operation_mode.value,
@@ -270,7 +330,8 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
             changesets,
             {
                 "id": str(changeset.id),
-                "project_id": str(changeset.project_id),
+                "project_id": str(changeset.project_id) if changeset.project_id else None,
+                "workspace_id": str(changeset.workspace_id),
                 "conversation_id": str(changeset.conversation_id),
                 "task_id": str(changeset.task_id),
                 "version_id": str(changeset.version_id),
@@ -579,6 +640,7 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
             id=UUID(row["id"]),
             name=row["name"],
             residency=ProjectResidency(row["residency"]),
+            workspace_id=UUID(row["workspace_id"]),
             active_version_id=_uuid(row["active_version_id"]),
             active_preview_id=_uuid(row["active_preview_id"]),
             revision=int(row["revision"]),
@@ -591,6 +653,7 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
         return Conversation(
             id=UUID(row["id"]),
             project_id=_uuid(row["project_id"]),
+            workspace_id=UUID(row["workspace_id"]),
             workspace_type=WorkspaceType(row["workspace_type"]),
             base_version_id=_uuid(row["base_version_id"]),
             active_draft_version_id=_uuid(row["active_draft_version_id"]),
@@ -608,7 +671,8 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
     def _version_from_row(row: Mapping[str, Any]) -> Version:
         return Version(
             id=UUID(row["id"]),
-            project_id=UUID(row["project_id"]),
+            project_id=_uuid(row["project_id"]),
+            workspace_id=UUID(row["workspace_id"]),
             source_conversation_id=_uuid(row["source_conversation_id"]),
             source_task_id=_uuid(row["source_task_id"]),
             parent_version_id=_uuid(row["parent_version_id"]),
@@ -622,6 +686,7 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
         return Task(
             id=UUID(row["id"]),
             project_id=_uuid(row["project_id"]),
+            workspace_id=UUID(row["workspace_id"]),
             conversation_id=UUID(row["conversation_id"]),
             user_request=row["user_request"],
             operation_mode=OperationMode(row["operation_mode"]),
@@ -639,10 +704,24 @@ class SqlAlchemyStateStore(CollectionStateStoreMixin, ExecutionStateStoreMixin):
         )
 
     @staticmethod
+    def _workspace_from_row(row: Mapping[str, Any]) -> Workspace:
+        return Workspace(
+            id=UUID(row["id"]),
+            active_version_id=_uuid(row["active_version_id"]),
+            active_preview_id=_uuid(row["active_preview_id"]),
+            revision=int(row["revision"]),
+            max_files=int(row["max_files"]),
+            max_bytes=int(row["max_bytes"]),
+            created_at=_datetime(row["created_at"]),
+            updated_at=_datetime(row["updated_at"]),
+        )
+
+    @staticmethod
     def _changeset_from_row(row: Mapping[str, Any]) -> Changeset:
         return Changeset(
             id=UUID(row["id"]),
-            project_id=UUID(row["project_id"]),
+            project_id=_uuid(row["project_id"]),
+            workspace_id=UUID(row["workspace_id"]),
             conversation_id=UUID(row["conversation_id"]),
             task_id=UUID(row["task_id"]),
             version_id=UUID(row["version_id"]),

@@ -121,6 +121,7 @@ from fairy_cloud.sync.contracts import (
 from fairy_cloud.sync.models import SyncedEvent
 from fairy_cloud.sync.ports import SyncStore
 from fairy_cloud.voice_routes import install_voice_routes
+from fairy_cloud.workspace_routes import install_workspace_routes
 
 _MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
 EVENT_POLL_SECONDS = 0.025
@@ -1100,6 +1101,7 @@ def create_cloud_app(
 
     install_extension_routes(protected, invoke)
     install_history_routes(protected, invoke)
+    install_workspace_routes(protected, invoke)
     operation_ids = {
         route.operation_id
         for route in (*app.routes, *protected.routes)

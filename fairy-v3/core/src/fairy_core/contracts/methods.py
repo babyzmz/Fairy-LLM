@@ -126,6 +126,14 @@ from fairy_core.contracts.voice_sessions import (
     VoiceSessionModel,
     VoiceSessionStartInput,
 )
+from fairy_core.contracts.workspaces import (
+    WorkspaceFileContentModel,
+    WorkspaceFilePageModel,
+    WorkspaceFileReadInput,
+    WorkspaceIdInput,
+    WorkspaceModel,
+    WorkspaceVersionInput,
+)
 from fairy_core.system_actions.models import SystemActionExecution, SystemActionRequest
 
 
@@ -459,6 +467,21 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "versions.list",
             VersionListInput,
             VersionPageModel,
+        ),
+        "workspaces.files.list": CoreMethod(
+            "workspaces.files.list",
+            WorkspaceVersionInput,
+            WorkspaceFilePageModel,
+        ),
+        "workspaces.files.read": CoreMethod(
+            "workspaces.files.read",
+            WorkspaceFileReadInput,
+            WorkspaceFileContentModel,
+        ),
+        "workspaces.get": CoreMethod(
+            "workspaces.get",
+            WorkspaceIdInput,
+            WorkspaceModel,
         ),
         "voice.synthesize": CoreMethod(
             "voice.synthesize",

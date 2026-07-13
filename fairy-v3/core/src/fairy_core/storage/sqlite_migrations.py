@@ -5,6 +5,8 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import inspect, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection, Engine
@@ -17,6 +19,7 @@ from fairy_core.storage.schema import (
     projects,
     tasks,
     versions,
+    workspaces,
 )
 
 _PRE_TENANT_REVISION = "20260710_pre_tenant_state"
@@ -25,6 +28,7 @@ _GENERIC_APPROVAL_REVISION = "20260711_generic_approval"
 _CHECKPOINT_EVIDENCE_REVISION = "20260712_checkpoint_evidence"
 _MCP_REQUEST_RESULTS_REVISION = "20260712_mcp_request_results"
 _HISTORY_METADATA_REVISION = "20260712_history_metadata"
+_WORKSPACE_IDENTITY_REVISION = "20260713_workspace_identity"
 
 
 def _datetime(value: str | None) -> datetime | None:
@@ -38,6 +42,7 @@ def _identity(row: Mapping[str, Any]) -> dict[str, Any]:
 def _project(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
         **row,
+        "workspace_id": row["id"],
         "created_at": _datetime(row["created_at"]),
         "updated_at": _datetime(row["updated_at"]),
     }
@@ -46,18 +51,24 @@ def _project(row: Mapping[str, Any]) -> dict[str, Any]:
 def _conversation(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
         **row,
+        "workspace_id": row.get("project_id") or row["id"],
         "created_at": _datetime(row["created_at"]),
         "updated_at": _datetime(row["updated_at"]),
     }
 
 
 def _version(row: Mapping[str, Any]) -> dict[str, Any]:
-    return {**row, "created_at": _datetime(row["created_at"])}
+    return {
+        **row,
+        "workspace_id": row.get("project_id") or row["id"],
+        "created_at": _datetime(row["created_at"]),
+    }
 
 
 def _task(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
         **row,
+        "workspace_id": row.get("project_id") or row["conversation_id"],
         "created_at": _datetime(row["created_at"]),
         "updated_at": _datetime(row["updated_at"]),
     }
@@ -65,11 +76,136 @@ def _task(row: Mapping[str, Any]) -> dict[str, Any]:
 
 def _changeset(row: Mapping[str, Any]) -> dict[str, Any]:
     values = dict(row)
+    values["workspace_id"] = row.get("project_id") or row["conversation_id"]
     values["files"] = json.loads(values.pop("files_json"))
     values["patches"] = json.loads(values.pop("patches_json"))
     values["created_at"] = _datetime(row["created_at"])
     values["updated_at"] = _datetime(row["updated_at"])
     return values
+
+
+def migrate_workspace_identity(engine: Engine) -> None:
+    """Make Workspace identity durable for existing canonical SQLite databases."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _WORKSPACE_IDENTITY_REVISION},
+        ).first():
+            return
+        inspector = inspect(connection)
+        tables = set(inspector.get_table_names())
+        targets = {
+            "core_projects": "id",
+            "core_conversations": "COALESCE(project_id, id)",
+            "core_versions": "COALESCE(project_id, source_conversation_id, id)",
+            "core_tasks": "COALESCE(project_id, conversation_id)",
+            "core_task_workspaces": "COALESCE(project_id, conversation_id)",
+            "core_project_indexes": "COALESCE(project_id, version_id)",
+            "core_changesets": "COALESCE(project_id, conversation_id)",
+        }
+        for table_name, expression in targets.items():
+            if table_name not in tables:
+                continue
+            columns = {column["name"] for column in inspector.get_columns(table_name)}
+            if "workspace_id" not in columns:
+                connection.exec_driver_sql(
+                    f'ALTER TABLE "{table_name}" ADD COLUMN workspace_id VARCHAR(36)'
+                )
+            connection.exec_driver_sql(
+                f'UPDATE "{table_name}" SET workspace_id = {expression} '
+                "WHERE workspace_id IS NULL"
+            )
+
+        now = datetime.now(UTC).isoformat()
+        if "core_projects" in tables:
+            connection.execute(
+                text(
+                    "INSERT OR IGNORE INTO core_workspaces "
+                    "(tenant_id, id, active_version_id, active_preview_id, revision, "
+                    "max_files, max_bytes, created_at, updated_at) "
+                    "SELECT tenant_id, workspace_id, active_version_id, active_preview_id, "
+                    "revision, 200, 20971520, created_at, updated_at FROM core_projects"
+                )
+            )
+        if "core_conversations" in tables:
+            connection.execute(
+                text(
+                    "INSERT OR IGNORE INTO core_workspaces "
+                    "(tenant_id, id, active_version_id, active_preview_id, revision, "
+                    "max_files, max_bytes, created_at, updated_at) "
+                    "SELECT tenant_id, workspace_id, "
+                    "COALESCE(active_draft_version_id, base_version_id), active_preview_id, "
+                    "revision, 200, 20971520, created_at, updated_at "
+                    "FROM core_conversations"
+                )
+            )
+
+        context = MigrationContext.configure(connection)
+        operations = Operations(context)
+        for table_name in targets:
+            if table_name not in tables:
+                continue
+            table_inspector = inspect(connection)
+            columns = {
+                column["name"]: column
+                for column in table_inspector.get_columns(table_name)
+            }
+            foreign_keys = {
+                item.get("name") for item in table_inspector.get_foreign_keys(table_name)
+            }
+            workspace_fk = f"fk_{table_name}_workspace"
+            recreate = columns["workspace_id"].get("nullable", True)
+            recreate = recreate or workspace_fk not in foreign_keys
+            if table_name in {"core_versions", "core_project_indexes", "core_changesets"}:
+                recreate = recreate or not columns["project_id"].get("nullable", True)
+            checks = {
+                item.get("name")
+                for item in table_inspector.get_check_constraints(table_name)
+            }
+            if (
+                table_name == "core_task_workspaces"
+                and "ck_core_task_workspaces_project_version" in checks
+            ):
+                recreate = True
+            if not recreate:
+                continue
+            with operations.batch_alter_table(table_name, recreate="always") as batch:
+                batch.alter_column("workspace_id", existing_type=None, nullable=False)
+                if workspace_fk not in foreign_keys:
+                    batch.create_foreign_key(
+                        workspace_fk,
+                        "core_workspaces",
+                        ["tenant_id", "workspace_id"],
+                        ["tenant_id", "id"],
+                        ondelete=(
+                            None
+                            if table_name in {"core_projects", "core_conversations"}
+                            else "CASCADE"
+                        ),
+                    )
+                if table_name in {"core_versions", "core_project_indexes", "core_changesets"}:
+                    batch.alter_column("project_id", existing_type=None, nullable=True)
+                if (
+                    table_name == "core_task_workspaces"
+                    and "ck_core_task_workspaces_project_version" in checks
+                ):
+                    batch.drop_constraint(
+                        "ck_core_task_workspaces_project_version",
+                        type_="check",
+                    )
+
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {"revision": _WORKSPACE_IDENTITY_REVISION, "applied_at": now},
+        )
 
 
 def _approval(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -131,6 +267,41 @@ def migrate_pre_tenant_schema(engine: Engine, *, tenant_id: str) -> None:
             rows = connection.execute(text(f'SELECT * FROM "{source_name}"')).mappings()
             for row in rows:
                 values = {"tenant_id": tenant_id, **transform(row)}
+                if destination is projects:
+                    workspace_statement = sqlite_insert(workspaces).values(
+                        tenant_id=tenant_id,
+                        id=values["workspace_id"],
+                        active_version_id=values.get("active_version_id"),
+                        active_preview_id=values.get("active_preview_id"),
+                        revision=values.get("revision", 0),
+                        max_files=200,
+                        max_bytes=20 * 1024 * 1024,
+                        created_at=values["created_at"],
+                        updated_at=values["updated_at"],
+                    )
+                    connection.execute(
+                        workspace_statement.on_conflict_do_nothing(
+                            index_elements=[workspaces.c.tenant_id, workspaces.c.id]
+                        )
+                    )
+                elif destination is conversations:
+                    workspace_statement = sqlite_insert(workspaces).values(
+                        tenant_id=tenant_id,
+                        id=values["workspace_id"],
+                        active_version_id=values.get("active_draft_version_id")
+                        or values.get("base_version_id"),
+                        active_preview_id=values.get("active_preview_id"),
+                        revision=values.get("revision", 0),
+                        max_files=200,
+                        max_bytes=20 * 1024 * 1024,
+                        created_at=values["created_at"],
+                        updated_at=values["updated_at"],
+                    )
+                    connection.execute(
+                        workspace_statement.on_conflict_do_nothing(
+                            index_elements=[workspaces.c.tenant_id, workspaces.c.id]
+                        )
+                    )
                 statement = sqlite_insert(destination).values(**values)
                 statement = statement.on_conflict_do_nothing(
                     index_elements=[destination.c.tenant_id, destination.c.id]

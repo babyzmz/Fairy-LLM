@@ -5,6 +5,7 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from sqlalchemy import inspect, text
 
 from fairy_core.commanding import SqlAlchemyCommandLedger
 from fairy_core.commanding.registry import RiskLevel
@@ -22,6 +23,7 @@ from fairy_core.storage import SqliteStateStore
 from fairy_core.storage.schema import state_metadata
 from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
+from fairy_core.storage.sqlite_migrations import migrate_workspace_identity
 
 
 def _scope(tmp_path: Path, name: str) -> ScopeContract:
@@ -43,6 +45,59 @@ def _scope(tmp_path: Path, name: str) -> ScopeContract:
         memory_read_scope=("project_canonical",),
         memory_write_scope=("current_conversation_draft",),
     )
+
+
+def test_workspace_identity_migrates_legacy_project_version(tmp_path: Path) -> None:
+    engine = create_sqlite_engine(tmp_path / "legacy-workspace.db")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE core_workspaces ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "active_version_id VARCHAR(36), active_preview_id VARCHAR(36), "
+            "revision BIGINT NOT NULL, max_files BIGINT NOT NULL, max_bytes BIGINT NOT NULL, "
+            "created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, "
+            "PRIMARY KEY (tenant_id, id))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE core_projects ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "active_version_id VARCHAR(36), active_preview_id VARCHAR(36), "
+            "revision BIGINT NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, "
+            "PRIMARY KEY (tenant_id, id))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE core_versions ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "project_id VARCHAR(36) NOT NULL, source_conversation_id VARCHAR(36), "
+            "PRIMARY KEY (tenant_id, id))"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_projects VALUES "
+            "('local', 'project-1', 'version-1', NULL, 2, "
+            "'2026-07-13T00:00:00+00:00', '2026-07-13T00:00:00+00:00')"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_versions VALUES "
+            "('local', 'version-1', 'project-1', NULL)"
+        )
+
+    migrate_workspace_identity(engine)
+
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT workspace_id FROM core_versions WHERE id = 'version-1'")
+        ).scalar_one() == "project-1"
+    version_columns = {
+        column["name"]: column for column in inspect(engine).get_columns("core_versions")
+    }
+    workspace_foreign_keys = {
+        foreign_key.get("name")
+        for foreign_key in inspect(engine).get_foreign_keys("core_versions")
+    }
+    assert version_columns["workspace_id"]["nullable"] is False
+    assert version_columns["project_id"]["nullable"] is True
+    assert "fk_core_versions_workspace" in workspace_foreign_keys
+    engine.dispose()
 
 
 def test_split_database_import_preserves_every_existing_tenant(tmp_path: Path) -> None:

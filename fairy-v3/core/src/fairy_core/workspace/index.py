@@ -63,7 +63,8 @@ class ProjectIndexer:
     def build(
         self,
         *,
-        project_id: UUID,
+        project_id: UUID | None,
+        workspace_id: UUID | None = None,
         version_id: UUID,
         root: Path,
         generation: int,
@@ -91,6 +92,7 @@ class ProjectIndexer:
             digest.update(b"\n")
         return ProjectIndex(
             project_id=project_id,
+            workspace_id=workspace_id,
             version_id=version_id,
             generation=generation,
             source_hash=digest.hexdigest(),

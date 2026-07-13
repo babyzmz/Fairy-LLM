@@ -35,6 +35,7 @@ const timestamp = "2026-07-11T00:00:00Z";
 
 const project: Project = {
   id: ID.project,
+  workspace_id: ID.project,
   name: "Atlas Console",
   residency: "local_only",
   active_version_id: ID.version,
@@ -46,6 +47,7 @@ const project: Project = {
 const conversation: Conversation = {
   id: ID.conversation,
   project_id: ID.project,
+  workspace_id: ID.project,
   workspace_type: "project_chat",
   base_version_id: ID.version,
   active_draft_version_id: null,
@@ -61,6 +63,7 @@ const conversation: Conversation = {
 const task: Task = {
   id: ID.task,
   project_id: ID.project,
+  workspace_id: ID.project,
   conversation_id: ID.conversation,
   user_request: "Tighten the project overview",
   operation_mode: "continue_current_chat_draft",
@@ -79,6 +82,7 @@ const task: Task = {
 const version: Version = {
   id: ID.version,
   project_id: ID.project,
+  workspace_id: ID.project,
   source_conversation_id: ID.conversation,
   source_task_id: ID.task,
   parent_version_id: null,
@@ -89,6 +93,7 @@ const version: Version = {
 const scratchConversation: Conversation = {
   id: ID.scratchConversation,
   project_id: null,
+  workspace_id: ID.scratchConversation,
   workspace_type: "chat_scratch",
   base_version_id: null,
   active_draft_version_id: null,

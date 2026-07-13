@@ -23,6 +23,7 @@ from fairy_core.storage.sqlite_migrations import (
     migrate_mcp_request_results,
     migrate_pre_tenant_schema,
     migrate_task_snapshot_binding,
+    migrate_workspace_identity,
 )
 
 
@@ -38,6 +39,7 @@ def create_sqlite_core_engine(
     try:
         prepare_pre_tenant_schema(engine)
         state_metadata.create_all(engine)
+        migrate_workspace_identity(engine)
         initialize_document_sqlite_fts(engine)
         migrate_task_snapshot_binding(engine)
         migrate_history_metadata(engine)

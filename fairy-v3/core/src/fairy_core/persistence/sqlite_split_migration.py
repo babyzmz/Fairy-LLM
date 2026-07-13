@@ -31,17 +31,20 @@ from fairy_core.storage.schema import (
     state_metadata,
     tasks,
     versions,
+    workspaces,
 )
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
 from fairy_core.storage.sqlite_migrations import (
     migrate_checkpoint_evidence,
     migrate_pre_tenant_schema,
     migrate_task_snapshot_binding,
+    migrate_workspace_identity,
 )
 
 _STATE_IMPORT_REVISION = "20260710_split_state_db_v1"
 _LEDGER_IMPORT_REVISION = "20260710_split_ledger_db_v1"
 _STATE_TABLES = (
+    workspaces,
     projects,
     conversations,
     versions,
@@ -211,6 +214,7 @@ def _normalized_copy(
 
 def _normalize_state_database(engine: Engine, tenant_id: str) -> None:
     state_metadata.create_all(engine)
+    migrate_workspace_identity(engine)
     migrate_task_snapshot_binding(engine)
     migrate_checkpoint_evidence(engine)
     migrate_pre_tenant_schema(engine, tenant_id=tenant_id)

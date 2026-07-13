@@ -1203,6 +1203,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{workspace_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Workspace */
+        get: operations["workspaces.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{workspace_id}/file-content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Workspace File */
+        get: operations["workspaces.files.read"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{workspace_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Workspace Files */
+        get: operations["workspaces.files.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1495,11 +1546,8 @@ export interface components {
             idempotency_key: string;
             /** Patches */
             patches: string[];
-            /**
-             * Project Id
-             * Format: uuid
-             */
-            project_id: string;
+            /** Project Id */
+            project_id: string | null;
             /** Reason */
             reason: string;
             /** Risk Level */
@@ -1520,6 +1568,11 @@ export interface components {
              * Format: uuid
              */
             version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
         };
         /** ChangesetProposal */
         ChangesetProposal: {
@@ -1634,6 +1687,11 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
             workspace_type: components["schemas"]["WorkspaceType"];
         };
         /** ConversationMoveResultModel */
@@ -2994,6 +3052,11 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
         };
         /** ProjectPageModel */
         ProjectPageModel: {
@@ -3219,6 +3282,11 @@ export interface components {
              * Format: uuid
              */
             task_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
             workspace_type: components["schemas"]["WorkspaceType"];
         };
         /**
@@ -3420,6 +3488,11 @@ export interface components {
             updated_at: string;
             /** User Request */
             user_request: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
         };
         /** TaskPageModel */
         TaskPageModel: {
@@ -3569,11 +3642,8 @@ export interface components {
             id: string;
             /** Parent Version Id */
             parent_version_id: string | null;
-            /**
-             * Project Id
-             * Format: uuid
-             */
-            project_id: string;
+            /** Project Id */
+            project_id: string | null;
             /**
              * Project Root
              * Format: path
@@ -3584,6 +3654,11 @@ export interface components {
             /** Source Task Id */
             source_task_id: string | null;
             visibility: components["schemas"]["VersionVisibility"];
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
         };
         /** VersionPageModel */
         VersionPageModel: {
@@ -3762,6 +3837,76 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** WorkspaceFileContentModel */
+        WorkspaceFileContentModel: {
+            /** Content Base64 */
+            content_base64?: string | null;
+            file: components["schemas"]["WorkspaceFileModel"];
+            /** Media Type */
+            media_type: string;
+            /** Text */
+            text?: string | null;
+        };
+        /** WorkspaceFileModel */
+        WorkspaceFileModel: {
+            /** Byte Length */
+            byte_length: number;
+            /** Content Hash */
+            content_hash: string;
+            /** Kind */
+            kind: string;
+            /** Language */
+            language: string | null;
+            /** Path */
+            path: string;
+        };
+        /** WorkspaceFilePageModel */
+        WorkspaceFilePageModel: {
+            /** Generation */
+            generation: number;
+            /** Items */
+            items: components["schemas"]["WorkspaceFileModel"][];
+            /** Source Hash */
+            source_hash: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** WorkspaceModel */
+        WorkspaceModel: {
+            /** Active Preview Id */
+            active_preview_id: string | null;
+            /** Active Version Id */
+            active_version_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Max Bytes */
+            max_bytes: number;
+            /** Max Files */
+            max_files: number;
+            /** Revision */
+            revision: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /**
          * WorkspaceType
          * @enum {string}
@@ -3781,6 +3926,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string | null;
+                workspace_id?: string | null;
                 project_id?: string | null;
                 conversation_id?: string | null;
                 task_id?: string | null;
@@ -6287,6 +6433,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string | null;
+                workspace_id?: string | null;
                 project_id?: string | null;
                 conversation_id?: string | null;
                 task_id?: string | null;
@@ -6510,6 +6657,110 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VoiceTranscriptModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workspaces.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workspaces.files.read": {
+        parameters: {
+            query: {
+                path: string;
+                version_id?: string | null;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceFileContentModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workspaces.files.list": {
+        parameters: {
+            query?: {
+                version_id?: string | null;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceFilePageModel"];
                 };
             };
             /** @description Validation Error */

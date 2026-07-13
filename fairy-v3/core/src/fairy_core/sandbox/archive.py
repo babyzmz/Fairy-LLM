@@ -90,10 +90,12 @@ class WorkspaceArchiveBuilder:
             or workspace is None
             or task.id != scope.task_id
             or task.project_id != scope.project_id
+            or task.workspace_id != scope.workspace_id
             or task.conversation_id != scope.conversation_id
             or task.target_version_id != scope.target_version_id
             or workspace.task_id != scope.task_id
             or workspace.project_id != scope.project_id
+            or workspace.workspace_id != scope.workspace_id
             or workspace.conversation_id != scope.conversation_id
             or workspace.version_id != scope.target_version_id
         ):
@@ -113,16 +115,10 @@ class WorkspaceArchiveBuilder:
                 "Task Workspace root does not match Scope",
                 code="SCOPE_MISMATCH",
             )
-        if scope.project_id is None:
-            if index is not None or scope.target_version_id is not None:
-                raise ScopeViolationError(
-                    "scratch Workspace has a Project Index",
-                    code="SCOPE_MISMATCH",
-                )
-            return workspace, None
         if (
             index is None
             or index.project_id != scope.project_id
+            or index.workspace_id != scope.workspace_id
             or index.version_id != scope.target_version_id
         ):
             raise ScopeViolationError(

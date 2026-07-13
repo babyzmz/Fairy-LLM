@@ -80,6 +80,7 @@ def test_changeset_cannot_apply_before_approval() -> None:
     ids = _scope_ids()
     changeset = Changeset.create(
         **ids,
+        workspace_id=ids["project_id"],
         files=("src/app.ts",),
         patches=("@@ -1 +1 @@",),
         reason="Add pricing section",

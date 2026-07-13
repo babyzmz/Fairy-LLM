@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from uuid import UUID
 
@@ -17,6 +15,10 @@ from fairy_core.application.contexts import (
 from fairy_core.application.contexts import (
     TaskIntent as _TaskIntent,
 )
+from fairy_core.application.core_support import (
+    CoreSupportMixin,
+    approve_changeset_by_policy,
+)
 from fairy_core.application.errors import ApprovalRequiredError, command_rejected
 from fairy_core.application.history import ConversationMoveContext, HistoryApplication
 from fairy_core.application.recoverable_command import start_recoverable_core_command
@@ -27,8 +29,9 @@ from fairy_core.application.replay_validation import (
 )
 from fairy_core.application.review_evidence import collect_checkpoint_evidence
 from fairy_core.application.scope import build_task_scope
-from fairy_core.commanding import CommandLedger, CommandRun, CommandStatus
-from fairy_core.commanding.bus import CommandBus, CommandRequest
+from fairy_core.application.workspaces import WorkspaceApplication
+from fairy_core.commanding import CommandStatus
+from fairy_core.commanding.bus import CommandRequest
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
@@ -52,15 +55,16 @@ from fairy_core.domain.models import (
     TaskStatus,
     Version,
     VersionVisibility,
+    Workspace,
     WorkspaceType,
 )
-from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
+from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.storage import StateStore
 from fairy_core.workspace.index import ProjectIndexer
 from fairy_core.workspace.ports import WorkspaceProvisioner
 
 
-class CoreApplication:
+class CoreApplication(CoreSupportMixin):
     def __init__(
         self,
         *,
@@ -77,6 +81,10 @@ class CoreApplication:
         self._registry = registry
         self._policy = policy
         self._project_indexer = project_indexer or ProjectIndexer()
+        self.workspace_access = WorkspaceApplication(
+            unit_of_work_factory,
+            self._project_indexer,
+        )
         self._execution_policy = execution_policy or ExecutionPolicyResolver()
         self._approvals = ApprovalApplication(
             unit_of_work_factory=unit_of_work_factory,
@@ -95,11 +103,13 @@ class CoreApplication:
         version_id = new_id()
         setup_conversation = Conversation.create(
             project_id=project.id,
+            workspace_id=project.workspace_id,
             workspace_type=WorkspaceType.PROJECT_CHAT,
             base_version_id=None,
         )
         setup_task = Task.create(
             project_id=project.id,
+            workspace_id=project.workspace_id,
             conversation_id=setup_conversation.id,
             user_request="Import project" if source is not None else "Create project",
             operation_mode=OperationMode.CREATE_NEW_VERSION,
@@ -108,9 +118,10 @@ class CoreApplication:
         )
         setup_task.bind_target_version(version_id)
         setup_task.transition_to(TaskStatus.RESOLVING_SCOPE)
-        root_hint = self._workspaces.version_path(project.id, version_id)
+        root_hint = self._workspaces.version_path(project.workspace_id, version_id)
         scope = ScopeContract.create(
             workspace_type=WorkspaceType.PROJECT_CHAT,
+            workspace_id=project.workspace_id,
             project_id=project.id,
             conversation_id=setup_conversation.id,
             task_id=setup_task.id,
@@ -127,7 +138,8 @@ class CoreApplication:
         )
         tool_name = "workspace.import" if source is not None else "workspace.create_empty"
         payload: dict[str, object] = {
-            "project_id": str(project.id),
+            "project_id": str(project.workspace_id),
+            "workspace_id": str(project.workspace_id),
             "version_id": str(version_id),
         }
         if source is not None:
@@ -152,12 +164,13 @@ class CoreApplication:
 
         try:
             root = self._workspaces.create_initial_version(
-                project.id,
+                project.workspace_id,
                 version_id,
                 source=source,
             )
             initial_index = self._project_indexer.build(
                 project_id=project.id,
+                workspace_id=project.workspace_id,
                 version_id=version_id,
                 root=root,
                 generation=1,
@@ -186,6 +199,7 @@ class CoreApplication:
             version = Version.create(
                 version_id=version_id,
                 project_id=persisted_project.id,
+                workspace_id=persisted_project.workspace_id,
                 source_conversation_id=None,
                 source_task_id=None,
                 parent_version_id=None,
@@ -193,6 +207,10 @@ class CoreApplication:
                 visibility=VersionVisibility.PROJECT_ACTIVE,
             )
             persisted_project.accept_version(version.id, expected_revision=0)
+            workspace = unit_of_work.state.get_workspace(persisted_project.workspace_id)
+            if workspace is None:
+                raise RuntimeError("Project Workspace was not persisted")
+            workspace.accept_version(version.id, expected_revision=0)
             for status in (
                 TaskStatus.BUILDING_WORKSPACE,
                 TaskStatus.PLANNING,
@@ -204,9 +222,11 @@ class CoreApplication:
                 persisted_task.transition_to(status)
             persisted_conversation.base_version_id = version.id
             unit_of_work.state.save_version(version)
+            unit_of_work.state.save_workspace(workspace)
             unit_of_work.workspaces.bind_once(
                 task_id=persisted_task.id,
                 project_id=persisted_project.id,
+                workspace_id=persisted_project.workspace_id,
                 conversation_id=persisted_conversation.id,
                 version_id=version.id,
                 root=root,
@@ -245,9 +265,36 @@ class CoreApplication:
                 base_version_id = project.active_version_id
             conversation = Conversation.create(
                 project_id=project_id,
+                workspace_id=(project.workspace_id if project_id is not None else None),
                 workspace_type=workspace_type,
                 base_version_id=base_version_id,
             )
+            if workspace_type is WorkspaceType.CHAT_SCRATCH:
+                assert conversation.workspace_id is not None
+                unit_of_work.state.save_conversation(conversation)
+                version_id = new_id()
+                root = self._workspaces.create_initial_version(
+                    conversation.workspace_id,
+                    version_id,
+                    source=None,
+                )
+                version = Version.create(
+                    version_id=version_id,
+                    project_id=None,
+                    workspace_id=conversation.workspace_id,
+                    source_conversation_id=conversation.id,
+                    source_task_id=None,
+                    parent_version_id=None,
+                    project_root=root,
+                    visibility=VersionVisibility.PROJECT_ACTIVE,
+                )
+                conversation.base_version_id = version.id
+                workspace = unit_of_work.state.get_workspace(conversation.workspace_id)
+                if workspace is None:
+                    workspace = Workspace.create(workspace_id=conversation.workspace_id)
+                workspace.accept_version(version.id, expected_revision=workspace.revision)
+                unit_of_work.state.save_workspace(workspace)
+                unit_of_work.state.save_version(version)
             unit_of_work.state.save_conversation(conversation)
             unit_of_work.commit()
         return conversation
@@ -330,9 +377,9 @@ class CoreApplication:
 
         try:
             if target_version is not None:
-                assert task.project_id is not None and task.base_version_id is not None
+                assert task.workspace_id is not None and task.base_version_id is not None
                 root = self._workspaces.fork_version(
-                    project_id=task.project_id,
+                    project_id=task.workspace_id,
                     version_id=target_version.id,
                     parent_version_id=task.base_version_id,
                 )
@@ -341,11 +388,12 @@ class CoreApplication:
             project_index = (
                 self._project_indexer.build(
                     project_id=task.project_id,
+                    workspace_id=task.workspace_id,
                     version_id=target_version.id,
                     root=root,
                     generation=1,
                 )
-                if target_version is not None and task.project_id is not None
+                if target_version is not None
                 else None
             )
         except Exception as error:
@@ -379,6 +427,7 @@ class CoreApplication:
             unit_of_work.workspaces.bind_once(
                 task_id=persisted_task.id,
                 project_id=persisted_task.project_id,
+                workspace_id=persisted_task.workspace_id,
                 conversation_id=persisted_conversation.id,
                 version_id=(persisted_target.id if persisted_target is not None else None),
                 root=root,
@@ -429,6 +478,7 @@ class CoreApplication:
                 )
                 task = Task.create(
                     project_id=conversation.project_id,
+                    workspace_id=conversation.workspace_id,
                     conversation_id=conversation.id,
                     user_request=request.user_request,
                     operation_mode=request.operation_mode,
@@ -436,18 +486,19 @@ class CoreApplication:
                     execution_target=request.execution_target.value,
                 )
                 target_version: Version | None = None
-                if conversation.workspace_type is WorkspaceType.PROJECT_CHAT:
-                    if conversation.project_id is None or base_version_id is None:
-                        raise ValueError("project conversation has no base version")
+                if base_version_id is not None:
+                    if conversation.workspace_id is None:
+                        raise ValueError("conversation has no Workspace")
                     parent = self._require_version(unit_of_work.state, base_version_id)
                     version_id = new_id()
                     root_hint = self._workspaces.version_path(
-                        conversation.project_id,
+                        conversation.workspace_id,
                         version_id,
                     )
                     target_version = Version.create(
                         version_id=version_id,
                         project_id=conversation.project_id,
+                        workspace_id=conversation.workspace_id,
                         source_conversation_id=conversation.id,
                         source_task_id=task.id,
                         parent_version_id=parent.id,
@@ -463,7 +514,8 @@ class CoreApplication:
                     unit_of_work.state.save_version(target_version)
                     tool_name = "workspace.fork"
                     payload: dict[str, object] = {
-                        "project_id": str(task.project_id),
+                        "project_id": str(task.workspace_id),
+                        "workspace_id": str(task.workspace_id),
                         "parent_version_id": str(task.base_version_id),
                         "version_id": str(target_version.id),
                     }
@@ -579,13 +631,14 @@ class CoreApplication:
                 raise InvalidTransitionError(
                     "Task must be planning or executing before proposing a Changeset"
                 )
-            if task.project_id is None or task.target_version_id is None:
-                raise ValueError("scratch tasks cannot apply project Changesets")
+            if task.target_version_id is None or task.workspace_id is None:
+                raise ValueError("Task has no writable Workspace Version")
             if task.status is TaskStatus.REPAIRING:
                 task.transition_to(TaskStatus.EXECUTING)
             context = self._context_for(unit_of_work.state, task)
             changeset = Changeset.create(
                 project_id=task.project_id,
+                workspace_id=task.workspace_id,
                 conversation_id=task.conversation_id,
                 task_id=task.id,
                 version_id=task.target_version_id,
@@ -611,8 +664,9 @@ class CoreApplication:
                 capability_overrides=dict(policy.capability_overrides),
                 sandbox_healthy=policy.sandbox_healthy,
             )
-            if not dispatch.accepted or not dispatch.requires_approval or dispatch.run is None:
+            if not dispatch.accepted or dispatch.run is None:
                 raise command_rejected(dispatch, "Changeset approval command was rejected")
+            auto_approved = not dispatch.requires_approval
             changeset.transition_to(ChangesetStatus.AWAITING_APPROVAL)
             approval = Approval.create(
                 task_id=task.id,
@@ -626,6 +680,18 @@ class CoreApplication:
             unit_of_work.state.save_approval(approval)
             unit_of_work.state.save_task(task)
             unit_of_work.commit()
+        if auto_approved:
+            approve_changeset_by_policy(
+                self._unit_of_work_factory,
+                approval_id=approval.id,
+                changeset_id=changeset.id,
+            )
+            changeset = self.decide_approval(
+                approval_id=approval.id,
+                approved=True,
+                decided_by="policy:autonomous",
+            )
+            approval = self.get_approval(approval.id)
         return PendingChangeset(changeset=changeset, approval=approval)
 
     def decide_approval(
@@ -666,7 +732,7 @@ class CoreApplication:
 
         try:
             written = self._workspaces.apply_changeset(
-                project_id=changeset.project_id,
+                project_id=task.workspace_id,
                 version_id=changeset.version_id,
                 mutations=tuple(zip(changeset.files, changeset.patches, strict=True)),
             )
@@ -675,9 +741,10 @@ class CoreApplication:
             current_generation = current_index.generation if current_index is not None else 0
             refreshed_index = self._project_indexer.build(
                 project_id=changeset.project_id,
+                workspace_id=changeset.workspace_id,
                 version_id=changeset.version_id,
                 root=self._workspaces.version_path(
-                    changeset.project_id,
+                    changeset.workspace_id,
                     changeset.version_id,
                 ),
                 generation=current_generation + 1,
@@ -759,7 +826,8 @@ class CoreApplication:
                 tool_name="workspace.diff",
                 scope=context.scope,
                 payload={
-                    "project_id": str(task.project_id),
+                    "project_id": str(task.workspace_id),
+                    "workspace_id": str(task.workspace_id),
                     "version_id": str(task.target_version_id),
                 },
                 idempotency_key=f"task:{task.id}:diff",
@@ -770,7 +838,7 @@ class CoreApplication:
         if diff_running.status is not CommandStatus.SUCCEEDED:
             try:
                 diff = self._workspaces.diff(
-                    project_id=task.project_id,
+                    project_id=task.workspace_id,
                     version_id=task.target_version_id,
                 )
             except Exception as error:
@@ -802,7 +870,8 @@ class CoreApplication:
                 tool_name="workspace.checkpoint",
                 scope=context.scope,
                 payload={
-                    "project_id": str(task.project_id),
+                    "project_id": str(task.workspace_id),
+                    "workspace_id": str(task.workspace_id),
                     "version_id": str(task.target_version_id),
                 },
                 idempotency_key=f"task:{task.id}:checkpoint",
@@ -811,7 +880,7 @@ class CoreApplication:
 
         try:
             commit = self._workspaces.checkpoint(
-                project_id=task.project_id,
+                project_id=task.workspace_id,
                 version_id=task.target_version_id,
                 message=f"Fairy Task {task.id}",
             )
@@ -905,7 +974,8 @@ class CoreApplication:
                 tool_name="workspace.discard",
                 scope=context.scope,
                 payload={
-                    "project_id": str(task.project_id),
+                    "project_id": str(task.workspace_id),
+                    "workspace_id": str(task.workspace_id),
                     "version_id": str(task.target_version_id),
                 },
                 idempotency_key=(f"task:{task.id}:discard:revision:{reservation_revision}"),
@@ -914,7 +984,7 @@ class CoreApplication:
 
         try:
             self._workspaces.discard_version(
-                project_id=task.project_id,
+                project_id=task.workspace_id,
                 version_id=task.target_version_id,
             )
         except Exception as error:
@@ -1027,6 +1097,13 @@ class CoreApplication:
                     version_id=persisted_task.target_version_id,
                     expected_revision=expected_project_revision,
                 )
+                workspace = unit_of_work.state.get_workspace(persisted_task.workspace_id)
+                if workspace is None:
+                    raise RuntimeError("Task Workspace was not persisted")
+                workspace.accept_version(
+                    persisted_task.target_version_id,
+                    expected_revision=expected_project_revision,
+                )
                 conversation = self._require_conversation(
                     unit_of_work.state,
                     persisted_task.conversation_id,
@@ -1059,6 +1136,7 @@ class CoreApplication:
                     conversation.active_preview_id = preview.id
                     unit_of_work.state.save_project(project)
                 unit_of_work.state.save_version(version)
+                unit_of_work.state.save_workspace(workspace)
                 unit_of_work.state.save_task(persisted_task)
                 unit_of_work.state.save_conversation(conversation)
                 commands.complete(
@@ -1104,96 +1182,3 @@ class CoreApplication:
             workspaces=self._workspaces,
         )
         return TaskContext(task=task, target_version=target_version, scope=scope)
-
-    def _start_command(
-        self,
-        unit_of_work: CoreUnitOfWork,
-        commands: CommandBus,
-        *,
-        tool_name: str,
-        scope: ScopeContract,
-        payload: dict[str, object],
-        idempotency_key: str,
-    ) -> CommandRun:
-        policy = self._execution_policy.resolve(
-            unit_of_work.execution_settings,
-            execution_target=scope.execution_target,
-        )
-        dispatch = commands.submit(
-            CommandRequest(
-                tool_name=tool_name,
-                actor="core",
-                scope=scope,
-                payload=payload,
-                idempotency_key=idempotency_key,
-            ),
-            profile=policy.profile,
-            capability_overrides=dict(policy.capability_overrides),
-            sandbox_healthy=policy.sandbox_healthy,
-        )
-        if not dispatch.accepted or dispatch.run is None:
-            raise command_rejected(dispatch, "command was rejected")
-        if dispatch.requires_approval:
-            raise ApprovalRequiredError(dispatch.reason or "command requires approval")
-        if dispatch.run.status is not CommandStatus.QUEUED:
-            raise RuntimeError(f"command cannot execute from {dispatch.run.status}")
-        return commands.start(dispatch.run.id)
-
-    @contextmanager
-    def _transaction(self) -> Iterator[tuple[CoreUnitOfWork, CommandBus]]:
-        with self._unit_of_work_factory() as unit_of_work:
-            yield unit_of_work, self._command_bus(unit_of_work.commands)
-
-    def _command_bus(self, ledger: CommandLedger) -> CommandBus:
-        return CommandBus(
-            registry=self._registry,
-            policy=self._policy,
-            ledger=ledger,
-        )
-
-    @staticmethod
-    def _require_project(state: StateStore, project_id: UUID) -> Project:
-        project = state.get_project(project_id)
-        if project is None:
-            raise KeyError(f"project not found: {project_id}")
-        return project
-
-    @staticmethod
-    def _require_conversation(
-        state: StateStore,
-        conversation_id: UUID,
-    ) -> Conversation:
-        conversation = state.get_conversation(conversation_id)
-        if conversation is None:
-            raise KeyError(f"conversation not found: {conversation_id}")
-        return conversation
-
-    @staticmethod
-    def _require_task(state: StateStore, task_id: UUID) -> Task:
-        task = state.get_task(task_id)
-        if task is None:
-            raise KeyError(f"task not found: {task_id}")
-        return task
-
-    @staticmethod
-    def _require_version(state: StateStore, version_id: UUID | None) -> Version:
-        if version_id is None:
-            raise ValueError("version_id is required")
-        version = state.get_version(version_id)
-        if version is None:
-            raise KeyError(f"version not found: {version_id}")
-        return version
-
-    @staticmethod
-    def _require_changeset(state: StateStore, changeset_id: UUID) -> Changeset:
-        changeset = state.get_changeset(changeset_id)
-        if changeset is None:
-            raise KeyError(f"changeset not found: {changeset_id}")
-        return changeset
-
-    @staticmethod
-    def _require_approval(state: StateStore, approval_id: UUID) -> Approval:
-        approval = state.get_approval(approval_id)
-        if approval is None:
-            raise KeyError(f"approval not found: {approval_id}")
-        return approval

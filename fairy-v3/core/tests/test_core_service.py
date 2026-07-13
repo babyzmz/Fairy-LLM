@@ -315,5 +315,8 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "voice.sessions.get",
         "voice.sessions.start",
         "voice.transcribe",
+        "workspaces.files.list",
+        "workspaces.files.read",
+        "workspaces.get",
     }
     assert all(method.name == name for name, method in CORE_METHODS.items())

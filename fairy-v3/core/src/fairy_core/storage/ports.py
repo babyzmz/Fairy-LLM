@@ -12,12 +12,16 @@ from fairy_core.domain.execution import (
     PreviewSession,
     RuntimeSession,
 )
-from fairy_core.domain.models import Conversation, Project, Task, Version
+from fairy_core.domain.models import Conversation, Project, Task, Version, Workspace
 from fairy_core.research.models import ResearchEvidence
 from fairy_core.storage.pagination import StatePage
 
 
 class StateStore(Protocol):
+    def save_workspace(self, workspace: Workspace) -> None: ...
+
+    def get_workspace(self, workspace_id: UUID) -> Workspace | None: ...
+
     def save_project(self, project: Project) -> None: ...
 
     def get_project(self, project_id: UUID) -> Project | None: ...
@@ -50,6 +54,7 @@ class StateStore(Protocol):
     def list_versions(
         self,
         *,
+        workspace_id: UUID | None,
         project_id: UUID | None,
         conversation_id: UUID | None,
         task_id: UUID | None,

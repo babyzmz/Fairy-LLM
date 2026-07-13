@@ -252,6 +252,7 @@ function task(): Task {
   return {
     id: id.task,
     project_id: id.project,
+    workspace_id: id.project,
     conversation_id: id.conversation,
     user_request: "Build preview",
     operation_mode: "continue_current_chat_draft",

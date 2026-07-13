@@ -36,6 +36,7 @@ class SqlAlchemyWorkspaceRepository:
         *,
         task_id: UUID | str,
         project_id: UUID | str | None,
+        workspace_id: UUID | str | None = None,
         conversation_id: UUID | str,
         version_id: UUID | str | None,
         root: Path,
@@ -46,6 +47,7 @@ class SqlAlchemyWorkspaceRepository:
         candidate = TaskWorkspace(
             task_id=_require_uuid(task_id),
             project_id=_uuid(project_id),
+            workspace_id=_uuid(workspace_id),
             conversation_id=_require_uuid(conversation_id),
             version_id=_uuid(version_id),
             root=root,
@@ -94,6 +96,7 @@ class SqlAlchemyWorkspaceRepository:
             "tenant_id": self._tenant_id,
             "task_id": str(workspace.task_id),
             "project_id": str(workspace.project_id) if workspace.project_id else None,
+            "workspace_id": str(workspace.workspace_id),
             "conversation_id": str(workspace.conversation_id),
             "version_id": str(workspace.version_id) if workspace.version_id else None,
             "root": str(workspace.root),
@@ -109,6 +112,7 @@ class SqlAlchemyWorkspaceRepository:
         return TaskWorkspace(
             task_id=UUID(row["task_id"]),
             project_id=_uuid(row["project_id"]),
+            workspace_id=UUID(row["workspace_id"]),
             conversation_id=UUID(row["conversation_id"]),
             version_id=_uuid(row["version_id"]),
             root=Path(row["root"]),
@@ -124,6 +128,7 @@ class SqlAlchemyWorkspaceRepository:
         return (
             left.task_id == right.task_id
             and left.project_id == right.project_id
+            and left.workspace_id == right.workspace_id
             and left.conversation_id == right.conversation_id
             and left.version_id == right.version_id
             and left.root == right.root
@@ -181,7 +186,7 @@ class SqlAlchemyProjectIndexRepository:
                 .where(
                     project_indexes.c.tenant_id == self._tenant_id,
                     project_indexes.c.version_id == str(index.version_id),
-                    project_indexes.c.project_id == str(index.project_id),
+                    project_indexes.c.workspace_id == str(index.workspace_id),
                     project_indexes.c.generation == expected_generation,
                 )
                 .values(
@@ -211,7 +216,8 @@ class SqlAlchemyProjectIndexRepository:
         return {
             "tenant_id": self._tenant_id,
             "version_id": str(index.version_id),
-            "project_id": str(index.project_id),
+            "project_id": str(index.project_id) if index.project_id else None,
+            "workspace_id": str(index.workspace_id),
             "generation": index.generation,
             "source_hash": index.source_hash,
             "files": [self._file_values(item) for item in index.files],
@@ -236,7 +242,8 @@ class SqlAlchemyProjectIndexRepository:
     @classmethod
     def _index_from_row(cls, row: RowMapping) -> ProjectIndex:
         return ProjectIndex(
-            project_id=UUID(row["project_id"]),
+            project_id=_uuid(row["project_id"]),
+            workspace_id=UUID(row["workspace_id"]),
             version_id=UUID(row["version_id"]),
             generation=int(row["generation"]),
             source_hash=row["source_hash"],
@@ -248,6 +255,7 @@ class SqlAlchemyProjectIndexRepository:
     def _same_index(left: ProjectIndex, right: ProjectIndex) -> bool:
         return (
             left.project_id == right.project_id
+            and left.workspace_id == right.workspace_id
             and left.version_id == right.version_id
             and left.generation == right.generation
             and left.source_hash == right.source_hash

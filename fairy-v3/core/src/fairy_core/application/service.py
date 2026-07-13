@@ -20,6 +20,7 @@ from fairy_core.application.runtime import (
     RuntimeApplication,
 )
 from fairy_core.application.runtime_review import RuntimeReviewApplication
+from fairy_core.application.workspace_service import WorkspaceService
 from fairy_core.assistant.application import AssistantApplication
 from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
@@ -184,6 +185,7 @@ class CoreService:
         if default_execution_target not in {"local", "cloud"}:
             raise ValueError("default_execution_target must be local or cloud")
         self._application = application
+        self._workspace_service = WorkspaceService(application.workspace_access)
         self._unit_of_work_factory = unit_of_work_factory
         self._registry = registry
         self._skill_registry = skill_registry or SkillRegistry(registry)
@@ -395,6 +397,9 @@ class CoreService:
             "versions.discard": self._discard_version,
             "versions.get": self._get_version,
             "versions.list": self._list_versions,
+            "workspaces.files.list": self._workspace_service.list_files,
+            "workspaces.files.read": self._workspace_service.read_file,
+            "workspaces.get": self._workspace_service.get,
             "voice.synthesize": self._synthesize_voice,
             "voice.sessions.cancel": self._cancel_voice_session,
             "voice.sessions.get": self._get_voice_session,
@@ -1030,6 +1035,7 @@ class CoreService:
         validated = cast(VersionListInput, request)
         with self._unit_of_work_factory() as unit_of_work:
             return unit_of_work.state.list_versions(
+                workspace_id=validated.workspace_id,
                 project_id=validated.project_id,
                 conversation_id=validated.conversation_id,
                 task_id=validated.task_id,

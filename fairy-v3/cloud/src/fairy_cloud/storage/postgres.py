@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
+from fairy_core.storage.schema import workspaces as core_workspaces
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -395,6 +396,7 @@ class PostgresSyncStore:
                 id=project_id,
                 name=f"Cloud {project_id}",
                 residency="synced",
+                workspace_id=project_id,
                 revision=0,
                 active_version_id=active_version_id,
                 active_preview_id=None,
@@ -409,6 +411,23 @@ class PostgresSyncStore:
                 postgres_insert(core_tenants)
                 .values(tenant_id=tenant_id, subject_id=user_id)
                 .on_conflict_do_nothing(index_elements=[core_tenants.c.tenant_id])
+            )
+            await connection.execute(
+                postgres_insert(core_workspaces)
+                .values(
+                    tenant_id=tenant_id,
+                    id=project_id,
+                    active_version_id=active_version_id,
+                    active_preview_id=None,
+                    revision=0,
+                    max_files=200,
+                    max_bytes=20 * 1024 * 1024,
+                    created_at=now,
+                    updated_at=now,
+                )
+                .on_conflict_do_nothing(
+                    index_elements=[core_workspaces.c.tenant_id, core_workspaces.c.id]
+                )
             )
             await connection.execute(statement)
             row = (

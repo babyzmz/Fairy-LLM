@@ -101,8 +101,8 @@ class SandboxRequest:
         dependency_key: str | None = None,
         dependency_manager: str | None = None,
     ) -> SandboxRequest:
-        if (project_id is None) != (version_id is None):
-            raise ValueError("project_id and version_id must both be present or absent")
+        if version_id is None:
+            raise ValueError("Sandbox requests require an immutable Workspace Version")
         if _DIGEST.fullmatch(scope_digest) is None:
             raise ValueError("scope_digest must be lowercase SHA-256")
         if isinstance(workspace_generation, bool) or workspace_generation < 1:

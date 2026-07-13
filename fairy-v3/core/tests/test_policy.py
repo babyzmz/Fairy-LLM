@@ -221,7 +221,7 @@ def test_internal_workspace_commands_share_registry_but_are_not_model_tools() ->
     metadata = {item["name"]: item for item in registry.frontend_metadata()}
 
     assert standard["workspace.fork"] is True
-    assert observe["workspace.fork"] is False
+    assert observe["workspace.fork"] is True
     assert observe["workspace.create_scratch"] is True
     assert observe["memory.snapshot.build"] is True
     assert "workspace.fork" not in agent_names

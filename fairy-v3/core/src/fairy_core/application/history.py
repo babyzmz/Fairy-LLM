@@ -109,6 +109,7 @@ class HistoryApplication:
             project = self._require_project(unit_of_work.state, target_project_id)
             destination = Conversation.create(
                 project_id=project.id,
+                workspace_id=project.workspace_id,
                 workspace_type=WorkspaceType.PROJECT_CHAT,
                 base_version_id=project.active_version_id,
                 title=source.title,

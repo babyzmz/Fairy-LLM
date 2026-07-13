@@ -152,8 +152,9 @@ async def test_async_core_routes_run_sync_service_in_threadpool() -> None:
             self.thread_id = threading.get_ident()
             now = datetime.now(UTC).isoformat()
             return {
-                "project": {
-                    "id": "018f0f7c-1234-7000-8000-000000000001",
+                    "project": {
+                        "id": "018f0f7c-1234-7000-8000-000000000001",
+                        "workspace_id": "018f0f7c-1234-7000-8000-000000000001",
                     "name": "Threaded",
                     "residency": "synced",
                     "active_version_id": "018f0f7c-1234-7000-8000-000000000002",
@@ -162,9 +163,10 @@ async def test_async_core_routes_run_sync_service_in_threadpool() -> None:
                     "created_at": now,
                     "updated_at": now,
                 },
-                "initial_version": {
-                    "id": "018f0f7c-1234-7000-8000-000000000002",
-                    "project_id": "018f0f7c-1234-7000-8000-000000000001",
+                    "initial_version": {
+                        "id": "018f0f7c-1234-7000-8000-000000000002",
+                        "project_id": "018f0f7c-1234-7000-8000-000000000001",
+                        "workspace_id": "018f0f7c-1234-7000-8000-000000000001",
                     "source_conversation_id": None,
                     "source_task_id": None,
                     "parent_version_id": None,
@@ -493,7 +495,7 @@ async def test_rest_exposes_task_bound_assistant_ledger_with_idempotency_header(
     assert retried.json()["status"] == "created"
     assert run.status_code == 200
     assert run.json()["status"] == "failed"
-    assert run.json()["error_code"] == "CAPABILITY_NOT_AVAILABLE"
+    assert run.json()["error_code"] == "PROVIDER_UNAVAILABLE"
 
 
 @pytest.mark.asyncio
