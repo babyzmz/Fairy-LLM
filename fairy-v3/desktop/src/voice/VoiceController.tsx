@@ -102,7 +102,7 @@ export function VoiceController({
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [speakingTurnId, setSpeakingTurnId] = useState<string | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [recordingStatusMessage, setRecordingStatusMessage] = useState<string | null>(null);
   const [autoPlayChat, setAutoPlayChat] = useState(false);
   const [autoPlayPet, setAutoPlayPet] = useState(true);
   const [petMuted, setPetMuted] = useState(false);
@@ -162,11 +162,11 @@ export function VoiceController({
   const startRecording = useCallback(
     async (onTranscript: (text: string) => void) => {
       if (!sttAvailable) {
-        setStatusMessage("Speech transcription unavailable");
+        setRecordingStatusMessage("Speech transcription unavailable");
         return;
       }
       stopSpeaking();
-      setStatusMessage(null);
+      setRecordingStatusMessage(null);
       setRecordingState("requesting");
       try {
         const session = await environment.startRecording();
@@ -175,7 +175,7 @@ export function VoiceController({
         setRecordingState("recording");
       } catch (error) {
         setRecordingState("idle");
-        setStatusMessage(
+        setRecordingStatusMessage(
           isPermissionDenied(error)
             ? "Microphone permission denied"
             : "Microphone unavailable",
@@ -192,7 +192,7 @@ export function VoiceController({
     recordingRef.current = null;
     transcriptRef.current = null;
     setRecordingState("transcribing");
-    setStatusMessage(null);
+    setRecordingStatusMessage(null);
     try {
       const blob = await session.stop();
       if (blob.size === 0 || blob.size > MAX_RECORDING_BYTES) {
@@ -207,7 +207,7 @@ export function VoiceController({
       });
       onTranscript?.(result.text);
     } catch (error) {
-      setStatusMessage(errorMessage(error, "Transcription failed"));
+      setRecordingStatusMessage(errorMessage(error, "Transcription failed"));
     } finally {
       setRecordingState("idle");
     }
@@ -221,7 +221,6 @@ export function VoiceController({
         message.visibility !== "user" ||
         message.turn_id === null
       ) {
-        setStatusMessage("Speech playback unavailable");
         return;
       }
       stopSpeaking();
@@ -238,7 +237,6 @@ export function VoiceController({
         }),
         ...sentenceQueue.current.flush(turnId),
       ];
-      setStatusMessage(null);
       setSpeakingMessageId(message.id);
       setSpeakingTurnId(turnId);
       setPlaybackState("preparing");
@@ -289,10 +287,9 @@ export function VoiceController({
           if (epoch !== playbackEpoch.current) return;
           playbackRef.current = null;
         }
-      } catch (error) {
+      } catch {
         if (epoch === playbackEpoch.current) {
           playbackFailed = true;
-          setStatusMessage(errorMessage(error, "Speech playback failed"));
           setPlaybackState("failed");
         }
       } finally {
@@ -392,12 +389,11 @@ export function VoiceController({
             }
           });
         }
-      }).catch((error) => {
+      }).catch(() => {
         if (epoch === playbackEpoch.current) {
           playbackRef.current = null;
           setSpeakingMessageId(null);
           setPlaybackState("failed");
-          setStatusMessage(errorMessage(error, "Speech playback failed"));
         }
       });
     }
@@ -422,7 +418,7 @@ export function VoiceController({
       speakingTurnId,
       playbackState,
       statusMessage:
-        statusMessage ??
+        recordingStatusMessage ??
         (!environment.supported
           ? "Voice device APIs unavailable"
           : !sttAvailable
@@ -441,7 +437,7 @@ export function VoiceController({
       speakingTurnId,
       playbackState,
       startRecording,
-      statusMessage,
+      recordingStatusMessage,
       stopRecording,
       stopSpeaking,
       sttAvailable,

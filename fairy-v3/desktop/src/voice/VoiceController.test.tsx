@@ -12,6 +12,7 @@ import type {
   VoiceAudio,
 } from "../core/client";
 import { DESKTOP_PREFERENCES_EVENT, type DesktopPreferences } from "../settings/client";
+import { ActivityRail } from "../chat/ActivityRail";
 import {
   type AudioPlayback,
   type RecordingSession,
@@ -171,6 +172,31 @@ describe("VoiceController", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop speaking" }));
 
     await waitFor(() => expect(capturedSignal?.aborted).toBe(true));
+  });
+
+  it("keeps playback failures on the matching turn activity rail", async () => {
+    const turn = {
+      id: "turn-1",
+      task_id: "task-1",
+      conversation_id: "conversation-1",
+      status: "completed",
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:01Z",
+    } as AssistantTurn;
+    renderVoice(
+      <>
+        <VoiceSpeakControl message={assistantMessage("One sentence.")} />
+        <VoiceRecordControl onTranscript={vi.fn()} />
+        <ActivityRail turn={turn} events={[]} />
+      </>,
+      voiceClient({ synthesize: vi.fn(async () => Promise.reject(new Error("worker offline"))) }),
+      environment(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Speak message" }));
+
+    expect(await screen.findByText("Voice playback failed")).toBeVisible();
+    expect(screen.queryByText("Speech playback failed")).not.toBeInTheDocument();
   });
 
   it("auto-plays only stable durable delta ranges through native voice", async () => {
