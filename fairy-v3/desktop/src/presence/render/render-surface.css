@@ -1,0 +1,34 @@
+:root {
+  background: transparent;
+}
+
+html,
+body,
+#root,
+.presence-render-surface {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.presence-render-surface {
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.presence-render-surface canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.probe-fallback {
+  position: absolute;
+  width: 112px;
+  height: 112px;
+  border: 2px solid rgb(221 241 250 / 70%);
+  border-radius: 50%;
+  box-shadow: inset 0 0 14px rgb(101 184 225 / 18%);
+}

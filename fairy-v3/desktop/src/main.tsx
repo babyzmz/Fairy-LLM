@@ -23,6 +23,12 @@ async function mountSurface() {
     return;
   }
 
+  if (surface === "presence-render") {
+    const { PresenceRenderProbe } = await import("./presence/render/PresenceRenderProbe");
+    renderSurface(<PresenceRenderProbe />);
+    return;
+  }
+
   if (surface === "settings") {
     const [{ invoke }, { SettingsApp }, { SettingsClient }] = await Promise.all([
       import("@tauri-apps/api/core"),

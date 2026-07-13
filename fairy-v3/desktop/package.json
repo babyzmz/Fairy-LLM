@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "e2e": "playwright test",
     "preview:e2e": "vite preview --host 127.0.0.1 --port 1431",
+    "presence:platform": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/check-presence-platform.ps1",
     "tauri": "tauri"
   },
   "dependencies": {
