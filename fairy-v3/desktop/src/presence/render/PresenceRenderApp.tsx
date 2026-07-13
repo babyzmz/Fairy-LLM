@@ -5,6 +5,11 @@ import {
   PresenceProjection,
   type PresenceProjectionState,
 } from "../domain/projection";
+import type { PresenceInteractionSnapshot } from "../domain/interaction";
+import {
+  createPresenceInteractionSource,
+  type PresenceInteractionSource,
+} from "../transport/interactionEvents";
 import {
   createPresenceChannel,
   type PresenceChannel,
@@ -15,18 +20,24 @@ import "./presence-render.css";
 
 interface PresenceRenderAppProps {
   channel?: PresenceChannel;
+  interactionSource?: PresenceInteractionSource;
   now?: () => number;
 }
 
 export function PresenceRenderApp({
   channel: suppliedChannel,
+  interactionSource: suppliedInteractionSource,
   now = Date.now,
 }: PresenceRenderAppProps) {
   const [channel] = useState(() => suppliedChannel ?? createPresenceChannel());
+  const [interactionSource] = useState(
+    () => suppliedInteractionSource ?? createPresenceInteractionSource(),
+  );
   const [projection, setProjection] = useState<PresenceProjectionState>(() =>
     PresenceProjection.initial(),
   );
   const [clock, setClock] = useState(() => now());
+  const [interaction, setInteraction] = useState<PresenceInteractionSnapshot | null>(null);
 
   useEffect(() => {
     const stop = channel.onProjection((next) => {
@@ -47,6 +58,25 @@ export function PresenceRenderApp({
     return () => window.clearInterval(timer);
   }, [now]);
 
+  useEffect(() => {
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void interactionSource.subscribe((snapshot) => {
+      if (!disposed) {
+        setInteraction((current) =>
+          current !== null && current.sequence >= snapshot.sequence ? current : snapshot,
+        );
+      }
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, [interactionSource]);
+
   const view = derivePresenceView(projection, {
     now_ms: clock,
     quiet_mode: false,
@@ -55,18 +85,36 @@ export function PresenceRenderApp({
   const reducedMotion =
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const gaze = interaction === null
+    ? { x: 0, y: 0 }
+    : {
+        x: clamp(
+          (interaction.cursor.point.x - interaction.placement.anchor.x) /
+            (120 * interaction.placement.scale_factor),
+          -1,
+          1,
+        ),
+        y: clamp(
+          (interaction.cursor.point.y - interaction.placement.anchor.y) /
+            (120 * interaction.placement.scale_factor),
+          -1,
+          1,
+        ),
+      };
 
   return (
     <main
       aria-hidden="true"
       className="presence-render-window"
+      data-cursor-band={interaction?.cursor.band ?? "outside"}
+      data-expansion-direction={interaction?.placement.expansion_direction ?? "right"}
       data-reduced-motion={String(reducedMotion)}
       data-testid="presence-render-surface"
     >
       <CompatibilityFairyCanvas
         dragging={false}
-        gaze={{ x: 0, y: 0 }}
-        hovered={false}
+        gaze={gaze}
+        hovered={interaction?.cursor.band !== "outside"}
         listening={false}
         reducedMotion={reducedMotion}
         sleeping={view.density === "quiet"}
@@ -75,4 +123,8 @@ export function PresenceRenderApp({
       />
     </main>
   );
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
 }

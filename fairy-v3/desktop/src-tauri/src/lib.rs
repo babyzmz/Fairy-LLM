@@ -12,6 +12,7 @@ use desktop_preferences::{
     DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore, DesktopPreferencesUpdate,
     PetPreferencesUpdate,
 };
+use presence_coordinator::PresenceCoordinatorHandle;
 use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStore};
 use provider_credentials::ProviderCredentialStore;
 use voice_worker::{
@@ -21,6 +22,7 @@ use voice_worker::{
 
 pub mod capture;
 pub mod desktop_preferences;
+pub mod presence_coordinator;
 pub mod provider_configuration;
 pub mod provider_credentials;
 pub mod voice_worker;
@@ -188,6 +190,7 @@ struct DesktopState {
     data_dir: PathBuf,
     desktop_program: PathBuf,
     resource_dir: PathBuf,
+    presence: PresenceCoordinatorHandle,
 }
 
 fn scope_failure_response(id: Value, message: &str) -> Value {
@@ -413,7 +416,11 @@ enum PetInputLayout {
 }
 
 #[tauri::command]
-async fn pet_input_set_layout(window: WebviewWindow, layout: PetInputLayout) -> Result<(), String> {
+async fn pet_input_set_layout(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    layout: PetInputLayout,
+) -> Result<(), String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
     if matches!(layout, PetInputLayout::Hidden) {
@@ -438,17 +445,29 @@ async fn pet_input_set_layout(window: WebviewWindow, layout: PetInputLayout) -> 
     let target_width = (logical_width * scale).round() as u32;
     let target_height = (logical_height * scale).round() as u32;
     let compact_height = (72.0 * scale).round() as u32;
-    let frame = anchored_pet_input_frame(
-        PetWindowFrame {
-            x: render_position.x,
-            y: render_position.y,
-            width: render_size.width,
-            height: render_size.height,
-        },
-        target_width,
-        target_height,
-        compact_height,
-    );
+    let frame = state
+        .presence
+        .latest_placement()
+        .map(|placement| placement.input_frame(target_width, target_height, compact_height))
+        .map(|frame| PetWindowFrame {
+            x: frame.x,
+            y: frame.y,
+            width: frame.width,
+            height: frame.height,
+        })
+        .unwrap_or_else(|| {
+            anchored_pet_input_frame(
+                PetWindowFrame {
+                    x: render_position.x,
+                    y: render_position.y,
+                    width: render_size.width,
+                    height: render_size.height,
+                },
+                target_width,
+                target_height,
+                compact_height,
+            )
+        });
     input
         .set_size(tauri::PhysicalSize::new(frame.width, frame.height))
         .map_err(|error| error.to_string())?;
@@ -830,6 +849,7 @@ pub fn run() {
                 let _ = warming_voice.health();
             });
             let preferences = DesktopPreferencesStore::new(&data_dir).load()?;
+            let presence = PresenceCoordinatorHandle::start(app.handle().clone());
             app.manage(DesktopState {
                 core: Arc::new(Mutex::new(Some(bridge))),
                 voice,
@@ -837,6 +857,7 @@ pub fn run() {
                 data_dir,
                 desktop_program,
                 resource_dir,
+                presence,
             });
             for label in [PET_RENDER_LABEL, PET_INPUT_LABEL] {
                 let Some(policy) = auxiliary_window_policy(label) else {

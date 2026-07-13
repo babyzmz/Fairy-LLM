@@ -1,0 +1,480 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use serde::Serialize;
+use tauri::{Emitter, Manager};
+
+use crate::{PET_INPUT_LABEL, PET_RENDER_LABEL};
+
+pub const PRESENCE_INTERACTION_EVENT: &str = "presence-interaction-snapshot";
+const CORE_ANCHOR_X: f64 = 96.0;
+const CORE_ANCHOR_Y: f64 = 130.0;
+const AWARE_RADIUS: f64 = 220.0;
+const ACTIVE_RADIUS: f64 = 120.0;
+const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const HIDDEN_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const PLACEMENT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct PhysicalPoint {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct PhysicalFrame {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl PhysicalFrame {
+    fn right(self) -> i64 {
+        i64::from(self.x) + i64::from(self.width)
+    }
+
+    fn bottom(self) -> i64 {
+        i64::from(self.y) + i64::from(self.height)
+    }
+
+    fn contains(self, point: PhysicalPoint) -> bool {
+        i64::from(point.x) >= i64::from(self.x)
+            && i64::from(point.x) < self.right()
+            && i64::from(point.y) >= i64::from(self.y)
+            && i64::from(point.y) < self.bottom()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpansionDirection {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorBand {
+    Outside,
+    Aware,
+    Active,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct CursorMetrics {
+    pub point: PhysicalPoint,
+    pub distance_px: f64,
+    pub speed_px_s: f64,
+    pub dwell_ms: u64,
+    pub band: CursorBand,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct PresenceWindowPlacement {
+    pub anchor: PhysicalPoint,
+    pub render_frame: PhysicalFrame,
+    pub input_compact_frame: PhysicalFrame,
+    pub input_expanded_frame: PhysicalFrame,
+    pub monitor_work_area: PhysicalFrame,
+    pub scale_factor: f64,
+    pub expansion_direction: ExpansionDirection,
+}
+
+impl PresenceWindowPlacement {
+    pub fn input_frame(self, width: u32, height: u32, compact_height: u32) -> PhysicalFrame {
+        input_frame(
+            self.render_frame,
+            self.expansion_direction,
+            width,
+            height,
+            compact_height,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct PresenceInteractionSnapshot {
+    pub schema_version: u16,
+    pub sequence: u64,
+    pub sampled_at_ms: u64,
+    pub cursor: CursorMetrics,
+    pub placement: PresenceWindowPlacement,
+}
+
+#[derive(Default)]
+pub struct CursorTracker {
+    previous: Option<(PhysicalPoint, u64)>,
+    active_since_ms: Option<u64>,
+}
+
+impl CursorTracker {
+    pub fn observe(
+        &mut self,
+        point: PhysicalPoint,
+        sampled_at_ms: u64,
+        anchor: PhysicalPoint,
+        scale_factor: f64,
+    ) -> CursorMetrics {
+        let distance_px = point_distance(point, anchor);
+        let speed_px_s = self
+            .previous
+            .and_then(|(previous, previous_ms)| {
+                let elapsed_ms = sampled_at_ms.saturating_sub(previous_ms);
+                (elapsed_ms > 0)
+                    .then(|| point_distance(previous, point) * 1_000.0 / elapsed_ms as f64)
+            })
+            .unwrap_or(0.0);
+        self.previous = Some((point, sampled_at_ms));
+
+        let scale = scale_factor.clamp(0.5, 4.0);
+        let band = if distance_px <= ACTIVE_RADIUS * scale {
+            CursorBand::Active
+        } else if distance_px <= AWARE_RADIUS * scale {
+            CursorBand::Aware
+        } else {
+            CursorBand::Outside
+        };
+        let dwell_ms = if band == CursorBand::Active {
+            let active_since = *self.active_since_ms.get_or_insert(sampled_at_ms);
+            sampled_at_ms.saturating_sub(active_since)
+        } else {
+            self.active_since_ms = None;
+            0
+        };
+
+        CursorMetrics {
+            point,
+            distance_px,
+            speed_px_s,
+            dwell_ms,
+            band,
+        }
+    }
+}
+
+pub fn resolve_presence_placement(
+    render_frame: PhysicalFrame,
+    work_area: PhysicalFrame,
+    scale_factor: f64,
+    previous_direction: Option<ExpansionDirection>,
+) -> PresenceWindowPlacement {
+    let scale = scale_factor.clamp(0.5, 4.0);
+    let anchor_x_offset = (CORE_ANCHOR_X * scale).round() as i64;
+    let anchor_y_offset = (CORE_ANCHOR_Y * scale).round() as i64;
+    let compact_width = (372.0 * scale).round() as u32;
+    let compact_height = (72.0 * scale).round() as u32;
+    let expanded_width = (420.0 * scale).round() as u32;
+    let expanded_height = (360.0 * scale).round() as u32;
+    let prior = previous_direction.unwrap_or(ExpansionDirection::Right);
+    let original_anchor = PhysicalPoint {
+        x: match prior {
+            ExpansionDirection::Right => i64::from(render_frame.x) + anchor_x_offset,
+            ExpansionDirection::Left => render_frame.right() - anchor_x_offset,
+        } as i32,
+        y: (i64::from(render_frame.y) + anchor_y_offset) as i32,
+    };
+    let needed = i64::from(render_frame.width).saturating_sub(anchor_x_offset);
+    let room_right = work_area.right() - i64::from(original_anchor.x);
+    let room_left = i64::from(original_anchor.x) - i64::from(work_area.x);
+    let expansion_direction = match (room_right >= needed, room_left >= needed) {
+        (true, true) => prior,
+        (true, false) => ExpansionDirection::Right,
+        (false, true) => ExpansionDirection::Left,
+        (false, false) if room_left > room_right => ExpansionDirection::Left,
+        (false, false) => ExpansionDirection::Right,
+    };
+    let desired_x = match expansion_direction {
+        ExpansionDirection::Right => i64::from(original_anchor.x) - anchor_x_offset,
+        ExpansionDirection::Left => {
+            i64::from(original_anchor.x) - i64::from(render_frame.width) + anchor_x_offset
+        }
+    };
+    let desired_y = i64::from(original_anchor.y) - anchor_y_offset;
+    let render_x = clamp_axis(
+        desired_x,
+        i64::from(work_area.x),
+        work_area.right() - i64::from(render_frame.width),
+    );
+    let expanded_top_offset = i64::from(render_frame.height) / 2 + i64::from(compact_height) / 2
+        - i64::from(expanded_height);
+    let expanded_bottom_offset = i64::from(render_frame.height) / 2 + i64::from(compact_height) / 2;
+    let minimum_y = i64::from(work_area.y).max(i64::from(work_area.y) - expanded_top_offset);
+    let maximum_y = (work_area.bottom() - i64::from(render_frame.height))
+        .min(work_area.bottom() - expanded_bottom_offset);
+    let render_y = clamp_axis(desired_y, minimum_y, maximum_y);
+    let resolved_render = PhysicalFrame {
+        x: render_x as i32,
+        y: render_y as i32,
+        ..render_frame
+    };
+    let anchor = PhysicalPoint {
+        x: match expansion_direction {
+            ExpansionDirection::Right => render_x + anchor_x_offset,
+            ExpansionDirection::Left => resolved_render.right() - anchor_x_offset,
+        } as i32,
+        y: (render_y + anchor_y_offset) as i32,
+    };
+    PresenceWindowPlacement {
+        anchor,
+        render_frame: resolved_render,
+        input_compact_frame: input_frame(
+            resolved_render,
+            expansion_direction,
+            compact_width,
+            compact_height,
+            compact_height,
+        ),
+        input_expanded_frame: input_frame(
+            resolved_render,
+            expansion_direction,
+            expanded_width,
+            expanded_height,
+            compact_height,
+        ),
+        monitor_work_area: work_area,
+        scale_factor: scale,
+        expansion_direction,
+    }
+}
+
+pub fn select_work_area(
+    anchor: PhysicalPoint,
+    work_areas: &[PhysicalFrame],
+) -> Option<PhysicalFrame> {
+    work_areas
+        .iter()
+        .copied()
+        .find(|area| area.contains(anchor))
+        .or_else(|| {
+            work_areas.iter().copied().min_by_key(|area| {
+                let nearest_x =
+                    i64::from(anchor.x).clamp(i64::from(area.x), area.right().saturating_sub(1));
+                let nearest_y =
+                    i64::from(anchor.y).clamp(i64::from(area.y), area.bottom().saturating_sub(1));
+                let dx = i64::from(anchor.x) - nearest_x;
+                let dy = i64::from(anchor.y) - nearest_y;
+                dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy))
+            })
+        })
+}
+
+pub struct PresenceCoordinatorHandle {
+    latest_placement: Arc<RwLock<Option<PresenceWindowPlacement>>>,
+    shutdown: Arc<AtomicBool>,
+}
+
+impl PresenceCoordinatorHandle {
+    pub fn start(app: tauri::AppHandle) -> Self {
+        let latest_placement = Arc::new(RwLock::new(None));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let thread_placement = Arc::clone(&latest_placement);
+        let thread_shutdown = Arc::clone(&shutdown);
+        let _ = thread::Builder::new()
+            .name("fairy-presence-coordinator".to_owned())
+            .spawn(move || run_coordinator(app, thread_placement, thread_shutdown));
+        Self {
+            latest_placement,
+            shutdown,
+        }
+    }
+
+    pub fn latest_placement(&self) -> Option<PresenceWindowPlacement> {
+        self.latest_placement.read().ok().and_then(|value| *value)
+    }
+}
+
+impl Drop for PresenceCoordinatorHandle {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
+    }
+}
+
+fn run_coordinator(
+    app: tauri::AppHandle,
+    latest_placement: Arc<RwLock<Option<PresenceWindowPlacement>>>,
+    shutdown: Arc<AtomicBool>,
+) {
+    let started = Instant::now();
+    let mut tracker = CursorTracker::default();
+    let mut sequence = 0_u64;
+    let mut placement: Option<PresenceWindowPlacement> = None;
+    let mut placement_refreshed_at = Instant::now() - PLACEMENT_REFRESH_INTERVAL;
+
+    while !shutdown.load(Ordering::Acquire) {
+        let Some(render) = app.get_webview_window(PET_RENDER_LABEL) else {
+            thread::sleep(HIDDEN_POLL_INTERVAL);
+            continue;
+        };
+        if !render.is_visible().unwrap_or(false) {
+            thread::sleep(HIDDEN_POLL_INTERVAL);
+            continue;
+        }
+        if placement.is_none() || placement_refreshed_at.elapsed() >= PLACEMENT_REFRESH_INTERVAL {
+            if let Some(next) = refresh_placement(&app, &render, placement) {
+                placement = Some(next);
+                if let Ok(mut value) = latest_placement.write() {
+                    *value = Some(next);
+                }
+            }
+            placement_refreshed_at = Instant::now();
+        }
+        let (Some(current_placement), Some(point)) = (placement, global_cursor_position()) else {
+            thread::sleep(HIDDEN_POLL_INTERVAL);
+            continue;
+        };
+        let sampled_at_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        let cursor = tracker.observe(
+            point,
+            sampled_at_ms,
+            current_placement.anchor,
+            current_placement.scale_factor,
+        );
+        sequence = sequence.saturating_add(1);
+        let snapshot = PresenceInteractionSnapshot {
+            schema_version: 1,
+            sequence,
+            sampled_at_ms,
+            cursor,
+            placement: current_placement,
+        };
+        let _ = app.emit_to(PET_RENDER_LABEL, PRESENCE_INTERACTION_EVENT, snapshot);
+        let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_INTERACTION_EVENT, snapshot);
+        thread::sleep(match cursor.band {
+            CursorBand::Aware | CursorBand::Active => ACTIVE_POLL_INTERVAL,
+            CursorBand::Outside => IDLE_POLL_INTERVAL,
+        });
+    }
+}
+
+fn refresh_placement(
+    app: &tauri::AppHandle,
+    render: &tauri::WebviewWindow,
+    previous: Option<PresenceWindowPlacement>,
+) -> Option<PresenceWindowPlacement> {
+    let position = render.outer_position().ok()?;
+    let size = render.outer_size().ok()?;
+    let scale = render.scale_factor().ok()?;
+    let current_frame = PhysicalFrame {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    };
+    let provisional = provisional_anchor(
+        current_frame,
+        scale,
+        previous.map(|value| value.expansion_direction),
+    );
+    let work_areas = render
+        .available_monitors()
+        .ok()?
+        .into_iter()
+        .map(|monitor| PhysicalFrame {
+            x: monitor.work_area().position.x,
+            y: monitor.work_area().position.y,
+            width: monitor.work_area().size.width,
+            height: monitor.work_area().size.height,
+        })
+        .collect::<Vec<_>>();
+    let work_area = select_work_area(provisional, &work_areas)?;
+    let placement = resolve_presence_placement(
+        current_frame,
+        work_area,
+        scale,
+        previous.map(|value| value.expansion_direction),
+    );
+    if placement.render_frame.x != current_frame.x || placement.render_frame.y != current_frame.y {
+        let _ = render.set_position(tauri::PhysicalPosition::new(
+            placement.render_frame.x,
+            placement.render_frame.y,
+        ));
+    }
+    if let Some(input) = app.get_webview_window(PET_INPUT_LABEL) {
+        if input.is_visible().unwrap_or(false) {
+            if let Ok(input_size) = input.outer_size() {
+                let compact_height = (72.0 * scale).round() as u32;
+                let frame =
+                    placement.input_frame(input_size.width, input_size.height, compact_height);
+                let _ = input.set_position(tauri::PhysicalPosition::new(frame.x, frame.y));
+            }
+        }
+    }
+    Some(placement)
+}
+
+fn provisional_anchor(
+    render: PhysicalFrame,
+    scale_factor: f64,
+    direction: Option<ExpansionDirection>,
+) -> PhysicalPoint {
+    let offset_x = (CORE_ANCHOR_X * scale_factor.clamp(0.5, 4.0)).round() as i64;
+    let offset_y = (CORE_ANCHOR_Y * scale_factor.clamp(0.5, 4.0)).round() as i64;
+    PhysicalPoint {
+        x: match direction.unwrap_or(ExpansionDirection::Right) {
+            ExpansionDirection::Right => i64::from(render.x) + offset_x,
+            ExpansionDirection::Left => render.right() - offset_x,
+        } as i32,
+        y: (i64::from(render.y) + offset_y) as i32,
+    }
+}
+
+fn input_frame(
+    render: PhysicalFrame,
+    direction: ExpansionDirection,
+    width: u32,
+    height: u32,
+    compact_height: u32,
+) -> PhysicalFrame {
+    let render_center_y = i64::from(render.y) + i64::from(render.height) / 2;
+    let compact_bottom = render_center_y + i64::from(compact_height) / 2;
+    let y = if height <= compact_height {
+        render_center_y - i64::from(height) / 2
+    } else {
+        compact_bottom - i64::from(height)
+    };
+    PhysicalFrame {
+        x: match direction {
+            ExpansionDirection::Right => render.right() - i64::from(width),
+            ExpansionDirection::Left => i64::from(render.x),
+        } as i32,
+        y: y as i32,
+        width,
+        height,
+    }
+}
+
+fn clamp_axis(value: i64, minimum: i64, maximum: i64) -> i64 {
+    if maximum < minimum {
+        minimum
+    } else {
+        value.clamp(minimum, maximum)
+    }
+}
+
+fn point_distance(left: PhysicalPoint, right: PhysicalPoint) -> f64 {
+    let dx = f64::from(left.x) - f64::from(right.x);
+    let dy = f64::from(left.y) - f64::from(right.y);
+    dx.hypot(dy)
+}
+
+#[cfg(target_os = "windows")]
+fn global_cursor_position() -> Option<PhysicalPoint> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    let mut point = POINT { x: 0, y: 0 };
+    // GetCursorPos samples global state and does not install a hook or intercept input.
+    (unsafe { GetCursorPos(&mut point) } != 0).then_some(PhysicalPoint {
+        x: point.x,
+        y: point.y,
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn global_cursor_position() -> Option<PhysicalPoint> {
+    None
+}

@@ -4,12 +4,14 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { DesktopPreferences } from "../settings/client";
+import type { PresenceInteractionSnapshot } from "./domain/interaction";
 import type { PresenceProjectionState } from "./domain/projection";
 import type { PetHost } from "./host/petHost";
 import type { StorageLike } from "./host/persistence";
 import { PresenceInputApp } from "./input/PresenceInputApp";
 import { PresenceRenderApp } from "./render/PresenceRenderApp";
 import type { PresenceChannel } from "./transport/presenceChannel";
+import type { PresenceInteractionSource } from "./transport/interactionEvents";
 
 function channelHarness() {
   let listener: ((state: PresenceProjectionState) => void) | null = null;
@@ -105,6 +107,48 @@ function hostHarness() {
   };
 }
 
+function interactionHarness() {
+  let listener: ((snapshot: PresenceInteractionSnapshot) => void) | null = null;
+  const source: PresenceInteractionSource = {
+    async subscribe(next) {
+      listener = next;
+      return () => {
+        listener = null;
+      };
+    },
+  };
+  return {
+    source,
+    emit(snapshot: PresenceInteractionSnapshot) {
+      listener?.(snapshot);
+    },
+  };
+}
+
+function interaction(sequence: number): PresenceInteractionSnapshot {
+  return {
+    schema_version: 1,
+    sequence,
+    sampled_at_ms: sequence * 16,
+    cursor: {
+      point: { x: 120, y: 160 },
+      distance_px: 40,
+      speed_px_s: 240,
+      dwell_ms: 32,
+      band: "active",
+    },
+    placement: {
+      anchor: { x: 96, y: 130 },
+      render_frame: { x: 0, y: 0, width: 640, height: 260 },
+      input_compact_frame: { x: 0, y: 0, width: 372, height: 72 },
+      input_expanded_frame: { x: 0, y: 0, width: 420, height: 360 },
+      monitor_work_area: { x: 0, y: 0, width: 1920, height: 1040 },
+      scale_factor: 1,
+      expansion_direction: "left",
+    },
+  };
+}
+
 const storage: StorageLike = {
   getItem: () => null,
   setItem: () => undefined,
@@ -113,9 +157,16 @@ const storage: StorageLike = {
 afterEach(cleanup);
 
 describe("dual presence surfaces", () => {
-  it("keeps the render surface projection-only", () => {
+  it("keeps the render surface projection-only and ignores stale native snapshots", async () => {
     const harness = channelHarness();
-    render(<PresenceRenderApp channel={harness.channel} now={() => Date.now()} />);
+    const coordinator = interactionHarness();
+    render(
+      <PresenceRenderApp
+        channel={harness.channel}
+        interactionSource={coordinator.source}
+        now={() => Date.now()}
+      />,
+    );
 
     expect(screen.getByTestId("presence-render-surface")).toHaveAttribute(
       "aria-hidden",
@@ -124,6 +175,21 @@ describe("dual presence surfaces", () => {
     expect(screen.getByRole("img", { name: "Fairy", hidden: true })).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(harness.channel.requestProjection).toHaveBeenCalledOnce();
+
+    await waitFor(() => expect(coordinator.source).toBeDefined());
+    act(() => coordinator.emit(interaction(3)));
+    expect(screen.getByTestId("presence-render-surface")).toHaveAttribute(
+      "data-cursor-band",
+      "active",
+    );
+    act(() => coordinator.emit({
+      ...interaction(2),
+      cursor: { ...interaction(2).cursor, band: "outside" },
+    }));
+    expect(screen.getByTestId("presence-render-surface")).toHaveAttribute(
+      "data-cursor-band",
+      "active",
+    );
   });
 
   it("shows the input surface only for an explicit input request or projected card", async () => {
