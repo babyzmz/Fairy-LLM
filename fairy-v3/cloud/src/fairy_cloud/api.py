@@ -107,6 +107,7 @@ from fairy_cloud.auth import AuthenticationError, DenyAllAuthenticator
 from fairy_cloud.auth.models import Authenticator, RequestIdentity
 from fairy_cloud.history_routes import install_history_routes
 from fairy_cloud.mcp.routes import install_extension_routes
+from fairy_cloud.planning_routes import install_planning_routes
 from fairy_cloud.runtime.proxy import CloudPreviewProxy
 from fairy_cloud.storage.objects import (
     ImmutableObjectConflict,
@@ -1101,6 +1102,7 @@ def create_cloud_app(
 
     install_extension_routes(protected, invoke)
     install_history_routes(protected, invoke)
+    install_planning_routes(protected, invoke)
     install_workspace_routes(protected, invoke)
     operation_ids = {
         route.operation_id

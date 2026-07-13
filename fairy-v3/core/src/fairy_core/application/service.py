@@ -13,6 +13,7 @@ from weakref import finalize
 from pydantic import BaseModel, ValidationError
 
 from fairy_core.application.core import CoreApplication
+from fairy_core.application.planning_service import planning_service_handlers
 from fairy_core.application.runtime import (
     PreviewResolveRequest,
     PreviewStartRequest,
@@ -225,6 +226,7 @@ class CoreService:
                 policy=PolicyEngine(registry),
                 execution_policy=self._execution_policy,
                 scope_resolver=application.scope_for_task,
+                planning=application.execution_planning,
             )
             if sandbox_executor is not None
             else None
@@ -252,6 +254,7 @@ class CoreService:
             unit_of_work_factory=unit_of_work_factory,
             scope_resolver=application.scope_for_task,
         )
+        self._execution_planning = application.execution_planning
         effective_tool_executor = tool_executor
         if research_fetch_port is not None:
             effective_tool_executor = ResearchToolExecutor(
@@ -352,6 +355,7 @@ class CoreService:
             "documents.list": self._list_documents,
             "documents.search": self._search_documents,
             "events.subscribe": self._subscribe_events,
+            **planning_service_handlers(self._execution_planning),
             "health": self._health,
             "memory.claims.get": self._get_memory_claim,
             "memory.claims.list": self._list_memory_claims,

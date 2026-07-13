@@ -367,6 +367,10 @@ class AssistantTurn:
     def interrupt(self) -> None:
         self.fail(error_code="WORKER_INTERRUPTED")
 
+    @property
+    def is_terminal(self) -> bool:
+        return not _TURN_TRANSITIONS[self.status]
+
     def _transition_to(self, status: AssistantTurnStatus) -> None:
         if status not in _TURN_TRANSITIONS[self.status]:
             raise InvalidTransitionError(

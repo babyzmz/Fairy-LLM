@@ -120,6 +120,11 @@ from fairy_core.contracts.models import (
     VoiceTranscribeInput,
     VoiceTranscriptModel,
 )
+from fairy_core.contracts.planning import (
+    ExecutionPlanContextModel,
+    ExecutionPlanCreateInput,
+    ExecutionPlanIdInput,
+)
 from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.contracts.voice_sessions import (
     VoiceSessionIdInput,
@@ -253,6 +258,16 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "events.subscribe",
             EventSubscribeInput,
             EventPageModel,
+        ),
+        "execution_plans.create": CoreMethod(
+            "execution_plans.create",
+            ExecutionPlanCreateInput,
+            ExecutionPlanContextModel,
+        ),
+        "execution_plans.get": CoreMethod(
+            "execution_plans.get",
+            ExecutionPlanIdInput,
+            ExecutionPlanContextModel,
         ),
         "documents.delete": CoreMethod(
             "documents.delete",

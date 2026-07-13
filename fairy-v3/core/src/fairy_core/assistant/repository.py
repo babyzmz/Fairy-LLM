@@ -150,9 +150,7 @@ class SqlAlchemyAssistantRepository:
                 .values(
                     status=attempt.status.value,
                     error_category=(
-                        attempt.error_category.value
-                        if attempt.error_category is not None
-                        else None
+                        attempt.error_category.value if attempt.error_category is not None else None
                     ),
                     usage=dict(attempt.usage),
                     completed_at=attempt.completed_at,
@@ -163,17 +161,21 @@ class SqlAlchemyAssistantRepository:
 
     def list_provider_attempts(self, turn_id: UUID) -> tuple[ProviderAttempt, ...]:
         with self._session.read() as connection:
-            rows = connection.execute(
-                select(assistant_provider_attempts)
-                .where(
-                    assistant_provider_attempts.c.tenant_id == self._tenant_id,
-                    assistant_provider_attempts.c.turn_id == str(turn_id),
+            rows = (
+                connection.execute(
+                    select(assistant_provider_attempts)
+                    .where(
+                        assistant_provider_attempts.c.tenant_id == self._tenant_id,
+                        assistant_provider_attempts.c.turn_id == str(turn_id),
+                    )
+                    .order_by(
+                        assistant_provider_attempts.c.model_round,
+                        assistant_provider_attempts.c.attempt_number,
+                    )
                 )
-                .order_by(
-                    assistant_provider_attempts.c.model_round,
-                    assistant_provider_attempts.c.attempt_number,
-                )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return tuple(self._provider_attempt_from_row(row) for row in rows)
 
     def append_message(self, message: Message) -> None:

@@ -364,6 +364,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/execution-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Execution Plan */
+        post: operations["execution_plans.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/health": {
         parameters: {
             query?: never;
@@ -1043,6 +1060,23 @@ export interface paths {
         put?: never;
         /** Archive Task */
         post: operations["tasks.archive"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tasks/{task_id}/execution-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Execution Plan */
+        get: operations["execution_plans.get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1951,6 +1985,96 @@ export interface components {
          * @enum {string}
          */
         EventVisibilityModel: "user" | "developer" | "internal";
+        /** ExecutionPlanContextModel */
+        ExecutionPlanContextModel: {
+            plan: components["schemas"]["ExecutionPlanModel"];
+            /** Steps */
+            steps: components["schemas"]["TaskStepModel"][];
+        };
+        /** ExecutionPlanCreateInput */
+        ExecutionPlanCreateInput: {
+            /**
+             * Dependencies
+             * @default []
+             */
+            dependencies: string[];
+            /**
+             * Entrypoints
+             * @default []
+             */
+            entrypoints: string[];
+            /** Files */
+            files: components["schemas"]["PlannedFileInput"][];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /**
+             * Validation Commands
+             * @default []
+             */
+            validation_commands: string[];
+        };
+        /** ExecutionPlanModel */
+        ExecutionPlanModel: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Manifest */
+            manifest: {
+                [key: string]: unknown;
+            };
+            /** Max Duration Seconds */
+            max_duration_seconds: number;
+            /** Max Model Calls */
+            max_model_calls: number;
+            /** Max Repairs */
+            max_repairs: number;
+            /** Max Tool Calls */
+            max_tool_calls: number;
+            /** Model Calls Used */
+            model_calls_used: number;
+            /** Repairs Used */
+            repairs_used: number;
+            /** Revision */
+            revision: number;
+            status: components["schemas"]["ExecutionPlanStatus"];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Tool Calls Used */
+            tool_calls_used: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /**
+         * ExecutionPlanStatus
+         * @enum {string}
+         */
+        ExecutionPlanStatus: "active" | "paused" | "completed" | "failed" | "cancelled";
         /** ExecutionSettingsModel */
         ExecutionSettingsModel: {
             /** Capability Overrides */
@@ -2907,6 +3031,17 @@ export interface components {
          * @enum {string}
          */
         PermissionProfileModel: "observe" | "standard" | "autonomous";
+        /** PlannedFileInput */
+        PlannedFileInput: {
+            /** Batch */
+            batch: number;
+            /** Expected Hash */
+            expected_hash?: string | null;
+            /** Path */
+            path: string;
+            /** Purpose */
+            purpose: string;
+        };
         /** PreviewContextModel */
         PreviewContextModel: {
             preview: components["schemas"]["PreviewModel"];
@@ -3506,6 +3641,48 @@ export interface components {
          * @enum {string}
          */
         TaskStatus: "created" | "resolving_scope" | "building_workspace" | "planning" | "awaiting_approval" | "executing" | "installing" | "previewing" | "reviewing" | "repairing" | "ready" | "accepted" | "rejected" | "archived" | "failed";
+        /**
+         * TaskStepKind
+         * @enum {string}
+         */
+        TaskStepKind: "analyze" | "file_plan" | "implement" | "install" | "test" | "preview" | "repair" | "summary" | "checkpoint";
+        /** TaskStepModel */
+        TaskStepModel: {
+            /** Attempts */
+            attempts: number;
+            /** Completed At */
+            completed_at: string | null;
+            /** Error Code */
+            error_code: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["TaskStepKind"];
+            /**
+             * Plan Id
+             * Format: uuid
+             */
+            plan_id: string;
+            /** Sequence */
+            sequence: number;
+            /** Started At */
+            started_at: string | null;
+            status: components["schemas"]["TaskStepStatus"];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Title */
+            title: string;
+        };
+        /**
+         * TaskStepStatus
+         * @enum {string}
+         */
+        TaskStepStatus: "pending" | "running" | "completed" | "failed" | "skipped";
         /** ToolDefinitionMetadataModel */
         ToolDefinitionMetadataModel: {
             /**
@@ -4760,6 +4937,41 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "execution_plans.create": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExecutionPlanCreateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionPlanContextModel"];
                 };
             };
             /** @description Validation Error */
@@ -6312,6 +6524,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "execution_plans.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionPlanContextModel"];
                 };
             };
             /** @description Validation Error */

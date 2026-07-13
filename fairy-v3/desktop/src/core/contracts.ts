@@ -51,6 +51,10 @@ export type DocumentVisibility = Schemas["DocumentVisibility"];
 export type EventEnvelope = Schemas["EventEnvelopeModel"];
 export type ExecutionSettings = Schemas["ExecutionSettingsModel"];
 export type ExecutionSettingsUpdateInput = Schemas["ExecutionSettingsUpdateInput"];
+export type ExecutionPlan = Schemas["ExecutionPlanModel"];
+export type ExecutionPlanContext = Schemas["ExecutionPlanContextModel"];
+export type ExecutionPlanCreateInput = Schemas["ExecutionPlanCreateInput"];
+export type TaskStep = Schemas["TaskStepModel"];
 export type Health = Schemas["HealthModel"];
 export type MemoryClaim = Schemas["MemoryClaimModel"];
 export type MemoryClaimContext = Schemas["MemoryClaimContextModel"];
@@ -194,6 +198,14 @@ export interface CoreMethodMap {
   "tasks.list": { params: TaskListInput; result: TaskPage };
   "tasks.review": { params: { task_id: string }; result: Checkpoint };
   "tasks.update_metadata": { params: TaskMetadataUpdateInput; result: Task };
+  "execution_plans.create": {
+    params: ExecutionPlanCreateInput;
+    result: ExecutionPlanContext;
+  };
+  "execution_plans.get": {
+    params: { task_id: string };
+    result: ExecutionPlanContext;
+  };
   "changesets.propose": { params: ChangesetProposal; result: PendingChangeset };
   "approvals.decide": { params: ApprovalDecisionInput; result: ApprovalDecisionResult };
   "approvals.list": { params: ApprovalListInput; result: ApprovalPage };

@@ -77,22 +77,23 @@ def test_workspace_identity_migrates_legacy_project_version(tmp_path: Path) -> N
             "'2026-07-13T00:00:00+00:00', '2026-07-13T00:00:00+00:00')"
         )
         connection.exec_driver_sql(
-            "INSERT INTO core_versions VALUES "
-            "('local', 'version-1', 'project-1', NULL)"
+            "INSERT INTO core_versions VALUES ('local', 'version-1', 'project-1', NULL)"
         )
 
     migrate_workspace_identity(engine)
 
     with engine.connect() as connection:
-        assert connection.execute(
-            text("SELECT workspace_id FROM core_versions WHERE id = 'version-1'")
-        ).scalar_one() == "project-1"
+        assert (
+            connection.execute(
+                text("SELECT workspace_id FROM core_versions WHERE id = 'version-1'")
+            ).scalar_one()
+            == "project-1"
+        )
     version_columns = {
         column["name"]: column for column in inspect(engine).get_columns("core_versions")
     }
     workspace_foreign_keys = {
-        foreign_key.get("name")
-        for foreign_key in inspect(engine).get_foreign_keys("core_versions")
+        foreign_key.get("name") for foreign_key in inspect(engine).get_foreign_keys("core_versions")
     }
     assert version_columns["workspace_id"]["nullable"] is False
     assert version_columns["project_id"]["nullable"] is True

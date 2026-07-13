@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 from fairy_core.application import snapshot_support as snapshot
 from fairy_core.application.approval import ApprovalApplication
+from fairy_core.application.changeset_limits import validate_changeset_limits
 from fairy_core.application.contexts import (
     PendingChangeset,
     ProjectContext,
@@ -58,6 +59,7 @@ from fairy_core.domain.models import (
     Workspace,
     WorkspaceType,
 )
+from fairy_core.execution.planning import ExecutionPlanningApplication
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.storage import StateStore
 from fairy_core.workspace.index import ProjectIndexer
@@ -85,6 +87,7 @@ class CoreApplication(CoreSupportMixin):
             unit_of_work_factory,
             self._project_indexer,
         )
+        self.execution_planning = ExecutionPlanningApplication(unit_of_work_factory)
         self._execution_policy = execution_policy or ExecutionPolicyResolver()
         self._approvals = ApprovalApplication(
             unit_of_work_factory=unit_of_work_factory,
@@ -633,6 +636,11 @@ class CoreApplication(CoreSupportMixin):
                 )
             if task.target_version_id is None or task.workspace_id is None:
                 raise ValueError("Task has no writable Workspace Version")
+            workspace = unit_of_work.state.get_workspace(task.workspace_id)
+            if workspace is None:
+                raise ValueError("Task Workspace is unavailable")
+            current_index = unit_of_work.project_indexes.get(task.target_version_id)
+            validate_changeset_limits(workspace, current_index, request.files)
             if task.status is TaskStatus.REPAIRING:
                 task.transition_to(TaskStatus.EXECUTING)
             context = self._context_for(unit_of_work.state, task)
@@ -784,6 +792,7 @@ class CoreApplication(CoreSupportMixin):
                 expected_generation=current_generation,
             )
             unit_of_work.commit()
+        self.execution_planning.complete_file_batch_if_planned(applied.task_id, applied.files)
         return applied
 
     def get_approval(self, approval_id: UUID) -> Approval:

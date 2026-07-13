@@ -117,8 +117,7 @@ def migrate_workspace_identity(engine: Engine) -> None:
                     f'ALTER TABLE "{table_name}" ADD COLUMN workspace_id VARCHAR(36)'
                 )
             connection.exec_driver_sql(
-                f'UPDATE "{table_name}" SET workspace_id = {expression} '
-                "WHERE workspace_id IS NULL"
+                f'UPDATE "{table_name}" SET workspace_id = {expression} WHERE workspace_id IS NULL'
             )
 
         now = datetime.now(UTC).isoformat()
@@ -151,10 +150,7 @@ def migrate_workspace_identity(engine: Engine) -> None:
             if table_name not in tables:
                 continue
             table_inspector = inspect(connection)
-            columns = {
-                column["name"]: column
-                for column in table_inspector.get_columns(table_name)
-            }
+            columns = {column["name"]: column for column in table_inspector.get_columns(table_name)}
             foreign_keys = {
                 item.get("name") for item in table_inspector.get_foreign_keys(table_name)
             }
@@ -164,8 +160,7 @@ def migrate_workspace_identity(engine: Engine) -> None:
             if table_name in {"core_versions", "core_project_indexes", "core_changesets"}:
                 recreate = recreate or not columns["project_id"].get("nullable", True)
             checks = {
-                item.get("name")
-                for item in table_inspector.get_check_constraints(table_name)
+                item.get("name") for item in table_inspector.get_check_constraints(table_name)
             }
             if (
                 table_name == "core_task_workspaces"

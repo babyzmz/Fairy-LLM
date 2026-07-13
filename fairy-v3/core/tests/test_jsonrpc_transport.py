@@ -405,6 +405,8 @@ def test_public_method_manifest_is_stable() -> None:
             "documents.list",
             "documents.search",
             "events.subscribe",
+            "execution_plans.create",
+            "execution_plans.get",
             "health",
             "memory.claims.get",
             "memory.claims.list",
@@ -453,10 +455,10 @@ def test_public_method_manifest_is_stable() -> None:
             "voice.synthesize",
             "voice.sessions.cancel",
             "voice.sessions.get",
-                "voice.sessions.start",
-                "voice.transcribe",
-                "workspaces.files.list",
-                "workspaces.files.read",
-                "workspaces.get",
-            }
+            "voice.sessions.start",
+            "voice.transcribe",
+            "workspaces.files.list",
+            "workspaces.files.read",
+            "workspaces.get",
+        }
     )

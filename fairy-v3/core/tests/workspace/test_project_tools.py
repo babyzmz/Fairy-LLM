@@ -175,10 +175,56 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
     source = tmp_path / "source"
     source.mkdir()
     (source / "README.md").write_text("base", encoding="utf-8")
-    provider = _provider(
-        "edit.propose_changeset",
-        '{"files":[{"path":"README.md","content":"draft"}],"reason":"Update copy"}',
-        "Draft is ready for approval",
+    base_hash = hashlib.sha256(b"base").hexdigest()
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-plan",
+                    tool_name="execution.plan",
+                    arguments_fragment=(
+                        '{"files":[{"path":"README.md","purpose":"Update copy",'
+                        f'"batch":1,"expected_hash":"{base_hash}"}}],'
+                        '"validation_commands":[]}'
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-edit",
+                    tool_name="edit.propose_changeset",
+                    arguments_fragment=(
+                        '{"files":[{"path":"README.md","content":"draft"}],"reason":"Update copy"}'
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.text(
+                    profile_id="scripted",
+                    sequence=1,
+                    text="Draft is ready for approval",
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+        ]
     )
     service = build_local_service(
         tmp_path / "data",
@@ -196,6 +242,15 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
         assert len(approvals) == 1
         assert approvals[0]["changeset_id"] is not None
         assert approvals[0]["tool_invocation_id"] is None
+        running_plan = service.invoke(
+            "execution_plans.get",
+            {"task_id": context["task"]["id"]},
+        )
+        assert running_plan["plan"]["model_calls_used"] == 3
+        assert running_plan["plan"]["tool_calls_used"] == 2
+        assert [
+            step["status"] for step in running_plan["steps"] if step["kind"] == "implement"
+        ] == ["running"]
         managed_file = Path(context["target_version"]["project_root"]) / "README.md"
         assert managed_file.read_text(encoding="utf-8") == "base"
         with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
@@ -212,6 +267,13 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
             after = unit_of_work.project_indexes.get(context["target_version"]["id"])
         assert after is not None and after.generation == 2
         assert after.file("README.md").content_hash == hashlib.sha256(b"draft").hexdigest()
+        completed_plan = service.invoke(
+            "execution_plans.get",
+            {"task_id": context["task"]["id"]},
+        )
+        assert [
+            step["status"] for step in completed_plan["steps"] if step["kind"] == "implement"
+        ] == ["completed"]
     finally:
         service.close()
 
@@ -312,6 +374,7 @@ def test_project_tool_schemas_are_closed_and_scope_free(tmp_path: Path) -> None:
             "artifact.list",
             "artifact.read",
             "edit.propose_changeset",
+            "execution.plan",
             "preview.status",
         ):
             definition = service._registry.get(name)  # type: ignore[attr-defined]

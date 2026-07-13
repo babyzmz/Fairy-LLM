@@ -13,11 +13,39 @@ from fairy_core.domain.execution import (
     RuntimeSession,
 )
 from fairy_core.domain.models import Conversation, Project, Task, Version, Workspace
+from fairy_core.execution.plans import ExecutionPlan, TaskStep, TaskStepStatus
 from fairy_core.research.models import ResearchEvidence
 from fairy_core.storage.pagination import StatePage
 
 
 class StateStore(Protocol):
+    def save_execution_plan(
+        self,
+        plan: ExecutionPlan,
+        steps: list[TaskStep] | tuple[TaskStep, ...],
+    ) -> None: ...
+
+    def update_execution_plan(
+        self,
+        plan: ExecutionPlan,
+        *,
+        expected_revision: int,
+    ) -> None: ...
+
+    def get_execution_plan(self, plan_id: UUID) -> ExecutionPlan | None: ...
+
+    def execution_plan_for_task(self, task_id: UUID) -> ExecutionPlan | None: ...
+
+    def task_steps_for_plan(self, plan_id: UUID) -> list[TaskStep]: ...
+
+    def save_task_step(
+        self,
+        step: TaskStep,
+        *,
+        expected_status: TaskStepStatus,
+        expected_attempts: int,
+    ) -> None: ...
+
     def save_workspace(self, workspace: Workspace) -> None: ...
 
     def get_workspace(self, workspace_id: UUID) -> Workspace | None: ...

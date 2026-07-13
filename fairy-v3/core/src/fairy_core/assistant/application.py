@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
+from fairy_core.assistant import limits
 from fairy_core.assistant.candidates import ToolCandidate, arguments_for_definition
 from fairy_core.assistant.context import AssistantContextBuilder
 from fairy_core.assistant.durable_context import durable_tool_context
@@ -17,6 +18,7 @@ from fairy_core.assistant.models import (
     ToolInvocation,
     ToolInvocationStatus,
 )
+from fairy_core.assistant.plan_budget import consume_model_budget, consume_tool_budget
 from fairy_core.assistant.provider_attempts import ProviderAttemptRecorder
 from fairy_core.assistant.tools import (
     DIRECT_ANSWER_TOOL_NAME,
@@ -57,10 +59,6 @@ from fairy_core.providers import (
     ProviderUnavailableError,
 )
 
-_MAX_MODEL_ROUNDS = 3
-_MAX_TOOL_INVOCATIONS = 8
-_MAX_ASSISTANT_CHARACTERS = 1_000_000
-
 
 class AssistantApplication:
     def __init__(
@@ -98,11 +96,7 @@ class AssistantApplication:
         cancellation: CancellationToken,
     ) -> AssistantTurn:
         turn = self._turns.get(turn_id)
-        if turn.status in {
-            AssistantTurnStatus.COMPLETED,
-            AssistantTurnStatus.CANCELLED,
-            AssistantTurnStatus.FAILED,
-        }:
+        if turn.is_terminal:
             self._image_attachments.release(turn_id)
             return turn
         all_text: list[str] = []
@@ -119,7 +113,7 @@ class AssistantApplication:
                 self._resume_after_tools(turn_id)
                 ephemeral_context.extend(self._durable_tool_context(turn_id))
                 model_round_start = self._next_model_round(turn_id)
-            for model_round in range(model_round_start, _MAX_MODEL_ROUNDS + 1):
+            for model_round in range(model_round_start, limits.MAX_MODEL_ROUNDS + 1):
                 cancellation.raise_if_cancelled()
                 turn, current_run = self._start_model_round(turn_id, model_round)
                 profile = self._providers.profile(turn.profile_id)
@@ -132,7 +126,7 @@ class AssistantApplication:
                     messages=(*context.messages, *ephemeral_context),
                     tools=context.tools,
                     required_capabilities=context.required_capabilities,
-                    max_output_tokens=4_096,
+                    max_output_tokens=16_384,
                 )
                 offered_definitions = {
                     definition.name: definition for definition in context.tool_definitions
@@ -148,7 +142,10 @@ class AssistantApplication:
                     self._turns.require_active(turn_id)
                     if delta.kind is ModelDeltaKind.TEXT:
                         assert delta.text is not None
-                        if sum(map(len, all_text)) + len(delta.text) > _MAX_ASSISTANT_CHARACTERS:
+                        if (
+                            sum(map(len, all_text)) + len(delta.text)
+                            > limits.MAX_ASSISTANT_CHARACTERS
+                        ):
                             raise ValueError("assistant output exceeds the durable message limit")
                         chunk_index += 1
                         self._append_delta(
@@ -203,7 +200,7 @@ class AssistantApplication:
                 if direct_candidates:
                     external_candidates = list(candidates.values())
                 if external_candidates:
-                    if tool_count + len(external_candidates) > _MAX_TOOL_INVOCATIONS:
+                    if tool_count + len(external_candidates) > limits.MAX_TOOL_INVOCATIONS:
                         return self._fail_turn(
                             turn_id,
                             current_run,
@@ -346,6 +343,7 @@ class AssistantApplication:
             turn = require_turn(unit_of_work, turn_id)
             task = require_task(unit_of_work, turn.task_id)
             scope = self._scope_resolver(unit_of_work.state, task)
+            consume_model_budget(unit_of_work, task.id)
             started = turn.status is AssistantTurnStatus.CREATED
             if started:
                 expected_status = turn.status
@@ -534,6 +532,8 @@ class AssistantApplication:
                 running = None
             else:
                 duplicate = False
+                if definition.name != "execution.plan":
+                    consume_tool_budget(unit_of_work, task.id)
                 current_definition = self._registry.get(definition.name)
                 if (
                     current_definition is None

@@ -21,6 +21,7 @@ from fairy_core.persistence.tenant import TENANT_ID_LENGTH
 from fairy_core.storage.assistant_attempt_schema import build_assistant_attempt_tables
 from fairy_core.storage.history_schema import build_history_tables
 from fairy_core.storage.index_schema import build_state_indexes
+from fairy_core.storage.planning_schema import build_planning_schema
 from fairy_core.storage.types import UTCDateTime
 
 ID_LENGTH = 36
@@ -292,6 +293,13 @@ tasks = Table(
         name="fk_core_tasks_conversation",
         ondelete="CASCADE",
     ),
+)
+
+execution_plans, task_steps = build_planning_schema(
+    metadata=state_metadata,
+    tasks=tasks,
+    workspaces=workspaces,
+    versions=versions,
 )
 
 task_workspaces = Table(

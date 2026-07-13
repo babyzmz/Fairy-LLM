@@ -9,6 +9,7 @@ from enum import StrEnum
 from threading import RLock
 from types import MappingProxyType
 
+from fairy_core.commanding import tool_schemas
 from fairy_core.commanding.registry_projection import (
     available_agent_definitions as project_available_agent_definitions,
 )
@@ -581,6 +582,20 @@ def _project_definitions(
 ) -> list[ToolDefinition]:
     return [
         _tool(
+            "execution.plan",
+            SideEffect.WRITE,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "project_tools",
+            idempotent=True,
+            description=(
+                "Create the immutable file, dependency, entrypoint, and validation plan "
+                "before modifying a Workspace."
+            ),
+            input_schema=tool_schemas.execution_plan_tool_schema(),
+        ),
+        _tool(
             "project.read",
             SideEffect.READ,
             RiskLevel.LOW,
@@ -589,16 +604,7 @@ def _project_definitions(
             "project_tools",
             idempotent=True,
             description="Read bounded UTF-8 source from the Task-bound managed Version.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "minLength": 1, "maxLength": 1_024},
-                    "start_line": {"type": "integer", "minimum": 1, "maximum": 1_000_000},
-                    "end_line": {"type": "integer", "minimum": 1, "maximum": 1_000_000},
-                },
-                "required": ["path"],
-                "additionalProperties": False,
-            },
+            input_schema=tool_schemas.project_read_tool_schema(),
         ),
         _tool(
             "artifact.list",
@@ -620,14 +626,7 @@ def _project_definitions(
             "project_tools",
             idempotent=True,
             description="Read one bounded Artifact owned by the current Task Scope.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "artifact_id": {"type": "string", "format": "uuid"},
-                },
-                "required": ["artifact_id"],
-                "additionalProperties": False,
-            },
+            input_schema=tool_schemas.artifact_read_tool_schema(),
         ),
         _tool(
             "preview.status",
@@ -655,7 +654,7 @@ def _project_definitions(
                     "files": {
                         "type": "array",
                         "minItems": 1,
-                        "maxItems": 100,
+                        "maxItems": 25,
                         "items": {
                             "type": "object",
                             "properties": {
@@ -664,7 +663,7 @@ def _project_definitions(
                                     "minLength": 1,
                                     "maxLength": 1_024,
                                 },
-                                "content": {"type": "string", "maxLength": 1_000_000},
+                                "content": {"type": "string", "maxLength": 2_097_152},
                             },
                             "required": ["path", "content"],
                             "additionalProperties": False,

@@ -15,6 +15,8 @@ from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.domain.errors import ScopeViolationError
 from fairy_core.domain.execution import Artifact, ArtifactType, ArtifactVisibility
 from fairy_core.domain.models import ScopeContract, Task, TaskStatus
+from fairy_core.execution.planning import ExecutionPlanningApplication
+from fairy_core.execution.plans import TaskStepKind
 from fairy_core.execution.templates import (
     ReviewKind,
     UnknownProjectManagerError,
@@ -59,6 +61,7 @@ class ProjectExecutionApplication:
         policy: PolicyEngine,
         execution_policy: ExecutionPolicyResolver,
         scope_resolver: ScopeResolver,
+        planning: ExecutionPlanningApplication,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._sandbox_executor = sandbox_executor
@@ -66,6 +69,7 @@ class ProjectExecutionApplication:
         self._policy = policy
         self._execution_policy = execution_policy
         self._scope_resolver = scope_resolver
+        self._planning = planning
         self._archive_builder = WorkspaceArchiveBuilder(unit_of_work_factory)
 
     def execute_command(
@@ -80,7 +84,11 @@ class ProjectExecutionApplication:
         self._validate_command(tool_name, scope, command_run)
         existing = self._existing_report(scope.task_id, command_run.id)
         if existing is not None:
+            if tool_name == _DEPENDENCY_TOOL:
+                self._planning.complete_step(scope.task_id, TaskStepKind.INSTALL)
             return self._tool_result(existing)
+        if tool_name == _DEPENDENCY_TOOL:
+            self._planning.start_step(scope.task_id, TaskStepKind.INSTALL)
         self._begin_phase(scope.task_id, tool_name)
         template = (
             dependency_template(scope.project_root)
@@ -123,6 +131,12 @@ class ProjectExecutionApplication:
                 error=error,
             )
             self._mark_repairing(scope.task_id)
+            if tool_name == _DEPENDENCY_TOOL:
+                self._planning.fail_step(
+                    scope.task_id,
+                    TaskStepKind.INSTALL,
+                    error_code=str(getattr(error, "error_code", "WORKER_INTERRUPTED")),
+                )
             raise ProjectExecutionFailedError(
                 tool_name,
                 error_code=str(getattr(error, "error_code", "WORKER_INTERRUPTED")),
@@ -139,6 +153,12 @@ class ProjectExecutionApplication:
         )
         if result.status is not SandboxResultStatus.COMPLETED:
             self._mark_repairing(scope.task_id)
+            if tool_name == _DEPENDENCY_TOOL:
+                self._planning.fail_step(
+                    scope.task_id,
+                    TaskStepKind.INSTALL,
+                    error_code="DEPENDENCY_FAILED",
+                )
             raise ProjectExecutionFailedError(
                 tool_name,
                 error_code=(
@@ -147,6 +167,7 @@ class ProjectExecutionApplication:
             )
         if tool_name == _DEPENDENCY_TOOL:
             self._finish_install(scope.task_id)
+            self._planning.complete_step(scope.task_id, TaskStepKind.INSTALL)
         return self._tool_result(artifact)
 
     def run_review_suite(self, task_id: UUID) -> tuple[Artifact, ...]:
@@ -157,29 +178,37 @@ class ProjectExecutionApplication:
             review_template(scope.project_root, ReviewKind.TYPECHECK)
         except UnknownProjectManagerError:
             return ()
+        self._planning.start_step(task_id, TaskStepKind.TEST)
         reports: list[Artifact] = []
-        for tool_name in _REVIEW_TOOLS:
-            running, scope = self._start_review_command(task_id, tool_name)
-            if running.status is CommandStatus.SUCCEEDED:
-                existing = self._existing_report(task_id, running.id)
-                if existing is None:
-                    raise RuntimeError("succeeded Review command has no durable report")
-                reports.append(existing)
-                continue
-            try:
+        try:
+            for tool_name in _REVIEW_TOOLS:
+                running, scope = self._start_review_command(task_id, tool_name)
+                if running.status is CommandStatus.SUCCEEDED:
+                    existing = self._existing_report(task_id, running.id)
+                    if existing is None:
+                        raise RuntimeError("succeeded Review command has no durable report")
+                    reports.append(existing)
+                    continue
                 result = self.execute_command(
                     tool_name=tool_name,
                     scope=scope,
                     command_run=running,
                 )
-            except Exception as error:
+                self._complete_command(running, result)
+                report = self._existing_report(task_id, running.id)
+                if report is None:
+                    raise RuntimeError("completed Review command has no durable report")
+                reports.append(report)
+        except Exception as error:
+            if "running" in locals():
                 self._fail_command(running, error)
-                raise
-            self._complete_command(running, result)
-            report = self._existing_report(task_id, running.id)
-            if report is None:
-                raise RuntimeError("completed Review command has no durable report")
-            reports.append(report)
+            self._planning.fail_step(
+                task_id,
+                TaskStepKind.TEST,
+                error_code=str(getattr(error, "error_code", "REVIEW_FAILED")),
+            )
+            raise
+        self._planning.complete_step(task_id, TaskStepKind.TEST)
         return tuple(reports)
 
     def _start_review_command(

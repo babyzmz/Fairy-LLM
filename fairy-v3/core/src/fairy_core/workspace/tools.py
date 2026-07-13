@@ -10,8 +10,9 @@ from fairy_core.application.core import CoreApplication
 from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.contracts.models import ChangesetProposal, FileMutation
+from fairy_core.contracts.planning import ExecutionPlanCreateInput
 from fairy_core.domain.errors import ScopeViolationError
-from fairy_core.domain.execution import Artifact, ArtifactVisibility
+from fairy_core.domain.execution import Artifact, ArtifactVisibility, ChangesetStatus
 from fairy_core.domain.models import ScopeContract
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.security.path_guard import PathGuard
@@ -22,6 +23,7 @@ _PROJECT_TOOLS = frozenset(
         "artifact.list",
         "artifact.read",
         "edit.propose_changeset",
+        "execution.plan",
         "preview.status",
         "project.read",
     }
@@ -63,7 +65,35 @@ class ProjectToolExecutor:
             return self._read_artifact(scope, arguments)
         if definition.name == "preview.status":
             return self._preview_status(scope)
+        if definition.name == "execution.plan":
+            return self._create_execution_plan(scope, arguments)
         return self._propose_changeset(scope, arguments)
+
+    def _create_execution_plan(
+        self,
+        scope: ScopeContract,
+        arguments: dict[str, object],
+    ) -> ToolResult:
+        request = ExecutionPlanCreateInput.model_validate({"task_id": scope.task_id, **arguments})
+        context = self._application.execution_planning.create(
+            request,
+            initial_model_calls=1,
+            initial_tool_calls=1,
+        )
+        return ToolResult.create(
+            public_summary=f"Planned {len(request.files)} file(s)",
+            model_content=json.dumps(
+                {
+                    "plan_id": str(context.plan.id),
+                    "status": context.plan.status.value,
+                    "batches": max(item.batch for item in request.files),
+                    "files": len(request.files),
+                },
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ),
+            artifact_ids=(),
+        )
 
     def _read_project(
         self,
@@ -236,9 +266,16 @@ class ProjectToolExecutor:
         scope: ScopeContract,
         arguments: dict[str, object],
     ) -> ToolResult:
-        if scope.project_id is None or scope.target_version_id is None:
-            raise ScopeViolationError("scratch Tasks cannot propose project Changesets")
-        workspace, _index = self._project_context(scope)
+        if scope.target_version_id is None:
+            raise ScopeViolationError("Task has no writable Workspace Version")
+        with self._unit_of_work_factory() as unit_of_work:
+            plan = unit_of_work.state.execution_plan_for_task(scope.task_id)
+        if plan is None:
+            raise ScopeViolationError(
+                "Create an Execution Plan before proposing file changes",
+                code="SCOPE_MISMATCH",
+            )
+        workspace, index = self._project_context(scope)
         raw_files = arguments.get("files")
         if not isinstance(raw_files, list):
             raise ValueError("files must be an array")
@@ -252,6 +289,27 @@ class ProjectToolExecutor:
         )
         if len(files) != len(raw_files):
             raise ValueError("each Changeset file must be an object")
+        planned_files = {str(item["path"]): item for item in plan.manifest["files"]}
+        planned_paths = set(planned_files)
+        unplanned = sorted(file.path for file in files if file.path not in planned_paths)
+        if unplanned:
+            raise ScopeViolationError(
+                f"Changeset contains unplanned files: {', '.join(unplanned[:5])}"
+            )
+        indexed_files = {item.path: item for item in index.files}
+        for file in files:
+            expected_hash = planned_files[file.path].get("expected_hash")
+            indexed = indexed_files.get(file.path)
+            if indexed is None and expected_hash is not None:
+                raise ScopeViolationError(
+                    f"planned hash does not match absent file: {file.path}",
+                    code="SCOPE_MISMATCH",
+                )
+            if indexed is not None and expected_hash != indexed.content_hash:
+                raise ScopeViolationError(
+                    f"planned hash is stale or missing for existing file: {file.path}",
+                    code="SCOPE_MISMATCH",
+                )
         for file in files:
             normalized = _relative_path(file.path)
             if not _matches_patterns(workspace.editable_files, normalized):
@@ -272,14 +330,26 @@ class ProjectToolExecutor:
                 sort_keys=True,
             ).encode("utf-8")
         ).hexdigest()
-        pending = self._application.propose_changeset(
-            ChangesetProposal(
-                task_id=scope.task_id,
-                files=files,
-                reason=reason,
-                idempotency_key=f"assistant:changeset:{fingerprint}",
+        paths = tuple(file.path for file in files)
+        self._application.execution_planning.start_file_batch(scope.task_id, paths)
+        try:
+            pending = self._application.propose_changeset(
+                ChangesetProposal(
+                    task_id=scope.task_id,
+                    files=files,
+                    reason=reason,
+                    idempotency_key=f"assistant:changeset:{fingerprint}",
+                )
             )
-        )
+        except Exception as error:
+            self._application.execution_planning.fail_file_batch(
+                scope.task_id,
+                paths,
+                error_code=str(getattr(error, "code", "WORKER_INTERRUPTED")),
+            )
+            raise
+        if pending.changeset.status is ChangesetStatus.APPLIED:
+            self._application.execution_planning.complete_file_batch(scope.task_id, paths)
         return ToolResult.create(
             public_summary=f"Changeset awaiting approval for {len(files)} file(s)",
             model_content=json.dumps(

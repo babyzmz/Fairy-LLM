@@ -749,7 +749,7 @@
             "items": {
               "$ref": "#/components/schemas/FileMutation"
             },
-            "maxItems": 1000,
+            "maxItems": 25,
             "minItems": 1,
             "title": "Files",
             "type": "array"
@@ -1737,6 +1737,185 @@
         "title": "EventVisibilityModel",
         "type": "string"
       },
+      "ExecutionPlanContextModel": {
+        "additionalProperties": false,
+        "properties": {
+          "plan": {
+            "$ref": "#/components/schemas/ExecutionPlanModel"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/TaskStepModel"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "plan",
+          "steps"
+        ],
+        "title": "ExecutionPlanContextModel",
+        "type": "object"
+      },
+      "ExecutionPlanCreateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "dependencies": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Dependencies",
+            "type": "array"
+          },
+          "entrypoints": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Entrypoints",
+            "type": "array"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/PlannedFileInput"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Files",
+            "type": "array"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "validation_commands": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Validation Commands",
+            "type": "array"
+          }
+        },
+        "required": [
+          "task_id",
+          "files"
+        ],
+        "title": "ExecutionPlanCreateInput",
+        "type": "object"
+      },
+      "ExecutionPlanModel": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "manifest": {
+            "additionalProperties": true,
+            "title": "Manifest",
+            "type": "object"
+          },
+          "max_duration_seconds": {
+            "title": "Max Duration Seconds",
+            "type": "integer"
+          },
+          "max_model_calls": {
+            "title": "Max Model Calls",
+            "type": "integer"
+          },
+          "max_repairs": {
+            "title": "Max Repairs",
+            "type": "integer"
+          },
+          "max_tool_calls": {
+            "title": "Max Tool Calls",
+            "type": "integer"
+          },
+          "model_calls_used": {
+            "title": "Model Calls Used",
+            "type": "integer"
+          },
+          "repairs_used": {
+            "title": "Repairs Used",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExecutionPlanStatus"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "tool_calls_used": {
+            "title": "Tool Calls Used",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "workspace_id",
+          "version_id",
+          "manifest",
+          "status",
+          "max_model_calls",
+          "max_tool_calls",
+          "max_repairs",
+          "max_duration_seconds",
+          "model_calls_used",
+          "tool_calls_used",
+          "repairs_used",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ExecutionPlanModel",
+        "type": "object"
+      },
+      "ExecutionPlanStatus": {
+        "enum": [
+          "active",
+          "paused",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "title": "ExecutionPlanStatus",
+        "type": "string"
+      },
       "ExecutionSettingsModel": {
         "additionalProperties": false,
         "properties": {
@@ -1816,7 +1995,7 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "maxLength": 5000000,
+            "maxLength": 2097152,
             "title": "Content",
             "type": "string"
           },
@@ -4441,6 +4620,48 @@
         "title": "PermissionProfileModel",
         "type": "string"
       },
+      "PlannedFileInput": {
+        "additionalProperties": false,
+        "properties": {
+          "batch": {
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Batch",
+            "type": "integer"
+          },
+          "expected_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Hash"
+          },
+          "path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "purpose": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Purpose",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "purpose",
+          "batch"
+        ],
+        "title": "PlannedFileInput",
+        "type": "object"
+      },
       "PreviewContextModel": {
         "additionalProperties": false,
         "properties": {
@@ -6180,6 +6401,120 @@
           "failed"
         ],
         "title": "TaskStatus",
+        "type": "string"
+      },
+      "TaskStepKind": {
+        "enum": [
+          "analyze",
+          "file_plan",
+          "implement",
+          "install",
+          "test",
+          "preview",
+          "repair",
+          "summary",
+          "checkpoint"
+        ],
+        "title": "TaskStepKind",
+        "type": "string"
+      },
+      "TaskStepModel": {
+        "additionalProperties": false,
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TaskStepKind"
+          },
+          "plan_id": {
+            "format": "uuid",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStepStatus"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "plan_id",
+          "task_id",
+          "sequence",
+          "kind",
+          "title",
+          "status",
+          "attempts",
+          "error_code",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "TaskStepModel",
+        "type": "object"
+      },
+      "TaskStepStatus": {
+        "enum": [
+          "pending",
+          "running",
+          "completed",
+          "failed",
+          "skipped"
+        ],
+        "title": "TaskStepStatus",
         "type": "string"
       },
       "ToolDefinitionMetadataModel": {
@@ -9006,6 +9341,67 @@
           }
         ],
         "summary": "Events"
+      }
+    },
+    "/v1/execution-plans": {
+      "post": {
+        "operationId": "execution_plans.create",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutionPlanCreateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionPlanContextModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Execution Plan"
       }
     },
     "/v1/health": {
@@ -12026,6 +12422,67 @@
           }
         ],
         "summary": "Archive Task"
+      }
+    },
+    "/v1/tasks/{task_id}/execution-plan": {
+      "get": {
+        "operationId": "execution_plans.get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionPlanContextModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Execution Plan"
       }
     },
     "/v1/tasks/{task_id}/metadata": {

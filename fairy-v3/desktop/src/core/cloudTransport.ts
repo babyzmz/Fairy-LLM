@@ -66,6 +66,9 @@ const routes = {
     post(`/v1/tasks/${pathParameter(params, "task_id")}/review`),
   "tasks.update_metadata": (params) =>
     put(`/v1/tasks/${pathParameter(params, "task_id")}/metadata`, params),
+  "execution_plans.create": (params) => post("/v1/execution-plans", params),
+  "execution_plans.get": (params) =>
+    get(`/v1/tasks/${pathParameter(params, "task_id")}/execution-plan`),
   "changesets.propose": (params) => post("/v1/changesets", params),
   "approvals.decide": (params) =>
     post(

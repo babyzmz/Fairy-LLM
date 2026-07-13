@@ -825,7 +825,7 @@ class HealthModel(ContractModel):
 
 class FileMutation(ContractModel):
     path: str = Field(min_length=1, max_length=1_024)
-    content: str = Field(max_length=5_000_000)
+    content: str = Field(max_length=2_097_152)
 
     @field_validator("path")
     @classmethod
@@ -845,7 +845,7 @@ class FileMutation(ContractModel):
 
 class ChangesetProposal(ContractModel):
     task_id: UUID
-    files: tuple[FileMutation, ...] = Field(min_length=1, max_length=1_000)
+    files: tuple[FileMutation, ...] = Field(min_length=1, max_length=25)
     reason: str = Field(min_length=1, max_length=10_000)
     idempotency_key: str = Field(min_length=1, max_length=255)
 
