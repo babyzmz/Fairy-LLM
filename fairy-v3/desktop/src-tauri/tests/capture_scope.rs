@@ -40,7 +40,8 @@ fn backend(width: u32, height: u32, png: Vec<u8>) -> FakeBackend {
 #[test]
 fn capture_is_authorized_only_for_the_main_window() {
     assert!(authorize_capture_window("main").is_ok());
-    assert!(authorize_capture_window("pet").is_err());
+    assert!(authorize_capture_window("pet-render").is_err());
+    assert!(authorize_capture_window("pet-input").is_err());
     assert!(authorize_capture_window("preview").is_err());
 }
 

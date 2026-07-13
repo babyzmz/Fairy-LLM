@@ -14,11 +14,15 @@ export interface PetHost {
   getPreferences(): Promise<DesktopPreferences>;
   updatePreferences(input: PetPreferencePatch): Promise<DesktopPreferences>;
   onPreferences(listener: (preferences: DesktopPreferences) => void): Promise<() => void>;
+  onInputRequested(listener: () => void): Promise<() => void>;
   setExpanded(expanded: boolean): Promise<void>;
+  setInputLayout(layout: PetInputLayout): Promise<void>;
   openMain(): Promise<void>;
   openSettings(): Promise<void>;
   exit(): Promise<void>;
 }
+
+export type PetInputLayout = "hidden" | "compact" | "expanded";
 
 export function createDefaultPetHost(): PetHost {
   if (!isTauri()) return createBrowserPetHost();
@@ -30,7 +34,12 @@ export function createDefaultPetHost(): PetHost {
         listener(event.payload);
       });
     },
-    setExpanded: (expanded) => invoke("pet_window_set_expanded", { expanded }),
+    async onInputRequested(listener) {
+      return listen("presence-input-requested", listener);
+    },
+    setExpanded: (expanded) =>
+      invoke("pet_input_set_layout", { layout: expanded ? "expanded" : "hidden" }),
+    setInputLayout: (layout) => invoke("pet_input_set_layout", { layout }),
     openMain: () => invoke("open_main_window"),
     openSettings: () => invoke("open_settings_window"),
     exit: () => invoke("pet_exit"),
@@ -63,7 +72,11 @@ function createBrowserPetHost(): PetHost {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    async onInputRequested() {
+      return () => undefined;
+    },
     async setExpanded() {},
+    async setInputLayout() {},
     async openMain() {},
     async openSettings() {},
     async exit() {},

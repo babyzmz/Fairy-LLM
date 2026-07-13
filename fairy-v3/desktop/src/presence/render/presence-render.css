@@ -1,0 +1,16 @@
+.presence-render-window {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.presence-render-window .fairy-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.presence-render-window[data-reduced-motion="true"] * {
+  animation: none !important;
+  transition: none !important;
+}

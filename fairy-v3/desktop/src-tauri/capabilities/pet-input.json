@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pet-input-window",
+  "description": "Interactive companion surface; Core, project, file, capture, and voice session access remain unavailable",
+  "windows": ["pet-input"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

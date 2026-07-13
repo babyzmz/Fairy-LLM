@@ -25,6 +25,9 @@ pub mod provider_configuration;
 pub mod provider_credentials;
 pub mod voice_worker;
 
+pub const PET_RENDER_LABEL: &str = "pet-render";
+pub const PET_INPUT_LABEL: &str = "pet-input";
+
 #[derive(Debug)]
 pub struct WindowScopeError;
 
@@ -51,15 +54,15 @@ pub fn authorize_settings_window(label: &str) -> Result<(), WindowScopeError> {
 }
 
 pub fn authorize_preferences_reader(label: &str) -> Result<(), WindowScopeError> {
-    if ["main", "settings", "pet"].contains(&label) {
+    if ["main", "settings", PET_INPUT_LABEL].contains(&label) {
         Ok(())
     } else {
         Err(WindowScopeError)
     }
 }
 
-pub fn authorize_pet_window(label: &str) -> Result<(), WindowScopeError> {
-    if label == "pet" {
+pub fn authorize_pet_input_window(label: &str) -> Result<(), WindowScopeError> {
+    if label == PET_INPUT_LABEL {
         Ok(())
     } else {
         Err(WindowScopeError)
@@ -99,11 +102,37 @@ pub fn settings_method_allowed(method: &str) -> bool {
 
 pub fn auxiliary_window_policy(label: &str) -> Option<AuxiliaryWindowPolicy> {
     match label {
-        "pet" => Some(AuxiliaryWindowPolicy {
+        PET_RENDER_LABEL => Some(AuxiliaryWindowPolicy {
+            ignore_cursor_events: true,
+            focusable: false,
+        }),
+        PET_INPUT_LABEL => Some(AuxiliaryWindowPolicy {
             ignore_cursor_events: false,
             focusable: true,
         }),
         _ => None,
+    }
+}
+
+pub fn anchored_pet_input_frame(
+    render: PetWindowFrame,
+    target_width: u32,
+    target_height: u32,
+    compact_height: u32,
+) -> PetWindowFrame {
+    let render_right = i64::from(render.x) + i64::from(render.width);
+    let render_center_y = i64::from(render.y) + i64::from(render.height) / 2;
+    let compact_bottom = render_center_y + i64::from(compact_height) / 2;
+    let y = if target_height <= compact_height {
+        render_center_y - i64::from(target_height) / 2
+    } else {
+        compact_bottom - i64::from(target_height)
+    };
+    PetWindowFrame {
+        x: (render_right - i64::from(target_width)) as i32,
+        y: y as i32,
+        width: target_width,
+        height: target_height,
     }
 }
 
@@ -357,7 +386,8 @@ async fn pet_preferences_update(
     state: State<'_, DesktopState>,
     input: PetPreferencesUpdate,
 ) -> Result<DesktopPreferences, String> {
-    authorize_pet_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
     let _guard = state
         .preferences
         .lock()
@@ -374,50 +404,64 @@ async fn pet_preferences_update(
     Ok(next)
 }
 
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PetInputLayout {
+    Hidden,
+    Compact,
+    Expanded,
+}
+
 #[tauri::command]
-async fn pet_window_set_expanded(window: WebviewWindow, expanded: bool) -> Result<(), String> {
-    authorize_pet_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
-    let scale = window.scale_factor().map_err(|error| error.to_string())?;
-    let current_position = window.outer_position().map_err(|error| error.to_string())?;
-    let current_size = window.outer_size().map_err(|error| error.to_string())?;
-    let monitor = window
-        .current_monitor()
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "Pet monitor is unavailable".to_owned())?;
-    let (logical_width, logical_height) = if expanded {
-        (420.0, 360.0)
-    } else {
-        (176.0, 176.0)
+async fn pet_input_set_layout(window: WebviewWindow, layout: PetInputLayout) -> Result<(), String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    if matches!(layout, PetInputLayout::Hidden) {
+        return window.hide().map_err(|error| error.to_string());
+    }
+
+    let app = window.app_handle();
+    let render = app
+        .get_webview_window(PET_RENDER_LABEL)
+        .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
+    let input = app
+        .get_webview_window(PET_INPUT_LABEL)
+        .ok_or_else(|| "Pet input window is unavailable".to_owned())?;
+    let scale = render.scale_factor().map_err(|error| error.to_string())?;
+    let render_position = render.outer_position().map_err(|error| error.to_string())?;
+    let render_size = render.outer_size().map_err(|error| error.to_string())?;
+    let (logical_width, logical_height) = match layout {
+        PetInputLayout::Compact => (372.0, 72.0),
+        PetInputLayout::Expanded => (420.0, 360.0),
+        PetInputLayout::Hidden => unreachable!(),
     };
     let target_width = (logical_width * scale).round() as u32;
     let target_height = (logical_height * scale).round() as u32;
-    let frame = anchored_pet_frame(
+    let compact_height = (72.0 * scale).round() as u32;
+    let frame = anchored_pet_input_frame(
         PetWindowFrame {
-            x: current_position.x,
-            y: current_position.y,
-            width: current_size.width,
-            height: current_size.height,
+            x: render_position.x,
+            y: render_position.y,
+            width: render_size.width,
+            height: render_size.height,
         },
         target_width,
         target_height,
-        PetWindowFrame {
-            x: monitor.position().x,
-            y: monitor.position().y,
-            width: monitor.size().width,
-            height: monitor.size().height,
-        },
+        compact_height,
     );
-    window
+    input
         .set_size(tauri::PhysicalSize::new(frame.width, frame.height))
         .map_err(|error| error.to_string())?;
-    window
+    input
         .set_position(tauri::PhysicalPosition::new(frame.x, frame.y))
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    input.show().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 async fn pet_exit(window: WebviewWindow) -> Result<(), String> {
-    authorize_pet_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
     window.app_handle().exit(0);
     Ok(())
 }
@@ -462,7 +506,8 @@ fn settings_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
 
 #[tauri::command]
 async fn open_main_window(window: WebviewWindow) -> Result<(), String> {
-    authorize_pet_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
     show_and_focus(&main_window(window.app_handle())?)
 }
 
@@ -470,21 +515,28 @@ fn apply_pet_window_preferences(
     app: &tauri::AppHandle,
     preferences: &DesktopPreferences,
 ) -> Result<(), String> {
-    let pet = app
-        .get_webview_window("pet")
-        .ok_or_else(|| "Pet window is unavailable".to_owned())?;
-    pet.set_always_on_top(preferences.pet_always_on_top)
-        .map_err(|error| error.to_string())?;
+    let render = app
+        .get_webview_window(PET_RENDER_LABEL)
+        .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
+    let input = app
+        .get_webview_window(PET_INPUT_LABEL)
+        .ok_or_else(|| "Pet input window is unavailable".to_owned())?;
+    for window in [&render, &input] {
+        window
+            .set_always_on_top(preferences.pet_always_on_top)
+            .map_err(|error| error.to_string())?;
+    }
     if preferences.pet_enabled {
-        pet.show().map_err(|error| error.to_string())
+        render.show().map_err(|error| error.to_string())
     } else {
-        pet.hide().map_err(|error| error.to_string())
+        render.hide().map_err(|error| error.to_string())?;
+        input.hide().map_err(|error| error.to_string())
     }
 }
 
 #[tauri::command]
 async fn open_settings_window(window: WebviewWindow) -> Result<(), String> {
-    if !["main", "pet", "settings"].contains(&window.label()) {
+    if !["main", PET_INPUT_LABEL, "settings"].contains(&window.label()) {
         return Err("Window is not authorized".to_owned());
     }
     show_and_focus(&settings_window(window.app_handle())?)
@@ -786,7 +838,7 @@ pub fn run() {
                 desktop_program,
                 resource_dir,
             });
-            for label in ["pet"] {
+            for label in [PET_RENDER_LABEL, PET_INPUT_LABEL] {
                 let Some(policy) = auxiliary_window_policy(label) else {
                     continue;
                 };
@@ -809,7 +861,7 @@ pub fn run() {
             desktop_preferences_get,
             desktop_preferences_update,
             pet_preferences_update,
-            pet_window_set_expanded,
+            pet_input_set_layout,
             pet_exit,
             open_main_window,
             open_settings_window,

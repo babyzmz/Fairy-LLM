@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pet-render-window",
+  "description": "Render-only companion surface; it can only receive safe presence events",
+  "windows": ["pet-render"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

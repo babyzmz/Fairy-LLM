@@ -23,6 +23,18 @@ async function mountSurface() {
     return;
   }
 
+  if (surface === "pet-render") {
+    const { PresenceRenderApp } = await import("./presence/render/PresenceRenderApp");
+    renderSurface(<PresenceRenderApp />);
+    return;
+  }
+
+  if (surface === "pet-input") {
+    const { PresenceInputApp } = await import("./presence/input/PresenceInputApp");
+    renderSurface(<PresenceInputApp />);
+    return;
+  }
+
   if (surface === "presence-render") {
     const { PresenceRenderProbe } = await import("./presence/render/PresenceRenderProbe");
     renderSurface(<PresenceRenderProbe />);

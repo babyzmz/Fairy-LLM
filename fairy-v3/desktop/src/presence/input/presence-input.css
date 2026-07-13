@@ -1,0 +1,48 @@
+.presence-input-window {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  user-select: none;
+}
+
+.presence-input-window .presence-panel {
+  inset: 0;
+  width: 100%;
+  max-height: 100%;
+  padding: 8px;
+  align-content: end;
+  transform: translateY(5px) scale(0.99);
+  transform-origin: bottom center;
+}
+
+.presence-input-window[data-layout="compact"] .presence-panel {
+  padding: 5px;
+}
+
+.presence-input-window[data-layout="compact"] .presence-input {
+  height: 62px;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  align-items: center;
+  padding: 6px 7px 6px 15px;
+  border-radius: 28px;
+}
+
+.presence-input-window[data-layout="compact"] .presence-input textarea {
+  min-height: 36px;
+  max-height: 36px;
+  padding: 8px 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.presence-input-window[data-layout="compact"] .presence-input > button {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+}
+
+.presence-input-window[data-layout="expanded"] .presence-card,
+.presence-input-window[data-layout="expanded"] .presence-menu {
+  width: 100%;
+}
