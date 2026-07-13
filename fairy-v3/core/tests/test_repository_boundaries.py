@@ -15,6 +15,7 @@ def test_core_runtime_dependencies_stay_transport_independent() -> None:
     project = tomllib.loads((V3_ROOT / "core" / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert project["project"]["dependencies"] == [
+        "alembic>=1.18.5,<1.19",
         "mcp>=1.28.1,<2",
         "pydantic>=2.13,<3",
         "pyyaml>=6.0.3,<7",
