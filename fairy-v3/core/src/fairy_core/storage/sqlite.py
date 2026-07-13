@@ -8,6 +8,7 @@ from fairy_core.storage.sqlite_migrations import (
     migrate_checkpoint_evidence,
     migrate_mcp_request_results,
     migrate_pre_tenant_schema,
+    migrate_runtime_workspace_binding,
     migrate_task_snapshot_binding,
 )
 
@@ -24,4 +25,5 @@ class SqliteStateStore(SqlAlchemyStateStore):
         migrate_task_snapshot_binding(engine)
         migrate_checkpoint_evidence(engine)
         migrate_mcp_request_results(engine)
+        migrate_runtime_workspace_binding(engine)
         migrate_pre_tenant_schema(engine, tenant_id="local")

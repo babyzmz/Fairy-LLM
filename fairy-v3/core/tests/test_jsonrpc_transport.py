@@ -137,7 +137,15 @@ def test_jsonrpc_runtime_preview_and_artifact_contracts(tmp_path: Path) -> None:
     )
     with stack.factory() as unit_of_work:
         unit_of_work.state.append_artifact(artifact)
+        workspace = unit_of_work.state.get_workspace(stack.task.task.workspace_id)
+        assert workspace is not None
         unit_of_work.commit()
+    preview_scope = {
+        "task_id": str(stack.task.task.id),
+        "workspace_id": str(stack.task.task.workspace_id),
+        "version_id": str(stack.task.task.target_version_id),
+        "expected_workspace_revision": workspace.revision,
+    }
     dispatcher = JsonRpcDispatcher(
         CoreService(
             stack.core,
@@ -152,7 +160,7 @@ def test_jsonrpc_runtime_preview_and_artifact_contracts(tmp_path: Path) -> None:
         30,
         "previews.start",
         {
-            "task_id": str(stack.task.task.id),
+            **preview_scope,
             "idempotency_key": "rpc:preview:start",
         },
     )["result"]
@@ -175,7 +183,11 @@ def test_jsonrpc_runtime_preview_and_artifact_contracts(tmp_path: Path) -> None:
             dispatcher,
             34,
             "previews.stop",
-            {"preview_id": preview_id, "idempotency_key": "rpc:preview:stop"},
+            {
+                **preview_scope,
+                "preview_id": preview_id,
+                "idempotency_key": "rpc:preview:stop",
+            },
         )["result"]["status"]
         == "stopped"
     )

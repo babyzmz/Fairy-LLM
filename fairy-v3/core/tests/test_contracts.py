@@ -136,6 +136,7 @@ def test_preview_contract_accepts_only_executor_owned_local_loopback_urls() -> N
     payload = {
         "id": new_id(),
         "project_id": new_id(),
+        "workspace_id": new_id(),
         "conversation_id": new_id(),
         "task_id": new_id(),
         "version_id": new_id(),
@@ -167,6 +168,9 @@ def test_preview_contract_accepts_only_executor_owned_local_loopback_urls() -> N
         PreviewStartInput.model_validate(
             {
                 "task_id": new_id(),
+                "workspace_id": new_id(),
+                "version_id": new_id(),
+                "expected_workspace_revision": 0,
                 "idempotency_key": "preview:start",
                 "url": payload["url"],
                 "runtime_id": new_id(),

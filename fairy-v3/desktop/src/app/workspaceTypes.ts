@@ -50,6 +50,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   >;
   approvals: Pick<CoreClient["approvals"], "list" | "decide">;
   versions: Pick<CoreClient["versions"], "list" | "accept" | "discard">;
+  workspaces: Pick<CoreClient["workspaces"], "get">;
   runtimes: Pick<CoreClient["runtimes"], "health">;
   previews: Pick<CoreClient["previews"], "resolve" | "start" | "stop">;
   capabilities: Pick<CoreClient["capabilities"], "get">;

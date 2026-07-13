@@ -12,6 +12,9 @@ from fairy_core.runtime.models import RuntimeExecutorHealth
 class PreviewStartRequest:
     task_id: UUID
     idempotency_key: str
+    workspace_id: UUID | None = None
+    version_id: UUID | None = None
+    expected_workspace_revision: int | None = None
 
     def __post_init__(self) -> None:
         if not self.idempotency_key.strip():
@@ -22,6 +25,10 @@ class PreviewStartRequest:
 class PreviewStopRequest:
     preview_id: UUID
     idempotency_key: str
+    task_id: UUID | None = None
+    workspace_id: UUID | None = None
+    version_id: UUID | None = None
+    expected_workspace_revision: int | None = None
 
     def __post_init__(self) -> None:
         if not self.idempotency_key.strip():
@@ -30,7 +37,10 @@ class PreviewStopRequest:
 
 @dataclass(frozen=True, slots=True)
 class PreviewResolveRequest:
-    conversation_id: UUID
+    conversation_id: UUID | None = None
+    task_id: UUID | None = None
+    workspace_id: UUID | None = None
+    version_id: UUID | None = None
     preview_id: UUID | None = None
 
 

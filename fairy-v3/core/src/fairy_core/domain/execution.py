@@ -308,6 +308,7 @@ _PREVIEW_TRANSITIONS: dict[PreviewStatus, frozenset[PreviewStatus]] = {
 class RuntimeSession:
     id: UUID
     project_id: UUID | None
+    workspace_id: UUID
     conversation_id: UUID
     task_id: UUID
     version_id: UUID | None
@@ -335,6 +336,8 @@ class RuntimeSession:
         )
         if self.execution_target not in {"local", "cloud"}:
             raise ValueError("execution_target must be local or cloud")
+        if self.version_id is None:
+            raise ValueError("Runtime requires an immutable Workspace Version")
         if self.kind is RuntimeKind.STATIC_SITE and (
             self.execution_target != "local" or self.project_id is None or self.version_id is None
         ):
@@ -379,6 +382,7 @@ class RuntimeSession:
         return cls.restore(
             id=new_id(),
             project_id=scope.project_id,
+            workspace_id=scope.workspace_id,
             conversation_id=scope.conversation_id,
             task_id=scope.task_id,
             version_id=scope.target_version_id or scope.base_version_id,
@@ -457,6 +461,7 @@ class RuntimeSession:
 class PreviewSession:
     id: UUID
     project_id: UUID | None
+    workspace_id: UUID
     conversation_id: UUID
     task_id: UUID
     version_id: UUID | None
@@ -482,6 +487,8 @@ class PreviewSession:
         )
         if self.execution_target not in {"local", "cloud"}:
             raise ValueError("execution_target must be local or cloud")
+        if self.version_id is None:
+            raise ValueError("Preview requires an immutable Workspace Version")
         if self.revision < 0:
             raise ValueError("revision cannot be negative")
         _validate_timestamps(self.created_at, self.updated_at)
@@ -519,6 +526,7 @@ class PreviewSession:
         return cls.restore(
             id=new_id(),
             project_id=scope.project_id,
+            workspace_id=scope.workspace_id,
             conversation_id=scope.conversation_id,
             task_id=scope.task_id,
             version_id=scope.target_version_id or scope.base_version_id,

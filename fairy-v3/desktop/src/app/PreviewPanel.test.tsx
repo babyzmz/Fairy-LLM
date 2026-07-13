@@ -209,6 +209,7 @@ function readyContext(): PreviewContext {
     runtime: {
       id: id.runtime,
       project_id: id.project,
+      workspace_id: id.project,
       conversation_id: id.conversation,
       task_id: id.task,
       version_id: id.version,
@@ -229,6 +230,7 @@ function readyContext(): PreviewContext {
     preview: {
       id: id.preview,
       project_id: id.project,
+      workspace_id: id.project,
       conversation_id: id.conversation,
       task_id: id.task,
       version_id: id.version,

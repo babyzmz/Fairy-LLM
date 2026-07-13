@@ -410,6 +410,18 @@ function createClient(
       accept: async () => project,
       discard: async () => task,
     },
+    workspaces: {
+      get: async (workspaceId) => ({
+        id: workspaceId,
+        active_version_id: ID.version,
+        active_preview_id: null,
+        revision: 1,
+        max_files: 200,
+        max_bytes: 20 * 1024 * 1024,
+        created_at: timestamp,
+        updated_at: timestamp,
+      }),
+    },
     runtimes: {
       health: async () => ({
         executor: {

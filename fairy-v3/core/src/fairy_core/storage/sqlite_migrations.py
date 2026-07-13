@@ -29,6 +29,7 @@ _CHECKPOINT_EVIDENCE_REVISION = "20260712_checkpoint_evidence"
 _MCP_REQUEST_RESULTS_REVISION = "20260712_mcp_request_results"
 _HISTORY_METADATA_REVISION = "20260712_history_metadata"
 _WORKSPACE_IDENTITY_REVISION = "20260713_workspace_identity"
+_RUNTIME_WORKSPACE_BINDING_REVISION = "20260713_runtime_workspace_binding"
 
 
 def _datetime(value: str | None) -> datetime | None:
@@ -200,6 +201,69 @@ def migrate_workspace_identity(engine: Engine) -> None:
                 "VALUES (:revision, :applied_at)"
             ),
             {"revision": _WORKSPACE_IDENTITY_REVISION, "applied_at": now},
+        )
+
+
+def migrate_runtime_workspace_binding(engine: Engine) -> None:
+    """Bind legacy Runtime rows to the Workspace identity owned by their Task."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _RUNTIME_WORKSPACE_BINDING_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        operations = Operations(MigrationContext.configure(connection))
+        for table_name in ("core_runtime_sessions", "core_preview_sessions"):
+            if table_name not in tables:
+                continue
+            table_inspector = inspect(connection)
+            columns = {item["name"]: item for item in table_inspector.get_columns(table_name)}
+            if "workspace_id" not in columns:
+                connection.exec_driver_sql(
+                    f'ALTER TABLE "{table_name}" ADD COLUMN workspace_id VARCHAR(36)'
+                )
+            connection.exec_driver_sql(
+                f'UPDATE "{table_name}" SET workspace_id = '
+                "(SELECT workspace_id FROM core_tasks WHERE "
+                f'core_tasks.tenant_id = "{table_name}".tenant_id AND '
+                f'core_tasks.id = "{table_name}".task_id) WHERE workspace_id IS NULL'
+            )
+            foreign_keys = {
+                item.get("name") for item in inspect(connection).get_foreign_keys(table_name)
+            }
+            workspace_fk = f"fk_{table_name}_workspace"
+            columns = {item["name"]: item for item in inspect(connection).get_columns(table_name)}
+            if (
+                columns["workspace_id"].get("nullable", True)
+                or columns["version_id"].get("nullable", True)
+                or workspace_fk not in foreign_keys
+            ):
+                with operations.batch_alter_table(table_name, recreate="always") as batch:
+                    batch.alter_column("workspace_id", existing_type=None, nullable=False)
+                    batch.alter_column("version_id", existing_type=None, nullable=False)
+                    if workspace_fk not in foreign_keys:
+                        batch.create_foreign_key(
+                            workspace_fk,
+                            "core_workspaces",
+                            ["tenant_id", "workspace_id"],
+                            ["tenant_id", "id"],
+                            ondelete="CASCADE",
+                        )
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {
+                "revision": _RUNTIME_WORKSPACE_BINDING_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
         )
 
 

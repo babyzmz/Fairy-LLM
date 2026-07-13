@@ -14,13 +14,9 @@ from pydantic import BaseModel, ValidationError
 
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.planning_service import planning_service_handlers
-from fairy_core.application.runtime import (
-    PreviewResolveRequest,
-    PreviewStartRequest,
-    PreviewStopRequest,
-    RuntimeApplication,
-)
+from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.runtime_review import RuntimeReviewApplication
+from fairy_core.application.runtime_service import runtime_service_handlers
 from fairy_core.application.workspace_service import WorkspaceService
 from fairy_core.assistant.application import AssistantApplication
 from fairy_core.assistant.ledger import AssistantLedgerApplication
@@ -80,17 +76,11 @@ from fairy_core.contracts.models import (
     MemorySearchInput,
     MemorySnapshotGetInput,
     MessageListInput,
-    PreviewIdInput,
-    PreviewResolveInput,
-    PreviewStartInput,
-    PreviewStopInput,
     ProjectCreate,
     ProjectIdInput,
     ProjectImport,
     ProjectListInput,
     ProviderHealthInput,
-    RuntimeHealthInput,
-    RuntimeIdInput,
     TaskCreate,
     TaskIdInput,
     TaskListInput,
@@ -379,16 +369,11 @@ class CoreService:
             "projects.get": self._get_project,
             "projects.import": self._import_project,
             "projects.list": self._list_projects,
-            "previews.get": self._get_preview,
-            "previews.resolve": self._resolve_preview,
-            "previews.start": self._start_preview,
-            "previews.stop": self._stop_preview,
+            **runtime_service_handlers(self._runtime, self._unit_of_work_factory),
             "permissions.get": self._get_permissions,
             "permissions.update": self._update_permissions,
             "providers.health": self._provider_health,
             "providers.list": self._list_providers,
-            "runtimes.get": self._get_runtime,
-            "runtimes.health": self._runtime_health,
             "skills.list": self._list_skills,
             "system.actions.execute": self._execute_system_action,
             "tasks.archive": self._archive_task,
@@ -1057,49 +1042,6 @@ class CoreService:
                 limit=validated.limit,
                 cursor=validated.cursor,
             )
-
-    def _get_runtime(self, request: BaseModel) -> Any:
-        validated = cast(RuntimeIdInput, request)
-        with self._unit_of_work_factory() as unit_of_work:
-            runtime = unit_of_work.state.get_runtime(validated.runtime_id)
-        if runtime is None:
-            raise KeyError(f"Runtime not found: {validated.runtime_id}")
-        return runtime
-
-    def _runtime_health(self, request: BaseModel) -> Any:
-        validated = cast(RuntimeHealthInput, request)
-        return self._runtime().runtime_health(validated.task_id)
-
-    def _start_preview(self, request: BaseModel) -> Any:
-        validated = cast(PreviewStartInput, request)
-        return self._runtime().start_preview(
-            PreviewStartRequest(
-                task_id=validated.task_id,
-                idempotency_key=validated.idempotency_key,
-            )
-        )
-
-    def _get_preview(self, request: BaseModel) -> Any:
-        validated = cast(PreviewIdInput, request)
-        return self._runtime().get_preview(validated.preview_id)
-
-    def _resolve_preview(self, request: BaseModel) -> Any:
-        validated = cast(PreviewResolveInput, request)
-        return self._runtime().resolve_preview(
-            PreviewResolveRequest(
-                conversation_id=validated.conversation_id,
-                preview_id=validated.preview_id,
-            )
-        )
-
-    def _stop_preview(self, request: BaseModel) -> Any:
-        validated = cast(PreviewStopInput, request)
-        return self._runtime().stop_preview(
-            PreviewStopRequest(
-                preview_id=validated.preview_id,
-                idempotency_key=validated.idempotency_key,
-            )
-        )
 
     def _list_artifacts(self, request: BaseModel) -> dict[str, Any]:
         validated = cast(ArtifactListInput, request)

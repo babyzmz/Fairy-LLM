@@ -4802,11 +4802,17 @@
           },
           "visibility": {
             "$ref": "#/components/schemas/PreviewVisibility"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
           }
         },
         "required": [
           "id",
           "project_id",
+          "workspace_id",
           "conversation_id",
           "task_id",
           "version_id",
@@ -4840,6 +4846,11 @@
       "PreviewStartInput": {
         "additionalProperties": false,
         "properties": {
+          "expected_workspace_revision": {
+            "minimum": 0.0,
+            "title": "Expected Workspace Revision",
+            "type": "integer"
+          },
           "idempotency_key": {
             "maxLength": 255,
             "minLength": 1,
@@ -4850,10 +4861,23 @@
             "format": "uuid",
             "title": "Task Id",
             "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
           }
         },
         "required": [
           "task_id",
+          "workspace_id",
+          "version_id",
+          "expected_workspace_revision",
           "idempotency_key"
         ],
         "title": "PreviewStartInput",
@@ -4875,6 +4899,11 @@
       "PreviewStopInput": {
         "additionalProperties": false,
         "properties": {
+          "expected_workspace_revision": {
+            "minimum": 0.0,
+            "title": "Expected Workspace Revision",
+            "type": "integer"
+          },
           "idempotency_key": {
             "maxLength": 255,
             "minLength": 1,
@@ -4885,10 +4914,29 @@
             "format": "uuid",
             "title": "Preview Id",
             "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
           }
         },
         "required": [
           "preview_id",
+          "task_id",
+          "workspace_id",
+          "version_id",
+          "expected_workspace_revision",
           "idempotency_key"
         ],
         "title": "PreviewStopInput",
@@ -5542,11 +5590,17 @@
               }
             ],
             "title": "Version Id"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
           }
         },
         "required": [
           "id",
           "project_id",
+          "workspace_id",
           "conversation_id",
           "task_id",
           "version_id",
@@ -10842,11 +10896,31 @@
         "parameters": [
           {
             "in": "query",
-            "name": "conversation_id",
+            "name": "task_id",
             "required": true,
             "schema": {
               "format": "uuid",
-              "title": "Conversation Id",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
               "type": "string"
             }
           },

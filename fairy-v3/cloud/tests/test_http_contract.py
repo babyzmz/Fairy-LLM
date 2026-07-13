@@ -548,6 +548,13 @@ async def test_rest_exposes_collection_runtime_preview_and_artifact_contracts(
             )
         ).json()["task"]
         task_id = task["id"]
+        workspace = (await client.get(f"/v1/workspaces/{task['workspace_id']}")).json()
+        preview_scope = {
+            "task_id": task_id,
+            "workspace_id": task["workspace_id"],
+            "version_id": task["target_version_id"],
+            "expected_workspace_revision": workspace["revision"],
+        }
         pending = (
             await client.post(
                 "/v1/changesets",
@@ -572,17 +579,17 @@ async def test_rest_exposes_collection_runtime_preview_and_artifact_contracts(
         approvals = await client.get("/v1/approvals", params={"task_id": task_id})
         missing_idempotency = await client.post(
             "/v1/previews/start",
-            json={"task_id": task_id, "idempotency_key": "http:preview:start"},
+            json={**preview_scope, "idempotency_key": "http:preview:start"},
         )
         mismatched_idempotency = await client.post(
             "/v1/previews/start",
             headers={"Idempotency-Key": "different"},
-            json={"task_id": task_id, "idempotency_key": "http:preview:start"},
+            json={**preview_scope, "idempotency_key": "http:preview:start"},
         )
         started = await client.post(
             "/v1/previews/start",
             headers={"Idempotency-Key": "http:preview:start"},
-            json={"task_id": task_id, "idempotency_key": "http:preview:start"},
+            json={**preview_scope, "idempotency_key": "http:preview:start"},
         )
         started.raise_for_status()
         preview = started.json()["preview"]
@@ -592,7 +599,11 @@ async def test_rest_exposes_collection_runtime_preview_and_artifact_contracts(
         fetched_preview = await client.get(f"/v1/previews/{preview['id']}")
         resolved_preview = await client.get(
             "/v1/previews/resolve",
-            params={"conversation_id": conversation_id},
+            params={
+                "task_id": task_id,
+                "workspace_id": task["workspace_id"],
+                "version_id": task["target_version_id"],
+            },
         )
         artifacts = await client.get("/v1/artifacts", params={"task_id": task_id})
         missing_artifact = await client.get("/v1/artifacts/018f0f7c-1234-7000-8000-000000000099")
@@ -600,6 +611,7 @@ async def test_rest_exposes_collection_runtime_preview_and_artifact_contracts(
             f"/v1/previews/{preview['id']}/stop",
             headers={"Idempotency-Key": "http:preview:stop"},
             json={
+                **preview_scope,
                 "preview_id": preview["id"],
                 "idempotency_key": "http:preview:stop",
             },

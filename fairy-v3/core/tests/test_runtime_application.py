@@ -271,3 +271,48 @@ def test_preview_resolver_never_uses_project_wide_newest_fallback(tmp_path: Path
                 preview_id=context.preview.id,
             )
         )
+
+
+def test_preview_operations_require_exact_workspace_version_binding(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    task = stack.task.task
+    assert task.target_version_id is not None
+    with stack.factory() as unit_of_work:
+        workspace = unit_of_work.state.get_workspace(task.workspace_id)
+        assert workspace is not None
+    binding = {
+        "task_id": task.id,
+        "workspace_id": task.workspace_id,
+        "version_id": task.target_version_id,
+    }
+
+    with pytest.raises(RuntimeExecutorError) as mismatched_start:
+        stack.runtime.start_preview(
+            PreviewStartRequest(
+                **{**binding, "workspace_id": new_id()},
+                expected_workspace_revision=workspace.revision,
+                idempotency_key="preview:wrong-workspace",
+            )
+        )
+    assert mismatched_start.value.error_code == "SCOPE_MISMATCH"
+
+    context = stack.runtime.start_preview(
+        PreviewStartRequest(
+            **binding,
+            expected_workspace_revision=workspace.revision,
+            idempotency_key="preview:strict-binding",
+        )
+    )
+    with pytest.raises(RuntimeExecutorError) as mismatched_resolve:
+        stack.runtime.resolve_preview(PreviewResolveRequest(**{**binding, "version_id": new_id()}))
+    assert mismatched_resolve.value.error_code == "SCOPE_MISMATCH"
+    with pytest.raises(RuntimeExecutorError) as mismatched_stop:
+        stack.runtime.stop_preview(
+            PreviewStopRequest(
+                preview_id=context.preview.id,
+                idempotency_key="preview:wrong-stop",
+                **{**binding, "task_id": new_id()},
+                expected_workspace_revision=workspace.revision,
+            )
+        )
+    assert mismatched_stop.value.error_code == "SCOPE_MISMATCH"

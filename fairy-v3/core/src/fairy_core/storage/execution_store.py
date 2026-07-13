@@ -65,6 +65,7 @@ def _mutable_json(value: Any) -> Any:
 def _runtime_request_identity(runtime: RuntimeSession) -> tuple[object, ...]:
     return (
         runtime.project_id,
+        runtime.workspace_id,
         runtime.conversation_id,
         runtime.task_id,
         runtime.version_id,
@@ -78,6 +79,7 @@ def _runtime_request_identity(runtime: RuntimeSession) -> tuple[object, ...]:
 def _preview_request_identity(preview: PreviewSession) -> tuple[object, ...]:
     return (
         preview.project_id,
+        preview.workspace_id,
         preview.conversation_id,
         preview.task_id,
         preview.version_id,
@@ -425,6 +427,7 @@ class ExecutionStateStoreMixin:
         return {
             "id": str(runtime.id),
             "project_id": str(runtime.project_id) if runtime.project_id else None,
+            "workspace_id": str(runtime.workspace_id),
             "conversation_id": str(runtime.conversation_id),
             "task_id": str(runtime.task_id),
             "version_id": str(runtime.version_id) if runtime.version_id else None,
@@ -448,6 +451,7 @@ class ExecutionStateStoreMixin:
         return {
             "id": str(preview.id),
             "project_id": str(preview.project_id) if preview.project_id else None,
+            "workspace_id": str(preview.workspace_id),
             "conversation_id": str(preview.conversation_id),
             "task_id": str(preview.task_id),
             "version_id": str(preview.version_id) if preview.version_id else None,
@@ -512,6 +516,7 @@ class ExecutionStateStoreMixin:
         return RuntimeSession.restore(
             id=UUID(row["id"]),
             project_id=_uuid(row["project_id"]),
+            workspace_id=UUID(row["workspace_id"]),
             conversation_id=UUID(row["conversation_id"]),
             task_id=UUID(row["task_id"]),
             version_id=_uuid(row["version_id"]),
@@ -535,6 +540,7 @@ class ExecutionStateStoreMixin:
         return PreviewSession.restore(
             id=UUID(row["id"]),
             project_id=_uuid(row["project_id"]),
+            workspace_id=UUID(row["workspace_id"]),
             conversation_id=UUID(row["conversation_id"]),
             task_id=UUID(row["task_id"]),
             version_id=_uuid(row["version_id"]),

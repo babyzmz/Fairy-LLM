@@ -149,6 +149,19 @@ class RuntimeApplication(RuntimeApplicationSupport):
     def _stop_preview(self, request: PreviewStopRequest) -> PreviewSession:
         with self._transaction() as (unit_of_work, _commands):
             pending = self._require_preview(unit_of_work.state, request.preview_id)
+            self._validate_preview_binding(
+                pending,
+                task_id=request.task_id,
+                workspace_id=request.workspace_id,
+                version_id=request.version_id,
+            )
+            self._require_bound_task(
+                unit_of_work.state,
+                task_id=pending.task_id,
+                workspace_id=request.workspace_id,
+                version_id=request.version_id,
+                expected_workspace_revision=request.expected_workspace_revision,
+            )
             pending_runtime = self._require_runtime(
                 unit_of_work.state,
                 pending.runtime_id,
@@ -182,6 +195,33 @@ class RuntimeApplication(RuntimeApplicationSupport):
     def resolve_preview(self, request: PreviewResolveRequest) -> PreviewContext | None:
         with self._transaction() as (unit_of_work, _commands):
             state = unit_of_work.state
+            if request.task_id is not None:
+                task = self._require_bound_task(
+                    state,
+                    task_id=request.task_id,
+                    workspace_id=request.workspace_id,
+                    version_id=request.version_id,
+                )
+                preview = (
+                    self._require_preview(state, request.preview_id)
+                    if request.preview_id is not None
+                    else state.preview_for_task(task.id, include_terminal=True)
+                )
+                if preview is None:
+                    return None
+                self._validate_preview_binding(
+                    preview,
+                    task_id=task.id,
+                    workspace_id=request.workspace_id,
+                    version_id=request.version_id,
+                )
+                return (
+                    self._context_for_preview(state, preview)
+                    if self._is_resolvable(preview)
+                    else None
+                )
+            if request.conversation_id is None:
+                raise ValueError("Preview resolution requires a Task binding")
             conversation = self._require_conversation(state, request.conversation_id)
             if request.preview_id is not None:
                 preview = self._require_preview(state, request.preview_id)
@@ -329,6 +369,19 @@ class RuntimeApplication(RuntimeApplicationSupport):
                     raise IdempotencyConflictError(
                         "Preview idempotency key is already bound to another Task"
                     )
+                self._validate_preview_binding(
+                    existing,
+                    task_id=request.task_id,
+                    workspace_id=request.workspace_id,
+                    version_id=request.version_id,
+                )
+                self._require_bound_task(
+                    state,
+                    task_id=request.task_id,
+                    workspace_id=request.workspace_id,
+                    version_id=request.version_id,
+                    expected_workspace_revision=request.expected_workspace_revision,
+                )
                 context = self._context_for_preview(state, existing)
                 if existing.status not in {PreviewStatus.FAILED, PreviewStatus.INTERRUPTED}:
                     return context
@@ -373,7 +426,13 @@ class RuntimeApplication(RuntimeApplicationSupport):
                 state.save_preview(existing, expected_revision=preview_revision)
                 preview = existing
             else:
-                task = self._require_task(state, request.task_id)
+                task = self._require_bound_task(
+                    state,
+                    task_id=request.task_id,
+                    workspace_id=request.workspace_id,
+                    version_id=request.version_id,
+                    expected_workspace_revision=request.expected_workspace_revision,
+                )
                 if task.status is not TaskStatus.EXECUTING:
                     raise InvalidTransitionError("Task must be executing before Preview start")
                 scope = self._scope_resolver(state, task)
@@ -602,6 +661,19 @@ class RuntimeApplication(RuntimeApplicationSupport):
         with self._transaction() as (unit_of_work, commands):
             state = unit_of_work.state
             preview = self._require_preview(state, request.preview_id)
+            self._validate_preview_binding(
+                preview,
+                task_id=request.task_id,
+                workspace_id=request.workspace_id,
+                version_id=request.version_id,
+            )
+            self._require_bound_task(
+                state,
+                task_id=preview.task_id,
+                workspace_id=request.workspace_id,
+                version_id=request.version_id,
+                expected_workspace_revision=request.expected_workspace_revision,
+            )
             if preview.status is PreviewStatus.STOPPED:
                 return preview
             if preview.status not in {PreviewStatus.READY, PreviewStatus.INTERRUPTED}:

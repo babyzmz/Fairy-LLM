@@ -161,7 +161,12 @@ const routes = {
   "previews.get": (params) =>
     get(`/v1/previews/${pathParameter(params, "preview_id")}`),
   "previews.resolve": (params) =>
-    getWithQuery("/v1/previews/resolve", params, ["conversation_id", "preview_id"]),
+    getWithQuery("/v1/previews/resolve", params, [
+      "task_id",
+      "workspace_id",
+      "version_id",
+      "preview_id",
+    ]),
   "previews.stop": (params) =>
     postWithIdempotency(
       `/v1/previews/${pathParameter(params, "preview_id")}/stop`,

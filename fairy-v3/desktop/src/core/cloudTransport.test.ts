@@ -89,6 +89,7 @@ const PROJECTION_HEALTH = {
 const RUNTIME = {
   id: "0198f4de-0114-7000-8000-000000000010",
   project_id: "0198f4de-0114-7000-8000-000000000011",
+  workspace_id: "0198f4de-0114-7000-8000-000000000011",
   conversation_id: "0198f4de-0114-7000-8000-000000000002",
   task_id: "0198f4de-0114-7000-8000-000000000003",
   version_id: "0198f4de-0114-7000-8000-000000000012",
@@ -110,6 +111,7 @@ const RUNTIME = {
 const PREVIEW = {
   id: "0198f4de-0114-7000-8000-000000000013",
   project_id: RUNTIME.project_id,
+  workspace_id: RUNTIME.workspace_id,
   conversation_id: RUNTIME.conversation_id,
   task_id: RUNTIME.task_id,
   version_id: RUNTIME.version_id,
@@ -225,10 +227,17 @@ describe("CloudCoreTransport", () => {
     await transport.call("memory.projection.health", { task_id: "task/1" });
     await transport.call("previews.start", {
       task_id: RUNTIME.task_id,
+      workspace_id: RUNTIME.workspace_id,
+      version_id: RUNTIME.version_id,
+      expected_workspace_revision: 0,
       idempotency_key: "preview:start",
     });
     await transport.call("previews.stop", {
       preview_id: PREVIEW.id,
+      task_id: RUNTIME.task_id,
+      workspace_id: RUNTIME.workspace_id,
+      version_id: RUNTIME.version_id,
+      expected_workspace_revision: 0,
       idempotency_key: "preview:stop",
     });
     await transport.call("assistant.turns.run", { turn_id: "turn/1" });

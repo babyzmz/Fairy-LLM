@@ -110,6 +110,7 @@ def _runtime(status: RuntimeStatus, tmp_path: Path) -> RuntimeSession:
     return RuntimeSession.restore(
         id=new_id(),
         project_id=scope.project_id,
+        workspace_id=scope.workspace_id,
         conversation_id=scope.conversation_id,
         task_id=scope.task_id,
         version_id=scope.target_version_id,
@@ -154,6 +155,7 @@ def _preview(status: PreviewStatus, tmp_path: Path) -> PreviewSession:
     return PreviewSession.restore(
         id=new_id(),
         project_id=scope.project_id,
+        workspace_id=scope.workspace_id,
         conversation_id=scope.conversation_id,
         task_id=scope.task_id,
         version_id=scope.target_version_id,

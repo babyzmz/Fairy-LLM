@@ -3106,11 +3106,18 @@ export interface components {
             /** Version Id */
             version_id: string | null;
             visibility: components["schemas"]["PreviewVisibility"];
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
         };
         /** PreviewResolutionModel */
         PreviewResolutionModel: components["schemas"]["PreviewContextModel"] | null;
         /** PreviewStartInput */
         PreviewStartInput: {
+            /** Expected Workspace Revision */
+            expected_workspace_revision: number;
             /** Idempotency Key */
             idempotency_key: string;
             /**
@@ -3118,6 +3125,16 @@ export interface components {
              * Format: uuid
              */
             task_id: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
         };
         /**
          * PreviewStatus
@@ -3126,6 +3143,8 @@ export interface components {
         PreviewStatus: "created" | "starting" | "ready" | "stopping" | "stopped" | "failed" | "interrupted";
         /** PreviewStopInput */
         PreviewStopInput: {
+            /** Expected Workspace Revision */
+            expected_workspace_revision: number;
             /** Idempotency Key */
             idempotency_key: string;
             /**
@@ -3133,6 +3152,21 @@ export interface components {
              * Format: uuid
              */
             preview_id: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
         };
         /**
          * PreviewVisibility
@@ -3370,6 +3404,11 @@ export interface components {
             updated_at: string;
             /** Version Id */
             version_id: string | null;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
         };
         /**
          * RuntimeStatus
@@ -5716,7 +5755,9 @@ export interface operations {
     "previews.resolve": {
         parameters: {
             query: {
-                conversation_id: string;
+                task_id: string;
+                workspace_id: string;
+                version_id: string;
                 preview_id?: string | null;
             };
             header?: {

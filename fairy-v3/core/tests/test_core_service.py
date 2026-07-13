@@ -158,12 +158,20 @@ def test_core_service_exposes_runtime_preview_and_artifact_contracts(tmp_path: P
     )
     with stack.factory() as unit_of_work:
         unit_of_work.state.append_artifact(artifact)
+        workspace = unit_of_work.state.get_workspace(stack.task.task.workspace_id)
+        assert workspace is not None
         unit_of_work.commit()
+    preview_scope = {
+        "task_id": str(stack.task.task.id),
+        "workspace_id": str(stack.task.task.workspace_id),
+        "version_id": str(stack.task.task.target_version_id),
+        "expected_workspace_revision": workspace.revision,
+    }
 
     started = service.invoke(
         "previews.start",
         {
-            "task_id": str(stack.task.task.id),
+            **preview_scope,
             "idempotency_key": "service:preview:start",
         },
     )
@@ -183,7 +191,11 @@ def test_core_service_exposes_runtime_preview_and_artifact_contracts(tmp_path: P
     assert (
         service.invoke(
             "previews.resolve",
-            {"conversation_id": str(stack.task.task.conversation_id)},
+            {
+                "task_id": preview_scope["task_id"],
+                "workspace_id": preview_scope["workspace_id"],
+                "version_id": preview_scope["version_id"],
+            },
         )["preview"]["id"]
         == preview_id
     )
@@ -197,6 +209,7 @@ def test_core_service_exposes_runtime_preview_and_artifact_contracts(tmp_path: P
     stopped = service.invoke(
         "previews.stop",
         {
+            **preview_scope,
             "preview_id": preview_id,
             "idempotency_key": "service:preview:stop",
         },

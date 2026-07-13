@@ -159,6 +159,11 @@ export class CoreClient {
       this.transport.call("versions.discard", { task_id: taskId }),
   };
 
+  readonly workspaces = {
+    get: (workspaceId: string) =>
+      this.transport.call("workspaces.get", { workspace_id: workspaceId }),
+  };
+
   readonly capabilities = {
     get: () => this.transport.call("capabilities.get", {}),
   };

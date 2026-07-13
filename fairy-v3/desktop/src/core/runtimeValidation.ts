@@ -27,9 +27,10 @@ const runtimeSchema = z
   .object({
     id: z.uuid(),
     project_id: z.uuid().nullable(),
+    workspace_id: z.uuid(),
     conversation_id: z.uuid(),
     task_id: z.uuid(),
-    version_id: z.uuid().nullable(),
+    version_id: z.uuid(),
     project_root: z.string().min(1),
     execution_target: executionTargetSchema,
     kind: z.enum(["static_site", "wsl_project", "cloud_oci"]),
@@ -75,9 +76,10 @@ const previewSchema = z
   .object({
     id: z.uuid(),
     project_id: z.uuid().nullable(),
+    workspace_id: z.uuid(),
     conversation_id: z.uuid(),
     task_id: z.uuid(),
-    version_id: z.uuid().nullable(),
+    version_id: z.uuid(),
     runtime_id: z.uuid(),
     project_root: z.string().min(1),
     execution_target: executionTargetSchema,

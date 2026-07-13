@@ -22,6 +22,7 @@ from fairy_core.storage.assistant_attempt_schema import build_assistant_attempt_
 from fairy_core.storage.history_schema import build_history_tables
 from fairy_core.storage.index_schema import build_state_indexes
 from fairy_core.storage.planning_schema import build_planning_schema
+from fairy_core.storage.runtime_index_schema import build_runtime_scope_indexes
 from fairy_core.storage.types import UTCDateTime
 
 ID_LENGTH = 36
@@ -738,9 +739,10 @@ runtime_sessions = Table(
     _tenant_id(),
     _id(),
     Column("project_id", String(ID_LENGTH)),
+    Column("workspace_id", String(ID_LENGTH), nullable=False),
     Column("conversation_id", String(ID_LENGTH), nullable=False),
     Column("task_id", String(ID_LENGTH), nullable=False),
-    Column("version_id", String(ID_LENGTH)),
+    Column("version_id", String(ID_LENGTH), nullable=False),
     Column("project_root", String(4096), nullable=False),
     Column("execution_target", String(32), nullable=False),
     Column("kind", String(32), nullable=False),
@@ -775,6 +777,12 @@ runtime_sessions = Table(
         name="ck_core_runtime_sessions_status",
     ),
     ForeignKeyConstraint(
+        ["tenant_id", "workspace_id"],
+        [workspaces.c.tenant_id, workspaces.c.id],
+        name="fk_core_runtime_sessions_workspace",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
         ["tenant_id", "project_id"],
         [projects.c.tenant_id, projects.c.id],
         name="fk_core_runtime_sessions_project",
@@ -806,9 +814,10 @@ preview_sessions = Table(
     _tenant_id(),
     _id(),
     Column("project_id", String(ID_LENGTH)),
+    Column("workspace_id", String(ID_LENGTH), nullable=False),
     Column("conversation_id", String(ID_LENGTH), nullable=False),
     Column("task_id", String(ID_LENGTH), nullable=False),
-    Column("version_id", String(ID_LENGTH)),
+    Column("version_id", String(ID_LENGTH), nullable=False),
     Column("runtime_id", String(ID_LENGTH), nullable=False),
     Column("project_root", String(4096), nullable=False),
     Column("execution_target", String(32), nullable=False),
@@ -843,6 +852,12 @@ preview_sessions = Table(
         name="ck_core_preview_sessions_status",
     ),
     ForeignKeyConstraint(
+        ["tenant_id", "workspace_id"],
+        [workspaces.c.tenant_id, workspaces.c.id],
+        name="fk_core_preview_sessions_workspace",
+        ondelete="CASCADE",
+    ),
+    ForeignKeyConstraint(
         ["tenant_id", "project_id"],
         [projects.c.tenant_id, projects.c.id],
         name="fk_core_preview_sessions_project",
@@ -873,6 +888,8 @@ preview_sessions = Table(
         ondelete="CASCADE",
     ),
 )
+
+build_runtime_scope_indexes(runtime_sessions, preview_sessions)
 
 artifacts = Table(
     "core_artifacts",

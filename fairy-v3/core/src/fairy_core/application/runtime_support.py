@@ -47,6 +47,73 @@ class RuntimeApplicationSupport:
         self._instance_id = uuid4().hex
         self._operation_lock = RLock()
 
+    @staticmethod
+    def _require_bound_task(
+        state: StateStore,
+        *,
+        task_id: UUID,
+        workspace_id: UUID | None,
+        version_id: UUID | None,
+        expected_workspace_revision: int | None = None,
+    ) -> Task:
+        task = RuntimeApplicationSupport._require_task(state, task_id)
+        if workspace_id is None and version_id is None:
+            return task
+        if workspace_id is None or version_id is None:
+            raise RuntimeExecutorError(
+                "Preview Scope binding is incomplete",
+                error_code="SCOPE_MISMATCH",
+            )
+        if task.workspace_id != workspace_id or task.target_version_id != version_id:
+            raise RuntimeExecutorError(
+                "Preview does not match the Task Workspace Version",
+                error_code="SCOPE_MISMATCH",
+            )
+        workspace = state.get_workspace(workspace_id)
+        if workspace is None:
+            raise RuntimeExecutorError(
+                "Preview Workspace is unavailable",
+                error_code="SCOPE_MISMATCH",
+            )
+        if (
+            expected_workspace_revision is not None
+            and workspace.revision != expected_workspace_revision
+        ):
+            raise RuntimeExecutorError(
+                "Preview Workspace revision has changed",
+                error_code="VERSION_CONFLICT",
+            )
+        return task
+
+    @staticmethod
+    def _validate_preview_binding(
+        preview: PreviewSession,
+        *,
+        task_id: UUID | None,
+        workspace_id: UUID | None,
+        version_id: UUID | None,
+    ) -> None:
+        supplied = (task_id, workspace_id, version_id)
+        if (
+            workspace_id is None
+            and version_id is None
+            and task_id
+            in {
+                None,
+                preview.task_id,
+            }
+        ):
+            return
+        if None in supplied or supplied != (
+            preview.task_id,
+            preview.workspace_id,
+            preview.version_id,
+        ):
+            raise RuntimeExecutorError(
+                "Preview identity does not match the Task Workspace Version",
+                error_code="SCOPE_MISMATCH",
+            )
+
     def _recovery_command(
         self,
         runtime: RuntimeSession,

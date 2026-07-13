@@ -90,6 +90,7 @@ describe("CoreClient", () => {
       user_confirmed: true,
     });
     await client.versions.discard(id);
+    await client.workspaces.get(id);
     await client.runtimes.get(id);
     await client.runtimes.health(id);
     await client.systemActions.execute({
@@ -98,10 +99,23 @@ describe("CoreClient", () => {
       idempotency_key: "system-action-1",
       user_confirmed: true,
     });
-    await client.previews.start({ task_id: id, idempotency_key: "preview-start-1" });
+    await client.previews.start({
+      task_id: id,
+      workspace_id: id,
+      version_id: id,
+      expected_workspace_revision: 0,
+      idempotency_key: "preview-start-1",
+    });
     await client.previews.get(id);
-    await client.previews.resolve({ conversation_id: id });
-    await client.previews.stop({ preview_id: id, idempotency_key: "preview-stop-1" });
+    await client.previews.resolve({ task_id: id, workspace_id: id, version_id: id });
+    await client.previews.stop({
+      preview_id: id,
+      task_id: id,
+      workspace_id: id,
+      version_id: id,
+      expected_workspace_revision: 0,
+      idempotency_key: "preview-stop-1",
+    });
     await client.artifacts.list(id);
     await client.artifacts.read(id);
     await client.documents.import({
@@ -269,6 +283,7 @@ describe("CoreClient", () => {
       "versions.list",
       "versions.accept",
       "versions.discard",
+      "workspaces.get",
       "runtimes.get",
       "runtimes.health",
       "system.actions.execute",
@@ -316,7 +331,7 @@ describe("CoreClient", () => {
     ]);
     expect(transport.requests[3]?.params).toEqual({ project_id: id });
     expect(transport.requests[11]?.params).toEqual({ task_id: id });
-    expect(transport.requests[20]?.params).toEqual({ task_id: id });
+    expect(transport.requests[21]?.params).toEqual({ task_id: id });
   });
 
   it("uses the transport-native resumable event subscription", async () => {

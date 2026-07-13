@@ -208,13 +208,29 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
   const chatApprovals = chatApprovalsQuery.data?.items ?? [];
+  const selectedWorkspaceQuery = useQuery({
+    queryKey: [...workspaceKey, "workspace", selectedTask?.workspace_id],
+    queryFn: () => client.workspaces.get(requireId(selectedTask?.workspace_id)),
+    enabled: selectedTask !== null,
+    retry: false,
+  });
   const previewQuery = useQuery({
-    queryKey: [...workspaceKey, "preview", selectedConversation?.id],
+    queryKey: [
+      ...workspaceKey,
+      "preview",
+      selectedTask?.id,
+      selectedTask?.target_version_id,
+    ],
     queryFn: () =>
       client.previews.resolve({
-        conversation_id: requireId(selectedConversation?.id),
+        task_id: requireId(selectedTask?.id),
+        workspace_id: requireId(selectedTask?.workspace_id),
+        version_id: requireId(selectedTask?.target_version_id),
       }),
-    enabled: selectedConversation !== null,
+    enabled:
+      selectedTask !== null &&
+      selectedTask.target_version_id !== null &&
+      selectedWorkspaceQuery.isSuccess,
     retry: false,
   });
   const runtimeHealthQuery = useQuery({
@@ -695,19 +711,33 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       },
       async startPreview() {
         if (selectedTask === null) throw new Error("Task is unavailable");
+        const workspace = selectedWorkspaceQuery.data;
+        const versionId = selectedTask.target_version_id;
+        if (workspace === undefined || versionId === null) {
+          throw new Error("Workspace Version is unavailable");
+        }
         await runAction(() =>
           client.previews.start({
             task_id: selectedTask.id,
+            workspace_id: selectedTask.workspace_id,
+            version_id: versionId,
+            expected_workspace_revision: workspace.revision,
             idempotency_key: `desktop:preview:${selectedTask.id}`,
           }),
         );
       },
       async stopPreview() {
         const activePreview = previewQuery.data?.preview;
+        const workspace = selectedWorkspaceQuery.data;
         if (activePreview === undefined || activePreview === null) return;
+        if (selectedTask === null || workspace === undefined) return;
         await runAction(() =>
           client.previews.stop({
             preview_id: activePreview.id,
+            task_id: selectedTask.id,
+            workspace_id: selectedTask.workspace_id,
+            version_id: requireId(selectedTask.target_version_id),
+            expected_workspace_revision: workspace.revision,
             idempotency_key: `desktop:preview:${activePreview.id}:stop`,
           }),
         );
@@ -731,14 +761,20 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       async discardVersion() {
         if (selectedTask === null) throw new Error("Task is unavailable");
         const activePreview = previewQuery.data?.preview;
+        const workspace = selectedWorkspaceQuery.data;
         await runAction(async () => {
           if (
             activePreview !== undefined &&
             activePreview !== null &&
             !["stopped", "failed"].includes(activePreview.status)
           ) {
+            if (workspace === undefined) throw new Error("Workspace is unavailable");
             await client.previews.stop({
               preview_id: activePreview.id,
+              task_id: selectedTask.id,
+              workspace_id: selectedTask.workspace_id,
+              version_id: requireId(selectedTask.target_version_id),
+              expected_workspace_revision: workspace.revision,
               idempotency_key: `desktop:preview:${activePreview.id}:discard-stop`,
             });
           }

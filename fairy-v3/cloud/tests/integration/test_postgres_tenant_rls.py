@@ -515,12 +515,12 @@ async def _insert_tenant_project_event(
         text(
             """
             INSERT INTO core_runtime_sessions (
-                tenant_id, id, project_id, conversation_id, task_id, version_id,
+                tenant_id, id, project_id, workspace_id, conversation_id, task_id, version_id,
                 project_root, execution_target, kind, executor, executor_handle,
                 port, status, health, idempotency_key, revision,
                 created_at, updated_at
             ) VALUES (
-                :tenant_id, :runtime_id, :project_id, :conversation_id, :task_id,
+                :tenant_id, :runtime_id, :project_id, :project_id, :conversation_id, :task_id,
                 :version_id, :project_root, 'local', 'static_site', :executor,
                 :executor_handle, 43125, 'running', 'healthy', 'runtime:rls', 0,
                 now(), now()
@@ -584,11 +584,11 @@ async def _insert_tenant_project_event(
         text(
             """
             INSERT INTO core_preview_sessions (
-                tenant_id, id, project_id, conversation_id, task_id, version_id,
+                tenant_id, id, project_id, workspace_id, conversation_id, task_id, version_id,
                 runtime_id, project_root, execution_target, url, visibility,
                 status, health, idempotency_key, revision, created_at, updated_at
             ) VALUES (
-                :tenant_id, :preview_id, :project_id, :conversation_id, :task_id,
+                :tenant_id, :preview_id, :project_id, :project_id, :conversation_id, :task_id,
                 :version_id, :runtime_id, :project_root, 'local',
                 'http://127.0.0.1:43125/rls/', 'chat_draft', 'ready', 'healthy',
                 'preview:rls', 0, now(), now()
