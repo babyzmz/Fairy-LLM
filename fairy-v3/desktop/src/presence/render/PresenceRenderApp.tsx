@@ -83,23 +83,14 @@ export function PresenceRenderApp({
     dismissed_notice_ids: [],
   });
   const reducedMotion =
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    interaction?.reduced_motion === true ||
+    (typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const gaze = interaction === null
     ? { x: 0, y: 0 }
     : {
-        x: clamp(
-          (interaction.cursor.point.x - interaction.placement.anchor.x) /
-            (120 * interaction.placement.scale_factor),
-          -1,
-          1,
-        ),
-        y: clamp(
-          (interaction.cursor.point.y - interaction.placement.anchor.y) /
-            (120 * interaction.placement.scale_factor),
-          -1,
-          1,
-        ),
+        x: interaction.cursor.direction.x,
+        y: interaction.cursor.direction.y,
       };
 
   return (
@@ -108,6 +99,7 @@ export function PresenceRenderApp({
       className="presence-render-window"
       data-cursor-band={interaction?.cursor.band ?? "outside"}
       data-expansion-direction={interaction?.placement.expansion_direction ?? "right"}
+      data-interaction-phase={interaction?.phase ?? "idle"}
       data-reduced-motion={String(reducedMotion)}
       data-testid="presence-render-surface"
     >
@@ -115,7 +107,9 @@ export function PresenceRenderApp({
         dragging={false}
         gaze={gaze}
         hovered={interaction?.cursor.band !== "outside"}
-        listening={false}
+        listening={
+          interaction?.phase === "input_reveal" || interaction?.phase === "interactive"
+        }
         reducedMotion={reducedMotion}
         sleeping={view.density === "quiet"}
         speaking={projection.speaking}
@@ -123,8 +117,4 @@ export function PresenceRenderApp({
       />
     </main>
   );
-}
-
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(maximum, Math.max(minimum, value));
 }

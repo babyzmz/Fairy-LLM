@@ -23,6 +23,7 @@ use voice_worker::{
 pub mod capture;
 pub mod desktop_preferences;
 pub mod presence_coordinator;
+pub mod presence_interaction;
 pub mod provider_configuration;
 pub mod provider_credentials;
 pub mod voice_worker;
@@ -376,6 +377,7 @@ async fn desktop_preferences_update(
             DesktopPreferencesError::RevisionConflict => "PREFERENCES_REVISION_CONFLICT".to_owned(),
             other => other.to_string(),
         })?;
+    state.presence.set_reduced_motion(next.reduced_motion);
     apply_pet_window_preferences(&app, &next)?;
     app.emit("desktop-preferences-changed", &next)
         .map_err(|error| error.to_string())?;
@@ -849,7 +851,8 @@ pub fn run() {
                 let _ = warming_voice.health();
             });
             let preferences = DesktopPreferencesStore::new(&data_dir).load()?;
-            let presence = PresenceCoordinatorHandle::start(app.handle().clone());
+            let presence =
+                PresenceCoordinatorHandle::start(app.handle().clone(), preferences.reduced_motion);
             app.manage(DesktopState {
                 core: Arc::new(Mutex::new(Some(bridge))),
                 voice,

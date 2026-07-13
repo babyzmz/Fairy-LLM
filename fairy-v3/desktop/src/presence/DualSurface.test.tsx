@@ -130,8 +130,12 @@ function interaction(sequence: number): PresenceInteractionSnapshot {
     schema_version: 1,
     sequence,
     sampled_at_ms: sequence * 16,
+    phase: "aware",
+    phase_started_at_ms: sequence * 16,
+    reduced_motion: false,
     cursor: {
       point: { x: 120, y: 160 },
+      direction: { x: 0.624695, y: 0.780869 },
       distance_px: 40,
       speed_px_s: 240,
       dwell_ms: 32,

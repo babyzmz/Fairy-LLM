@@ -6,8 +6,12 @@ const snapshot = {
   schema_version: 1,
   sequence: 4,
   sampled_at_ms: 120,
+  phase: "droplet",
+  phase_started_at_ms: 100,
+  reduced_motion: false,
   cursor: {
     point: { x: -240, y: 720 },
+    direction: { x: 0.948683298, y: 0.316227766 },
     distance_px: 84.5,
     speed_px_s: 340,
     dwell_ms: 48,

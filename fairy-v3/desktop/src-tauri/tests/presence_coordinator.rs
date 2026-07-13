@@ -16,6 +16,7 @@ fn cursor_tracker_reports_speed_distance_and_continuous_active_dwell() {
     assert_eq!(second.band, CursorBand::Active);
     assert_eq!(second.dwell_ms, 60);
     assert!((second.speed_px_s - 1_000.0).abs() < 0.01);
+    assert_eq!((second.direction.x, second.direction.y), (1.0, 0.0));
 
     let outside = tracker.observe(PhysicalPoint { x: 400, y: 0 }, 1_160, anchor, 1.0);
     assert_eq!(outside.band, CursorBand::Outside);

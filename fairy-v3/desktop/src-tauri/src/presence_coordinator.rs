@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
+pub use crate::presence_interaction::{CursorBand, PresenceInteractionPhase};
+use crate::presence_interaction::{PresenceInteractionSignal, PresenceInteractionStateMachine};
 use crate::{PET_INPUT_LABEL, PET_RENDER_LABEL};
 
 pub const PRESENCE_INTERACTION_EVENT: &str = "presence-interaction-snapshot";
@@ -56,21 +58,20 @@ pub enum ExpansionDirection {
     Right,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CursorBand {
-    Outside,
-    Aware,
-    Active,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct CursorMetrics {
     pub point: PhysicalPoint,
+    pub direction: NormalizedDirection,
     pub distance_px: f64,
     pub speed_px_s: f64,
     pub dwell_ms: u64,
     pub band: CursorBand,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct NormalizedDirection {
+    pub x: f64,
+    pub y: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -101,6 +102,9 @@ pub struct PresenceInteractionSnapshot {
     pub schema_version: u16,
     pub sequence: u64,
     pub sampled_at_ms: u64,
+    pub phase: PresenceInteractionPhase,
+    pub phase_started_at_ms: u64,
+    pub reduced_motion: bool,
     pub cursor: CursorMetrics,
     pub placement: PresenceWindowPlacement,
 }
@@ -120,6 +124,14 @@ impl CursorTracker {
         scale_factor: f64,
     ) -> CursorMetrics {
         let distance_px = point_distance(point, anchor);
+        let direction = if distance_px <= f64::EPSILON {
+            NormalizedDirection { x: 0.0, y: 0.0 }
+        } else {
+            NormalizedDirection {
+                x: (f64::from(point.x) - f64::from(anchor.x)) / distance_px,
+                y: (f64::from(point.y) - f64::from(anchor.y)) / distance_px,
+            }
+        };
         let speed_px_s = self
             .previous
             .and_then(|(previous, previous_ms)| {
@@ -148,6 +160,7 @@ impl CursorTracker {
 
         CursorMetrics {
             point,
+            direction,
             distance_px,
             speed_px_s,
             dwell_ms,
@@ -265,25 +278,40 @@ pub fn select_work_area(
 pub struct PresenceCoordinatorHandle {
     latest_placement: Arc<RwLock<Option<PresenceWindowPlacement>>>,
     shutdown: Arc<AtomicBool>,
+    reduced_motion: Arc<AtomicBool>,
 }
 
 impl PresenceCoordinatorHandle {
-    pub fn start(app: tauri::AppHandle) -> Self {
+    pub fn start(app: tauri::AppHandle, reduced_motion: bool) -> Self {
         let latest_placement = Arc::new(RwLock::new(None));
         let shutdown = Arc::new(AtomicBool::new(false));
+        let reduced_motion = Arc::new(AtomicBool::new(reduced_motion));
         let thread_placement = Arc::clone(&latest_placement);
         let thread_shutdown = Arc::clone(&shutdown);
+        let thread_reduced_motion = Arc::clone(&reduced_motion);
         let _ = thread::Builder::new()
             .name("fairy-presence-coordinator".to_owned())
-            .spawn(move || run_coordinator(app, thread_placement, thread_shutdown));
+            .spawn(move || {
+                run_coordinator(
+                    app,
+                    thread_placement,
+                    thread_shutdown,
+                    thread_reduced_motion,
+                )
+            });
         Self {
             latest_placement,
             shutdown,
+            reduced_motion,
         }
     }
 
     pub fn latest_placement(&self) -> Option<PresenceWindowPlacement> {
         self.latest_placement.read().ok().and_then(|value| *value)
+    }
+
+    pub fn set_reduced_motion(&self, reduced_motion: bool) {
+        self.reduced_motion.store(reduced_motion, Ordering::Release);
     }
 }
 
@@ -297,9 +325,11 @@ fn run_coordinator(
     app: tauri::AppHandle,
     latest_placement: Arc<RwLock<Option<PresenceWindowPlacement>>>,
     shutdown: Arc<AtomicBool>,
+    reduced_motion: Arc<AtomicBool>,
 ) {
     let started = Instant::now();
     let mut tracker = CursorTracker::default();
+    let mut interaction = PresenceInteractionStateMachine::new(0);
     let mut sequence = 0_u64;
     let mut placement: Option<PresenceWindowPlacement> = None;
     let mut placement_refreshed_at = Instant::now() - PLACEMENT_REFRESH_INTERVAL;
@@ -310,6 +340,7 @@ fn run_coordinator(
             continue;
         };
         if !render.is_visible().unwrap_or(false) {
+            interaction.suspend(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
             thread::sleep(HIDDEN_POLL_INTERVAL);
             continue;
         }
@@ -333,11 +364,26 @@ fn run_coordinator(
             current_placement.anchor,
             current_placement.scale_factor,
         );
+        let reduced_motion = reduced_motion.load(Ordering::Acquire);
+        let (pointer_over_input, input_focused) = input_pointer_state(&app, point);
+        let phase = interaction.advance(PresenceInteractionSignal {
+            sampled_at_ms,
+            cursor_band: cursor.band,
+            cursor_speed_px_s: cursor.speed_px_s,
+            pointer_over_input,
+            input_focused,
+            reduced_motion,
+            suspended: false,
+            repositioning: false,
+        });
         sequence = sequence.saturating_add(1);
         let snapshot = PresenceInteractionSnapshot {
             schema_version: 1,
             sequence,
             sampled_at_ms,
+            phase: phase.phase,
+            phase_started_at_ms: phase.phase_started_at_ms,
+            reduced_motion,
             cursor,
             placement: current_placement,
         };
@@ -348,6 +394,30 @@ fn run_coordinator(
             CursorBand::Outside => IDLE_POLL_INTERVAL,
         });
     }
+}
+
+fn input_pointer_state(app: &tauri::AppHandle, point: PhysicalPoint) -> (bool, bool) {
+    let Some(input) = app.get_webview_window(PET_INPUT_LABEL) else {
+        return (false, false);
+    };
+    if !input.is_visible().unwrap_or(false) {
+        return (false, false);
+    }
+    let focused = input.is_focused().unwrap_or(false);
+    let pointer_over = input
+        .outer_position()
+        .ok()
+        .zip(input.outer_size().ok())
+        .is_some_and(|(position, size)| {
+            PhysicalFrame {
+                x: position.x,
+                y: position.y,
+                width: size.width,
+                height: size.height,
+            }
+            .contains(point)
+        });
+    (pointer_over, focused)
 }
 
 fn refresh_placement(
