@@ -176,7 +176,9 @@ describe("dual presence surfaces", () => {
       "aria-hidden",
       "true",
     );
-    expect(screen.getByRole("img", { name: "Fairy", hidden: true })).toBeInTheDocument();
+    expect(
+      screen.getByTestId("presence-renderer").querySelector("canvas.presence-webgl-canvas"),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(harness.channel.requestProjection).toHaveBeenCalledOnce();
 

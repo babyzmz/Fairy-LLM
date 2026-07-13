@@ -14,7 +14,7 @@ import {
   createPresenceChannel,
   type PresenceChannel,
 } from "../transport/presenceChannel";
-import { CompatibilityFairyCanvas } from "./CompatibilityFairyCanvas";
+import { PresenceRendererCanvas } from "./PresenceRendererCanvas";
 import "../presence.css";
 import "./presence-render.css";
 
@@ -86,13 +86,6 @@ export function PresenceRenderApp({
     interaction?.reduced_motion === true ||
     (typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  const gaze = interaction === null
-    ? { x: 0, y: 0 }
-    : {
-        x: interaction.cursor.direction.x,
-        y: interaction.cursor.direction.y,
-      };
-
   return (
     <main
       aria-hidden="true"
@@ -103,17 +96,14 @@ export function PresenceRenderApp({
       data-reduced-motion={String(reducedMotion)}
       data-testid="presence-render-surface"
     >
-      <CompatibilityFairyCanvas
-        dragging={false}
-        gaze={gaze}
-        hovered={interaction?.cursor.band !== "outside"}
-        listening={
-          interaction?.phase === "input_reveal" || interaction?.phase === "interactive"
-        }
-        reducedMotion={reducedMotion}
-        sleeping={view.density === "quiet"}
-        speaking={projection.speaking}
-        workState={view.work_state}
+      <PresenceRendererCanvas
+        snapshot={{
+          interaction,
+          reduced_motion: reducedMotion,
+          sleeping: view.density === "quiet",
+          speaking: projection.speaking,
+          work_state: view.work_state,
+        }}
       />
     </main>
   );
