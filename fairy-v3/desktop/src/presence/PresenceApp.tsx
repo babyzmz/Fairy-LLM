@@ -241,6 +241,7 @@ export function PresenceApp({
     setInputOpen(false);
     setMenuOpen(false);
     channel.requestWorkspaceOpen();
+    void host.openMain().catch(() => undefined);
   }
 
   function handlePointerDown(event: ReactPointerEvent<HTMLElement>) {
@@ -304,7 +305,10 @@ export function PresenceApp({
               <X size={14} />
             </button>
             {view.work_state === "awaiting_confirmation" ? (
-              <button className="presence-card-action" onClick={() => channel.requestWorkspaceOpen()} type="button">
+              <button className="presence-card-action" onClick={() => {
+                channel.requestWorkspaceOpen();
+                void host.openMain().catch(() => undefined);
+              }} type="button">
                 Review in Fairy
               </button>
             ) : null}
@@ -365,7 +369,10 @@ export function PresenceApp({
               void updatePetPreferences({ pet_muted: !muted });
             }} />
             <MenuToggle checked={alwaysOnTop} icon={alwaysOnTop ? <Pin size={15} /> : <PinOff size={15} />} label="Always on top" onClick={() => void updatePetPreferences({ pet_always_on_top: !alwaysOnTop })} />
-            <MenuButton icon={<MonitorUp size={15} />} label="Open Fairy" onClick={() => channel.requestWorkspaceOpen()} />
+            <MenuButton icon={<MonitorUp size={15} />} label="Open Fairy" onClick={() => {
+              channel.requestWorkspaceOpen();
+              void host.openMain().catch(() => undefined);
+            }} />
             <MenuButton icon={<Settings size={15} />} label="Settings" onClick={() => void host.openSettings()} />
             <MenuButton icon={<RotateCcw size={15} />} label="Reset position" onClick={() => void resetPosition(windowPort, settingsRef.current)} />
             <MenuButton danger icon={<LogOut size={15} />} label="Exit Fairy" onClick={() => void host.exit()} />

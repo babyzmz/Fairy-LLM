@@ -222,6 +222,8 @@ def test_internal_workspace_commands_share_registry_but_are_not_model_tools() ->
 
     assert standard["workspace.fork"] is True
     assert observe["workspace.fork"] is False
+    assert observe["workspace.create_scratch"] is True
+    assert observe["memory.snapshot.build"] is True
     assert "workspace.fork" not in agent_names
     assert metadata["workspace.fork"]["side_effect"] == "write"
     assert metadata["workspace.fork"]["model_visible"] is False

@@ -15,6 +15,7 @@ export interface PetHost {
   updatePreferences(input: PetPreferencePatch): Promise<DesktopPreferences>;
   onPreferences(listener: (preferences: DesktopPreferences) => void): Promise<() => void>;
   setExpanded(expanded: boolean): Promise<void>;
+  openMain(): Promise<void>;
   openSettings(): Promise<void>;
   exit(): Promise<void>;
 }
@@ -30,6 +31,7 @@ export function createDefaultPetHost(): PetHost {
       });
     },
     setExpanded: (expanded) => invoke("pet_window_set_expanded", { expanded }),
+    openMain: () => invoke("open_main_window"),
     openSettings: () => invoke("open_settings_window"),
     exit: () => invoke("pet_exit"),
   };
@@ -62,6 +64,7 @@ function createBrowserPetHost(): PetHost {
       return () => listeners.delete(listener);
     },
     async setExpanded() {},
+    async openMain() {},
     async openSettings() {},
     async exit() {},
   };

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from enum import Enum
@@ -13,6 +14,8 @@ from fairy_core.application.service import CoreResponseValidationError, CoreServ
 from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.domain.errors import DomainError
 from fairy_core.workspace.worker_transport import WorkerRpcError
+
+logger = logging.getLogger(__name__)
 
 
 class JsonRpcDispatcher:
@@ -91,6 +94,14 @@ class JsonRpcDispatcher:
                 code=-32603,
                 message="Internal error",
                 data={"error_code": "CORE_ERROR", "method": exc.method},
+            )
+        except Exception:
+            logger.exception("Unhandled Fairy Core error while dispatching %s", method_name)
+            return self._error(
+                request_id,
+                code=-32603,
+                message="Internal error",
+                data={"error_code": "CORE_ERROR", "method": method_name},
             )
         return {"jsonrpc": "2.0", "id": request_id, "result": _json_value(result)}
 

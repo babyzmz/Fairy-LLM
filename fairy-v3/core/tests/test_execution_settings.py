@@ -10,7 +10,11 @@ from fairy_core.assistant.tools import model_tools, model_tools_for_definitions
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.commanding.settings import StaticSandboxHealthProvider
 from fairy_core.commanding.types import PermissionProfile
-from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
+from fairy_core.domain.errors import (
+    CommandRejectedError,
+    IdempotencyConflictError,
+    VersionConflictError,
+)
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.transports.stdio import build_local_service
@@ -188,11 +192,44 @@ def test_slash_command_metadata_follows_the_effective_manifest(tmp_path: Path) -
         manifest = service.invoke("capabilities.get", {})
         commands = {item["name"]: item for item in manifest["slash_commands"]}
 
-        assert commands["new"]["available"] is False
-        assert commands["clear"]["available"] is False
+        assert commands["new"]["available"] is True
+        assert commands["clear"]["available"] is True
         assert commands["permission"]["available"] is True
         assert commands["project"]["available"] is True
         assert commands["help"]["available"] is True
+    finally:
+        service.close()
+
+
+def test_observe_profile_can_initialize_a_scratch_chat_task(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        service.invoke(
+            "permissions.update",
+            {
+                "profile": "observe",
+                "capability_overrides": {},
+                "expected_revision": 0,
+                "idempotency_key": "settings:scratch:observe",
+            },
+        )
+        conversation = service.invoke(
+            "conversations.create",
+            {"project_id": None, "workspace_type": "chat_scratch"},
+        )
+
+        context = service.invoke(
+            "tasks.create",
+            {
+                "conversation_id": conversation["id"],
+                "user_request": "Answer without project writes",
+                "operation_mode": "continue_current_chat_draft",
+                "execution_target": "local",
+                "idempotency_key": "settings:scratch:task",
+            },
+        )
+
+        assert context["scope"]["workspace_type"] == "chat_scratch"
     finally:
         service.close()
 
@@ -307,7 +344,7 @@ def test_core_application_commands_cannot_bypass_persisted_observe_policy(
             },
         )
 
-        with pytest.raises(RuntimeError, match="CAPABILITY_NOT_AVAILABLE"):
+        with pytest.raises(CommandRejectedError) as rejected:
             service.invoke(
                 "changesets.propose",
                 {
@@ -317,5 +354,6 @@ def test_core_application_commands_cannot_bypass_persisted_observe_policy(
                     "idempotency_key": "policy:blocked-changeset",
                 },
             )
+        assert rejected.value.code == "CAPABILITY_NOT_AVAILABLE"
     finally:
         service.close()

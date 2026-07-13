@@ -111,6 +111,7 @@ function petHost(): PetHost {
     }),
     onPreferences: vi.fn(async () => () => undefined),
     setExpanded: vi.fn(async () => undefined),
+    openMain: vi.fn(async () => undefined),
     openSettings: vi.fn(async () => undefined),
     exit: vi.fn(async () => undefined),
   };
@@ -135,10 +136,11 @@ describe("PresenceApp", () => {
   it("opens quick chat on click and the workspace on double click", () => {
     vi.useFakeTimers();
     const harness = channelHarness();
+    const host = petHost();
     render(
       <PresenceApp
         channel={harness.channel}
-        host={petHost()}
+        host={host}
         storage={memoryStorage()}
         windowPort={windowPort()}
       />,
@@ -150,6 +152,7 @@ describe("PresenceApp", () => {
     expect(screen.getByRole("textbox", { name: "Quick message to Fairy" })).toBeVisible();
     fireEvent.doubleClick(core);
     expect(harness.channel.requestWorkspaceOpen).toHaveBeenCalledOnce();
+    expect(host.openMain).toHaveBeenCalledOnce();
   });
 
   it("starts native dragging only after five pixels", () => {

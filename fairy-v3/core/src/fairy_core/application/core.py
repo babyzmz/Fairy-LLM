@@ -17,7 +17,7 @@ from fairy_core.application.contexts import (
 from fairy_core.application.contexts import (
     TaskIntent as _TaskIntent,
 )
-from fairy_core.application.errors import ApprovalRequiredError
+from fairy_core.application.errors import ApprovalRequiredError, command_rejected
 from fairy_core.application.history import ConversationMoveContext, HistoryApplication
 from fairy_core.application.recoverable_command import start_recoverable_core_command
 from fairy_core.application.replay_validation import (
@@ -612,7 +612,7 @@ class CoreApplication:
                 sandbox_healthy=policy.sandbox_healthy,
             )
             if not dispatch.accepted or not dispatch.requires_approval or dispatch.run is None:
-                raise RuntimeError(dispatch.error_code or "Changeset approval command was rejected")
+                raise command_rejected(dispatch, "Changeset approval command was rejected")
             changeset.transition_to(ChangesetStatus.AWAITING_APPROVAL)
             approval = Approval.create(
                 task_id=task.id,
@@ -1001,7 +1001,7 @@ class CoreApplication:
                 sandbox_healthy=policy.sandbox_healthy,
             )
             if not dispatch.accepted or not dispatch.requires_approval or dispatch.run is None:
-                raise RuntimeError(dispatch.error_code or "Version promotion command was rejected")
+                raise command_rejected(dispatch, "Version promotion command was rejected")
             queued = commands.decide_approval(dispatch.run.id, approved=True)
             running = commands.start(queued.id)
             unit_of_work.commit()
@@ -1132,7 +1132,7 @@ class CoreApplication:
             sandbox_healthy=policy.sandbox_healthy,
         )
         if not dispatch.accepted or dispatch.run is None:
-            raise RuntimeError(dispatch.error_code or "command was rejected")
+            raise command_rejected(dispatch, "command was rejected")
         if dispatch.requires_approval:
             raise ApprovalRequiredError(dispatch.reason or "command requires approval")
         if dispatch.run.status is not CommandStatus.QUEUED:

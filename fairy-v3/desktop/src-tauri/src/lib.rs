@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use fairy_core_bridge::{CoreBridge, CoreBridgeError, CoreLaunchSpec};
 use serde_json::{json, Value};
 use tauri::ipc::{Channel, Response};
-use tauri::{Emitter, Manager, State, WebviewWindow};
+use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
 use desktop_preferences::{
@@ -422,6 +422,50 @@ async fn pet_exit(window: WebviewWindow) -> Result<(), String> {
     Ok(())
 }
 
+fn show_and_focus(window: &WebviewWindow) -> Result<(), String> {
+    window.show().map_err(|error| error.to_string())?;
+    window.unminimize().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())
+}
+
+fn main_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window("main") {
+        return Ok(window);
+    }
+    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("Fairy")
+        .inner_size(1440.0, 900.0)
+        .min_inner_size(880.0, 680.0)
+        .resizable(true)
+        .visible(false)
+        .build()
+        .map_err(|error| error.to_string())
+}
+
+fn settings_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window("settings") {
+        return Ok(window);
+    }
+    WebviewWindowBuilder::new(
+        app,
+        "settings",
+        WebviewUrl::App("index.html?surface=settings".into()),
+    )
+    .title("Fairy Settings")
+    .inner_size(980.0, 720.0)
+    .min_inner_size(760.0, 560.0)
+    .resizable(true)
+    .visible(false)
+    .build()
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn open_main_window(window: WebviewWindow) -> Result<(), String> {
+    authorize_pet_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    show_and_focus(&main_window(window.app_handle())?)
+}
+
 fn apply_pet_window_preferences(
     app: &tauri::AppHandle,
     preferences: &DesktopPreferences,
@@ -443,13 +487,7 @@ async fn open_settings_window(window: WebviewWindow) -> Result<(), String> {
     if !["main", "pet", "settings"].contains(&window.label()) {
         return Err("Window is not authorized".to_owned());
     }
-    let settings = window
-        .app_handle()
-        .get_webview_window("settings")
-        .ok_or_else(|| "Settings window is unavailable".to_owned())?;
-    settings.show().map_err(|error| error.to_string())?;
-    settings.unminimize().map_err(|error| error.to_string())?;
-    settings.set_focus().map_err(|error| error.to_string())
+    show_and_focus(&settings_window(window.app_handle())?)
 }
 
 fn deserialize_core_result<T: serde::de::DeserializeOwned>(response: Value) -> Result<T, String> {
@@ -773,6 +811,7 @@ pub fn run() {
             pet_preferences_update,
             pet_window_set_expanded,
             pet_exit,
+            open_main_window,
             open_settings_window,
             voice_worker_health,
             voice_model_install,

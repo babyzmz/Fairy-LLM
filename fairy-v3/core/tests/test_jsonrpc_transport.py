@@ -44,6 +44,26 @@ def test_jsonrpc_transport_invokes_one_core_service_without_own_handlers() -> No
     assert response["result"]["service"] == "fake"
 
 
+def test_jsonrpc_transport_contains_unexpected_errors_and_remains_available() -> None:
+    class RecoveringService:
+        def __init__(self) -> None:
+            self.failed = False
+
+        def invoke(self, method: str, params: dict[str, Any]) -> Any:
+            if not self.failed:
+                self.failed = True
+                raise RuntimeError("unexpected command failure")
+            return {"status": "ok", "service": "fairy-core", "protocol": "core-service-v1"}
+
+    dispatcher = JsonRpcDispatcher(cast(CoreService, RecoveringService()))
+
+    failed = _call(dispatcher, 8, "health", {})
+    recovered = _call(dispatcher, 9, "health", {})
+
+    assert failed["error"]["data"] == {"error_code": "CORE_ERROR", "method": "health"}
+    assert recovered["result"]["status"] == "ok"
+
+
 def test_jsonrpc_system_action_reports_unavailable_without_local_worker(
     tmp_path: Path,
 ) -> None:
