@@ -115,9 +115,7 @@ def test_runner_revalidates_untrusted_request_headers(
 
 def test_runner_accepts_versioned_scratch_scope_without_project() -> None:
     runner = _load_runner()
-    request, _decoded = runner.parse_request_frame(
-        _frame(_archive(), project_id=None)
-    )
+    request, _decoded = runner.parse_request_frame(_frame(_archive(), project_id=None))
 
     assert request.project_id is None
     assert request.version_id is not None
