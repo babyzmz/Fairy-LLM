@@ -9,6 +9,7 @@ import {
   type PresenceRendererMode,
   resolvePresenceRendererMode,
 } from "./rendererSupport";
+import { RendererRecoveryCircuit } from "./rendererRecovery";
 
 interface PresenceRendererHostOptions {
   webglCanvas: HTMLCanvasElement;
@@ -16,6 +17,7 @@ interface PresenceRendererHostOptions {
   requestedMode: PresenceRendererMode;
   initialSnapshot: PresenceRenderSnapshot;
   onHealth(health: PresenceRendererHealth): void;
+  now?: () => number;
 }
 
 export class PresenceRendererHost implements PresenceRenderer {
@@ -29,9 +31,12 @@ export class PresenceRendererHost implements PresenceRenderer {
   private suspended = false;
   private disposed = false;
   private generation = 0;
+  private readonly recovery = new RendererRecoveryCircuit();
+  private readonly now: () => number;
 
   constructor(private readonly options: PresenceRendererHostOptions) {
     this.snapshot = options.initialSnapshot;
+    this.now = options.now ?? Date.now;
     options.webglCanvas.addEventListener("webglcontextlost", this.onContextLost);
     options.webglCanvas.addEventListener("webglcontextrestored", this.onContextRestored);
     this.showCanvas("compatibility");
@@ -144,6 +149,7 @@ export class PresenceRendererHost implements PresenceRenderer {
     event.preventDefault();
     if (this.disposed) return;
     this.active?.stop();
+    this.recovery.recordContextLoss(this.now());
     this.report("liquid", "context_lost", "WEBGL_CONTEXT_LOST");
     this.activateCompatibility("WEBGL_CONTEXT_LOST");
   };
@@ -152,6 +158,7 @@ export class PresenceRendererHost implements PresenceRenderer {
     if (
       this.disposed ||
       this.options.requestedMode === "compatibility" ||
+      this.recovery.compatibilityLocked ||
       !this.running
     ) {
       return;

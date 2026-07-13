@@ -7,6 +7,12 @@ import {
 } from "./presenceRenderer";
 import { RendererFrameLoop } from "./RendererFrameLoop";
 import {
+  readPerformanceHeapBytes,
+  RendererPerformanceSampler,
+  WebGlGpuTimer,
+  writePerformanceDataset,
+} from "./RendererPerformanceSampler";
+import {
   LIQUID_GLASS_FRAGMENT_SHADER,
   LIQUID_GLASS_VERTEX_SHADER,
   liquidDirectionForSnapshot,
@@ -24,6 +30,9 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
   private readonly motion: LiquidMotionController;
   private snapshot: PresenceRenderSnapshot;
   private readonly loop: RendererFrameLoop;
+  private readonly performanceSampler = new RendererPerformanceSampler();
+  private readonly gpuTimer: WebGlGpuTimer;
+  private renderedFrames = 0;
   private disposed = false;
   private width = 1;
   private height = 1;
@@ -46,6 +55,9 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
       powerPreference: "high-performance",
     });
     this.renderer.setClearColor(0x000000, 0);
+    this.gpuTimer = new WebGlGpuTimer(
+      this.renderer.getContext() as WebGL2RenderingContext,
+    );
     this.renderer.autoClear = true;
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.scene = new THREE.Scene();
@@ -127,9 +139,11 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.geometry.dispose();
     this.material.dispose();
     this.renderer.dispose();
+    this.gpuTimer.dispose();
   }
 
   private drawFrame(now: number) {
+    const cpuStartedAt = performance.now();
     const motion = this.motion.sample(now);
     this.material.uniforms.uShape.value.set(
       motion.droplet,
@@ -138,7 +152,21 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     );
     this.material.uniforms.uSpeechLevel.value = motion.speech_level;
     this.material.uniforms.uTime.value = this.snapshot.reduced_motion ? 0 : now / 1_000;
+    this.gpuTimer.begin();
     this.renderer.render(this.scene, this.camera);
+    this.gpuTimer.end();
+    for (const duration of this.gpuTimer.collect()) {
+      this.performanceSampler.recordGpuFrame(duration);
+    }
+    this.performanceSampler.recordCpuFrame(performance.now() - cpuStartedAt);
+    this.renderedFrames += 1;
+    if (this.renderedFrames % 60 === 0) {
+      this.performanceSampler.recordHeap(readPerformanceHeapBytes());
+      writePerformanceDataset(
+        this.renderer.domElement,
+        this.performanceSampler.snapshot(),
+      );
+    }
     this.renderer.domElement.dataset.rendered = "true";
   }
 

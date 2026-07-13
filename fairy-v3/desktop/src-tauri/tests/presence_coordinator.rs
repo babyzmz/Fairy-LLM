@@ -1,8 +1,9 @@
 use fairy_desktop_v3::presence_coordinator::{
     anchor_from_ratios, anchor_ratios, configured_cursor_band, resolve_presence_placement,
-    resolve_presence_placement_for_anchor, select_work_area, CursorBand, CursorTracker,
-    ExpansionDirection, PhysicalFrame, PhysicalPoint,
+    resolve_presence_placement_for_anchor, select_work_area, CursorBand, CursorSamplingHealth,
+    CursorTracker, ExpansionDirection, InteractionEmissionGate, PhysicalFrame, PhysicalPoint,
 };
+use fairy_desktop_v3::presence_interaction::PresenceInteractionPhase;
 
 #[test]
 fn cursor_tracker_reports_speed_distance_and_continuous_active_dwell() {
@@ -178,4 +179,75 @@ fn hover_preferences_gate_activation_without_hiding_cursor_metrics() {
         CursorBand::Outside
     );
     assert_eq!(settled.band, CursorBand::Active);
+}
+
+#[test]
+fn idle_interaction_emits_only_changes_and_one_second_heartbeats() {
+    let placement = resolve_presence_placement(
+        PhysicalFrame {
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 260,
+        },
+        PhysicalFrame {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1040,
+        },
+        1.0,
+        None,
+    );
+    let mut gate = InteractionEmissionGate::default();
+    assert!(gate.should_emit(
+        0,
+        PresenceInteractionPhase::Idle,
+        CursorBand::Outside,
+        false,
+        false,
+        placement,
+    ));
+    assert!(!gate.should_emit(
+        50,
+        PresenceInteractionPhase::Idle,
+        CursorBand::Outside,
+        false,
+        false,
+        placement,
+    ));
+    assert!(gate.should_emit(
+        1_000,
+        PresenceInteractionPhase::Idle,
+        CursorBand::Outside,
+        false,
+        false,
+        placement,
+    ));
+    assert!(gate.should_emit(
+        1_016,
+        PresenceInteractionPhase::Aware,
+        CursorBand::Aware,
+        false,
+        false,
+        placement,
+    ));
+    assert!(gate.should_emit(
+        1_032,
+        PresenceInteractionPhase::Aware,
+        CursorBand::Aware,
+        false,
+        false,
+        placement,
+    ));
+}
+
+#[test]
+fn cursor_sampling_failure_closes_hover_after_three_attempts_and_recovers() {
+    let mut health = CursorSamplingHealth::default();
+    assert!(!health.record_failure());
+    assert!(!health.record_failure());
+    assert!(health.record_failure());
+    health.record_success();
+    assert!(!health.record_failure());
 }

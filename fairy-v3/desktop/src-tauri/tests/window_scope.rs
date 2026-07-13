@@ -1,10 +1,10 @@
 use fairy_core_bridge::CoreBridgeError;
 use fairy_desktop_v3::{
     anchored_pet_frame, anchored_pet_input_frame, authorize_core_rpc_window,
-    authorize_pet_input_window, authorize_preferences_reader, authorize_settings_window,
-    authorize_voice_health_window, authorize_voice_settings_window, auxiliary_window_policy,
-    bridge_failure_response, fairy_tray_action, settings_method_allowed, FairyTrayAction,
-    PetWindowFrame,
+    authorize_pet_input_window, authorize_pet_render_window, authorize_preferences_reader,
+    authorize_settings_window, authorize_voice_health_window, authorize_voice_settings_window,
+    auxiliary_window_policy, bridge_failure_response, fairy_tray_action, settings_method_allowed,
+    FairyTrayAction, PetWindowFrame,
 };
 use serde_json::json;
 
@@ -44,6 +44,9 @@ fn settings_window_has_a_narrow_method_allow_list() {
     assert!(authorize_pet_input_window("pet-render").is_err());
     assert!(authorize_pet_input_window("main").is_err());
     assert!(authorize_pet_input_window("settings").is_err());
+    assert!(authorize_pet_render_window("pet-render").is_ok());
+    assert!(authorize_pet_render_window("pet-input").is_err());
+    assert!(authorize_pet_render_window("main").is_err());
 }
 
 #[test]

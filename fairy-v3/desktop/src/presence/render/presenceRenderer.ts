@@ -13,6 +13,8 @@ export interface PresenceRenderSnapshot {
   size_scale: number;
   opacity: number;
   particles_enabled: boolean;
+  idle_for_ms: number;
+  frame_rate_limit: 15 | 30 | 60;
 }
 
 export type PresenceRendererStatus =
@@ -68,6 +70,6 @@ export function visualStateForSnapshot(
 
 export function rendererFrameInterval(snapshot: PresenceRenderSnapshot): number {
   if (snapshot.reduced_motion) return Number.POSITIVE_INFINITY;
-  const state = visualStateForSnapshot(snapshot);
-  return state === "idle" || state === "sleeping" ? 1_000 / 30 : 1_000 / 60;
+  const activityRate = snapshot.idle_for_ms >= 15_000 ? 30 : 60;
+  return 1_000 / Math.min(snapshot.frame_rate_limit, activityRate);
 }

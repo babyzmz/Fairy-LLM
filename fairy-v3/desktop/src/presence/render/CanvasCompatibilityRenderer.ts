@@ -6,6 +6,11 @@ import {
   visualStateForSnapshot,
 } from "./presenceRenderer";
 import { RendererFrameLoop } from "./RendererFrameLoop";
+import {
+  readPerformanceHeapBytes,
+  RendererPerformanceSampler,
+  writePerformanceDataset,
+} from "./RendererPerformanceSampler";
 
 export class CanvasCompatibilityRenderer implements PresenceRenderer {
   private readonly context: CanvasRenderingContext2D;
@@ -15,6 +20,8 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
   private width = 1;
   private height = 1;
   private dpr = 1;
+  private readonly performanceSampler = new RendererPerformanceSampler();
+  private renderedFrames = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -67,6 +74,7 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
   }
 
   private drawFrame(now: number) {
+    const startedAt = performance.now();
     const gaze = this.snapshot.interaction?.cursor.direction ?? { x: 0, y: 0 };
     drawFairyFrame(
       this.context,
@@ -80,6 +88,12 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
         sizeScale: this.snapshot.size_scale,
       },
     );
+    this.performanceSampler.recordCpuFrame(performance.now() - startedAt);
+    this.renderedFrames += 1;
+    if (this.renderedFrames % 60 === 0) {
+      this.performanceSampler.recordHeap(readPerformanceHeapBytes());
+      writePerformanceDataset(this.canvas, this.performanceSampler.snapshot());
+    }
     this.canvas.dataset.rendered = "true";
   }
 }

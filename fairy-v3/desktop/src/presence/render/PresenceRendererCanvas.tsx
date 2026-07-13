@@ -10,6 +10,7 @@ import type { PresenceRendererMode } from "./rendererSupport";
 interface PresenceRendererCanvasProps {
   requestedMode?: PresenceRendererMode;
   snapshot: PresenceRenderSnapshot;
+  onHealth?: (health: PresenceRendererHealth) => void;
 }
 
 const INITIAL_HEALTH: PresenceRendererHealth = {
@@ -21,12 +22,15 @@ const INITIAL_HEALTH: PresenceRendererHealth = {
 export function PresenceRendererCanvas({
   requestedMode = "auto",
   snapshot,
+  onHealth,
 }: PresenceRendererCanvasProps) {
   const webglRef = useRef<HTMLCanvasElement>(null);
   const compatibilityRef = useRef<HTMLCanvasElement>(null);
   const hostRef = useRef<PresenceRendererHost | null>(null);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+  const onHealthRef = useRef(onHealth);
+  onHealthRef.current = onHealth;
   const [health, setHealth] = useState(INITIAL_HEALTH);
 
   useLayoutEffect(() => {
@@ -40,7 +44,10 @@ export function PresenceRendererCanvas({
       requestedMode,
       initialSnapshot: snapshotRef.current,
       onHealth: (nextHealth) => {
-        if (mounted) setHealth(nextHealth);
+        if (mounted) {
+          setHealth(nextHealth);
+          onHealthRef.current?.(nextHealth);
+        }
       },
     });
     hostRef.current = host;

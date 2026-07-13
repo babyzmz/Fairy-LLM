@@ -19,6 +19,8 @@ function snapshot(
     size_scale: 1,
     opacity: 0.92,
     particles_enabled: true,
+    idle_for_ms: 0,
+    frame_rate_limit: 60,
     ...overrides,
   };
 }
@@ -32,10 +34,13 @@ describe("presence renderer scheduling", () => {
     );
   });
 
-  it("uses 60 FPS for active work, 30 FPS when idle, and one frame for reduced motion", () => {
-    expect(rendererFrameInterval(snapshot())).toBeCloseTo(1_000 / 30);
-    expect(rendererFrameInterval(snapshot({ work_state: "streaming" }))).toBeCloseTo(
-      1_000 / 60,
+  it("uses 60 FPS while fresh, 30 FPS after idle, and 15 FPS when constrained", () => {
+    expect(rendererFrameInterval(snapshot())).toBeCloseTo(1_000 / 60);
+    expect(rendererFrameInterval(snapshot({ idle_for_ms: 15_000 }))).toBeCloseTo(
+      1_000 / 30,
+    );
+    expect(rendererFrameInterval(snapshot({ frame_rate_limit: 15 }))).toBeCloseTo(
+      1_000 / 15,
     );
     expect(rendererFrameInterval(snapshot({ reduced_motion: true }))).toBe(
       Number.POSITIVE_INFINITY,

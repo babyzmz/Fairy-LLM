@@ -8,6 +8,7 @@ use tauri::{Emitter, Manager};
 
 pub use crate::presence_interaction::{CursorBand, PresenceInteractionPhase};
 use crate::presence_interaction::{PresenceInteractionSignal, PresenceInteractionStateMachine};
+use crate::presence_runtime::{sample_presence_runtime_policy, PRESENCE_RUNTIME_POLICY_EVENT};
 use crate::{PET_INPUT_LABEL, PET_RENDER_LABEL};
 
 pub const PRESENCE_INTERACTION_EVENT: &str = "presence-interaction-snapshot";
@@ -19,6 +20,9 @@ const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const HIDDEN_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const PLACEMENT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+const RUNTIME_POLICY_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const IDLE_EMISSION_HEARTBEAT_MS: u64 = 1_000;
+const CURSOR_FAILURE_LIMIT: u8 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PresenceCoordinatorConfig {
@@ -183,6 +187,76 @@ impl CursorTracker {
             dwell_ms,
             band,
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.previous = None;
+        self.active_since_ms = None;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct InteractionEmissionMarker {
+    phase: PresenceInteractionPhase,
+    cursor_band: CursorBand,
+    reduced_motion: bool,
+    repositioning: bool,
+    anchor: PhysicalPoint,
+    render_frame: PhysicalFrame,
+    expansion_direction: ExpansionDirection,
+}
+
+#[derive(Default)]
+pub struct InteractionEmissionGate {
+    last: Option<InteractionEmissionMarker>,
+    last_emitted_at_ms: Option<u64>,
+}
+
+impl InteractionEmissionGate {
+    pub fn should_emit(
+        &mut self,
+        sampled_at_ms: u64,
+        phase: PresenceInteractionPhase,
+        cursor_band: CursorBand,
+        reduced_motion: bool,
+        repositioning: bool,
+        placement: PresenceWindowPlacement,
+    ) -> bool {
+        let marker = InteractionEmissionMarker {
+            phase,
+            cursor_band,
+            reduced_motion,
+            repositioning,
+            anchor: placement.anchor,
+            render_frame: placement.render_frame,
+            expansion_direction: placement.expansion_direction,
+        };
+        let changed = self.last != Some(marker);
+        let heartbeat_due = self
+            .last_emitted_at_ms
+            .is_none_or(|last| sampled_at_ms.saturating_sub(last) >= IDLE_EMISSION_HEARTBEAT_MS);
+        let emit = changed || cursor_band != CursorBand::Outside || heartbeat_due;
+        if emit {
+            self.last = Some(marker);
+            self.last_emitted_at_ms = Some(sampled_at_ms);
+        }
+        emit
+    }
+}
+
+#[derive(Default)]
+pub struct CursorSamplingHealth {
+    consecutive_failures: u8,
+}
+
+impl CursorSamplingHealth {
+    pub fn record_success(&mut self) {
+        self.consecutive_failures = 0;
+    }
+
+    pub fn record_failure(&mut self) -> bool {
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        self.consecutive_failures >= CURSOR_FAILURE_LIMIT
     }
 }
 
@@ -444,6 +518,9 @@ fn run_coordinator(
     let mut sequence = 0_u64;
     let mut placement: Option<PresenceWindowPlacement> = None;
     let mut placement_refreshed_at = Instant::now() - PLACEMENT_REFRESH_INTERVAL;
+    let mut runtime_policy_refreshed_at = Instant::now() - RUNTIME_POLICY_REFRESH_INTERVAL;
+    let mut emission_gate = InteractionEmissionGate::default();
+    let mut cursor_sampling = CursorSamplingHealth::default();
 
     while !shutdown.load(Ordering::Acquire) {
         let Some(render) = app.get_webview_window(PET_RENDER_LABEL) else {
@@ -454,6 +531,11 @@ fn run_coordinator(
             interaction.suspend(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
             thread::sleep(HIDDEN_POLL_INTERVAL);
             continue;
+        }
+        if runtime_policy_refreshed_at.elapsed() >= RUNTIME_POLICY_REFRESH_INTERVAL {
+            let policy = sample_presence_runtime_policy();
+            let _ = app.emit_to(PET_RENDER_LABEL, PRESENCE_RUNTIME_POLICY_EVENT, policy);
+            runtime_policy_refreshed_at = Instant::now();
         }
         if repositioning.load(Ordering::Acquire) {
             if let Ok(value) = latest_placement.read() {
@@ -471,23 +553,44 @@ fn run_coordinator(
             }
             placement_refreshed_at = Instant::now();
         }
-        let (Some(current_placement), Some(point)) = (placement, global_cursor_position()) else {
+        let Some(current_placement) = placement else {
             thread::sleep(HIDDEN_POLL_INTERVAL);
             continue;
         };
         let sampled_at_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-        let cursor = tracker.observe(
-            point,
-            sampled_at_ms,
-            current_placement.anchor,
-            current_placement.scale_factor,
-        );
+        let point = global_cursor_position();
+        let cursor = match point {
+            Some(point) => {
+                cursor_sampling.record_success();
+                tracker.observe(
+                    point,
+                    sampled_at_ms,
+                    current_placement.anchor,
+                    current_placement.scale_factor,
+                )
+            }
+            None if cursor_sampling.record_failure() => {
+                tracker.reset();
+                unavailable_cursor(current_placement)
+            }
+            None => {
+                thread::sleep(IDLE_POLL_INTERVAL);
+                continue;
+            }
+        };
         let reduced_motion = reduced_motion.load(Ordering::Acquire);
         let hover_enabled = hover_enabled.load(Ordering::Acquire);
         let hover_dwell_ms = hover_dwell_ms.load(Ordering::Acquire);
         let repositioning = repositioning.load(Ordering::Acquire);
-        let (pointer_over_input, input_focused) = input_pointer_state(&app, point);
+        let (pointer_over_input, input_focused) = point.map_or_else(
+            || (false, input_focus_state(&app)),
+            |point| input_pointer_state(&app, point),
+        );
         let effective_cursor_band = configured_cursor_band(cursor, hover_enabled, hover_dwell_ms);
+        let projected_cursor = CursorMetrics {
+            band: effective_cursor_band,
+            ..cursor
+        };
         let phase = interaction.advance(PresenceInteractionSignal {
             sampled_at_ms,
             cursor_band: effective_cursor_band,
@@ -498,24 +601,51 @@ fn run_coordinator(
             suspended: false,
             repositioning,
         });
-        sequence = sequence.saturating_add(1);
-        let snapshot = PresenceInteractionSnapshot {
-            schema_version: 1,
-            sequence,
+        if emission_gate.should_emit(
             sampled_at_ms,
-            phase: phase.phase,
-            phase_started_at_ms: phase.phase_started_at_ms,
+            phase.phase,
+            effective_cursor_band,
             reduced_motion,
-            cursor,
-            placement: current_placement,
-        };
-        let _ = app.emit_to(PET_RENDER_LABEL, PRESENCE_INTERACTION_EVENT, snapshot);
-        let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_INTERACTION_EVENT, snapshot);
-        thread::sleep(match cursor.band {
+            repositioning,
+            current_placement,
+        ) {
+            sequence = sequence.saturating_add(1);
+            let snapshot = PresenceInteractionSnapshot {
+                schema_version: 1,
+                sequence,
+                sampled_at_ms,
+                phase: phase.phase,
+                phase_started_at_ms: phase.phase_started_at_ms,
+                reduced_motion,
+                cursor: projected_cursor,
+                placement: current_placement,
+            };
+            let _ = app.emit_to(PET_RENDER_LABEL, PRESENCE_INTERACTION_EVENT, snapshot);
+            let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_INTERACTION_EVENT, snapshot);
+        }
+        thread::sleep(match effective_cursor_band {
             CursorBand::Aware | CursorBand::Active => ACTIVE_POLL_INTERVAL,
             CursorBand::Outside => IDLE_POLL_INTERVAL,
         });
     }
+}
+
+fn unavailable_cursor(placement: PresenceWindowPlacement) -> CursorMetrics {
+    CursorMetrics {
+        point: placement.anchor,
+        direction: NormalizedDirection { x: 0.0, y: 0.0 },
+        distance_px: (AWARE_RADIUS + 1.0) * placement.scale_factor,
+        speed_px_s: 0.0,
+        dwell_ms: 0,
+        band: CursorBand::Outside,
+    }
+}
+
+fn input_focus_state(app: &tauri::AppHandle) -> bool {
+    app.get_webview_window(PET_INPUT_LABEL)
+        .is_some_and(|input| {
+            input.is_visible().unwrap_or(false) && input.is_focused().unwrap_or(false)
+        })
 }
 
 fn input_pointer_state(app: &tauri::AppHandle, point: PhysicalPoint) -> (bool, bool) {

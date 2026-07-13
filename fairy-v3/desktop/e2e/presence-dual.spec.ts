@@ -383,7 +383,7 @@ for (const expansionDirection of ["right", "left"] as const) {
   });
 }
 
-test("WebGL context loss falls back to Canvas and restores the liquid renderer", async ({
+test("WebGL recovery locks to Canvas after repeated context loss", async ({
   browser,
 }) => {
   const context = await browser.newContext({ viewport: { width: 640, height: 260 } });
@@ -423,6 +423,56 @@ test("WebGL context loss falls back to Canvas and restores the liquid renderer",
   await expect(renderer).toHaveAttribute("data-renderer", "liquid");
   await expect(renderer).toHaveAttribute("data-renderer-health", "running");
   await expect(canvas).toHaveAttribute("data-rendered", "true");
+
+  await canvas.evaluate(() => {
+    const scope = window as typeof window & {
+      __fairyContextExtension?: WEBGL_lose_context;
+    };
+    scope.__fairyContextExtension?.loseContext();
+  });
+  await expect(renderer).toHaveAttribute("data-renderer", "compatibility");
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __fairyContextExtension?: WEBGL_lose_context;
+    };
+    scope.__fairyContextExtension?.restoreContext();
+  });
+  await page.waitForTimeout(300);
+  await expect(renderer).toHaveAttribute("data-renderer", "compatibility");
+  await context.close();
+});
+
+test("runtime policy and renderer metrics remain bounded and non-visible", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ viewport: { width: 640, height: 260 } });
+  const page = await context.newPage();
+  await page.goto("/?surface=pet-render");
+  const surface = page.getByTestId("presence-render-surface");
+  const canvas = page.locator("canvas.presence-webgl-canvas");
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel("fairy.presence.runtime-policy.v1");
+    channel.postMessage({
+      kind: "presence.runtime-policy",
+      policy: {
+        schema_version: 1,
+        frame_rate_limit: 15,
+        power_saver: true,
+        foreground_fullscreen: false,
+      },
+    });
+    window.setTimeout(() => channel.close(), 100);
+  });
+  await expect(surface).toHaveAttribute("data-frame-rate-limit", "15");
+  await expect(surface).toHaveAttribute("data-power-saver", "true");
+  await expect(canvas).toHaveAttribute("data-timing-samples", /\d+/, {
+    timeout: 6_000,
+  });
+  const cpuP95 = Number(await canvas.getAttribute("data-cpu-frame-p95-ms"));
+  const gpuMetric = await canvas.getAttribute("data-gpu-frame-p95-ms");
+  expect(cpuP95).toBeLessThan(8);
+  if (gpuMetric !== "unavailable") expect(Number(gpuMetric)).toBeLessThan(8);
+  await expect(surface).not.toContainText(/frame|heap|gpu/i);
   await context.close();
 });
 

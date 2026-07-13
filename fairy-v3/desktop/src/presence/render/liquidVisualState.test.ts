@@ -16,6 +16,8 @@ function snapshot(
     size_scale: 1,
     opacity: 0.92,
     particles_enabled: true,
+    idle_for_ms: 0,
+    frame_rate_limit: 60,
     ...overrides,
   };
 }

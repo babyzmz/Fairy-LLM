@@ -24,6 +24,18 @@ import {
   type PresenceRenderSettings,
   type PresenceRenderSettingsChannel,
 } from "../transport/renderSettings";
+import {
+  createPresenceRuntimePolicySource,
+  type PresenceRuntimePolicySource,
+} from "../transport/runtimePolicyEvents";
+import {
+  DEFAULT_PRESENCE_RUNTIME_POLICY,
+  type PresenceRuntimePolicy,
+} from "../domain/runtimePolicy";
+import {
+  createPresenceRendererHealthHost,
+  type PresenceRendererHealthHost,
+} from "../host/rendererHealthHost";
 import { PresenceRendererCanvas } from "./PresenceRendererCanvas";
 import "../presence.css";
 import "./presence-render.css";
@@ -33,6 +45,8 @@ interface PresenceRenderAppProps {
   interactionSource?: PresenceInteractionSource;
   renderSettingsChannel?: PresenceRenderSettingsChannel;
   voiceLevelSource?: PresenceVoiceLevelSource;
+  runtimePolicySource?: PresenceRuntimePolicySource;
+  rendererHealthHost?: PresenceRendererHealthHost;
   now?: () => number;
 }
 
@@ -41,6 +55,8 @@ export function PresenceRenderApp({
   interactionSource: suppliedInteractionSource,
   renderSettingsChannel: suppliedRenderSettingsChannel,
   voiceLevelSource: suppliedVoiceLevelSource,
+  runtimePolicySource: suppliedRuntimePolicySource,
+  rendererHealthHost: suppliedRendererHealthHost,
   now = Date.now,
 }: PresenceRenderAppProps) {
   const [channel] = useState(() => suppliedChannel ?? createPresenceChannel());
@@ -53,6 +69,12 @@ export function PresenceRenderApp({
   const [renderSettingsChannel] = useState(
     () => suppliedRenderSettingsChannel ?? createPresenceRenderSettingsChannel(),
   );
+  const [runtimePolicySource] = useState(
+    () => suppliedRuntimePolicySource ?? createPresenceRuntimePolicySource(),
+  );
+  const [rendererHealthHost] = useState(
+    () => suppliedRendererHealthHost ?? createPresenceRendererHealthHost(),
+  );
   const [projection, setProjection] = useState<PresenceProjectionState>(() =>
     PresenceProjection.initial(),
   );
@@ -62,6 +84,11 @@ export function PresenceRenderApp({
   const [renderSettings, setRenderSettings] = useState<PresenceRenderSettings>(
     DEFAULT_PRESENCE_RENDER_SETTINGS,
   );
+  const [runtimePolicy, setRuntimePolicy] = useState<PresenceRuntimePolicy>(
+    DEFAULT_PRESENCE_RUNTIME_POLICY,
+  );
+  const [forcedCompatibility, setForcedCompatibility] = useState(false);
+  const [sessionDisabled, setSessionDisabled] = useState(false);
 
   useEffect(() => {
     const stop = channel.onProjection((next) => {
@@ -117,6 +144,21 @@ export function PresenceRenderApp({
     [voiceLevelSource],
   );
 
+  useEffect(() => {
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void runtimePolicySource.subscribe((policy) => {
+      if (!disposed) setRuntimePolicy(policy);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, [runtimePolicySource]);
+
   const view = derivePresenceView(projection, {
     now_ms: clock,
     quiet_mode: false,
@@ -127,6 +169,16 @@ export function PresenceRenderApp({
     !renderSettings.motion_enabled ||
     (typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const interactionActive = interaction !== null && (
+    interaction.cursor.band !== "outside" ||
+    !["idle", "suspended"].includes(interaction.phase)
+  );
+  const workActive = ["analyzing", "tool", "streaming"].includes(view.work_state);
+  const idleForMs = useRenderIdleDuration(
+    projection.speaking || interactionActive || workActive,
+    now,
+  );
+  const requestedMode = forcedCompatibility ? "compatibility" : renderSettings.mode;
   return (
     <main
       aria-hidden="true"
@@ -137,22 +189,53 @@ export function PresenceRenderApp({
       data-reduced-motion={String(reducedMotion)}
       data-speaking={String(projection.speaking)}
       data-work-state={view.work_state}
+      data-frame-rate-limit={runtimePolicy.frame_rate_limit}
+      data-power-saver={String(runtimePolicy.power_saver)}
+      data-foreground-fullscreen={String(runtimePolicy.foreground_fullscreen)}
+      data-session-disabled={String(sessionDisabled)}
       data-testid="presence-render-surface"
     >
-      <PresenceRendererCanvas
-        requestedMode={renderSettings.mode}
-        snapshot={{
-          interaction,
-          reduced_motion: reducedMotion,
-          sleeping: view.density === "quiet",
-          speaking: projection.speaking,
-          voice_level: projection.speaking ? voiceLevel : 0,
-          work_state: view.work_state,
-          size_scale: renderSettings.size_scale,
-          opacity: renderSettings.opacity,
-          particles_enabled: renderSettings.particles_enabled,
-        }}
-      />
+      {!sessionDisabled && (
+        <PresenceRendererCanvas
+          requestedMode={requestedMode}
+          onHealth={(health) => {
+            void rendererHealthHost.report(health).then((directive) => {
+              if (directive === "force_compatibility") setForcedCompatibility(true);
+              if (directive === "disable_pet") setSessionDisabled(true);
+            });
+          }}
+          snapshot={{
+            interaction,
+            reduced_motion: reducedMotion,
+            sleeping: view.density === "quiet",
+            speaking: projection.speaking,
+            voice_level: projection.speaking ? voiceLevel : 0,
+            work_state: view.work_state,
+            size_scale: renderSettings.size_scale,
+            opacity: renderSettings.opacity,
+            particles_enabled: renderSettings.particles_enabled,
+            idle_for_ms: idleForMs,
+            frame_rate_limit: runtimePolicy.frame_rate_limit,
+          }}
+        />
+      )}
     </main>
   );
+}
+
+function useRenderIdleDuration(active: boolean, now: () => number): number {
+  const [idleForMs, setIdleForMs] = useState(0);
+  useEffect(() => {
+    if (active) {
+      setIdleForMs(0);
+      return;
+    }
+    const startedAt = now();
+    setIdleForMs(0);
+    const timer = window.setTimeout(() => {
+      setIdleForMs(Math.max(15_000, now() - startedAt));
+    }, 15_000);
+    return () => window.clearTimeout(timer);
+  }, [active, now]);
+  return idleForMs;
 }

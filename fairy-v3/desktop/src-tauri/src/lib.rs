@@ -1,6 +1,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use fairy_core_bridge::{CoreBridge, CoreBridgeError, CoreLaunchSpec};
 use serde_json::{json, Value};
@@ -19,6 +20,9 @@ use presence_coordinator::{
     resolve_presence_placement_for_anchor, select_work_area, ExpansionDirection, PhysicalFrame,
     PhysicalPoint, PresenceCoordinatorConfig, PresenceCoordinatorHandle, PresenceWindowPlacement,
 };
+use presence_renderer_supervisor::{
+    PresenceRendererDirective, PresenceRendererHealthReport, PresenceRendererSupervisor,
+};
 use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStore};
 use provider_credentials::ProviderCredentialStore;
 use voice_worker::{
@@ -30,6 +34,8 @@ pub mod capture;
 pub mod desktop_preferences;
 pub mod presence_coordinator;
 pub mod presence_interaction;
+pub mod presence_renderer_supervisor;
+pub mod presence_runtime;
 pub mod provider_configuration;
 pub mod provider_credentials;
 pub mod voice_worker;
@@ -109,6 +115,14 @@ pub fn authorize_preferences_reader(label: &str) -> Result<(), WindowScopeError>
 
 pub fn authorize_pet_input_window(label: &str) -> Result<(), WindowScopeError> {
     if label == PET_INPUT_LABEL {
+        Ok(())
+    } else {
+        Err(WindowScopeError)
+    }
+}
+
+pub fn authorize_pet_render_window(label: &str) -> Result<(), WindowScopeError> {
+    if label == PET_RENDER_LABEL {
         Ok(())
     } else {
         Err(WindowScopeError)
@@ -236,6 +250,8 @@ struct DesktopState {
     resource_dir: PathBuf,
     presence: PresenceCoordinatorHandle,
     pet_drag: Mutex<Option<PetGroupDragSession>>,
+    renderer_supervisor: Mutex<PresenceRendererSupervisor>,
+    started_at: Instant,
 }
 
 struct FairyTrayState {
@@ -798,6 +814,51 @@ async fn open_main_window(window: WebviewWindow) -> Result<(), String> {
     show_and_focus(&main_window(window.app_handle())?)
 }
 
+#[tauri::command]
+fn pet_renderer_report_health(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    report: PresenceRendererHealthReport,
+) -> Result<PresenceRendererDirective, String> {
+    authorize_pet_render_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    if !report.is_valid() {
+        return Err("Unsupported renderer health schema".to_owned());
+    }
+    let now_ms = state
+        .started_at
+        .elapsed()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64;
+    let directive = state
+        .renderer_supervisor
+        .lock()
+        .map_err(|_| "Renderer supervisor is unavailable".to_owned())?
+        .observe_at(report, now_ms);
+    if directive == PresenceRendererDirective::DisablePet {
+        hide_pet_windows(window.app_handle());
+    }
+    Ok(directive)
+}
+
+fn hide_pet_windows(app: &tauri::AppHandle) {
+    for label in [PET_RENDER_LABEL, PET_INPUT_LABEL] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.hide();
+        }
+    }
+}
+
+fn pet_session_disabled(app: &tauri::AppHandle) -> bool {
+    app.try_state::<DesktopState>().is_some_and(|state| {
+        state
+            .renderer_supervisor
+            .lock()
+            .map(|supervisor| supervisor.session_disabled())
+            .unwrap_or(true)
+    })
+}
+
 fn apply_pet_window_preferences(
     app: &tauri::AppHandle,
     preferences: &DesktopPreferences,
@@ -805,20 +866,27 @@ fn apply_pet_window_preferences(
     let render = app
         .get_webview_window(PET_RENDER_LABEL)
         .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
-    let input = app
-        .get_webview_window(PET_INPUT_LABEL)
-        .ok_or_else(|| "Pet input window is unavailable".to_owned())?;
-    for window in [&render, &input] {
-        window
+    let input = app.get_webview_window(PET_INPUT_LABEL);
+    render
+        .set_always_on_top(preferences.pet_always_on_top)
+        .map_err(|error| error.to_string())?;
+    if let Some(input) = &input {
+        input
             .set_always_on_top(preferences.pet_always_on_top)
             .map_err(|error| error.to_string())?;
     }
-    if preferences.pet_enabled {
-        render.show().map_err(|error| error.to_string())
-    } else {
+    if !preferences.pet_enabled || pet_session_disabled(app) {
         render.hide().map_err(|error| error.to_string())?;
-        input.hide().map_err(|error| error.to_string())
+        if let Some(input) = input {
+            input.hide().map_err(|error| error.to_string())?;
+        }
+        return Ok(());
     }
+    if input.is_none() {
+        render.hide().map_err(|error| error.to_string())?;
+        return main_window(app).and_then(|window| show_and_focus(&window));
+    }
+    render.show().map_err(|error| error.to_string())
 }
 
 fn coordinator_config(preferences: &DesktopPreferences) -> PresenceCoordinatorConfig {
@@ -1095,7 +1163,8 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent)
     };
     match action {
         FairyTrayAction::Ask => {
-            if app.get_webview_window(PET_INPUT_LABEL).is_none()
+            if pet_session_disabled(app)
+                || app.get_webview_window(PET_INPUT_LABEL).is_none()
                 || app
                     .emit_to(PET_INPUT_LABEL, "presence-input-requested", ())
                     .is_err()
@@ -1104,7 +1173,8 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent)
             }
         }
         FairyTrayAction::NewChat => {
-            if app.get_webview_window(PET_INPUT_LABEL).is_none()
+            if pet_session_disabled(app)
+                || app.get_webview_window(PET_INPUT_LABEL).is_none()
                 || app
                     .emit_to(PET_INPUT_LABEL, "presence-new-chat-requested", ())
                     .is_err()
@@ -1506,6 +1576,8 @@ pub fn run() {
                 resource_dir,
                 presence,
                 pet_drag: Mutex::new(None),
+                renderer_supervisor: Mutex::new(PresenceRendererSupervisor::default()),
+                started_at: Instant::now(),
             });
             let tray = build_fairy_tray(app, &preferences)?;
             app.manage(tray);
@@ -1530,6 +1602,7 @@ pub fn run() {
             pet_window_group_move,
             pet_window_group_end_drag,
             pet_window_group_reset_position,
+            pet_renderer_report_health,
             pet_exit,
             open_main_window,
             open_settings_window,
