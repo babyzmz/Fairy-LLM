@@ -1,5 +1,7 @@
 import {
   Check,
+  CircleAlert,
+  LoaderCircle,
   LogOut,
   MessageSquarePlus,
   MonitorUp,
@@ -8,6 +10,7 @@ import {
   RotateCcw,
   Send,
   Settings,
+  Square,
   Volume2,
   VolumeX,
   X,
@@ -24,7 +27,9 @@ import { m } from "motion/react";
 import type { PresenceReply, PresenceView } from "../domain/projection";
 
 export interface PresencePanelActions {
+  cancelTurn(): void;
   closeReply(replyId: string): void;
+  closeSubmission(): void;
   dismissNotice(): void;
   exit(): void;
   newChat(): void;
@@ -33,12 +38,23 @@ export interface PresencePanelActions {
   openSettings(): void;
   requestInputFocus(): void;
   resetPosition(): void;
+  retrySubmission(): void;
   send(text: string): void;
   setInputOpen(open: boolean): void;
   setMenuOpen(open: boolean): void;
   toggleAlwaysOnTop(): void;
   toggleAutoPlay(): void;
   toggleMuted(): void;
+  stopVoice(): void;
+}
+
+export interface PresenceSubmissionCard {
+  id: string;
+  phase: "sending" | "accepted" | "cancelling" | "cancelled" | "failed";
+  title: string;
+  detail: string;
+  canCancel: boolean;
+  canRetry: boolean;
 }
 
 interface PresencePanelProps {
@@ -51,6 +67,7 @@ interface PresencePanelProps {
   menuOpen: boolean;
   muted: boolean;
   reply: PresenceReply | null;
+  submission: PresenceSubmissionCard | null;
   view: PresenceView;
   visible: boolean;
 }
@@ -65,6 +82,7 @@ export function PresencePanel({
   menuOpen,
   muted,
   reply,
+  submission,
   view,
   visible,
 }: PresencePanelProps) {
@@ -152,18 +170,104 @@ export function PresencePanel({
           initial={{ opacity: 0, y: 6, scale: 0.98 }}
           role="status"
         >
-          <div>
+          <div className="presence-card-copy">
             <strong>{reply.streaming ? "Fairy is replying" : "Fairy"}</strong>
             <span>{reply.text}</span>
           </div>
-          <button
-            aria-label="Close reply"
-            onClick={() => actions.closeReply(reply.id)}
-            title="Close"
-            type="button"
-          >
-            <X size={14} />
-          </button>
+          <div className="presence-card-controls">
+            {reply.streaming ? (
+              <button
+                aria-label="Stop reply"
+                onClick={actions.cancelTurn}
+                title="Stop reply"
+                type="button"
+              >
+                <Square size={13} />
+              </button>
+            ) : null}
+            {view.speaking ? (
+              <button
+                aria-label="Stop reading"
+                onClick={actions.stopVoice}
+                title="Stop reading"
+                type="button"
+              >
+                <VolumeX size={14} />
+              </button>
+            ) : null}
+            <button
+              aria-label="Open reply in Fairy"
+              onClick={actions.openMain}
+              title="Open in Fairy"
+              type="button"
+            >
+              <MonitorUp size={14} />
+            </button>
+            <button
+              aria-label="Close reply"
+              onClick={() => actions.closeReply(reply.id)}
+              title="Close"
+              type="button"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </m.aside>
+      ) : null}
+
+      {!menuOpen && reply === null && view.notice === null && submission !== null ? (
+        <m.aside
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          className={`presence-card submission ${submission.phase}`}
+          data-submission-id={submission.id}
+          initial={{ opacity: 0, y: 6, scale: 0.98 }}
+          role="status"
+        >
+          <div className="presence-card-copy">
+            <strong>
+              {submission.phase === "failed" ? (
+                <CircleAlert aria-hidden="true" size={13} />
+              ) : submission.phase === "cancelled" ? (
+                <Check aria-hidden="true" size={13} />
+              ) : (
+                <LoaderCircle aria-hidden="true" className="submission-spinner" size={13} />
+              )}
+              {submission.title}
+            </strong>
+            <span>{submission.detail}</span>
+          </div>
+          <div className="presence-card-controls">
+            {submission.canCancel ? (
+              <button
+                aria-label="Cancel request"
+                onClick={actions.cancelTurn}
+                title="Cancel"
+                type="button"
+              >
+                <Square size={13} />
+              </button>
+            ) : null}
+            {submission.canRetry ? (
+              <button
+                aria-label="Retry request"
+                onClick={actions.retrySubmission}
+                title="Retry"
+                type="button"
+              >
+                <RotateCcw size={14} />
+              </button>
+            ) : null}
+            {!submission.canCancel ? (
+              <button
+                aria-label="Dismiss request status"
+                onClick={actions.closeSubmission}
+                title="Dismiss"
+                type="button"
+              >
+                <X size={14} />
+              </button>
+            ) : null}
+          </div>
         </m.aside>
       ) : null}
 

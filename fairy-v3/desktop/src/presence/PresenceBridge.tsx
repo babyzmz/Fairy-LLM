@@ -6,6 +6,7 @@ import {
   createPresenceChannel,
   type PresenceChannel,
   type PresenceRequest,
+  type PresenceSubmissionFailure,
 } from "./transport/presenceChannel";
 import {
   PresenceProjection,
@@ -19,6 +20,7 @@ interface PresenceBridgeProps {
   speaking?: boolean;
   onNewChat?(): void | Promise<void>;
   onSend?(text: string): void | Promise<void>;
+  onCancel?(): void | Promise<void>;
   onStopVoice?(): void;
   channelFactory?: () => PresenceChannel;
 }
@@ -29,6 +31,7 @@ export function PresenceBridge({
   speaking = false,
   onNewChat,
   onSend,
+  onCancel,
   onStopVoice,
   channelFactory = createPresenceChannel,
 }: PresenceBridgeProps) {
@@ -57,6 +60,7 @@ export function PresenceBridge({
         enqueue,
         onNewChat,
         onSend,
+        onCancel,
         onStopVoice,
       );
     });
@@ -66,7 +70,7 @@ export function PresenceBridge({
       channel.close();
       channelRef.current = null;
     };
-  }, [channelFactory, onNewChat, onSend, onStopVoice]);
+  }, [channelFactory, onCancel, onNewChat, onSend, onStopVoice]);
 
   useEffect(() => {
     channelRef.current?.publishProjection(projection);
@@ -94,6 +98,7 @@ function handleRequest(
   enqueue: (action: () => void | Promise<void>) => void,
   onNewChat: (() => void | Promise<void>) | undefined,
   onSend: ((text: string) => void | Promise<void>) | undefined,
+  onCancel: (() => void | Promise<void>) | undefined,
   onStopVoice: (() => void) | undefined,
 ): void {
   switch (request.kind) {
@@ -107,12 +112,74 @@ function handleRequest(
       if (onNewChat !== undefined) enqueue(onNewChat);
       break;
     case "chat.send":
-      if (onSend !== undefined) enqueue(() => onSend(request.text));
+      enqueue(async () => {
+        if (onSend === undefined) {
+          channel.publishSubmission(failedSubmission(request.submission_id, "unavailable"));
+          return;
+        }
+        try {
+          await onSend(request.text);
+          channel.publishSubmission({
+            submission_id: request.submission_id,
+            status: "accepted",
+            failure: null,
+          });
+        } catch (error) {
+          channel.publishSubmission(
+            failedSubmission(request.submission_id, publicFailure(error)),
+          );
+        }
+      });
+      break;
+    case "chat.cancel":
+      enqueue(async () => {
+        if (onCancel === undefined) {
+          channel.publishSubmission(failedSubmission(request.submission_id, "unavailable"));
+          return;
+        }
+        try {
+          await onCancel();
+          channel.publishSubmission({
+            submission_id: request.submission_id,
+            status: "cancelled",
+            failure: null,
+          });
+        } catch (error) {
+          channel.publishSubmission(
+            failedSubmission(request.submission_id, publicFailure(error)),
+          );
+        }
+      });
       break;
     case "voice.stop":
       onStopVoice?.();
       break;
   }
+}
+
+function failedSubmission(
+  submissionId: string,
+  failure: PresenceSubmissionFailure,
+) {
+  return {
+    submission_id: submissionId,
+    status: "failed" as const,
+    failure,
+  };
+}
+
+function publicFailure(error: unknown): PresenceSubmissionFailure {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (
+    message.includes("offline") ||
+    message.includes("network") ||
+    message.includes("fetch") ||
+    message.includes("connection")
+  ) {
+    return "offline";
+  }
+  if (message.includes("already running") || message.includes("busy")) return "busy";
+  return "unavailable";
 }
 
 async function openWorkspaceWindow(): Promise<void> {

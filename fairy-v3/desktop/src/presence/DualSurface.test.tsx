@@ -10,22 +10,34 @@ import type { PetHost } from "./host/petHost";
 import type { StorageLike } from "./host/persistence";
 import { PresenceInputApp } from "./input/PresenceInputApp";
 import { PresenceRenderApp } from "./render/PresenceRenderApp";
-import type { PresenceChannel } from "./transport/presenceChannel";
+import type {
+  PresenceChannel,
+  PresenceSubmissionUpdate,
+} from "./transport/presenceChannel";
 import type { PresenceInteractionSource } from "./transport/interactionEvents";
 
 function channelHarness() {
   let listener: ((state: PresenceProjectionState) => void) | null = null;
+  let submissionListener: ((update: PresenceSubmissionUpdate) => void) | null = null;
   const channel: PresenceChannel = {
     publishProjection: vi.fn(),
+    publishSubmission: vi.fn(),
     requestProjection: vi.fn(),
     requestWorkspaceOpen: vi.fn(),
     requestNewChat: vi.fn(),
     requestChatSend: vi.fn(),
+    requestChatCancel: vi.fn(),
     requestVoiceStop: vi.fn(),
     onProjection(next) {
       listener = next;
       return () => {
         listener = null;
+      };
+    },
+    onSubmission(next) {
+      submissionListener = next;
+      return () => {
+        submissionListener = null;
       };
     },
     onRequest: vi.fn(() => () => undefined),
@@ -35,6 +47,9 @@ function channelHarness() {
     channel,
     emit(state: PresenceProjectionState) {
       listener?.(state);
+    },
+    emitSubmission(update: PresenceSubmissionUpdate) {
+      submissionListener?.(update);
     },
   };
 }
@@ -296,7 +311,145 @@ describe("dual presence surfaces", () => {
     fireEvent.compositionEnd(input);
     fireEvent.keyDown(input, { key: "Enter" });
     expect(channel.channel.requestChatSend).toHaveBeenCalledOnce();
-    expect(channel.channel.requestChatSend).toHaveBeenCalledWith("\u4f60\u597d Fairy");
+    expect(channel.channel.requestChatSend).toHaveBeenCalledWith(
+      "\u4f60\u597d Fairy",
+      expect.any(String),
+    );
+  });
+
+  it("moves from send status to one streaming reply with isolated controls", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    act(() => host.requestInput());
+    const input = await screen.findByLabelText("Quick message to Fairy");
+    fireEvent.change(input, { target: { value: "Stream this reply" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    const submissionId = vi.mocked(channel.channel.requestChatSend).mock.calls[0]?.[1];
+    expect(submissionId).toEqual(expect.any(String));
+    expect(screen.getByRole("status")).toHaveTextContent("Sending to Fairy");
+
+    act(() => channel.emitSubmission({
+      submission_id: submissionId ?? "missing",
+      status: "accepted",
+      failure: null,
+    }));
+    act(() => channel.emit(projection({
+      activity: "working",
+      work_state: "streaming",
+      status_text: "Writing the reply",
+      reply: {
+        id: "reply-stream",
+        kind: "scratch",
+        streaming: true,
+        text: "A single streamed reply",
+      },
+      speaking: true,
+    })));
+
+    expect(screen.getAllByText("A single streamed reply")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Stop reading" }));
+    expect(channel.channel.requestVoiceStop).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Stop reply" }));
+    expect(channel.channel.requestChatCancel).toHaveBeenCalledWith(submissionId);
+    expect(screen.getByRole("button", { name: "Open reply in Fairy" })).toBeInTheDocument();
+  });
+
+  it("shows offline failure without duplicating a reply and retries the same text", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    act(() => host.requestInput());
+    const input = await screen.findByLabelText("Quick message to Fairy");
+    fireEvent.change(input, { target: { value: "Retry safely" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    const firstId = vi.mocked(channel.channel.requestChatSend).mock.calls[0]?.[1];
+    act(() => channel.emitSubmission({
+      submission_id: firstId ?? "missing",
+      status: "failed",
+      failure: "offline",
+    }));
+    expect(screen.getByRole("status")).toHaveTextContent("Fairy is offline");
+    fireEvent.click(screen.getByRole("button", { name: "Retry request" }));
+    expect(channel.channel.requestChatSend).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(channel.channel.requestChatSend).mock.calls[1]?.[0]).toBe(
+      "Retry safely",
+    );
+    expect(vi.mocked(channel.channel.requestChatSend).mock.calls[1]?.[1]).not.toBe(firstId);
+  });
+
+  it("retracts a completed reply after five seconds without interaction", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    vi.useFakeTimers();
+    act(() => channel.emit(projection({
+      reply: {
+        id: "reply-complete",
+        kind: "scratch",
+        streaming: false,
+        text: "Finished once",
+      },
+    })));
+    expect(screen.getByText("Finished once")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(4_999));
+    expect(screen.getByText("Finished once")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.queryByText("Finished once")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("routes approvals to the main window without decision controls", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+    act(() => channel.emit(projection({
+      activity: "needs_attention",
+      work_state: "awaiting_confirmation",
+      status_text: "Waiting for your decision",
+      notice: {
+        id: "approval-1",
+        tone: "critical",
+        text: "An approval needs your decision",
+      },
+    })));
+    expect(screen.queryByRole("button", { name: /approve/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /reject/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Review in Fairy" }));
+    expect(channel.channel.requestWorkspaceOpen).toHaveBeenCalledOnce();
+    expect(host.host.openMain).toHaveBeenCalledOnce();
   });
 });
 

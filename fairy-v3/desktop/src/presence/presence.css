@@ -110,6 +110,18 @@ textarea:focus-visible {
   border-color: rgba(83, 192, 167, 0.68);
 }
 
+.presence-card.submission {
+  border-color: rgba(230, 174, 75, 0.68);
+}
+
+.presence-card.submission.failed {
+  border-color: rgba(238, 126, 113, 0.78);
+}
+
+.presence-card.submission.cancelled {
+  border-color: rgba(83, 192, 167, 0.68);
+}
+
 .presence-card.notice.info {
   border-color: rgba(91, 168, 224, 0.68);
 }
@@ -118,10 +130,16 @@ textarea:focus-visible {
   border-color: rgba(238, 126, 113, 0.78);
 }
 
-.presence-card > div {
+.presence-card-copy {
   min-width: 0;
   display: grid;
   gap: 4px;
+}
+
+.presence-card-copy strong {
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .presence-card strong {
@@ -142,6 +160,7 @@ textarea:focus-visible {
 }
 
 .presence-card > button,
+.presence-card-controls > button,
 .presence-input > button {
   width: 28px;
   height: 28px;
@@ -155,9 +174,26 @@ textarea:focus-visible {
 }
 
 .presence-card > button:hover,
+.presence-card-controls > button:hover,
 .presence-input > button:hover {
   border-color: #52605f;
   background: #293231;
+}
+
+.presence-card-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.submission-spinner {
+  animation: presence-spin 900ms linear infinite;
+}
+
+@keyframes presence-spin {
+  to {
+    transform: rotate(1turn);
+  }
 }
 
 .presence-card .presence-card-action {

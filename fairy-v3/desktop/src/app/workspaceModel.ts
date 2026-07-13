@@ -1037,6 +1037,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       await projectAssistant.send(...args);
     },
     sendPetMessage: actions.sendPetMessage,
+    cancelPetTurn: async () => {
+      if (petTaskId === null || chatAssistant.turn?.task_id !== petTaskId) return;
+      await chatAssistant.cancel();
+    },
     cancelChatTurn: chatAssistant.cancel,
     retryChatTurn: chatAssistant.retry,
     retryPendingChatMessage: chatAssistant.retryPending,

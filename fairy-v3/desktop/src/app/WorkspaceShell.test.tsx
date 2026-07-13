@@ -251,6 +251,7 @@ function workspaceModel(): WorkspaceModel {
     sendChatMessage: vi.fn(async () => undefined),
     sendProjectMessage: vi.fn(async () => undefined),
     sendPetMessage: vi.fn(async () => undefined),
+    cancelPetTurn: vi.fn(async () => undefined),
     cancelChatTurn: vi.fn(async () => undefined),
     retryChatTurn: vi.fn(async () => undefined),
     retryPendingChatMessage: vi.fn(async () => undefined),

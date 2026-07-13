@@ -52,10 +52,13 @@ test("Fairy quick chat, cards, and context menu stay inside the expanded surface
   await expect(input).toBeVisible();
   await input.fill("Summarize today");
   await input.press("Enter");
-  await expect.poll(() => capturedRequests(page)).toContainEqual({
-    kind: "chat.send",
-    text: "Summarize today",
-  });
+  await expect.poll(() => capturedRequests(page)).toContainEqual(
+    expect.objectContaining({
+      kind: "chat.send",
+      submission_id: expect.any(String),
+      text: "Summarize today",
+    }),
+  );
 
   await publishProjection(page, {
     ...READY_PROJECTION,

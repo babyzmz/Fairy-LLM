@@ -26,10 +26,12 @@ function channelHarness() {
   let listener: ((state: PresenceProjectionState) => void) | null = null;
   const channel: PresenceChannel = {
     publishProjection: vi.fn(),
+    publishSubmission: vi.fn(),
     requestProjection: vi.fn(),
     requestWorkspaceOpen: vi.fn(),
     requestNewChat: vi.fn(),
     requestChatSend: vi.fn(),
+    requestChatCancel: vi.fn(),
     requestVoiceStop: vi.fn(),
     onProjection(next) {
       listener = next;
@@ -37,6 +39,7 @@ function channelHarness() {
         listener = null;
       };
     },
+    onSubmission: vi.fn(() => () => undefined),
     onRequest: vi.fn(() => () => undefined),
     close: vi.fn(),
   };
@@ -228,7 +231,10 @@ describe("PresenceApp", () => {
     expect(harness.channel.requestChatSend).not.toHaveBeenCalled();
     fireEvent.compositionEnd(input);
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(harness.channel.requestChatSend).toHaveBeenCalledWith("你好 Fairy");
+    expect(harness.channel.requestChatSend).toHaveBeenCalledWith(
+      "你好 Fairy",
+      expect.any(String),
+    );
   });
 
   it("applies the reduced-motion override", () => {

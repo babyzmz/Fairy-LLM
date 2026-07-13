@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { PresenceBridge } from "../presence/PresenceBridge";
-import type { PresenceReply } from "../presence/projection";
+import { projectPetReply } from "../presence/domain/reply";
 import { VoiceController, useVoicePresence } from "../voice/VoiceController";
 import { DesktopPreferencesBridge } from "../settings/DesktopPreferencesBridge";
 
@@ -49,47 +49,19 @@ function WorkspacePresence({ model }: { model: ReturnType<typeof useWorkspaceMod
   return (
     <PresenceBridge
       events={model.presenceEvents}
+      onCancel={model.cancelPetTurn}
       onNewChat={model.createPetChatConversation}
       onSend={model.sendPetMessage}
       onStopVoice={voice.stopSpeaking}
-      reply={petReply(model)}
+      reply={projectPetReply({
+        petTaskId: model.petTaskId,
+        turn: model.chatTurn,
+        streamedText: model.chatStreamedText,
+        messages: model.messages,
+      })}
       speaking={voice.speaking}
     />
   );
-}
-
-function petReply(model: ReturnType<typeof useWorkspaceModel>): PresenceReply | null {
-  const taskId = model.petTaskId;
-  if (taskId === null) return null;
-  if (model.chatTurn?.task_id === taskId && model.chatStreamedText !== "") {
-    return {
-      id: `pet-stream:${model.chatTurn.id}`,
-      text: boundedReply(model.chatStreamedText),
-      kind: "scratch",
-      streaming: model.chatTurn.status !== "completed",
-    };
-  }
-  const message = [...model.messages]
-    .filter(
-      (item) =>
-        item.task_id === taskId &&
-        item.role === "assistant" &&
-        item.visibility === "user",
-    )
-    .sort((left, right) => left.sequence - right.sequence)
-    .at(-1);
-  return message === undefined
-    ? null
-    : {
-        id: `pet-message:${message.id}`,
-        text: boundedReply(message.content),
-        kind: "scratch",
-        streaming: false,
-      };
-}
-
-function boundedReply(value: string): string {
-  return Array.from(value.trim()).slice(-1_200).join("") || "Fairy is ready";
 }
 
 export function App({ client }: AppProps) {

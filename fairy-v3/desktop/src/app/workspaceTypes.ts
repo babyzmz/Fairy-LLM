@@ -191,6 +191,7 @@ export interface WorkspaceModel {
     images?: PendingImageAttachment[],
   ): Promise<void>;
   sendPetMessage(value: string): Promise<void>;
+  cancelPetTurn(): Promise<void>;
   cancelChatTurn(): Promise<void>;
   retryChatTurn(): Promise<void>;
   retryPendingChatMessage(): Promise<void>;

@@ -76,6 +76,113 @@ test("input surface owns cards and controls without duplicating the renderer", a
   await context.close();
 });
 
+test("pet input reuses one streaming turn and keeps voice and approval isolated", async ({
+  browser,
+}, testInfo) => {
+  const context = await browser.newContext({ viewport: { width: 420, height: 360 } });
+  const page = await context.newPage();
+  await page.goto("/?surface=pet-input");
+  await installPresenceRequestCapture(page);
+  await publishInteraction(page, interactionSnapshot("right", 96));
+
+  const input = page.getByLabel("Quick message to Fairy");
+  await expect(input).toBeVisible();
+  await input.fill("Stream exactly one reply");
+  await input.press("Enter");
+  await expect.poll(async () => {
+    const requests = await capturedPresenceRequests(page);
+    return requests.find((request) => request.kind === "chat.send") ?? null;
+  }).toMatchObject({ kind: "chat.send", text: "Stream exactly one reply" });
+  const sendRequest = (await capturedPresenceRequests(page)).find(
+    (request) => request.kind === "chat.send",
+  );
+  const submissionId = (sendRequest as { submission_id?: string } | null)?.submission_id;
+  expect(submissionId).toEqual(expect.any(String));
+  await expect(page.getByRole("status")).toContainText("Sending to Fairy");
+
+  await publishSubmission(page, {
+    submission_id: submissionId ?? "missing",
+    status: "accepted",
+    failure: null,
+  });
+  await publishProjection(page, {
+    activity: "working",
+    work_state: "streaming",
+    status_text: "Writing the reply",
+    last_cursor: 31,
+    last_event_id: "event-31",
+    updated_at_ms: Date.now(),
+    recent_activity_ms: [Date.now()],
+    notice: null,
+    reply: {
+      id: "reply-31",
+      text: "One durable stream is visible here.",
+      kind: "scratch",
+      streaming: true,
+    },
+    speaking: true,
+  });
+
+  await expect(page.getByText("One durable stream is visible here.")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Stop reading" })).toBeVisible();
+  await page.getByRole("button", { name: "Stop reading" }).click();
+  await page.getByRole("button", { name: "Stop reply" }).click();
+  await expect.poll(() => capturedPresenceRequests(page)).toContainEqual({
+    kind: "voice.stop",
+  });
+  await expect.poll(() => capturedPresenceRequests(page)).toContainEqual({
+    kind: "chat.cancel",
+    submission_id: submissionId,
+  });
+  await page.screenshot({
+    path: testInfo.outputPath("pet-input-streaming-reply.png"),
+    omitBackground: true,
+  });
+
+  await publishProjection(page, {
+    activity: "ready",
+    work_state: "ready",
+    status_text: "Ready for review",
+    last_cursor: 32,
+    last_event_id: "event-32",
+    updated_at_ms: Date.now(),
+    recent_activity_ms: [Date.now()],
+    notice: null,
+    reply: {
+      id: "reply-31",
+      text: "One durable stream is visible here.",
+      kind: "scratch",
+      streaming: false,
+    },
+    speaking: false,
+  });
+  await expect(page.getByText("One durable stream is visible here.")).toBeVisible();
+  await expect(page.getByText("One durable stream is visible here.")).not.toBeVisible({
+    timeout: 6_000,
+  });
+
+  await publishProjection(page, {
+    activity: "needs_attention",
+    work_state: "awaiting_confirmation",
+    status_text: "Waiting for your decision",
+    last_cursor: 33,
+    last_event_id: "event-33",
+    updated_at_ms: Date.now(),
+    recent_activity_ms: [Date.now()],
+    notice: {
+      id: "approval-33",
+      tone: "critical",
+      text: "An approval needs your decision",
+    },
+    reply: null,
+    speaking: false,
+  });
+  await expect(page.getByRole("button", { name: "Review in Fairy" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /approve/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /reject/i })).toHaveCount(0);
+  await context.close();
+});
+
 test("hover input stays passive until the 520ms interaction gate", async ({
   browser,
 }) => {
@@ -246,6 +353,48 @@ async function publishProjection(page: Page, projection: PresenceProjectionState
     channel.postMessage({ kind: "presence.projection", projection: value });
     window.setTimeout(() => channel.close(), 100);
   }, projection);
+}
+
+async function publishSubmission(
+  page: Page,
+  update: {
+    submission_id: string;
+    status: "accepted" | "failed" | "cancelled";
+    failure: "offline" | "busy" | "unavailable" | null;
+  },
+) {
+  await page.evaluate((value) => {
+    const channel = new BroadcastChannel("fairy.presence.v2");
+    channel.postMessage({ kind: "presence.submission", update: value });
+    window.setTimeout(() => channel.close(), 100);
+  }, update);
+}
+
+async function installPresenceRequestCapture(page: Page) {
+  await page.evaluate(() => {
+    const scope = window as typeof window & {
+      __fairyPresenceRequests?: Array<Record<string, unknown>>;
+      __fairyPresenceRequestChannel?: BroadcastChannel;
+    };
+    scope.__fairyPresenceRequests = [];
+    scope.__fairyPresenceRequestChannel = new BroadcastChannel("fairy.presence.v2");
+    scope.__fairyPresenceRequestChannel.onmessage = (event) => {
+      if (event.data?.kind === "presence.request") {
+        scope.__fairyPresenceRequests?.push(event.data.request);
+      }
+    };
+  });
+}
+
+async function capturedPresenceRequests(
+  page: Page,
+): Promise<Array<Record<string, unknown>>> {
+  return page.evaluate(() => {
+    const scope = window as typeof window & {
+      __fairyPresenceRequests?: Array<Record<string, unknown>>;
+    };
+    return scope.__fairyPresenceRequests ?? [];
+  });
 }
 
 async function publishInteraction(

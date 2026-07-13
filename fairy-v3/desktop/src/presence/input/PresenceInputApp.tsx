@@ -19,15 +19,21 @@ import {
   savePresenceSettings,
 } from "../host/persistence";
 import {
+  createPresenceSubmissionId,
   createPresenceChannel,
   type PresenceChannel,
+  type PresenceSubmissionFailure,
+  type PresenceSubmissionUpdate,
 } from "../transport/presenceChannel";
 import {
   createPresenceInteractionSource,
   type PresenceInteractionSource,
 } from "../transport/interactionEvents";
 import { presenceInputGate } from "./inputGate";
-import { PresencePanel } from "./PresencePanel";
+import {
+  PresencePanel,
+  type PresenceSubmissionCard,
+} from "./PresencePanel";
 import "../presence.css";
 import "./presence-input.css";
 
@@ -40,6 +46,15 @@ interface PresenceInputAppProps {
 }
 
 const MAX_DISMISSED_NOTICES = 128;
+const COMPLETED_REPLY_VISIBLE_MS = 5_000;
+const TERMINAL_STATUS_VISIBLE_MS = 2_400;
+
+interface PresenceSubmissionState {
+  id: string;
+  text: string;
+  phase: PresenceSubmissionCard["phase"];
+  failure: PresenceSubmissionFailure | null;
+}
 
 export function PresenceInputApp({
   channel: suppliedChannel,
@@ -66,6 +81,8 @@ export function PresenceInputApp({
   const [manualInputOpen, setManualInputOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [closedReplyId, setClosedReplyId] = useState<string | null>(null);
+  const [submission, setSubmission] = useState<PresenceSubmissionState | null>(null);
+  const [replyInteraction, setReplyInteraction] = useState(0);
   const [interaction, setInteraction] = useState<PresenceInteractionSnapshot | null>(null);
   const [hoverSuppressed, setHoverSuppressed] = useState(false);
   const [focusRequest, setFocusRequest] = useState(0);
@@ -81,6 +98,13 @@ export function PresenceInputApp({
     channel.requestProjection();
     return stop;
   }, [channel, now]);
+
+  useEffect(() => {
+    const stop = channel.onSubmission((update) => {
+      setSubmission((current) => applySubmissionUpdate(current, update));
+    });
+    return stop;
+  }, [channel]);
 
   useEffect(() => {
     if (suppliedChannel !== undefined) return;
@@ -153,8 +177,10 @@ export function PresenceInputApp({
     dismissed_notice_ids: settings.dismissed_notice_ids,
   });
   const reply = view.reply?.id === closedReplyId ? null : view.reply;
+  const submissionCard = toSubmissionCard(submission, view);
   const hoverGate = presenceInputGate(interaction, hoverSuppressed);
-  const cardOpen = menuOpen || reply !== null || view.notice !== null;
+  const cardOpen =
+    menuOpen || reply !== null || view.notice !== null || submissionCard !== null;
   const inputOpen = manualInputOpen || hoverGate.window_visible;
   const layout = cardOpen
     ? "expanded"
@@ -163,6 +189,27 @@ export function PresenceInputApp({
       : "hidden";
   const contentVisible = cardOpen || manualInputOpen || hoverGate.content_visible;
   const surfaceInteractive = cardOpen || manualInputOpen || hoverGate.interactive;
+
+  useEffect(() => {
+    if (reply === null || reply.streaming) return;
+    const timer = window.setTimeout(
+      () => setClosedReplyId(reply.id),
+      COMPLETED_REPLY_VISIBLE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [reply?.id, reply?.streaming, replyInteraction]);
+
+  useEffect(() => {
+    if (submission?.phase !== "cancelled") return;
+    const timer = window.setTimeout(() => setSubmission(null), TERMINAL_STATUS_VISIBLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [submission?.id, submission?.phase]);
+
+  useEffect(() => {
+    if ((reply !== null && !reply.streaming) || view.notice !== null) {
+      setSubmission(null);
+    }
+  }, [reply?.id, reply?.streaming, view.notice?.id]);
 
   useEffect(() => {
     presentationQueue.current = presentationQueue.current
@@ -230,6 +277,28 @@ export function PresenceInputApp({
     setMenuOpen(false);
   }
 
+  function sendMessage(text: string) {
+    const id = createPresenceSubmissionId();
+    setSubmission({ id, text, phase: "sending", failure: null });
+    channel.requestChatSend(text, id);
+  }
+
+  function cancelTurn() {
+    const id = submission?.id ?? createPresenceSubmissionId();
+    setSubmission((current) => ({
+      id,
+      text: current?.text ?? "",
+      phase: "cancelling",
+      failure: null,
+    }));
+    channel.requestChatCancel(id);
+  }
+
+  function retrySubmission() {
+    if (submission === null || submission.text === "") return;
+    sendMessage(submission.text);
+  }
+
   return (
     <main
       className="presence-input-window"
@@ -240,6 +309,9 @@ export function PresenceInputApp({
         interaction?.reduced_motion === true || preferences?.reduced_motion === true
       )}
       data-testid="presence-input-surface"
+      onPointerDown={() => setReplyInteraction((value) => value + 1)}
+      onPointerEnter={() => setReplyInteraction((value) => value + 1)}
+      onWheel={() => setReplyInteraction((value) => value + 1)}
       onContextMenu={(event) => {
         event.preventDefault();
         setManualInputOpen(false);
@@ -253,7 +325,12 @@ export function PresenceInputApp({
     >
       <PresencePanel
         actions={{
-          closeReply: setClosedReplyId,
+          cancelTurn,
+          closeReply: (replyId) => {
+            setClosedReplyId(replyId);
+            setSubmission(null);
+          },
+          closeSubmission: () => setSubmission(null),
           dismissNotice,
           exit: () => void host.exit(),
           newChat: () => channel.requestNewChat(),
@@ -268,7 +345,8 @@ export function PresenceInputApp({
           openSettings: () => void host.openSettings(),
           requestInputFocus: () => void host.requestInputFocus(),
           resetPosition: () => undefined,
-          send: (text) => channel.requestChatSend(text),
+          retrySubmission,
+          send: sendMessage,
           setInputOpen,
           setMenuOpen,
           toggleAlwaysOnTop: () =>
@@ -279,6 +357,7 @@ export function PresenceInputApp({
             if (!muted) channel.requestVoiceStop();
             void updatePetPreferences({ pet_muted: !muted });
           },
+          stopVoice: () => channel.requestVoiceStop(),
         }}
         alwaysOnTop={alwaysOnTop}
         autoPlay={autoPlay}
@@ -288,9 +367,78 @@ export function PresenceInputApp({
         menuOpen={menuOpen}
         muted={muted}
         reply={reply}
+        submission={submissionCard}
         view={view}
         visible={contentVisible}
       />
     </main>
   );
+}
+
+function applySubmissionUpdate(
+  current: PresenceSubmissionState | null,
+  update: PresenceSubmissionUpdate,
+): PresenceSubmissionState | null {
+  if (current === null || current.id !== update.submission_id) return current;
+  return {
+    ...current,
+    phase: update.status,
+    failure: update.failure,
+  };
+}
+
+function toSubmissionCard(
+  submission: PresenceSubmissionState | null,
+  view: { status_text: string; work_state: PresenceProjectionState["work_state"] },
+): PresenceSubmissionCard | null {
+  if (submission === null) return null;
+  switch (submission.phase) {
+    case "sending":
+      return card(submission, "Sending to Fairy", "Starting a private scratch chat", true);
+    case "accepted":
+      return card(
+        submission,
+        ["analyzing", "tool", "streaming"].includes(view.work_state)
+          ? view.status_text
+          : "Fairy is working",
+        "You can continue in the main window",
+        true,
+      );
+    case "cancelling":
+      return card(submission, "Stopping", "Waiting for the active turn to stop", false);
+    case "cancelled":
+      return card(submission, "Stopped", "The active turn was cancelled", false);
+    case "failed":
+      return {
+        ...card(
+          submission,
+          failureTitle(submission.failure),
+          "Your message was not started",
+          false,
+        ),
+        canRetry: submission.text !== "",
+      };
+  }
+}
+
+function card(
+  submission: PresenceSubmissionState,
+  title: string,
+  detail: string,
+  canCancel: boolean,
+): PresenceSubmissionCard {
+  return {
+    id: submission.id,
+    phase: submission.phase,
+    title,
+    detail,
+    canCancel,
+    canRetry: false,
+  };
+}
+
+function failureTitle(failure: PresenceSubmissionFailure | null): string {
+  if (failure === "offline") return "Fairy is offline";
+  if (failure === "busy") return "Fairy is already working";
+  return "Message could not be sent";
 }
