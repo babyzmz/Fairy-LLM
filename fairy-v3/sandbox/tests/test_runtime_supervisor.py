@@ -219,6 +219,25 @@ def test_runtime_graph_rolls_back_started_services_on_failure(tmp_path: Path) ->
     assert processes.stops == [(701, 901)]
 
 
+def test_runtime_graph_accepts_projectless_workspace_identity() -> None:
+    runner = _load_runner()
+    archive = _graph_archive()
+    frame = _graph_frame(archive)
+    header_length = struct.unpack(">I", frame[:4])[0]
+    header = json.loads(frame[4 : 4 + header_length].decode("utf-8"))
+    header["project_id"] = None
+    header["workspace_id"] = "01980f66-b740-7dc8-9e1b-2714cf0c8899"
+    encoded = json.dumps(header, separators=(",", ":"), sort_keys=True).encode()
+
+    request, decoded = runner.parse_start_frame(
+        struct.pack(">I", len(encoded)) + encoded + archive
+    )
+
+    assert request.project_id is None
+    assert str(request.workspace_id) == header["workspace_id"]
+    assert decoded == archive
+
+
 def test_runtime_seccomp_filter_blocks_outbound_network_syscalls() -> None:
     runner = _load_runner()
     content = runner._network_filter("x86_64")
@@ -344,6 +363,7 @@ def _graph_frame(archive: bytes) -> bytes:
     base.update(
         {
             "schema_version": 2,
+            "workspace_id": base["project_id"],
             "cwd": "web",
             "services": [
                 {

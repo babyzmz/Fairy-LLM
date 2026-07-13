@@ -126,6 +126,19 @@ def test_cloud_runtime_probe_stop_and_target_binding(tmp_path: Path) -> None:
     assert captured.value.error_code == "SCOPE_MISMATCH"
 
 
+def test_cloud_runtime_lease_round_trips_projectless_workspace(tmp_path: Path) -> None:
+    request = replace(_request(tmp_path), project_id=None, workspace_id=uuid4())
+
+    lease = _lease(request)
+    restored = lease.to_request()
+
+    assert lease.project_id is None
+    assert lease.workspace_id == request.workspace_id
+    assert restored.project_id is None
+    assert restored.workspace_id == request.workspace_id
+    assert lease.matches(restored)
+
+
 def test_cloud_preview_token_rejects_tampering_tenant_and_expiry() -> None:
     signer = CloudPreviewSigner(b"k" * 32)
     now = datetime.now(UTC)

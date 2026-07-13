@@ -25,7 +25,12 @@ from fairy_core.domain.execution import (
     RuntimeSession,
     RuntimeStatus,
 )
-from fairy_core.domain.models import ScopeContract, TaskStatus
+from fairy_core.domain.models import (
+    ScopeContract,
+    TaskStatus,
+    VersionVisibility,
+    WorkspaceType,
+)
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork
 from fairy_core.runtime.artifacts import ensure_preview_manifest
 from fairy_core.runtime.models import (
@@ -119,12 +124,13 @@ class RuntimeApplication(RuntimeApplicationSupport):
         intent = intent_or_replay
         preview = intent.context.preview
         runtime = intent.context.runtime
-        assert runtime.project_id is not None and runtime.version_id is not None
+        assert runtime.version_id is not None
         try:
             if intent.template.adapter is RuntimeAdapter.STATIC:
                 result = self._executor.start_static(
                     StaticRuntimeStart(
                         project_id=runtime.project_id,
+                        workspace_id=runtime.workspace_id,
                         version_id=runtime.version_id,
                         preview_id=preview.id,
                         project_root=runtime.project_root,
@@ -142,6 +148,7 @@ class RuntimeApplication(RuntimeApplicationSupport):
                 result = self._executor.start_dynamic(
                     DynamicRuntimeStart(
                         project_id=runtime.project_id,
+                        workspace_id=runtime.workspace_id,
                         conversation_id=runtime.conversation_id,
                         task_id=runtime.task_id,
                         version_id=runtime.version_id,
@@ -571,6 +578,24 @@ class RuntimeApplication(RuntimeApplicationSupport):
                 task.transition_to(TaskStatus.PREVIEWING)
             conversation = self._require_conversation(state, preview.conversation_id)
             conversation.active_preview_id = preview.id
+            if conversation.workspace_type is WorkspaceType.CHAT_SCRATCH:
+                workspace = state.get_workspace(preview.workspace_id)
+                version = state.get_version(preview.version_id)
+                if workspace is None or version is None:
+                    raise RuntimeExecutorError(
+                        "Scratch Preview Workspace Version is unavailable",
+                        error_code="SCOPE_MISMATCH",
+                    )
+                workspace.accept_version(
+                    preview.version_id,
+                    expected_revision=workspace.revision,
+                )
+                workspace.active_preview_id = preview.id
+                version.visibility = VersionVisibility.PROJECT_ACTIVE
+                conversation.base_version_id = preview.version_id
+                conversation.active_draft_version_id = None
+                state.save_workspace(workspace)
+                state.save_version(version)
             state.save_runtime(runtime, expected_revision=runtime_revision)
             state.save_preview(preview, expected_revision=preview_revision)
             state.save_task(task)
@@ -600,6 +625,19 @@ class RuntimeApplication(RuntimeApplicationSupport):
                 lease_owner=intent.command.lease_owner,
                 lease_fence=intent.command.lease_fence,
             )
+            if conversation.workspace_type is WorkspaceType.CHAT_SCRATCH:
+                unit_of_work.commands.append_event(
+                    run_id=intent.command.id,
+                    event_type="workspace.version.auto_promoted",
+                    visibility=EventVisibility.USER,
+                    message="Workspace saved",
+                    payload={
+                        "workspace_id": str(preview.workspace_id),
+                        "version_id": str(preview.version_id),
+                    },
+                    lease_owner=intent.command.lease_owner,
+                    lease_fence=intent.command.lease_fence,
+                )
             commands.complete(
                 intent.command.id,
                 output={"preview_id": str(preview.id), "url": result.url},

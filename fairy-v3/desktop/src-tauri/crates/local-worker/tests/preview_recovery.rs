@@ -21,7 +21,7 @@ fn prepare_version() -> (tempfile::TempDir, std::path::PathBuf) {
 fn preview_request() -> StaticPreviewRequest {
     StaticPreviewRequest {
         preview_id: "preview-1".to_owned(),
-        project_id: "project-1".to_owned(),
+        workspace_id: "project-1".to_owned(),
         version_id: "version-1".to_owned(),
         entry_path: "index.html".to_owned(),
     }

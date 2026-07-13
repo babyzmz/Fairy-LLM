@@ -45,7 +45,7 @@ class RustRuntimeExecutor:
         expected_root = (
             self._managed_root
             / "projects"
-            / str(request.project_id)
+            / str(request.workspace_id)
             / "versions"
             / str(request.version_id)
         ).resolve(strict=False)
@@ -58,7 +58,7 @@ class RustRuntimeExecutor:
             "preview.start_static",
             {
                 "preview_id": str(request.preview_id),
-                "project_id": str(request.project_id),
+                "workspace_id": str(request.workspace_id),
                 "version_id": str(request.version_id),
                 "entry_path": request.entry_path,
             },

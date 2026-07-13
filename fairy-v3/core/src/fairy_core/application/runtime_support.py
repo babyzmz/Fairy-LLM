@@ -245,27 +245,17 @@ class RuntimeApplicationSupport:
 
     @staticmethod
     def _validate_static_scope(scope: ScopeContract) -> None:
-        if (
-            scope.workspace_type.value != "project_chat"
-            or scope.project_id is None
-            or scope.target_version_id is None
-            or scope.execution_target != "local"
-        ):
+        if scope.target_version_id is None or scope.execution_target != "local":
             raise RuntimeExecutorError(
-                "Static Preview requires a local Project draft",
+                "Static Preview requires a local immutable Workspace Version",
                 error_code="SCOPE_MISMATCH",
             )
 
     @staticmethod
     def _validate_project_scope(scope: ScopeContract) -> None:
-        if (
-            scope.workspace_type.value != "project_chat"
-            or scope.project_id is None
-            or scope.target_version_id is None
-            or scope.execution_target not in {"local", "cloud"}
-        ):
+        if scope.target_version_id is None or scope.execution_target not in {"local", "cloud"}:
             raise RuntimeExecutorError(
-                "Dynamic Preview requires an immutable Project draft Scope",
+                "Dynamic Preview requires an immutable Workspace Version Scope",
                 error_code="SCOPE_MISMATCH",
             )
 

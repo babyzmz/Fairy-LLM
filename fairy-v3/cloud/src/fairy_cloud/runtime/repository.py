@@ -443,6 +443,7 @@ class AsyncCloudRuntimeRepository:
                             runtime_leases.c.runtime_id,
                             runtime_leases.c.preview_id,
                             runtime_leases.c.project_id,
+                            runtime_leases.c.workspace_id,
                             runtime_leases.c.conversation_id,
                             runtime_leases.c.task_id,
                             runtime_leases.c.version_id,
@@ -460,6 +461,8 @@ class AsyncCloudRuntimeRepository:
             )
         if row is None:
             raise KeyError(f"active Cloud Runtime not found: {runtime_id}")
+        if row["project_id"] is None:
+            raise KeyError(f"Project Review Runtime not found: {runtime_id}")
         return CloudRuntimeReviewBinding(
             runtime_id=UUID(str(row["runtime_id"])),
             preview_id=UUID(str(row["preview_id"])),
@@ -606,7 +609,8 @@ def _lease_values(lease: CloudRuntimeLease) -> dict[str, object]:
         "tenant_id": lease.tenant_id,
         "runtime_id": str(lease.runtime_id),
         "preview_id": str(lease.preview_id),
-        "project_id": str(lease.project_id),
+        "project_id": str(lease.project_id) if lease.project_id is not None else None,
+        "workspace_id": str(lease.workspace_id),
         "conversation_id": str(lease.conversation_id),
         "task_id": str(lease.task_id),
         "version_id": str(lease.version_id),
@@ -648,6 +652,7 @@ def _validate_retry(
         "runtime_id",
         "preview_id",
         "project_id",
+        "workspace_id",
         "conversation_id",
         "task_id",
         "version_id",
@@ -695,7 +700,8 @@ def _lease_from_row(row: Mapping[str, object]) -> CloudRuntimeLease:
         tenant_id=str(row["tenant_id"]),
         runtime_id=UUID(str(row["runtime_id"])),
         preview_id=UUID(str(row["preview_id"])),
-        project_id=UUID(str(row["project_id"])),
+        project_id=UUID(str(row["project_id"])) if row.get("project_id") else None,
+        workspace_id=UUID(str(row["workspace_id"])),
         conversation_id=UUID(str(row["conversation_id"])),
         task_id=UUID(str(row["task_id"])),
         version_id=UUID(str(row["version_id"])),

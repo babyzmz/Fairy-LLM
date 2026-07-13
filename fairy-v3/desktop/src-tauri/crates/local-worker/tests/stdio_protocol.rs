@@ -271,7 +271,7 @@ fn preview_protocol_keeps_registry_for_the_entire_stdio_stream() {
             "method": "preview.start_static",
             "params": {
                 "preview_id": "preview-1",
-                "project_id": "project-1",
+                "workspace_id": "project-1",
                 "version_id": "version-1",
                 "entry_path": "index.html"
             }
@@ -288,7 +288,7 @@ fn preview_protocol_keeps_registry_for_the_entire_stdio_stream() {
             "method": "preview.start_static",
             "params": {
                 "preview_id": "preview-1",
-                "project_id": "project-1",
+                "workspace_id": "project-1",
                 "version_id": "another-version",
                 "entry_path": "index.html"
             }

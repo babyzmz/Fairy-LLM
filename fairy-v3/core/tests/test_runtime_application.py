@@ -21,7 +21,7 @@ from fairy_core.domain.execution import (
 from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import TaskStatus, WorkspaceType
 from fairy_core.runtime.models import RuntimeExecutorError
-from tests.runtime_support import build_runtime_stack
+from tests.runtime_support import build_runtime_stack, build_scratch_runtime_stack
 
 
 def test_static_preview_start_replay_stop_and_visible_events(tmp_path: Path) -> None:
@@ -82,6 +82,44 @@ def test_static_preview_start_replay_stop_and_visible_events(tmp_path: Path) -> 
     assert stopped.status is PreviewStatus.STOPPED
     assert stop_replay.status is PreviewStatus.STOPPED
     assert len(stack.executor.stop_calls) == 1
+
+
+def test_scratch_chat_uses_versioned_workspace_and_auto_promotes_preview(
+    tmp_path: Path,
+) -> None:
+    stack = build_scratch_runtime_stack(tmp_path)
+    task = stack.task.task
+    assert task.project_id is None
+    assert task.workspace_id is not None
+    assert task.target_version_id is not None
+
+    context = stack.runtime.start_preview(
+        PreviewStartRequest(
+            task_id=task.id,
+            workspace_id=task.workspace_id,
+            version_id=task.target_version_id,
+            idempotency_key="scratch-runtime:preview",
+        )
+    )
+
+    assert context.preview.status is PreviewStatus.READY
+    assert stack.executor.start_calls[0].project_id is None
+    assert stack.executor.start_calls[0].workspace_id == task.workspace_id
+    with stack.factory() as unit_of_work:
+        workspace = unit_of_work.state.get_workspace(task.workspace_id)
+        version = unit_of_work.state.get_version(task.target_version_id)
+        conversation = unit_of_work.state.get_conversation(task.conversation_id)
+        index = unit_of_work.project_indexes.get(task.target_version_id)
+        events = unit_of_work.commands.events_after(
+            cursor=0,
+            allowed_visibilities={EventVisibility.USER},
+        )
+    assert workspace is not None and workspace.active_version_id == task.target_version_id
+    assert workspace.active_preview_id == context.preview.id
+    assert version is not None and version.visibility.value == "project_active"
+    assert conversation is not None and conversation.base_version_id == task.target_version_id
+    assert index is not None and any(item.path == "index.html" for item in index.files)
+    assert "workspace.version.auto_promoted" in {event.event_type for event in events}
 
 
 def test_preview_start_uses_persisted_execution_policy(tmp_path: Path) -> None:

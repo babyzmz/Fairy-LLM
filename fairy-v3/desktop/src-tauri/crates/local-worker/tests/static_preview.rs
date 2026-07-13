@@ -47,7 +47,7 @@ fn start(manager: &StaticPreviewManager) -> fairy_local_worker::preview::StaticP
     manager
         .start_static(StaticPreviewRequest {
             preview_id: "preview-1".to_owned(),
-            project_id: "project-1".to_owned(),
+            workspace_id: "project-1".to_owned(),
             version_id: "version-1".to_owned(),
             entry_path: "index.html".to_owned(),
         })
@@ -184,7 +184,7 @@ fn static_preview_rejects_a_version_root_reparse_escape() {
     let error = manager
         .start_static(StaticPreviewRequest {
             preview_id: "preview-1".to_owned(),
-            project_id: "project-1".to_owned(),
+            workspace_id: "project-1".to_owned(),
             version_id: "version-1".to_owned(),
             entry_path: "index.html".to_owned(),
         })
@@ -209,7 +209,7 @@ fn static_preview_lifecycle_is_idempotent_and_drop_stops_the_listener() {
         let conflict = manager
             .start_static(StaticPreviewRequest {
                 preview_id: "preview-1".to_owned(),
-                project_id: "project-1".to_owned(),
+                workspace_id: "project-1".to_owned(),
                 version_id: "another-version".to_owned(),
                 entry_path: "index.html".to_owned(),
             })
@@ -226,7 +226,7 @@ fn static_preview_lifecycle_is_idempotent_and_drop_stops_the_listener() {
         let second = manager
             .start_static(StaticPreviewRequest {
                 preview_id: "preview-2".to_owned(),
-                project_id: "project-1".to_owned(),
+                workspace_id: "project-1".to_owned(),
                 version_id: "version-1".to_owned(),
                 entry_path: "index.html".to_owned(),
             })

@@ -96,7 +96,8 @@ class OciDynamicRuntimeSupervisor:
         )
         _validate_identity(values, "start")
         expected = {
-            "project_id": str(request.project_id),
+            "project_id": str(request.project_id) if request.project_id is not None else None,
+            "workspace_id": str(request.workspace_id),
             "conversation_id": str(request.conversation_id),
             "task_id": str(request.task_id),
             "version_id": str(request.version_id),
@@ -212,7 +213,8 @@ class OciDynamicRuntimeSupervisor:
 def _encode_start(request: DynamicRuntimeStart) -> bytes:
     header = {
         "schema_version": 2,
-        "project_id": str(request.project_id),
+        "project_id": str(request.project_id) if request.project_id is not None else None,
+        "workspace_id": str(request.workspace_id),
         "conversation_id": str(request.conversation_id),
         "task_id": str(request.task_id),
         "version_id": str(request.version_id),

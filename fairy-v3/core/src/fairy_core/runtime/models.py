@@ -50,15 +50,20 @@ class RuntimeExecutorHealth:
 
 @dataclass(frozen=True, slots=True)
 class StaticRuntimeStart:
-    project_id: UUID
+    project_id: UUID | None
     version_id: UUID
     preview_id: UUID
     project_root: Path
     entry_path: str = "index.html"
+    workspace_id: UUID | None = None
 
     def __post_init__(self) -> None:
         if self.entry_path != "index.html":
             raise ValueError("static Preview entry_path must be index.html")
+        workspace_id = self.workspace_id or self.project_id
+        if workspace_id is None:
+            raise ValueError("static Preview workspace_id is required")
+        object.__setattr__(self, "workspace_id", workspace_id)
         object.__setattr__(self, "project_root", Path(self.project_root).resolve(strict=False))
 
 
@@ -107,7 +112,7 @@ class RuntimeServiceStart:
 
 @dataclass(frozen=True, slots=True)
 class DynamicRuntimeStart:
-    project_id: UUID
+    project_id: UUID | None
     conversation_id: UUID
     task_id: UUID
     version_id: UUID
@@ -129,10 +134,15 @@ class DynamicRuntimeStart:
     archive_sha256: str
     services: tuple[RuntimeServiceStart, ...] = ()
     public_service_id: str = "app"
+    workspace_id: UUID | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "project_root", Path(self.project_root).resolve(strict=False))
         object.__setattr__(self, "argv", tuple(self.argv))
+        workspace_id = self.workspace_id or self.project_id
+        if workspace_id is None:
+            raise ValueError("dynamic Runtime workspace_id is required")
+        object.__setattr__(self, "workspace_id", workspace_id)
         services = tuple(self.services) or (
             RuntimeServiceStart(
                 service_id=self.public_service_id,

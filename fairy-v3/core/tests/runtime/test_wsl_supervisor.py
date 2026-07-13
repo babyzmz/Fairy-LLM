@@ -93,6 +93,7 @@ def test_wsl_dynamic_start_uses_fixed_exec_and_binds_attested_response(tmp_path:
     header, archive = _decode_frame(call["input"])
     assert archive == request.workspace_archive
     assert header["scope_digest"] == request.scope_digest
+    assert header["workspace_id"] == str(request.workspace_id)
     assert header["workspace_generation"] == request.workspace_generation
     assert header["lease_fence"] == request.lease_fence
     assert header["argv"] == list(request.argv)
@@ -100,6 +101,19 @@ def test_wsl_dynamic_start_uses_fixed_exec_and_binds_attested_response(tmp_path:
     assert "host" not in header
     assert "port" not in header
     assert "url" not in header
+
+
+def test_wsl_dynamic_start_accepts_projectless_workspace_scope(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    request = replace(_request(tmp_path), project_id=None, workspace_id=uuid4())
+    runner.responses.append(_response(_start_payload(request)))
+    executor = _executor(tmp_path, runner)
+
+    executor.start_dynamic(request)
+
+    header, _archive = _decode_frame(runner.calls[0]["input"])
+    assert header["project_id"] is None
+    assert header["workspace_id"] == str(request.workspace_id)
 
 
 def test_wsl_dynamic_probe_and_stop_use_only_bound_handle(tmp_path: Path) -> None:
@@ -291,7 +305,8 @@ def _start_payload(request: DynamicRuntimeStart) -> dict[str, object]:
         "executor": "wsl_fairy_runtime",
         "executor_version": "1.0.0",
         "action": "start",
-        "project_id": str(request.project_id),
+        "project_id": str(request.project_id) if request.project_id is not None else None,
+        "workspace_id": str(request.workspace_id),
         "conversation_id": str(request.conversation_id),
         "task_id": str(request.task_id),
         "version_id": str(request.version_id),

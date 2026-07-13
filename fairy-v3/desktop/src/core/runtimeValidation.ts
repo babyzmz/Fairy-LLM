@@ -90,7 +90,6 @@ const runtimeSchema = z
     if (
       value.kind === "static_site" &&
       (value.execution_target !== "local" ||
-        value.project_id === null ||
         value.version_id === null)
     ) {
       context.addIssue({ code: "custom", message: "Static Runtime scope is inconsistent" });

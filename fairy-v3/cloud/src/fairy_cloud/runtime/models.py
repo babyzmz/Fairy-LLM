@@ -46,7 +46,8 @@ class CloudRuntimeLease:
     tenant_id: str
     runtime_id: UUID
     preview_id: UUID
-    project_id: UUID
+    project_id: UUID | None
+    workspace_id: UUID
     conversation_id: UUID
     task_id: UUID
     version_id: UUID
@@ -146,6 +147,7 @@ class CloudRuntimeLease:
             runtime_id=request.runtime_id,
             preview_id=request.preview_id,
             project_id=request.project_id,
+            workspace_id=request.workspace_id,
             conversation_id=request.conversation_id,
             task_id=request.task_id,
             version_id=request.version_id,
@@ -183,6 +185,7 @@ class CloudRuntimeLease:
             self.runtime_id == request.runtime_id
             and self.preview_id == request.preview_id
             and self.project_id == request.project_id
+            and self.workspace_id == request.workspace_id
             and self.conversation_id == request.conversation_id
             and self.task_id == request.task_id
             and self.version_id == request.version_id
@@ -195,6 +198,7 @@ class CloudRuntimeLease:
     def to_request(self) -> DynamicRuntimeStart:
         return DynamicRuntimeStart(
             project_id=self.project_id,
+            workspace_id=self.workspace_id,
             conversation_id=self.conversation_id,
             task_id=self.task_id,
             version_id=self.version_id,
@@ -253,7 +257,8 @@ class CloudRuntimeReviewBinding:
 
 def cloud_runtime_fingerprint(request: DynamicRuntimeStart) -> str:
     values = {
-        "project_id": str(request.project_id),
+        "project_id": str(request.project_id) if request.project_id is not None else None,
+        "workspace_id": str(request.workspace_id),
         "conversation_id": str(request.conversation_id),
         "task_id": str(request.task_id),
         "version_id": str(request.version_id),

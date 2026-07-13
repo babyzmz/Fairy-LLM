@@ -419,9 +419,9 @@ class RuntimeSession:
                 ),
             )
         if self.kind is RuntimeKind.STATIC_SITE and (
-            self.execution_target != "local" or self.project_id is None or self.version_id is None
+            self.execution_target != "local" or self.version_id is None
         ):
-            raise ValueError("static_site requires a local Project Version")
+            raise ValueError("static_site requires a local Workspace Version")
         if self.revision < 0:
             raise ValueError("revision cannot be negative")
         _validate_timestamps(self.created_at, self.updated_at)

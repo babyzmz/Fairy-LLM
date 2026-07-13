@@ -79,7 +79,7 @@ _START_KEYS = frozenset(
         "archive_sha256",
     }
 )
-_START_KEYS_V2 = _START_KEYS | {"services", "public_service_id"}
+_START_KEYS_V2 = _START_KEYS | {"workspace_id", "services", "public_service_id"}
 
 
 class RuntimeProtocolError(ValueError):
@@ -88,7 +88,8 @@ class RuntimeProtocolError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class RuntimeRequest:
-    project_id: UUID
+    project_id: UUID | None
+    workspace_id: UUID
     conversation_id: UUID
     task_id: UUID
     version_id: UUID
@@ -115,7 +116,8 @@ class RuntimeRequest:
     def fingerprint(self) -> str:
         values = {
             "runtime_policy": "loopback-seccomp-v1",
-            "project_id": str(self.project_id),
+            "project_id": str(self.project_id) if self.project_id is not None else None,
+            "workspace_id": str(self.workspace_id),
             "conversation_id": str(self.conversation_id),
             "task_id": str(self.task_id),
             "version_id": str(self.version_id),
@@ -344,7 +346,9 @@ def parse_start_frame(frame: bytes) -> tuple[RuntimeRequest, bytes]:
         if not isinstance(public_service_id, str):
             raise RuntimeProtocolError("Runtime public service is invalid")
         services = _services(header.get("services"), public_service_id)
-        public = next(service for service in services if service.service_id == public_service_id)
+        public = next(
+            service for service in services if service.service_id == public_service_id
+        )
         if (
             public.adapter != adapter
             or public.argv != argv
@@ -356,7 +360,16 @@ def parse_start_frame(frame: bytes) -> tuple[RuntimeRequest, bytes]:
             raise RuntimeProtocolError("Runtime public service metadata changed")
     return (
         RuntimeRequest(
-            project_id=_uuid(header, "project_id"),
+            project_id=(
+                _uuid(header, "project_id")
+                if schema_version == 1
+                else _optional_uuid(header, "project_id")
+            ),
+            workspace_id=(
+                _uuid(header, "project_id")
+                if schema_version == 1
+                else _uuid(header, "workspace_id")
+            ),
             conversation_id=_uuid(header, "conversation_id"),
             task_id=_uuid(header, "task_id"),
             version_id=_uuid(header, "version_id"),
@@ -435,7 +448,9 @@ def _start_runtime_locked(
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    ports = {service.service_id: controller.allocate_port() for service in request.services}
+    ports = {
+        service.service_id: controller.allocate_port() for service in request.services
+    }
     if len(set(ports.values())) != len(ports):
         raise RuntimeProtocolError("Runtime service port lease collided")
     service_urls = {
@@ -486,7 +501,10 @@ def _start_runtime_locked(
     public_identity = identities[request.public_service_id]
     state = {
         "schema_version": 1,
-        "project_id": str(request.project_id),
+        "project_id": str(request.project_id)
+        if request.project_id is not None
+        else None,
+        "workspace_id": str(request.workspace_id),
         "conversation_id": str(request.conversation_id),
         "task_id": str(request.task_id),
         "version_id": str(request.version_id),
@@ -597,7 +615,9 @@ def build_isolation_command(
     port: int,
 ) -> tuple[str, ...]:
     service = next(
-        item for item in request.services if item.service_id == request.public_service_id
+        item
+        for item in request.services
+        if item.service_id == request.public_service_id
     )
     return build_service_isolation_command(
         service,
@@ -808,11 +828,7 @@ def _validate_adapter_argv(adapter: str, argv: tuple[str, ...]) -> None:
             raise RuntimeProtocolError("Runtime argv does not match its adapter")
         return
     if adapter == "node_http":
-        if (
-            len(argv) != 2
-            or argv[0] != "node"
-            or not _valid_entry_path(argv[1])
-        ):
+        if len(argv) != 2 or argv[0] != "node" or not _valid_entry_path(argv[1]):
             raise RuntimeProtocolError("Runtime argv does not match node_http")
         return
     if (
@@ -831,7 +847,9 @@ def _validate_adapter_argv(adapter: str, argv: tuple[str, ...]) -> None:
         raise RuntimeProtocolError("Runtime argv does not match python_asgi")
 
 
-def _services(value: object, public_service_id: str) -> tuple[RuntimeServiceRequest, ...]:
+def _services(
+    value: object, public_service_id: str
+) -> tuple[RuntimeServiceRequest, ...]:
     if not isinstance(value, list) or not 1 <= len(value) <= 8:
         raise RuntimeProtocolError("Runtime services are invalid")
     services = tuple(_service(item) for item in value)
@@ -985,9 +1003,7 @@ def _dependency_layer(root: Path, key: str, adapter: str) -> Path:
     ):
         raise RuntimeProtocolError("Runtime dependency layer binding does not match")
     expected = (
-        "node_modules"
-        if adapter in {"vite", "next", "astro", "node_http"}
-        else ".venv"
+        "node_modules" if adapter in {"vite", "next", "astro", "node_http"} else ".venv"
     )
     content = layer / expected
     if content.is_symlink() or not content.is_dir():
@@ -1048,8 +1064,10 @@ def _state_services(state: dict[str, object]) -> tuple[dict[str, object], ...]:
     value = state.get("services")
     if value is None:
         return (state,)
-    if not isinstance(value, list) or not value or any(
-        not isinstance(item, dict) for item in value
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(not isinstance(item, dict) for item in value)
     ):
         raise RuntimeProtocolError("Runtime service state is invalid")
     return tuple(value)
@@ -1146,6 +1164,7 @@ def _response(
     if action == "start":
         for key in (
             "project_id",
+            "workspace_id",
             "conversation_id",
             "task_id",
             "version_id",
@@ -1195,6 +1214,12 @@ def _uuid(values: dict[str, object], key: str) -> UUID:
     if str(parsed) != value:
         raise RuntimeProtocolError(f"{key} must be a canonical UUID")
     return parsed
+
+
+def _optional_uuid(values: dict[str, object], key: str) -> UUID | None:
+    if values.get(key) is None:
+        return None
+    return _uuid(values, key)
 
 
 def _digest(values: dict[str, object], key: str) -> str:

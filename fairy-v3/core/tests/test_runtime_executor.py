@@ -88,7 +88,7 @@ def test_rust_runtime_executor_maps_only_fixed_worker_methods(tmp_path: Path) ->
             "preview.start_static",
             {
                 "preview_id": str(request.preview_id),
-                "project_id": str(request.project_id),
+                "workspace_id": str(request.workspace_id),
                 "version_id": str(request.version_id),
                 "entry_path": "index.html",
             },

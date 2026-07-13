@@ -106,12 +106,14 @@ Invoke-Step "Boundaries: check_boundaries.py" $Root $Uv @(
 Invoke-Step "Sandbox runner: ruff format --check" $Root $Uv @(
     "run", "--project", "core", "ruff", "format", "--check",
     "--no-cache",
-    "sandbox/runner", "sandbox/tests", "scripts/verify_wsl_sandbox.py"
+    "sandbox/runner", "sandbox/tests", "scripts/verify_wsl_sandbox.py",
+    "scripts/verify_wsl_scratch_runtime.py"
 )
 Invoke-Step "Sandbox runner: ruff check" $Root $Uv @(
     "run", "--project", "core", "ruff", "check",
     "--no-cache",
-    "sandbox/runner", "sandbox/tests", "scripts/verify_wsl_sandbox.py"
+    "sandbox/runner", "sandbox/tests", "scripts/verify_wsl_sandbox.py",
+    "scripts/verify_wsl_scratch_runtime.py"
 )
 Invoke-Step "Sandbox runner: pytest" $Root $Uv @(
     "run", "--project", "core", "python", "-m", "pytest",
@@ -191,6 +193,9 @@ raise SystemExit(0 if health.available else 1)
     )
     Invoke-Step "WSL: structured Sandbox execution" $Root $Uv @(
         "run", "--project", "core", "python", "scripts/verify_wsl_sandbox.py"
+    )
+    Invoke-Step "WSL: projectless chat Workspace Runtime" $Root $Uv @(
+        "run", "--project", "core", "python", "scripts/verify_wsl_scratch_runtime.py"
     )
     Invoke-Step "WSL-required Runtime: static Preview start/status/stop" $RustRoot "cargo" @(
         "test", "-p", "fairy-local-worker", "--test", "preview_recovery"

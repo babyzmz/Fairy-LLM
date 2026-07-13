@@ -360,7 +360,8 @@ class WslDynamicRuntimeExecutor:
     ) -> None:
         _validate_common_response(values, action="start")
         expected: dict[str, object] = {
-            "project_id": str(request.project_id),
+            "project_id": str(request.project_id) if request.project_id is not None else None,
+            "workspace_id": str(request.workspace_id),
             "conversation_id": str(request.conversation_id),
             "task_id": str(request.task_id),
             "version_id": str(request.version_id),
@@ -445,7 +446,8 @@ class RoutedRuntimeExecutor:
 def _encode_start_frame(request: DynamicRuntimeStart) -> bytes:
     header = {
         "schema_version": 2,
-        "project_id": str(request.project_id),
+        "project_id": str(request.project_id) if request.project_id is not None else None,
+        "workspace_id": str(request.workspace_id),
         "conversation_id": str(request.conversation_id),
         "task_id": str(request.task_id),
         "version_id": str(request.version_id),

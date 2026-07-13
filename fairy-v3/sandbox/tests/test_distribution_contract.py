@@ -79,5 +79,6 @@ def test_release_gate_runs_runner_tests_and_requires_real_execution_with_wsl() -
     assert "verify_wsl_sandbox.py" in source
     required_gate = source[source.index("if ($RequireWslSandbox)") :]
     assert "verify_wsl_sandbox.py" in required_gate
+    assert "verify_wsl_scratch_runtime.py" in required_gate
     assert "json.dumps(dict(" in required_gate
     assert "available=health.available" in required_gate

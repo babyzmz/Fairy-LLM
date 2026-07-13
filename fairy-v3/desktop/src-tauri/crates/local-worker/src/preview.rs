@@ -23,7 +23,7 @@ const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StaticPreviewRequest {
     pub preview_id: String,
-    pub project_id: String,
+    pub workspace_id: String,
     pub version_id: String,
     pub entry_path: String,
 }
@@ -46,7 +46,7 @@ pub struct StaticPreviewInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PreviewBinding {
-    project_id: String,
+    workspace_id: String,
     version_id: String,
     entry_path: String,
 }
@@ -101,13 +101,13 @@ impl StaticPreviewManager {
         request: StaticPreviewRequest,
     ) -> Result<StaticPreviewInfo, WorkerError> {
         validate_identifier(&request.preview_id)?;
-        validate_identifier(&request.project_id)?;
+        validate_identifier(&request.workspace_id)?;
         validate_identifier(&request.version_id)?;
         if request.entry_path != "index.html" {
             return Err(WorkerError::PathOutOfScope(request.entry_path));
         }
         let binding = PreviewBinding {
-            project_id: request.project_id.clone(),
+            workspace_id: request.workspace_id.clone(),
             version_id: request.version_id.clone(),
             entry_path: request.entry_path.clone(),
         };
@@ -127,7 +127,7 @@ impl StaticPreviewManager {
 
         let root = resolve_version_root(
             &self.registry.managed_root,
-            &request.project_id,
+            &request.workspace_id,
             &request.version_id,
         )?;
         let entry = Path::new(&request.entry_path);
@@ -372,12 +372,12 @@ fn validate_percent_encoding(value: &str) -> Result<(), WorkerError> {
 
 fn resolve_version_root(
     managed_root: &Path,
-    project_id: &str,
+    workspace_id: &str,
     version_id: &str,
 ) -> Result<PathBuf, WorkerError> {
     let managed_root = managed_root.canonicalize()?;
     let projects_root = managed_root.join("projects");
-    let project_root = projects_root.join(project_id);
+    let project_root = projects_root.join(workspace_id);
     let versions_root = project_root.join("versions");
     let requested_root = versions_root.join(version_id);
     for directory in [

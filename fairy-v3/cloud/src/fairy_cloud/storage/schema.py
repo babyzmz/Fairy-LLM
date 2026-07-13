@@ -270,7 +270,8 @@ runtime_leases = Table(
     Column("tenant_id", String(TENANT_ID_LENGTH), primary_key=True),
     Column("runtime_id", String(36), primary_key=True),
     Column("preview_id", String(36), nullable=False),
-    Column("project_id", String(36), nullable=False),
+    Column("project_id", String(36)),
+    Column("workspace_id", String(36), nullable=False),
     Column("conversation_id", String(36), nullable=False),
     Column("task_id", String(36), nullable=False),
     Column("version_id", String(36), nullable=False),
@@ -324,7 +325,7 @@ runtime_leases = Table(
         name="ck_runtime_leases_archive_size",
     ),
     CheckConstraint(
-        "adapter IN ('vite','next','astro','python_asgi') AND cwd = '.' AND "
+        "adapter IN ('vite','next','astro','python_asgi','node_http') AND "
         "startup_timeout_seconds BETWEEN 1 AND 120",
         name="ck_runtime_leases_template",
     ),

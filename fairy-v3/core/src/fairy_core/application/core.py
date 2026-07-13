@@ -379,25 +379,24 @@ class CoreApplication(CoreSupportMixin):
         running = prepared.running
 
         try:
-            if target_version is not None:
-                assert task.workspace_id is not None and task.base_version_id is not None
+            assert target_version is not None and task.workspace_id is not None
+            if task.base_version_id is None:
+                root = self._workspaces.create_initial_version(
+                    task.workspace_id,
+                    target_version.id,
+                )
+            else:
                 root = self._workspaces.fork_version(
                     project_id=task.workspace_id,
                     version_id=target_version.id,
                     parent_version_id=task.base_version_id,
                 )
-            else:
-                root = self._workspaces.create_scratch(conversation.id, task.id)
-            project_index = (
-                self._project_indexer.build(
-                    project_id=task.project_id,
-                    workspace_id=task.workspace_id,
-                    version_id=target_version.id,
-                    root=root,
-                    generation=1,
-                )
-                if target_version is not None
-                else None
+            project_index = self._project_indexer.build(
+                project_id=task.project_id,
+                workspace_id=task.workspace_id,
+                version_id=target_version.id,
+                root=root,
+                generation=1,
             )
         except Exception as error:
             with self._transaction() as (unit_of_work, commands):
@@ -488,45 +487,46 @@ class CoreApplication(CoreSupportMixin):
                     base_version_id=base_version_id,
                     execution_target=request.execution_target.value,
                 )
+                if conversation.workspace_id is None:
+                    raise ValueError("conversation has no Workspace")
                 target_version: Version | None = None
+                parent: Version | None = None
                 if base_version_id is not None:
-                    if conversation.workspace_id is None:
-                        raise ValueError("conversation has no Workspace")
                     parent = self._require_version(unit_of_work.state, base_version_id)
-                    version_id = new_id()
-                    root_hint = self._workspaces.version_path(
-                        conversation.workspace_id,
-                        version_id,
-                    )
-                    target_version = Version.create(
-                        version_id=version_id,
-                        project_id=conversation.project_id,
-                        workspace_id=conversation.workspace_id,
-                        source_conversation_id=conversation.id,
-                        source_task_id=task.id,
-                        parent_version_id=parent.id,
-                        project_root=root_hint,
-                        visibility=VersionVisibility.CHAT_DRAFT,
-                    )
-                    task.bind_target_version(target_version.id)
-                    conversation.active_draft_version_id = target_version.id
+                version_id = new_id()
+                root_hint = self._workspaces.version_path(
+                    conversation.workspace_id,
+                    version_id,
+                )
+                target_version = Version.create(
+                    version_id=version_id,
+                    project_id=conversation.project_id,
+                    workspace_id=conversation.workspace_id,
+                    source_conversation_id=conversation.id,
+                    source_task_id=task.id,
+                    parent_version_id=parent.id if parent is not None else None,
+                    project_root=root_hint,
+                    visibility=VersionVisibility.CHAT_DRAFT,
+                )
+                task.bind_target_version(target_version.id)
+                conversation.active_draft_version_id = target_version.id
 
                 task.transition_to(TaskStatus.RESOLVING_SCOPE)
                 conversation.active_task_id = task.id
-                if target_version is not None:
-                    unit_of_work.state.save_version(target_version)
+                unit_of_work.state.save_version(target_version)
+                if parent is not None:
                     tool_name = "workspace.fork"
                     payload: dict[str, object] = {
                         "project_id": str(task.workspace_id),
                         "workspace_id": str(task.workspace_id),
-                        "parent_version_id": str(task.base_version_id),
+                        "parent_version_id": str(parent.id),
                         "version_id": str(target_version.id),
                     }
                 else:
-                    tool_name = "workspace.create_scratch"
+                    tool_name = "workspace.create_empty"
                     payload = {
-                        "conversation_id": str(conversation.id),
-                        "task_id": str(task.id),
+                        "workspace_id": str(task.workspace_id),
+                        "version_id": str(target_version.id),
                     }
                 unit_of_work.state.save_task(
                     task,

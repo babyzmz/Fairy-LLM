@@ -256,3 +256,59 @@ def build_runtime_stack(tmp_path: Path) -> RuntimeStack:
         task=task,
         project_revision=project.project.revision,
     )
+
+
+def build_scratch_runtime_stack(tmp_path: Path) -> RuntimeStack:
+    engine = create_sqlite_core_engine(tmp_path / "scratch-core.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
+    registry = build_default_registry()
+    workspace = FakeWorkspace(tmp_path / "managed")
+    core = CoreApplication(
+        unit_of_work_factory=factory,
+        workspace_provisioner=workspace,
+        registry=registry,
+        policy=PolicyEngine(registry),
+    )
+    executor = FakeRuntimeExecutor()
+    runtime = RuntimeApplication(
+        unit_of_work_factory=factory,
+        executor=executor,
+        registry=registry,
+        policy=PolicyEngine(registry),
+        scope_resolver=core.scope_for_task,
+    )
+    conversation = core.create_conversation(
+        project_id=None,
+        workspace_type=WorkspaceType.CHAT_SCRATCH,
+    )
+    task = core.create_task(
+        TaskCreate(
+            conversation_id=conversation.id,
+            user_request="Build a scratch preview",
+            operation_mode=OperationMode.ANSWER,
+            execution_target=ExecutionTarget.LOCAL,
+            idempotency_key="scratch-runtime:task",
+        )
+    )
+    pending = core.propose_changeset(
+        ChangesetProposal(
+            task_id=task.task.id,
+            files=(FileMutation(path="index.html", content="<h1>Scratch Preview</h1>"),),
+            reason="Create the scratch entry",
+            idempotency_key="scratch-runtime:changeset",
+        )
+    )
+    core.decide_approval(
+        approval_id=pending.approval.id,
+        approved=True,
+        decided_by="user",
+    )
+    return RuntimeStack(
+        core=core,
+        runtime=runtime,
+        factory=factory,
+        engine=engine,
+        executor=executor,
+        task=task,
+        project_revision=0,
+    )

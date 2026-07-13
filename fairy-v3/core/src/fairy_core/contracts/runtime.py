@@ -79,9 +79,9 @@ class RuntimeModel(ContractModel):
         ):
             raise ValueError("active Runtime requires executor handle and port")
         if self.kind is RuntimeKind.STATIC_SITE and (
-            self.execution_target is not ExecutionTarget.LOCAL or self.project_id is None
+            self.execution_target is not ExecutionTarget.LOCAL
         ):
-            raise ValueError("static Runtime requires a local Project Version")
+            raise ValueError("static Runtime requires a local Workspace Version")
         return self
 
 
