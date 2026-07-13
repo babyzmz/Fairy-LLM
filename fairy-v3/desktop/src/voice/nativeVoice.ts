@@ -2,6 +2,7 @@ import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 
 import type { VoiceSession, VoiceSessionStartInput } from "../core/client";
 import type { DesktopPreferences } from "../settings/client";
+import { publishPresenceVoiceLevel } from "../presence/transport/voiceLevelEvents";
 import workletUrl from "./fairy-pcm-worklet.js?url&no-inline";
 
 export type NativeVoiceEvent =
@@ -20,8 +21,9 @@ export interface NativeVoicePlayback {
 }
 
 interface WorkletEvent {
-  type: "drained" | "overflow";
+  type: "drained" | "overflow" | "level";
   sessionId: string | null;
+  level?: number;
 }
 
 interface PendingPlayback {
@@ -181,11 +183,16 @@ class NativeVoiceHost {
       outputChannelCount: [1],
     });
     node.port.onmessage = (event: MessageEvent<WorkletEvent>) => {
+      if (event.data.type === "level") {
+        publishPresenceVoiceLevel(event.data.level ?? 0);
+        return;
+      }
       const sessionId = event.data.sessionId;
       if (sessionId === null) return;
       const playback = this.pending.get(sessionId);
       if (playback === undefined) return;
       if (event.data.type === "drained") {
+        publishPresenceVoiceLevel(0);
         playback.resolveFinished();
         this.pending.delete(sessionId);
       } else {

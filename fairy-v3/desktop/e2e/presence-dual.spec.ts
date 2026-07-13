@@ -76,6 +76,50 @@ test("input surface owns cards and controls without duplicating the renderer", a
   await context.close();
 });
 
+test("public work and speaking states drive the render surface", async ({
+  browser,
+}, testInfo) => {
+  const context = await browser.newContext({ viewport: { width: 640, height: 260 } });
+  const page = await context.newPage();
+  await page.goto("/?surface=pet-render");
+  const surface = page.getByTestId("presence-render-surface");
+
+  await publishProjection(page, {
+    activity: "working",
+    work_state: "tool",
+    status_text: "Working in the project",
+    last_cursor: 20,
+    last_event_id: "event-20",
+    updated_at_ms: Date.now(),
+    recent_activity_ms: [Date.now()],
+    notice: null,
+    reply: null,
+    speaking: false,
+  });
+  await expect(surface).toHaveAttribute("data-work-state", "tool");
+  await expect(surface).toHaveAttribute("data-speaking", "false");
+
+  await publishProjection(page, {
+    activity: "working",
+    work_state: "streaming",
+    status_text: "Writing the reply",
+    last_cursor: 21,
+    last_event_id: "event-21",
+    updated_at_ms: Date.now(),
+    recent_activity_ms: [Date.now()],
+    notice: null,
+    reply: null,
+    speaking: true,
+  });
+  await expect(surface).toHaveAttribute("data-work-state", "streaming");
+  await expect(surface).toHaveAttribute("data-speaking", "true");
+  await page.screenshot({
+    path: testInfo.outputPath("pet-render-speaking.png"),
+    omitBackground: true,
+  });
+  await context.close();
+});
+
 for (const expansionDirection of ["right", "left"] as const) {
   test(`Liquid Glass material forms a continuous ${expansionDirection} capsule`, async ({
     browser,
@@ -88,7 +132,7 @@ for (const expansionDirection of ["right", "left"] as const) {
       "running",
     );
     const anchorX = expansionDirection === "right" ? 96 : 544;
-    await publishInteraction(page, interactionSnapshot(expansionDirection, anchorX));
+    await advanceInteraction(page, expansionDirection, anchorX);
     await expect(page.getByTestId("presence-render-surface")).toHaveAttribute(
       "data-interaction-phase",
       "interactive",
@@ -101,7 +145,7 @@ for (const expansionDirection of ["right", "left"] as const) {
     const pixels = PNG.sync.read(screenshot);
     const direction = expansionDirection === "right" ? 1 : -1;
     const glassCenter = alphaAt(pixels, anchorX + direction * 42, 130);
-    const glassEdge = alphaAt(pixels, anchorX, 200);
+    const glassEdge = maximumAlpha(pixels, anchorX, 196, 202);
     expect(glassCenter).toBeGreaterThanOrEqual(15);
     expect(glassCenter).toBeLessThanOrEqual(31);
     expect(glassEdge).toBeGreaterThanOrEqual(54);
@@ -178,13 +222,16 @@ async function publishInteraction(
 function interactionSnapshot(
   expansion_direction: "left" | "right",
   anchorX: number,
+  phase: PresenceInteractionSnapshot["phase"] = "interactive",
+  sampledAt = 520,
+  sequence = 25,
 ): PresenceInteractionSnapshot {
   return {
     schema_version: 1,
-    sequence: 25,
-    sampled_at_ms: 520,
-    phase: "interactive",
-    phase_started_at_ms: 520,
+    sequence,
+    sampled_at_ms: sampledAt,
+    phase,
+    phase_started_at_ms: sampledAt,
     reduced_motion: false,
     cursor: {
       point: { x: anchorX + (expansion_direction === "right" ? 40 : -40), y: 130 },
@@ -216,6 +263,31 @@ function interactionSnapshot(
   };
 }
 
+async function advanceInteraction(
+  page: Page,
+  direction: "left" | "right",
+  anchorX: number,
+) {
+  const stages: ReadonlyArray<{
+    phase: PresenceInteractionSnapshot["phase"];
+    sampledAt: number;
+    waitAfter: number;
+  }> = [
+    { phase: "aware", sampledAt: 0, waitAfter: 100 },
+    { phase: "droplet", sampledAt: 100, waitAfter: 80 },
+    { phase: "stretching", sampledAt: 180, waitAfter: 120 },
+    { phase: "input_reveal", sampledAt: 300, waitAfter: 220 },
+    { phase: "interactive", sampledAt: 520, waitAfter: 0 },
+  ];
+  for (const [index, stage] of stages.entries()) {
+    await publishInteraction(
+      page,
+      interactionSnapshot(direction, anchorX, stage.phase, stage.sampledAt, index + 1),
+    );
+    if (stage.waitAfter > 0) await page.waitForTimeout(stage.waitAfter);
+  }
+}
+
 function visiblePngPixels(image: PNG): number {
   let visible = 0;
   for (let index = 3; index < image.data.length; index += 4) {
@@ -226,6 +298,19 @@ function visiblePngPixels(image: PNG): number {
 
 function alphaAt(image: PNG, x: number, y: number): number {
   return image.data[(y * image.width + x) * 4 + 3] ?? 0;
+}
+
+function maximumAlpha(
+  image: PNG,
+  x: number,
+  startY: number,
+  endY: number,
+): number {
+  let maximum = 0;
+  for (let y = startY; y <= endY; y += 1) {
+    maximum = Math.max(maximum, alphaAt(image, x, y));
+  }
+  return maximum;
 }
 
 async function overflow(page: Page) {

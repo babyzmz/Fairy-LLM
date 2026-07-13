@@ -7,6 +7,7 @@ export interface PresenceRenderSnapshot {
   interaction: PresenceInteractionSnapshot | null;
   work_state: PresenceWorkState;
   speaking: boolean;
+  voice_level: number;
   sleeping: boolean;
   reduced_motion: boolean;
 }
@@ -46,13 +47,13 @@ export function visualStateForSnapshot(
   snapshot: PresenceRenderSnapshot,
 ): FairyVisualState {
   if (snapshot.speaking) return "speaking";
+  if (snapshot.work_state !== "idle") return snapshot.work_state;
   if (
     snapshot.interaction?.phase === "input_reveal" ||
     snapshot.interaction?.phase === "interactive"
   ) {
     return "listening";
   }
-  if (snapshot.work_state !== "idle") return snapshot.work_state;
   if (
     snapshot.interaction !== null &&
     snapshot.interaction.cursor.band !== "outside"

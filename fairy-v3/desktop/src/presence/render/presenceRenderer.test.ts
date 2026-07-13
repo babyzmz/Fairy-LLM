@@ -13,6 +13,7 @@ function snapshot(
     interaction: null,
     work_state: "idle",
     speaking: false,
+    voice_level: 0,
     sleeping: false,
     reduced_motion: false,
     ...overrides,

@@ -12,6 +12,8 @@ import {
   liquidDirectionForSnapshot,
   liquidShapeTargetForPhase,
 } from "./liquidGlassMaterial";
+import { LiquidMotionController } from "./liquidMotion";
+import { liquidVisualStyleForSnapshot } from "./liquidVisualState";
 
 export class ThreeLiquidRenderer implements PresenceRenderer {
   private readonly renderer: THREE.WebGLRenderer;
@@ -19,6 +21,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
   private readonly scene: THREE.Scene;
   private readonly geometry: THREE.PlaneGeometry;
   private readonly material: THREE.ShaderMaterial;
+  private readonly motion: LiquidMotionController;
   private snapshot: PresenceRenderSnapshot;
   private readonly loop: RendererFrameLoop;
   private disposed = false;
@@ -31,6 +34,10 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     initialSnapshot: PresenceRenderSnapshot,
   ) {
     this.snapshot = initialSnapshot;
+    this.motion = new LiquidMotionController(
+      liquidShapeTargetForPhase(initialSnapshot.interaction?.phase ?? null),
+      initialSnapshot.speaking ? initialSnapshot.voice_level : 0,
+    );
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       alpha: true,
@@ -57,9 +64,14 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
         uDirection: { value: new THREE.Vector2(1, 0) },
         uGaze: { value: new THREE.Vector2(0, 0) },
         uShape: { value: new THREE.Vector3(0, 0, 0) },
+        uAccent: { value: new THREE.Vector3(0.38, 0.75, 0.9) },
         uTime: { value: 0 },
         uEnergy: { value: 0.35 },
         uDpr: { value: 1 },
+        uParticleCount: { value: 10 },
+        uParticleSeed: { value: 23 },
+        uPulseSpeed: { value: 0.42 },
+        uSpeechLevel: { value: 0 },
       },
     });
     this.scene.add(new THREE.Mesh(this.geometry, this.material));
@@ -72,6 +84,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
 
   start(): void {
     if (this.disposed) return;
+    this.motion.resetClock();
     this.loop.start();
   }
 
@@ -81,6 +94,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
 
   suspend(): void {
     this.stop();
+    this.motion.resetClock();
   }
 
   resize(width: number, height: number, devicePixelRatio: number): void {
@@ -114,6 +128,13 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
   }
 
   private drawFrame(now: number) {
+    const motion = this.motion.sample(now);
+    this.material.uniforms.uShape.value.set(
+      motion.droplet,
+      motion.bridge,
+      motion.capsule,
+    );
+    this.material.uniforms.uSpeechLevel.value = motion.speech_level;
     this.material.uniforms.uTime.value = this.snapshot.reduced_motion ? 0 : now / 1_000;
     this.renderer.render(this.scene, this.camera);
     this.renderer.domElement.dataset.rendered = "true";
@@ -126,13 +147,17 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     const direction = liquidDirectionForSnapshot(this.snapshot);
     this.material.uniforms.uDirection.value.set(direction.x, -direction.y);
     const shape = liquidShapeTargetForPhase(interaction?.phase ?? null);
-    this.material.uniforms.uShape.value.set(
-      shape.droplet,
-      shape.bridge,
-      shape.capsule,
+    this.motion.setShapeTarget(shape, this.snapshot.reduced_motion);
+    this.motion.setSpeechTarget(
+      this.snapshot.speaking ? Math.max(0.2, this.snapshot.voice_level) : 0,
+      this.snapshot.reduced_motion,
     );
-    const phase = interaction?.phase ?? "idle";
-    this.material.uniforms.uEnergy.value = phase === "idle" ? 0.35 : 0.72;
+    const style = liquidVisualStyleForSnapshot(this.snapshot);
+    this.material.uniforms.uAccent.value.set(...style.accent);
+    this.material.uniforms.uEnergy.value = style.energy;
+    this.material.uniforms.uParticleCount.value = style.particle_count;
+    this.material.uniforms.uParticleSeed.value = style.particle_seed;
+    this.material.uniforms.uPulseSpeed.value = style.pulse_speed;
     if (interaction === null) {
       this.material.uniforms.uAnchor.value.set(96 * this.dpr, 130 * this.dpr);
       return;

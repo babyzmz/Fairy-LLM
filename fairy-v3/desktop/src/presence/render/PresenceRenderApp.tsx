@@ -14,6 +14,10 @@ import {
   createPresenceChannel,
   type PresenceChannel,
 } from "../transport/presenceChannel";
+import {
+  createPresenceVoiceLevelSource,
+  type PresenceVoiceLevelSource,
+} from "../transport/voiceLevelEvents";
 import { PresenceRendererCanvas } from "./PresenceRendererCanvas";
 import "../presence.css";
 import "./presence-render.css";
@@ -21,23 +25,29 @@ import "./presence-render.css";
 interface PresenceRenderAppProps {
   channel?: PresenceChannel;
   interactionSource?: PresenceInteractionSource;
+  voiceLevelSource?: PresenceVoiceLevelSource;
   now?: () => number;
 }
 
 export function PresenceRenderApp({
   channel: suppliedChannel,
   interactionSource: suppliedInteractionSource,
+  voiceLevelSource: suppliedVoiceLevelSource,
   now = Date.now,
 }: PresenceRenderAppProps) {
   const [channel] = useState(() => suppliedChannel ?? createPresenceChannel());
   const [interactionSource] = useState(
     () => suppliedInteractionSource ?? createPresenceInteractionSource(),
   );
+  const [voiceLevelSource] = useState(
+    () => suppliedVoiceLevelSource ?? createPresenceVoiceLevelSource(),
+  );
   const [projection, setProjection] = useState<PresenceProjectionState>(() =>
     PresenceProjection.initial(),
   );
   const [clock, setClock] = useState(() => now());
   const [interaction, setInteraction] = useState<PresenceInteractionSnapshot | null>(null);
+  const [voiceLevel, setVoiceLevel] = useState(0);
 
   useEffect(() => {
     const stop = channel.onProjection((next) => {
@@ -77,6 +87,11 @@ export function PresenceRenderApp({
     };
   }, [interactionSource]);
 
+  useEffect(
+    () => voiceLevelSource.subscribe((sample) => setVoiceLevel(sample.level)),
+    [voiceLevelSource],
+  );
+
   const view = derivePresenceView(projection, {
     now_ms: clock,
     quiet_mode: false,
@@ -94,6 +109,8 @@ export function PresenceRenderApp({
       data-expansion-direction={interaction?.placement.expansion_direction ?? "right"}
       data-interaction-phase={interaction?.phase ?? "idle"}
       data-reduced-motion={String(reducedMotion)}
+      data-speaking={String(projection.speaking)}
+      data-work-state={view.work_state}
       data-testid="presence-render-surface"
     >
       <PresenceRendererCanvas
@@ -102,6 +119,7 @@ export function PresenceRenderApp({
           reduced_motion: reducedMotion,
           sleeping: view.density === "quiet",
           speaking: projection.speaking,
+          voice_level: projection.speaking ? voiceLevel : 0,
           work_state: view.work_state,
         }}
       />

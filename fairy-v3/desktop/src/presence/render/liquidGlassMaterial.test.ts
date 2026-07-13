@@ -40,6 +40,7 @@ function renderSnapshot(
     } satisfies PresenceInteractionSnapshot,
     work_state: "idle",
     speaking: false,
+    voice_level: 0,
     sleeping: false,
     reduced_motion: false,
   };

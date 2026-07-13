@@ -13,6 +13,9 @@ class FairyPcmRingProcessor extends AudioWorkletProcessor {
     this.writtenTotal = 0;
     this.readTotal = 0;
     this.completions = [];
+    this.levelEnergy = 0;
+    this.levelFrames = 0;
+    this.lastLevel = 0;
     this.port.onmessage = (event) => this.handleMessage(event.data);
   }
 
@@ -49,6 +52,12 @@ class FairyPcmRingProcessor extends AudioWorkletProcessor {
     this.writtenTotal = 0;
     this.readTotal = 0;
     this.completions = [];
+    this.levelEnergy = 0;
+    this.levelFrames = 0;
+    if (this.lastLevel !== 0) {
+      this.lastLevel = 0;
+      this.port.postMessage({ type: "level", sessionId: this.sessionId, level: 0 });
+    }
   }
 
   append(buffer, sessionId) {
@@ -78,12 +87,24 @@ class FairyPcmRingProcessor extends AudioWorkletProcessor {
         ? this.ring[(this.readIndex + 1) % this.ring.length]
         : current;
       output[index] = (current + (next - current) * this.phase) * this.volume;
+      this.levelEnergy += output[index] * output[index];
+      this.levelFrames += 1;
       this.phase += step;
       const consumed = Math.min(Math.floor(this.phase), this.available);
       this.phase -= consumed;
       this.readIndex = (this.readIndex + consumed) % this.ring.length;
       this.available -= consumed;
       this.readTotal += consumed;
+    }
+    if (this.levelFrames >= 1_024) {
+      const rms = Math.sqrt(this.levelEnergy / this.levelFrames);
+      const level = Math.min(1, rms * 3.5);
+      if (Math.abs(level - this.lastLevel) >= 0.01 || (level === 0) !== (this.lastLevel === 0)) {
+        this.lastLevel = level;
+        this.port.postMessage({ type: "level", sessionId: this.sessionId, level });
+      }
+      this.levelEnergy = 0;
+      this.levelFrames = 0;
     }
     while (
       this.completions.length > 0 &&

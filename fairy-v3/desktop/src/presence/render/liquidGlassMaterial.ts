@@ -80,9 +80,14 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
   uniform vec2 uDirection;
   uniform vec2 uGaze;
   uniform vec3 uShape;
+  uniform vec3 uAccent;
   uniform float uTime;
   uniform float uEnergy;
   uniform float uDpr;
+  uniform float uParticleCount;
+  uniform float uParticleSeed;
+  uniform float uPulseSpeed;
+  uniform float uSpeechLevel;
   varying vec2 vUv;
 
   float saturate(float value) {
@@ -109,16 +114,27 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
       + progress * progress * end;
   }
 
-  float bezierBridgeDistance(vec2 point, float scale, float curve) {
+  float bezierBridgeDistance(
+    vec2 point,
+    float scale,
+    float curve,
+    float morph
+  ) {
+    float shapeProgress = smoothstep(0.0, 1.0, saturate(morph));
     vec2 start = vec2(52.0, 0.0) * scale;
-    vec2 control = vec2(112.0, curve) * scale;
-    vec2 end = vec2(178.0, 0.0) * scale;
+    vec2 control = mix(vec2(58.0, 0.0), vec2(112.0, curve), shapeProgress) * scale;
+    vec2 end = mix(vec2(64.0, 0.0), vec2(178.0, 0.0), shapeProgress) * scale;
     vec2 previous = start;
     float result = 100000.0;
     for (int index = 1; index <= 8; index += 1) {
-      float progress = float(index) / 8.0;
-      vec2 current = quadraticBezier(start, control, end, progress);
-      float radius = mix(15.0, 20.0, smoothstep(0.0, 1.0, progress)) * scale;
+      float segmentProgress = float(index) / 8.0;
+      vec2 current = quadraticBezier(start, control, end, segmentProgress);
+      float targetRadius = mix(
+        15.0,
+        20.0,
+        smoothstep(0.0, 1.0, segmentProgress)
+      );
+      float radius = mix(2.0, targetRadius, morph) * scale;
       result = min(result, segmentDistance(point, previous, current) - radius);
       previous = current;
     }
@@ -133,30 +149,58 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     vec2 axis = normalize(uDirection);
     vec2 normalAxis = vec2(-axis.y, axis.x);
     vec2 local = vec2(dot(point, axis), dot(point, normalAxis));
-    float breathe = sin(uTime * 1.35) * 1.25 * uEnergy * uDpr;
+    float animatedTime = uTime * uPulseSpeed;
+    float breathe = sin(animatedTime * 1.35)
+      * (1.25 * uEnergy + 2.2 * uSpeechLevel) * uDpr;
     float core = length(point) - (72.0 * uDpr + breathe);
 
-    float droplet = length(local - vec2(104.0, 0.0) * uDpr) - 18.0 * uDpr;
-    droplet += (1.0 - uShape.x) * 220.0 * uDpr;
+    float dropletMorph = smoothstep(0.0, 1.0, saturate(uShape.x));
+    float dropletCenter = mix(62.0, 104.0, dropletMorph);
+    float dropletRadius = mix(2.0, 18.0, dropletMorph);
+    float droplet = length(local - vec2(dropletCenter, 0.0) * uDpr)
+      - dropletRadius * uDpr;
 
     float curve = clamp(uGaze.y, -1.0, 1.0) * 10.0;
-    float bridge = bezierBridgeDistance(local, uDpr, curve);
-    bridge += (1.0 - uShape.y) * 240.0 * uDpr;
+    float bridge = bezierBridgeDistance(local, uDpr, curve, saturate(uShape.y));
 
+    float capsuleMorph = smoothstep(0.0, 1.0, saturate(uShape.z));
     float capsule = capsuleDistance(
       local,
       vec2(176.0, 0.0) * uDpr,
-      vec2(500.0, 0.0) * uDpr,
-      32.0 * uDpr
+      vec2(mix(176.0, 500.0, capsuleMorph), 0.0) * uDpr,
+      mix(0.0, 32.0, capsuleMorph) * uDpr
     );
-    capsule += (1.0 - uShape.z) * 560.0 * uDpr;
+    capsule += (1.0 - capsuleMorph) * 16.0 * uDpr;
 
     float distanceField = smoothMinimum(core, droplet, 11.0 * uDpr);
     distanceField = smoothMinimum(distanceField, bridge, 14.0 * uDpr);
     distanceField = smoothMinimum(distanceField, capsule, 13.0 * uDpr);
-    float ripple = sin(point.x / (31.0 * uDpr) + uTime * 0.23)
-      * sin(point.y / (27.0 * uDpr) - uTime * 0.19);
+    float ripple = sin(point.x / (31.0 * uDpr) + animatedTime * 0.23)
+      * sin(point.y / (27.0 * uDpr) - animatedTime * 0.19);
     return distanceField + ripple * 0.55 * uDpr * uEnergy;
+  }
+
+  float hashValue(float value) {
+    return fract(sin(value * 91.3458 + 17.234) * 47453.5453);
+  }
+
+  float particleField(vec2 point) {
+    float result = 0.0;
+    float animatedTime = uTime * uPulseSpeed;
+    for (int index = 0; index < 18; index += 1) {
+      float particleIndex = float(index);
+      float enabled = 1.0 - step(uParticleCount, particleIndex + 0.5);
+      float seed = hashValue(particleIndex * 2.399 + uParticleSeed);
+      float orbit = mix(84.0, 122.0, hashValue(seed * 13.7)) * uDpr;
+      float velocity = mix(0.035, 0.085, hashValue(seed * 29.1));
+      float angle = seed * 6.2831853 + animatedTime * velocity;
+      vec2 position = vec2(cos(angle), sin(angle) * 0.82) * orbit;
+      float radius = mix(0.7, 1.55, hashValue(seed * 41.3)) * uDpr;
+      vec2 delta = point - position;
+      float glow = exp(-dot(delta, delta) / max(0.001, radius * radius * 3.4));
+      result = max(result, glow * enabled);
+    }
+    return result;
   }
 
   vec3 environmentLight(vec2 coordinate) {
@@ -173,7 +217,8 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     float distanceField = liquidDistance(point);
     float antialias = max(fwidth(distanceField), 0.65 * uDpr);
     float coverage = 1.0 - smoothstep(-antialias, antialias, distanceField);
-    if (coverage <= 0.001) discard;
+    float particle = particleField(point);
+    if (coverage + particle <= 0.001) discard;
 
     vec2 gradient = vec2(dFdx(distanceField), dFdy(distanceField));
     vec3 surfaceNormal = normalize(vec3(gradient * 1.55, 0.86));
@@ -196,15 +241,22 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     float innerCore = 1.0 - smoothstep(5.0 * uDpr, 14.0 * uDpr, coreDistance);
     float innerHalo = exp(-coreDistance / (20.0 * uDpr));
     float coreRing = exp(-abs(coreDistance - 30.0 * uDpr) / (2.2 * uDpr));
-    vec3 aiLight = mix(vec3(0.72, 0.96, 1.0), vec3(0.24, 0.78, 0.94), innerHalo);
+    vec3 aiLight = mix(vec3(0.8, 0.97, 1.0), uAccent, innerHalo * 0.72);
     glassColor = mix(glassColor, aiLight, saturate(innerHalo * 0.34 + coreRing * 0.48));
     glassColor = mix(glassColor, vec3(0.98, 1.0, 1.0), innerCore * 0.78);
 
     float glassAlpha = (0.075 + edge * 0.19 + fresnel * 0.075 + highlight * 0.035)
       * coverage;
-    float lightAlpha = (innerCore * 0.42 + coreRing * 0.23 + innerHalo * 0.07)
+    float speechPulse = uSpeechLevel * (0.5 + 0.5 * sin(uTime * 10.0));
+    float lightAlpha = (
+      innerCore * (0.42 + speechPulse * 0.18)
+      + coreRing * (0.23 + uEnergy * 0.04)
+      + innerHalo * 0.07
+    )
       * coverage;
-    float alpha = clamp(glassAlpha + lightAlpha, 0.0, 0.76);
+    float particleAlpha = particle * mix(0.2, 0.34, uEnergy);
+    glassColor = mix(glassColor, uAccent, saturate(particle * 0.9 + coreRing * 0.18));
+    float alpha = clamp(glassAlpha + lightAlpha + particleAlpha, 0.0, 0.76);
     gl_FragColor = vec4(glassColor * alpha, alpha);
   }
 `;

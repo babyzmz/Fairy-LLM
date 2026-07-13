@@ -38,7 +38,7 @@ interface StateStyle {
 
 const STYLES: Record<FairyVisualState, StateStyle> = {
   booting: style("#7dc8ff", "#f4fbff", 1.5, 0.9, 18),
-  idle: style("#58a9ef", "#e8f6ff", 0.35, 0.35, 7),
+  idle: style("#58a9ef", "#e8f6ff", 0.35, 0.35, 10),
   hover: style("#74c7ff", "#ffffff", 0.55, 0.55, 10),
   listening: style("#62d7c5", "#eefefa", 0.8, 0.8, 12),
   analyzing: style("#65b9ff", "#f4fbff", 1.15, 0.85, 15),
@@ -48,7 +48,7 @@ const STYLES: Record<FairyVisualState, StateStyle> = {
   awaiting_confirmation: style("#f0b44d", "#fff1c2", 0.8, 0.82, 11),
   ready: style("#63d1ad", "#edfff8", 0.5, 0.62, 9),
   error: style("#f47d72", "#fff0ee", 0.9, 0.95, 8),
-  sleeping: style("#70869b", "#dce7ee", 0.12, 0.16, 2),
+  sleeping: style("#70869b", "#dce7ee", 0.12, 0.16, 8),
   dragging: style("#8abdf0", "#ffffff", 1.05, 0.72, 10),
 };
 
