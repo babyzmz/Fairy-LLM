@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { DesktopPreferences } from "../settings/client";
@@ -95,6 +95,8 @@ function hostHarness() {
     }),
     setExpanded: vi.fn(async () => undefined),
     setInputLayout: vi.fn(async () => undefined),
+    setInputInteractive: vi.fn(async () => undefined),
+    requestInputFocus: vi.fn(async () => undefined),
     openMain: vi.fn(async () => undefined),
     openSettings: vi.fn(async () => undefined),
     exit: vi.fn(async () => undefined),
@@ -158,7 +160,10 @@ const storage: StorageLike = {
   setItem: () => undefined,
 };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("dual presence surfaces", () => {
   it("keeps the render surface projection-only and ignores stale native snapshots", async () => {
@@ -230,4 +235,82 @@ describe("dual presence surfaces", () => {
     expect(screen.getByText("Streaming from the shared assistant turn")).toBeInTheDocument();
     expect(screen.queryByLabelText("Fairy companion")).not.toBeInTheDocument();
   });
+
+  it("gates hover reveal at 300ms, content at 430ms, and clicks at 520ms", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    const coordinator = interactionHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        interactionSource={coordinator.source}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+    const surface = screen.getByTestId("presence-input-surface");
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
+
+    act(() => coordinator.emit(interactionAt(20, "input_reveal", 300, 300)));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact"));
+    await waitFor(() => expect(host.host.setInputInteractive).toHaveBeenLastCalledWith(false));
+    expect(surface).toHaveAttribute("data-content-visible", "false");
+    const input = screen.getByLabelText("Quick message to Fairy");
+    expect(input).not.toHaveFocus();
+
+    act(() => coordinator.emit(interactionAt(21, "input_reveal", 430, 300)));
+    expect(surface).toHaveAttribute("data-content-visible", "true");
+    expect(surface).toHaveAttribute("data-interactive", "false");
+    expect(host.host.requestInputFocus).not.toHaveBeenCalled();
+
+    act(() => coordinator.emit(interactionAt(22, "interactive", 520, 520)));
+    await waitFor(() => expect(host.host.setInputInteractive).toHaveBeenLastCalledWith(true));
+    expect(surface).toHaveAttribute("data-interactive", "true");
+    expect(input).not.toHaveFocus();
+    fireEvent.pointerDown(input);
+    expect(host.host.requestInputFocus).toHaveBeenCalledOnce();
+  });
+
+  it("keeps Shift+Enter and Chinese IME confirmation from submitting", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    act(() => host.requestInput());
+    const input = await screen.findByLabelText("Quick message to Fairy");
+    fireEvent.change(input, { target: { value: "\u4f60\u597d Fairy" } });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(channel.channel.requestChatSend).not.toHaveBeenCalled();
+
+    fireEvent.compositionStart(input);
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(channel.channel.requestChatSend).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(input);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(channel.channel.requestChatSend).toHaveBeenCalledOnce();
+    expect(channel.channel.requestChatSend).toHaveBeenCalledWith("\u4f60\u597d Fairy");
+  });
 });
+
+function interactionAt(
+  sequence: number,
+  phase: PresenceInteractionSnapshot["phase"],
+  sampled_at_ms: number,
+  phase_started_at_ms: number,
+): PresenceInteractionSnapshot {
+  return {
+    ...interaction(sequence),
+    sequence,
+    phase,
+    sampled_at_ms,
+    phase_started_at_ms,
+  };
+}

@@ -76,6 +76,46 @@ test("input surface owns cards and controls without duplicating the renderer", a
   await context.close();
 });
 
+test("hover input stays passive until the 520ms interaction gate", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ viewport: { width: 372, height: 72 } });
+  const page = await context.newPage();
+  await page.goto("/?surface=pet-input");
+  const surface = page.getByTestId("presence-input-surface");
+
+  await publishInteraction(
+    page,
+    interactionSnapshot("right", 96, "input_reveal", 300, 30, 300),
+  );
+  await expect(surface).toHaveAttribute("data-layout", "compact");
+  await expect(surface).toHaveAttribute("data-content-visible", "false");
+  await expect(surface).toHaveAttribute("data-interactive", "false");
+  const input = page.getByLabel("Quick message to Fairy");
+  await expect(input).toHaveCount(1);
+  await expect(input).not.toBeFocused();
+
+  await publishInteraction(
+    page,
+    interactionSnapshot("right", 96, "input_reveal", 430, 31, 300),
+  );
+  await expect(surface).toHaveAttribute("data-content-visible", "true");
+  await expect(surface).toHaveAttribute("data-interactive", "false");
+  await expect(page.locator(".presence-panel")).toHaveAttribute("inert", "");
+  await expect(input).not.toBeFocused();
+
+  await publishInteraction(
+    page,
+    interactionSnapshot("right", 96, "interactive", 520, 32, 520),
+  );
+  await expect(surface).toHaveAttribute("data-interactive", "true");
+  await expect(page.locator(".presence-panel")).not.toHaveAttribute("inert", "");
+  await expect(input).not.toBeFocused();
+  await input.click();
+  await expect(input).toBeFocused();
+  await context.close();
+});
+
 test("public work and speaking states drive the render surface", async ({
   browser,
 }, testInfo) => {
@@ -225,13 +265,14 @@ function interactionSnapshot(
   phase: PresenceInteractionSnapshot["phase"] = "interactive",
   sampledAt = 520,
   sequence = 25,
+  phaseStartedAt = sampledAt,
 ): PresenceInteractionSnapshot {
   return {
     schema_version: 1,
     sequence,
     sampled_at_ms: sampledAt,
     phase,
-    phase_started_at_ms: sampledAt,
+    phase_started_at_ms: phaseStartedAt,
     reduced_motion: false,
     cursor: {
       point: { x: anchorX + (expansion_direction === "right" ? 40 : -40), y: 130 },

@@ -6,6 +6,10 @@
   user-select: none;
 }
 
+.presence-input-window[data-interactive="false"] {
+  pointer-events: none;
+}
+
 .presence-input-window .presence-panel {
   inset: 0;
   width: 100%;
@@ -14,6 +18,11 @@
   align-content: end;
   transform: translateY(5px) scale(0.99);
   transform-origin: bottom center;
+  transition: opacity 90ms ease, transform 120ms ease;
+}
+
+.presence-input-window[data-interactive="false"] .presence-panel {
+  pointer-events: none;
 }
 
 .presence-input-window[data-layout="compact"] .presence-panel {
@@ -26,6 +35,10 @@
   align-items: center;
   padding: 6px 7px 6px 15px;
   border-radius: 28px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .presence-input-window[data-layout="compact"] .presence-input textarea {
@@ -45,4 +58,9 @@
 .presence-input-window[data-layout="expanded"] .presence-card,
 .presence-input-window[data-layout="expanded"] .presence-menu {
   width: 100%;
+}
+
+.presence-input-window[data-reduced-motion="true"] * {
+  animation: none !important;
+  transition: none !important;
 }

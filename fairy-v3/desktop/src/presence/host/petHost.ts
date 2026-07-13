@@ -17,6 +17,8 @@ export interface PetHost {
   onInputRequested(listener: () => void): Promise<() => void>;
   setExpanded(expanded: boolean): Promise<void>;
   setInputLayout(layout: PetInputLayout): Promise<void>;
+  setInputInteractive(interactive: boolean): Promise<void>;
+  requestInputFocus(): Promise<void>;
   openMain(): Promise<void>;
   openSettings(): Promise<void>;
   exit(): Promise<void>;
@@ -40,6 +42,9 @@ export function createDefaultPetHost(): PetHost {
     setExpanded: (expanded) =>
       invoke("pet_input_set_layout", { layout: expanded ? "expanded" : "hidden" }),
     setInputLayout: (layout) => invoke("pet_input_set_layout", { layout }),
+    setInputInteractive: (interactive) =>
+      invoke("pet_input_set_interactive", { interactive }),
+    requestInputFocus: () => invoke("pet_input_request_focus"),
     openMain: () => invoke("open_main_window"),
     openSettings: () => invoke("open_settings_window"),
     exit: () => invoke("pet_exit"),
@@ -77,6 +82,8 @@ function createBrowserPetHost(): PetHost {
     },
     async setExpanded() {},
     async setInputLayout() {},
+    async setInputInteractive() {},
+    async requestInputFocus() {},
     async openMain() {},
     async openSettings() {},
     async exit() {},

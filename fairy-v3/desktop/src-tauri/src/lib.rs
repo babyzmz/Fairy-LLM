@@ -110,8 +110,8 @@ pub fn auxiliary_window_policy(label: &str) -> Option<AuxiliaryWindowPolicy> {
             focusable: false,
         }),
         PET_INPUT_LABEL => Some(AuxiliaryWindowPolicy {
-            ignore_cursor_events: false,
-            focusable: true,
+            ignore_cursor_events: true,
+            focusable: false,
         }),
         _ => None,
     }
@@ -426,6 +426,12 @@ async fn pet_input_set_layout(
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
     if matches!(layout, PetInputLayout::Hidden) {
+        window
+            .set_ignore_cursor_events(true)
+            .map_err(|error| error.to_string())?;
+        window
+            .set_focusable(false)
+            .map_err(|error| error.to_string())?;
         return window.hide().map_err(|error| error.to_string());
     }
 
@@ -477,6 +483,44 @@ async fn pet_input_set_layout(
         .set_position(tauri::PhysicalPosition::new(frame.x, frame.y))
         .map_err(|error| error.to_string())?;
     input.show().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn pet_input_set_interactive(
+    window: WebviewWindow,
+    interactive: bool,
+) -> Result<(), String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    if interactive {
+        window
+            .set_focusable(true)
+            .map_err(|error| error.to_string())?;
+        window
+            .set_ignore_cursor_events(false)
+            .map_err(|error| error.to_string())
+    } else {
+        window
+            .set_ignore_cursor_events(true)
+            .map_err(|error| error.to_string())?;
+        window
+            .set_focusable(false)
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[tauri::command]
+async fn pet_input_request_focus(window: WebviewWindow) -> Result<(), String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    window
+        .set_focusable(true)
+        .map_err(|error| error.to_string())?;
+    window
+        .set_ignore_cursor_events(false)
+        .map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -886,6 +930,8 @@ pub fn run() {
             desktop_preferences_update,
             pet_preferences_update,
             pet_input_set_layout,
+            pet_input_set_interactive,
+            pet_input_request_focus,
             pet_exit,
             open_main_window,
             open_settings_window,

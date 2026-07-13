@@ -46,14 +46,14 @@ fn settings_window_has_a_narrow_method_allow_list() {
 }
 
 #[test]
-fn pet_render_is_permanently_pass_through_and_input_is_interactive() {
+fn pet_render_is_permanently_pass_through_and_input_starts_passive() {
     let render = auxiliary_window_policy("pet-render").expect("render policy");
     assert!(render.ignore_cursor_events);
     assert!(!render.focusable);
 
     let input = auxiliary_window_policy("pet-input").expect("input policy");
-    assert!(!input.ignore_cursor_events);
-    assert!(input.focusable);
+    assert!(input.ignore_cursor_events);
+    assert!(!input.focusable);
 
     assert!(auxiliary_window_policy("main").is_none());
     assert!(auxiliary_window_policy("guide").is_none());

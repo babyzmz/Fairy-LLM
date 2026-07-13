@@ -113,6 +113,8 @@ function petHost(): PetHost {
     onInputRequested: vi.fn(async () => () => undefined),
     setExpanded: vi.fn(async () => undefined),
     setInputLayout: vi.fn(async () => undefined),
+    setInputInteractive: vi.fn(async () => undefined),
+    requestInputFocus: vi.fn(async () => undefined),
     openMain: vi.fn(async () => undefined),
     openSettings: vi.fn(async () => undefined),
     exit: vi.fn(async () => undefined),

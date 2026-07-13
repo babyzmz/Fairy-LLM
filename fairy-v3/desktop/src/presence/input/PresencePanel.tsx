@@ -31,6 +31,7 @@ export interface PresencePanelActions {
   openMain(): void;
   openReview(): void;
   openSettings(): void;
+  requestInputFocus(): void;
   resetPosition(): void;
   send(text: string): void;
   setInputOpen(open: boolean): void;
@@ -44,7 +45,9 @@ interface PresencePanelProps {
   actions: PresencePanelActions;
   alwaysOnTop: boolean;
   autoPlay: boolean;
+  focusRequest?: number;
   inputOpen: boolean;
+  interactive?: boolean;
   menuOpen: boolean;
   muted: boolean;
   reply: PresenceReply | null;
@@ -56,7 +59,9 @@ export function PresencePanel({
   actions,
   alwaysOnTop,
   autoPlay,
+  focusRequest = 0,
   inputOpen,
+  interactive = true,
   menuOpen,
   muted,
   reply,
@@ -66,6 +71,8 @@ export function PresencePanel({
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const composing = useRef(false);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const lastSubmission = useRef<{ text: string; submittedAt: number } | null>(null);
   const submitTimer = useRef<number | null>(null);
 
   useEffect(
@@ -75,10 +82,21 @@ export function PresencePanel({
     [],
   );
 
+  useEffect(() => {
+    if (focusRequest > 0 && inputOpen && interactive) textarea.current?.focus();
+  }, [focusRequest, inputOpen, interactive]);
+
   function submit(event: FormEvent) {
     event.preventDefault();
     const value = draft.trim();
-    if (value.length === 0 || composing.current || submitting) return;
+    const now = performance.now();
+    const duplicate =
+      lastSubmission.current?.text === value &&
+      now - lastSubmission.current.submittedAt < 1_000;
+    if (value.length === 0 || composing.current || submitting || !interactive || duplicate) {
+      return;
+    }
+    lastSubmission.current = { text: value, submittedAt: now };
     setSubmitting(true);
     actions.send(value);
     setDraft("");
@@ -90,7 +108,12 @@ export function PresencePanel({
   }
 
   return (
-    <section className="presence-panel" data-visible={String(visible)}>
+    <section
+      className="presence-panel"
+      data-interactive={String(interactive)}
+      data-visible={String(visible)}
+      inert={!interactive}
+    >
       {!menuOpen && view.notice !== null ? (
         <m.aside
           animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -148,7 +171,7 @@ export function PresencePanel({
         <form className="presence-input" onSubmit={submit}>
           <textarea
             aria-label="Quick message to Fairy"
-            autoFocus
+            ref={textarea}
             maxLength={4_000}
             onChange={(event) => setDraft(event.target.value)}
             onCompositionEnd={() => {
@@ -158,18 +181,25 @@ export function PresencePanel({
               composing.current = true;
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !composing.current) {
+              const nativeComposing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !composing.current &&
+                !nativeComposing
+              ) {
                 event.preventDefault();
                 event.currentTarget.form?.requestSubmit();
               }
             }}
+            onPointerDown={actions.requestInputFocus}
             placeholder="Message Fairy"
             rows={3}
             value={draft}
           />
           <button
             aria-label="Send quick message"
-            disabled={draft.trim() === "" || submitting}
+            disabled={!interactive || draft.trim() === "" || submitting}
             title="Send"
             type="submit"
           >

@@ -286,6 +286,7 @@ export function PresenceApp({
             void host.openMain().catch(() => undefined);
           },
           openSettings: () => void host.openSettings(),
+          requestInputFocus: () => void host.requestInputFocus(),
           resetPosition: () => void resetPosition(windowPort, settingsRef.current),
           send: (text) => channel.requestChatSend(text),
           setInputOpen,
