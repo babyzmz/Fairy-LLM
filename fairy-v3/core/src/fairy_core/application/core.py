@@ -12,9 +12,7 @@ from fairy_core.application.contexts import (
     PendingChangeset,
     ProjectContext,
     TaskContext,
-)
-from fairy_core.application.contexts import (
-    TaskIntent as _TaskIntent,
+    TaskIntent,
 )
 from fairy_core.application.core_support import (
     CoreSupportMixin,
@@ -30,6 +28,7 @@ from fairy_core.application.replay_validation import (
 )
 from fairy_core.application.review_evidence import collect_checkpoint_evidence
 from fairy_core.application.scope import build_task_scope
+from fairy_core.application.workspace_mutation import WorkspaceMutationApplication
 from fairy_core.application.workspaces import WorkspaceApplication
 from fairy_core.commanding import CommandStatus
 from fairy_core.commanding.bus import CommandRequest
@@ -37,7 +36,7 @@ from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.contracts.models import ChangesetProposal, TaskCreate
-from fairy_core.domain.errors import InvalidTransitionError
+from fairy_core.domain.errors import InvalidTransitionError, VersionConflictError
 from fairy_core.domain.execution import (
     Approval,
     Changeset,
@@ -63,6 +62,11 @@ from fairy_core.execution.planning import ExecutionPlanningApplication
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.storage import StateStore
 from fairy_core.workspace.index import ProjectIndexer
+from fairy_core.workspace.mutations import (
+    decode_mutation,
+    encode_mutation,
+    expected_workspace_revision,
+)
 from fairy_core.workspace.ports import WorkspaceProvisioner
 
 
@@ -92,8 +96,15 @@ class CoreApplication(CoreSupportMixin):
         self._approvals = ApprovalApplication(
             unit_of_work_factory=unit_of_work_factory,
         )
-        self._history = HistoryApplication(unit_of_work_factory)
+        self.history = HistoryApplication(unit_of_work_factory)
         self._snapshot_builder_factory = snapshot_builder_factory or snapshot.build_default_snapshot
+        self.workspace_mutations = WorkspaceMutationApplication(
+            unit_of_work_factory=unit_of_work_factory,
+            create_task=self.create_task,
+            propose_changeset=self.propose_changeset,
+            decide_approval=self.decide_approval,
+            get_approval=self.get_approval,
+        )
 
     def create_project(
         self,
@@ -302,69 +313,6 @@ class CoreApplication(CoreSupportMixin):
             unit_of_work.commit()
         return conversation
 
-    def update_conversation_metadata(
-        self,
-        *,
-        conversation_id: UUID,
-        title: str | None,
-        pinned: bool | None,
-        expected_revision: int,
-    ) -> Conversation:
-        return self._history.update_conversation(
-            conversation_id=conversation_id,
-            title=title,
-            pinned=pinned,
-            expected_revision=expected_revision,
-        )
-
-    def delete_conversation(
-        self,
-        *,
-        conversation_id: UUID,
-        expected_revision: int,
-        user_confirmed: bool,
-    ) -> Conversation:
-        return self._history.delete_conversation(
-            conversation_id=conversation_id,
-            expected_revision=expected_revision,
-            user_confirmed=user_confirmed,
-        )
-
-    def move_conversation_to_project(
-        self,
-        *,
-        conversation_id: UUID,
-        target_project_id: UUID,
-        expected_revision: int,
-        user_confirmed: bool,
-        idempotency_key: str,
-    ) -> ConversationMoveContext:
-        return self._history.move_to_project(
-            conversation_id=conversation_id,
-            target_project_id=target_project_id,
-            expected_revision=expected_revision,
-            user_confirmed=user_confirmed,
-            idempotency_key=idempotency_key,
-        )
-
-    def update_task_metadata(
-        self,
-        *,
-        task_id: UUID,
-        display_title: str | None,
-        pinned: bool | None,
-        expected_revision: int,
-    ) -> Task:
-        return self._history.update_task(
-            task_id=task_id,
-            display_title=display_title,
-            pinned=pinned,
-            expected_revision=expected_revision,
-        )
-
-    def archive_task(self, *, task_id: UUID, expected_revision: int) -> Task:
-        return self._history.archive_task(task_id=task_id, expected_revision=expected_revision)
-
     def create_task(self, request: TaskCreate) -> TaskContext:
         idempotency_key = normalize_idempotency_key(request.idempotency_key)
         prepared = self._prepare_task_intent(
@@ -458,12 +406,44 @@ class CoreApplication(CoreSupportMixin):
             persisted_target,
         )
 
+    def update_conversation_metadata(
+        self,
+        *,
+        conversation_id: UUID,
+        title: str | None,
+        pinned: bool | None,
+        expected_revision: int,
+    ) -> Conversation:
+        return self.history.update_conversation(
+            conversation_id=conversation_id,
+            title=title,
+            pinned=pinned,
+            expected_revision=expected_revision,
+        )
+
+    def move_conversation_to_project(
+        self,
+        *,
+        conversation_id: UUID,
+        target_project_id: UUID,
+        expected_revision: int,
+        user_confirmed: bool,
+        idempotency_key: str,
+    ) -> ConversationMoveContext:
+        return self.history.move_to_project(
+            conversation_id=conversation_id,
+            target_project_id=target_project_id,
+            expected_revision=expected_revision,
+            user_confirmed=user_confirmed,
+            idempotency_key=idempotency_key,
+        )
+
     def _prepare_task_intent(
         self,
         request: TaskCreate,
         *,
         idempotency_key: str,
-    ) -> _TaskIntent | TaskContext:
+    ) -> TaskIntent | TaskContext:
         try:
             with self._transaction() as (unit_of_work, commands):
                 existing = unit_of_work.state.find_task_by_idempotency_key(idempotency_key)
@@ -579,7 +559,7 @@ class CoreApplication(CoreSupportMixin):
                     idempotency_key=f"{idempotency_key}:workspace",
                 )
                 unit_of_work.commit()
-            return _TaskIntent(
+            return TaskIntent(
                 task=task,
                 conversation=conversation,
                 target_version=target_version,
@@ -639,6 +619,14 @@ class CoreApplication(CoreSupportMixin):
             workspace = unit_of_work.state.get_workspace(task.workspace_id)
             if workspace is None:
                 raise ValueError("Task Workspace is unavailable")
+            if (
+                request.expected_workspace_revision is not None
+                and workspace.revision != request.expected_workspace_revision
+            ):
+                raise VersionConflictError(
+                    f"expected Workspace revision {request.expected_workspace_revision}, "
+                    f"current revision is {workspace.revision}"
+                )
             current_index = unit_of_work.project_indexes.get(task.target_version_id)
             validate_changeset_limits(workspace, current_index, request.files)
             if task.status is TaskStatus.REPAIRING:
@@ -651,7 +639,13 @@ class CoreApplication(CoreSupportMixin):
                 task_id=task.id,
                 version_id=task.target_version_id,
                 files=tuple(mutation.path for mutation in request.files),
-                patches=tuple(mutation.content for mutation in request.files),
+                patches=tuple(
+                    encode_mutation(
+                        mutation,
+                        expected_workspace_revision=request.expected_workspace_revision,
+                    )
+                    for mutation in request.files
+                ),
                 reason=request.reason,
                 risk_level="medium",
                 idempotency_key=idempotency_key,
@@ -739,6 +733,18 @@ class CoreApplication(CoreSupportMixin):
             unit_of_work.commit()
 
         try:
+            decoded = tuple(
+                decode_mutation(path, patch)
+                for path, patch in zip(changeset.files, changeset.patches, strict=True)
+            )
+            expected_revision = expected_workspace_revision(decoded)
+            if expected_revision is not None:
+                with self._unit_of_work_factory() as unit_of_work:
+                    workspace = unit_of_work.state.get_workspace(changeset.workspace_id)
+                if workspace is None or workspace.revision != expected_revision:
+                    raise VersionConflictError(
+                        f"expected Workspace revision {expected_revision} before applying Changeset"
+                    )
             written = self._workspaces.apply_changeset(
                 project_id=task.workspace_id,
                 version_id=changeset.version_id,

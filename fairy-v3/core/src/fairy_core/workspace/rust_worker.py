@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
+from fairy_core.workspace.mutations import decode_mutation
 from fairy_core.workspace.ports import WorkspaceId
 from fairy_core.workspace.worker_transport import WorkerTransport
 
@@ -85,13 +87,25 @@ class RustWorkspaceProvisioner:
         version_id: WorkspaceId,
         mutations: tuple[tuple[str, str], ...],
     ) -> tuple[Path, ...]:
+        decoded = tuple(decode_mutation(path, patch) for path, patch in mutations)
         result = self._transport.call(
             "workspace.apply_changeset",
             {
                 "project_id": str(project_id),
                 "version_id": str(version_id),
                 "mutations": [
-                    {"relative_path": path, "content": content} for path, content in mutations
+                    {
+                        "operation": mutation.operation.value,
+                        "relative_path": mutation.path,
+                        "destination_path": mutation.destination_path,
+                        "content_base64": (
+                            base64.b64encode(mutation.content).decode("ascii")
+                            if mutation.content is not None
+                            else None
+                        ),
+                        "expected_hash": mutation.expected_hash,
+                    }
+                    for mutation in decoded
                 ],
             },
         )

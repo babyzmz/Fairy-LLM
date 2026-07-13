@@ -1237,6 +1237,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Export Workspace */
+        post: operations["workspaces.export"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/files/mutate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mutate Workspace Files */
+        post: operations["workspaces.files.mutate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{workspace_id}": {
         parameters: {
             query?: never;
@@ -1610,6 +1644,8 @@ export interface components {
         };
         /** ChangesetProposal */
         ChangesetProposal: {
+            /** Expected Workspace Revision */
+            expected_workspace_revision?: number | null;
             /** Files */
             files: components["schemas"]["FileMutation"][];
             /** Idempotency Key */
@@ -2110,10 +2146,23 @@ export interface components {
         /** FileMutation */
         FileMutation: {
             /** Content */
-            content: string;
+            content?: string | null;
+            /** Content Base64 */
+            content_base64?: string | null;
+            /** Destination Path */
+            destination_path?: string | null;
+            /** Expected Hash */
+            expected_hash?: string | null;
+            /** @default upsert */
+            operation: components["schemas"]["FileMutationOperation"];
             /** Path */
             path: string;
         };
+        /**
+         * FileMutationOperation
+         * @enum {string}
+         */
+        FileMutationOperation: "upsert" | "create" | "update" | "delete" | "rename";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -4083,6 +4132,34 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** WorkspaceExportInput */
+        WorkspaceExportInput: {
+            /**
+             * Filename
+             * @default fairy-workspace.zip
+             */
+            filename: string;
+            /** Version Id */
+            version_id?: string | null;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** WorkspaceExportModel */
+        WorkspaceExportModel: {
+            /** Byte Length */
+            byte_length: number;
+            /** Content Base64 */
+            content_base64: string;
+            /** Content Hash */
+            content_hash: string;
+            /** Filename */
+            filename: string;
+            /** Media Type */
+            media_type: string;
+        };
         /** WorkspaceFileContentModel */
         WorkspaceFileContentModel: {
             /** Content Base64 */
@@ -4105,6 +4182,38 @@ export interface components {
             language: string | null;
             /** Path */
             path: string;
+        };
+        /** WorkspaceFileMutateInput */
+        WorkspaceFileMutateInput: {
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /** Expected Workspace Revision */
+            expected_workspace_revision: number;
+            /** Files */
+            files: components["schemas"]["FileMutation"][];
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Reason */
+            reason: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** WorkspaceFileMutationResultModel */
+        WorkspaceFileMutationResultModel: {
+            approval: components["schemas"]["ApprovalModel"];
+            changeset: components["schemas"]["ChangesetModel"];
+            conversation: components["schemas"]["ConversationModel"];
+            target_version: components["schemas"]["VersionModel"];
+            task: components["schemas"]["TaskModel"];
+            workspace: components["schemas"]["WorkspaceModel"];
         };
         /** WorkspaceFilePageModel */
         WorkspaceFilePageModel: {
@@ -6973,6 +7082,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VoiceTranscriptModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workspaces.export": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceExportInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceExportModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workspaces.files.mutate": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceFileMutateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceFileMutationResultModel"];
                 };
             };
             /** @description Validation Error */

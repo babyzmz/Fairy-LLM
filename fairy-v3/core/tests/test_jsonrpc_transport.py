@@ -469,7 +469,9 @@ def test_public_method_manifest_is_stable() -> None:
             "voice.sessions.get",
             "voice.sessions.start",
             "voice.transcribe",
+            "workspaces.export",
             "workspaces.files.list",
+            "workspaces.files.mutate",
             "workspaces.files.read",
             "workspaces.get",
         }

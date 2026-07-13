@@ -330,7 +330,9 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "voice.sessions.get",
         "voice.sessions.start",
         "voice.transcribe",
+        "workspaces.export",
         "workspaces.files.list",
+        "workspaces.files.mutate",
         "workspaces.files.read",
         "workspaces.get",
     }

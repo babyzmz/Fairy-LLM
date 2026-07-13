@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { WorkspaceModel } from "./workspaceModel";
 import { PreviewPanel } from "./PreviewPanel";
 import { WorkspaceFilesPanel } from "./WorkspaceFilesPanel";
+import "./workspace-inspector.css";
 
 export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
   const hasFiles = model.workspaceFiles.length > 0;
@@ -60,6 +61,10 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
             onRead={model.readWorkspaceFile}
             onReveal={model.revealWorkspaceFile}
             onRefresh={model.refreshWorkspaceFiles}
+            onUpload={model.uploadWorkspaceFiles}
+            onRename={model.renameWorkspaceFile}
+            onDelete={model.deleteWorkspaceFile}
+            onExport={model.exportWorkspace}
           />
         )}
       </div>

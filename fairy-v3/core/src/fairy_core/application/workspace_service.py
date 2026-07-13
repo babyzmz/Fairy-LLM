@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import mimetypes
 from typing import Any
 
 from fairy_core.application.workspaces import WorkspaceApplication
 from fairy_core.contracts.workspaces import (
+    WorkspaceExportInput,
     WorkspaceFileReadInput,
     WorkspaceIdInput,
     WorkspaceVersionInput,
@@ -50,6 +52,19 @@ class WorkspaceService:
         else:
             response["content_base64"] = base64.b64encode(content).decode("ascii")
         return response
+
+    def export(self, request: WorkspaceExportInput) -> dict[str, Any]:
+        content = self._application.export(
+            workspace_id=request.workspace_id,
+            version_id=request.version_id,
+        )
+        return {
+            "filename": request.filename,
+            "media_type": "application/zip",
+            "byte_length": len(content),
+            "content_hash": hashlib.sha256(content).hexdigest(),
+            "content_base64": base64.b64encode(content).decode("ascii"),
+        }
 
 
 __all__ = ["WorkspaceService"]

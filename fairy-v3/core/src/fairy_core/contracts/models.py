@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import math
@@ -721,9 +723,21 @@ class HealthModel(ContractModel):
     protocol: str
 
 
+class FileMutationOperation(StrEnum):
+    UPSERT = "upsert"
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+    RENAME = "rename"
+
+
 class FileMutation(ContractModel):
+    operation: FileMutationOperation = FileMutationOperation.UPSERT
     path: str = Field(min_length=1, max_length=1_024)
-    content: str = Field(max_length=2_097_152)
+    destination_path: str | None = Field(default=None, min_length=1, max_length=1_024)
+    content: str | None = Field(default=None, max_length=2_097_152)
+    content_base64: str | None = Field(default=None, max_length=2_796_204)
+    expected_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @field_validator("path")
     @classmethod
@@ -740,10 +754,67 @@ class FileMutation(ContractModel):
             raise ValueError("path must be a normalized project-relative path")
         return normalized
 
+    @field_validator("destination_path")
+    @classmethod
+    def require_relative_destination(cls, value: str | None) -> str | None:
+        return None if value is None else cls.require_project_relative_path(value)
+
+    @model_validator(mode="after")
+    def require_operation_fields(self) -> FileMutation:
+        has_content = self.content is not None
+        has_binary = self.content_base64 is not None
+        if has_content and has_binary:
+            raise ValueError("file mutation accepts one content encoding")
+        if has_binary:
+            try:
+                decoded = base64.b64decode(self.content_base64, validate=True)
+            except (ValueError, binascii.Error) as error:
+                raise ValueError("content_base64 must be valid Base64") from error
+            if len(decoded) > 2_097_152:
+                raise ValueError("decoded file content exceeds 2 MiB")
+        if self.operation in {
+            FileMutationOperation.UPSERT,
+            FileMutationOperation.CREATE,
+            FileMutationOperation.UPDATE,
+        } and not (has_content or has_binary):
+            raise ValueError(f"{self.operation.value} requires file content")
+        if self.operation in {FileMutationOperation.DELETE, FileMutationOperation.RENAME} and (
+            has_content or has_binary
+        ):
+            raise ValueError(f"{self.operation.value} does not accept file content")
+        if (
+            self.operation
+            in {
+                FileMutationOperation.UPDATE,
+                FileMutationOperation.DELETE,
+                FileMutationOperation.RENAME,
+            }
+            and self.expected_hash is None
+        ):
+            raise ValueError(f"{self.operation.value} requires expected_hash")
+        if self.operation is FileMutationOperation.CREATE and self.expected_hash is not None:
+            raise ValueError("create does not accept expected_hash")
+        if self.operation is FileMutationOperation.RENAME:
+            if self.destination_path is None:
+                raise ValueError("rename requires destination_path")
+            if self.destination_path == self.path:
+                raise ValueError("rename destination must differ from source")
+        elif self.destination_path is not None:
+            raise ValueError("destination_path is only valid for rename")
+        return self
+
+    def content_bytes(self) -> bytes | None:
+        if self.content is not None:
+            return self.content.encode("utf-8")
+        if self.content_base64 is not None:
+            return base64.b64decode(self.content_base64, validate=True)
+        return None
+
 
 class ChangesetProposal(ContractModel):
     task_id: UUID
     files: tuple[FileMutation, ...] = Field(min_length=1, max_length=25)
+    expected_workspace_revision: int | None = Field(default=None, ge=0)
     reason: str = Field(min_length=1, max_length=10_000)
     idempotency_key: str = Field(min_length=1, max_length=255)
 

@@ -139,7 +139,11 @@ export type VersionPage = Schemas["VersionPageModel"];
 export type Workspace = Schemas["WorkspaceModel"];
 export type WorkspaceFile = Schemas["WorkspaceFileModel"];
 export type WorkspaceFileContent = Schemas["WorkspaceFileContentModel"];
+export type WorkspaceFileMutateInput = Schemas["WorkspaceFileMutateInput"];
+export type WorkspaceFileMutationResult = Schemas["WorkspaceFileMutationResultModel"];
 export type WorkspaceFilePage = Schemas["WorkspaceFilePageModel"];
+export type WorkspaceExportInput = Schemas["WorkspaceExportInput"];
+export type WorkspaceExport = Schemas["WorkspaceExportModel"];
 export type WorkspaceIdInput = { workspace_id: string };
 export type WorkspaceVersionInput = WorkspaceIdInput & { version_id?: string | null };
 export type WorkspaceFileReadInput = WorkspaceVersionInput & { path: string };
@@ -290,6 +294,14 @@ export interface CoreMethodMap {
   "workspaces.files.read": {
     params: WorkspaceFileReadInput;
     result: WorkspaceFileContent;
+  };
+  "workspaces.files.mutate": {
+    params: WorkspaceFileMutateInput;
+    result: WorkspaceFileMutationResult;
+  };
+  "workspaces.export": {
+    params: WorkspaceExportInput;
+    result: WorkspaceExport;
   };
   "events.subscribe": { params: { cursor: number }; result: EventBatch };
   "memory.observations.create": {

@@ -57,6 +57,16 @@ describe("WorkspaceShell", () => {
 
     await waitFor(() => expect(screen.getByText("console.log('Fairy');")).toBeVisible());
     expect(screen.queryByText("Use this version")).not.toBeInTheDocument();
+
+    vi.spyOn(window, "prompt").mockReturnValue("src/bootstrap.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Rename file" }));
+    await waitFor(() =>
+      expect(model.renameWorkspaceFile).toHaveBeenCalledWith(file, "src/bootstrap.ts"),
+    );
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Delete file" }));
+    await waitFor(() => expect(model.deleteWorkspaceFile).toHaveBeenCalledWith(file));
   });
 
   it("renders the offline state without sample project truth and retries Core", () => {
@@ -253,6 +263,12 @@ function workspaceModel(): WorkspaceModel {
     }),
     revealWorkspaceFile: vi.fn(async () => undefined),
     refreshWorkspaceFiles: vi.fn(async () => undefined),
+    uploadWorkspaceFiles: vi.fn(async () => undefined),
+    renameWorkspaceFile: vi.fn(async () => undefined),
+    deleteWorkspaceFile: vi.fn(async () => undefined),
+    exportWorkspace: vi.fn(async () => {
+      throw new Error("not used");
+    }),
     cancelProjectTurn: vi.fn(async () => undefined),
     decideApproval: vi.fn(async () => undefined),
     startPreview: vi.fn(async () => undefined),

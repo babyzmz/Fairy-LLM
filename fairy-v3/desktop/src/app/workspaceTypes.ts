@@ -28,6 +28,7 @@ import type {
   Version,
   WorkspaceFile,
   WorkspaceFileContent,
+  WorkspaceExport,
 } from "../core/client";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
 import type { McpServerDraft } from "../settings/extensionTypes";
@@ -52,7 +53,10 @@ export interface WorkspaceClient extends AssistantTurnClient {
   >;
   approvals: Pick<CoreClient["approvals"], "list" | "decide">;
   versions: Pick<CoreClient["versions"], "list" | "accept" | "discard">;
-  workspaces: Pick<CoreClient["workspaces"], "get" | "listFiles" | "readFile">;
+  workspaces: Pick<
+    CoreClient["workspaces"],
+    "get" | "listFiles" | "readFile" | "mutateFiles" | "export"
+  >;
   runtimes: Pick<CoreClient["runtimes"], "health">;
   previews: Pick<CoreClient["previews"], "resolve" | "start" | "stop">;
   capabilities: Pick<CoreClient["capabilities"], "get">;
@@ -197,6 +201,10 @@ export interface WorkspaceModel {
   readWorkspaceFile(path: string): Promise<WorkspaceFileContent>;
   revealWorkspaceFile(path: string): Promise<void>;
   refreshWorkspaceFiles(): Promise<void>;
+  uploadWorkspaceFiles(files: Array<{ path: string; contentBase64: string }>): Promise<void>;
+  renameWorkspaceFile(file: WorkspaceFile, destinationPath: string): Promise<void>;
+  deleteWorkspaceFile(file: WorkspaceFile): Promise<void>;
+  exportWorkspace(): Promise<WorkspaceExport>;
   cancelProjectTurn(): Promise<void>;
   decideApproval(approvalId: string, approved: boolean): Promise<void>;
   startPreview(): Promise<void>;

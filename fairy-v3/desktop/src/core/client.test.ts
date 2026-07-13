@@ -76,7 +76,7 @@ describe("CoreClient", () => {
     await client.tasks.review(id);
     await client.changesets.propose({
       task_id: id,
-      files: [{ path: "README.md", content: "draft" }],
+      files: [{ operation: "upsert", path: "README.md", content: "draft" }],
       reason: "Update copy",
       idempotency_key: "changeset-1",
     });
@@ -93,6 +93,20 @@ describe("CoreClient", () => {
     await client.workspaces.get(id);
     await client.workspaces.listFiles({ workspace_id: id, version_id: id });
     await client.workspaces.readFile({ workspace_id: id, version_id: id, path: "README.md" });
+    await client.workspaces.mutateFiles({
+      workspace_id: id,
+      conversation_id: id,
+      expected_workspace_revision: 1,
+      files: [{ operation: "delete", path: "README.md", expected_hash: "a".repeat(64) }],
+      reason: "Delete README",
+      idempotency_key: "workspace-mutate-1",
+      user_confirmed: true,
+    });
+    await client.workspaces.export({
+      workspace_id: id,
+      version_id: id,
+      filename: "workspace.zip",
+    });
     await client.runtimes.get(id);
     await client.runtimes.health(id);
     await client.systemActions.execute({
@@ -288,6 +302,8 @@ describe("CoreClient", () => {
       "workspaces.get",
       "workspaces.files.list",
       "workspaces.files.read",
+      "workspaces.files.mutate",
+      "workspaces.export",
       "runtimes.get",
       "runtimes.health",
       "system.actions.execute",
@@ -335,7 +351,7 @@ describe("CoreClient", () => {
     ]);
     expect(transport.requests[3]?.params).toEqual({ project_id: id });
     expect(transport.requests[11]?.params).toEqual({ task_id: id });
-    expect(transport.requests[23]?.params).toEqual({ task_id: id });
+    expect(transport.requests[25]?.params).toEqual({ task_id: id });
   });
 
   it("uses the transport-native resumable event subscription", async () => {

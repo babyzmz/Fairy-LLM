@@ -1141,6 +1141,7 @@ dependencies = [
 name = "fairy-local-worker"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "mime_guess",
  "percent-encoding",
  "serde",

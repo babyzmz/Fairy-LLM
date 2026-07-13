@@ -117,6 +117,9 @@ const routes = {
       params,
       ["path", "version_id"],
     ),
+  "workspaces.files.mutate": (params) =>
+    postWithIdempotency("/v1/workspaces/files/mutate", params),
+  "workspaces.export": (params) => post("/v1/workspaces/export", params),
   "capabilities.get": () => get("/v1/capabilities"),
   "permissions.get": () => get("/v1/permissions"),
   "permissions.update": (params) => putWithIdempotency("/v1/permissions", params),

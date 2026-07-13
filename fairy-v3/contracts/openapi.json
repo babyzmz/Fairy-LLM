@@ -745,6 +745,18 @@
       "ChangesetProposal": {
         "additionalProperties": false,
         "properties": {
+          "expected_workspace_revision": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Workspace Revision"
+          },
           "files": {
             "items": {
               "$ref": "#/components/schemas/FileMutation"
@@ -1995,9 +2007,57 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "maxLength": 2097152,
-            "title": "Content",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 2097152,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "content_base64": {
+            "anyOf": [
+              {
+                "maxLength": 2796204,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Base64"
+          },
+          "destination_path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination Path"
+          },
+          "expected_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Hash"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/FileMutationOperation",
+            "default": "upsert"
           },
           "path": {
             "maxLength": 1024,
@@ -2007,11 +2067,21 @@
           }
         },
         "required": [
-          "path",
-          "content"
+          "path"
         ],
         "title": "FileMutation",
         "type": "object"
+      },
+      "FileMutationOperation": {
+        "enum": [
+          "upsert",
+          "create",
+          "update",
+          "delete",
+          "rename"
+        ],
+        "title": "FileMutationOperation",
+        "type": "string"
       },
       "HTTPValidationError": {
         "properties": {
@@ -7469,6 +7539,76 @@
         "title": "VoiceTranscriptModel",
         "type": "object"
       },
+      "WorkspaceExportInput": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "default": "fairy-workspace.zip",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id"
+        ],
+        "title": "WorkspaceExportInput",
+        "type": "object"
+      },
+      "WorkspaceExportModel": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_length": {
+            "minimum": 0.0,
+            "title": "Byte Length",
+            "type": "integer"
+          },
+          "content_base64": {
+            "title": "Content Base64",
+            "type": "string"
+          },
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "media_type",
+          "byte_length",
+          "content_hash",
+          "content_base64"
+        ],
+        "title": "WorkspaceExportModel",
+        "type": "object"
+      },
       "WorkspaceFileContentModel": {
         "additionalProperties": false,
         "properties": {
@@ -7550,6 +7690,95 @@
           "language"
         ],
         "title": "WorkspaceFileModel",
+        "type": "object"
+      },
+      "WorkspaceFileMutateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "expected_workspace_revision": {
+            "minimum": 0.0,
+            "title": "Expected Workspace Revision",
+            "type": "integer"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/FileMutation"
+            },
+            "maxItems": 25,
+            "minItems": 1,
+            "title": "Files",
+            "type": "array"
+          },
+          "idempotency_key": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "user_confirmed": {
+            "title": "User Confirmed",
+            "type": "boolean"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "conversation_id",
+          "expected_workspace_revision",
+          "files",
+          "reason",
+          "idempotency_key",
+          "user_confirmed"
+        ],
+        "title": "WorkspaceFileMutateInput",
+        "type": "object"
+      },
+      "WorkspaceFileMutationResultModel": {
+        "additionalProperties": false,
+        "properties": {
+          "approval": {
+            "$ref": "#/components/schemas/ApprovalModel"
+          },
+          "changeset": {
+            "$ref": "#/components/schemas/ChangesetModel"
+          },
+          "conversation": {
+            "$ref": "#/components/schemas/ConversationModel"
+          },
+          "target_version": {
+            "$ref": "#/components/schemas/VersionModel"
+          },
+          "task": {
+            "$ref": "#/components/schemas/TaskModel"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceModel"
+          }
+        },
+        "required": [
+          "workspace",
+          "conversation",
+          "task",
+          "target_version",
+          "changeset",
+          "approval"
+        ],
+        "title": "WorkspaceFileMutationResultModel",
         "type": "object"
       },
       "WorkspaceFilePageModel": {
@@ -13323,6 +13552,128 @@
           }
         ],
         "summary": "Transcribe Voice"
+      }
+    },
+    "/v1/workspaces/export": {
+      "post": {
+        "operationId": "workspaces.export",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceExportInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceExportModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export Workspace"
+      }
+    },
+    "/v1/workspaces/files/mutate": {
+      "post": {
+        "operationId": "workspaces.files.mutate",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceFileMutateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceFileMutationResultModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mutate Workspace Files"
       }
     },
     "/v1/workspaces/{workspace_id}": {

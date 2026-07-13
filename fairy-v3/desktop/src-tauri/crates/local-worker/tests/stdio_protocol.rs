@@ -3,6 +3,7 @@ use std::io::Cursor;
 
 use fairy_local_worker::{dispatch_request, process_stream, WorkspaceManager};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 #[test]
@@ -167,6 +168,75 @@ fn changeset_validates_every_path_before_writing_any_file() {
         fs::read_to_string(workspace.root.join("README.md")).expect("read file"),
         "base"
     );
+}
+
+#[test]
+fn changeset_supports_hash_checked_rename_delete_and_binary_create() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    fs::create_dir_all(&source).expect("source dir");
+    fs::write(source.join("README.md"), "base").expect("source file");
+    let manager = WorkspaceManager::new(temp.path().join("managed"));
+    let workspace = manager
+        .import_project(&source, "project-1", "version-base")
+        .expect("import project");
+    let base_hash = format!("{:x}", Sha256::digest(b"base"));
+
+    let renamed = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 20,
+            "method": "workspace.apply_changeset",
+            "params": {
+                "project_id": "project-1",
+                "version_id": "version-base",
+                "mutations": [
+                    {
+                        "operation": "rename",
+                        "relative_path": "README.md",
+                        "destination_path": "docs/README.md",
+                        "expected_hash": base_hash
+                    },
+                    {
+                        "operation": "create",
+                        "relative_path": "asset.bin",
+                        "content_base64": "AAH/"
+                    }
+                ]
+            }
+        }),
+    );
+    assert!(renamed.get("error").is_none());
+    assert!(!workspace.root.join("README.md").exists());
+    assert_eq!(
+        fs::read_to_string(workspace.root.join("docs/README.md")).expect("renamed"),
+        "base"
+    );
+    assert_eq!(
+        fs::read(workspace.root.join("asset.bin")).expect("binary"),
+        [0, 1, 255]
+    );
+
+    let deleted = dispatch_request(
+        &manager,
+        json!({
+            "jsonrpc": "2.0",
+            "id": 21,
+            "method": "workspace.apply_changeset",
+            "params": {
+                "project_id": "project-1",
+                "version_id": "version-base",
+                "mutations": [{
+                    "operation": "delete",
+                    "relative_path": "docs/README.md",
+                    "expected_hash": base_hash
+                }]
+            }
+        }),
+    );
+    assert!(deleted.get("error").is_none());
+    assert!(!workspace.root.join("docs/README.md").exists());
 }
 
 #[test]

@@ -432,6 +432,12 @@ function createClient(
       readFile: async () => {
         throw new Error("not used");
       },
+      mutateFiles: async () => {
+        throw new Error("not used");
+      },
+      export: async () => {
+        throw new Error("not used");
+      },
     },
     runtimes: {
       health: async () => ({

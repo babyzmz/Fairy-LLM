@@ -10,7 +10,9 @@ from fairy_core.security.path_guard import PathGuard
 from fairy_core.workspace.file_transaction import (
     FileChangesetTransaction,
     atomic_write_scoped,
+    unlink_scoped,
 )
+from fairy_core.workspace.mutations import decode_mutation
 
 
 class FileSystemWorkspaceProvisioner:
@@ -119,21 +121,69 @@ class FileSystemWorkspaceProvisioner:
                 / "current"
             )
             FileChangesetTransaction.recover(transaction_root, guard=guard)
+            decoded = tuple(decode_mutation(path, patch) for path, patch in mutations)
+            for mutation in decoded:
+                target = guard.validate_write(mutation.path)
+                current = target.read_bytes() if target.is_file() else None
+                destination_exists = (
+                    guard.validate_write(mutation.destination_path).exists()
+                    if mutation.destination_path is not None
+                    else False
+                )
+                mutation.validate_current(current, destination_exists=destination_exists)
             transaction = FileChangesetTransaction.prepare(
                 transaction_root,
                 guard=guard,
-                relative_paths=tuple(path for path, _content in mutations),
+                relative_paths=tuple(
+                    path for mutation in decoded for path in mutation.affected_paths
+                ),
             )
+            staging_root = transaction_root / "writes"
             try:
-                written = tuple(
-                    self.write_text(
-                        project_id=project_id,
-                        version_id=version_id,
-                        relative_path=path,
-                        content=content,
-                    )
-                    for path, content in mutations
-                )
+                changed: list[Path] = []
+                for mutation in decoded:
+                    if mutation.operation.value in {"upsert", "create", "update"}:
+                        assert mutation.content is not None
+                        if (
+                            mutation.operation.value == "upsert"
+                            and mutation.expected_hash is None
+                            and mutation.expected_workspace_revision is None
+                        ):
+                            changed.append(
+                                self.write_text(
+                                    project_id=project_id,
+                                    version_id=version_id,
+                                    relative_path=mutation.path,
+                                    content=mutation.content.decode("utf-8"),
+                                )
+                            )
+                        else:
+                            changed.append(
+                                atomic_write_scoped(
+                                    guard=guard,
+                                    relative_path=mutation.path,
+                                    content=mutation.content,
+                                    staging_root=staging_root,
+                                )
+                            )
+                    elif mutation.operation.value == "delete":
+                        unlink_scoped(guard=guard, relative_path=mutation.path)
+                        changed.append(root / mutation.path)
+                    else:
+                        assert mutation.destination_path is not None
+                        source = guard.validate_write(mutation.path)
+                        content = source.read_bytes()
+                        changed.append(
+                            atomic_write_scoped(
+                                guard=guard,
+                                relative_path=mutation.destination_path,
+                                content=content,
+                                staging_root=staging_root,
+                            )
+                        )
+                        unlink_scoped(guard=guard, relative_path=mutation.path)
+                        changed.append(root / mutation.path)
+                written = tuple(changed)
                 transaction.mark_applied()
             except BaseException as error:
                 try:

@@ -597,6 +597,35 @@ def test_changeset_idempotency_key_rejects_different_mutations(tmp_path: Path) -
         )
 
 
+def test_changeset_rejects_stale_workspace_revision(tmp_path: Path) -> None:
+    app = _application(tmp_path)
+    project = app.create_project(name="Example", residency=ProjectResidency.LOCAL_ONLY)
+    conversation = app.create_conversation(
+        project_id=project.project.id,
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+    )
+    task = app.create_task(
+        TaskCreate(
+            conversation_id=conversation.id,
+            user_request="Update readme",
+            operation_mode=OperationMode.CONTINUE_CURRENT_DRAFT,
+            execution_target=ExecutionTarget.LOCAL,
+            idempotency_key="stale-workspace-task",
+        )
+    )
+
+    with pytest.raises(VersionConflictError, match="expected Workspace revision"):
+        app.propose_changeset(
+            ChangesetProposal(
+                task_id=task.task.id,
+                files=(FileMutation(path="README.md", content="stale"),),
+                expected_workspace_revision=999,
+                reason="Reject a stale write",
+                idempotency_key="stale-workspace-changeset",
+            )
+        )
+
+
 def test_changeset_idempotency_key_is_normalized_before_replay(tmp_path: Path) -> None:
     app = _application(tmp_path)
     project = app.create_project(name="Example", residency=ProjectResidency.LOCAL_ONLY)

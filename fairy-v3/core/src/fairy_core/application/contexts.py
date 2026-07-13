@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from fairy_core.commanding import CommandRun
 from fairy_core.domain.execution import Approval, Changeset
-from fairy_core.domain.models import Conversation, Project, ScopeContract, Task, Version
+from fairy_core.domain.models import Conversation, Project, ScopeContract, Task, Version, Workspace
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,4 +32,20 @@ class TaskIntent:
     running: CommandRun
 
 
-__all__ = ["PendingChangeset", "ProjectContext", "TaskContext", "TaskIntent"]
+@dataclass(frozen=True, slots=True)
+class WorkspaceMutationContext:
+    workspace: Workspace
+    conversation: Conversation
+    task: Task
+    target_version: Version
+    changeset: Changeset
+    approval: Approval
+
+
+__all__ = [
+    "PendingChangeset",
+    "ProjectContext",
+    "TaskContext",
+    "TaskIntent",
+    "WorkspaceMutationContext",
+]

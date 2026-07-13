@@ -5,7 +5,11 @@ from typing import Any
 from uuid import UUID
 
 from fairy_core.contracts.workspaces import (
+    WorkspaceExportInput,
+    WorkspaceExportModel,
     WorkspaceFileContentModel,
+    WorkspaceFileMutateInput,
+    WorkspaceFileMutationResultModel,
     WorkspaceFilePageModel,
     WorkspaceModel,
 )
@@ -52,6 +56,22 @@ def install_workspace_routes(
         if version_id is not None:
             params["version_id"] = str(version_id)
         return invoke("workspaces.files.read", params)
+
+    @router.post(
+        "/workspaces/files/mutate",
+        operation_id="workspaces.files.mutate",
+        response_model=WorkspaceFileMutationResultModel,
+    )
+    def mutate_workspace_files(request: WorkspaceFileMutateInput) -> dict[str, Any]:
+        return invoke("workspaces.files.mutate", request.model_dump(mode="json"))
+
+    @router.post(
+        "/workspaces/export",
+        operation_id="workspaces.export",
+        response_model=WorkspaceExportModel,
+    )
+    def export_workspace(request: WorkspaceExportInput) -> dict[str, Any]:
+        return invoke("workspaces.export", request.model_dump(mode="json"))
 
 
 __all__ = ["install_workspace_routes"]

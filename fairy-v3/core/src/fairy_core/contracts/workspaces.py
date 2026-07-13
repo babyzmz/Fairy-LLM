@@ -6,7 +6,15 @@ from uuid import UUID
 from pydantic import Field, field_validator, model_validator
 
 from fairy_core.contracts.common import ContractModel
-from fairy_core.contracts.models import VersionModel
+from fairy_core.contracts.models import (
+    ApprovalModel,
+    ChangesetModel,
+    ConversationModel,
+    FileMutation,
+    FileMutationOperation,
+    TaskModel,
+    VersionModel,
+)
 
 
 class WorkspaceIdInput(ContractModel):
@@ -78,9 +86,59 @@ class WorkspaceFileContentModel(ContractModel):
         return self
 
 
+class WorkspaceFileMutateInput(WorkspaceIdInput):
+    conversation_id: UUID
+    expected_workspace_revision: int = Field(ge=0)
+    files: tuple[FileMutation, ...] = Field(min_length=1, max_length=25)
+    reason: str = Field(min_length=1, max_length=10_000)
+    idempotency_key: str = Field(min_length=1, max_length=255)
+    user_confirmed: bool
+
+    @model_validator(mode="after")
+    def require_strict_file_operations(self) -> WorkspaceFileMutateInput:
+        if any(file.operation is FileMutationOperation.UPSERT for file in self.files):
+            raise ValueError("Workspace file mutations require an explicit operation")
+        return self
+
+
+class WorkspaceFileMutationResultModel(ContractModel):
+    workspace: WorkspaceModel
+    conversation: ConversationModel
+    task: TaskModel
+    target_version: VersionModel
+    changeset: ChangesetModel
+    approval: ApprovalModel
+
+
+class WorkspaceExportInput(WorkspaceVersionInput):
+    filename: str = Field(default="fairy-workspace.zip", min_length=1, max_length=255)
+
+    @field_validator("filename")
+    @classmethod
+    def require_zip_filename(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized.lower().endswith(".zip") or any(
+            character in normalized for character in '<>:"/\\|?*'
+        ):
+            raise ValueError("filename must be a safe .zip filename")
+        return normalized
+
+
+class WorkspaceExportModel(ContractModel):
+    filename: str
+    media_type: str
+    byte_length: int = Field(ge=0)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content_base64: str
+
+
 __all__ = [
+    "WorkspaceExportInput",
+    "WorkspaceExportModel",
     "WorkspaceFileContentModel",
     "WorkspaceFileModel",
+    "WorkspaceFileMutateInput",
+    "WorkspaceFileMutationResultModel",
     "WorkspaceFilePageModel",
     "WorkspaceFileReadInput",
     "WorkspaceIdInput",

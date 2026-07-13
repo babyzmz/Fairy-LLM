@@ -50,6 +50,8 @@ import type {
   VoiceSessionStartInput,
   VoiceTranscribeInput,
   WorkspaceFileReadInput,
+  WorkspaceFileMutateInput,
+  WorkspaceExportInput,
   WorkspaceVersionInput,
 } from "./contracts";
 
@@ -168,6 +170,10 @@ export class CoreClient {
       this.transport.call("workspaces.files.list", input),
     readFile: (input: WorkspaceFileReadInput) =>
       this.transport.call("workspaces.files.read", input),
+    mutateFiles: (input: WorkspaceFileMutateInput) =>
+      this.transport.call("workspaces.files.mutate", input),
+    export: (input: WorkspaceExportInput) =>
+      this.transport.call("workspaces.export", input),
   };
 
   readonly capabilities = {

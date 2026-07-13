@@ -27,6 +27,7 @@ import {
   permissionUpdateKey,
   requireMcpServer,
 } from "./workspaceCommandKeys";
+import { createWorkspaceFileActions } from "./workspaceFileActions";
 
 const workspaceKey = ["workspace"] as const;
 const permissionQueryKey = [...workspaceKey, "permissions"] as const;
@@ -854,30 +855,19 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           user_confirmed: true,
         }));
       },
-      async readWorkspaceFile(path: string) {
-        if (workspaceTask === null) throw new Error("Workspace is unavailable");
-        return client.workspaces.readFile({
-          workspace_id: workspaceTask.workspace_id,
-          version_id: requireId(workspaceTask.target_version_id),
-          path,
-        });
-      },
-      async revealWorkspaceFile(path: string) {
-        if (workspaceTask === null) throw new Error("Workspace is unavailable");
-        await runAction(() =>
-          client.systemActions.execute({
-            task_id: workspaceTask.id,
-            action: { type: "reveal_path", relative_path: path },
-            idempotency_key: `desktop:workspace-reveal:${workspaceTask.id}:${path}`,
-            user_confirmed: true,
-          }),
-        );
-      },
-      async refreshWorkspaceFiles() {
-        await queryClient.invalidateQueries({
+      ...createWorkspaceFileActions({
+        client,
+        mode,
+        task: workspaceTask,
+        conversation: mode === "chat" ? selectedChatConversation : selectedConversation,
+        workspace: selectedWorkspaceQuery.data,
+        runAction,
+        selectTask: mode === "chat" ? setChatTaskId : setTaskSelection,
+        invalidateWorkspace,
+        refreshFiles: () => queryClient.invalidateQueries({
           queryKey: [...workspaceKey, "files"],
-        });
-      },
+        }),
+      }),
     }),
     [
       chatAssistant,
@@ -886,9 +876,13 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       client,
       previewQuery.data?.preview,
       projectAssistant,
+      invalidateWorkspace,
+      mode,
       runAction,
       selectedProject,
       selectedChatConversation,
+      selectedConversation,
+      selectedWorkspaceQuery.data,
       selectedTask,
       workspaceTask,
       queryClient,
@@ -1053,6 +1047,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     readWorkspaceFile: actions.readWorkspaceFile,
     revealWorkspaceFile: actions.revealWorkspaceFile,
     refreshWorkspaceFiles: actions.refreshWorkspaceFiles,
+    uploadWorkspaceFiles: actions.uploadWorkspaceFiles,
+    renameWorkspaceFile: actions.renameWorkspaceFile,
+    deleteWorkspaceFile: actions.deleteWorkspaceFile,
+    exportWorkspace: actions.exportWorkspace,
     cancelProjectTurn: projectAssistant.cancel,
     decideApproval: actions.decideApproval,
     startPreview: actions.startPreview,

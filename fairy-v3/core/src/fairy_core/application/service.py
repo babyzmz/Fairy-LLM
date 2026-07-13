@@ -91,6 +91,7 @@ from fairy_core.contracts.models import (
     VoiceTranscribeInput,
 )
 from fairy_core.contracts.voice_sessions import VoiceSessionIdInput, VoiceSessionStartInput
+from fairy_core.contracts.workspaces import WorkspaceFileMutateInput
 from fairy_core.documents.application import DocumentApplication, DocumentToolExecutor
 from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
 from fairy_core.domain.errors import (
@@ -387,7 +388,9 @@ class CoreService:
             "versions.get": self._get_version,
             "versions.list": self._list_versions,
             "workspaces.files.list": self._workspace_service.list_files,
+            "workspaces.files.mutate": self._mutate_workspace_files,
             "workspaces.files.read": self._workspace_service.read_file,
+            "workspaces.export": self._workspace_service.export,
             "workspaces.get": self._workspace_service.get,
             "voice.synthesize": self._synthesize_voice,
             "voice.sessions.cancel": self._cancel_voice_session,
@@ -913,7 +916,7 @@ class CoreService:
 
     def _update_conversation(self, request: BaseModel) -> Any:
         validated = cast(ConversationUpdateInput, request)
-        return self._application.update_conversation_metadata(
+        return self._application.history.update_conversation(
             conversation_id=validated.conversation_id,
             title=validated.title,
             pinned=validated.pinned,
@@ -922,7 +925,7 @@ class CoreService:
 
     def _delete_conversation(self, request: BaseModel) -> Any:
         validated = cast(ConversationDeleteInput, request)
-        return self._application.delete_conversation(
+        return self._application.history.delete_conversation(
             conversation_id=validated.conversation_id,
             expected_revision=validated.expected_revision,
             user_confirmed=validated.user_confirmed,
@@ -939,7 +942,7 @@ class CoreService:
 
     def _move_conversation_to_project(self, request: BaseModel) -> Any:
         validated = cast(ConversationMoveToProjectInput, request)
-        return self._application.move_conversation_to_project(
+        return self._application.history.move_to_project(
             conversation_id=validated.conversation_id,
             target_project_id=validated.target_project_id,
             expected_revision=validated.expected_revision,
@@ -952,7 +955,7 @@ class CoreService:
 
     def _archive_task(self, request: BaseModel) -> Any:
         validated = cast(TaskArchiveInput, request)
-        return self._application.archive_task(
+        return self._application.history.archive_task(
             task_id=validated.task_id,
             expected_revision=validated.expected_revision,
         )
@@ -972,7 +975,7 @@ class CoreService:
 
     def _update_task_metadata(self, request: BaseModel) -> Any:
         validated = cast(TaskMetadataUpdateInput, request)
-        return self._application.update_task_metadata(
+        return self._application.history.update_task(
             task_id=validated.task_id,
             display_title=validated.display_title,
             pinned=validated.pinned,
@@ -995,6 +998,19 @@ class CoreService:
 
     def _propose_changeset(self, request: BaseModel) -> Any:
         return self._application.propose_changeset(cast(ChangesetProposal, request))
+
+    def _mutate_workspace_files(self, request: BaseModel) -> Any:
+        context = self._application.workspace_mutations.mutate(
+            cast(WorkspaceFileMutateInput, request)
+        )
+        return {
+            "workspace": context.workspace,
+            "conversation": context.conversation,
+            "task": context.task,
+            "target_version": context.target_version,
+            "changeset": context.changeset,
+            "approval": context.approval,
+        }
 
     def _decide_approval(self, request: BaseModel) -> Any:
         validated = cast(ApprovalDecisionInput, request)

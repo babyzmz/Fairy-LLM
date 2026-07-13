@@ -1,4 +1,6 @@
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
@@ -29,8 +31,37 @@ struct ChangesetJournalEntry {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct FileMutationParams {
+    #[serde(default = "default_operation")]
+    pub(crate) operation: String,
     pub(crate) relative_path: String,
-    pub(crate) content: String,
+    #[serde(default)]
+    pub(crate) destination_path: Option<String>,
+    #[serde(default)]
+    pub(crate) content: Option<String>,
+    #[serde(default)]
+    pub(crate) content_base64: Option<String>,
+    #[serde(default)]
+    pub(crate) expected_hash: Option<String>,
+}
+
+fn default_operation() -> String {
+    "upsert".to_owned()
+}
+
+impl FileMutationParams {
+    fn content_bytes(&self) -> Result<Option<Vec<u8>>, WorkerError> {
+        match (&self.content, &self.content_base64) {
+            (Some(content), None) => Ok(Some(content.as_bytes().to_vec())),
+            (None, Some(content)) => BASE64
+                .decode(content)
+                .map(Some)
+                .map_err(|error| WorkerError::ChangesetJournal(error.to_string())),
+            (None, None) => Ok(None),
+            (Some(_), Some(_)) => Err(WorkerError::ChangesetJournal(
+                "mutation has multiple content encodings".to_owned(),
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -292,25 +323,63 @@ impl WorkspaceManager {
             .join(version_id)
             .join("current");
         recover_changeset(&transaction_root, &version_root)?;
-        let targets = mutations
-            .iter()
-            .map(|mutation| validate_scoped_target(&version_root, &mutation.relative_path))
-            .collect::<Result<Vec<_>, _>>()?;
-        let journal = prepare_changeset(&transaction_root, &version_root, mutations, &targets)?;
+        let mut affected_paths = Vec::new();
+        for mutation in mutations {
+            let target = validate_scoped_target(&version_root, &mutation.relative_path)?;
+            let current = if target.is_file() {
+                Some(fs::read(&target)?)
+            } else {
+                None
+            };
+            validate_mutation(mutation, current.as_deref(), &version_root)?;
+            affected_paths.push(mutation.relative_path.clone());
+            if let Some(destination) = &mutation.destination_path {
+                affected_paths.push(destination.clone());
+            }
+        }
+        let journal = prepare_changeset(&transaction_root, &version_root, &affected_paths)?;
 
         let apply_result = (|| -> Result<(), WorkerError> {
-            for (index, (mutation, target)) in mutations.iter().zip(&targets).enumerate() {
-                let parent = target
-                    .parent()
-                    .ok_or_else(|| WorkerError::PathOutOfScope(mutation.relative_path.clone()))?;
-                fs::create_dir_all(parent)?;
-                if validate_scoped_target(&version_root, &mutation.relative_path)? != *target {
-                    return Err(WorkerError::PathOutOfScope(mutation.relative_path.clone()));
+            for (index, mutation) in mutations.iter().enumerate() {
+                let target = validate_scoped_target(&version_root, &mutation.relative_path)?;
+                match mutation.operation.as_str() {
+                    "upsert" | "create" | "update" => {
+                        let content = mutation.content_bytes()?.ok_or_else(|| {
+                            WorkerError::ChangesetJournal("file content is missing".to_owned())
+                        })?;
+                        let parent = target.parent().ok_or_else(|| {
+                            WorkerError::PathOutOfScope(mutation.relative_path.clone())
+                        })?;
+                        fs::create_dir_all(parent)?;
+                        let staged = transaction_root.join("staged").join(format!("{index}.bin"));
+                        write_durable(&staged, &content)?;
+                        replace_file(&staged, &target)?;
+                    }
+                    "delete" => fs::remove_file(&target)?,
+                    "rename" => {
+                        let destination =
+                            mutation.destination_path.as_deref().ok_or_else(|| {
+                                WorkerError::ChangesetJournal(
+                                    "rename destination is missing".to_owned(),
+                                )
+                            })?;
+                        let destination_target =
+                            validate_scoped_target(&version_root, destination)?;
+                        let parent = destination_target
+                            .parent()
+                            .ok_or_else(|| WorkerError::PathOutOfScope(destination.to_owned()))?;
+                        fs::create_dir_all(parent)?;
+                        let staged = transaction_root.join("staged").join(format!("{index}.bin"));
+                        write_durable(&staged, &fs::read(&target)?)?;
+                        replace_file(&staged, &destination_target)?;
+                        fs::remove_file(&target)?;
+                    }
+                    operation => {
+                        return Err(WorkerError::ChangesetJournal(format!(
+                            "unsupported file operation: {operation}"
+                        )))
+                    }
                 }
-                replace_file(
-                    &transaction_root.join("staged").join(format!("{index}.bin")),
-                    target,
-                )?;
             }
             write_durable(&transaction_root.join("applied"), b"applied\n")
         })();
@@ -327,7 +396,10 @@ impl WorkspaceManager {
             return Err(write_error);
         }
         let _cleanup = fs::remove_dir_all(&transaction_root);
-        Ok(targets)
+        affected_paths
+            .iter()
+            .map(|path| validate_scoped_target(&version_root, path))
+            .collect()
     }
 
     pub fn checkpoint(
@@ -473,8 +545,7 @@ fn validate_scoped_target(
 fn prepare_changeset(
     transaction_root: &Path,
     version_root: &Path,
-    mutations: &[FileMutationParams],
-    targets: &[PathBuf],
+    relative_paths: &[String],
 ) -> Result<ChangesetJournal, WorkerError> {
     if transaction_root.exists() {
         return Err(WorkerError::ChangesetJournal(
@@ -486,11 +557,12 @@ fn prepare_changeset(
     let result = (|| -> Result<ChangesetJournal, WorkerError> {
         let mut entries: Vec<ChangesetJournalEntry> = Vec::new();
         let mut unique_targets: Vec<PathBuf> = Vec::new();
-        for (mutation, target) in mutations.iter().zip(targets) {
-            if unique_targets.iter().any(|existing| existing == target) {
+        for relative_path in relative_paths {
+            let target = validate_scoped_target(version_root, relative_path)?;
+            if unique_targets.iter().any(|existing| existing == &target) {
                 continue;
             }
-            let checked = validate_scoped_target(version_root, &mutation.relative_path)?;
+            let checked = validate_scoped_target(version_root, relative_path)?;
             let existed = checked.exists();
             if existed {
                 write_durable(
@@ -502,15 +574,9 @@ fn prepare_changeset(
             }
             unique_targets.push(target.clone());
             entries.push(ChangesetJournalEntry {
-                relative_path: mutation.relative_path.clone(),
+                relative_path: relative_path.clone(),
                 existed,
             });
-        }
-        for (index, mutation) in mutations.iter().enumerate() {
-            write_durable(
-                &transaction_root.join("staged").join(format!("{index}.bin")),
-                mutation.content.as_bytes(),
-            )?;
         }
         let journal = ChangesetJournal {
             schema_version: 1,
@@ -525,6 +591,56 @@ fn prepare_changeset(
         let _cleanup = fs::remove_dir_all(transaction_root);
     }
     result
+}
+
+fn validate_mutation(
+    mutation: &FileMutationParams,
+    current: Option<&[u8]>,
+    version_root: &Path,
+) -> Result<(), WorkerError> {
+    match mutation.operation.as_str() {
+        "create" if current.is_some() => {
+            return Err(WorkerError::ChangesetJournal(format!(
+                "file already exists: {}",
+                mutation.relative_path
+            )))
+        }
+        "update" | "delete" | "rename" => {
+            let current = current.ok_or_else(|| {
+                WorkerError::ChangesetJournal(format!(
+                    "file does not exist: {}",
+                    mutation.relative_path
+                ))
+            })?;
+            let expected = mutation.expected_hash.as_deref().ok_or_else(|| {
+                WorkerError::ChangesetJournal("expected hash is missing".to_owned())
+            })?;
+            let actual = format!("{:x}", Sha256::digest(current));
+            if actual != expected {
+                return Err(WorkerError::ChangesetJournal(format!(
+                    "file hash conflict: {}",
+                    mutation.relative_path
+                )));
+            }
+        }
+        "upsert" | "create" => {}
+        operation => {
+            return Err(WorkerError::ChangesetJournal(format!(
+                "unsupported file operation: {operation}"
+            )))
+        }
+    }
+    if mutation.operation == "rename" {
+        let destination = mutation.destination_path.as_deref().ok_or_else(|| {
+            WorkerError::ChangesetJournal("rename destination is missing".to_owned())
+        })?;
+        if validate_scoped_target(version_root, destination)?.exists() {
+            return Err(WorkerError::ChangesetJournal(format!(
+                "rename destination exists: {destination}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn recover_changeset(transaction_root: &Path, version_root: &Path) -> Result<(), WorkerError> {

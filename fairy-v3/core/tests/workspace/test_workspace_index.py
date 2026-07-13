@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 
-from fairy_core.domain.errors import IdempotencyConflictError
+from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.transports.stdio import build_local_service
 from fairy_core.workspace.index import ProjectIndexer
@@ -257,6 +257,98 @@ def test_scratch_workspace_applies_and_reads_a_changeset_without_a_project(
         assert [item["path"] for item in files["items"]] == ["hello.txt"]
         assert content["text"] == "hello Fairy\n"
         assert content["content_base64"] is None
+    finally:
+        service.close()
+
+
+def test_workspace_file_api_versions_create_rename_delete_and_export(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path / "data")
+    try:
+        conversation = service.invoke(
+            "conversations.create",
+            {"project_id": None, "workspace_type": "chat_scratch"},
+        )
+        workspace = service.invoke(
+            "workspaces.get",
+            {"workspace_id": conversation["workspace_id"]},
+        )
+        with pytest.raises(VersionConflictError, match="expected Workspace revision"):
+            service.invoke(
+                "workspaces.files.mutate",
+                {
+                    "workspace_id": workspace["id"],
+                    "conversation_id": conversation["id"],
+                    "expected_workspace_revision": workspace["revision"] + 1,
+                    "files": [{"operation": "create", "path": "stale.txt", "content": "stale"}],
+                    "reason": "Reject stale mutation",
+                    "idempotency_key": "workspace:file-stale",
+                    "user_confirmed": True,
+                },
+            )
+        created = service.invoke(
+            "workspaces.files.mutate",
+            {
+                "workspace_id": workspace["id"],
+                "conversation_id": conversation["id"],
+                "expected_workspace_revision": workspace["revision"],
+                "files": [
+                    {
+                        "operation": "create",
+                        "path": "notes.txt",
+                        "content": "durable notes\n",
+                    }
+                ],
+                "reason": "Upload notes.txt",
+                "idempotency_key": "workspace:file-create",
+                "user_confirmed": True,
+            },
+        )
+        first_version = created["target_version"]["id"]
+        first_file = service.invoke(
+            "workspaces.files.list",
+            {"workspace_id": workspace["id"], "version_id": first_version},
+        )["items"][0]
+        renamed = service.invoke(
+            "workspaces.files.mutate",
+            {
+                "workspace_id": workspace["id"],
+                "conversation_id": conversation["id"],
+                "expected_workspace_revision": workspace["revision"],
+                "files": [
+                    {
+                        "operation": "rename",
+                        "path": "notes.txt",
+                        "destination_path": "archive/notes.txt",
+                        "expected_hash": first_file["content_hash"],
+                    }
+                ],
+                "reason": "Rename notes.txt",
+                "idempotency_key": "workspace:file-rename",
+                "user_confirmed": True,
+            },
+        )
+        second_version = renamed["target_version"]["id"]
+        exported = service.invoke(
+            "workspaces.export",
+            {
+                "workspace_id": workspace["id"],
+                "version_id": second_version,
+                "filename": "notes-workspace.zip",
+            },
+        )
+
+        assert created["changeset"]["status"] == "applied"
+        assert created["approval"]["decided_by"] == "user"
+        assert [
+            item["path"]
+            for item in service.invoke(
+                "workspaces.files.list",
+                {"workspace_id": workspace["id"], "version_id": second_version},
+            )["items"]
+        ] == ["archive/notes.txt"]
+        assert exported["filename"] == "notes-workspace.zip"
+        assert exported["media_type"] == "application/zip"
+        assert exported["byte_length"] > 0
     finally:
         service.close()
 

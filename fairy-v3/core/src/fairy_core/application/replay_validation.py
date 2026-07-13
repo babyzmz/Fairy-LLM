@@ -4,6 +4,7 @@ from fairy_core.contracts.models import ChangesetProposal, TaskCreate
 from fairy_core.domain.errors import IdempotencyConflictError
 from fairy_core.domain.execution import Changeset
 from fairy_core.domain.models import Task
+from fairy_core.workspace.mutations import encode_mutation
 
 
 def normalize_idempotency_key(value: str) -> str:
@@ -32,7 +33,14 @@ def validate_changeset_replay(
     if (
         existing.task_id != request.task_id
         or existing.files != tuple(mutation.path for mutation in request.files)
-        or existing.patches != tuple(mutation.content for mutation in request.files)
+        or existing.patches
+        != tuple(
+            encode_mutation(
+                mutation,
+                expected_workspace_revision=request.expected_workspace_revision,
+            )
+            for mutation in request.files
+        )
         or existing.reason != request.reason.strip()
     ):
         raise IdempotencyConflictError(

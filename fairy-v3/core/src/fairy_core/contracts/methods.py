@@ -132,7 +132,11 @@ from fairy_core.contracts.voice_sessions import (
     VoiceSessionStartInput,
 )
 from fairy_core.contracts.workspaces import (
+    WorkspaceExportInput,
+    WorkspaceExportModel,
     WorkspaceFileContentModel,
+    WorkspaceFileMutateInput,
+    WorkspaceFileMutationResultModel,
     WorkspaceFilePageModel,
     WorkspaceFileReadInput,
     WorkspaceIdInput,
@@ -488,10 +492,20 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             WorkspaceVersionInput,
             WorkspaceFilePageModel,
         ),
+        "workspaces.files.mutate": CoreMethod(
+            "workspaces.files.mutate",
+            WorkspaceFileMutateInput,
+            WorkspaceFileMutationResultModel,
+        ),
         "workspaces.files.read": CoreMethod(
             "workspaces.files.read",
             WorkspaceFileReadInput,
             WorkspaceFileContentModel,
+        ),
+        "workspaces.export": CoreMethod(
+            "workspaces.export",
+            WorkspaceExportInput,
+            WorkspaceExportModel,
         ),
         "workspaces.get": CoreMethod(
             "workspaces.get",

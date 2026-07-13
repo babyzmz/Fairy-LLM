@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import zipfile
 from uuid import UUID
 
 from fairy_core.domain.errors import InvalidTransitionError
@@ -84,6 +86,27 @@ class WorkspaceApplication:
         ):
             raise InvalidTransitionError("Workspace file changed outside its indexed Version")
         return item, content
+
+    def export(
+        self,
+        *,
+        workspace_id: UUID,
+        version_id: UUID | None = None,
+    ) -> bytes:
+        index = self.files(workspace_id=workspace_id, version_id=version_id)
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for item in index.files:
+                indexed, content = self.read_file(
+                    workspace_id=workspace_id,
+                    version_id=index.version_id,
+                    path=item.path,
+                )
+                info = zipfile.ZipInfo(indexed.path, date_time=(1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o600 << 16
+                archive.writestr(info, content)
+        return stream.getvalue()
 
     @staticmethod
     def _require_ownership(version: Version, workspace: Workspace) -> None:
