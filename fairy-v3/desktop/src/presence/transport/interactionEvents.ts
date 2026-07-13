@@ -7,6 +7,7 @@ import {
 } from "../domain/interaction";
 
 export const PRESENCE_INTERACTION_EVENT = "presence-interaction-snapshot";
+export const PRESENCE_INTERACTION_CHANNEL = "fairy.presence.interaction.v1";
 
 export interface PresenceInteractionSource {
   subscribe(
@@ -16,7 +17,27 @@ export interface PresenceInteractionSource {
 
 export function createPresenceInteractionSource(): PresenceInteractionSource {
   if (!isTauri()) {
-    return { subscribe: async () => () => undefined };
+    return {
+      async subscribe(listener) {
+        if (typeof BroadcastChannel === "undefined") return () => undefined;
+        const channel = new BroadcastChannel(PRESENCE_INTERACTION_CHANNEL);
+        channel.addEventListener("message", (event: MessageEvent<unknown>) => {
+          const message = event.data;
+          if (
+            typeof message !== "object" ||
+            message === null ||
+            !("kind" in message) ||
+            message.kind !== "presence.interaction" ||
+            !("snapshot" in message)
+          ) {
+            return;
+          }
+          const parsed = presenceInteractionSnapshotSchema.safeParse(message.snapshot);
+          if (parsed.success) listener(parsed.data);
+        });
+        return () => channel.close();
+      },
+    };
   }
   return {
     async subscribe(listener) {

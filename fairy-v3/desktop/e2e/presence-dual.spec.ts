@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { PNG } from "pngjs";
 
 import type { PresenceProjectionState } from "../src/presence/domain/projection";
+import type { PresenceInteractionSnapshot } from "../src/presence/domain/interaction";
 
 const DISPLAY_SCALES = [1, 1.25, 1.5, 2] as const;
 
@@ -75,6 +76,43 @@ test("input surface owns cards and controls without duplicating the renderer", a
   await context.close();
 });
 
+for (const expansionDirection of ["right", "left"] as const) {
+  test(`Liquid Glass material forms a continuous ${expansionDirection} capsule`, async ({
+    browser,
+  }, testInfo) => {
+    const context = await browser.newContext({ viewport: { width: 640, height: 260 } });
+    const page = await context.newPage();
+    await page.goto("/?surface=pet-render");
+    await expect(page.getByTestId("presence-renderer")).toHaveAttribute(
+      "data-renderer-health",
+      "running",
+    );
+    const anchorX = expansionDirection === "right" ? 96 : 544;
+    await publishInteraction(page, interactionSnapshot(expansionDirection, anchorX));
+    await expect(page.getByTestId("presence-render-surface")).toHaveAttribute(
+      "data-interaction-phase",
+      "interactive",
+    );
+
+    const screenshot = await page.screenshot({
+      path: testInfo.outputPath(`pet-render-liquid-${expansionDirection}.png`),
+      omitBackground: true,
+    });
+    const pixels = PNG.sync.read(screenshot);
+    const direction = expansionDirection === "right" ? 1 : -1;
+    const glassCenter = alphaAt(pixels, anchorX + direction * 42, 130);
+    const glassEdge = alphaAt(pixels, anchorX, 200);
+    expect(glassCenter).toBeGreaterThanOrEqual(15);
+    expect(glassCenter).toBeLessThanOrEqual(31);
+    expect(glassEdge).toBeGreaterThanOrEqual(54);
+    expect(glassEdge).toBeLessThanOrEqual(90);
+    expect(alphaAt(pixels, anchorX + direction * 126, 130)).toBeGreaterThan(4);
+    expect(alphaAt(pixels, anchorX + direction * 220, 130)).toBeGreaterThan(4);
+    expect(alphaAt(pixels, 0, 0)).toBe(0);
+    await context.close();
+  });
+}
+
 test("WebGL context loss falls back to Canvas and restores the liquid renderer", async ({
   browser,
 }) => {
@@ -124,6 +162,58 @@ async function publishProjection(page: Page, projection: PresenceProjectionState
     channel.postMessage({ kind: "presence.projection", projection: value });
     window.setTimeout(() => channel.close(), 100);
   }, projection);
+}
+
+async function publishInteraction(
+  page: Page,
+  snapshot: PresenceInteractionSnapshot,
+) {
+  await page.evaluate((value) => {
+    const channel = new BroadcastChannel("fairy.presence.interaction.v1");
+    channel.postMessage({ kind: "presence.interaction", snapshot: value });
+    window.setTimeout(() => channel.close(), 100);
+  }, snapshot);
+}
+
+function interactionSnapshot(
+  expansion_direction: "left" | "right",
+  anchorX: number,
+): PresenceInteractionSnapshot {
+  return {
+    schema_version: 1,
+    sequence: 25,
+    sampled_at_ms: 520,
+    phase: "interactive",
+    phase_started_at_ms: 520,
+    reduced_motion: false,
+    cursor: {
+      point: { x: anchorX + (expansion_direction === "right" ? 40 : -40), y: 130 },
+      direction: { x: expansion_direction === "right" ? 1 : -1, y: 0 },
+      distance_px: 40,
+      speed_px_s: 80,
+      dwell_ms: 520,
+      band: "active",
+    },
+    placement: {
+      anchor: { x: anchorX, y: 130 },
+      render_frame: { x: 0, y: 0, width: 640, height: 260 },
+      input_compact_frame: {
+        x: expansion_direction === "right" ? 268 : 0,
+        y: 94,
+        width: 372,
+        height: 72,
+      },
+      input_expanded_frame: {
+        x: expansion_direction === "right" ? 220 : 0,
+        y: -64,
+        width: 420,
+        height: 360,
+      },
+      monitor_work_area: { x: 0, y: 0, width: 1920, height: 1040 },
+      scale_factor: 1,
+      expansion_direction,
+    },
+  };
 }
 
 function visiblePngPixels(image: PNG): number {
