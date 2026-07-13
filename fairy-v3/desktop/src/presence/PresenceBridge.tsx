@@ -6,12 +6,12 @@ import {
   createPresenceChannel,
   type PresenceChannel,
   type PresenceRequest,
-} from "./channel";
+} from "./transport/presenceChannel";
 import {
   PresenceProjection,
   type PresenceReply,
   type PresenceProjectionState,
-} from "./projection";
+} from "./domain/projection";
 
 interface PresenceBridgeProps {
   events: readonly EventEnvelope[];

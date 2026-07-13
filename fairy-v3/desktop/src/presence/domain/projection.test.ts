@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { EventEnvelope } from "../core/contracts";
+import type { EventEnvelope } from "../../core/contracts";
 
 import {
   PresenceProjection,

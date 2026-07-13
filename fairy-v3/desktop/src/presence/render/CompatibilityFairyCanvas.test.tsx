@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { visualState } from "./FairyCanvas";
+import { visualState } from "./CompatibilityFairyCanvas";
 
 const base = {
   workState: "idle" as const,

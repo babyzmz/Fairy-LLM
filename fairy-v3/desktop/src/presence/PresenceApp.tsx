@@ -1,31 +1,17 @@
 import {
-  Check,
-  LogOut,
-  MessageSquarePlus,
-  MonitorUp,
-  Pin,
-  PinOff,
-  RotateCcw,
-  Send,
-  Settings,
-  Volume2,
-  VolumeX,
-  X,
-} from "lucide-react";
-import {
-  type FormEvent,
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
   useCallback,
   useEffect,
   useRef,
   useState,
 } from "react";
-import { m } from "motion/react";
 
 import { type DesktopPreferences } from "../settings/client";
-import { createPresenceChannel, type PresenceChannel } from "./channel";
-import { FairyCanvas } from "./FairyCanvas";
+import {
+  derivePresenceView,
+  PresenceProjection,
+  type PresenceProjectionState,
+} from "./domain/projection";
 import {
   createDefaultPresenceWindowPort,
   loadPresenceSettings,
@@ -38,13 +24,18 @@ import {
   restoreMonitorPosition,
   savePresenceSettings,
   snapToMonitorEdges,
-} from "./persistence";
-import { createDefaultPetHost, type PetHost, type PetPreferencePatch } from "./petHost";
+} from "./host/persistence";
 import {
-  derivePresenceView,
-  PresenceProjection,
-  type PresenceProjectionState,
-} from "./projection";
+  createDefaultPetHost,
+  type PetHost,
+  type PetPreferencePatch,
+} from "./host/petHost";
+import { PresencePanel } from "./input/PresencePanel";
+import { CompatibilityFairyCanvas } from "./render/CompatibilityFairyCanvas";
+import {
+  createPresenceChannel,
+  type PresenceChannel,
+} from "./transport/presenceChannel";
 import "./presence.css";
 
 interface PresenceAppProps {
@@ -82,12 +73,9 @@ export function PresenceApp({
   const [hovered, setHovered] = useState(false);
   const [inputOpen, setInputOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [closedReplyId, setClosedReplyId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
-  const composing = useRef(false);
   const dragOrigin = useRef<{ x: number; y: number } | null>(null);
   const dragged = useRef(false);
   const clickTimer = useRef<number | null>(null);
@@ -211,17 +199,6 @@ export function PresenceApp({
     }));
   }
 
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    const value = draft.trim();
-    if (value.length === 0 || composing.current || submitting) return;
-    setSubmitting(true);
-    channel.requestChatSend(value);
-    setDraft("");
-    setInputOpen(false);
-    window.setTimeout(() => setSubmitting(false), 300);
-  }
-
   function handleCoreClick() {
     if (dragged.current) {
       dragged.current = false;
@@ -294,91 +271,43 @@ export function PresenceApp({
       onPointerMove={handlePointerMove}
       onPointerUp={finishPointerGesture}
     >
-      <section className="presence-panel" data-visible={String(expanded)}>
-        {!menuOpen && view.notice !== null ? (
-          <m.aside initial={{ opacity: 0, y: 6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} className={`presence-card notice ${view.notice.tone}`} role="alert">
-            <div>
-              <strong>{view.status_text}</strong>
-              <span>{view.notice.text}</span>
-            </div>
-            <button aria-label="Dismiss notice" onClick={dismissNotice} title="Dismiss" type="button">
-              <X size={14} />
-            </button>
-            {view.work_state === "awaiting_confirmation" ? (
-              <button className="presence-card-action" onClick={() => {
-                channel.requestWorkspaceOpen();
-                void host.openMain().catch(() => undefined);
-              }} type="button">
-                Review in Fairy
-              </button>
-            ) : null}
-          </m.aside>
-        ) : null}
-
-        {!menuOpen && reply !== null ? (
-          <m.aside initial={{ opacity: 0, y: 6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} className="presence-card reply" role="status">
-            <div>
-              <strong>{reply.streaming ? "Fairy is replying" : "Fairy"}</strong>
-              <span>{reply.text}</span>
-            </div>
-            <button aria-label="Close reply" onClick={() => setClosedReplyId(reply.id)} title="Close" type="button">
-              <X size={14} />
-            </button>
-          </m.aside>
-        ) : null}
-
-        {inputOpen ? (
-          <form className="presence-input" onSubmit={submit}>
-            <textarea
-              aria-label="Quick message to Fairy"
-              autoFocus
-              maxLength={4_000}
-              onChange={(event) => setDraft(event.target.value)}
-              onCompositionEnd={() => {
-                composing.current = false;
-              }}
-              onCompositionStart={() => {
-                composing.current = true;
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey && !composing.current) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-              placeholder="Message Fairy"
-              rows={3}
-              value={draft}
-            />
-            <button aria-label="Send quick message" disabled={draft.trim() === "" || submitting} title="Send" type="submit">
-              <Send size={15} />
-            </button>
-          </form>
-        ) : null}
-
-        {menuOpen ? (
-          <m.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} aria-label="Fairy menu" className="presence-menu" role="menu">
-            <MenuButton icon={<MessageSquarePlus size={15} />} label="New chat" onClick={() => {
-              channel.requestNewChat();
-              setMenuOpen(false);
-              setInputOpen(true);
-            }} />
-            <MenuToggle checked={autoPlay} icon={<Volume2 size={15} />} label="Auto-play replies" onClick={() => void updatePetPreferences({ voice_auto_play_pet: !autoPlay })} />
-            <MenuToggle checked={muted} icon={muted ? <VolumeX size={15} /> : <Volume2 size={15} />} label="Mute" onClick={() => {
-              if (!muted) channel.requestVoiceStop();
-              void updatePetPreferences({ pet_muted: !muted });
-            }} />
-            <MenuToggle checked={alwaysOnTop} icon={alwaysOnTop ? <Pin size={15} /> : <PinOff size={15} />} label="Always on top" onClick={() => void updatePetPreferences({ pet_always_on_top: !alwaysOnTop })} />
-            <MenuButton icon={<MonitorUp size={15} />} label="Open Fairy" onClick={() => {
-              channel.requestWorkspaceOpen();
-              void host.openMain().catch(() => undefined);
-            }} />
-            <MenuButton icon={<Settings size={15} />} label="Settings" onClick={() => void host.openSettings()} />
-            <MenuButton icon={<RotateCcw size={15} />} label="Reset position" onClick={() => void resetPosition(windowPort, settingsRef.current)} />
-            <MenuButton danger icon={<LogOut size={15} />} label="Exit Fairy" onClick={() => void host.exit()} />
-          </m.div>
-        ) : null}
-      </section>
+      <PresencePanel
+        actions={{
+          closeReply: setClosedReplyId,
+          dismissNotice,
+          exit: () => void host.exit(),
+          newChat: () => channel.requestNewChat(),
+          openMain: () => {
+            channel.requestWorkspaceOpen();
+            void host.openMain().catch(() => undefined);
+          },
+          openReview: () => {
+            channel.requestWorkspaceOpen();
+            void host.openMain().catch(() => undefined);
+          },
+          openSettings: () => void host.openSettings(),
+          resetPosition: () => void resetPosition(windowPort, settingsRef.current),
+          send: (text) => channel.requestChatSend(text),
+          setInputOpen,
+          setMenuOpen,
+          toggleAlwaysOnTop: () =>
+            void updatePetPreferences({ pet_always_on_top: !alwaysOnTop }),
+          toggleAutoPlay: () =>
+            void updatePetPreferences({ voice_auto_play_pet: !autoPlay }),
+          toggleMuted: () => {
+            if (!muted) channel.requestVoiceStop();
+            void updatePetPreferences({ pet_muted: !muted });
+          },
+        }}
+        alwaysOnTop={alwaysOnTop}
+        autoPlay={autoPlay}
+        inputOpen={inputOpen}
+        menuOpen={menuOpen}
+        muted={muted}
+        reply={reply}
+        view={view}
+        visible={expanded}
+      />
 
       <button
         aria-label="Fairy companion"
@@ -388,7 +317,7 @@ export function PresenceApp({
         title={view.status_text}
         type="button"
       >
-        <FairyCanvas
+        <CompatibilityFairyCanvas
           dragging={dragging}
           gaze={gaze}
           hovered={hovered}
@@ -400,42 +329,6 @@ export function PresenceApp({
         />
       </button>
     </main>
-  );
-}
-
-function MenuButton({
-  danger = false,
-  icon,
-  label,
-  onClick,
-}: {
-  danger?: boolean;
-  icon: ReactNode;
-  label: string;
-  onClick(): void;
-}) {
-  return (
-    <button className={danger ? "danger" : undefined} onClick={onClick} role="menuitem" type="button">
-      {icon}<span>{label}</span>
-    </button>
-  );
-}
-
-function MenuToggle({
-  checked,
-  icon,
-  label,
-  onClick,
-}: {
-  checked: boolean;
-  icon: ReactNode;
-  label: string;
-  onClick(): void;
-}) {
-  return (
-    <button aria-checked={checked} onClick={onClick} role="menuitemcheckbox" type="button">
-      {icon}<span>{label}</span>{checked ? <Check className="menu-check" size={14} /> : null}
-    </button>
   );
 }
 
