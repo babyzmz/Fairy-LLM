@@ -4,6 +4,8 @@
   "description": "Companion-only capabilities; no project or execution access",
   "windows": ["pet"],
   "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "core:window:allow-available-monitors",
     "core:window:allow-primary-monitor",
     "core:window:allow-outer-position",
