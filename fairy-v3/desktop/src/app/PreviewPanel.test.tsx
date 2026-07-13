@@ -35,7 +35,7 @@ describe("PreviewPanel", () => {
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
-  it("blocks a forged local URL and renders interrupted state", () => {
+  it("blocks a forged local URL and can restart an interrupted preview", async () => {
     const forged = readyContext();
     forged.preview.url = "http://localhost:43125/preview/";
     const { rerender } = renderPanel(forged);
@@ -47,9 +47,12 @@ describe("PreviewPanel", () => {
     interrupted.preview.status = "interrupted";
     interrupted.preview.health = "interrupted";
     interrupted.preview.error_code = "WORKER_INTERRUPTED";
-    rerender(panel(interrupted));
+    const restart = vi.fn(async () => undefined);
+    rerender(panel(interrupted, undefined, restart));
     expect(screen.getByText("Preview interrupted")).toBeVisible();
     expect(screen.getByText("WORKER_INTERRUPTED")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Restart preview" }));
+    expect(restart).toHaveBeenCalledOnce();
   });
 
   it("starts an executable Preview and enables ready Version decisions", async () => {
@@ -180,14 +183,18 @@ function renderPanel(context: PreviewContext, stop = vi.fn(async () => undefined
   return render(panel(context, stop));
 }
 
-function panel(context: PreviewContext, stop = vi.fn(async () => undefined)) {
+function panel(
+  context: PreviewContext,
+  stop = vi.fn(async () => undefined),
+  start = vi.fn(async () => undefined),
+) {
   return (
     <PreviewPanel
       task={context.task}
       context={context}
       runtimeHealth={null}
       isActing={false}
-      onStart={vi.fn(async () => undefined)}
+      onStart={start}
       onStop={stop}
       onReview={vi.fn(async () => undefined)}
       onAccept={vi.fn(async () => undefined)}

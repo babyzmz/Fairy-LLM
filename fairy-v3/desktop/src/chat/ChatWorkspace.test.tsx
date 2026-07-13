@@ -127,6 +127,7 @@ describe("ChatWorkspace", () => {
   it("deduplicates streamed chunks and exposes stop then retry states", async () => {
     const user = userEvent.setup();
     const props = workspaceProps({
+      messages: [MESSAGES[0]],
       streamedText: "Streaming once, not twice",
       turn: { ...TURN, status: "running" },
       isBusy: true,
@@ -147,6 +148,19 @@ describe("ChatWorkspace", () => {
     );
     await user.click(screen.getByRole("button", { name: "Retry response" }));
     expect(props.onRetry).toHaveBeenCalledOnce();
+  });
+
+  it("hides a stream projection once its durable assistant message exists", () => {
+    const props = workspaceProps({
+      streamedText: MESSAGES[1].content,
+      turn: { ...TURN, status: "running", completed_at: null },
+      isBusy: true,
+    });
+
+    render(<ChatWorkspace {...props} />);
+
+    expect(screen.getAllByText(MESSAGES[1].content)).toHaveLength(1);
+    expect(screen.queryByText("responding")).not.toBeInTheDocument();
   });
 
   it("disables sending while offline or when the selected provider is unavailable", () => {

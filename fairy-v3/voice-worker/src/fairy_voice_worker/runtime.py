@@ -215,7 +215,7 @@ class CosyVoice3Runtime:
         with self._synthesis_lock:
             self._model.model.token_hop_len = INITIAL_TOKEN_HOP
             outputs = self._model.inference_zero_shot(
-                _bistream_text(normalized),
+                normalized,
                 "",
                 "",
                 zero_shot_spk_id="fairy-v3",
@@ -251,7 +251,7 @@ class CosyVoice3Runtime:
         assert self._model is not None
         self._model.model.token_hop_len = INITIAL_TOKEN_HOP
         output = self._model.inference_zero_shot(
-            _bistream_text("Fairy 已准备好继续工作。"),
+            "Fairy 已准备好继续工作。",
             "",
             "",
             zero_shot_spk_id="fairy-v3",
@@ -327,17 +327,6 @@ def normalize_spoken_text(text: str) -> str:
     if value and value[-1] not in ".!?\u3002\uff01\uff1f":
         value += "\u3002"
     return value
-
-
-def _bistream_text(text: str) -> Iterator[str]:
-    points = list(text)
-    start = 0
-    for index, value in enumerate(points, start=1):
-        if index - start >= 12 or value in ",;:\uff0c\uff1b\uff1a.!?\u3002\uff01\uff1f":
-            yield "".join(points[start:index])
-            start = index
-    if start < len(points):
-        yield "".join(points[start:])
 
 
 def _model_files_ready(model_dir: Path) -> bool:

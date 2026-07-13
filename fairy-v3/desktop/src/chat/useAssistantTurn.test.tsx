@@ -351,6 +351,7 @@ describe("useAssistantTurn", () => {
 
     await waitFor(() => expect(result.current.turn).toEqual(completed));
     expect(result.current.isBusy).toBe(false);
+    expect(result.current.streamedText).toBe("");
   });
 
   it("resumes a waiting turn after an explicit approval action", async () => {

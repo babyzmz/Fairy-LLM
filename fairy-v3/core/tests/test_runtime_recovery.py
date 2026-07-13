@@ -72,6 +72,42 @@ def test_recovery_completes_crash_after_external_start_from_probe(tmp_path: Path
     assert task is not None and task.status is TaskStatus.PREVIEWING
 
 
+def test_startup_recovery_interrupts_a_ready_preview_missing_from_the_worker(
+    tmp_path: Path,
+) -> None:
+    stack = build_runtime_stack(tmp_path)
+    context = stack.runtime.start_preview(
+        PreviewStartRequest(
+            task_id=stack.task.task.id,
+            idempotency_key="preview:startup-missing",
+        )
+    )
+    stack.executor.probes.clear()
+
+    recovered = stack.runtime.recover_interrupted(verify_running=True)
+
+    assert recovered[-1].id == context.preview.id
+    assert recovered[-1].status is PreviewStatus.INTERRUPTED
+    with stack.factory() as unit_of_work:
+        runtime = unit_of_work.state.get_runtime(context.runtime.id)
+    assert runtime is not None and runtime.status is RuntimeStatus.INTERRUPTED
+
+
+def test_startup_recovery_keeps_a_matching_ready_preview_live(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    context = stack.runtime.start_preview(
+        PreviewStartRequest(
+            task_id=stack.task.task.id,
+            idempotency_key="preview:startup-live",
+        )
+    )
+
+    recovered = stack.runtime.recover_interrupted(verify_running=True)
+
+    assert recovered == ()
+    assert stack.executor.probe_calls[-1] == context.runtime.executor_handle
+
+
 def test_start_replay_recovers_pending_intent_without_redispatch(tmp_path: Path) -> None:
     stack = build_runtime_stack(tmp_path)
     stack.executor.crash_after_start = True

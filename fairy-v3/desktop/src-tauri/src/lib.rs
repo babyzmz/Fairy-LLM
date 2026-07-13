@@ -543,7 +543,7 @@ async fn voice_session_start(
         &state,
         json!({
             "jsonrpc": "2.0",
-            "id": "native-voice-start",
+            "id": -10_001,
             "method": "voice.sessions.start",
             "params": input,
         }),
@@ -590,7 +590,7 @@ async fn voice_session_cancel(
         &state,
         json!({
             "jsonrpc": "2.0",
-            "id": "native-voice-cancel",
+            "id": -10_002,
             "method": "voice.sessions.cancel",
             "params": { "session_id": session_id },
         }),

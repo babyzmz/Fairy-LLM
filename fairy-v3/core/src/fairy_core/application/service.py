@@ -422,10 +422,16 @@ class CoreService:
         if self._finalizer is not None:
             self._finalizer()
 
-    def recover_interrupted_work(self) -> dict[str, int]:
+    def recover_interrupted_work(
+        self,
+        *,
+        verify_running_previews: bool = False,
+    ) -> dict[str, int]:
         turns = self._assistant_ledger.recover_orphaned_turns()
         previews = (
-            self._runtime_application.recover_interrupted()
+            self._runtime_application.recover_interrupted(
+                verify_running=verify_running_previews,
+            )
             if self._runtime_application is not None
             else ()
         )

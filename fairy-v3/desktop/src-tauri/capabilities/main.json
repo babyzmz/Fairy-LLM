@@ -3,5 +3,5 @@
   "identifier": "main-window",
   "description": "Main Fairy workspace capabilities, including user-triggered capture",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:allow-confirm"]
 }

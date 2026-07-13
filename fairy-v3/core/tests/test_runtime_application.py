@@ -193,6 +193,33 @@ def test_ready_preview_is_promoted_on_accept_without_restart(tmp_path: Path) -> 
     assert stack.executor.stop_calls == []
 
 
+def test_interrupted_project_active_preview_can_restart_without_reopening_task(
+    tmp_path: Path,
+) -> None:
+    stack = build_runtime_stack(tmp_path)
+    request = PreviewStartRequest(
+        task_id=stack.task.task.id,
+        idempotency_key="preview:accepted-restart",
+    )
+    context = stack.runtime.start_preview(request)
+    stack.core.review_task(stack.task.task.id)
+    stack.core.accept_task_version(
+        task_id=stack.task.task.id,
+        expected_project_revision=stack.project_revision,
+        user_confirmed=True,
+    )
+    stack.executor.probes.clear()
+    stack.runtime.recover_interrupted(verify_running=True)
+
+    restarted = stack.runtime.start_preview(request)
+
+    assert restarted.preview.id == context.preview.id
+    assert restarted.preview.status is PreviewStatus.READY
+    assert restarted.preview.visibility is PreviewVisibility.PROJECT_ACTIVE
+    assert restarted.task.status is TaskStatus.ACCEPTED
+    assert len(stack.executor.start_calls) == 2
+
+
 def test_discard_is_blocked_until_preview_is_stopped(tmp_path: Path) -> None:
     stack = build_runtime_stack(tmp_path)
     context = stack.runtime.start_preview(

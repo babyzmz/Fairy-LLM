@@ -11,7 +11,6 @@ from typing import TextIO
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.service import CoreService
-from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
@@ -189,11 +188,7 @@ def build_local_service(
             scope_resolver=application.scope_for_task,
             execution_policy=execution_policy,
         )
-        AssistantLedgerApplication(
-            unit_of_work_factory=unit_of_work_factory,
-            scope_resolver=application.scope_for_task,
-        ).recover_orphaned_turns()
-        return CoreService(
+        service = CoreService(
             application,
             unit_of_work_factory=unit_of_work_factory,
             registry=registry,
@@ -223,6 +218,8 @@ def build_local_service(
             default_execution_target="local",
             on_close=resources.close,
         )
+        service.recover_interrupted_work(verify_running_previews=True)
+        return service
     except BaseException:
         resources.close()
         raise

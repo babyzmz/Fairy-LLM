@@ -11,6 +11,8 @@ export type NativeVoiceEvent =
   | { type: "cancelled"; session_id: string }
   | { type: "failed"; session_id: string; error_code: string; message: string };
 
+type NativePcmChunk = ArrayBuffer | Uint8Array;
+
 export interface NativeVoicePlayback {
   readonly readyForNext: Promise<void>;
   readonly finished: Promise<void>;
@@ -60,7 +62,7 @@ class NativeVoiceHost {
     await this.context?.resume();
     const playback = pendingPlayback();
     const events = new Channel<NativeVoiceEvent>();
-    const audio = new Channel<ArrayBuffer>();
+    const audio = new Channel<NativePcmChunk>();
     events.onmessage = (event) => {
       if (event.type === "started") {
         this.attachSession(playback, event.session_id);
@@ -85,13 +87,14 @@ class NativeVoiceHost {
         this.stopAll(node);
       } else if (event.type === "failed") {
         playback.terminal = true;
-        const error = new Error(event.error_code);
+        const error = new Error(event.error_code || event.message);
         playback.rejectReady(error);
         playback.rejectFinished(error);
         this.failAll(node, error);
       }
     };
-    audio.onmessage = (pcm) => {
+    audio.onmessage = (chunk) => {
+      const pcm = transferablePcm(chunk);
       if (playback.sessionId === null) playback.queuedPcm.push(pcm);
       else this.appendPcm(node, playback, pcm);
     };
@@ -99,10 +102,10 @@ class NativeVoiceHost {
     try {
       session = await invoke<VoiceSession>(command, { ...args, audio, events });
     } catch (error) {
-      const failure = error instanceof Error ? error : new Error(String(error));
+      const failure = normalizedError(error, "VOICE_WORKER_UNAVAILABLE");
       playback.rejectReady(failure);
       playback.rejectFinished(failure);
-      throw error;
+      throw failure;
     }
     this.attachSession(playback, session.id);
     return {
@@ -242,6 +245,19 @@ function deferred(): {
       rejectPromise(error);
     },
   };
+}
+
+function transferablePcm(chunk: NativePcmChunk): ArrayBuffer {
+  if (chunk instanceof ArrayBuffer) return chunk;
+  const copy = new Uint8Array(chunk.byteLength);
+  copy.set(chunk);
+  return copy.buffer;
+}
+
+function normalizedError(error: unknown, fallback: string): Error {
+  if (error instanceof Error) return error;
+  if (typeof error === "string" && error.trim() !== "") return new Error(error);
+  return new Error(fallback);
 }
 
 let sharedHost: NativeVoiceHost | null = null;

@@ -58,7 +58,7 @@ describe("native voice channel", () => {
       }
       if (command === "voice_session_start") {
         const events = args?.events as MockChannel<Record<string, unknown>>;
-        const audio = args?.audio as MockChannel<ArrayBuffer>;
+        const audio = args?.audio as MockChannel<ArrayBuffer | Uint8Array>;
         events.onmessage({
           type: "started",
           session_id: "session-1",
@@ -66,7 +66,7 @@ describe("native voice channel", () => {
           channels: 1,
           scope_digest: "a".repeat(64),
         });
-        audio.onmessage(new ArrayBuffer(4));
+        audio.onmessage(new Uint8Array([0, 0, 1, 0]));
         events.onmessage({ type: "completed", session_id: "session-1", pcm_bytes: 4 });
         return { id: "session-1" };
       }
@@ -93,6 +93,10 @@ describe("native voice channel", () => {
       expect.objectContaining({ type: "append", sessionId: "session-1" }),
       { type: "complete", sessionId: "session-1" },
     ]));
+    const append = posted.find(
+      (message) => (message as { type?: string }).type === "append",
+    ) as { pcm: unknown };
+    expect(append.pcm).toBeInstanceOf(ArrayBuffer);
 
     port.onmessage?.({ data: { type: "drained", sessionId: "session-1" } } as MessageEvent);
     await expect(playback.finished).resolves.toBeUndefined();
@@ -131,5 +135,24 @@ describe("native voice channel", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("voice_session_cancel", {
       sessionId: "session-stop",
     });
+  });
+
+  it("preserves a stable Tauri error code from a rejected native command", async () => {
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "desktop_preferences_get") {
+        return { voice_volume_percent: 80, voice_rate_percent: 100 };
+      }
+      if (command === "voice_session_start") throw "CORE_PROTOCOL_ERROR";
+      return undefined;
+    });
+
+    await expect(startNativeVoice({
+      task_id: "task-1",
+      turn_id: "turn-1",
+      message_id: "message-1",
+      start_offset: 0,
+      end_offset: 4,
+      idempotency_key: "voice:error",
+    })).rejects.toThrow("CORE_PROTOCOL_ERROR");
   });
 });

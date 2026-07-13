@@ -48,7 +48,7 @@ def test_cosyvoice_cannot_download_an_unverified_model_at_runtime() -> None:
     assert decorated is original
 
 
-def test_cosyvoice_prime_uses_the_production_bistream_path() -> None:
+def test_cosyvoice_prime_uses_bounded_text_with_streaming_audio() -> None:
     runtime = CosyVoice3Runtime(
         model_dir=Path("model"),
         source_dir=Path("source"),
@@ -62,6 +62,23 @@ def test_cosyvoice_prime_uses_the_production_bistream_path() -> None:
 
     assert model.model.token_hop_len == INITIAL_TOKEN_HOP
     assert model.received_text == "Fairy 已准备好继续工作。"
+    assert model.received_text_type is str
+
+
+def test_cosyvoice_synthesis_uses_bounded_normalized_text() -> None:
+    runtime = CosyVoice3Runtime(
+        model_dir=Path("model"),
+        source_dir=Path("source"),
+        prompt_wav=Path("prompt.wav"),
+        prompt_text=Path("prompt.txt"),
+    )
+    model = RecordingCosyVoiceModel()
+    runtime._model = model
+
+    assert list(runtime.synthesize("Hello", threading.Event())) == []
+
+    assert model.received_text == "Hello。"
+    assert model.received_text_type is str
 
 
 def test_cosyvoice_does_not_report_ready_until_prime_completes() -> None:
@@ -174,10 +191,11 @@ class RecordingCosyVoiceModel:
     def __init__(self) -> None:
         self.model = SimpleNamespace(token_hop_len=25)
         self.received_text = ""
+        self.received_text_type: type[object] | None = None
 
     def inference_zero_shot(
         self,
-        text: Iterator[str],
+        text: str | Iterator[str],
         _prompt_text: str,
         _prompt_wav: str,
         *,
@@ -186,5 +204,6 @@ class RecordingCosyVoiceModel:
     ) -> Iterator[dict[str, object]]:
         assert zero_shot_spk_id == "fairy-v3"
         assert stream is True
-        self.received_text = "".join(text)
+        self.received_text_type = type(text)
+        self.received_text = text if isinstance(text, str) else "".join(text)
         return iter(())

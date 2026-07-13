@@ -73,7 +73,7 @@ export function Composer({
       className="chat-composer"
       onSubmit={(event) => {
         event.preventDefault();
-        void submit();
+        void submit().catch(() => undefined);
       }}
     >
       {files.length > 0 ? (
@@ -148,7 +148,7 @@ export function Composer({
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
-                void submit();
+                void submit().catch(() => undefined);
               }
               if (event.key === "Escape" && effectiveBusy) {
                 event.preventDefault();

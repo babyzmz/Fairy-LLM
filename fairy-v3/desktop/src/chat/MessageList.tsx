@@ -51,13 +51,19 @@ export function MessageList({
   const visibleMessages = developerMode
     ? messages
     : messages.filter((message) => message.role !== "tool");
+  const durableAssistantForTurn =
+    turn !== null &&
+    visibleMessages.some(
+      (message) => message.role === "assistant" && message.turn_id === turn.id,
+    );
+  const visibleStreamedText = durableAssistantForTurn ? "" : streamedText;
 
   useEffect(() => {
     if (!followingRef.current) return;
     scrollToLatest(listRef.current, endRef.current, false);
   }, [messages, pendingUserMessage, streamedText]);
 
-  if (visibleMessages.length === 0 && !streamedText && pendingUserMessage === null) {
+  if (visibleMessages.length === 0 && !visibleStreamedText && pendingUserMessage === null) {
     return (
       <div className="message-list message-list-empty" aria-label="Conversation messages">
         <Bot size={24} />
@@ -104,7 +110,7 @@ export function MessageList({
           {turn !== null ? <ActivityRail turn={turn} events={events} /> : null}
         </>
       ) : null}
-      {streamedText ? (
+      {visibleStreamedText ? (
         <m.article initial={{ opacity: 0.4, y: 6 }} animate={{ opacity: 1, y: 0 }} className="message-row message-assistant message-streaming">
           <div className="message-avatar" aria-hidden="true">
             <LoaderCircle className="spin" size={16} />
@@ -115,7 +121,7 @@ export function MessageList({
               <span>responding</span>
             </div>
             <MessageContent
-              content={streamedText}
+              content={visibleStreamedText}
               taskId={turn?.task_id ?? ""}
               onCopy={onCopy}
               onOpenLink={onOpenLink}

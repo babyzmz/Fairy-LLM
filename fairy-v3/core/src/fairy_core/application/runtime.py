@@ -241,11 +241,15 @@ class RuntimeApplication(RuntimeApplicationSupport):
             preview=preview,
         )
 
-    def recover_interrupted(self) -> tuple[PreviewSession, ...]:
+    def recover_interrupted(
+        self,
+        *,
+        verify_running: bool = False,
+    ) -> tuple[PreviewSession, ...]:
         with self._operation_lock:
-            return self._recover_interrupted()
+            return self._recover_interrupted(verify_running=verify_running)
 
-    def _recover_interrupted(self) -> tuple[PreviewSession, ...]:
+    def _recover_interrupted(self, *, verify_running: bool) -> tuple[PreviewSession, ...]:
         with self._transaction() as (unit_of_work, _commands):
             candidates = tuple(unit_of_work.state.recoverable_runtimes())
         recovered: list[PreviewSession] = []
@@ -257,11 +261,17 @@ class RuntimeApplication(RuntimeApplicationSupport):
                 preview = self._preview_for_runtime(unit_of_work.state, runtime)
                 if preview is None:
                     continue
-                if (
+                ready_and_running = (
                     runtime.status is RuntimeStatus.RUNNING
                     and preview.status is PreviewStatus.READY
-                ):
-                    continue
+                )
+
+            if ready_and_running:
+                if verify_running:
+                    verified = self._verify_running_preview(runtime, preview)
+                    if verified is not None:
+                        recovered.append(verified)
+                continue
 
             if runtime.status in {RuntimeStatus.STARTING, RuntimeStatus.RUNNING}:
                 if self._recovery_blocked_by_live_lease(runtime, "preview.start"):
@@ -272,6 +282,42 @@ class RuntimeApplication(RuntimeApplicationSupport):
                     continue
                 recovered.append(self._recover_stop(runtime, preview))
         return tuple(recovered)
+
+    def _verify_running_preview(
+        self,
+        runtime: RuntimeSession,
+        preview: PreviewSession,
+    ) -> PreviewSession | None:
+        try:
+            handle = runtime.executor_handle or self._executor.recovery_handle(
+                RuntimeRecoveryTarget(
+                    runtime_id=runtime.id,
+                    preview_id=preview.id,
+                    execution_target=runtime.execution_target,
+                    kind=runtime.kind,
+                    lease_fence=runtime.revision,
+                )
+            )
+            probe = self._executor.probe(handle)
+            if (
+                probe.state is not ExecutorRuntimeState.RUNNING
+                or probe.executor_handle != handle
+                or probe.execution_target != runtime.execution_target
+                or probe.port != runtime.port
+                or probe.url != preview.url
+            ):
+                raise RuntimeExecutorError(
+                    "Runtime recovery probe did not match the durable Preview",
+                    error_code="SCOPE_MISMATCH",
+                )
+        except Exception as error:
+            return self._mark_recovery_interrupted(
+                runtime.id,
+                preview.id,
+                "preview.start",
+                error,
+            )
+        return None
 
     def _prepare_start(self, request: PreviewStartRequest) -> _StartIntent | PreviewContext:
         key = request.idempotency_key.strip()
@@ -297,6 +343,11 @@ class RuntimeApplication(RuntimeApplicationSupport):
                 elif task.status is TaskStatus.REPAIRING:
                     task.transition_to(TaskStatus.EXECUTING)
                     state.save_task(task)
+                elif (
+                    task.status is TaskStatus.ACCEPTED
+                    and existing.visibility is PreviewVisibility.PROJECT_ACTIVE
+                ):
+                    pass
                 elif task.status is not TaskStatus.EXECUTING:
                     raise InvalidTransitionError("Task must be executing before Preview start")
                 scope = self._scope_resolver(state, task)

@@ -375,7 +375,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
 
   const streamedText = useMemo(
     () => (turn !== null && isTerminal(turn) ? "" : assistantDeltaText(options.events, turn?.id ?? null)),
-    [options.events, turn?.id],
+    [options.events, turn?.id, turn?.status],
   );
 
   return {

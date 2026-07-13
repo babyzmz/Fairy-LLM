@@ -944,7 +944,16 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     archiveTask: actions.archiveTask,
     createTask: (userRequest) => projectAssistant.send(userRequest, []),
     sendChatMessage: chatAssistant.send,
-    sendProjectMessage: projectAssistant.send,
+    sendProjectMessage: async (...args: Parameters<typeof projectAssistant.send>) => {
+      if (permissionProfile === "observe") {
+        const message =
+          "Project Tasks require Standard or Autonomous permissions. Observe remains read-only.";
+        setActionError(message);
+        setActionErrorCode("CAPABILITY_NOT_AVAILABLE");
+        throw new Error(message);
+      }
+      await projectAssistant.send(...args);
+    },
     sendPetMessage: actions.sendPetMessage,
     cancelChatTurn: chatAssistant.cancel,
     retryChatTurn: chatAssistant.retry,

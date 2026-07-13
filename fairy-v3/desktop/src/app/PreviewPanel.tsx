@@ -241,12 +241,19 @@ function renderPreviewState({
   }
   if (preview?.status === "interrupted" || preview?.status === "failed") {
     return (
-      <PreviewNotice
-        icon={<AlertCircle />}
-        title={preview.status === "interrupted" ? "Preview interrupted" : "Preview failed"}
-        detail={preview.error_code ?? "WORKER_INTERRUPTED"}
-        tone="danger"
-      />
+      <div className="preview-notice preview-notice-danger" role="status">
+        <AlertCircle />
+        <strong>{preview.status === "interrupted" ? "Preview interrupted" : "Preview failed"}</strong>
+        <span>{preview.error_code ?? "WORKER_INTERRUPTED"}</span>
+        <button
+          className="primary-command"
+          type="button"
+          disabled={isActing}
+          onClick={() => settle(onStart())}
+        >
+          <RotateCcw size={14} /> Restart preview
+        </button>
+      </div>
     );
   }
   if (preview?.status === "stopped") {

@@ -304,6 +304,42 @@ describe("App", () => {
     );
   });
 
+  it("keeps the project draft and explains Observe permission blocking", async () => {
+    const createTask = vi.fn(async () => ({ task: { id: ID.task } }) as never);
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [project],
+      {
+        createTask,
+        capabilities: { get: async () => capabilityManifest("observe", false) },
+        permissions: {
+          get: async () => ({
+            profile: "observe",
+            capability_overrides: {},
+            revision: 0,
+            updated_at: "2026-07-11T00:00:00Z",
+          }),
+          update: async () => {
+            throw new Error("not used");
+          },
+        },
+      },
+    );
+    render(<App client={client} />);
+
+    const composer = await screen.findByLabelText("Message Fairy");
+    await userEvent.type(composer, "Keep this draft");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(await screen.findByText("Permission prevents this action")).toBeVisible();
+    expect(composer).toHaveValue("Keep this draft");
+    expect(createTask).not.toHaveBeenCalled();
+  });
+
 });
 
 function createClient(

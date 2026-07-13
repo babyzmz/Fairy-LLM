@@ -72,15 +72,22 @@ export function EmptyWorkspace({
 
 export function RecoveryNotice({ model }: { model: WorkspaceModel }) {
   const code = model.actionErrorCode;
+  const permissionBlocked =
+    code === "CAPABILITY_NOT_AVAILABLE" ||
+    (model.permissionProfile === "observe" && model.projectError !== null);
   const title =
     code === "VERSION_CONFLICT"
       ? "Version conflict preserved"
       : code === "WORKER_INTERRUPTED"
         ? "Worker interrupted"
+        : permissionBlocked
+          ? "Permission prevents this action"
         : "Workspace request failed";
   const detail =
     code === "VERSION_CONFLICT"
       ? "The candidate version remains separate. Active Version was not overwritten."
+      : permissionBlocked
+        ? "Project Tasks require Standard or Autonomous permissions. Observe remains read-only."
       : (model.actionError ?? model.errorMessage ?? model.projectError);
   return (
     <div className="workspace-error recovery-notice" role="alert">
