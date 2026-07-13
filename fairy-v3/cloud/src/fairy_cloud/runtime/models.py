@@ -12,7 +12,7 @@ from uuid import UUID
 
 from fairy_core.domain.execution import RuntimeKind
 from fairy_core.persistence.tenant import normalize_tenant_id
-from fairy_core.runtime.models import DynamicRuntimeStart
+from fairy_core.runtime.models import DynamicRuntimeStart, RuntimeServiceStart
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
@@ -60,6 +60,8 @@ class CloudRuntimeLease:
     readiness_path: str
     startup_timeout_seconds: int
     dependency_key: str
+    services: tuple[RuntimeServiceStart, ...]
+    public_service_id: str
     workspace_archive: bytes
     archive_sha256: str
     status: CloudRuntimeStatus
@@ -77,6 +79,7 @@ class CloudRuntimeLease:
     def __post_init__(self) -> None:
         object.__setattr__(self, "tenant_id", normalize_tenant_id(self.tenant_id))
         object.__setattr__(self, "argv", tuple(self.argv))
+        object.__setattr__(self, "services", tuple(self.services))
         object.__setattr__(self, "workspace_archive", bytes(self.workspace_archive))
         for name in ("scope_digest", "request_fingerprint", "dependency_key", "archive_sha256"):
             if _DIGEST.fullmatch(str(getattr(self, name))) is None:
@@ -156,6 +159,8 @@ class CloudRuntimeLease:
             readiness_path=request.readiness_path,
             startup_timeout_seconds=request.startup_timeout_seconds,
             dependency_key=request.dependency_key,
+            services=request.services,
+            public_service_id=request.public_service_id,
             workspace_archive=request.workspace_archive,
             archive_sha256=request.archive_sha256,
             status=status,
@@ -207,6 +212,8 @@ class CloudRuntimeLease:
             readiness_path=self.readiness_path,
             startup_timeout_seconds=self.startup_timeout_seconds,
             dependency_key=self.dependency_key,
+            services=self.services,
+            public_service_id=self.public_service_id,
             workspace_archive=self.workspace_archive,
             archive_sha256=self.archive_sha256,
         )
@@ -263,6 +270,19 @@ def cloud_runtime_fingerprint(request: DynamicRuntimeStart) -> str:
         "readiness_path": request.readiness_path,
         "startup_timeout_seconds": request.startup_timeout_seconds,
         "dependency_key": request.dependency_key,
+        "services": [
+            {
+                "service_id": service.service_id,
+                "adapter": service.adapter,
+                "argv": list(service.argv),
+                "cwd": service.cwd,
+                "readiness_path": service.readiness_path,
+                "startup_timeout_seconds": service.startup_timeout_seconds,
+                "depends_on": list(service.depends_on),
+            }
+            for service in request.services
+        ],
+        "public_service_id": request.public_service_id,
         "archive_sha256": request.archive_sha256,
     }
     encoded = json.dumps(

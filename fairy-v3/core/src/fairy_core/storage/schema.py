@@ -746,6 +746,7 @@ runtime_sessions = Table(
     Column("project_root", String(4096), nullable=False),
     Column("execution_target", String(32), nullable=False),
     Column("kind", String(32), nullable=False),
+    Column("runtime_graph", JSON, nullable=False),
     Column("executor", String(128), nullable=False),
     Column("executor_handle", String(512)),
     Column("port", Integer),

@@ -7,7 +7,11 @@ from uuid import UUID
 
 from fairy_core.domain.errors import IdempotencyConflictError, WorkerFenceError
 from fairy_core.persistence.tenant import normalize_tenant_id
-from fairy_core.runtime.models import DynamicRuntimeStart, RuntimeExecutorHealth
+from fairy_core.runtime.models import (
+    DynamicRuntimeStart,
+    RuntimeExecutorHealth,
+    RuntimeServiceStart,
+)
 from sqlalchemy import and_, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.engine import Engine
@@ -616,6 +620,8 @@ def _lease_values(lease: CloudRuntimeLease) -> dict[str, object]:
         "readiness_path": lease.readiness_path,
         "startup_timeout_seconds": lease.startup_timeout_seconds,
         "dependency_key": lease.dependency_key,
+        "services": [_service_values(service) for service in lease.services],
+        "public_service_id": lease.public_service_id,
         "workspace_archive": lease.workspace_archive,
         "archive_sha256": lease.archive_sha256,
         "archive_byte_length": len(lease.workspace_archive),
@@ -668,6 +674,8 @@ def _retry_values(candidate: CloudRuntimeLease) -> dict[str, object]:
         "readiness_path": candidate.readiness_path,
         "startup_timeout_seconds": candidate.startup_timeout_seconds,
         "dependency_key": candidate.dependency_key,
+        "services": [_service_values(service) for service in candidate.services],
+        "public_service_id": candidate.public_service_id,
         "workspace_archive": candidate.workspace_archive,
         "archive_sha256": candidate.archive_sha256,
         "archive_byte_length": len(candidate.workspace_archive),
@@ -701,6 +709,8 @@ def _lease_from_row(row: Mapping[str, object]) -> CloudRuntimeLease:
         readiness_path=str(row["readiness_path"]),
         startup_timeout_seconds=int(row["startup_timeout_seconds"]),
         dependency_key=str(row["dependency_key"]),
+        services=tuple(_service_from_value(value) for value in row["services"]),
+        public_service_id=str(row["public_service_id"]),
         workspace_archive=bytes(row["workspace_archive"]),
         archive_sha256=str(row["archive_sha256"]),
         status=CloudRuntimeStatus(str(row["status"])),
@@ -720,6 +730,32 @@ def _lease_from_row(row: Mapping[str, object]) -> CloudRuntimeLease:
     if lease.to_request().archive_sha256 != lease.archive_sha256:
         raise ValueError("Cloud Runtime archive hash does not match")
     return lease
+
+
+def _service_values(service: RuntimeServiceStart) -> dict[str, object]:
+    return {
+        "service_id": service.service_id,
+        "adapter": service.adapter,
+        "argv": list(service.argv),
+        "cwd": service.cwd,
+        "readiness_path": service.readiness_path,
+        "startup_timeout_seconds": service.startup_timeout_seconds,
+        "depends_on": list(service.depends_on),
+    }
+
+
+def _service_from_value(value: object) -> RuntimeServiceStart:
+    if not isinstance(value, dict):
+        raise ValueError("Cloud Runtime service row is invalid")
+    return RuntimeServiceStart(
+        service_id=str(value["service_id"]),
+        adapter=str(value["adapter"]),
+        argv=tuple(str(item) for item in value["argv"]),
+        cwd=str(value["cwd"]),
+        readiness_path=str(value["readiness_path"]),
+        startup_timeout_seconds=int(value["startup_timeout_seconds"]),
+        depends_on=tuple(str(item) for item in value["depends_on"]),
+    )
 
 
 def _set_tenant(connection, tenant_id: str) -> None:

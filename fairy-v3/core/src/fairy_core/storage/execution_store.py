@@ -24,8 +24,10 @@ from fairy_core.domain.execution import (
     PreviewSession,
     PreviewStatus,
     PreviewVisibility,
+    RuntimeGraph,
     RuntimeHealth,
     RuntimeKind,
+    RuntimeServiceDefinition,
     RuntimeSession,
     RuntimeStatus,
 )
@@ -62,6 +64,38 @@ def _mutable_json(value: Any) -> Any:
     return value
 
 
+def _runtime_graph(value: object, kind: RuntimeKind) -> RuntimeGraph:
+    if not isinstance(value, Mapping):
+        return RuntimeGraph(
+            services=(
+                RuntimeServiceDefinition(
+                    service_id="app",
+                    adapter="static" if kind is RuntimeKind.STATIC_SITE else "legacy",
+                    cwd=".",
+                    readiness_path="/",
+                ),
+            ),
+            public_service_id="app",
+        )
+    services = value.get("services")
+    if not isinstance(services, list):
+        raise ValueError("Runtime graph row is invalid")
+    return RuntimeGraph(
+        services=tuple(
+            RuntimeServiceDefinition(
+                service_id=str(service["service_id"]),
+                adapter=str(service["adapter"]),
+                cwd=str(service["cwd"]),
+                readiness_path=str(service["readiness_path"]),
+                depends_on=tuple(str(item) for item in service["depends_on"]),
+            )
+            for service in services
+            if isinstance(service, Mapping)
+        ),
+        public_service_id=str(value["public_service_id"]),
+    )
+
+
 def _runtime_request_identity(runtime: RuntimeSession) -> tuple[object, ...]:
     return (
         runtime.project_id,
@@ -72,6 +106,7 @@ def _runtime_request_identity(runtime: RuntimeSession) -> tuple[object, ...]:
         runtime.project_root,
         runtime.execution_target,
         runtime.kind,
+        runtime.graph,
         runtime.executor,
     )
 
@@ -434,6 +469,19 @@ class ExecutionStateStoreMixin:
             "project_root": str(runtime.project_root),
             "execution_target": runtime.execution_target,
             "kind": runtime.kind.value,
+            "runtime_graph": {
+                "public_service_id": runtime.graph.public_service_id,
+                "services": [
+                    {
+                        "service_id": service.service_id,
+                        "adapter": service.adapter,
+                        "cwd": service.cwd,
+                        "readiness_path": service.readiness_path,
+                        "depends_on": list(service.depends_on),
+                    }
+                    for service in runtime.graph.services
+                ],
+            },
             "executor": runtime.executor,
             "executor_handle": runtime.executor_handle,
             "port": runtime.port,
@@ -523,6 +571,7 @@ class ExecutionStateStoreMixin:
             project_root=Path(row["project_root"]),
             execution_target=row["execution_target"],
             kind=RuntimeKind(row["kind"]),
+            graph=_runtime_graph(row.get("runtime_graph"), RuntimeKind(row["kind"])),
             executor=row["executor"],
             executor_handle=row["executor_handle"],
             port=int(row["port"]) if row["port"] is not None else None,

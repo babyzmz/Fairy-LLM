@@ -19,7 +19,9 @@ from fairy_core.domain.execution import (
     PreviewSession,
     PreviewStatus,
     PreviewVisibility,
+    RuntimeGraph,
     RuntimeKind,
+    RuntimeServiceDefinition,
     RuntimeSession,
     RuntimeStatus,
 )
@@ -33,6 +35,7 @@ from fairy_core.runtime.models import (
     RuntimeExecutorHealth,
     RuntimeProbeResult,
     RuntimeRecoveryTarget,
+    RuntimeServiceStart,
     RuntimeStartResult,
     StaticRuntimeStart,
 )
@@ -59,6 +62,34 @@ class _StopIntent:
     runtime: RuntimeSession
     command: CommandRun
     executor_handle: str
+
+
+def _runtime_graph(template: RuntimeTemplate) -> RuntimeGraph:
+    if template.adapter is RuntimeAdapter.STATIC:
+        return RuntimeGraph(
+            services=(
+                RuntimeServiceDefinition(
+                    service_id="app",
+                    adapter="static",
+                    cwd=".",
+                    readiness_path="/",
+                ),
+            ),
+            public_service_id="app",
+        )
+    return RuntimeGraph(
+        services=tuple(
+            RuntimeServiceDefinition(
+                service_id=service.service_id,
+                adapter=service.adapter.value,
+                cwd=service.cwd,
+                readiness_path=service.readiness_path,
+                depends_on=service.depends_on,
+            )
+            for service in template.services
+        ),
+        public_service_id=template.public_service_id,
+    )
 
 
 class RuntimeApplication(RuntimeApplicationSupport):
@@ -130,6 +161,19 @@ class RuntimeApplication(RuntimeApplicationSupport):
                         dependency_key=dependency_key,
                         workspace_archive=archive.content,
                         archive_sha256=hashlib.sha256(archive.content).hexdigest(),
+                        services=tuple(
+                            RuntimeServiceStart(
+                                service_id=service.service_id,
+                                adapter=service.adapter.value,
+                                argv=service.argv,
+                                cwd=service.cwd,
+                                readiness_path=service.readiness_path,
+                                startup_timeout_seconds=service.startup_timeout_seconds,
+                                depends_on=service.depends_on,
+                            )
+                            for service in intent.template.services
+                        ),
+                        public_service_id=intent.template.public_service_id,
                     )
                 )
             if result.execution_target != runtime.execution_target:
@@ -410,6 +454,11 @@ class RuntimeApplication(RuntimeApplicationSupport):
                         "Preview retry cannot rebind the Runtime kind",
                         error_code="SCOPE_MISMATCH",
                     )
+                if runtime.graph != _runtime_graph(template):
+                    raise RuntimeExecutorError(
+                        "Preview retry cannot rebind the Runtime graph",
+                        error_code="SCOPE_MISMATCH",
+                    )
                 workspace_generation = self._validate_template_dependencies(
                     unit_of_work,
                     task.id,
@@ -450,6 +499,7 @@ class RuntimeApplication(RuntimeApplicationSupport):
                     kind=template.kind,
                     executor=health.executor,
                     idempotency_key=f"{key}:runtime",
+                    graph=_runtime_graph(template),
                 )
                 preview = PreviewSession.create(
                     scope=scope,

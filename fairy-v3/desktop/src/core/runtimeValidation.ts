@@ -22,6 +22,30 @@ const previewStatusSchema = z.enum([
   "interrupted",
 ]);
 const timestampSchema = z.string().min(1);
+const runtimeServiceSchema = z
+  .object({
+    service_id: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
+    adapter: z.string().min(1),
+    cwd: z.string().min(1),
+    readiness_path: z.string().startsWith("/"),
+    depends_on: z.array(z.string()).max(8),
+  })
+  .strict();
+const runtimeGraphSchema = z
+  .object({
+    services: z.array(runtimeServiceSchema).min(1).max(8),
+    public_service_id: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const ids = new Set(value.services.map((service) => service.service_id));
+    if (ids.size !== value.services.length || !ids.has(value.public_service_id)) {
+      context.addIssue({ code: "custom", message: "Runtime graph identity is invalid" });
+    }
+    if (value.services.some((service) => service.depends_on.some((id) => !ids.has(id)))) {
+      context.addIssue({ code: "custom", message: "Runtime graph dependency is unknown" });
+    }
+  });
 
 const runtimeSchema = z
   .object({
@@ -34,6 +58,7 @@ const runtimeSchema = z
     project_root: z.string().min(1),
     execution_target: executionTargetSchema,
     kind: z.enum(["static_site", "wsl_project", "cloud_oci"]),
+    graph: runtimeGraphSchema,
     executor: z.string().min(1),
     executor_handle: z.string().min(1).nullable(),
     port: z.number().int().min(1).max(65_535).nullable(),

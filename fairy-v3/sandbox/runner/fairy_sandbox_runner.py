@@ -136,8 +136,8 @@ def parse_request_frame(frame: bytes) -> tuple[RunnerRequest, bytes]:
     conversation_id = _uuid(header, "conversation_id")
     task_id = _uuid(header, "task_id")
     version_id = _optional_uuid(header, "version_id")
-    if (project_id is None) != (version_id is None):
-        raise RunnerProtocolError("project and version bindings must match")
+    if project_id is not None and version_id is None:
+        raise RunnerProtocolError("project-bound execution requires a version")
     scope_digest = header.get("scope_digest")
     if not isinstance(scope_digest, str) or _DIGEST.fullmatch(scope_digest) is None:
         raise RunnerProtocolError("scope digest is invalid")

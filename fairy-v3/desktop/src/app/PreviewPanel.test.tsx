@@ -215,7 +215,19 @@ function readyContext(): PreviewContext {
       version_id: id.version,
       project_root: "C:/Fairy/version",
       execution_target: "local",
-      kind: "static_site",
+    kind: "static_site",
+    graph: {
+      public_service_id: "app",
+      services: [
+        {
+          service_id: "app",
+          adapter: "static",
+          cwd: ".",
+          readiness_path: "/",
+          depends_on: [],
+        },
+      ],
+    },
       executor: "rust_local_worker",
       executor_handle: `static:${id.preview}`,
       port: 43125,

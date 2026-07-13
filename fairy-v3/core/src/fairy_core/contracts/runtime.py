@@ -18,6 +18,28 @@ from fairy_core.domain.execution import (
 )
 
 
+class RuntimeServiceModel(ContractModel):
+    service_id: str = Field(pattern=r"^[a-z][a-z0-9-]{0,31}$")
+    adapter: str = Field(min_length=1, max_length=32)
+    cwd: str = Field(min_length=1, max_length=1_024)
+    readiness_path: str = Field(min_length=1, max_length=2_048)
+    depends_on: tuple[str, ...] = Field(default=(), max_length=8)
+
+
+class RuntimeGraphModel(ContractModel):
+    services: tuple[RuntimeServiceModel, ...] = Field(min_length=1, max_length=8)
+    public_service_id: str = Field(pattern=r"^[a-z][a-z0-9-]{0,31}$")
+
+    @model_validator(mode="after")
+    def validate_graph(self) -> RuntimeGraphModel:
+        ids = {service.service_id for service in self.services}
+        if len(ids) != len(self.services) or self.public_service_id not in ids:
+            raise ValueError("Runtime graph identity is invalid")
+        if any(set(service.depends_on) - ids for service in self.services):
+            raise ValueError("Runtime graph dependency is unknown")
+        return self
+
+
 class RuntimeModel(ContractModel):
     id: UUID
     project_id: UUID | None
@@ -28,6 +50,7 @@ class RuntimeModel(ContractModel):
     project_root: Path
     execution_target: ExecutionTarget
     kind: RuntimeKind
+    graph: RuntimeGraphModel
     executor: str = Field(min_length=1, max_length=128)
     executor_handle: str | None
     port: int | None = Field(default=None, ge=1, le=65_535)
@@ -123,4 +146,9 @@ class PreviewModel(ContractModel):
         return self
 
 
-__all__ = ["PreviewModel", "RuntimeModel"]
+__all__ = [
+    "PreviewModel",
+    "RuntimeGraphModel",
+    "RuntimeModel",
+    "RuntimeServiceModel",
+]

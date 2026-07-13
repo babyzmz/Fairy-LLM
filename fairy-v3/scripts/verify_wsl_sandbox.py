@@ -22,7 +22,7 @@ def main() -> int:
         project_id=None,
         conversation_id=uuid4(),
         task_id=uuid4(),
-        version_id=None,
+        version_id=uuid4(),
         scope_digest="a" * 64,
         workspace_generation=1,
         lease_fence=1,

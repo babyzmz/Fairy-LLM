@@ -46,6 +46,7 @@ PORT_TOKEN = "{port}"
 SECCOMP_FD_TOKEN = "{seccomp_fd}"
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _READINESS_PATH = re.compile(r"^/(?:[A-Za-z0-9._~-]+/)*[A-Za-z0-9._~-]*$")
+_SERVICE_ID = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _ASGI_ENTRY = re.compile(
     r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*:"
     r"[A-Za-z_][A-Za-z0-9_]*$"
@@ -78,6 +79,7 @@ _START_KEYS = frozenset(
         "archive_sha256",
     }
 )
+_START_KEYS_V2 = _START_KEYS | {"services", "public_service_id"}
 
 
 class RuntimeProtocolError(ValueError):
@@ -102,6 +104,8 @@ class RuntimeRequest:
     startup_timeout_seconds: int
     dependency_key: str
     archive_sha256: str
+    services: tuple[RuntimeServiceRequest, ...]
+    public_service_id: str
 
     @property
     def executor_handle(self) -> str:
@@ -127,8 +131,37 @@ class RuntimeRequest:
             "startup_timeout_seconds": self.startup_timeout_seconds,
             "dependency_key": self.dependency_key,
             "archive_sha256": self.archive_sha256,
+            "services": [service.document for service in self.services],
+            "public_service_id": self.public_service_id,
         }
         return hashlib.sha256(_canonical_json(values)).hexdigest()
+
+    @property
+    def ordered_services(self) -> tuple[RuntimeServiceRequest, ...]:
+        return _topological_services(self.services)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeServiceRequest:
+    service_id: str
+    adapter: str
+    argv: tuple[str, ...]
+    cwd: str
+    readiness_path: str
+    startup_timeout_seconds: int
+    depends_on: tuple[str, ...]
+
+    @property
+    def document(self) -> dict[str, object]:
+        return {
+            "service_id": self.service_id,
+            "adapter": self.adapter,
+            "argv": list(self.argv),
+            "cwd": self.cwd,
+            "readiness_path": self.readiness_path,
+            "startup_timeout_seconds": self.startup_timeout_seconds,
+            "depends_on": list(self.depends_on),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,11 +284,11 @@ def parse_start_frame(frame: bytes) -> tuple[RuntimeRequest, bytes]:
         header = json.loads(frame[4 : 4 + header_length].decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise RuntimeProtocolError("Runtime request header is invalid JSON") from error
-    if (
-        not isinstance(header, dict)
-        or set(header) != _START_KEYS
-        or header.get("schema_version") != 1
-    ):
+    if not isinstance(header, dict):
+        raise RuntimeProtocolError("Runtime request schema is invalid")
+    schema_version = header.get("schema_version")
+    expected_keys = _START_KEYS if schema_version == 1 else _START_KEYS_V2
+    if schema_version not in {1, 2} or set(header) != expected_keys:
         raise RuntimeProtocolError("Runtime request schema is invalid")
     if header.get("archive_byte_length") != len(archive):
         raise RuntimeProtocolError("Runtime archive byte length does not match")
@@ -269,13 +302,16 @@ def parse_start_frame(frame: bytes) -> tuple[RuntimeRequest, bytes]:
         raise RuntimeProtocolError("Runtime target does not match the supervisor mode")
 
     adapter = header.get("adapter")
-    if adapter not in {"vite", "next", "astro", "python_asgi"}:
+    if adapter not in {"vite", "next", "astro", "python_asgi", "node_http"}:
         raise RuntimeProtocolError("Runtime adapter is invalid")
-    argv = _argv(header.get("argv"))
+    argv = _argv(header.get("argv"), requires_port=adapter != "node_http")
     _validate_adapter_argv(str(adapter), argv)
     cwd = header.get("cwd")
-    if cwd != ".":
-        raise RuntimeProtocolError("Runtime cwd must be the project root")
+    if not isinstance(cwd, str) or (
+        (schema_version == 1 and cwd != ".")
+        or (schema_version == 2 and not _valid_relative_directory(cwd))
+    ):
+        raise RuntimeProtocolError("Runtime cwd is invalid")
     readiness_path = header.get("readiness_path")
     if (
         not isinstance(readiness_path, str)
@@ -285,6 +321,39 @@ def parse_start_frame(frame: bytes) -> tuple[RuntimeRequest, bytes]:
         raise RuntimeProtocolError("Runtime readiness path is invalid")
     scope_digest = _digest(header, "scope_digest")
     dependency_key = _digest(header, "dependency_key")
+    if schema_version == 1:
+        public_service_id = "app"
+        services = (
+            RuntimeServiceRequest(
+                service_id=public_service_id,
+                adapter=str(adapter),
+                argv=argv,
+                cwd=".",
+                readiness_path=readiness_path,
+                startup_timeout_seconds=_bounded_integer(
+                    header,
+                    "startup_timeout_seconds",
+                    1,
+                    120,
+                ),
+                depends_on=(),
+            ),
+        )
+    else:
+        public_service_id = header.get("public_service_id")
+        if not isinstance(public_service_id, str):
+            raise RuntimeProtocolError("Runtime public service is invalid")
+        services = _services(header.get("services"), public_service_id)
+        public = next(service for service in services if service.service_id == public_service_id)
+        if (
+            public.adapter != adapter
+            or public.argv != argv
+            or public.cwd != cwd
+            or public.readiness_path != readiness_path
+            or public.startup_timeout_seconds
+            != _bounded_integer(header, "startup_timeout_seconds", 1, 120)
+        ):
+            raise RuntimeProtocolError("Runtime public service metadata changed")
     return (
         RuntimeRequest(
             project_id=_uuid(header, "project_id"),
@@ -303,7 +372,7 @@ def parse_start_frame(frame: bytes) -> tuple[RuntimeRequest, bytes]:
             ),
             lease_fence=_bounded_integer(header, "lease_fence", 1, 2**63 - 1),
             argv=argv,
-            cwd=".",
+            cwd=cwd,
             readiness_path=readiness_path,
             startup_timeout_seconds=_bounded_integer(
                 header,
@@ -313,6 +382,8 @@ def parse_start_frame(frame: bytes) -> tuple[RuntimeRequest, bytes]:
             ),
             dependency_key=dependency_key,
             archive_sha256=archive_sha256,
+            services=services,
+            public_service_id=public_service_id,
         ),
         archive,
     )
@@ -338,7 +409,6 @@ def _start_runtime_locked(
     controller = processes or PosixProcessController()
     resolved_root = Path(root).resolve(strict=False)
     resolved_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    layer = _dependency_layer(resolved_root, request.dependency_key, request.adapter)
     runtime_root = resolved_root / "runtimes" / str(request.runtime_id)
     runtime_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     state_path = runtime_root / "state.json"
@@ -352,11 +422,8 @@ def _start_runtime_locked(
                 raise RuntimeProtocolError("Runtime lease fence fingerprint changed")
             if _state_is_running(existing, controller):
                 return _response(existing, action="start", runtime_state="running")
-        elif _state_is_running(existing, controller):
-            controller.stop(
-                _state_integer(existing, "pid"),
-                _state_integer(existing, "start_ticks"),
-            )
+        elif existing.get("status") == "running":
+            _stop_state_processes(existing, controller)
 
     workspace = runtime_root / f"workspace-{request.lease_fence}"
     if workspace.exists():
@@ -368,19 +435,55 @@ def _start_runtime_locked(
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    port = controller.allocate_port()
-    command = build_isolation_command(request, workspace, layer, port)
-    identity = controller.start(
-        command,
-        cwd=workspace,
-        startup_timeout_seconds=request.startup_timeout_seconds,
-        readiness_path=request.readiness_path,
-        log_path=runtime_root / f"runtime-{request.lease_fence}.log",
-        port=port,
-    )
-    if identity.port != port:
-        controller.stop(identity.pid, identity.start_ticks)
-        raise RuntimeProtocolError("Runtime process rebound its allocated port")
+    ports = {service.service_id: controller.allocate_port() for service in request.services}
+    if len(set(ports.values())) != len(ports):
+        raise RuntimeProtocolError("Runtime service port lease collided")
+    service_urls = {
+        service_id: f"http://127.0.0.1:{port}/" for service_id, port in ports.items()
+    }
+    started: list[tuple[RuntimeServiceRequest, ProcessIdentity]] = []
+    try:
+        for service in request.ordered_services:
+            layer = _dependency_layer(
+                resolved_root,
+                request.dependency_key,
+                service.adapter,
+            )
+            command = build_service_isolation_command(
+                service,
+                workspace,
+                layer,
+                ports[service.service_id],
+                service_urls,
+            )
+            service_cwd = (workspace / service.cwd).resolve(strict=True)
+            if (
+                not service_cwd.is_relative_to(workspace)
+                or service_cwd.is_symlink()
+                or not service_cwd.is_dir()
+            ):
+                raise RuntimeProtocolError("Runtime service cwd is unavailable")
+            identity = controller.start(
+                command,
+                cwd=service_cwd,
+                startup_timeout_seconds=service.startup_timeout_seconds,
+                readiness_path=service.readiness_path,
+                log_path=(
+                    runtime_root
+                    / f"runtime-{request.lease_fence}-{service.service_id}.log"
+                ),
+                port=ports[service.service_id],
+            )
+            if identity.port != ports[service.service_id]:
+                controller.stop(identity.pid, identity.start_ticks)
+                raise RuntimeProtocolError("Runtime process rebound its allocated port")
+            started.append((service, identity))
+    except BaseException:
+        for _service, identity in reversed(started):
+            controller.stop(identity.pid, identity.start_ticks)
+        raise
+    identities = {service.service_id: identity for service, identity in started}
+    public_identity = identities[request.public_service_id]
     state = {
         "schema_version": 1,
         "project_id": str(request.project_id),
@@ -395,12 +498,23 @@ def _start_runtime_locked(
         "dependency_key": request.dependency_key,
         "fingerprint": request.fingerprint,
         "executor_handle": request.executor_handle,
-        "pid": identity.pid,
-        "start_ticks": identity.start_ticks,
+        "pid": public_identity.pid,
+        "start_ticks": public_identity.start_ticks,
         "host": "127.0.0.1",
-        "port": identity.port,
-        "url": f"http://127.0.0.1:{identity.port}/",
+        "port": public_identity.port,
+        "url": service_urls[request.public_service_id],
         "readiness_path": request.readiness_path,
+        "public_service_id": request.public_service_id,
+        "services": [
+            {
+                **service.document,
+                "pid": identities[service.service_id].pid,
+                "start_ticks": identities[service.service_id].start_ticks,
+                "port": identities[service.service_id].port,
+                "url": service_urls[service.service_id],
+            }
+            for service in request.ordered_services
+        ],
         "status": "running",
     }
     _write_json_atomic(state_path, state)
@@ -459,10 +573,8 @@ def _stop_runtime_locked(
         Path(root).resolve(strict=False) / "runtimes" / str(runtime_id) / "state.json"
     )
     state = _required_state(state_path, executor_handle, lease_fence)
-    if _state_is_running(state, controller):
-        controller.stop(
-            _state_integer(state, "pid"), _state_integer(state, "start_ticks")
-        )
+    if state.get("status") == "running":
+        _stop_state_processes(state, controller)
     state["status"] = "stopped"
     _write_json_atomic(state_path, state)
     return {
@@ -484,10 +596,31 @@ def build_isolation_command(
     layer: Path,
     port: int,
 ) -> tuple[str, ...]:
+    service = next(
+        item for item in request.services if item.service_id == request.public_service_id
+    )
+    return build_service_isolation_command(
+        service,
+        workspace,
+        layer,
+        port,
+        {service.service_id: f"http://127.0.0.1:{port}/"},
+    )
+
+
+def build_service_isolation_command(
+    service: RuntimeServiceRequest,
+    workspace: Path,
+    layer: Path,
+    port: int,
+    service_urls: dict[str, str],
+) -> tuple[str, ...]:
     workspace = workspace.resolve(strict=True)
     layer = layer.resolve(strict=True)
     mount_name = (
-        "node_modules" if request.adapter in {"vite", "next", "astro"} else ".venv"
+        "node_modules"
+        if service.adapter in {"vite", "next", "astro", "node_http"}
+        else ".venv"
     )
     mount_source = layer / mount_name
     if not mount_source.is_dir() or mount_source.is_symlink():
@@ -498,9 +631,15 @@ def build_isolation_command(
     ):
         raise RuntimeProtocolError("Runtime dependency mount target is invalid")
     mount_target.mkdir(exist_ok=True)
-    argv = tuple(str(port) if value == PORT_TOKEN else value for value in request.argv)
+    argv = tuple(str(port) if value == PORT_TOKEN else value for value in service.argv)
     if PORT_TOKEN in argv:
         raise RuntimeProtocolError("Runtime port token substitution failed")
+    service_environment: list[str] = []
+    for service_id, url in sorted(service_urls.items()):
+        key = service_id.upper().replace("-", "_")
+        service_environment.extend(("--setenv", f"FAIRY_SERVICE_{key}_URL", url))
+        service_environment.extend(("--setenv", f"VITE_FAIRY_SERVICE_{key}_URL", url))
+    chdir = "/workspace" if service.cwd == "." else f"/workspace/{service.cwd}"
     return (
         BWRAP.as_posix(),
         "--new-session",
@@ -519,6 +658,9 @@ def build_isolation_command(
         "--symlink",
         "usr/lib",
         "/lib",
+        "--symlink",
+        "usr/lib64",
+        "/lib64",
         "--proc",
         "/proc",
         "--dev",
@@ -544,8 +686,15 @@ def build_isolation_command(
         "--setenv",
         "LANG",
         "C.UTF-8",
+        "--setenv",
+        "HOST",
+        "127.0.0.1",
+        "--setenv",
+        "PORT",
+        str(port),
+        *service_environment,
         "--chdir",
-        "/workspace",
+        chdir,
         "--",
         *argv,
     )
@@ -658,6 +807,14 @@ def _validate_adapter_argv(adapter: str, argv: tuple[str, ...]) -> None:
         if argv != valid[adapter]:
             raise RuntimeProtocolError("Runtime argv does not match its adapter")
         return
+    if adapter == "node_http":
+        if (
+            len(argv) != 2
+            or argv[0] != "node"
+            or not _valid_entry_path(argv[1])
+        ):
+            raise RuntimeProtocolError("Runtime argv does not match node_http")
+        return
     if (
         len(argv) != 10
         or argv[:3] != (".venv/bin/python", "-m", "uvicorn")
@@ -674,7 +831,106 @@ def _validate_adapter_argv(adapter: str, argv: tuple[str, ...]) -> None:
         raise RuntimeProtocolError("Runtime argv does not match python_asgi")
 
 
-def _argv(value: object) -> tuple[str, ...]:
+def _services(value: object, public_service_id: str) -> tuple[RuntimeServiceRequest, ...]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 8:
+        raise RuntimeProtocolError("Runtime services are invalid")
+    services = tuple(_service(item) for item in value)
+    ids = {service.service_id for service in services}
+    if len(ids) != len(services) or public_service_id not in ids:
+        raise RuntimeProtocolError("Runtime public service is invalid")
+    if any(set(service.depends_on) - ids for service in services):
+        raise RuntimeProtocolError("Runtime service dependency is unknown")
+    _topological_services(services)
+    return services
+
+
+def _service(value: object) -> RuntimeServiceRequest:
+    keys = {
+        "service_id",
+        "adapter",
+        "argv",
+        "cwd",
+        "readiness_path",
+        "startup_timeout_seconds",
+        "depends_on",
+    }
+    if not isinstance(value, dict) or set(value) != keys:
+        raise RuntimeProtocolError("Runtime service schema is invalid")
+    service_id = value.get("service_id")
+    adapter = value.get("adapter")
+    cwd = value.get("cwd")
+    readiness_path = value.get("readiness_path")
+    depends_on = value.get("depends_on")
+    if (
+        not isinstance(service_id, str)
+        or _SERVICE_ID.fullmatch(service_id) is None
+        or adapter not in {"vite", "next", "astro", "python_asgi", "node_http"}
+        or not isinstance(cwd, str)
+        or not _valid_relative_directory(cwd)
+        or not isinstance(readiness_path, str)
+        or _READINESS_PATH.fullmatch(readiness_path) is None
+        or ".." in readiness_path.split("/")
+        or not isinstance(depends_on, list)
+        or any(not isinstance(item, str) for item in depends_on)
+        or len(set(depends_on)) != len(depends_on)
+        or service_id in depends_on
+    ):
+        raise RuntimeProtocolError("Runtime service values are invalid")
+    argv = _argv(value.get("argv"), requires_port=adapter != "node_http")
+    _validate_adapter_argv(str(adapter), argv)
+    return RuntimeServiceRequest(
+        service_id=service_id,
+        adapter=str(adapter),
+        argv=argv,
+        cwd=cwd,
+        readiness_path=readiness_path,
+        startup_timeout_seconds=_bounded_integer(
+            value,
+            "startup_timeout_seconds",
+            1,
+            120,
+        ),
+        depends_on=tuple(depends_on),
+    )
+
+
+def _valid_relative_directory(value: str) -> bool:
+    return value == "." or (
+        bool(value)
+        and not value.startswith(("/", "\\"))
+        and "\\" not in value
+        and all(part not in {"", ".", ".."} for part in value.split("/"))
+    )
+
+
+def _topological_services(
+    services: tuple[RuntimeServiceRequest, ...],
+) -> tuple[RuntimeServiceRequest, ...]:
+    by_id = {service.service_id: service for service in services}
+    ordered: list[RuntimeServiceRequest] = []
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(service: RuntimeServiceRequest) -> None:
+        if service.service_id in visiting:
+            raise RuntimeProtocolError("Runtime service graph contains a cycle")
+        if service.service_id in visited:
+            return
+        visiting.add(service.service_id)
+        for dependency in service.depends_on:
+            if dependency not in by_id:
+                raise RuntimeProtocolError("Runtime service dependency is unknown")
+            visit(by_id[dependency])
+        visiting.remove(service.service_id)
+        visited.add(service.service_id)
+        ordered.append(service)
+
+    for service in services:
+        visit(service)
+    return tuple(ordered)
+
+
+def _argv(value: object, *, requires_port: bool = True) -> tuple[str, ...]:
     if not isinstance(value, list) or not 1 <= len(value) <= MAX_ARGUMENTS:
         raise RuntimeProtocolError("Runtime argv must be a bounded array")
     result: list[str] = []
@@ -687,9 +943,23 @@ def _argv(value: object) -> tuple[str, ...]:
         ):
             raise RuntimeProtocolError("Runtime argv contains an invalid item")
         result.append(item)
-    if sum(item.count(PORT_TOKEN) for item in result) != 1:
-        raise RuntimeProtocolError("Runtime argv requires one port token")
+    expected_tokens = 1 if requires_port else 0
+    if sum(item.count(PORT_TOKEN) for item in result) != expected_tokens:
+        raise RuntimeProtocolError("Runtime argv has invalid port binding")
     return tuple(result)
+
+
+def _valid_entry_path(value: str) -> bool:
+    return (
+        bool(value)
+        and not value.startswith(("/", "\\"))
+        and "\\" not in value
+        and all(
+            part not in {"", ".", ".."}
+            and re.fullmatch(r"[A-Za-z0-9._-]+", part) is not None
+            for part in value.split("/")
+        )
+    )
 
 
 def _dependency_layer(root: Path, key: str, adapter: str) -> Path:
@@ -702,7 +972,9 @@ def _dependency_layer(root: Path, key: str, adapter: str) -> Path:
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeProtocolError("Runtime dependency layer is unavailable") from error
     allowed_managers = (
-        {"npm", "pnpm", "yarn"} if adapter in {"vite", "next", "astro"} else {"uv"}
+        {"npm", "pnpm", "yarn"}
+        if adapter in {"vite", "next", "astro", "node_http"}
+        else {"uv"}
     )
     if (
         not isinstance(metadata, dict)
@@ -712,7 +984,11 @@ def _dependency_layer(root: Path, key: str, adapter: str) -> Path:
         or set(metadata) != {"schema_version", "dependency_key", "dependency_manager"}
     ):
         raise RuntimeProtocolError("Runtime dependency layer binding does not match")
-    expected = "node_modules" if adapter in {"vite", "next", "astro"} else ".venv"
+    expected = (
+        "node_modules"
+        if adapter in {"vite", "next", "astro", "node_http"}
+        else ".venv"
+    )
     content = layer / expected
     if content.is_symlink() or not content.is_dir():
         raise RuntimeProtocolError("Runtime dependency layer content is unavailable")
@@ -757,12 +1033,36 @@ def _extract_archive(content: bytes, destination: Path) -> None:
 def _state_is_running(state: dict[str, object], controller: ProcessController) -> bool:
     if state.get("status") != "running":
         return False
-    return controller.is_running(
-        _state_integer(state, "pid"),
-        _state_integer(state, "start_ticks"),
-        _state_integer(state, "port"),
-        _state_string(state, "readiness_path"),
+    return all(
+        controller.is_running(
+            _state_integer(service, "pid"),
+            _state_integer(service, "start_ticks"),
+            _state_integer(service, "port"),
+            _state_string(service, "readiness_path"),
+        )
+        for service in _state_services(state)
     )
+
+
+def _state_services(state: dict[str, object]) -> tuple[dict[str, object], ...]:
+    value = state.get("services")
+    if value is None:
+        return (state,)
+    if not isinstance(value, list) or not value or any(
+        not isinstance(item, dict) for item in value
+    ):
+        raise RuntimeProtocolError("Runtime service state is invalid")
+    return tuple(value)
+
+
+def _stop_state_processes(
+    state: dict[str, object], controller: ProcessController
+) -> None:
+    for service in reversed(_state_services(state)):
+        controller.stop(
+            _state_integer(service, "pid"),
+            _state_integer(service, "start_ticks"),
+        )
 
 
 def _required_state(

@@ -113,6 +113,19 @@ def test_runner_revalidates_untrusted_request_headers(
         runner.parse_request_frame(_frame(archive, **override))
 
 
+def test_runner_accepts_versioned_scratch_scope_without_project() -> None:
+    runner = _load_runner()
+    request, _decoded = runner.parse_request_frame(
+        _frame(_archive(), project_id=None)
+    )
+
+    assert request.project_id is None
+    assert request.version_id is not None
+
+    with pytest.raises(runner.RunnerProtocolError, match="requires a version"):
+        runner.parse_request_frame(_frame(_archive(), version_id=None))
+
+
 def test_runner_rejects_archive_path_traversal(tmp_path: Path) -> None:
     runner = _load_runner()
     archive = _archive({"../escape.txt": b"escaped"})

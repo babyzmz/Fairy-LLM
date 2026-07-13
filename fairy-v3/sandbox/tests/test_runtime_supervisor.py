@@ -39,9 +39,13 @@ class FakeProcesses:
         self.starts: list[tuple[str, ...]] = []
         self.running: set[tuple[int, int]] = set()
         self.stops: list[tuple[int, int]] = []
+        self.next_port = 43125
+        self.fail_start_at: int | None = None
 
     def allocate_port(self) -> int:
-        return 43125
+        port = self.next_port
+        self.next_port += 1
+        return port
 
     def start(
         self,
@@ -55,6 +59,8 @@ class FakeProcesses:
     ) -> FakeIdentity:
         del cwd, startup_timeout_seconds, readiness_path, log_path
         self.starts.append(argv)
+        if self.fail_start_at == len(self.starts):
+            raise RuntimeError("fixture start failure")
         identity = FakeIdentity(700 + len(self.starts), 900 + len(self.starts), port)
         self.running.add((identity.pid, identity.start_ticks))
         return identity
@@ -152,6 +158,7 @@ def test_runtime_lifecycle_is_idempotent_and_fenced(tmp_path: Path) -> None:
     command = processes.starts[0]
     assert "--die-with-parent" not in command
     assert "--ro-bind" in command
+    assert "/lib64" in command
     assert "--seccomp" in command
     assert runner.SECCOMP_FD_TOKEN in command
     assert "--unshare-net" not in command
@@ -174,6 +181,42 @@ def test_runtime_lifecycle_is_idempotent_and_fenced(tmp_path: Path) -> None:
     assert replaced["lease_fence"] == 8
     assert processes.stops == [(701, 901)]
     assert len(processes.starts) == 2
+
+
+def test_runtime_graph_starts_dependencies_and_stops_in_reverse(tmp_path: Path) -> None:
+    runner = _load_runner()
+    archive = _graph_archive()
+    request, decoded = runner.parse_start_frame(_graph_frame(archive))
+    _dependency_layer(tmp_path, request.dependency_key)
+    processes = FakeProcesses()
+
+    started = runner.start_runtime(request, decoded, tmp_path, processes)
+
+    assert started["port"] == 43125
+    assert len(processes.starts) == 2
+    api, web = processes.starts
+    assert ("--setenv", "PORT", "43126") == _subsequence(api, "--setenv", "PORT")
+    assert ("--setenv", "PORT", "43125") == _subsequence(web, "--setenv", "PORT")
+    assert "VITE_FAIRY_SERVICE_API_URL" in web
+    assert "http://127.0.0.1:43126/" in web
+
+    runner.stop_runtime(str(started["executor_handle"]), tmp_path, processes)
+
+    assert processes.stops == [(702, 902), (701, 901)]
+
+
+def test_runtime_graph_rolls_back_started_services_on_failure(tmp_path: Path) -> None:
+    runner = _load_runner()
+    archive = _graph_archive()
+    request, decoded = runner.parse_start_frame(_graph_frame(archive))
+    _dependency_layer(tmp_path, request.dependency_key)
+    processes = FakeProcesses()
+    processes.fail_start_at = 2
+
+    with pytest.raises(RuntimeError, match="fixture start failure"):
+        runner.start_runtime(request, decoded, tmp_path, processes)
+
+    assert processes.stops == [(701, 901)]
 
 
 def test_runtime_seccomp_filter_blocks_outbound_network_syscalls() -> None:
@@ -284,6 +327,55 @@ def _archive() -> bytes:
         archive.writestr("index.html", "<main></main>")
         archive.writestr("package.json", "{}")
     return output.getvalue()
+
+
+def _graph_archive() -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("web/index.html", "<main></main>")
+        archive.writestr("server/index.js", "")
+        archive.writestr("package.json", "{}")
+    return output.getvalue()
+
+
+def _graph_frame(archive: bytes) -> bytes:
+    base_length = struct.unpack(">I", _frame(archive)[:4])[0]
+    base = json.loads(_frame(archive)[4 : 4 + base_length].decode("utf-8"))
+    base.update(
+        {
+            "schema_version": 2,
+            "cwd": "web",
+            "services": [
+                {
+                    "service_id": "web",
+                    "adapter": "vite",
+                    "argv": base["argv"],
+                    "cwd": "web",
+                    "readiness_path": "/health",
+                    "startup_timeout_seconds": 45,
+                    "depends_on": ["api"],
+                },
+                {
+                    "service_id": "api",
+                    "adapter": "node_http",
+                    "argv": ["node", "index.js"],
+                    "cwd": "server",
+                    "readiness_path": "/health",
+                    "startup_timeout_seconds": 45,
+                    "depends_on": [],
+                },
+            ],
+            "public_service_id": "web",
+        }
+    )
+    encoded = json.dumps(base, separators=(",", ":"), sort_keys=True).encode()
+    return struct.pack(">I", len(encoded)) + encoded + archive
+
+
+def _subsequence(values: tuple[str, ...], first: str, second: str) -> tuple[str, ...]:
+    index = values.index(second)
+    assert values[index - 1] == first
+    return values[index - 1 : index + 2]
 
 
 def _dependency_layer(root: Path, key: str) -> None:

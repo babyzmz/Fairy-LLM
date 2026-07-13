@@ -305,6 +305,67 @@ _PREVIEW_TRANSITIONS: dict[PreviewStatus, frozenset[PreviewStatus]] = {
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeServiceDefinition:
+    service_id: str
+    adapter: str
+    cwd: str
+    readiness_path: str
+    depends_on: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "depends_on", tuple(self.depends_on))
+        if re.fullmatch(r"[a-z][a-z0-9-]{0,31}", self.service_id) is None:
+            raise ValueError("Runtime service id is invalid")
+        if not self.adapter.strip():
+            raise ValueError("Runtime service adapter is required")
+        if self.cwd != "." and (
+            self.cwd.startswith(("/", "\\"))
+            or "\\" in self.cwd
+            or any(part in {"", ".", ".."} for part in self.cwd.split("/"))
+        ):
+            raise ValueError("Runtime service cwd is invalid")
+        if not self.readiness_path.startswith("/") or ".." in self.readiness_path.split("/"):
+            raise ValueError("Runtime service readiness path is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeGraph:
+    services: tuple[RuntimeServiceDefinition, ...]
+    public_service_id: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "services", tuple(self.services))
+        ids = {service.service_id for service in self.services}
+        if not 1 <= len(self.services) <= 8 or len(ids) != len(self.services):
+            raise ValueError("Runtime graph services are invalid")
+        if self.public_service_id not in ids:
+            raise ValueError("Runtime graph public service is invalid")
+        if any(set(service.depends_on) - ids for service in self.services):
+            raise ValueError("Runtime graph dependency is unknown")
+        _validate_runtime_graph(self.services)
+
+
+def _validate_runtime_graph(services: tuple[RuntimeServiceDefinition, ...]) -> None:
+    by_id = {service.service_id: service for service in services}
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(service_id: str) -> None:
+        if service_id in visiting:
+            raise ValueError("Runtime graph contains a dependency cycle")
+        if service_id in visited:
+            return
+        visiting.add(service_id)
+        for dependency in by_id[service_id].depends_on:
+            visit(dependency)
+        visiting.remove(service_id)
+        visited.add(service_id)
+
+    for service_id in by_id:
+        visit(service_id)
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeSession:
     id: UUID
     project_id: UUID | None
@@ -325,6 +386,7 @@ class RuntimeSession:
     revision: int
     created_at: datetime
     updated_at: datetime
+    graph: RuntimeGraph | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "project_root", Path(self.project_root).resolve(strict=False))
@@ -338,6 +400,24 @@ class RuntimeSession:
             raise ValueError("execution_target must be local or cloud")
         if self.version_id is None:
             raise ValueError("Runtime requires an immutable Workspace Version")
+        if self.graph is None:
+            object.__setattr__(
+                self,
+                "graph",
+                RuntimeGraph(
+                    services=(
+                        RuntimeServiceDefinition(
+                            service_id="app",
+                            adapter=(
+                                "static" if self.kind is RuntimeKind.STATIC_SITE else "legacy"
+                            ),
+                            cwd=".",
+                            readiness_path="/",
+                        ),
+                    ),
+                    public_service_id="app",
+                ),
+            )
         if self.kind is RuntimeKind.STATIC_SITE and (
             self.execution_target != "local" or self.project_id is None or self.version_id is None
         ):
@@ -377,6 +457,7 @@ class RuntimeSession:
         kind: RuntimeKind,
         executor: str,
         idempotency_key: str,
+        graph: RuntimeGraph | None = None,
     ) -> RuntimeSession:
         now = _now()
         return cls.restore(
@@ -399,6 +480,7 @@ class RuntimeSession:
             revision=0,
             created_at=now,
             updated_at=now,
+            graph=graph,
         )
 
     @classmethod

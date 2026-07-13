@@ -96,6 +96,18 @@ const RUNTIME = {
   project_root: "C:/managed/version",
   execution_target: "local",
   kind: "static_site",
+  graph: {
+    public_service_id: "app",
+    services: [
+      {
+        service_id: "app",
+        adapter: "static",
+        cwd: ".",
+        readiness_path: "/",
+        depends_on: [],
+      },
+    ],
+  },
   executor: "rust_local_worker",
   executor_handle: "static:0198f4de-0114-7000-8000-000000000013",
   port: 43125,

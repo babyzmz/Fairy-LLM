@@ -3103,8 +3103,11 @@ export interface components {
             updated_at: string;
             /** Url */
             url: string | null;
-            /** Version Id */
-            version_id: string | null;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
             visibility: components["schemas"]["PreviewVisibility"];
             /**
              * Workspace Id
@@ -3336,6 +3339,13 @@ export interface components {
             /** Version */
             version: string | null;
         };
+        /** RuntimeGraphModel */
+        RuntimeGraphModel: {
+            /** Public Service Id */
+            public_service_id: string;
+            /** Services */
+            services: components["schemas"]["RuntimeServiceModel"][];
+        };
         /**
          * RuntimeHealth
          * @enum {string}
@@ -3371,6 +3381,7 @@ export interface components {
             executor: string;
             /** Executor Handle */
             executor_handle: string | null;
+            graph: components["schemas"]["RuntimeGraphModel"];
             health: components["schemas"]["RuntimeHealth"];
             /**
              * Id
@@ -3402,13 +3413,32 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
-            /** Version Id */
-            version_id: string | null;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
             /**
              * Workspace Id
              * Format: uuid
              */
             workspace_id: string;
+        };
+        /** RuntimeServiceModel */
+        RuntimeServiceModel: {
+            /** Adapter */
+            adapter: string;
+            /** Cwd */
+            cwd: string;
+            /**
+             * Depends On
+             * @default []
+             */
+            depends_on: string[];
+            /** Readiness Path */
+            readiness_path: string;
+            /** Service Id */
+            service_id: string;
         };
         /**
          * RuntimeStatus

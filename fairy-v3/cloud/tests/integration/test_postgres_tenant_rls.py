@@ -516,12 +516,15 @@ async def _insert_tenant_project_event(
             """
             INSERT INTO core_runtime_sessions (
                 tenant_id, id, project_id, workspace_id, conversation_id, task_id, version_id,
-                project_root, execution_target, kind, executor, executor_handle,
+                project_root, execution_target, kind, runtime_graph, executor, executor_handle,
                 port, status, health, idempotency_key, revision,
                 created_at, updated_at
             ) VALUES (
                 :tenant_id, :runtime_id, :project_id, :project_id, :conversation_id, :task_id,
-                :version_id, :project_root, 'local', 'static_site', :executor,
+                :version_id, :project_root, 'local', 'static_site',
+                CAST('{"public_service_id":"app","services":[{"service_id":"app",'
+                '"adapter":"static","cwd":".","readiness_path":"/","depends_on":[]}]}' AS json),
+                :executor,
                 :executor_handle, 43125, 'running', 'healthy', 'runtime:rls', 0,
                 now(), now()
             )

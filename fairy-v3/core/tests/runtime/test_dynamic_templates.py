@@ -119,6 +119,74 @@ def test_python_asgi_requires_a_strict_declarative_entry(tmp_path: Path) -> None
     assert template.readiness_path == "/healthz"
 
 
+def test_runtime_graph_orders_node_api_before_public_vite_service(tmp_path: Path) -> None:
+    _node_project(tmp_path, dependencies={"vite": "8.1.4", "express": "5.1.0"})
+    (tmp_path / "web").mkdir()
+    (tmp_path / "server").mkdir()
+    (tmp_path / "server" / "index.js").write_text("", encoding="utf-8")
+    _json(
+        tmp_path / "fairy.runtime.json",
+        {
+            "schema_version": 2,
+            "public_service": "web",
+            "services": [
+                {
+                    "id": "web",
+                    "adapter": "vite",
+                    "cwd": "web",
+                    "depends_on": ["api"],
+                },
+                {
+                    "id": "api",
+                    "adapter": "node_http",
+                    "cwd": "server",
+                    "entry": "index.js",
+                    "readiness_path": "/health",
+                },
+            ],
+        },
+    )
+
+    template = select_runtime_template(tmp_path, execution_target="local")
+
+    assert template.public_service_id == "web"
+    assert tuple(service.service_id for service in template.services) == ("web", "api")
+    assert template.services[1].argv == ("node", "index.js")
+    assert template.services[0].depends_on == ("api",)
+
+
+def test_runtime_graph_rejects_cycles_and_missing_entries(tmp_path: Path) -> None:
+    _node_project(tmp_path, dependencies={"vite": "8.1.4"})
+    (tmp_path / "web").mkdir()
+    (tmp_path / "server").mkdir()
+    manifest = {
+        "schema_version": 2,
+        "public_service": "web",
+        "services": [
+            {
+                "id": "web",
+                "adapter": "vite",
+                "cwd": "web",
+                "depends_on": ["api"],
+            },
+            {
+                "id": "api",
+                "adapter": "node_http",
+                "cwd": "server",
+                "entry": "missing.js",
+                "depends_on": ["web"],
+            },
+        ],
+    }
+    _json(tmp_path / "fairy.runtime.json", manifest)
+    with pytest.raises(RuntimeTemplateError, match="entry is unavailable"):
+        select_runtime_template(tmp_path, execution_target="local")
+
+    (tmp_path / "server" / "missing.js").write_text("", encoding="utf-8")
+    with pytest.raises(RuntimeTemplateError, match="cycle"):
+        select_runtime_template(tmp_path, execution_target="local")
+
+
 def test_runtime_manifest_rejects_command_environment_and_endpoint_injection(
     tmp_path: Path,
 ) -> None:

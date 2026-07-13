@@ -4789,16 +4789,9 @@
             "title": "Url"
           },
           "version_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Version Id"
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
           },
           "visibility": {
             "$ref": "#/components/schemas/PreviewVisibility"
@@ -5413,6 +5406,31 @@
         "title": "RuntimeExecutorHealthModel",
         "type": "object"
       },
+      "RuntimeGraphModel": {
+        "additionalProperties": false,
+        "properties": {
+          "public_service_id": {
+            "pattern": "^[a-z][a-z0-9-]{0,31}$",
+            "title": "Public Service Id",
+            "type": "string"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/RuntimeServiceModel"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "services",
+          "public_service_id"
+        ],
+        "title": "RuntimeGraphModel",
+        "type": "object"
+      },
       "RuntimeHealth": {
         "enum": [
           "unknown",
@@ -5514,6 +5532,9 @@
             ],
             "title": "Executor Handle"
           },
+          "graph": {
+            "$ref": "#/components/schemas/RuntimeGraphModel"
+          },
           "health": {
             "$ref": "#/components/schemas/RuntimeHealth"
           },
@@ -5580,16 +5601,9 @@
             "type": "string"
           },
           "version_id": {
-            "anyOf": [
-              {
-                "format": "uuid",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Version Id"
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
           },
           "workspace_id": {
             "format": "uuid",
@@ -5607,6 +5621,7 @@
           "project_root",
           "execution_target",
           "kind",
+          "graph",
           "executor",
           "executor_handle",
           "status",
@@ -5618,6 +5633,51 @@
           "updated_at"
         ],
         "title": "RuntimeModel",
+        "type": "object"
+      },
+      "RuntimeServiceModel": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Adapter",
+            "type": "string"
+          },
+          "cwd": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Cwd",
+            "type": "string"
+          },
+          "depends_on": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Depends On",
+            "type": "array"
+          },
+          "readiness_path": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Readiness Path",
+            "type": "string"
+          },
+          "service_id": {
+            "pattern": "^[a-z][a-z0-9-]{0,31}$",
+            "title": "Service Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "adapter",
+          "cwd",
+          "readiness_path"
+        ],
+        "title": "RuntimeServiceModel",
         "type": "object"
       },
       "RuntimeStatus": {

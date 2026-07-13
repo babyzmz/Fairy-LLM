@@ -211,7 +211,7 @@ class OciDynamicRuntimeSupervisor:
 
 def _encode_start(request: DynamicRuntimeStart) -> bytes:
     header = {
-        "schema_version": 1,
+        "schema_version": 2,
         "project_id": str(request.project_id),
         "conversation_id": str(request.conversation_id),
         "task_id": str(request.task_id),
@@ -231,6 +231,19 @@ def _encode_start(request: DynamicRuntimeStart) -> bytes:
         "dependency_key": request.dependency_key,
         "archive_byte_length": len(request.workspace_archive),
         "archive_sha256": request.archive_sha256,
+        "services": [
+            {
+                "service_id": service.service_id,
+                "adapter": service.adapter,
+                "argv": list(service.argv),
+                "cwd": service.cwd,
+                "readiness_path": service.readiness_path,
+                "startup_timeout_seconds": service.startup_timeout_seconds,
+                "depends_on": list(service.depends_on),
+            }
+            for service in request.services
+        ],
+        "public_service_id": request.public_service_id,
     }
     encoded = _json_bytes(header)
     return struct.pack(">I", len(encoded)) + encoded + request.workspace_archive

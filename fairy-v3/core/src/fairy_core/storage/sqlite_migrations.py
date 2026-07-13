@@ -30,6 +30,7 @@ _MCP_REQUEST_RESULTS_REVISION = "20260712_mcp_request_results"
 _HISTORY_METADATA_REVISION = "20260712_history_metadata"
 _WORKSPACE_IDENTITY_REVISION = "20260713_workspace_identity"
 _RUNTIME_WORKSPACE_BINDING_REVISION = "20260713_runtime_workspace_binding"
+_RUNTIME_GRAPH_REVISION = "20260713_runtime_graph"
 
 
 def _datetime(value: str | None) -> datetime | None:
@@ -262,6 +263,70 @@ def migrate_runtime_workspace_binding(engine: Engine) -> None:
             ),
             {
                 "revision": _RUNTIME_WORKSPACE_BINDING_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_runtime_graph(engine: Engine) -> None:
+    """Backfill durable single-service graphs for pre-graph Runtime rows."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _RUNTIME_GRAPH_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        if "core_runtime_sessions" in tables:
+            columns = {
+                item["name"] for item in inspect(connection).get_columns("core_runtime_sessions")
+            }
+            if "runtime_graph" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE core_runtime_sessions ADD COLUMN runtime_graph JSON"
+                )
+            rows = connection.execute(
+                text(
+                    "SELECT tenant_id, id, kind FROM core_runtime_sessions "
+                    "WHERE runtime_graph IS NULL"
+                )
+            ).mappings()
+            for row in rows:
+                graph = {
+                    "public_service_id": "app",
+                    "services": [
+                        {
+                            "service_id": "app",
+                            "adapter": ("static" if row["kind"] == "static_site" else "legacy"),
+                            "cwd": ".",
+                            "readiness_path": "/",
+                            "depends_on": [],
+                        }
+                    ],
+                }
+                connection.execute(
+                    text(
+                        "UPDATE core_runtime_sessions SET runtime_graph = :graph "
+                        "WHERE tenant_id = :tenant_id AND id = :id"
+                    ),
+                    {
+                        "graph": json.dumps(graph, separators=(",", ":")),
+                        "tenant_id": row["tenant_id"],
+                        "id": row["id"],
+                    },
+                )
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {
+                "revision": _RUNTIME_GRAPH_REVISION,
                 "applied_at": datetime.now(UTC).isoformat(),
             },
         )
