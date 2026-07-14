@@ -381,6 +381,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/file-sets/get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get File Set */
+        post: operations["file_sets.get"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/file-sets/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve File Set */
+        post: operations["file_sets.resolve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/files/open-stream": {
         parameters: {
             query?: never;
@@ -1339,6 +1373,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{workspace_id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Probe File */
+        get: operations["files.probe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2160,6 +2211,27 @@ export interface components {
          * @enum {string}
          */
         ExecutionTarget: "local" | "cloud";
+        /** FileDescriptorModel */
+        FileDescriptorModel: {
+            /** Byte Length */
+            byte_length: number;
+            /** Claimed Media Type */
+            claimed_media_type: string | null;
+            /** Content Hash */
+            content_hash: string;
+            /** Extension */
+            extension: string | null;
+            /** Kind */
+            kind: string;
+            /** Language */
+            language: string | null;
+            /** Media Type */
+            media_type: string;
+            /** Media Type Conflict */
+            media_type_conflict: boolean;
+            /** Path */
+            path: string;
+        };
         /** FileMutation */
         FileMutation: {
             /** Content */
@@ -2207,6 +2279,76 @@ export interface components {
              * Format: uuid
              */
             version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** FileSetGetInput */
+        FileSetGetInput: {
+            /**
+             * File Set Id
+             * Format: uuid
+             */
+            file_set_id: string;
+            /** Version Id */
+            version_id?: string | null;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** FileSetMemberModel */
+        FileSetMemberModel: {
+            /** Byte Length */
+            byte_length: number;
+            /** Content Hash */
+            content_hash: string;
+            /** Path */
+            path: string;
+            /** Role */
+            role: string;
+        };
+        /** FileSetModel */
+        FileSetModel: {
+            /** Blocked Dependencies */
+            blocked_dependencies: string[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Manifest Hash */
+            manifest_hash: string;
+            /** Members */
+            members: components["schemas"]["FileSetMemberModel"][];
+            /** Missing Dependencies */
+            missing_dependencies: string[];
+            /** Parser Version */
+            parser_version: string;
+            /** Primary Path */
+            primary_path: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** FileSetResolveInput */
+        FileSetResolveInput: {
+            /** Path */
+            path: string;
+            /** Version Id */
+            version_id?: string | null;
             /**
              * Workspace Id
              * Format: uuid
@@ -5233,6 +5375,76 @@ export interface operations {
             };
         };
     };
+    "file_sets.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileSetGetInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileSetModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "file_sets.resolve": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileSetResolveInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileSetModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "files.open_stream": {
         parameters: {
             query?: never;
@@ -7361,6 +7573,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkspaceFilePageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "files.probe": {
+        parameters: {
+            query: {
+                path: string;
+                version_id?: string | null;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                workspace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileDescriptorModel"];
                 };
             };
             /** @description Validation Error */

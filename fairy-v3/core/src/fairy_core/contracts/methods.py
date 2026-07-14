@@ -19,6 +19,12 @@ from fairy_core.contracts.extensions import (
     McpServerSetEnabledInput,
     SkillPageModel,
 )
+from fairy_core.contracts.files import (
+    FileDescriptorModel,
+    FileSetGetInput,
+    FileSetModel,
+    FileSetResolveInput,
+)
 from fairy_core.contracts.history import (
     ConversationDeleteInput,
     ConversationMoveResultModel,
@@ -508,6 +514,21 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "files.open_stream",
             WorkspaceFileStreamInput,
             FileReadSessionModel,
+        ),
+        "files.probe": CoreMethod(
+            "files.probe",
+            WorkspaceFileReadInput,
+            FileDescriptorModel,
+        ),
+        "file_sets.resolve": CoreMethod(
+            "file_sets.resolve",
+            FileSetResolveInput,
+            FileSetModel,
+        ),
+        "file_sets.get": CoreMethod(
+            "file_sets.get",
+            FileSetGetInput,
+            FileSetModel,
         ),
         "workspaces.export": CoreMethod(
             "workspaces.export",

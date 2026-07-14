@@ -140,6 +140,10 @@ export type Workspace = Schemas["WorkspaceModel"];
 export type WorkspaceFile = Schemas["WorkspaceFileModel"];
 export type WorkspaceFileContent = Schemas["WorkspaceFileContentModel"];
 export type FileReadSession = Schemas["FileReadSessionModel"];
+export type FileDescriptor = Schemas["FileDescriptorModel"];
+export type FileSet = Schemas["FileSetModel"];
+export type FileSetGetInput = Schemas["FileSetGetInput"];
+export type FileSetResolveInput = Schemas["FileSetResolveInput"];
 export type WorkspaceFileMutateInput = Schemas["WorkspaceFileMutateInput"];
 export type WorkspaceFileMutationResult = Schemas["WorkspaceFileMutationResultModel"];
 export type WorkspaceFilePage = Schemas["WorkspaceFilePageModel"];
@@ -301,6 +305,12 @@ export interface CoreMethodMap {
     params: WorkspaceFileStreamInput;
     result: FileReadSession;
   };
+  "files.probe": {
+    params: WorkspaceFileReadInput;
+    result: FileDescriptor;
+  };
+  "file_sets.get": { params: FileSetGetInput; result: FileSet };
+  "file_sets.resolve": { params: FileSetResolveInput; result: FileSet };
   "workspaces.files.mutate": {
     params: WorkspaceFileMutateInput;
     result: WorkspaceFileMutationResult;

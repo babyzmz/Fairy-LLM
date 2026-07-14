@@ -118,6 +118,14 @@ const routes = {
       ["path", "version_id"],
     ),
   "files.open_stream": (params) => post("/v1/files/open-stream", params),
+  "files.probe": (params) =>
+    getWithQuery(
+      `/v1/workspaces/${pathParameter(params, "workspace_id")}/probe`,
+      params,
+      ["path", "version_id"],
+    ),
+  "file_sets.resolve": (params) => post("/v1/file-sets/resolve", params),
+  "file_sets.get": (params) => post("/v1/file-sets/get", params),
   "workspaces.files.mutate": (params) =>
     postWithIdempotency("/v1/workspaces/files/mutate", params),
   "workspaces.export": (params) => post("/v1/workspaces/export", params),

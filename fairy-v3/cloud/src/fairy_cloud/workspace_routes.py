@@ -4,6 +4,12 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from uuid import UUID
 
+from fairy_core.contracts.files import (
+    FileDescriptorModel,
+    FileSetGetInput,
+    FileSetModel,
+    FileSetResolveInput,
+)
 from fairy_core.contracts.workspaces import (
     FileReadSessionModel,
     WorkspaceExportInput,
@@ -66,6 +72,37 @@ def install_workspace_routes(
     )
     def open_file_stream(request: WorkspaceFileStreamInput) -> dict[str, Any]:
         return invoke("files.open_stream", request.model_dump(mode="json"))
+
+    @router.get(
+        "/workspaces/{workspace_id}/probe",
+        operation_id="files.probe",
+        response_model=FileDescriptorModel,
+    )
+    def probe_file(
+        workspace_id: UUID,
+        path: str = Query(min_length=1, max_length=1_024),
+        version_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        params = {"workspace_id": str(workspace_id), "path": path}
+        if version_id is not None:
+            params["version_id"] = str(version_id)
+        return invoke("files.probe", params)
+
+    @router.post(
+        "/file-sets/resolve",
+        operation_id="file_sets.resolve",
+        response_model=FileSetModel,
+    )
+    def resolve_file_set(request: FileSetResolveInput) -> dict[str, Any]:
+        return invoke("file_sets.resolve", request.model_dump(mode="json"))
+
+    @router.post(
+        "/file-sets/get",
+        operation_id="file_sets.get",
+        response_model=FileSetModel,
+    )
+    def get_file_set(request: FileSetGetInput) -> dict[str, Any]:
+        return invoke("file_sets.get", request.model_dump(mode="json"))
 
     @router.post(
         "/workspaces/files/mutate",

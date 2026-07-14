@@ -54,6 +54,8 @@ import type {
   WorkspaceFileMutateInput,
   WorkspaceExportInput,
   WorkspaceVersionInput,
+  FileSetGetInput,
+  FileSetResolveInput,
 } from "./contracts";
 
 export const DEFAULT_EVENT_POLL_MS = 25;
@@ -177,6 +179,18 @@ export class CoreClient {
       this.transport.call("workspaces.files.mutate", input),
     export: (input: WorkspaceExportInput) =>
       this.transport.call("workspaces.export", input),
+  };
+
+  readonly files = {
+    probe: (input: WorkspaceFileReadInput) => this.transport.call("files.probe", input),
+    openStream: (input: WorkspaceFileStreamInput) =>
+      this.transport.call("files.open_stream", input),
+  };
+
+  readonly fileSets = {
+    get: (input: FileSetGetInput) => this.transport.call("file_sets.get", input),
+    resolve: (input: FileSetResolveInput) =>
+      this.transport.call("file_sets.resolve", input),
   };
 
   readonly capabilities = {

@@ -93,6 +93,15 @@ describe("CoreClient", () => {
     await client.workspaces.get(id);
     await client.workspaces.listFiles({ workspace_id: id, version_id: id });
     await client.workspaces.readFile({ workspace_id: id, version_id: id, path: "README.md" });
+    await client.files.probe({ workspace_id: id, version_id: id, path: "README.md" });
+    await client.files.openStream({
+      workspace_id: id,
+      version_id: id,
+      path: "README.md",
+      expires_seconds: 120,
+    });
+    await client.fileSets.resolve({ workspace_id: id, version_id: id, path: "README.md" });
+    await client.fileSets.get({ workspace_id: id, version_id: id, file_set_id: id });
     await client.workspaces.mutateFiles({
       workspace_id: id,
       conversation_id: id,
@@ -302,6 +311,10 @@ describe("CoreClient", () => {
       "workspaces.get",
       "workspaces.files.list",
       "workspaces.files.read",
+      "files.probe",
+      "files.open_stream",
+      "file_sets.resolve",
+      "file_sets.get",
       "workspaces.files.mutate",
       "workspaces.export",
       "runtimes.get",
@@ -351,7 +364,7 @@ describe("CoreClient", () => {
     ]);
     expect(transport.requests[3]?.params).toEqual({ project_id: id });
     expect(transport.requests[11]?.params).toEqual({ task_id: id });
-    expect(transport.requests[25]?.params).toEqual({ task_id: id });
+    expect(transport.requests[29]?.params).toEqual({ task_id: id });
   });
 
   it("uses the transport-native resumable event subscription", async () => {

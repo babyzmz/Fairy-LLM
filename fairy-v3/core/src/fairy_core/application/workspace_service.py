@@ -6,6 +6,7 @@ import mimetypes
 from typing import Any
 
 from fairy_core.application.workspaces import WorkspaceApplication
+from fairy_core.contracts.files import FileSetGetInput, FileSetResolveInput
 from fairy_core.contracts.workspaces import (
     WorkspaceExportInput,
     WorkspaceFileReadInput,
@@ -63,6 +64,27 @@ class WorkspaceService:
             version_id=request.version_id,
             path=request.path,
             expires_seconds=request.expires_seconds,
+        )
+
+    def probe_file(self, request: WorkspaceFileReadInput) -> Any:
+        return self._application.probe_file(
+            workspace_id=request.workspace_id,
+            version_id=request.version_id,
+            path=request.path,
+        )
+
+    def resolve_file_set(self, request: FileSetResolveInput) -> Any:
+        return self._application.resolve_file_set(
+            workspace_id=request.workspace_id,
+            version_id=request.version_id,
+            path=request.path,
+        )
+
+    def get_file_set(self, request: FileSetGetInput) -> Any:
+        return self._application.get_file_set(
+            workspace_id=request.workspace_id,
+            version_id=request.version_id,
+            file_set_id=request.file_set_id,
         )
 
     def export(self, request: WorkspaceExportInput) -> dict[str, Any]:
