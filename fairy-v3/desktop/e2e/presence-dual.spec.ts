@@ -479,8 +479,11 @@ test("runtime policy and renderer metrics remain bounded and non-visible", async
 async function publishProjection(page: Page, projection: PresenceProjectionState) {
   await page.evaluate((value) => {
     const channel = new BroadcastChannel("fairy.presence.v2");
-    channel.postMessage({ kind: "presence.projection", projection: value });
-    window.setTimeout(() => channel.close(), 100);
+    const publish = () => channel.postMessage({ kind: "presence.projection", projection: value });
+    publish();
+    window.setTimeout(publish, 30);
+    window.setTimeout(publish, 80);
+    window.setTimeout(() => channel.close(), 120);
   }, projection);
 }
 
@@ -494,8 +497,11 @@ async function publishSubmission(
 ) {
   await page.evaluate((value) => {
     const channel = new BroadcastChannel("fairy.presence.v2");
-    channel.postMessage({ kind: "presence.submission", update: value });
-    window.setTimeout(() => channel.close(), 100);
+    const publish = () => channel.postMessage({ kind: "presence.submission", update: value });
+    publish();
+    window.setTimeout(publish, 30);
+    window.setTimeout(publish, 80);
+    window.setTimeout(() => channel.close(), 120);
   }, update);
 }
 
@@ -532,8 +538,11 @@ async function publishInteraction(
 ) {
   await page.evaluate((value) => {
     const channel = new BroadcastChannel("fairy.presence.interaction.v1");
-    channel.postMessage({ kind: "presence.interaction", snapshot: value });
-    window.setTimeout(() => channel.close(), 100);
+    const publish = () => channel.postMessage({ kind: "presence.interaction", snapshot: value });
+    publish();
+    window.setTimeout(publish, 30);
+    window.setTimeout(publish, 80);
+    window.setTimeout(() => channel.close(), 120);
   }, snapshot);
 }
 
