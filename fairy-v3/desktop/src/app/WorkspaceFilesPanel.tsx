@@ -12,7 +12,7 @@ import {
   MessageSquarePlus,
   Quote,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   FileReadSession,
@@ -23,6 +23,10 @@ import type {
   AnnotationDocument,
   SelectionReference,
 } from "../core/client";
+
+const PdfViewer = lazy(() => import("./viewers/PdfViewer"));
+const DocumentViewer = lazy(() => import("./viewers/DocumentViewer"));
+const DataViewer = lazy(() => import("./viewers/DataViewer"));
 
 interface WorkspaceFilesPanelProps {
   files: WorkspaceFile[];
@@ -36,11 +40,7 @@ interface WorkspaceFilesPanelProps {
     current: AnnotationDocument | null,
     annotations: Array<Record<string, unknown>>,
   ): Promise<AnnotationDocument>;
-  onCreateTextSelection(
-    presentation: FilePresentationResult,
-    start: number,
-    end: number,
-  ): Promise<SelectionReference>;
+  onCreateTextSelection(presentation: FilePresentationResult, start: number, end: number): Promise<SelectionReference>;
   onReveal(path: string): Promise<void>;
   onRefresh(): Promise<void>;
   onUpload(files: Array<{ path: string; contentBase64: string }>): Promise<void>;
@@ -73,14 +73,15 @@ export function WorkspaceFilesPanel({
   const [readSession, setReadSession] = useState<FileReadSession | null>(null);
   const [presentation, setPresentation] = useState<FilePresentationResult | null>(null);
   const [annotations, setAnnotations] = useState<AnnotationDocument | null>(null);
-  const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
+  const [selection, setSelection] = useState<{
+    start: number;
+    end: number;
+  } | null>(null);
   const [selectionSaved, setSelectionSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const visibleFiles = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    return normalized.length === 0
-      ? files
-      : files.filter((file) => file.path.toLocaleLowerCase().includes(normalized));
+    return normalized.length === 0 ? files : files.filter((file) => file.path.toLocaleLowerCase().includes(normalized));
   }, [files, query]);
 
   useEffect(() => {
@@ -208,7 +209,11 @@ export function WorkspaceFilesPanel({
         </nav>
 
         <section className="workspace-file-viewer" aria-label="File viewer">
-          {error !== null ? <div className="workspace-file-error" role="alert">{error}</div> : null}
+          {error !== null ? (
+            <div className="workspace-file-error" role="alert">
+              {error}
+            </div>
+          ) : null}
           {content === null ? (
             <div className="workspace-file-placeholder">
               <FileCode2 size={22} />
@@ -342,52 +347,91 @@ function FileContent({
       </div>
     );
   }
+  if (presentation?.presentation?.renderer.startsWith("builtin.") && presentation.presentation.assets.length > 0) {
+    return (
+      <Suspense fallback={<div className="workspace-file-placeholder">Loading document</div>}>
+        <DocumentViewer presentation={presentation} />
+      </Suspense>
+    );
+  }
   if (content.text != null) {
+    if (/\.(csv|tsv|json|jsonl|ndjson)$/i.test(content.file.path)) {
+      return (
+        <Suspense fallback={<div className="workspace-file-placeholder">Loading data</div>}>
+          <DataViewer text={content.text} path={content.file.path} />
+        </Suspense>
+      );
+    }
     return <TextViewer text={content.text} onSelection={onTextSelection} />;
   }
   if (readSession !== null && /^image\/(png|jpeg|gif|webp|avif)$/.test(content.media_type)) {
     return (
       <div className="workspace-file-image">
-        <img
-          src={readSession.url}
-          alt={content.file.path.split("/").at(-1) ?? content.file.path}
-        />
+        <img src={readSession.url} alt={content.file.path.split("/").at(-1) ?? content.file.path} />
       </div>
     );
   }
   if (readSession !== null && content.media_type.startsWith("audio/")) {
-    return <div className="workspace-file-media"><audio controls src={readSession.url} /></div>;
+    return (
+      <div className="workspace-file-media">
+        <audio controls src={readSession.url} />
+      </div>
+    );
   }
   if (readSession !== null && content.media_type.startsWith("video/")) {
-    return <div className="workspace-file-media"><video controls src={readSession.url} /></div>;
+    return (
+      <div className="workspace-file-media">
+        <video controls src={readSession.url} />
+      </div>
+    );
   }
   if (readSession !== null && content.media_type === "application/pdf") {
-    return <iframe className="workspace-file-pdf" src={readSession.url} title={content.file.path} />;
+    return (
+      <Suspense fallback={<div className="workspace-file-placeholder">Loading PDF viewer</div>}>
+        <PdfViewer url={readSession.url} title={content.file.path} />
+      </Suspense>
+    );
   }
-  return <div className="workspace-file-placeholder"><File size={22} /><span>Binary preview unavailable</span></div>;
+  return (
+    <div className="workspace-file-placeholder">
+      <File size={22} />
+      <span>Binary preview unavailable</span>
+    </div>
+  );
 }
 
-function TextViewer({ text, onSelection }: { text: string; onSelection(value: { start: number; end: number } | null): void }) {
+function TextViewer({
+  text,
+  onSelection,
+}: {
+  text: string;
+  onSelection(value: { start: number; end: number } | null): void;
+}) {
   const codeRef = useRef<HTMLElement>(null);
   return (
-    <pre className="workspace-file-text" onMouseUp={() => {
-      const root = codeRef.current;
-      const selected = window.getSelection();
-      if (root === null || selected === null || selected.rangeCount === 0 || selected.isCollapsed) {
-        onSelection(null);
-        return;
-      }
-      const range = selected.getRangeAt(0);
-      if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) {
-        onSelection(null);
-        return;
-      }
-      const prefix = document.createRange();
-      prefix.selectNodeContents(root);
-      prefix.setEnd(range.startContainer, range.startOffset);
-      const start = prefix.toString().length;
-      onSelection({ start, end: start + range.toString().length });
-    }}><code ref={codeRef}>{text}</code></pre>
+    <pre
+      className="workspace-file-text"
+      onMouseUp={() => {
+        const root = codeRef.current;
+        const selected = window.getSelection();
+        if (root === null || selected === null || selected.rangeCount === 0 || selected.isCollapsed) {
+          onSelection(null);
+          return;
+        }
+        const range = selected.getRangeAt(0);
+        if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) {
+          onSelection(null);
+          return;
+        }
+        const prefix = document.createRange();
+        prefix.selectNodeContents(root);
+        prefix.setEnd(range.startContainer, range.startOffset);
+        const start = prefix.toString().length;
+        onSelection({ start, end: start + range.toString().length });
+      }}
+    >
+      <code ref={codeRef}>{text}</code>
+    </pre>
   );
 }
 
@@ -416,10 +460,14 @@ function StudioProperties({
       <section>
         <h3>Properties</h3>
         <dl>
-          <dt>Type</dt><dd>{content.media_type}</dd>
-          <dt>Size</dt><dd>{formatBytes(content.file.byte_length)}</dd>
-          <dt>Fidelity</dt><dd>{presentation?.presentation?.fidelity ?? "Pending"}</dd>
-          <dt>Status</dt><dd>{presentation?.job.status ?? "Probing"}</dd>
+          <dt>Type</dt>
+          <dd>{content.media_type}</dd>
+          <dt>Size</dt>
+          <dd>{formatBytes(content.file.byte_length)}</dd>
+          <dt>Fidelity</dt>
+          <dd>{presentation?.presentation?.fidelity ?? "Pending"}</dd>
+          <dt>Status</dt>
+          <dd>{presentation?.job.status ?? "Probing"}</dd>
         </dl>
       </section>
       <section>
@@ -435,27 +483,36 @@ function StudioProperties({
             <p key={String(item.id ?? index)}>{String(item.body ?? "Note")}</p>
           ))}
         </div>
-        <textarea value={note} maxLength={2000} placeholder="Add a note" onChange={(event) => setNote(event.target.value)} />
-        <button type="button" disabled={note.trim().length === 0 || savingNote} onClick={() => {
-          const value = note.trim();
-          setSavingNote(true);
-          void onAddAnnotation(value)
-            .then(() => setNote(""))
-            .catch(() => undefined)
-            .finally(() => setSavingNote(false));
-        }}><MessageSquarePlus size={14} /> Add note</button>
+        <textarea
+          value={note}
+          maxLength={2000}
+          placeholder="Add a note"
+          onChange={(event) => setNote(event.target.value)}
+        />
+        <button
+          type="button"
+          disabled={note.trim().length === 0 || savingNote}
+          onClick={() => {
+            const value = note.trim();
+            setSavingNote(true);
+            void onAddAnnotation(value)
+              .then(() => setNote(""))
+              .catch(() => undefined)
+              .finally(() => setSavingNote(false));
+          }}
+        >
+          <MessageSquarePlus size={14} /> Add note
+        </button>
       </section>
     </aside>
   );
 }
 
-async function downloadContent(
-  content: WorkspaceFileContent,
-  readSession: FileReadSession | null,
-): Promise<void> {
-  const blob = content.text != null
-    ? new Blob([content.text], { type: content.media_type })
-    : await fetchRequiredStream(readSession);
+async function downloadContent(content: WorkspaceFileContent, readSession: FileReadSession | null): Promise<void> {
+  const blob =
+    content.text != null
+      ? new Blob([content.text], { type: content.media_type })
+      : await fetchRequiredStream(readSession);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

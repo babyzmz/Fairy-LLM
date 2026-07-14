@@ -80,7 +80,10 @@ fn imports_content_addressed_asset_and_serves_range() {
         }),
     );
     let url = Url::parse(opened["result"]["url"].as_str().unwrap()).expect("read URL");
-    let response = raw_request(&url, "Range: bytes=8-15\r\n");
+    let response = raw_request(
+        &url,
+        "Range: bytes=8-15\r\nOrigin: http://tauri.localhost\r\n",
+    );
     let header_end = response
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
@@ -88,7 +91,16 @@ fn imports_content_addressed_asset_and_serves_range() {
     let headers = String::from_utf8_lossy(&response[..header_end]);
     assert!(headers.starts_with("HTTP/1.1 206"), "{headers}");
     assert!(headers.contains("Content-Range: bytes 8-15/64"));
+    assert!(headers.contains("Access-Control-Allow-Origin: http://tauri.localhost"));
     assert_eq!(&response[header_end + 4..], &[8, 9, 10, 11, 12, 13, 14, 15]);
+
+    let denied = raw_request(&url, "Origin: https://attacker.invalid\r\n");
+    let denied_header_end = denied
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("HTTP header terminator");
+    let denied_headers = String::from_utf8_lossy(&denied[..denied_header_end]);
+    assert!(!denied_headers.contains("Access-Control-Allow-Origin"));
 
     let revoked = dispatch_worker_request(
         &worker,

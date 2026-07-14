@@ -15,6 +15,15 @@ use crate::{validate_identifier, WorkerError};
 const LOOPBACK_HOST: &str = "127.0.0.1";
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
 const MAX_EXPIRY_SECONDS: u64 = 300;
+const ALLOWED_RENDERER_ORIGINS: &[&str] = &[
+    "http://127.0.0.1:1430",
+    "http://127.0.0.1:1431",
+    "http://localhost:1430",
+    "http://localhost:1431",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "tauri://localhost",
+];
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct FileReadRequest {
@@ -241,6 +250,13 @@ fn serve(
         .iter()
         .find(|header| header.field.equiv("Range"))
         .map(|header| header.value.as_str());
+    let allowed_origin = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("Origin"))
+        .map(|header| header.value.as_str())
+        .filter(|origin| ALLOWED_RENDERER_ORIGINS.contains(origin))
+        .map(str::to_owned);
     if byte_length == 0 {
         let status = if range_header.is_some() {
             StatusCode(416)
@@ -272,6 +288,16 @@ fn serve(
         header("X-Content-Type-Options", "nosniff"),
         header("Referrer-Policy", "no-referrer"),
     ];
+    if let Some(origin) = allowed_origin {
+        headers.extend([
+            header("Access-Control-Allow-Origin", &origin),
+            header("Vary", "Origin"),
+            header(
+                "Access-Control-Expose-Headers",
+                "Accept-Ranges, Content-Length, Content-Range",
+            ),
+        ]);
+    }
     if status == StatusCode(206) {
         headers.push(header(
             "Content-Range",

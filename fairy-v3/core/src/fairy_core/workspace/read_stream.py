@@ -13,6 +13,17 @@ from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 MAX_SESSION_SECONDS = 300
+_ALLOWED_RENDERER_ORIGINS = frozenset(
+    {
+        "http://127.0.0.1:1430",
+        "http://127.0.0.1:1431",
+        "http://localhost:1430",
+        "http://localhost:1431",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+        "tauri://localhost",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +190,14 @@ class LoopbackFileReadServer:
         request.send_header("Cache-Control", "private, no-store")
         request.send_header("X-Content-Type-Options", "nosniff")
         request.send_header("Referrer-Policy", "no-referrer")
+        origin = request.headers.get("Origin")
+        if origin in _ALLOWED_RENDERER_ORIGINS:
+            request.send_header("Access-Control-Allow-Origin", origin)
+            request.send_header("Vary", "Origin")
+            request.send_header(
+                "Access-Control-Expose-Headers",
+                "Accept-Ranges, Content-Length, Content-Range",
+            )
         if status is HTTPStatus.PARTIAL_CONTENT:
             request.send_header("Content-Range", f"bytes {start}-{end}/{binding.byte_length}")
         request.end_headers()

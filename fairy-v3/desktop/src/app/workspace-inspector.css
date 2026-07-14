@@ -52,7 +52,9 @@
   border-radius: 8px;
   color: #b9c5c0;
   background: #303432;
-  font: 600 10px/1 "Cascadia Mono", monospace;
+  font:
+    600 10px/1 "Cascadia Mono",
+    monospace;
 }
 
 .workspace-inspector-content,
@@ -65,8 +67,13 @@
   min-height: 0;
 }
 
-.workspace-inspector-content { overflow: hidden; }
-.workspace-inspector-content > * { width: 100%; height: 100%; }
+.workspace-inspector-content {
+  overflow: hidden;
+}
+.workspace-inspector-content > * {
+  width: 100%;
+  height: 100%;
+}
 
 .workspace-files {
   display: grid;
@@ -104,8 +111,12 @@
   background: transparent;
 }
 
-.workspace-file-input { display: none; }
-.icon-button.danger { color: #e98f86; }
+.workspace-file-input {
+  display: none;
+}
+.icon-button.danger {
+  color: #e98f86;
+}
 
 .workspace-files-body {
   display: grid;
@@ -173,7 +184,9 @@
 .workspace-file-viewer header span {
   flex: 0 0 auto;
   color: #8e9691;
-  font: 500 10px/1 "Cascadia Mono", monospace;
+  font:
+    500 10px/1 "Cascadia Mono",
+    monospace;
 }
 
 .workspace-file-text {
@@ -182,7 +195,9 @@
   overflow: auto;
   color: #d7dfdb;
   background: #111212;
-  font: 12px/1.55 "Cascadia Mono", monospace;
+  font:
+    12px/1.55 "Cascadia Mono",
+    monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -195,7 +210,11 @@
   background: #202220;
 }
 
-.workspace-file-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.workspace-file-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
 
 .workspace-file-media {
   min-height: 0;
@@ -206,9 +225,13 @@
   background: #111212;
 }
 
-.workspace-file-media audio { width: min(100%, 520px); }
-.workspace-file-media video { max-width: 100%; max-height: 100%; }
-.workspace-file-pdf { width: 100%; height: 100%; border: 0; background: #e8e9e7; }
+.workspace-file-media audio {
+  width: min(100%, 520px);
+}
+.workspace-file-media video {
+  max-width: 100%;
+  max-height: 100%;
+}
 
 .studio-properties {
   overflow: auto;
@@ -216,11 +239,31 @@
   background: #191b1a;
 }
 
-.studio-properties section { padding: 12px; border-bottom: 1px solid #303330; }
-.studio-properties h3 { margin: 0 0 10px; font-size: 12px; color: #dce6e1; }
-.studio-properties dl { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 7px; margin: 0; }
-.studio-properties dt { color: #87908b; font-size: 11px; }
-.studio-properties dd { margin: 0; overflow-wrap: anywhere; color: #c7cfcb; font-size: 11px; }
+.studio-properties section {
+  padding: 12px;
+  border-bottom: 1px solid #303330;
+}
+.studio-properties h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #dce6e1;
+}
+.studio-properties dl {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 7px;
+  margin: 0;
+}
+.studio-properties dt {
+  color: #87908b;
+  font-size: 11px;
+}
+.studio-properties dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #c7cfcb;
+  font-size: 11px;
+}
 .studio-properties button {
   min-height: 30px;
   display: inline-flex;
@@ -230,11 +273,33 @@
   color: #d7e2dd;
   background: #242826;
 }
-.studio-properties button:disabled { opacity: 0.45; }
-.studio-note-list { display: grid; gap: 6px; margin-bottom: 8px; }
-.studio-note-list p { margin: 0; padding: 7px; border-left: 2px solid #d2a95d; background: #232522; color: #cbd3cf; font-size: 11px; }
-.studio-annotations textarea { width: 100%; min-height: 64px; resize: vertical; border: 1px solid #414744; color: #e5ece8; background: #111312; }
-.studio-annotations button { margin-top: 7px; }
+.studio-properties button:disabled {
+  opacity: 0.45;
+}
+.studio-note-list {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.studio-note-list p {
+  margin: 0;
+  padding: 7px;
+  border-left: 2px solid #d2a95d;
+  background: #232522;
+  color: #cbd3cf;
+  font-size: 11px;
+}
+.studio-annotations textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  border: 1px solid #414744;
+  color: #e5ece8;
+  background: #111312;
+}
+.studio-annotations button {
+  margin-top: 7px;
+}
 
 .workspace-files-empty,
 .workspace-file-placeholder,
@@ -249,7 +314,9 @@
   text-align: center;
 }
 
-.workspace-file-error { color: #ff9f96; }
+.workspace-file-error {
+  color: #ff9f96;
+}
 
 @media (max-width: 1100px) {
   .unified-workspace-chat {

@@ -1,0 +1,123 @@
+.pdf-viewer {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 42px minmax(0, 1fr);
+  overflow: hidden;
+  background: #252826;
+}
+
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-bottom: 1px solid #3a3e3b;
+  background: #1a1c1b;
+}
+
+.pdf-toolbar i {
+  flex: 1;
+}
+.pdf-toolbar span {
+  min-width: 48px;
+  color: #aeb7b2;
+  font:
+    11px/1 "Cascadia Mono",
+    monospace;
+  text-align: center;
+}
+
+.pdf-page-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+}
+
+.pdf-page {
+  position: relative;
+  width: max-content;
+  margin: 0 auto;
+  box-shadow: 0 3px 14px rgb(0 0 0 / 0.28);
+  background: #fff;
+}
+
+.pdf-page canvas {
+  display: block;
+  background: #fff;
+}
+
+.pdf-rendering {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #5dd7cb;
+  background: rgb(25 28 27 / 0.42);
+  pointer-events: none;
+}
+
+.pdf-status {
+  min-height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 9px;
+  color: #ffaaa1;
+  text-align: center;
+}
+
+.textLayer {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  transform-origin: 0 0;
+  forced-color-adjust: none;
+}
+
+.textLayer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+}
+
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  z-index: 1;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x))
+    scale(var(--min-font-size-inv));
+}
+
+.textLayer .markedContent {
+  display: contents;
+}
+.textLayer ::selection {
+  background: rgb(75 188 211 / 0.35);
+}
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  user-select: none;
+}
+
+@media (forced-colors: active) {
+  .pdf-page {
+    outline: 1px solid CanvasText;
+    box-shadow: none;
+  }
+  .textLayer ::selection {
+    background: Highlight;
+  }
+}

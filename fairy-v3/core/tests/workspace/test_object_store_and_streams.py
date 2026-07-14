@@ -120,11 +120,20 @@ def test_binary_workspace_reads_use_revocable_loopback_ranges(tmp_path: Path) ->
 
         assert inline["text"] is None
         assert inline["stream_required"] is True
-        request = Request(session["url"], headers={"Range": "bytes=8-15"})
+        request = Request(
+            session["url"],
+            headers={"Range": "bytes=8-15", "Origin": "http://tauri.localhost"},
+        )
         with urlopen(request, timeout=2) as response:
             assert response.status == 206
             assert response.headers["Content-Range"] == "bytes 8-15/64"
+            assert response.headers["Access-Control-Allow-Origin"] == "http://tauri.localhost"
             assert response.read() == payload[8:16]
+
+        denied_origin = Request(session["url"], headers={"Origin": "https://attacker.invalid"})
+        with urlopen(denied_origin, timeout=2) as response:
+            assert response.headers["Access-Control-Allow-Origin"] is None
+            assert response.read() == payload
 
         service._application._workspaces.revoke_read_session(  # type: ignore[attr-defined]
             UUID(session["session_id"])

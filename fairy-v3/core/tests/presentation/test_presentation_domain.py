@@ -107,12 +107,16 @@ def test_service_persists_native_presentation_and_deduplicates_cache(tmp_path: P
         service.close()
 
 
-def test_service_waits_for_pack_without_running_untrusted_converter(tmp_path: Path) -> None:
+def test_service_builds_content_only_preview_for_modern_office_package(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     with zipfile.ZipFile(source / "report.docx", "w") as archive:
         archive.writestr("[Content_Types].xml", "<Types/>")
-        archive.writestr("word/document.xml", "<document/>")
+        archive.writestr(
+            "word/document.xml",
+            '<w:document xmlns:w="urn:w"><w:p><w:r>'
+            "<w:t>Quarterly review</w:t></w:r></w:p></w:document>",
+        )
     service = build_local_service(tmp_path / "app")
     try:
         imported = service.invoke(
@@ -128,8 +132,69 @@ def test_service_waits_for_pack_without_running_untrusted_converter(tmp_path: Pa
             },
         )
 
+        assert result["job"]["status"] == "ready"
+        assert result["job"]["renderer_pack_id"] is None
+        assert result["presentation"]["fidelity"] == "content_only"
+        assert result["presentation"]["assets"][0]["metadata"]["payload"] == {
+            "kind": "document",
+            "blocks": [{"kind": "paragraph", "text": "Quarterly review"}],
+        }
+    finally:
+        service.close()
+
+
+def test_service_keeps_legacy_office_binary_behind_renderer_pack(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "legacy.doc").write_bytes(b"\xd0\xcf\x11\xe0legacy")
+    service = build_local_service(tmp_path / "app")
+    try:
+        imported = service.invoke(
+            "projects.import",
+            {"name": "Legacy Office", "residency": "local_only", "source_path": str(source)},
+        )
+        result = service.invoke(
+            "files.present",
+            {
+                "workspace_id": imported["project"]["workspace_id"],
+                "version_id": imported["project"]["active_version_id"],
+                "path": "legacy.doc",
+            },
+        )
+
         assert result["job"]["status"] == "waiting_for_pack"
         assert result["job"]["renderer_pack_id"] == "office"
+        assert result["presentation"] is None
+    finally:
+        service.close()
+
+
+def test_document_package_rejects_unsafe_xml_without_exposing_content(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    with zipfile.ZipFile(source / "unsafe.docx", "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr(
+            "word/document.xml",
+            '<!DOCTYPE x [<!ENTITY leak SYSTEM "file:///etc/passwd">]><document>&leak;</document>',
+        )
+    service = build_local_service(tmp_path / "app")
+    try:
+        imported = service.invoke(
+            "projects.import",
+            {"name": "Unsafe Office", "residency": "local_only", "source_path": str(source)},
+        )
+        result = service.invoke(
+            "files.present",
+            {
+                "workspace_id": imported["project"]["workspace_id"],
+                "version_id": imported["project"]["active_version_id"],
+                "path": "unsafe.docx",
+            },
+        )
+
+        assert result["job"]["status"] == "quarantined"
+        assert result["job"]["error_code"] == "DOCUMENT_PACKAGE_INVALID"
         assert result["presentation"] is None
     finally:
         service.close()

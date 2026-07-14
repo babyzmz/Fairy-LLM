@@ -7,6 +7,10 @@ from fairy_core.application.workspaces import WorkspaceApplication
 from fairy_core.domain.ids import new_id
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.presentation.cache import presentation_cache_key
+from fairy_core.presentation.document_inspector import (
+    DocumentInspectionError,
+    DocumentPackageInspector,
+)
 from fairy_core.presentation.models import (
     FilePresentation,
     FileRenderJob,
@@ -52,6 +56,9 @@ _OFFICE_EXTENSIONS = frozenset(
         "xlsx",
     }
 )
+_BUILTIN_DOCUMENT_EXTENSIONS = frozenset(
+    {"docx", "key", "numbers", "odp", "ods", "odt", "pages", "pptx", "xlsx"}
+)
 
 
 class PresentationApplication:
@@ -63,6 +70,7 @@ class PresentationApplication:
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._workspaces = workspaces
+        self._documents = DocumentPackageInspector()
 
     def present(
         self,
@@ -115,8 +123,12 @@ class PresentationApplication:
                 source_hash=descriptor.content_hash,
                 cache_key=cache_key,
                 requested_mode=requested_mode,
-                renderer_pack_id=None if pack_id == "browser-native" else pack_id,
-                renderer_pack_version=None if pack_id == "browser-native" else pack_version,
+                renderer_pack_id=(
+                    None if pack_id in {"browser-native", "builtin-document"} else pack_id
+                ),
+                renderer_pack_version=(
+                    None if pack_id in {"browser-native", "builtin-document"} else pack_version
+                ),
             )
             presentation: FilePresentation | None = None
             if pack_id == "browser-native":
@@ -137,6 +149,53 @@ class PresentationApplication:
                     status=RenderJobStatus.READY,
                     capabilities=self._capabilities(descriptor.media_type),
                 )
+            elif pack_id == "builtin-document":
+                try:
+                    _, content = self._workspaces.read_file(
+                        workspace_id=workspace_id,
+                        version_id=file_set.version_id,
+                        path=file_set.primary_path,
+                    )
+                    assert content is not None
+                    inspection = self._documents.inspect(
+                        content,
+                        extension=descriptor.extension or "",
+                    )
+                    target_status = (
+                        RenderJobStatus.PARTIAL if inspection.partial else RenderJobStatus.READY
+                    )
+                    job = job.transition(RenderJobStatus.QUEUED, progress=5)
+                    job = job.transition(RenderJobStatus.CONVERTING, progress=40)
+                    job = job.transition(RenderJobStatus.VALIDATING, progress=90)
+                    job = job.transition(
+                        target_status,
+                        public_summary=(
+                            "Content-only document preview ready"
+                            if inspection.fidelity is PresentationFidelity.CONTENT_ONLY
+                            else "Embedded document preview ready"
+                        ),
+                    )
+                    presentation_id = new_id()
+                    presentation = FilePresentation(
+                        id=presentation_id,
+                        job_id=job.id,
+                        workspace_id=job.workspace_id,
+                        version_id=job.version_id,
+                        file_set_id=job.file_set_id,
+                        source_path=job.source_path,
+                        source_hash=job.source_hash,
+                        renderer=inspection.renderer,
+                        fidelity=inspection.fidelity,
+                        status=target_status,
+                        capabilities=inspection.capabilities,
+                        assets=(inspection.asset(presentation_id),),
+                    )
+                except DocumentInspectionError:
+                    job = job.transition(
+                        RenderJobStatus.QUARANTINED,
+                        error_code="DOCUMENT_PACKAGE_INVALID",
+                        public_summary="Document preview was blocked by package validation",
+                    )
             else:
                 job = job.transition(
                     RenderJobStatus.WAITING_FOR_PACK,
@@ -171,6 +230,8 @@ class PresentationApplication:
 
     @staticmethod
     def _renderer_for(media_type: str, extension: str | None) -> tuple[str, str]:
+        if extension and extension.lower() in _BUILTIN_DOCUMENT_EXTENSIONS:
+            return "builtin-document", "1"
         if extension and extension.lower() in _OFFICE_EXTENSIONS:
             return "office", "latest"
         if media_type.startswith(_DIRECT_MEDIA_PREFIXES) or media_type in _DIRECT_MEDIA_TYPES:

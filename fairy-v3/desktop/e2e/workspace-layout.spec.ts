@@ -6,19 +6,14 @@ test.beforeEach(async ({ page }) => {
   await installWorkspaceFixture(page);
 });
 
-test("minimum desktop window renders the durable workspace without overflow", async ({
-  page,
-}) => {
+test("minimum desktop window renders the durable workspace without overflow", async ({ page }) => {
   await page.setViewportSize({ width: 880, height: 680 });
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Task Timeline" })).toBeVisible();
   await expect(page.getByText("Preview is ready")).toBeVisible();
   await expect(page.getByTitle("Task preview")).toHaveAttribute("src", PREVIEW_URL);
-  await expect(page.getByTitle("Task preview")).toHaveAttribute(
-    "sandbox",
-    "allow-forms allow-scripts",
-  );
+  await expect(page.getByTitle("Task preview")).toHaveAttribute("sandbox", "allow-forms allow-scripts");
   await page.getByRole("tab", { name: /Files/ }).click();
   await page.getByRole("button", { name: "main.ts" }).click();
   await expect(page.getByText("console.log('Fairy');")).toBeVisible();
@@ -29,9 +24,7 @@ test("minimum desktop window renders the durable workspace without overflow", as
   await properties.getByRole("button", { name: "Add note" }).click();
   await expect(properties.getByText("Verify the entry point")).toBeVisible();
   expect(
-    (await page.evaluate(() => window.__FAIRY_FIXTURE_CALLS__)).some(
-      (call) => call.method === "annotations.update",
-    ),
+    (await page.evaluate(() => window.__FAIRY_FIXTURE_CALLS__)).some((call) => call.method === "annotations.update"),
   ).toBe(true);
   await page.getByRole("tab", { name: "Preview" }).click();
   await expect(page.getByText("Developer diagnostic")).toHaveCount(0);
@@ -45,9 +38,7 @@ test("minimum desktop window renders the durable workspace without overflow", as
   expect(layout.contextBottom).toBeLessThanOrEqual(layout.composerTop);
 });
 
-test("narrow workspace remains usable and reduced motion disables repeated HUD motion", async ({
-  page,
-}) => {
+test("narrow workspace remains usable and reduced motion disables repeated HUD motion", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 640, height: 700 });
   await page.goto("/");
@@ -63,18 +54,14 @@ test("narrow workspace remains usable and reduced motion disables repeated HUD m
   expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
   expect(layout.composerBottom).toBeLessThanOrEqual(layout.viewportHeight);
 
-  const decisionBottom = await acceptButton.evaluate(
-    (element) => element.getBoundingClientRect().bottom,
-  );
+  const decisionBottom = await acceptButton.evaluate((element) => element.getBoundingClientRect().bottom);
   expect(decisionBottom).toBeLessThanOrEqual(layout.composerTop);
 
   const motion = await page.locator(".scan-line").evaluate((element) => {
     const style = getComputedStyle(element);
     const duration = style.animationDuration;
     return {
-      durationMs: duration.endsWith("ms")
-        ? Number.parseFloat(duration)
-        : Number.parseFloat(duration) * 1_000,
+      durationMs: duration.endsWith("ms") ? Number.parseFloat(duration) : Number.parseFloat(duration) * 1_000,
       iterations: style.animationIterationCount,
     };
   });
@@ -82,9 +69,28 @@ test("narrow workspace remains usable and reduced motion disables repeated HUD m
   expect(motion.iterations).toBe("1");
 });
 
-test("governed Review promotes a previewing Task before Version acceptance", async ({
-  page,
-}) => {
+test("PDF files use the isolated native viewer with bounded controls", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: /Files/ }).click();
+  await page.getByRole("button", { name: "sample.pdf" }).click();
+
+  const viewer = page.getByLabel("PDF viewer: docs/sample.pdf");
+  await expect(viewer).toBeVisible();
+  await expect(viewer.getByText("1 / 1")).toBeVisible();
+  await expect(viewer.getByRole("button", { name: "Previous PDF page" })).toBeDisabled();
+  await expect(viewer.getByRole("button", { name: "Next PDF page" })).toBeDisabled();
+  const canvas = viewer.getByRole("img", { name: "docs/sample.pdf, page 1" });
+  await expect(canvas).toBeVisible();
+  expect(
+    await canvas.evaluate((element) => ({
+      width: (element as HTMLCanvasElement).width,
+      height: (element as HTMLCanvasElement).height,
+    })),
+  ).toEqual({ width: 300, height: 200 });
+});
+
+test("governed Review promotes a previewing Task before Version acceptance", async ({ page }) => {
   await page.goto("/?taskStatus=previewing");
 
   const accept = page.getByRole("button", { name: "Use this version" });
@@ -111,11 +117,8 @@ async function measureLayout(page: Page) {
     viewportHeight: window.innerHeight,
     documentWidth: document.documentElement.scrollWidth,
     documentHeight: document.documentElement.scrollHeight,
-    contextBottom:
-      document.querySelector(".context-bar")?.getBoundingClientRect().bottom ?? 0,
-    composerTop:
-      document.querySelector(".chat-composer")?.getBoundingClientRect().top ?? 0,
-    composerBottom:
-      document.querySelector(".chat-composer")?.getBoundingClientRect().bottom ?? 0,
+    contextBottom: document.querySelector(".context-bar")?.getBoundingClientRect().bottom ?? 0,
+    composerTop: document.querySelector(".chat-composer")?.getBoundingClientRect().top ?? 0,
+    composerBottom: document.querySelector(".chat-composer")?.getBoundingClientRect().bottom ?? 0,
   }));
 }

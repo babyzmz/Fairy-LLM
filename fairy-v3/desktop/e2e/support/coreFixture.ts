@@ -7,13 +7,27 @@ const VOICE_WAV_BASE64 = Buffer.from(VOICE_WAV).toString("base64");
 const VOICE_WAV_HASH = createHash("sha256").update(VOICE_WAV).digest("hex");
 const CAPTURE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-const CAPTURE_PNG_HASH = createHash("sha256")
-  .update(Buffer.from(CAPTURE_PNG_BASE64, "base64"))
-  .digest("hex");
+const CAPTURE_PNG_HASH = createHash("sha256").update(Buffer.from(CAPTURE_PNG_BASE64, "base64")).digest("hex");
+const PDF_FIXTURE_BASE64 =
+  "JVBERi0xLjMKJeLjz9MKMSAwIG9iago8PAovUHJvZHVjZXIgKHB5cGRmKQovVGl0bGUgKEZhaXJ5IFBERiBGaXh0dXJlKQo+PgplbmRvYmoKMiAwIG9iago8PAovVHlwZSAvUGFnZXMKL0NvdW50IDEKL0tpZHMgWyA0IDAgUiBdCj4+CmVuZG9iagozIDAgb2JqCjw8Ci9UeXBlIC9DYXRhbG9nCi9QYWdlcyAyIDAgUgo+PgplbmRvYmoKNCAwIG9iago8PAovVHlwZSAvUGFnZQovUmVzb3VyY2VzIDw8Cj4+Ci9NZWRpYUJveCBbIDAuMCAwLjAgMzAwIDIwMCBdCi9QYXJlbnQgMiAwIFIKPj4KZW5kb2JqCnhyZWYKMCA1CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAxNSAwMDAwIG4gCjAwMDAwMDAwODEgMDAwMDAgbiAKMDAwMDAwMDE0MCAwMDAwMCBuIAowMDAwMDAwMTg5IDAwMDAwIG4gCnRyYWlsZXIKPDwKL1NpemUgNQovUm9vdCAzIDAgUgovSW5mbyAxIDAgUgo+PgpzdGFydHhyZWYKMjg4CiUlRU9GCg==";
+const PDF_FIXTURE = Buffer.from(PDF_FIXTURE_BASE64, "base64");
+const PDF_FIXTURE_HASH = createHash("sha256").update(PDF_FIXTURE).digest("hex");
 
 export async function installWorkspaceFixture(page: Page) {
   await installCoreFixture(page);
   await page.route(`${PREVIEW_URL}**`, async (route) => {
+    if (route.request().url().endsWith("/fixture.pdf")) {
+      await route.fulfill({
+        contentType: "application/pdf",
+        body: PDF_FIXTURE,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range",
+          "Accept-Ranges": "bytes",
+        },
+      });
+      return;
+    }
     await route.fulfill({
       contentType: "text/html",
       body: `<!doctype html><html><body style="margin:0;font-family:Segoe UI;background:#f4f6f3;color:#18201d"><main style="padding:28px"><h1>Atlas preview</h1><p>Durable candidate version</p></main></body></html>`,
@@ -29,6 +43,8 @@ async function installCoreFixture(page: Page) {
       voiceWavHash,
       capturePngBase64,
       capturePngHash,
+      pdfFixtureHash,
+      pdfFixtureByteLength,
     }) => {
       const fixtureWindow = window as unknown as {
         isTauri: boolean;
@@ -116,12 +132,13 @@ async function installCoreFixture(page: Page) {
         presentation: "0198f4de-0114-7000-8000-000000000024",
         annotation: "0198f4de-0114-7000-8000-000000000025",
         selection: "0198f4de-0114-7000-8000-000000000026",
+        pdfFileSet: "0198f4de-0114-7000-8000-000000000027",
+        pdfRenderJob: "0198f4de-0114-7000-8000-000000000028",
+        pdfPresentation: "0198f4de-0114-7000-8000-000000000029",
       };
       const timestamp = "2026-07-11T00:00:00Z";
       const initialTaskStatus =
-        new URLSearchParams(window.location.search).get("taskStatus") === "previewing"
-          ? "previewing"
-          : "ready";
+        new URLSearchParams(window.location.search).get("taskStatus") === "previewing" ? "previewing" : "ready";
       let project = {
         id: id.project,
         workspace_id: id.project,
@@ -501,8 +518,32 @@ async function installCoreFixture(page: Page) {
           created_at: timestamp,
         },
       };
+      const pdfPresentation = {
+        job: {
+          ...filePresentation.job,
+          id: id.pdfRenderJob,
+          file_set_id: id.pdfFileSet,
+          source_path: "docs/sample.pdf",
+          source_hash: pdfFixtureHash,
+          cache_key: "fixture-pdf-presentation-cache",
+          public_summary: "Native PDF presentation ready",
+        },
+        presentation: {
+          ...filePresentation.presentation,
+          id: id.pdfPresentation,
+          file_set_id: id.pdfFileSet,
+          source_path: "docs/sample.pdf",
+          source_hash: pdfFixtureHash,
+          renderer: "browser-native",
+          capabilities: ["pages", "search", "zoom", "select", "annotate"],
+        },
+      };
       const results: Record<string, unknown> = {
-        health: { status: "ok", service: "fairy-core", protocol: "core-service-v1" },
+        health: {
+          status: "ok",
+          service: "fairy-core",
+          protocol: "core-service-v1",
+        },
         "projects.list": { items: [project], next_cursor: null },
         "conversations.list": {
           items: [conversation, scratchConversation],
@@ -533,6 +574,13 @@ async function installCoreFixture(page: Page) {
               content_hash: "fixture-main",
               kind: "source",
               language: "typescript",
+            },
+            {
+              path: "docs/sample.pdf",
+              byte_length: pdfFixtureByteLength,
+              content_hash: pdfFixtureHash,
+              kind: "binary",
+              language: null,
             },
           ],
         },
@@ -697,19 +745,24 @@ async function installCoreFixture(page: Page) {
             },
           ],
         },
-        "messages.list": { items: [scratchMessage, toolMessage], next_cursor: null },
+        "messages.list": {
+          items: [scratchMessage, toolMessage],
+          next_cursor: null,
+        },
         "tasks.create": { task: scratchTask },
         "documents.import": {},
         "documents.list": {
-          items: [{
-            document: {
-              id: "0198f4de-0114-7000-8000-000000000101",
-              filename: "fixture-notes.md",
-              media_type: "text/markdown",
-              byte_length: 128,
+          items: [
+            {
+              document: {
+                id: "0198f4de-0114-7000-8000-000000000101",
+                filename: "fixture-notes.md",
+                media_type: "text/markdown",
+                byte_length: 128,
+              },
+              revision: {},
             },
-            revision: {},
-          }],
+          ],
         },
         "documents.search": { items: [] },
         "documents.delete": {},
@@ -780,8 +833,7 @@ async function installCoreFixture(page: Page) {
             return {
               kind: captureRequest.kind,
               source_id: captureRequest.source_id,
-              source_label:
-                captureRequest.kind === "window" ? "Game window" : "Primary display",
+              source_label: captureRequest.kind === "window" ? "Game window" : "Primary display",
               media_type: "image/png",
               png_base64: capturePngBase64,
               width: captureRequest.kind === "window" ? 1 : 1920,
@@ -829,7 +881,9 @@ async function installCoreFixture(page: Page) {
             const events = args.events as {
               onmessage(payload: Record<string, unknown>): void;
             };
-            const audio = args.audio as { onmessage(payload: ArrayBuffer): void };
+            const audio = args.audio as {
+              onmessage(payload: ArrayBuffer): void;
+            };
             fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
               method: "voice.sessions.start",
               params: input,
@@ -898,299 +952,369 @@ async function installCoreFixture(page: Page) {
             request.method === "projects.list"
               ? { items: [{ ...project }], next_cursor: null }
               : request.method === "tasks.list"
-                ? { items: [{ ...task }, { ...scratchTask }], next_cursor: null }
-              : request.method === "workspaces.get"
                 ? {
-                    ...(results["workspaces.get"] as Record<string, unknown>),
-                    id: request.params.workspace_id,
-                    active_version_id:
-                      request.params.workspace_id === id.scratchConversation
-                        ? id.scratchVersion
-                        : id.version,
-                    active_preview_id:
-                      request.params.workspace_id === id.scratchConversation
-                        ? null
-                        : id.preview,
-                  }
-              : request.method === "workspaces.files.list"
-                ? {
-                    ...(results["workspaces.files.list"] as Record<string, unknown>),
-                    workspace_id: request.params.workspace_id,
-                    version_id: request.params.version_id,
-                  }
-              : request.method === "files.present"
-                ? filePresentation
-              : request.method === "annotations.list"
-                ? { document: annotationDocument }
-              : request.method === "annotations.update"
-                ? (() => {
-                    annotationDocument = {
-                      id: id.annotation,
-                      workspace_id: request.params.workspace_id,
-                      version_id: request.params.version_id,
-                      file_set_id: request.params.file_set_id,
-                      source_hash: request.params.source_hash,
-                      annotations: request.params.annotations,
-                      revision: Number(request.params.expected_revision) + 1,
-                      created_at: timestamp,
-                      updated_at: timestamp,
-                    };
-                    return annotationDocument;
-                  })()
-              : request.method === "selections.create"
-                ? {
-                    id: id.selection,
-                    workspace_id: request.params.workspace_id,
-                    version_id: request.params.version_id,
-                    file_set_id: request.params.file_set_id,
-                    source_path: request.params.source_path,
-                    source_hash: request.params.source_hash,
-                    viewer_kind: request.params.viewer_kind,
-                    locator_kind: request.params.locator_kind,
-                    locator: request.params.locator,
-                    created_at: timestamp,
-                  }
-              : request.method === "previews.resolve"
-                ? request.params.task_id === id.scratchTask
-                  ? null
-                  : { task: { ...task }, runtime: { ...runtime }, preview: { ...preview } }
-              : request.method === "voice.synthesize"
-              ? {
-                  task_id: request.params.task_id,
-                  turn_id: request.params.turn_id,
-                  message_id: request.params.message_id,
-                  profile_id: request.params.profile_id,
-                  start_offset: request.params.start_offset,
-                  end_offset: request.params.end_offset,
-                  media_type: "audio/wav",
-                  audio_base64: voiceWavBase64,
-                  sample_rate: 24_000,
-                  channels: 1,
-                  frames: 2,
-                  content_hash: voiceWavHash,
-                }
-              : request.method === "tasks.create"
-                ? (() => {
-                    const userRequest = String(request.params.user_request ?? "");
-                    latestUserRequest = userRequest;
-                    approvalScenario = userRequest === "Request a governed notification";
-                    approvalVisible = false;
-                    approvalDecision = "pending";
-                    messages = [scratchMessage, toolMessage];
-                    return { task: { ...scratchTask, user_request: userRequest } };
-                  })()
-              : request.method === "assistant.turns.create"
-                ? (() => {
-                    messages = [
-                      ...messages,
-                      {
-                        ...scratchMessage,
-                        id: "0198f4de-0114-7000-8000-000000000030",
-                        task_id: id.scratchTask,
-                        turn_id: id.turn,
-                        sequence: 3,
-                        role: "user",
-                        content: latestUserRequest,
-                      },
-                    ];
-                    return { ...completedTurn, status: "created", completed_at: null };
-                  })()
-              : request.method === "assistant.turns.start"
-                ? (() => {
-                    if (!approvalScenario) {
-                      messages = [
-                        ...messages,
-                        {
-                          ...resumedMessage,
-                          id: "0198f4de-0114-7000-8000-000000000031",
-                          sequence: 4,
-                          content: "Fixture streamed response completed",
-                        },
-                      ];
-                      return completedTurn;
-                    }
-                    if (approvalDecision === "pending") {
-                      approvalVisible = true;
-                      return waitingTurn;
-                    }
-                    if (!messages.some((message) => message.id === resumedMessage.id)) {
-                      messages = [...messages, resumedMessage];
-                    }
-                    return completedTurn;
-                  })()
-              : request.method === "messages.list"
-                ? { items: messages, next_cursor: null }
-              : request.method === "approvals.list"
-                ? {
-                    items:
-                      approvalVisible && request.params.task_id === id.scratchTask
-                        ? [
-                            {
-                              ...pendingApproval,
-                              decision: approvalDecision,
-                              decided_by:
-                                approvalDecision === "pending" ? null : "user",
-                              decided_at:
-                                approvalDecision === "pending" ? null : timestamp,
-                            },
-                          ]
-                        : [],
+                    items: [{ ...task }, { ...scratchTask }],
                     next_cursor: null,
                   }
-              : request.method === "approvals.decide"
-                ? (() => {
-                    if (request.params.approval_id !== id.approval) {
-                      throw new Error("Approval is unavailable");
+                : request.method === "workspaces.get"
+                  ? {
+                      ...(results["workspaces.get"] as Record<string, unknown>),
+                      id: request.params.workspace_id,
+                      active_version_id:
+                        request.params.workspace_id === id.scratchConversation ? id.scratchVersion : id.version,
+                      active_preview_id: request.params.workspace_id === id.scratchConversation ? null : id.preview,
                     }
-                    if ("decided_by" in request.params) {
-                      throw new Error("Renderer cannot choose decided_by");
-                    }
-                    approvalDecision = request.params.approved ? "approved" : "rejected";
-                    const cursor = (events.at(-1)?.cursor ?? 0) + 1;
-                    events.push({
-                      ...event,
-                      id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
-                      cursor,
-                      run_id: id.commandRun,
-                      project_id: null,
-                      conversation_id: id.scratchConversation,
-                      task_id: id.scratchTask,
-                      version_id: null,
-                      task_sequence: cursor,
-                      event_type: "approval.decided",
-                      message: `Approval ${approvalDecision}`,
-                      payload: {
-                        approval_id: id.approval,
-                        decision: approvalDecision,
-                      },
-                    });
-                    return {
-                      approval: {
-                        ...pendingApproval,
-                        decision: approvalDecision,
-                        decided_by: "user",
-                        decided_at: timestamp,
-                      },
-                      changeset: null,
-                    };
-                  })()
-              : request.method === "tasks.review"
-                ? (() => {
-                    if (request.params.task_id !== id.task) {
-                      throw new Error("Task is unavailable");
-                    }
-                    task = { ...task, status: "ready" };
-                    const cursor = (events.at(-1)?.cursor ?? 0) + 1;
-                    events.push({
-                      ...event,
-                      id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
-                      cursor,
-                      task_sequence: cursor,
-                      event_type: "task.reviewed",
-                      message: "Review complete",
-                      payload: { status: "ready", checkpoint_id: id.checkpoint },
-                    });
-                    return {
-                      id: id.checkpoint,
-                      task_id: id.task,
-                      version_id: id.version,
-                      changed_files: ["README.md"],
-                      command_run_ids: [id.commandRun],
-                      preview_artifact_id: null,
-                      created_at: timestamp,
-                    };
-                  })()
-              : request.method === "versions.accept"
-                ? (() => {
-                    task = { ...task, status: "accepted" };
-                    project = {
-                      ...project,
-                      active_version_id: id.version,
-                      revision: project.revision + 1,
-                    };
-                    return project;
-                  })()
-              : request.method === "permissions.get"
-                ? permissions
-              : request.method === "permissions.update"
-                ? (() => {
-                    if (request.params.expected_revision !== permissions.revision) {
-                      throw new Error("VERSION_CONFLICT");
-                    }
-                    permissions = {
-                      profile: String(request.params.profile),
-                      capability_overrides:
-                        (request.params.capability_overrides as Record<string, boolean>) ?? {},
-                      revision: permissions.revision + 1,
-                      updated_at: "2026-07-11T00:00:01Z",
-                    };
-                    return permissions;
-                  })()
-              : request.method === "capabilities.get"
-                ? (() => {
-                    const base = results["capabilities.get"] as {
-                      slash_commands: Array<{
-                        required_operation: string | null;
-                        available: boolean;
-                      }>;
-                      [key: string]: unknown;
-                    };
-                    const operations: Record<string, boolean> = {
-                      "model.generate": true,
-                      "workspace.create_scratch": permissions.profile !== "observe",
-                      "web.search": permissions.capability_overrides["web.search"] !== false,
-                      "run.sandboxed":
-                        permissions.profile === "autonomous" &&
-                        !scenarios.has("sandboxUnavailable") &&
-                        permissions.capability_overrides["run.sandboxed"] !== false,
-                    };
-                    return {
-                      ...base,
-                      profile: permissions.profile,
-                      operations,
-                      sandbox_healthy: !scenarios.has("sandboxUnavailable"),
-                      slash_commands: base.slash_commands.map((command) => ({
-                        ...command,
-                        available:
-                          command.required_operation === null ||
-                          operations[command.required_operation] === true,
-                      })),
-                    };
-                  })()
-              : request.method === "mcp.servers.list"
-                ? { items: mcpServer === null ? [] : [mcpServer] }
-              : request.method === "mcp.servers.accept"
-                ? (() => {
-                    if (
-                      mcpServer === null ||
-                      request.params.server_id !== mcpServer.server_id ||
-                      request.params.expected_revision !== mcpServer.revision ||
-                      request.params.schema_digest !== mcpServer.pending_schema_digest
-                    ) {
-                      throw new Error("MCP acceptance revision mismatch");
-                    }
-                    mcpServer = {
-                      ...mcpServer,
-                      enabled: Boolean(request.params.enabled),
-                      status: request.params.enabled ? "ready" : "disabled",
-                      revision: mcpServer.revision + 1,
-                      accepted_schema_digest: mcpServer.pending_schema_digest,
-                      accepted_tools: mcpServer.pending_tools,
-                      policies: request.params.tools,
-                      updated_at: "2026-07-11T00:00:01Z",
-                    };
-                    return mcpServer;
-                  })()
-              : request.method === "events.subscribe"
-              ? (() => {
-                  const cursor = Number(request.params.cursor ?? 0);
-                  const items = events.filter((item) => item.cursor > cursor);
-                  return {
-                    items,
-                    next_cursor: items.at(-1)?.cursor ?? cursor,
-                  };
-                })()
-              : results[request.method];
+                  : request.method === "workspaces.files.list"
+                    ? {
+                        ...(results["workspaces.files.list"] as Record<string, unknown>),
+                        workspace_id: request.params.workspace_id,
+                        version_id: request.params.version_id,
+                      }
+                    : request.method === "workspaces.files.read" && request.params.path === "docs/sample.pdf"
+                      ? {
+                          file: {
+                            path: "docs/sample.pdf",
+                            byte_length: pdfFixtureByteLength,
+                            content_hash: pdfFixtureHash,
+                            kind: "binary",
+                            language: null,
+                          },
+                          media_type: "application/pdf",
+                          text: null,
+                          content_base64: null,
+                          stream_required: true,
+                        }
+                      : request.method === "files.open_stream"
+                        ? {
+                            session_id: "0198f4de-0114-7000-8000-000000000030",
+                            workspace_id: request.params.workspace_id,
+                            version_id: request.params.version_id,
+                            path: request.params.path,
+                            content_hash: pdfFixtureHash,
+                            byte_length: pdfFixtureByteLength,
+                            media_type: "application/pdf",
+                            url: `${previewUrl}fixture.pdf`,
+                            expires_at: "2026-07-11T00:02:00Z",
+                          }
+                        : request.method === "files.present"
+                          ? request.params.path === "docs/sample.pdf"
+                            ? pdfPresentation
+                            : filePresentation
+                          : request.method === "annotations.list"
+                            ? { document: annotationDocument }
+                            : request.method === "annotations.update"
+                              ? (() => {
+                                  annotationDocument = {
+                                    id: id.annotation,
+                                    workspace_id: request.params.workspace_id,
+                                    version_id: request.params.version_id,
+                                    file_set_id: request.params.file_set_id,
+                                    source_hash: request.params.source_hash,
+                                    annotations: request.params.annotations,
+                                    revision: Number(request.params.expected_revision) + 1,
+                                    created_at: timestamp,
+                                    updated_at: timestamp,
+                                  };
+                                  return annotationDocument;
+                                })()
+                              : request.method === "selections.create"
+                                ? {
+                                    id: id.selection,
+                                    workspace_id: request.params.workspace_id,
+                                    version_id: request.params.version_id,
+                                    file_set_id: request.params.file_set_id,
+                                    source_path: request.params.source_path,
+                                    source_hash: request.params.source_hash,
+                                    viewer_kind: request.params.viewer_kind,
+                                    locator_kind: request.params.locator_kind,
+                                    locator: request.params.locator,
+                                    created_at: timestamp,
+                                  }
+                                : request.method === "previews.resolve"
+                                  ? request.params.task_id === id.scratchTask
+                                    ? null
+                                    : {
+                                        task: { ...task },
+                                        runtime: { ...runtime },
+                                        preview: { ...preview },
+                                      }
+                                  : request.method === "voice.synthesize"
+                                    ? {
+                                        task_id: request.params.task_id,
+                                        turn_id: request.params.turn_id,
+                                        message_id: request.params.message_id,
+                                        profile_id: request.params.profile_id,
+                                        start_offset: request.params.start_offset,
+                                        end_offset: request.params.end_offset,
+                                        media_type: "audio/wav",
+                                        audio_base64: voiceWavBase64,
+                                        sample_rate: 24_000,
+                                        channels: 1,
+                                        frames: 2,
+                                        content_hash: voiceWavHash,
+                                      }
+                                    : request.method === "tasks.create"
+                                      ? (() => {
+                                          const userRequest = String(request.params.user_request ?? "");
+                                          latestUserRequest = userRequest;
+                                          approvalScenario = userRequest === "Request a governed notification";
+                                          approvalVisible = false;
+                                          approvalDecision = "pending";
+                                          messages = [scratchMessage, toolMessage];
+                                          return {
+                                            task: {
+                                              ...scratchTask,
+                                              user_request: userRequest,
+                                            },
+                                          };
+                                        })()
+                                      : request.method === "assistant.turns.create"
+                                        ? (() => {
+                                            messages = [
+                                              ...messages,
+                                              {
+                                                ...scratchMessage,
+                                                id: "0198f4de-0114-7000-8000-000000000030",
+                                                task_id: id.scratchTask,
+                                                turn_id: id.turn,
+                                                sequence: 3,
+                                                role: "user",
+                                                content: latestUserRequest,
+                                              },
+                                            ];
+                                            return {
+                                              ...completedTurn,
+                                              status: "created",
+                                              completed_at: null,
+                                            };
+                                          })()
+                                        : request.method === "assistant.turns.start"
+                                          ? (() => {
+                                              if (!approvalScenario) {
+                                                messages = [
+                                                  ...messages,
+                                                  {
+                                                    ...resumedMessage,
+                                                    id: "0198f4de-0114-7000-8000-000000000031",
+                                                    sequence: 4,
+                                                    content: "Fixture streamed response completed",
+                                                  },
+                                                ];
+                                                return completedTurn;
+                                              }
+                                              if (approvalDecision === "pending") {
+                                                approvalVisible = true;
+                                                return waitingTurn;
+                                              }
+                                              if (!messages.some((message) => message.id === resumedMessage.id)) {
+                                                messages = [...messages, resumedMessage];
+                                              }
+                                              return completedTurn;
+                                            })()
+                                          : request.method === "messages.list"
+                                            ? {
+                                                items: messages,
+                                                next_cursor: null,
+                                              }
+                                            : request.method === "approvals.list"
+                                              ? {
+                                                  items:
+                                                    approvalVisible && request.params.task_id === id.scratchTask
+                                                      ? [
+                                                          {
+                                                            ...pendingApproval,
+                                                            decision: approvalDecision,
+                                                            decided_by: approvalDecision === "pending" ? null : "user",
+                                                            decided_at:
+                                                              approvalDecision === "pending" ? null : timestamp,
+                                                          },
+                                                        ]
+                                                      : [],
+                                                  next_cursor: null,
+                                                }
+                                              : request.method === "approvals.decide"
+                                                ? (() => {
+                                                    if (request.params.approval_id !== id.approval) {
+                                                      throw new Error("Approval is unavailable");
+                                                    }
+                                                    if ("decided_by" in request.params) {
+                                                      throw new Error("Renderer cannot choose decided_by");
+                                                    }
+                                                    approvalDecision = request.params.approved
+                                                      ? "approved"
+                                                      : "rejected";
+                                                    const cursor = (events.at(-1)?.cursor ?? 0) + 1;
+                                                    events.push({
+                                                      ...event,
+                                                      id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
+                                                      cursor,
+                                                      run_id: id.commandRun,
+                                                      project_id: null,
+                                                      conversation_id: id.scratchConversation,
+                                                      task_id: id.scratchTask,
+                                                      version_id: null,
+                                                      task_sequence: cursor,
+                                                      event_type: "approval.decided",
+                                                      message: `Approval ${approvalDecision}`,
+                                                      payload: {
+                                                        approval_id: id.approval,
+                                                        decision: approvalDecision,
+                                                      },
+                                                    });
+                                                    return {
+                                                      approval: {
+                                                        ...pendingApproval,
+                                                        decision: approvalDecision,
+                                                        decided_by: "user",
+                                                        decided_at: timestamp,
+                                                      },
+                                                      changeset: null,
+                                                    };
+                                                  })()
+                                                : request.method === "tasks.review"
+                                                  ? (() => {
+                                                      if (request.params.task_id !== id.task) {
+                                                        throw new Error("Task is unavailable");
+                                                      }
+                                                      task = {
+                                                        ...task,
+                                                        status: "ready",
+                                                      };
+                                                      const cursor = (events.at(-1)?.cursor ?? 0) + 1;
+                                                      events.push({
+                                                        ...event,
+                                                        id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
+                                                        cursor,
+                                                        task_sequence: cursor,
+                                                        event_type: "task.reviewed",
+                                                        message: "Review complete",
+                                                        payload: {
+                                                          status: "ready",
+                                                          checkpoint_id: id.checkpoint,
+                                                        },
+                                                      });
+                                                      return {
+                                                        id: id.checkpoint,
+                                                        task_id: id.task,
+                                                        version_id: id.version,
+                                                        changed_files: ["README.md"],
+                                                        command_run_ids: [id.commandRun],
+                                                        preview_artifact_id: null,
+                                                        created_at: timestamp,
+                                                      };
+                                                    })()
+                                                  : request.method === "versions.accept"
+                                                    ? (() => {
+                                                        task = {
+                                                          ...task,
+                                                          status: "accepted",
+                                                        };
+                                                        project = {
+                                                          ...project,
+                                                          active_version_id: id.version,
+                                                          revision: project.revision + 1,
+                                                        };
+                                                        return project;
+                                                      })()
+                                                    : request.method === "permissions.get"
+                                                      ? permissions
+                                                      : request.method === "permissions.update"
+                                                        ? (() => {
+                                                            if (
+                                                              request.params.expected_revision !== permissions.revision
+                                                            ) {
+                                                              throw new Error("VERSION_CONFLICT");
+                                                            }
+                                                            permissions = {
+                                                              profile: String(request.params.profile),
+                                                              capability_overrides:
+                                                                (request.params.capability_overrides as Record<
+                                                                  string,
+                                                                  boolean
+                                                                >) ?? {},
+                                                              revision: permissions.revision + 1,
+                                                              updated_at: "2026-07-11T00:00:01Z",
+                                                            };
+                                                            return permissions;
+                                                          })()
+                                                        : request.method === "capabilities.get"
+                                                          ? (() => {
+                                                              const base = results["capabilities.get"] as {
+                                                                slash_commands: Array<{
+                                                                  required_operation: string | null;
+                                                                  available: boolean;
+                                                                }>;
+                                                                [key: string]: unknown;
+                                                              };
+                                                              const operations: Record<string, boolean> = {
+                                                                "model.generate": true,
+                                                                "workspace.create_scratch":
+                                                                  permissions.profile !== "observe",
+                                                                "web.search":
+                                                                  permissions.capability_overrides["web.search"] !==
+                                                                  false,
+                                                                "run.sandboxed":
+                                                                  permissions.profile === "autonomous" &&
+                                                                  !scenarios.has("sandboxUnavailable") &&
+                                                                  permissions.capability_overrides["run.sandboxed"] !==
+                                                                    false,
+                                                              };
+                                                              return {
+                                                                ...base,
+                                                                profile: permissions.profile,
+                                                                operations,
+                                                                sandbox_healthy: !scenarios.has("sandboxUnavailable"),
+                                                                slash_commands: base.slash_commands.map((command) => ({
+                                                                  ...command,
+                                                                  available:
+                                                                    command.required_operation === null ||
+                                                                    operations[command.required_operation] === true,
+                                                                })),
+                                                              };
+                                                            })()
+                                                          : request.method === "mcp.servers.list"
+                                                            ? {
+                                                                items: mcpServer === null ? [] : [mcpServer],
+                                                              }
+                                                            : request.method === "mcp.servers.accept"
+                                                              ? (() => {
+                                                                  if (
+                                                                    mcpServer === null ||
+                                                                    request.params.server_id !== mcpServer.server_id ||
+                                                                    request.params.expected_revision !==
+                                                                      mcpServer.revision ||
+                                                                    request.params.schema_digest !==
+                                                                      mcpServer.pending_schema_digest
+                                                                  ) {
+                                                                    throw new Error("MCP acceptance revision mismatch");
+                                                                  }
+                                                                  mcpServer = {
+                                                                    ...mcpServer,
+                                                                    enabled: Boolean(request.params.enabled),
+                                                                    status: request.params.enabled
+                                                                      ? "ready"
+                                                                      : "disabled",
+                                                                    revision: mcpServer.revision + 1,
+                                                                    accepted_schema_digest:
+                                                                      mcpServer.pending_schema_digest,
+                                                                    accepted_tools: mcpServer.pending_tools,
+                                                                    policies: request.params.tools,
+                                                                    updated_at: "2026-07-11T00:00:01Z",
+                                                                  };
+                                                                  return mcpServer;
+                                                                })()
+                                                              : request.method === "events.subscribe"
+                                                                ? (() => {
+                                                                    const cursor = Number(request.params.cursor ?? 0);
+                                                                    const items = events.filter(
+                                                                      (item) => item.cursor > cursor,
+                                                                    );
+                                                                    return {
+                                                                      items,
+                                                                      next_cursor: items.at(-1)?.cursor ?? cursor,
+                                                                    };
+                                                                  })()
+                                                                : results[request.method];
           if (result === undefined) {
             throw new Error(`Unexpected Core method: ${request.method}`);
           }
@@ -1204,6 +1328,8 @@ async function installCoreFixture(page: Page) {
       voiceWavHash: VOICE_WAV_HASH,
       capturePngBase64: CAPTURE_PNG_BASE64,
       capturePngHash: CAPTURE_PNG_HASH,
+      pdfFixtureHash: PDF_FIXTURE_HASH,
+      pdfFixtureByteLength: PDF_FIXTURE.length,
     },
   );
 }
