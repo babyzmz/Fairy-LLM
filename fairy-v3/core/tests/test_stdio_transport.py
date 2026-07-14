@@ -51,6 +51,33 @@ def test_stdio_processes_one_jsonrpc_response_per_input_line(tmp_path: Path) -> 
     dispatcher.close()
 
 
+def test_stdio_escapes_unicode_for_windows_code_page_independent_output(
+    tmp_path: Path,
+) -> None:
+    dispatcher = build_local_dispatcher(tmp_path)
+    source = io.StringIO(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "projects.create",
+                "params": {"name": "Fairy smile \U0001f60a", "residency": "local_only"},
+            },
+            ensure_ascii=True,
+        )
+        + "\n"
+    )
+    raw_destination = io.BytesIO()
+    destination = io.TextIOWrapper(raw_destination, encoding="ascii", errors="strict")
+
+    process_stream(dispatcher, source, destination)
+    destination.flush()
+    response = json.loads(raw_destination.getvalue().decode("ascii"))
+
+    assert response["result"]["project"]["name"] == "Fairy smile \U0001f60a"
+    dispatcher.close()
+
+
 def test_stdio_imports_split_state_and_ledger_databases_once(tmp_path: Path) -> None:
     project = Project.create(name="Legacy project", residency=ProjectResidency.LOCAL_ONLY)
     state = SqliteStateStore(tmp_path / "state.db")

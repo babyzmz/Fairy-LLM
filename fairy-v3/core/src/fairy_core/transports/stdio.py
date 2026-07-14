@@ -285,7 +285,7 @@ def process_stream(
                     "data": {"details": str(exc)},
                 },
             }
-        destination.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")))
+        destination.write(json.dumps(response, ensure_ascii=True, separators=(",", ":")))
         destination.write("\n")
         destination.flush()
 

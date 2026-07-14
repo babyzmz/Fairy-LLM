@@ -8,6 +8,13 @@ const MAXIMUM_FRAME_DELTA_MS = 50;
 
 export interface LiquidMotionSample extends LiquidShapeTarget {
   speech_level: number;
+  return_bounce: number;
+}
+
+interface ReturnEnvelope {
+  startedAt: number;
+  origin: LiquidShapeTarget;
+  reducedMotion: boolean;
 }
 
 class BoundedSpring {
@@ -82,6 +89,7 @@ export class LiquidMotionController {
   private readonly capsule: BoundedSpring;
   private readonly speech = new SpeechLevelEnvelope();
   private lastSampleAt: number | null = null;
+  private returning: ReturnEnvelope | null = null;
 
   constructor(initialShape: LiquidShapeTarget, initialSpeechLevel = 0) {
     this.droplet = new BoundedSpring(initialShape.droplet);
@@ -100,6 +108,33 @@ export class LiquidMotionController {
     this.speech.setTarget(target, immediate);
   }
 
+  beginReturn(now: number, reducedMotion = false) {
+    if (reducedMotion) {
+      this.returning = null;
+      this.setShapeTarget({ droplet: 0, bridge: 0, capsule: 0 }, true);
+      return;
+    }
+    this.returning = {
+      startedAt: now,
+      origin: {
+        droplet: clampUnit(this.droplet.sample()),
+        bridge: clampUnit(this.bridge.sample()),
+        capsule: clampUnit(this.capsule.sample()),
+      },
+      reducedMotion: false,
+    };
+    this.setShapeTarget({ droplet: 0, bridge: 0, capsule: 0 });
+  }
+
+  cancelReturn(now: number) {
+    const returning = this.returning;
+    if (returning !== null) {
+      const shape = returnShapeAt(returning, now);
+      this.setShapeTarget(shape, true);
+    }
+    this.returning = null;
+  }
+
   resetClock() {
     this.lastSampleAt = null;
   }
@@ -109,6 +144,26 @@ export class LiquidMotionController {
       ? 0
       : Math.min(MAXIMUM_FRAME_DELTA_MS, Math.max(0, now - this.lastSampleAt));
     this.lastSampleAt = now;
+    const returning = this.returning;
+    if (returning !== null) {
+      const elapsed = Math.max(0, now - returning.startedAt);
+      const contractionDuration = returning.reducedMotion ? 160 : 220;
+      const shape = returnShapeAt(returning, now);
+      const bounceElapsed = elapsed - contractionDuration;
+      const completed = elapsed >= contractionDuration + 180;
+      const returnBounce = completed || returning.reducedMotion || bounceElapsed <= 0
+        ? 0
+        : Math.sin(Math.PI * Math.min(1, bounceElapsed / 180)) * MAXIMUM_OVERSHOOT;
+      if (completed) {
+        this.returning = null;
+        this.setShapeTarget({ droplet: 0, bridge: 0, capsule: 0 }, true);
+      }
+      return {
+        ...shape,
+        speech_level: this.speech.step(deltaMs),
+        return_bounce: returnBounce,
+      };
+    }
     const deltaSeconds = deltaMs / 1_000;
     this.droplet.step(deltaSeconds);
     this.bridge.step(deltaSeconds);
@@ -118,10 +173,28 @@ export class LiquidMotionController {
       bridge: clampUnit(this.bridge.sample()),
       capsule: clampUnit(this.capsule.sample()),
       speech_level: this.speech.step(deltaMs),
+      return_bounce: 0,
     };
   }
 }
 
 function clampUnit(value: number): number {
   return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+}
+
+function easeInOutCubic(value: number): number {
+  return value < 0.5
+    ? 4 * value * value * value
+    : 1 - Math.pow(-2 * value + 2, 3) / 2;
+}
+
+function returnShapeAt(envelope: ReturnEnvelope, now: number): LiquidShapeTarget {
+  const elapsed = Math.max(0, now - envelope.startedAt);
+  const duration = envelope.reducedMotion ? 160 : 220;
+  const scale = 1 - easeInOutCubic(Math.min(1, elapsed / duration));
+  return {
+    droplet: envelope.origin.droplet * scale,
+    bridge: envelope.origin.bridge * scale,
+    capsule: envelope.origin.capsule * scale,
+  };
 }

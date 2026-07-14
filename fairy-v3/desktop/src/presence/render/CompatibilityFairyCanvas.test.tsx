@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { visualState } from "./CompatibilityFairyCanvas";
+import {
+  COMPATIBILITY_GLASS_STYLE,
+  visualState,
+} from "./CompatibilityFairyCanvas";
 
 const base = {
   workState: "idle" as const,
@@ -12,6 +15,16 @@ const base = {
 };
 
 describe("FairyCanvas visual state", () => {
+  it("keeps the compatibility shell transparent with restrained spectral rims", () => {
+    expect(COMPATIBILITY_GLASS_STYLE.center_alpha).toBeGreaterThanOrEqual(0.05);
+    expect(COMPATIBILITY_GLASS_STYLE.center_alpha).toBeLessThanOrEqual(0.11);
+    expect(COMPATIBILITY_GLASS_STYLE.rim_alpha).toBeGreaterThanOrEqual(0.2);
+    expect(COMPATIBILITY_GLASS_STYLE.rim_alpha).toBeLessThanOrEqual(0.31);
+    expect(COMPATIBILITY_GLASS_STYLE.warm_rim).not.toBe(
+      COMPATIBILITY_GLASS_STYLE.cool_rim,
+    );
+  });
+
   it("shows booting before any work state", () => {
     expect(visualState(base, 1_599)).toBe("booting");
   });

@@ -3,10 +3,12 @@ use fairy_desktop_v3::{
     anchored_pet_frame, anchored_pet_input_frame, authorize_core_rpc_window,
     authorize_pet_input_window, authorize_pet_render_window, authorize_preferences_reader,
     authorize_settings_window, authorize_voice_health_window, authorize_voice_settings_window,
-    auxiliary_window_policy, bridge_failure_response, fairy_tray_action, settings_method_allowed,
-    FairyTrayAction, PetWindowFrame,
+    auxiliary_window_policy, bridge_failure_response, fairy_tray_action, resolve_desktop_data_dir,
+    settings_method_allowed, FairyTrayAction, PetWindowFrame,
 };
 use serde_json::json;
+use std::ffi::OsString;
+use std::path::PathBuf;
 
 #[test]
 fn only_the_main_window_can_call_core_rpc() {
@@ -220,4 +222,26 @@ fn tray_menu_routes_only_fixed_companion_actions() {
     );
     assert_eq!(fairy_tray_action("assistant.turns.start"), None);
     assert_eq!(fairy_tray_action("system.actions.execute"), None);
+}
+
+#[test]
+fn desktop_data_override_requires_an_absolute_path() {
+    let default = PathBuf::from(r"C:\Users\Fairy\AppData\Roaming\Fairy");
+    assert_eq!(
+        resolve_desktop_data_dir(default.clone(), None).expect("default data dir"),
+        default
+    );
+    assert_eq!(
+        resolve_desktop_data_dir(
+            PathBuf::from(r"C:\ignored"),
+            Some(OsString::from(r"D:\FairyTests\isolated")),
+        )
+        .expect("absolute override"),
+        PathBuf::from(r"D:\FairyTests\isolated")
+    );
+    assert!(resolve_desktop_data_dir(
+        PathBuf::from(r"C:\default"),
+        Some(OsString::from(r"relative\data")),
+    )
+    .is_err());
 }

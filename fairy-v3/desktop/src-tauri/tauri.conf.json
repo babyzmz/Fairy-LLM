@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Fairy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.fairy.desktop.v3",
   "build": {
     "beforeBuildCommand": "npm run build:desktop",
@@ -87,6 +87,13 @@
       "runtime/voice-worker": "runtime/voice-worker",
       "../../voice-worker/assets": "runtime/voice-assets"
     },
-    "targets": "all"
+    "targets": ["msi"],
+    "windows": {
+      "allowDowngrades": false,
+      "wix": {
+        "upgradeCode": "ec229d26-4398-54b4-b566-22e1e656880b",
+        "template": "wix/main.wxs"
+      }
+    }
   }
 }

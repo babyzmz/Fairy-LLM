@@ -1,5 +1,7 @@
 use std::env;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -21,7 +23,8 @@ use presence_coordinator::{
     PhysicalPoint, PresenceCoordinatorConfig, PresenceCoordinatorHandle, PresenceWindowPlacement,
 };
 use presence_renderer_supervisor::{
-    PresenceRendererDirective, PresenceRendererHealthReport, PresenceRendererSupervisor,
+    PresenceRendererDirective, PresenceRendererHealthReport, PresenceRendererStatus,
+    PresenceRendererSupervisor,
 };
 use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStore};
 use provider_credentials::ProviderCredentialStore;
@@ -251,6 +254,7 @@ struct DesktopState {
     presence: PresenceCoordinatorHandle,
     pet_drag: Mutex<Option<PetGroupDragSession>>,
     renderer_supervisor: Mutex<PresenceRendererSupervisor>,
+    pet_placement_reconciled: AtomicBool,
     started_at: Instant,
 }
 
@@ -824,6 +828,23 @@ fn pet_renderer_report_health(
         .map_err(|_| "Window is not authorized".to_owned())?;
     if !report.is_valid() {
         return Err("Unsupported renderer health schema".to_owned());
+    }
+    let renderer_ready = matches!(
+        report.status,
+        PresenceRendererStatus::Running | PresenceRendererStatus::Fallback
+    );
+    if renderer_ready
+        && state
+            .pet_placement_reconciled
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    {
+        if let Err(error) = reconcile_pet_window_placement(window.app_handle()) {
+            state
+                .pet_placement_reconciled
+                .store(false, Ordering::Release);
+            return Err(format!("Pet window placement is unavailable: {error}"));
+        }
     }
     let now_ms = state
         .started_at
@@ -1528,11 +1549,56 @@ fn restart_core(state: &DesktopState) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+pub fn resolve_desktop_data_dir(
+    default_dir: PathBuf,
+    override_dir: Option<OsString>,
+) -> Result<PathBuf, std::io::Error> {
+    let Some(override_dir) = override_dir else {
+        return Ok(default_dir);
+    };
+    let override_dir = PathBuf::from(override_dir);
+    if !override_dir.is_absolute() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "FAIRY_DESKTOP_DATA_DIR must be an absolute path",
+        ));
+    }
+    Ok(override_dir)
+}
+
+fn configured_desktop_data_dir(
+    app: &tauri::AppHandle,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let default_dir = app.path().app_data_dir()?;
+    Ok(resolve_desktop_data_dir(
+        default_dir,
+        env::var_os("FAIRY_DESKTOP_DATA_DIR"),
+    )?)
+}
+
+fn reconcile_pet_window_placement(app: &tauri::AppHandle) -> Result<(), String> {
+    let data_dir = app
+        .try_state::<DesktopState>()
+        .map(|state| state.data_dir.clone())
+        .map_or_else(
+            || configured_desktop_data_dir(app).map_err(|error| error.to_string()),
+            Ok,
+        )?;
+    let preferences = DesktopPreferencesStore::new(&data_dir)
+        .load()
+        .map_err(|error| error.to_string())?;
+    let placement = place_pet_windows(app, &preferences)?;
+    if let Some(state) = app.try_state::<DesktopState>() {
+        state.presence.set_latest_placement(placement);
+    }
+    Ok(())
+}
+
 pub fn run() {
-    tauri::Builder::default()
+    let application = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
+            let data_dir = configured_desktop_data_dir(app.handle())?;
             std::fs::create_dir_all(&data_dir)?;
             let desktop_program = std::env::current_exe()?;
             let resource_dir = app.path().resource_dir()?;
@@ -1562,10 +1628,7 @@ pub fn run() {
             }
             let initial_placement =
                 place_pet_windows(app.handle(), &preferences).map_err(std::io::Error::other)?;
-            let presence = PresenceCoordinatorHandle::start(
-                app.handle().clone(),
-                coordinator_config(&preferences),
-            );
+            let presence = PresenceCoordinatorHandle::new(coordinator_config(&preferences));
             presence.set_latest_placement(initial_placement);
             app.manage(DesktopState {
                 core: Arc::new(Mutex::new(Some(bridge))),
@@ -1577,6 +1640,7 @@ pub fn run() {
                 presence,
                 pet_drag: Mutex::new(None),
                 renderer_supervisor: Mutex::new(PresenceRendererSupervisor::default()),
+                pet_placement_reconciled: AtomicBool::new(false),
                 started_at: Instant::now(),
             });
             let tray = build_fairy_tray(app, &preferences)?;
@@ -1616,6 +1680,18 @@ pub fn run() {
             capture::list_capture_surfaces,
             capture::capture_surface
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Fairy desktop");
+        .build(tauri::generate_context!())
+        .expect("failed to build Fairy desktop");
+    application.run(|app, event| {
+        if matches!(event, tauri::RunEvent::Ready) {
+            if let Err(error) = reconcile_pet_window_placement(app) {
+                eprintln!("failed to reconcile pet window placement when ready: {error}");
+            }
+            if let Some(state) = app.try_state::<DesktopState>() {
+                if let Err(error) = state.presence.launch(app.clone()) {
+                    eprintln!("failed to launch presence coordinator: {error}");
+                }
+            }
+        }
+    });
 }

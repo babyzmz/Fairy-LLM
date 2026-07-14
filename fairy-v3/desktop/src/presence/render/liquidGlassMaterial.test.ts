@@ -73,6 +73,11 @@ describe("Liquid Glass material", () => {
       bridge: 1,
       capsule: 1,
     });
+    expect(liquidShapeTargetForPhase("returning")).toEqual({
+      droplet: 0,
+      bridge: 0,
+      capsule: 0,
+    });
   });
 
   it("keeps the material axis aligned with the selected monitor edge", () => {
@@ -87,6 +92,10 @@ describe("Liquid Glass material", () => {
   it("keeps desktop capture out of the shader contract", () => {
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("bezierBridgeDistance");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("smoothMinimum");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("opticalThickness");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("screenSpaceEnvironment");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("chromaticDispersion");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("caustic");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uSizeScale");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uOpacity");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toMatch(/sampler2D|texture2D|texture\s*\(/);

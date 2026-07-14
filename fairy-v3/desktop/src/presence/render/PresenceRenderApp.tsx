@@ -80,6 +80,7 @@ export function PresenceRenderApp({
   );
   const [clock, setClock] = useState(() => now());
   const [interaction, setInteraction] = useState<PresenceInteractionSnapshot | null>(null);
+  const [interactionReady, setInteractionReady] = useState(false);
   const [voiceLevel, setVoiceLevel] = useState(0);
   const [renderSettings, setRenderSettings] = useState<PresenceRenderSettings>(
     DEFAULT_PRESENCE_RENDER_SETTINGS,
@@ -131,10 +132,14 @@ export function PresenceRenderApp({
       }
     }).then((unlisten) => {
       if (disposed) unlisten();
-      else stop = unlisten;
+      else {
+        stop = unlisten;
+        setInteractionReady(true);
+      }
     });
     return () => {
       disposed = true;
+      setInteractionReady(false);
       stop?.();
     };
   }, [interactionSource]);
@@ -184,8 +189,21 @@ export function PresenceRenderApp({
       aria-hidden="true"
       className="presence-render-window"
       data-cursor-band={interaction?.cursor.band ?? "outside"}
+      data-cursor-distance={interaction?.cursor.distance_px ?? ""}
+      data-cursor-x={interaction?.cursor.point.x ?? ""}
+      data-cursor-y={interaction?.cursor.point.y ?? ""}
       data-expansion-direction={interaction?.placement.expansion_direction ?? "right"}
+      data-anchor-x={interaction?.placement.anchor.x ?? ""}
+      data-anchor-y={interaction?.placement.anchor.y ?? ""}
+      data-placement-scale={interaction?.placement.scale_factor ?? ""}
+      data-render-x={interaction?.placement.render_frame.x ?? ""}
+      data-render-y={interaction?.placement.render_frame.y ?? ""}
+      data-work-area-x={interaction?.placement.monitor_work_area.x ?? ""}
+      data-work-area-y={interaction?.placement.monitor_work_area.y ?? ""}
+      data-work-area-width={interaction?.placement.monitor_work_area.width ?? ""}
+      data-work-area-height={interaction?.placement.monitor_work_area.height ?? ""}
       data-interaction-phase={interaction?.phase ?? "idle"}
+      data-interaction-ready={String(interactionReady)}
       data-reduced-motion={String(reducedMotion)}
       data-speaking={String(projection.speaking)}
       data-work-state={view.work_state}

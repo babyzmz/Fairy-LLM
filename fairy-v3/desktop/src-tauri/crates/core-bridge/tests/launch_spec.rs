@@ -68,6 +68,8 @@ fn development_spec_prefers_composed_runtime_and_filters_parent_environment() {
     let python_path = &spec.env["PYTHONPATH"];
     assert!(python_path.contains("capabilities"));
     assert!(python_path.contains("core"));
+    assert_eq!(spec.env["PYTHONIOENCODING"], "utf-8");
+    assert_eq!(spec.env["PYTHONUTF8"], "1");
 }
 
 #[test]
@@ -99,5 +101,7 @@ fn bundled_spec_uses_only_the_sidecar_and_filtered_environment() {
         "provider-secret"
     );
     assert!(!spec.env.contains_key("PYTHONPATH"));
+    assert_eq!(spec.env["PYTHONIOENCODING"], "utf-8");
+    assert_eq!(spec.env["PYTHONUTF8"], "1");
     assert!(!spec.env.contains_key("UNRELATED_SECRET"));
 }

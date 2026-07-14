@@ -87,6 +87,7 @@ impl CoreLaunchSpec {
         );
         child_environment.insert("PYTHONPATH".to_owned(), python_path);
         child_environment.insert("PYTHONIOENCODING".to_owned(), "utf-8".to_owned());
+        child_environment.insert("PYTHONUTF8".to_owned(), "1".to_owned());
         child_environment.insert("PYTHONUNBUFFERED".to_owned(), "1".to_owned());
         Self {
             program,
@@ -117,6 +118,7 @@ impl CoreLaunchSpec {
             data_dir.as_ref().to_string_lossy().into_owned(),
         );
         child_environment.insert("PYTHONIOENCODING".to_owned(), "utf-8".to_owned());
+        child_environment.insert("PYTHONUTF8".to_owned(), "1".to_owned());
         child_environment.insert("PYTHONUNBUFFERED".to_owned(), "1".to_owned());
         Self {
             program: program.to_string_lossy().into_owned(),

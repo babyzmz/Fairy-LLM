@@ -1,6 +1,6 @@
 {
   "name": "fairy-v3-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -17,7 +17,9 @@
     "e2e": "playwright test",
     "preview:e2e": "vite preview --host 127.0.0.1 --port 1431",
     "presence:platform": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/check-presence-platform.ps1",
-    "tauri": "tauri"
+    "presence:native-build": "tauri build --no-bundle --config tauri.presence-build.conf.json",
+    "tauri": "tauri",
+    "release:windows": "tauri build && powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/collect-wix-media.ps1"
   },
   "dependencies": {
     "@tanstack/react-query": "5.101.2",

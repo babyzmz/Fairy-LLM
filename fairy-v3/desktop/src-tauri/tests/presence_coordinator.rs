@@ -1,9 +1,11 @@
 use fairy_desktop_v3::presence_coordinator::{
     anchor_from_ratios, anchor_ratios, configured_cursor_band, resolve_presence_placement,
-    resolve_presence_placement_for_anchor, select_work_area, CursorBand, CursorSamplingHealth,
-    CursorTracker, ExpansionDirection, InteractionEmissionGate, PhysicalFrame, PhysicalPoint,
+    resolve_presence_placement_for_anchor, select_work_area, CursorBand, CursorMetrics,
+    CursorSamplingHealth, CursorTracker, ExpansionDirection, InteractionEmissionGate,
+    NormalizedDirection, PhysicalFrame, PhysicalPoint, RuntimePolicyEmissionGate,
 };
 use fairy_desktop_v3::presence_interaction::PresenceInteractionPhase;
+use fairy_desktop_v3::presence_runtime::PresenceRuntimePolicy;
 
 #[test]
 fn cursor_tracker_reports_speed_distance_and_continuous_active_dwell() {
@@ -182,7 +184,7 @@ fn hover_preferences_gate_activation_without_hiding_cursor_metrics() {
 }
 
 #[test]
-fn idle_interaction_emits_only_changes_and_one_second_heartbeats() {
+fn idle_interaction_emits_only_changes_and_recovery_heartbeats() {
     let placement = resolve_presence_placement(
         PhysicalFrame {
             x: 0,
@@ -200,10 +202,11 @@ fn idle_interaction_emits_only_changes_and_one_second_heartbeats() {
         None,
     );
     let mut gate = InteractionEmissionGate::default();
+    let idle_point = PhysicalPoint { x: 0, y: 0 };
     assert!(gate.should_emit(
         0,
         PresenceInteractionPhase::Idle,
-        CursorBand::Outside,
+        cursor_metrics(CursorBand::Outside, idle_point),
         false,
         false,
         placement,
@@ -211,35 +214,100 @@ fn idle_interaction_emits_only_changes_and_one_second_heartbeats() {
     assert!(!gate.should_emit(
         50,
         PresenceInteractionPhase::Idle,
-        CursorBand::Outside,
+        cursor_metrics(CursorBand::Outside, idle_point),
         false,
         false,
         placement,
     ));
-    assert!(gate.should_emit(
+    assert!(!gate.should_emit(
         1_000,
         PresenceInteractionPhase::Idle,
-        CursorBand::Outside,
+        cursor_metrics(CursorBand::Outside, idle_point),
         false,
         false,
         placement,
     ));
     assert!(gate.should_emit(
-        1_016,
-        PresenceInteractionPhase::Aware,
-        CursorBand::Aware,
+        30_000,
+        PresenceInteractionPhase::Idle,
+        cursor_metrics(CursorBand::Outside, idle_point),
         false,
         false,
         placement,
     ));
     assert!(gate.should_emit(
-        1_032,
+        30_016,
         PresenceInteractionPhase::Aware,
-        CursorBand::Aware,
+        cursor_metrics(CursorBand::Aware, PhysicalPoint { x: 20, y: 0 }),
         false,
         false,
         placement,
     ));
+    assert!(!gate.should_emit(
+        30_032,
+        PresenceInteractionPhase::Aware,
+        cursor_metrics(CursorBand::Aware, PhysicalPoint { x: 20, y: 0 }),
+        false,
+        false,
+        placement,
+    ));
+    assert!(gate.should_emit(
+        30_048,
+        PresenceInteractionPhase::Aware,
+        cursor_metrics(CursorBand::Aware, PhysicalPoint { x: 21, y: 0 }),
+        false,
+        false,
+        placement,
+    ));
+    assert!(gate.should_emit(
+        30_064,
+        PresenceInteractionPhase::InputReveal,
+        cursor_metrics(CursorBand::Active, PhysicalPoint { x: 21, y: 0 }),
+        false,
+        false,
+        placement,
+    ));
+    assert!(gate.should_emit(
+        30_080,
+        PresenceInteractionPhase::InputReveal,
+        cursor_metrics(CursorBand::Active, PhysicalPoint { x: 21, y: 0 }),
+        false,
+        false,
+        placement,
+    ));
+}
+
+fn cursor_metrics(band: CursorBand, point: PhysicalPoint) -> CursorMetrics {
+    CursorMetrics {
+        point,
+        direction: NormalizedDirection { x: 0.0, y: 0.0 },
+        distance_px: 0.0,
+        speed_px_s: 0.0,
+        dwell_ms: 0,
+        band,
+    }
+}
+
+#[test]
+fn runtime_policy_emits_changes_and_recovery_heartbeats_only() {
+    let normal = PresenceRuntimePolicy {
+        schema_version: 1,
+        frame_rate_limit: 60,
+        power_saver: false,
+        foreground_fullscreen: false,
+    };
+    let saver = PresenceRuntimePolicy {
+        frame_rate_limit: 15,
+        power_saver: true,
+        ..normal
+    };
+    let mut gate = RuntimePolicyEmissionGate::default();
+
+    assert!(gate.should_emit(0, normal));
+    assert!(!gate.should_emit(1_000, normal));
+    assert!(gate.should_emit(2_000, saver));
+    assert!(!gate.should_emit(29_999, saver));
+    assert!(gate.should_emit(32_000, saver));
 }
 
 #[test]

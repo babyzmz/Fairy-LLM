@@ -11,6 +11,16 @@ $repository = [System.IO.DirectoryInfo]$root
 while ($null -ne $repository -and -not (Test-Path -LiteralPath (Join-Path $repository.FullName "cosyvoice_env\Scripts\python.exe"))) {
     $repository = $repository.Parent
 }
+if ($null -eq $repository) {
+    $gitCommonDir = (& git -C $root rev-parse --git-common-dir 2>$null)
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($gitCommonDir)) {
+        $gitCommonDir = [System.IO.Path]::GetFullPath($gitCommonDir.Trim())
+        $gitRepository = [System.IO.DirectoryInfo](Split-Path -Parent $gitCommonDir)
+        if (Test-Path -LiteralPath (Join-Path $gitRepository.FullName "cosyvoice_env\Scripts\python.exe")) {
+            $repository = $gitRepository
+        }
+    }
+}
 $runtimePython = if (-not [string]::IsNullOrWhiteSpace($env:FAIRY_COSYVOICE_PYTHON)) {
     $env:FAIRY_COSYVOICE_PYTHON
 } elseif ($null -ne $repository) {

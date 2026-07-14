@@ -37,4 +37,53 @@ describe("Liquid motion", () => {
     envelope.setTarget(0);
     expect(envelope.step(180)).toBeCloseTo((1 - Math.exp(-1)) * Math.exp(-1), 5);
   });
+
+  it("contracts for 220ms and applies a bounded 180ms core rebound", () => {
+    const motion = new LiquidMotionController({ droplet: 1, bridge: 1, capsule: 1 });
+    motion.sample(0);
+    motion.beginReturn(0);
+    expect(motion.sample(110)).toMatchObject({
+      droplet: 0.5,
+      bridge: 0.5,
+      capsule: 0.5,
+      return_bounce: 0,
+    });
+    expect(motion.sample(220)).toMatchObject({
+      droplet: 0,
+      bridge: 0,
+      capsule: 0,
+      return_bounce: 0,
+    });
+    expect(motion.sample(310).return_bounce).toBeCloseTo(0.04, 5);
+    expect(motion.sample(400)).toMatchObject({
+      droplet: 0,
+      bridge: 0,
+      capsule: 0,
+      return_bounce: 0,
+    });
+  });
+
+  it("uses a 160ms opacity-safe return for reduced motion", () => {
+    const motion = new LiquidMotionController({ droplet: 1, bridge: 1, capsule: 1 });
+    motion.beginReturn(0, true);
+    expect(motion.sample(0)).toMatchObject({
+      droplet: 0,
+      bridge: 0,
+      capsule: 0,
+      return_bounce: 0,
+    });
+  });
+
+  it("continues from the contracted shape when return is interrupted", () => {
+    const motion = new LiquidMotionController({ droplet: 1, bridge: 1, capsule: 1 });
+    motion.sample(0);
+    motion.beginReturn(0);
+    expect(motion.sample(110).capsule).toBeCloseTo(0.5, 5);
+
+    motion.cancelReturn(110);
+    motion.setShapeTarget({ droplet: 0, bridge: 0, capsule: 0 });
+
+    expect(motion.sample(110).capsule).toBeCloseTo(0.5, 5);
+    expect(motion.sample(126).capsule).toBeLessThan(0.5);
+  });
 });

@@ -1,0 +1,114 @@
+import type { PresenceRenderSnapshot } from "./presenceRenderer";
+
+export interface LiquidOpticsUniformState {
+  render_origin: readonly [number, number];
+  monitor_origin: readonly [number, number];
+  monitor_size: readonly [number, number];
+  device_scale: number;
+  refraction_px: number;
+  dispersion_px: number;
+  caustic_strength: number;
+}
+
+export const LIQUID_OPTICS_LIMITS = Object.freeze({
+  minimum_dispersion_logical_px: 1.25,
+  active_dispersion_logical_px: 2.25,
+  maximum_dispersion_logical_px: 3,
+  idle_refraction_logical_px: 8.5,
+  active_refraction_logical_px: 12.5,
+  idle_caustic_strength: 0.2,
+  active_caustic_strength: 0.36,
+});
+
+export function liquidOpticsForSnapshot(
+  snapshot: PresenceRenderSnapshot,
+  canvasWidth: number,
+  canvasHeight: number,
+  devicePixelRatio: number,
+): LiquidOpticsUniformState {
+  const deviceScale = clampFinite(devicePixelRatio, 0.5, 4, 1);
+  const fallbackWidth = physicalDimension(canvasWidth, deviceScale);
+  const fallbackHeight = physicalDimension(canvasHeight, deviceScale);
+  const placement = snapshot.interaction?.placement;
+  const monitorWidth = positiveFinite(placement?.monitor_work_area.width, fallbackWidth);
+  const monitorHeight = positiveFinite(placement?.monitor_work_area.height, fallbackHeight);
+  const activity = opticalActivity(snapshot);
+  const dispersionLogical = mix(
+    LIQUID_OPTICS_LIMITS.minimum_dispersion_logical_px,
+    LIQUID_OPTICS_LIMITS.active_dispersion_logical_px,
+    activity,
+  );
+  const refractionLogical = mix(
+    LIQUID_OPTICS_LIMITS.idle_refraction_logical_px,
+    LIQUID_OPTICS_LIMITS.active_refraction_logical_px,
+    activity,
+  );
+  const causticStrength = mix(
+    LIQUID_OPTICS_LIMITS.idle_caustic_strength,
+    LIQUID_OPTICS_LIMITS.active_caustic_strength,
+    activity,
+  );
+
+  return Object.freeze({
+    render_origin: Object.freeze([
+      finiteOr(placement?.render_frame.x, 0),
+      finiteOr(placement?.render_frame.y, 0),
+    ]) as readonly [number, number],
+    monitor_origin: Object.freeze([
+      finiteOr(placement?.monitor_work_area.x, 0),
+      finiteOr(placement?.monitor_work_area.y, 0),
+    ]) as readonly [number, number],
+    monitor_size: Object.freeze([monitorWidth, monitorHeight]) as readonly [number, number],
+    device_scale: deviceScale,
+    refraction_px: refractionLogical * deviceScale,
+    dispersion_px: Math.min(
+      dispersionLogical,
+      LIQUID_OPTICS_LIMITS.maximum_dispersion_logical_px,
+    ) * deviceScale,
+    caustic_strength: causticStrength,
+  });
+}
+
+function opticalActivity(snapshot: PresenceRenderSnapshot): number {
+  if (snapshot.sleeping) return 0;
+  let activity = 0;
+  const interaction = snapshot.interaction;
+  if (interaction?.cursor.band === "aware") activity = 0.38;
+  if (interaction?.cursor.band === "active") activity = 1;
+  if (
+    interaction !== null &&
+    interaction !== undefined &&
+    !["idle", "aware", "suspended"].includes(interaction.phase)
+  ) {
+    activity = Math.max(activity, 0.72);
+  }
+  if (snapshot.work_state !== "idle") activity = Math.max(activity, 0.78);
+  if (snapshot.speaking) activity = 1;
+  return activity;
+}
+
+function physicalDimension(logicalSize: number, scale: number): number {
+  return Math.max(1, Math.round(positiveFinite(logicalSize, 1) * scale));
+}
+
+function positiveFinite(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function finiteOr(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) ? value : fallback;
+}
+
+function clampFinite(
+  value: number,
+  minimum: number,
+  maximum: number,
+  fallback: number,
+): number {
+  const finite = Number.isFinite(value) ? value : fallback;
+  return Math.min(maximum, Math.max(minimum, finite));
+}
+
+function mix(start: number, end: number, progress: number): number {
+  return start + (end - start) * Math.min(1, Math.max(0, progress));
+}

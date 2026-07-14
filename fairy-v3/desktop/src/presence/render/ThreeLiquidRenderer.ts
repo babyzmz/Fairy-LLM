@@ -7,8 +7,10 @@ import {
 } from "./presenceRenderer";
 import { RendererFrameLoop } from "./RendererFrameLoop";
 import {
+  GPU_TIMER_SAMPLE_LIMIT,
   readPerformanceHeapBytes,
   RendererPerformanceSampler,
+  shouldSampleGpuFrame,
   WebGlGpuTimer,
   writePerformanceDataset,
 } from "./RendererPerformanceSampler";
@@ -19,6 +21,7 @@ import {
   liquidShapeTargetForPhase,
 } from "./liquidGlassMaterial";
 import { LiquidMotionController } from "./liquidMotion";
+import { liquidOpticsForSnapshot } from "./liquidOptics";
 import { liquidVisualStyleForSnapshot } from "./liquidVisualState";
 
 export class ThreeLiquidRenderer implements PresenceRenderer {
@@ -33,6 +36,12 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
   private readonly performanceSampler = new RendererPerformanceSampler();
   private readonly gpuTimer: WebGlGpuTimer;
   private renderedFrames = 0;
+  private hasRendered = false;
+  private gpuTimerSamplesStarted = 0;
+  private performanceSamplingComplete = false;
+  private interactionPhase: NonNullable<
+    PresenceRenderSnapshot["interaction"]
+  >["phase"] | null;
   private disposed = false;
   private width = 1;
   private height = 1;
@@ -43,6 +52,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     initialSnapshot: PresenceRenderSnapshot,
   ) {
     this.snapshot = initialSnapshot;
+    this.interactionPhase = initialSnapshot.interaction?.phase ?? null;
     this.motion = new LiquidMotionController(
       liquidShapeTargetForPhase(initialSnapshot.interaction?.phase ?? null),
       initialSnapshot.speaking ? initialSnapshot.voice_level : 0,
@@ -62,6 +72,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.scene = new THREE.Scene();
     this.geometry = new THREE.PlaneGeometry(2, 2);
+    const initialOptics = liquidOpticsForSnapshot(initialSnapshot, 1, 1, 1);
     this.material = new THREE.ShaderMaterial({
       vertexShader: LIQUID_GLASS_VERTEX_SHADER,
       fragmentShader: LIQUID_GLASS_FRAGMENT_SHADER,
@@ -75,6 +86,9 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
         uAnchor: { value: new THREE.Vector2(96, 130) },
         uDirection: { value: new THREE.Vector2(1, 0) },
         uGaze: { value: new THREE.Vector2(0, 0) },
+        uRenderOrigin: { value: new THREE.Vector2(...initialOptics.render_origin) },
+        uMonitorOrigin: { value: new THREE.Vector2(...initialOptics.monitor_origin) },
+        uMonitorSize: { value: new THREE.Vector2(...initialOptics.monitor_size) },
         uShape: { value: new THREE.Vector3(0, 0, 0) },
         uAccent: { value: new THREE.Vector3(0.38, 0.75, 0.9) },
         uTime: { value: 0 },
@@ -86,6 +100,10 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
         uSpeechLevel: { value: 0 },
         uSizeScale: { value: initialSnapshot.size_scale },
         uOpacity: { value: initialSnapshot.opacity },
+        uReturnBounce: { value: 0 },
+        uRefractionPx: { value: initialOptics.refraction_px },
+        uDispersionPx: { value: initialOptics.dispersion_px },
+        uCausticStrength: { value: initialOptics.caustic_strength },
       },
     });
     this.scene.add(new THREE.Mesh(this.geometry, this.material));
@@ -151,33 +169,81 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
       motion.capsule,
     );
     this.material.uniforms.uSpeechLevel.value = motion.speech_level;
+    this.material.uniforms.uReturnBounce.value = motion.return_bounce;
     this.material.uniforms.uTime.value = this.snapshot.reduced_motion ? 0 : now / 1_000;
-    this.gpuTimer.begin();
-    this.renderer.render(this.scene, this.camera);
-    this.gpuTimer.end();
-    for (const duration of this.gpuTimer.collect()) {
-      this.performanceSampler.recordGpuFrame(duration);
+    if (!this.performanceSamplingComplete && this.gpuTimer.hasPendingResults()) {
+      this.recordCompletedGpuFrames();
     }
-    this.performanceSampler.recordCpuFrame(performance.now() - cpuStartedAt);
+    let sampleGpuFrame = false;
+    if (
+      !this.performanceSamplingComplete &&
+      this.gpuTimer.supported &&
+      shouldSampleGpuFrame(this.renderedFrames, this.gpuTimerSamplesStarted)
+    ) {
+      sampleGpuFrame = this.gpuTimer.begin();
+      if (sampleGpuFrame) this.gpuTimerSamplesStarted += 1;
+    }
+    this.renderer.render(this.scene, this.camera);
+    if (sampleGpuFrame) this.gpuTimer.end();
+    if (!this.performanceSamplingComplete) {
+      this.performanceSampler.recordCpuFrame(performance.now() - cpuStartedAt);
+    }
     this.renderedFrames += 1;
-    if (this.renderedFrames % 60 === 0) {
+    if (!this.performanceSamplingComplete && this.renderedFrames % 60 === 0) {
       this.performanceSampler.recordHeap(readPerformanceHeapBytes());
       writePerformanceDataset(
         this.renderer.domElement,
         this.performanceSampler.snapshot(),
       );
+      const gpuSamplingComplete =
+        !this.gpuTimer.supported ||
+        (this.gpuTimerSamplesStarted >= GPU_TIMER_SAMPLE_LIMIT &&
+          !this.gpuTimer.hasPendingResults());
+      this.performanceSamplingComplete =
+        this.performanceSampler.cpuSamplingComplete && gpuSamplingComplete;
+      this.renderer.domElement.dataset.timingComplete = String(
+        this.performanceSamplingComplete,
+      );
     }
-    this.renderer.domElement.dataset.rendered = "true";
+    if (!this.hasRendered) {
+      this.hasRendered = true;
+      this.renderer.domElement.dataset.rendered = "true";
+    }
+  }
+
+  private recordCompletedGpuFrames() {
+    for (const duration of this.gpuTimer.collect()) {
+      this.performanceSampler.recordGpuFrame(duration);
+    }
   }
 
   private updateSnapshotUniforms() {
     const interaction = this.snapshot.interaction;
+    const optics = liquidOpticsForSnapshot(
+      this.snapshot,
+      this.width,
+      this.height,
+      this.dpr,
+    );
+    this.material.uniforms.uRenderOrigin.value.set(...optics.render_origin);
+    this.material.uniforms.uMonitorOrigin.value.set(...optics.monitor_origin);
+    this.material.uniforms.uMonitorSize.value.set(...optics.monitor_size);
+    this.material.uniforms.uRefractionPx.value = optics.refraction_px;
+    this.material.uniforms.uDispersionPx.value = optics.dispersion_px;
+    this.material.uniforms.uCausticStrength.value = optics.caustic_strength;
     const gaze = interaction?.cursor.direction ?? { x: 0, y: 0 };
     this.material.uniforms.uGaze.value.set(gaze.x, -gaze.y);
     const direction = liquidDirectionForSnapshot(this.snapshot);
     this.material.uniforms.uDirection.value.set(direction.x, -direction.y);
     const shape = liquidShapeTargetForPhase(interaction?.phase ?? null);
-    this.motion.setShapeTarget(shape, this.snapshot.reduced_motion);
+    const nextPhase = interaction?.phase ?? null;
+    if (nextPhase === "returning" && this.interactionPhase !== "returning") {
+      this.motion.beginReturn(performance.now(), this.snapshot.reduced_motion);
+    } else if (nextPhase !== "returning") {
+      this.motion.cancelReturn(performance.now());
+      this.motion.setShapeTarget(shape, this.snapshot.reduced_motion);
+    }
+    this.interactionPhase = nextPhase;
     this.motion.setSpeechTarget(
       this.snapshot.speaking ? Math.max(0.2, this.snapshot.voice_level) : 0,
       this.snapshot.reduced_motion,

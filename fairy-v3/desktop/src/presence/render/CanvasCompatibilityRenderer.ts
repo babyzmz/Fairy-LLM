@@ -22,6 +22,8 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
   private dpr = 1;
   private readonly performanceSampler = new RendererPerformanceSampler();
   private renderedFrames = 0;
+  private hasRendered = false;
+  private performanceSamplingComplete = false;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -75,7 +77,14 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
 
   private drawFrame(now: number) {
     const startedAt = performance.now();
-    const gaze = this.snapshot.interaction?.cursor.direction ?? { x: 0, y: 0 };
+    const interaction = this.snapshot.interaction;
+    const gaze = interaction?.cursor.direction ?? { x: 0, y: 0 };
+    const center = interaction === null
+      ? { x: 96 * this.dpr, y: 130 * this.dpr }
+      : {
+          x: interaction.placement.anchor.x - interaction.placement.render_frame.x,
+          y: interaction.placement.anchor.y - interaction.placement.render_frame.y,
+        };
     drawFairyFrame(
       this.context,
       this.canvas,
@@ -86,14 +95,22 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
         opacity: this.snapshot.opacity,
         particles: this.snapshot.particles_enabled,
         sizeScale: this.snapshot.size_scale,
+        center,
       },
     );
-    this.performanceSampler.recordCpuFrame(performance.now() - startedAt);
+    if (!this.performanceSamplingComplete) {
+      this.performanceSampler.recordCpuFrame(performance.now() - startedAt);
+    }
     this.renderedFrames += 1;
-    if (this.renderedFrames % 60 === 0) {
+    if (!this.performanceSamplingComplete && this.renderedFrames % 60 === 0) {
       this.performanceSampler.recordHeap(readPerformanceHeapBytes());
       writePerformanceDataset(this.canvas, this.performanceSampler.snapshot());
+      this.performanceSamplingComplete = this.performanceSampler.cpuSamplingComplete;
+      this.canvas.dataset.timingComplete = String(this.performanceSamplingComplete);
     }
-    this.canvas.dataset.rendered = "true";
+    if (!this.hasRendered) {
+      this.hasRendered = true;
+      this.canvas.dataset.rendered = "true";
+    }
   }
 }

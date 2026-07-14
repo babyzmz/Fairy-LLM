@@ -52,6 +52,13 @@ const STYLES: Record<FairyVisualState, StateStyle> = {
   dragging: style("#8abdf0", "#ffffff", 1.05, 0.72, 10),
 };
 
+export const COMPATIBILITY_GLASS_STYLE = Object.freeze({
+  center_alpha: 0.075,
+  rim_alpha: 0.27,
+  warm_rim: "#ffd7b0",
+  cool_rim: "#86d8ff",
+});
+
 function style(
   accent: string,
   secondary: string,
@@ -76,6 +83,7 @@ export function CompatibilityFairyCanvas(props: FairyCanvasProps) {
     let started = performance.now();
     let lastDraw = 0;
     let disposed = false;
+    let hasRendered = false;
 
     const render = (now: number) => {
       if (disposed) return;
@@ -86,7 +94,10 @@ export function CompatibilityFairyCanvas(props: FairyCanvasProps) {
       if (!document.hidden && (now - lastDraw >= interval || lastDraw === 0)) {
         resizeCanvas(canvas);
         drawFairyFrame(context, canvas, state, current.gaze, current.reducedMotion ? 0 : now / 1_000);
-        canvas.dataset.rendered = "true";
+        if (!hasRendered) {
+          hasRendered = true;
+          canvas.dataset.rendered = "true";
+        }
         lastDraw = now;
       }
       if (!current.reducedMotion) frame = requestAnimationFrame(render);
@@ -135,27 +146,38 @@ export function drawFairyFrame(
     opacity?: number;
     particles?: boolean;
     sizeScale?: number;
+    center?: { x: number; y: number };
   } = {},
 ): void {
   const width = canvas.width;
   const height = canvas.height;
   const scale = width / Math.max(1, canvas.clientWidth);
-  const centerX = width / 2 + gaze.x * 4 * scale;
-  const centerY = height / 2 + gaze.y * 3 * scale + Math.sin(time * 1.2) * 1.2 * scale;
-  const radius = Math.min(width, height) * 0.32 * (options.sizeScale ?? 1);
+  const requestedCenter = options.center ?? { x: width / 2, y: height / 2 };
+  const centerX = requestedCenter.x + gaze.x * 4 * scale;
+  const centerY = requestedCenter.y + gaze.y * 3 * scale
+    + Math.sin(time * 1.2) * 1.2 * scale;
+  const radius = Math.min(Math.min(width, height) * 0.32, 72 * scale)
+    * (options.sizeScale ?? 1);
   const stateStyle = STYLES[state];
   const phase = time * stateStyle.speed;
   context.clearRect(0, 0, width, height);
   context.save();
   context.globalAlpha = options.opacity ?? 1;
 
-  const aura = context.createRadialGradient(centerX, centerY, radius * 0.15, centerX, centerY, radius * 1.5);
-  aura.addColorStop(0, colorWithAlpha(stateStyle.accent, 0.18 + stateStyle.energy * 0.08));
-  aura.addColorStop(0.55, colorWithAlpha(stateStyle.accent, 0.09));
+  const aura = context.createRadialGradient(
+    centerX,
+    centerY,
+    radius * 0.15,
+    centerX,
+    centerY,
+    radius * 1.35,
+  );
+  aura.addColorStop(0, colorWithAlpha(stateStyle.accent, 0.045 + stateStyle.energy * 0.02));
+  aura.addColorStop(0.55, colorWithAlpha(stateStyle.accent, 0.018));
   aura.addColorStop(1, colorWithAlpha(stateStyle.accent, 0));
   context.fillStyle = aura;
   context.beginPath();
-  context.arc(centerX, centerY, radius * 1.5, 0, Math.PI * 2);
+  context.arc(centerX, centerY, radius * 1.35, 0, Math.PI * 2);
   context.fill();
 
   if (options.particles ?? true) {
@@ -177,13 +199,24 @@ function drawShell(
   phase: number,
   stateStyle: StateStyle,
 ) {
-  const shell = context.createRadialGradient(x, y, radius * 0.1, x, y, radius);
-  shell.addColorStop(0, "#163d7d");
-  shell.addColorStop(0.58, "#102f68");
-  shell.addColorStop(1, "#091b43");
+  const shell = context.createRadialGradient(
+    x - radius * 0.28,
+    y - radius * 0.34,
+    radius * 0.04,
+    x,
+    y,
+    radius * 1.03,
+  );
+  shell.addColorStop(0, "rgba(255, 255, 255, 0.16)");
+  shell.addColorStop(
+    0.42,
+    `rgba(220, 231, 237, ${COMPATIBILITY_GLASS_STYLE.center_alpha})`,
+  );
+  shell.addColorStop(0.76, "rgba(116, 132, 142, 0.065)");
+  shell.addColorStop(1, "rgba(247, 251, 253, 0.18)");
   context.fillStyle = shell;
-  context.strokeStyle = colorWithAlpha(stateStyle.accent, 0.42);
-  context.lineWidth = radius * 0.018;
+  context.strokeStyle = `rgba(248, 252, 255, ${COMPATIBILITY_GLASS_STYLE.rim_alpha})`;
+  context.lineWidth = radius * 0.025;
   context.beginPath();
   for (let index = 0; index <= 72; index += 1) {
     const angle = (index / 72) * Math.PI * 2;
@@ -196,6 +229,27 @@ function drawShell(
   context.closePath();
   context.fill();
   context.stroke();
+
+  context.save();
+  context.translate(x, y);
+  context.rotate(-0.12 + Math.sin(phase * 0.08) * 0.025);
+  context.globalCompositeOperation = "screen";
+  context.lineCap = "round";
+  context.strokeStyle = colorWithAlpha(COMPATIBILITY_GLASS_STYLE.warm_rim, 0.24);
+  context.lineWidth = radius * 0.038;
+  context.beginPath();
+  context.arc(0, 0, radius * 0.985, Math.PI * 1.08, Math.PI * 1.78);
+  context.stroke();
+  context.strokeStyle = colorWithAlpha(COMPATIBILITY_GLASS_STYLE.cool_rim, 0.25);
+  context.beginPath();
+  context.arc(0, 0, radius * 0.985, -0.08, Math.PI * 0.66);
+  context.stroke();
+  context.strokeStyle = "rgba(255, 252, 242, 0.2)";
+  context.lineWidth = radius * 0.045;
+  context.beginPath();
+  context.arc(0, 0, radius * 0.83, Math.PI * 1.12, Math.PI * 1.56);
+  context.stroke();
+  context.restore();
 }
 
 function drawRings(
@@ -209,8 +263,8 @@ function drawRings(
   context.save();
   context.translate(x, y);
   context.rotate(phase * 0.16);
-  context.strokeStyle = colorWithAlpha(stateStyle.secondary, 0.92);
-  context.lineWidth = radius * 0.11;
+  context.strokeStyle = colorWithAlpha(stateStyle.secondary, 0.74);
+  context.lineWidth = radius * 0.085;
   context.lineCap = "round";
   context.beginPath();
   context.arc(0, 0, radius * 0.52, -0.25, Math.PI * 1.55);

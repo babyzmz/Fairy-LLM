@@ -1,4 +1,15 @@
-const MAX_SAMPLES = 300;
+export const CPU_TIMING_SAMPLE_LIMIT = 300;
+export const GPU_TIMER_SAMPLE_INTERVAL_FRAMES = 60;
+export const GPU_TIMER_SAMPLE_LIMIT = 60;
+export const GPU_QUERY_MAX_POLLS = 120;
+
+export function shouldSampleGpuFrame(
+  renderedFrames: number,
+  startedSamples: number,
+): boolean {
+  return startedSamples < GPU_TIMER_SAMPLE_LIMIT &&
+    renderedFrames % GPU_TIMER_SAMPLE_INTERVAL_FRAMES === 0;
+}
 
 export interface RendererPerformanceSnapshot {
   sample_count: number;
@@ -13,12 +24,13 @@ export class RendererPerformanceSampler {
   private initialHeapBytes: number | null = null;
   private currentHeapBytes: number | null = null;
 
-  recordCpuFrame(durationMs: number): void {
-    this.push(this.cpuSamples, durationMs);
+  recordCpuFrame(durationMs: number): boolean {
+    if (this.cpuSamples.length >= CPU_TIMING_SAMPLE_LIMIT) return false;
+    return this.push(this.cpuSamples, durationMs);
   }
 
-  recordGpuFrame(durationMs: number): void {
-    this.push(this.gpuSamples, durationMs);
+  recordGpuFrame(durationMs: number): boolean {
+    return this.push(this.gpuSamples, durationMs);
   }
 
   recordHeap(usedBytes: number | null): void {
@@ -39,10 +51,14 @@ export class RendererPerformanceSampler {
     };
   }
 
-  private push(target: number[], value: number) {
-    if (!Number.isFinite(value) || value < 0) return;
+  get cpuSamplingComplete(): boolean {
+    return this.cpuSamples.length >= CPU_TIMING_SAMPLE_LIMIT;
+  }
+
+  private push(target: number[], value: number): boolean {
+    if (!Number.isFinite(value) || value < 0) return false;
     target.push(value);
-    if (target.length > MAX_SAMPLES) target.splice(0, target.length - MAX_SAMPLES);
+    return true;
   }
 }
 
@@ -54,7 +70,8 @@ interface GpuTimerExtension {
 export class WebGlGpuTimer {
   private readonly extension: GpuTimerExtension | null;
   private active: WebGLQuery | null = null;
-  private pending: WebGLQuery[] = [];
+  private pending: Array<{ query: WebGLQuery; polls: number }> = [];
+  private reusable: WebGLQuery[] = [];
 
   constructor(private readonly context: WebGL2RenderingContext) {
     this.extension = context.getExtension(
@@ -62,20 +79,33 @@ export class WebGlGpuTimer {
     ) as GpuTimerExtension | null;
   }
 
-  begin(): void {
-    this.collect();
-    if (this.extension === null || this.active !== null || this.pending.length >= 8) return;
-    const query = this.context.createQuery();
-    if (query === null) return;
-    this.context.beginQuery(this.extension.TIME_ELAPSED_EXT, query);
+  get supported(): boolean {
+    return this.extension !== null;
+  }
+
+  begin(): boolean {
+    if (this.extension === null || this.active !== null || this.pending.length >= 8) return false;
+    const query = this.reusable.pop() ?? this.context.createQuery();
+    if (query === null) return false;
+    try {
+      this.context.beginQuery(this.extension.TIME_ELAPSED_EXT, query);
+    } catch (error) {
+      this.context.deleteQuery(query);
+      throw error;
+    }
     this.active = query;
+    return true;
   }
 
   end(): void {
     if (this.extension === null || this.active === null) return;
     this.context.endQuery(this.extension.TIME_ELAPSED_EXT);
-    this.pending.push(this.active);
+    this.pending.push({ query: this.active, polls: 0 });
     this.active = null;
+  }
+
+  hasPendingResults(): boolean {
+    return this.pending.length > 0;
   }
 
   collect(): number[] {
@@ -86,13 +116,19 @@ export class WebGlGpuTimer {
     }
     const durations: number[] = [];
     while (this.pending.length > 0) {
-      const query = this.pending[0];
-      if (!this.context.getQueryParameter(query, this.context.QUERY_RESULT_AVAILABLE)) break;
+      const pending = this.pending[0];
+      if (!this.context.getQueryParameter(pending.query, this.context.QUERY_RESULT_AVAILABLE)) {
+        pending.polls += 1;
+        if (pending.polls < GPU_QUERY_MAX_POLLS) break;
+        this.pending.shift();
+        this.context.deleteQuery(pending.query);
+        continue;
+      }
       const nanoseconds = Number(
-        this.context.getQueryParameter(query, this.context.QUERY_RESULT),
+        this.context.getQueryParameter(pending.query, this.context.QUERY_RESULT),
       );
-      this.context.deleteQuery(query);
       this.pending.shift();
+      this.reusable.push(pending.query);
       if (Number.isFinite(nanoseconds) && nanoseconds >= 0) {
         durations.push(nanoseconds / 1_000_000);
       }
@@ -105,15 +141,22 @@ export class WebGlGpuTimer {
       if (this.active !== null) this.context.deleteQuery(this.active);
       this.active = null;
       this.clearPending();
+      this.clearReusable();
     } catch {
       this.active = null;
       this.pending = [];
+      this.reusable = [];
     }
   }
 
   private clearPending() {
-    for (const query of this.pending) this.context.deleteQuery(query);
+    for (const pending of this.pending) this.context.deleteQuery(pending.query);
     this.pending = [];
+  }
+
+  private clearReusable() {
+    for (const query of this.reusable) this.context.deleteQuery(query);
+    this.reusable = [];
   }
 }
 

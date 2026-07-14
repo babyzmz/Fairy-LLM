@@ -8,7 +8,9 @@ use tauri::{Emitter, Manager};
 
 pub use crate::presence_interaction::{CursorBand, PresenceInteractionPhase};
 use crate::presence_interaction::{PresenceInteractionSignal, PresenceInteractionStateMachine};
-use crate::presence_runtime::{sample_presence_runtime_policy, PRESENCE_RUNTIME_POLICY_EVENT};
+use crate::presence_runtime::{
+    sample_presence_runtime_policy, PresenceRuntimePolicy, PRESENCE_RUNTIME_POLICY_EVENT,
+};
 use crate::{PET_INPUT_LABEL, PET_RENDER_LABEL};
 
 pub const PRESENCE_INTERACTION_EVENT: &str = "presence-interaction-snapshot";
@@ -21,7 +23,7 @@ const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const HIDDEN_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const PLACEMENT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 const RUNTIME_POLICY_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
-const IDLE_EMISSION_HEARTBEAT_MS: u64 = 1_000;
+const PROJECTION_RECOVERY_HEARTBEAT_MS: u64 = 30_000;
 const CURSOR_FAILURE_LIMIT: u8 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -199,6 +201,7 @@ impl CursorTracker {
 struct InteractionEmissionMarker {
     phase: PresenceInteractionPhase,
     cursor_band: CursorBand,
+    cursor_point: PhysicalPoint,
     reduced_motion: bool,
     repositioning: bool,
     anchor: PhysicalPoint,
@@ -217,14 +220,15 @@ impl InteractionEmissionGate {
         &mut self,
         sampled_at_ms: u64,
         phase: PresenceInteractionPhase,
-        cursor_band: CursorBand,
+        cursor: CursorMetrics,
         reduced_motion: bool,
         repositioning: bool,
         placement: PresenceWindowPlacement,
     ) -> bool {
         let marker = InteractionEmissionMarker {
             phase,
-            cursor_band,
+            cursor_band: cursor.band,
+            cursor_point: cursor.point,
             reduced_motion,
             repositioning,
             anchor: placement.anchor,
@@ -232,15 +236,40 @@ impl InteractionEmissionGate {
             expansion_direction: placement.expansion_direction,
         };
         let changed = self.last != Some(marker);
-        let heartbeat_due = self
-            .last_emitted_at_ms
-            .is_none_or(|last| sampled_at_ms.saturating_sub(last) >= IDLE_EMISSION_HEARTBEAT_MS);
-        let emit = changed || cursor_band != CursorBand::Outside || heartbeat_due;
+        let heartbeat_due = self.last_emitted_at_ms.is_none_or(|last| {
+            sampled_at_ms.saturating_sub(last) >= PROJECTION_RECOVERY_HEARTBEAT_MS
+        });
+        let transition_progress_due = matches!(
+            phase,
+            PresenceInteractionPhase::InputReveal | PresenceInteractionPhase::Returning
+        );
+        let emit = changed || transition_progress_due || heartbeat_due;
         if emit {
             self.last = Some(marker);
             self.last_emitted_at_ms = Some(sampled_at_ms);
         }
         emit
+    }
+}
+
+#[derive(Default)]
+pub struct RuntimePolicyEmissionGate {
+    last: Option<PresenceRuntimePolicy>,
+    last_emitted_at_ms: Option<u64>,
+}
+
+impl RuntimePolicyEmissionGate {
+    pub fn should_emit(&mut self, sampled_at_ms: u64, policy: PresenceRuntimePolicy) -> bool {
+        let changed = self.last != Some(policy);
+        let heartbeat_due = self.last_emitted_at_ms.is_none_or(|last| {
+            sampled_at_ms.saturating_sub(last) >= PROJECTION_RECOVERY_HEARTBEAT_MS
+        });
+        if changed || heartbeat_due {
+            self.last = Some(policy);
+            self.last_emitted_at_ms = Some(sampled_at_ms);
+            return true;
+        }
+        false
     }
 }
 
@@ -426,6 +455,7 @@ pub fn select_work_area(
 pub struct PresenceCoordinatorHandle {
     latest_placement: Arc<RwLock<Option<PresenceWindowPlacement>>>,
     shutdown: Arc<AtomicBool>,
+    started: AtomicBool,
     reduced_motion: Arc<AtomicBool>,
     hover_enabled: Arc<AtomicBool>,
     hover_dwell_ms: Arc<AtomicU64>,
@@ -433,20 +463,33 @@ pub struct PresenceCoordinatorHandle {
 }
 
 impl PresenceCoordinatorHandle {
-    pub fn start(app: tauri::AppHandle, config: PresenceCoordinatorConfig) -> Self {
-        let latest_placement = Arc::new(RwLock::new(None));
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let reduced_motion = Arc::new(AtomicBool::new(config.reduced_motion));
-        let hover_enabled = Arc::new(AtomicBool::new(config.hover_enabled));
-        let hover_dwell_ms = Arc::new(AtomicU64::new(u64::from(config.hover_dwell_ms)));
-        let repositioning = Arc::new(AtomicBool::new(false));
-        let thread_placement = Arc::clone(&latest_placement);
-        let thread_shutdown = Arc::clone(&shutdown);
-        let thread_reduced_motion = Arc::clone(&reduced_motion);
-        let thread_hover_enabled = Arc::clone(&hover_enabled);
-        let thread_hover_dwell_ms = Arc::clone(&hover_dwell_ms);
-        let thread_repositioning = Arc::clone(&repositioning);
-        let _ = thread::Builder::new()
+    pub fn new(config: PresenceCoordinatorConfig) -> Self {
+        Self {
+            latest_placement: Arc::new(RwLock::new(None)),
+            shutdown: Arc::new(AtomicBool::new(false)),
+            started: AtomicBool::new(false),
+            reduced_motion: Arc::new(AtomicBool::new(config.reduced_motion)),
+            hover_enabled: Arc::new(AtomicBool::new(config.hover_enabled)),
+            hover_dwell_ms: Arc::new(AtomicU64::new(u64::from(config.hover_dwell_ms))),
+            repositioning: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn launch(&self, app: tauri::AppHandle) -> Result<(), std::io::Error> {
+        if self
+            .started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Ok(());
+        }
+        let thread_placement = Arc::clone(&self.latest_placement);
+        let thread_shutdown = Arc::clone(&self.shutdown);
+        let thread_reduced_motion = Arc::clone(&self.reduced_motion);
+        let thread_hover_enabled = Arc::clone(&self.hover_enabled);
+        let thread_hover_dwell_ms = Arc::clone(&self.hover_dwell_ms);
+        let thread_repositioning = Arc::clone(&self.repositioning);
+        let spawn = thread::Builder::new()
             .name("fairy-presence-coordinator".to_owned())
             .spawn(move || {
                 run_coordinator(
@@ -459,14 +502,11 @@ impl PresenceCoordinatorHandle {
                     thread_repositioning,
                 )
             });
-        Self {
-            latest_placement,
-            shutdown,
-            reduced_motion,
-            hover_enabled,
-            hover_dwell_ms,
-            repositioning,
+        if let Err(error) = spawn {
+            self.started.store(false, Ordering::Release);
+            return Err(error);
         }
+        Ok(())
     }
 
     pub fn latest_placement(&self) -> Option<PresenceWindowPlacement> {
@@ -520,6 +560,7 @@ fn run_coordinator(
     let mut placement_refreshed_at = Instant::now() - PLACEMENT_REFRESH_INTERVAL;
     let mut runtime_policy_refreshed_at = Instant::now() - RUNTIME_POLICY_REFRESH_INTERVAL;
     let mut emission_gate = InteractionEmissionGate::default();
+    let mut runtime_policy_emission_gate = RuntimePolicyEmissionGate::default();
     let mut cursor_sampling = CursorSamplingHealth::default();
 
     while !shutdown.load(Ordering::Acquire) {
@@ -534,7 +575,10 @@ fn run_coordinator(
         }
         if runtime_policy_refreshed_at.elapsed() >= RUNTIME_POLICY_REFRESH_INTERVAL {
             let policy = sample_presence_runtime_policy();
-            let _ = app.emit_to(PET_RENDER_LABEL, PRESENCE_RUNTIME_POLICY_EVENT, policy);
+            let sampled_at_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+            if runtime_policy_emission_gate.should_emit(sampled_at_ms, policy) {
+                let _ = app.emit_to(PET_RENDER_LABEL, PRESENCE_RUNTIME_POLICY_EVENT, policy);
+            }
             runtime_policy_refreshed_at = Instant::now();
         }
         if repositioning.load(Ordering::Acquire) {
@@ -604,7 +648,7 @@ fn run_coordinator(
         if emission_gate.should_emit(
             sampled_at_ms,
             phase.phase,
-            effective_cursor_band,
+            projected_cursor,
             reduced_motion,
             repositioning,
             current_placement,
