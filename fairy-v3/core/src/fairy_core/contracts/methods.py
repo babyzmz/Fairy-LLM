@@ -21,9 +21,17 @@ from fairy_core.contracts.extensions import (
 )
 from fairy_core.contracts.files import (
     FileDescriptorModel,
+    FilePresentationResultModel,
+    FilePresentInput,
+    FileRenderJobCancelInput,
     FileSetGetInput,
     FileSetModel,
     FileSetResolveInput,
+    RendererPackInstallInput,
+    RendererPackModel,
+    RendererPackPageModel,
+    RendererPackRemoveInput,
+    RendererPackRemoveResultModel,
 )
 from fairy_core.contracts.history import (
     ConversationDeleteInput,
@@ -520,6 +528,16 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             WorkspaceFileReadInput,
             FileDescriptorModel,
         ),
+        "files.present": CoreMethod(
+            "files.present",
+            FilePresentInput,
+            FilePresentationResultModel,
+        ),
+        "files.cancel": CoreMethod(
+            "files.cancel",
+            FileRenderJobCancelInput,
+            FilePresentationResultModel,
+        ),
         "file_sets.resolve": CoreMethod(
             "file_sets.resolve",
             FileSetResolveInput,
@@ -529,6 +547,21 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "file_sets.get",
             FileSetGetInput,
             FileSetModel,
+        ),
+        "renderer_packs.list": CoreMethod("renderer_packs.list", EmptyInput, RendererPackPageModel),
+        "renderer_packs.health": CoreMethod(
+            "renderer_packs.health", EmptyInput, RendererPackPageModel
+        ),
+        "renderer_packs.install": CoreMethod(
+            "renderer_packs.install", RendererPackInstallInput, RendererPackModel
+        ),
+        "renderer_packs.update": CoreMethod(
+            "renderer_packs.update", RendererPackInstallInput, RendererPackModel
+        ),
+        "renderer_packs.remove": CoreMethod(
+            "renderer_packs.remove",
+            RendererPackRemoveInput,
+            RendererPackRemoveResultModel,
         ),
         "workspaces.export": CoreMethod(
             "workspaces.export",

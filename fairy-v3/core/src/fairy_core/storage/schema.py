@@ -22,6 +22,7 @@ from fairy_core.storage.assistant_attempt_schema import build_assistant_attempt_
 from fairy_core.storage.history_schema import build_history_tables
 from fairy_core.storage.index_schema import build_state_indexes
 from fairy_core.storage.planning_schema import build_planning_schema
+from fairy_core.storage.presentation_schema import build_presentation_schema
 from fairy_core.storage.runtime_index_schema import build_runtime_scope_indexes
 from fairy_core.storage.types import UTCDateTime
 
@@ -303,6 +304,7 @@ execution_plans, task_steps = build_planning_schema(
     versions=versions,
 )
 
+file_render_jobs, file_presentations, derived_assets, renderer_packs = build_presentation_schema(metadata=state_metadata, workspaces=workspaces, versions=versions)  # noqa: E501
 task_workspaces = Table(
     "core_task_workspaces",
     state_metadata,

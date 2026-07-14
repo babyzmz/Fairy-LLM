@@ -94,6 +94,13 @@ describe("CoreClient", () => {
     await client.workspaces.listFiles({ workspace_id: id, version_id: id });
     await client.workspaces.readFile({ workspace_id: id, version_id: id, path: "README.md" });
     await client.files.probe({ workspace_id: id, version_id: id, path: "README.md" });
+    await client.files.present({
+      workspace_id: id,
+      version_id: id,
+      path: "README.md",
+      requested_mode: "auto",
+    });
+    await client.files.cancel({ job_id: id });
     await client.files.openStream({
       workspace_id: id,
       version_id: id,
@@ -102,6 +109,15 @@ describe("CoreClient", () => {
     });
     await client.fileSets.resolve({ workspace_id: id, version_id: id, path: "README.md" });
     await client.fileSets.get({ workspace_id: id, version_id: id, file_set_id: id });
+    await client.rendererPacks.list();
+    await client.rendererPacks.health();
+    await client.rendererPacks.install({ bundle_path: "pack.frp", user_confirmed: true });
+    await client.rendererPacks.update({ bundle_path: "pack.frp", user_confirmed: true });
+    await client.rendererPacks.remove({
+      pack_id: "office",
+      version: "1",
+      user_confirmed: true,
+    });
     await client.workspaces.mutateFiles({
       workspace_id: id,
       conversation_id: id,
@@ -312,9 +328,16 @@ describe("CoreClient", () => {
       "workspaces.files.list",
       "workspaces.files.read",
       "files.probe",
+      "files.present",
+      "files.cancel",
       "files.open_stream",
       "file_sets.resolve",
       "file_sets.get",
+      "renderer_packs.list",
+      "renderer_packs.health",
+      "renderer_packs.install",
+      "renderer_packs.update",
+      "renderer_packs.remove",
       "workspaces.files.mutate",
       "workspaces.export",
       "runtimes.get",
@@ -364,7 +387,9 @@ describe("CoreClient", () => {
     ]);
     expect(transport.requests[3]?.params).toEqual({ project_id: id });
     expect(transport.requests[11]?.params).toEqual({ task_id: id });
-    expect(transport.requests[29]?.params).toEqual({ task_id: id });
+    expect(
+      transport.requests.find(({ method }) => method === "runtimes.health")?.params,
+    ).toEqual({ task_id: id });
   });
 
   it("uses the transport-native resumable event subscription", async () => {

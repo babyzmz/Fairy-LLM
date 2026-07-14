@@ -415,6 +415,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/files/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel File Presentation */
+        post: operations["files.cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/files/open-stream": {
         parameters: {
             query?: never;
@@ -426,6 +443,23 @@ export interface paths {
         put?: never;
         /** Open File Stream */
         post: operations["files.open_stream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/files/present": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Present File */
+        post: operations["files.present"];
         delete?: never;
         options?: never;
         head?: never;
@@ -906,6 +940,91 @@ export interface paths {
         get: operations["cloud.ready"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/renderer-packs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Renderer Packs */
+        get: operations["renderer_packs.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/renderer-packs/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Renderer Pack Health */
+        get: operations["renderer_packs.health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/renderer-packs/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install Renderer Pack */
+        post: operations["renderer_packs.install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/renderer-packs/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Remove Renderer Pack */
+        post: operations["renderer_packs.remove"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/renderer-packs/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Update Renderer Pack */
+        post: operations["renderer_packs.update"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1889,6 +2008,28 @@ export interface components {
              */
             type: "copy_text";
         };
+        /** DerivedAssetModel */
+        DerivedAssetModel: {
+            /** Byte Length */
+            byte_length: number;
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Media Type */
+            media_type: string;
+            /** Metadata */
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** Role */
+            role: string;
+            /** Storage Key */
+            storage_key: string;
+        };
         /** DocumentChunkModel */
         DocumentChunkModel: {
             /** Content Hash */
@@ -2252,6 +2393,70 @@ export interface components {
          * @enum {string}
          */
         FileMutationOperation: "upsert" | "create" | "update" | "delete" | "rename";
+        /** FilePresentInput */
+        FilePresentInput: {
+            /** Path */
+            path: string;
+            /**
+             * Requested Mode
+             * @default auto
+             */
+            requested_mode: string;
+            /** Version Id */
+            version_id?: string | null;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** FilePresentationModel */
+        FilePresentationModel: {
+            /** Assets */
+            assets: components["schemas"]["DerivedAssetModel"][];
+            /** Capabilities */
+            capabilities: string[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Fidelity */
+            fidelity: string;
+            /**
+             * File Set Id
+             * Format: uuid
+             */
+            file_set_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Renderer */
+            renderer: string;
+            /** Source Hash */
+            source_hash: string;
+            /** Source Path */
+            source_path: string;
+            /** Status */
+            status: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** FilePresentationResultModel */
+        FilePresentationResultModel: {
+            job: components["schemas"]["FileRenderJobModel"];
+            presentation: components["schemas"]["FilePresentationModel"] | null;
+        };
         /** FileReadSessionModel */
         FileReadSessionModel: {
             /** Byte Length */
@@ -2274,6 +2479,67 @@ export interface components {
             session_id: string;
             /** Url */
             url: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** FileRenderJobCancelInput */
+        FileRenderJobCancelInput: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+        };
+        /** FileRenderJobModel */
+        FileRenderJobModel: {
+            /** Cache Key */
+            cache_key: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error Code */
+            error_code: string | null;
+            /**
+             * File Set Id
+             * Format: uuid
+             */
+            file_set_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Progress */
+            progress: number;
+            /** Public Summary */
+            public_summary: string | null;
+            /** Renderer Pack Id */
+            renderer_pack_id: string | null;
+            /** Renderer Pack Version */
+            renderer_pack_version: string | null;
+            /** Requested Mode */
+            requested_mode: string;
+            /** Source Hash */
+            source_hash: string;
+            /** Source Path */
+            source_path: string;
+            /** Status */
+            status: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
             /**
              * Version Id
              * Format: uuid
@@ -3552,6 +3818,64 @@ export interface components {
          * @enum {string}
          */
         PublicMessageVisibilityModel: "user" | "developer";
+        /** RendererPackInstallInput */
+        RendererPackInstallInput: {
+            /** Bundle Path */
+            bundle_path: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+        };
+        /** RendererPackModel */
+        RendererPackModel: {
+            /** Features */
+            features: string[];
+            /** Health */
+            health: string;
+            /** Id */
+            id: string;
+            /** Input Media Types */
+            input_media_types: string[];
+            /**
+             * Installed At
+             * Format: date-time
+             */
+            installed_at: string;
+            /** License */
+            license: string;
+            /** Limits */
+            limits: {
+                [key: string]: number;
+            };
+            /** Output Media Types */
+            output_media_types: string[];
+            /** Platform */
+            platform: string;
+            /** Reproducible */
+            reproducible: boolean;
+            /** Sandbox */
+            sandbox: string;
+            /** Version */
+            version: string;
+        };
+        /** RendererPackPageModel */
+        RendererPackPageModel: {
+            /** Items */
+            items: components["schemas"]["RendererPackModel"][];
+        };
+        /** RendererPackRemoveInput */
+        RendererPackRemoveInput: {
+            /** Pack Id */
+            pack_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+            /** Version */
+            version: string;
+        };
+        /** RendererPackRemoveResultModel */
+        RendererPackRemoveResultModel: {
+            /** Removed */
+            removed: boolean;
+        };
         /** RevealPathAction */
         RevealPathAction: {
             /** Relative Path */
@@ -5445,6 +5769,41 @@ export interface operations {
             };
         };
     };
+    "files.cancel": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileRenderJobCancelInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilePresentationResultModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "files.open_stream": {
         parameters: {
             query?: never;
@@ -5467,6 +5826,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FileReadSessionModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "files.present": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FilePresentInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FilePresentationResultModel"];
                 };
             };
             /** @description Validation Error */
@@ -6570,6 +6964,173 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    "renderer_packs.list": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RendererPackPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "renderer_packs.health": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RendererPackPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "renderer_packs.install": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RendererPackInstallInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RendererPackModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "renderer_packs.remove": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RendererPackRemoveInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RendererPackRemoveResultModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "renderer_packs.update": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RendererPackInstallInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RendererPackModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

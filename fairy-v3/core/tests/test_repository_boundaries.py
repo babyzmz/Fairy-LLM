@@ -16,6 +16,7 @@ def test_core_runtime_dependencies_stay_transport_independent() -> None:
 
     assert project["project"]["dependencies"] == [
         "alembic>=1.18.5,<1.19",
+        "cryptography>=46,<50",
         "mcp>=1.28.1,<2",
         "pydantic>=2.13,<3",
         "pyyaml>=6.0.3,<7",

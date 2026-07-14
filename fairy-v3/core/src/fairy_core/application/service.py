@@ -14,6 +14,7 @@ from pydantic import BaseModel, ValidationError
 
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.planning_service import planning_service_handlers
+from fairy_core.application.presentation_service import presentation_service_handlers
 from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.runtime_review import RuntimeReviewApplication
 from fairy_core.application.runtime_service import runtime_service_handlers
@@ -109,6 +110,7 @@ from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
 from fairy_core.perception import ImageAttachment, ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
+from fairy_core.presentation.packs import RendererPackInstaller
 from fairy_core.providers import CancellationToken, ProviderCapability, ProviderRegistry
 from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
 from fairy_core.research.ports import FetchPort
@@ -171,6 +173,7 @@ class CoreService:
         sandbox_health_provider: SandboxHealthProvider | None = None,
         skill_registry: SkillRegistry | None = None,
         mcp_application: McpApplication | None = None,
+        renderer_pack_installer: RendererPackInstaller | None = None,
         default_execution_target: str = "local",
         on_close: Callable[[], None] | None = None,
     ) -> None:
@@ -392,6 +395,11 @@ class CoreService:
             "workspaces.files.read": self._workspace_service.read_file,
             "files.open_stream": self._workspace_service.open_stream,
             "files.probe": self._workspace_service.probe_file,
+            **presentation_service_handlers(
+                unit_of_work_factory=unit_of_work_factory,
+                workspaces=application.workspace_access,
+                renderer_pack_installer=renderer_pack_installer,
+            ),
             "file_sets.resolve": self._workspace_service.resolve_file_set,
             "file_sets.get": self._workspace_service.get_file_set,
             "workspaces.export": self._workspace_service.export,

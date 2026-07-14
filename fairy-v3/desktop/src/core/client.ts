@@ -56,6 +56,10 @@ import type {
   WorkspaceVersionInput,
   FileSetGetInput,
   FileSetResolveInput,
+  FilePresentInput,
+  FileRenderJobCancelInput,
+  RendererPackInstallInput,
+  RendererPackRemoveInput,
 } from "./contracts";
 
 export const DEFAULT_EVENT_POLL_MS = 25;
@@ -183,8 +187,22 @@ export class CoreClient {
 
   readonly files = {
     probe: (input: WorkspaceFileReadInput) => this.transport.call("files.probe", input),
+    present: (input: FilePresentInput) => this.transport.call("files.present", input),
+    cancel: (input: FileRenderJobCancelInput) =>
+      this.transport.call("files.cancel", input),
     openStream: (input: WorkspaceFileStreamInput) =>
       this.transport.call("files.open_stream", input),
+  };
+
+  readonly rendererPacks = {
+    list: () => this.transport.call("renderer_packs.list", {}),
+    health: () => this.transport.call("renderer_packs.health", {}),
+    install: (input: RendererPackInstallInput) =>
+      this.transport.call("renderer_packs.install", input),
+    update: (input: RendererPackInstallInput) =>
+      this.transport.call("renderer_packs.update", input),
+    remove: (input: RendererPackRemoveInput) =>
+      this.transport.call("renderer_packs.remove", input),
   };
 
   readonly fileSets = {

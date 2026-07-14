@@ -6,9 +6,17 @@ from uuid import UUID
 
 from fairy_core.contracts.files import (
     FileDescriptorModel,
+    FilePresentationResultModel,
+    FilePresentInput,
+    FileRenderJobCancelInput,
     FileSetGetInput,
     FileSetModel,
     FileSetResolveInput,
+    RendererPackInstallInput,
+    RendererPackModel,
+    RendererPackPageModel,
+    RendererPackRemoveInput,
+    RendererPackRemoveResultModel,
 )
 from fairy_core.contracts.workspaces import (
     FileReadSessionModel,
@@ -87,6 +95,62 @@ def install_workspace_routes(
         if version_id is not None:
             params["version_id"] = str(version_id)
         return invoke("files.probe", params)
+
+    @router.post(
+        "/files/present",
+        operation_id="files.present",
+        response_model=FilePresentationResultModel,
+    )
+    def present_file(request: FilePresentInput) -> dict[str, Any]:
+        return invoke("files.present", request.model_dump(mode="json"))
+
+    @router.post(
+        "/files/cancel",
+        operation_id="files.cancel",
+        response_model=FilePresentationResultModel,
+    )
+    def cancel_file_presentation(request: FileRenderJobCancelInput) -> dict[str, Any]:
+        return invoke("files.cancel", request.model_dump(mode="json"))
+
+    @router.get(
+        "/renderer-packs",
+        operation_id="renderer_packs.list",
+        response_model=RendererPackPageModel,
+    )
+    def list_renderer_packs() -> dict[str, Any]:
+        return invoke("renderer_packs.list", {})
+
+    @router.get(
+        "/renderer-packs/health",
+        operation_id="renderer_packs.health",
+        response_model=RendererPackPageModel,
+    )
+    def renderer_pack_health() -> dict[str, Any]:
+        return invoke("renderer_packs.health", {})
+
+    @router.post(
+        "/renderer-packs/install",
+        operation_id="renderer_packs.install",
+        response_model=RendererPackModel,
+    )
+    def install_renderer_pack(request: RendererPackInstallInput) -> dict[str, Any]:
+        return invoke("renderer_packs.install", request.model_dump(mode="json"))
+
+    @router.post(
+        "/renderer-packs/update",
+        operation_id="renderer_packs.update",
+        response_model=RendererPackModel,
+    )
+    def update_renderer_pack(request: RendererPackInstallInput) -> dict[str, Any]:
+        return invoke("renderer_packs.update", request.model_dump(mode="json"))
+
+    @router.post(
+        "/renderer-packs/remove",
+        operation_id="renderer_packs.remove",
+        response_model=RendererPackRemoveResultModel,
+    )
+    def remove_renderer_pack(request: RendererPackRemoveInput) -> dict[str, Any]:
+        return invoke("renderer_packs.remove", request.model_dump(mode="json"))
 
     @router.post(
         "/file-sets/resolve",

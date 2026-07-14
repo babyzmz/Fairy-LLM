@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import Field
@@ -48,10 +49,111 @@ class FileSetGetInput(WorkspaceVersionInput):
     file_set_id: UUID
 
 
+class FilePresentInput(WorkspaceFileReadInput):
+    requested_mode: str = Field(default="auto", pattern=r"^(auto|native|normalized)$")
+
+
+class FileRenderJobCancelInput(ContractModel):
+    job_id: UUID
+
+
+class DerivedAssetModel(ContractModel):
+    id: UUID
+    role: str
+    media_type: str
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    byte_length: int = Field(ge=0)
+    storage_key: str
+    metadata: dict[str, object]
+
+
+class FilePresentationModel(ContractModel):
+    id: UUID
+    workspace_id: UUID
+    version_id: UUID
+    file_set_id: UUID
+    source_path: str
+    source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    renderer: str
+    fidelity: str
+    status: str
+    capabilities: tuple[str, ...]
+    assets: tuple[DerivedAssetModel, ...]
+    created_at: datetime
+
+
+class FileRenderJobModel(ContractModel):
+    id: UUID
+    workspace_id: UUID
+    version_id: UUID
+    file_set_id: UUID
+    source_path: str
+    source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    cache_key: str = Field(pattern=r"^[0-9a-f]{64}$")
+    requested_mode: str
+    renderer_pack_id: str | None
+    renderer_pack_version: str | None
+    status: str
+    progress: int = Field(ge=0, le=100)
+    error_code: str | None
+    public_summary: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class FilePresentationResultModel(ContractModel):
+    job: FileRenderJobModel
+    presentation: FilePresentationModel | None
+
+
+class RendererPackModel(ContractModel):
+    id: str
+    version: str
+    platform: str
+    input_media_types: tuple[str, ...]
+    output_media_types: tuple[str, ...]
+    features: tuple[str, ...]
+    limits: dict[str, int]
+    license: str
+    sandbox: str
+    reproducible: bool
+    health: str
+    installed_at: datetime
+
+
+class RendererPackPageModel(ContractModel):
+    items: tuple[RendererPackModel, ...]
+
+
+class RendererPackInstallInput(ContractModel):
+    bundle_path: str = Field(min_length=1, max_length=4096)
+    user_confirmed: bool
+
+
+class RendererPackRemoveInput(ContractModel):
+    pack_id: str = Field(min_length=1, max_length=128)
+    version: str = Field(min_length=1, max_length=64)
+    user_confirmed: bool
+
+
+class RendererPackRemoveResultModel(ContractModel):
+    removed: bool
+
+
 __all__ = [
     "FileDescriptorModel",
+    "FilePresentInput",
+    "FilePresentationModel",
+    "FilePresentationResultModel",
+    "FileRenderJobCancelInput",
+    "FileRenderJobModel",
     "FileSetGetInput",
     "FileSetMemberModel",
     "FileSetModel",
     "FileSetResolveInput",
+    "RendererPackInstallInput",
+    "RendererPackModel",
+    "RendererPackPageModel",
+    "RendererPackRemoveInput",
+    "RendererPackRemoveResultModel",
 ]

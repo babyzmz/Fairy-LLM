@@ -144,6 +144,14 @@ export type FileDescriptor = Schemas["FileDescriptorModel"];
 export type FileSet = Schemas["FileSetModel"];
 export type FileSetGetInput = Schemas["FileSetGetInput"];
 export type FileSetResolveInput = Schemas["FileSetResolveInput"];
+export type FilePresentInput = Schemas["FilePresentInput"];
+export type FilePresentationResult = Schemas["FilePresentationResultModel"];
+export type FileRenderJobCancelInput = Schemas["FileRenderJobCancelInput"];
+export type RendererPack = Schemas["RendererPackModel"];
+export type RendererPackInstallInput = Schemas["RendererPackInstallInput"];
+export type RendererPackPage = Schemas["RendererPackPageModel"];
+export type RendererPackRemoveInput = Schemas["RendererPackRemoveInput"];
+export type RendererPackRemoveResult = Schemas["RendererPackRemoveResultModel"];
 export type WorkspaceFileMutateInput = Schemas["WorkspaceFileMutateInput"];
 export type WorkspaceFileMutationResult = Schemas["WorkspaceFileMutationResultModel"];
 export type WorkspaceFilePage = Schemas["WorkspaceFilePageModel"];
@@ -309,8 +317,27 @@ export interface CoreMethodMap {
     params: WorkspaceFileReadInput;
     result: FileDescriptor;
   };
+  "files.present": { params: FilePresentInput; result: FilePresentationResult };
+  "files.cancel": {
+    params: FileRenderJobCancelInput;
+    result: FilePresentationResult;
+  };
   "file_sets.get": { params: FileSetGetInput; result: FileSet };
   "file_sets.resolve": { params: FileSetResolveInput; result: FileSet };
+  "renderer_packs.list": { params: EmptyParams; result: RendererPackPage };
+  "renderer_packs.health": { params: EmptyParams; result: RendererPackPage };
+  "renderer_packs.install": {
+    params: RendererPackInstallInput;
+    result: RendererPack;
+  };
+  "renderer_packs.update": {
+    params: RendererPackInstallInput;
+    result: RendererPack;
+  };
+  "renderer_packs.remove": {
+    params: RendererPackRemoveInput;
+    result: RendererPackRemoveResult;
+  };
   "workspaces.files.mutate": {
     params: WorkspaceFileMutateInput;
     result: WorkspaceFileMutationResult;
