@@ -20,6 +20,7 @@ import type {
   WorkspaceFile,
   WorkspaceFileContent,
   FilePresentationResult,
+  FileSet,
   AnnotationDocument,
   AssetSet,
   SelectionReference,
@@ -31,6 +32,17 @@ const DataViewer = lazy(() => import("./viewers/DataViewer"));
 const ImageViewer = lazy(() => import("./viewers/ImageViewer"));
 const MediaViewer = lazy(() => import("./viewers/MediaViewer"));
 const SvgViewer = lazy(() => import("./viewers/SvgViewer"));
+const ModelViewer = lazy(() => import("./viewers/ModelViewer"));
+
+interface ModelSource {
+  fileSet: FileSet;
+  primaryUrl: string;
+  resources: Record<string, string>;
+}
+
+type ViewerSelection =
+  | { kind: "text_range"; start: number; end: number }
+  | { kind: "scene_node"; nodePath: string; label: string };
 
 interface WorkspaceFilesPanelProps {
   files: WorkspaceFile[];
@@ -39,6 +51,7 @@ interface WorkspaceFilesPanelProps {
   onRead(path: string): Promise<WorkspaceFileContent>;
   onOpenStream(path: string): Promise<FileReadSession>;
   onPresent(path: string): Promise<FilePresentationResult>;
+  onResolveFileSet(path: string): Promise<FileSet>;
   onListAnnotations(presentation: FilePresentationResult): Promise<{ document: AnnotationDocument | null }>;
   onUpdateAnnotations(
     presentation: FilePresentationResult,
@@ -46,6 +59,7 @@ interface WorkspaceFilesPanelProps {
     annotations: Array<Record<string, unknown>>,
   ): Promise<AnnotationDocument>;
   onCreateTextSelection(presentation: FilePresentationResult, start: number, end: number): Promise<SelectionReference>;
+  onCreateSceneSelection(presentation: FilePresentationResult, nodePath: string): Promise<SelectionReference>;
   onReveal(path: string): Promise<void>;
   onRefresh(): Promise<void>;
   onUpload(files: Array<{ path: string; contentBase64: string }>): Promise<void>;
@@ -61,9 +75,11 @@ export function WorkspaceFilesPanel({
   onRead,
   onOpenStream,
   onPresent,
+  onResolveFileSet,
   onListAnnotations,
   onUpdateAnnotations,
   onCreateTextSelection,
+  onCreateSceneSelection,
   onReveal,
   onRefresh,
   onUpload,
@@ -77,13 +93,11 @@ export function WorkspaceFilesPanel({
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [content, setContent] = useState<WorkspaceFileContent | null>(null);
   const [readSession, setReadSession] = useState<FileReadSession | null>(null);
+  const [modelSource, setModelSource] = useState<ModelSource | null>(null);
   const [captionSessions, setCaptionSessions] = useState<Array<{ label: string; language: string; src: string }>>([]);
   const [presentation, setPresentation] = useState<FilePresentationResult | null>(null);
   const [annotations, setAnnotations] = useState<AnnotationDocument | null>(null);
-  const [selection, setSelection] = useState<{
-    start: number;
-    end: number;
-  } | null>(null);
+  const [selection, setSelection] = useState<ViewerSelection | null>(null);
   const [selectionSaved, setSelectionSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const visibleFiles = useMemo(() => {
@@ -96,6 +110,7 @@ export function WorkspaceFilesPanel({
       setSelectedPath(null);
       setContent(null);
       setReadSession(null);
+      setModelSource(null);
       setCaptionSessions([]);
       setPresentation(null);
       setAnnotations(null);
@@ -108,6 +123,7 @@ export function WorkspaceFilesPanel({
     setSelectedPath(path);
     setContent(null);
     setReadSession(null);
+    setModelSource(null);
     setCaptionSessions([]);
     setPresentation(null);
     setAnnotations(null);
@@ -115,7 +131,11 @@ export function WorkspaceFilesPanel({
     setSelectionSaved(false);
     setError(null);
     try {
-      const [nextContent, nextPresentation] = await Promise.all([onRead(path), onPresent(path)]);
+      const [nextContent, nextPresentation, nextFileSet] = await Promise.all([
+        onRead(path),
+        onPresent(path),
+        onResolveFileSet(path),
+      ]);
       if (request !== selectionRequestRef.current) return;
       setContent(nextContent);
       setPresentation(nextPresentation);
@@ -147,6 +167,25 @@ export function WorkspaceFilesPanel({
               src: caption.session.url,
             })),
         );
+      }
+      if (nextContent.media_type === "model/gltf-binary" || nextContent.media_type === "model/gltf+json") {
+        if (nextFileSet.missing_dependencies.length > 0 || nextFileSet.blocked_dependencies.length > 0) {
+          throw new Error("3D model dependencies are missing or outside the Workspace Version");
+        }
+        const sessions = await Promise.all(
+          nextFileSet.members.map(async (member) => ({
+            path: member.path,
+            session: await onOpenStream(member.path),
+          })),
+        );
+        if (request !== selectionRequestRef.current) return;
+        const primary = sessions.find((item) => item.path === nextFileSet.primary_path);
+        if (primary === undefined) throw new Error("3D model primary stream is unavailable");
+        setModelSource({
+          fileSet: nextFileSet,
+          primaryUrl: primary.session.url,
+          resources: Object.fromEntries(sessions.map((item) => [item.path, item.session.url])),
+        });
       }
     } catch (readError) {
       if (request !== selectionRequestRef.current) return;
@@ -299,8 +338,13 @@ export function WorkspaceFilesPanel({
                 readSession={readSession}
                 captionSessions={captionSessions}
                 presentation={presentation}
+                modelSource={modelSource}
                 onTextSelection={(value) => {
-                  setSelection(value);
+                  setSelection(value === null ? null : { kind: "text_range", ...value });
+                  setSelectionSaved(false);
+                }}
+                onSceneSelection={(nodePath, label) => {
+                  setSelection({ kind: "scene_node", nodePath, label });
                   setSelectionSaved(false);
                 }}
               />
@@ -327,7 +371,14 @@ export function WorkspaceFilesPanel({
                 id: crypto.randomUUID(),
                 body,
                 created_at: new Date().toISOString(),
-                ...(selection === null ? {} : { locator: { kind: "text_range", ...selection } }),
+                ...(selection === null
+                  ? {}
+                  : {
+                      locator:
+                        selection.kind === "text_range"
+                          ? { kind: selection.kind, start: selection.start, end: selection.end }
+                          : { kind: selection.kind, node_path: selection.nodePath },
+                    }),
               },
             ];
             try {
@@ -340,7 +391,11 @@ export function WorkspaceFilesPanel({
           onAttachSelection={async () => {
             if (presentation === null || selection === null) return;
             try {
-              await onCreateTextSelection(presentation, selection.start, selection.end);
+              if (selection.kind === "text_range") {
+                await onCreateTextSelection(presentation, selection.start, selection.end);
+              } else {
+                await onCreateSceneSelection(presentation, selection.nodePath);
+              }
               setSelectionSaved(true);
             } catch (selectionError) {
               setError(selectionError instanceof Error ? selectionError.message : "Selection could not be saved");
@@ -367,13 +422,17 @@ function FileContent({
   readSession,
   captionSessions,
   presentation,
+  modelSource,
   onTextSelection,
+  onSceneSelection,
 }: {
   content: WorkspaceFileContent;
   readSession: FileReadSession | null;
   captionSessions: Array<{ label: string; language: string; src: string }>;
   presentation: FilePresentationResult | null;
+  modelSource: ModelSource | null;
   onTextSelection(value: { start: number; end: number } | null): void;
+  onSceneSelection(nodePath: string, label: string): void;
 }) {
   if (presentation?.job.status === "waiting_for_pack") {
     return (
@@ -387,6 +446,20 @@ function FileContent({
     return (
       <Suspense fallback={<div className="workspace-file-placeholder">Loading document</div>}>
         <DocumentViewer presentation={presentation} />
+      </Suspense>
+    );
+  }
+  if (modelSource !== null) {
+    return (
+      <Suspense fallback={<div className="workspace-file-placeholder">Loading 3D scene</div>}>
+        <ModelViewer
+          path={content.file.path}
+          mediaType={content.media_type}
+          primaryUrl={modelSource.primaryUrl}
+          sourceText={content.text ?? null}
+          resources={modelSource.resources}
+          onSelectNode={onSceneSelection}
+        />
       </Suspense>
     );
   }
@@ -490,7 +563,7 @@ function StudioProperties({
   assetSet: AssetSet | null;
   presentation: FilePresentationResult | null;
   annotations: AnnotationDocument | null;
-  selection: { start: number; end: number } | null;
+  selection: ViewerSelection | null;
   selectionSaved: boolean;
   onAddAnnotation(body: string): Promise<void>;
   onAttachSelection(): Promise<void>;
@@ -532,6 +605,7 @@ function StudioProperties({
       ) : null}
       <section>
         <h3>Selection</h3>
+        {selection?.kind === "scene_node" ? <p>{selection.label}</p> : null}
         <button type="button" disabled={selection === null || selectionSaved} onClick={() => void onAttachSelection()}>
           <Quote size={14} /> {selectionSaved ? "Selection saved" : "Save selection"}
         </button>

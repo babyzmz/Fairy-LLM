@@ -73,6 +73,15 @@ export function createWorkspaceFileActions(context: WorkspaceFileActionContext) 
         requested_mode: "auto",
       });
     },
+    async resolveWorkspaceFileSet(path: string) {
+      const current = scope();
+      if (current.task.target_version_id === null) throw new Error("Version is unavailable");
+      return context.client.fileSets.resolve({
+        workspace_id: current.task.workspace_id,
+        version_id: current.task.target_version_id,
+        path,
+      });
+    },
     async listFileAnnotations(presentation: Awaited<ReturnType<WorkspaceClient["files"]["present"]>>) {
       const value = presentation.presentation;
       if (value === null) return { document: null };
@@ -114,6 +123,23 @@ export function createWorkspaceFileActions(context: WorkspaceFileActionContext) 
         viewer_kind: "text",
         locator_kind: "text_range",
         locator: { start, end },
+      });
+    },
+    async createSceneSelection(
+      presentation: Awaited<ReturnType<WorkspaceClient["files"]["present"]>>,
+      nodePath: string,
+    ) {
+      const value = presentation.presentation;
+      if (value === null) throw new Error("Presentation is not ready");
+      return context.client.selections.create({
+        workspace_id: value.workspace_id,
+        version_id: value.version_id,
+        file_set_id: value.file_set_id,
+        source_path: value.source_path,
+        source_hash: value.source_hash,
+        viewer_kind: "threejs",
+        locator_kind: "scene_node",
+        locator: { node_path: nodePath },
       });
     },
     async revealWorkspaceFile(path: string) {

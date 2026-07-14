@@ -19,6 +19,18 @@ _MAGIC_TYPES: tuple[tuple[bytes, str], ...] = (
     (b"fLaC", "audio/flac"),
     (b"SQLite format 3\x00", "application/vnd.sqlite3"),
 )
+_EXTENSION_TYPES = {
+    ".gltf": "model/gltf+json",
+    ".glb": "model/gltf-binary",
+    ".obj": "model/obj",
+    ".stl": "model/stl",
+    ".ply": "model/ply",
+    ".step": "model/step",
+    ".stp": "model/step",
+    ".iges": "model/iges",
+    ".igs": "model/iges",
+    ".ifc": "model/ifc",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +75,8 @@ class WorkspaceFileCatalog:
                 return media_type
         if len(prefix) >= 12 and prefix[4:8] == b"ftyp":
             return "video/mp4"
+        if suffix in _EXTENSION_TYPES:
+            return _EXTENSION_TYPES[suffix]
         if kind in {"source", "manifest", "config", "text"}:
             return mimetypes.guess_type(f"file{suffix}")[0] or "text/plain"
         return "application/octet-stream"

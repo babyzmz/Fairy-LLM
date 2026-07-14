@@ -1,0 +1,87 @@
+.model-viewer {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: 40px minmax(0, 1fr);
+  background: #171a18;
+}
+.model-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-bottom: 1px solid #383d3a;
+  color: #aab4af;
+  font-size: 11px;
+}
+.model-toolbar button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #c6ceca;
+  background: #242826;
+  border: 1px solid #3e4541;
+}
+.model-toolbar button[aria-pressed="true"] {
+  color: #8ee8df;
+  border-color: #4c8f88;
+}
+.model-toolbar i { flex: 1; }
+.model-layout {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(124px, 176px) minmax(240px, 1fr) minmax(132px, 180px);
+}
+.model-tree,
+.model-properties {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: #1d211f;
+}
+.model-tree { border-right: 1px solid #353a37; }
+.model-properties { border-left: 1px solid #353a37; padding: 10px; }
+.model-tree > strong,
+.model-properties > strong {
+  display: block;
+  padding: 9px 8px 6px;
+  color: #cbd4cf;
+  font-size: 11px;
+}
+.model-tree button {
+  width: 100%;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #aeb8b3;
+  background: transparent;
+  border: 0;
+  text-align: left;
+}
+.model-tree button.selected { color: #dffffb; background: #29413d; }
+.model-tree button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-canvas-host { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+.model-canvas-host canvas { width: 100%; height: 100%; display: block; }
+.model-error {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: #ffaaa1;
+  background: #171a18ee;
+}
+.model-properties dl { display: grid; grid-template-columns: minmax(50px, auto) 1fr; gap: 5px 8px; margin: 4px 0 14px; font-size: 11px; }
+.model-properties dt { color: #7f8b85; }
+.model-properties dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #cbd4cf; }
+@media (max-width: 1050px) {
+  .model-layout { grid-template-columns: 130px minmax(220px, 1fr); }
+  .model-properties { display: none; }
+}

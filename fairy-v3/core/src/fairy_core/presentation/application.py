@@ -59,6 +59,14 @@ _OFFICE_EXTENSIONS = frozenset(
 _BUILTIN_DOCUMENT_EXTENSIONS = frozenset(
     {"docx", "key", "numbers", "odp", "ods", "odt", "pages", "pptx", "xlsx"}
 )
+_PACK_BY_EXTENSION = {
+    **{
+        extension: "cad"
+        for extension in ("brep", "dxf", "iges", "igs", "obj", "ply", "step", "stl", "stp")
+    },
+    **{extension: "bim" for extension in ("ifc", "ifczip")},
+    **{extension: "dcc-3d" for extension in ("3mf", "blend", "dae", "fbx", "usda", "usdc", "usdz")},
+}
 
 
 class PresentationApplication:
@@ -234,6 +242,8 @@ class PresentationApplication:
             return "builtin-document", "1"
         if extension and extension.lower() in _OFFICE_EXTENSIONS:
             return "office", "latest"
+        if extension and extension.lower() in _PACK_BY_EXTENSION:
+            return _PACK_BY_EXTENSION[extension.lower()], "latest"
         if media_type.startswith(_DIRECT_MEDIA_PREFIXES) or media_type in _DIRECT_MEDIA_TYPES:
             return "browser-native", "1"
         return _PACK_BY_MEDIA_TYPE.get(media_type, "universal"), "latest"

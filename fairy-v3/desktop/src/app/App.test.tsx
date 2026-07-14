@@ -445,6 +445,11 @@ function createClient(
         throw new Error("not used");
       },
     },
+    fileSets: {
+      resolve: async () => {
+        throw new Error("not used");
+      },
+    },
     assetSets: {
       list: async () => ({ items: [] }),
     },

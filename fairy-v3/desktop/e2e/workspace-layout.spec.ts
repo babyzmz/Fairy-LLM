@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { PNG } from "pngjs";
 
 import { installWorkspaceFixture, PREVIEW_URL } from "./support/coreFixture";
 
@@ -101,6 +102,42 @@ test("generated images expose native inspection and durable provenance", async (
   const properties = page.getByLabel("File properties");
   await expect(properties).toContainText("Generated hero");
   await expect(properties).toContainText("image-test");
+});
+
+test("glTF models render nonblank pixels and preserve scene-node selections", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: /Files/ }).click();
+  await page.getByRole("button", { name: "triangle.gltf" }).click();
+
+  const viewer = page.getByLabel("3D model viewer: models/triangle.gltf");
+  await expect(viewer).toBeVisible();
+  await expect(viewer.getByRole("button", { name: "Fairy_Triangle" })).toBeVisible();
+  const canvas = page.getByLabel("3D viewport: models/triangle.gltf");
+  await expect(canvas).toBeVisible();
+  await expect(viewer.getByText(/1 meshes.+1 triangles/)).toBeVisible();
+  const pixels = PNG.sync.read(await canvas.screenshot());
+  let coloredPixels = 0;
+  for (let index = 0; index < pixels.data.length; index += 4) {
+    if (pixels.data[index + 1] > pixels.data[index] + 20 && pixels.data[index + 1] > pixels.data[index + 2]) {
+      coloredPixels += 1;
+    }
+  }
+  expect(coloredPixels).toBeGreaterThan(20);
+
+  await viewer.getByRole("button", { name: "Fairy_Triangle" }).click();
+  const properties = page.getByLabel("File properties");
+  await expect(properties).toContainText("Fairy_Triangle");
+  await properties.getByRole("button", { name: "Save selection" }).click();
+  const calls = await page.evaluate(() => window.__FAIRY_FIXTURE_CALLS__);
+  expect(
+    calls.some(
+      (call) =>
+        call.method === "selections.create" &&
+        call.params.locator_kind === "scene_node" &&
+        (call.params.locator as { node_path?: string }).node_path === "0",
+    ),
+  ).toBe(true);
 });
 
 test("governed Review promotes a previewing Task before Version acceptance", async ({ page }) => {

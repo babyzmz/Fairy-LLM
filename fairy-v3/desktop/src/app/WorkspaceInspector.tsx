@@ -52,9 +52,11 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
             onRead={model.readWorkspaceFile}
             onOpenStream={model.openWorkspaceFileStream}
             onPresent={model.presentWorkspaceFile}
+            onResolveFileSet={model.resolveWorkspaceFileSet}
             onListAnnotations={model.listFileAnnotations}
             onUpdateAnnotations={model.updateFileAnnotations}
             onCreateTextSelection={model.createTextSelection}
+            onCreateSceneSelection={model.createSceneSelection}
             onReveal={model.revealWorkspaceFile}
             onRefresh={model.refreshWorkspaceFiles}
             onUpload={model.uploadWorkspaceFiles}

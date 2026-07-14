@@ -170,6 +170,38 @@ def test_service_keeps_legacy_office_binary_behind_renderer_pack(tmp_path: Path)
         service.close()
 
 
+@pytest.mark.parametrize(
+    ("filename", "expected_pack"),
+    [("assembly.step", "cad"), ("building.ifc", "bim"), ("scene.fbx", "dcc-3d")],
+)
+def test_professional_3d_formats_require_their_explicit_pack(
+    tmp_path: Path, filename: str, expected_pack: str
+) -> None:
+    source = tmp_path / f"source-{expected_pack}"
+    source.mkdir()
+    (source / filename).write_bytes(b"professional-model-fixture")
+    service = build_local_service(tmp_path / f"app-{expected_pack}")
+    try:
+        imported = service.invoke(
+            "projects.import",
+            {"name": "Model", "residency": "local_only", "source_path": str(source)},
+        )
+        result = service.invoke(
+            "files.present",
+            {
+                "workspace_id": imported["project"]["workspace_id"],
+                "version_id": imported["project"]["active_version_id"],
+                "path": filename,
+            },
+        )
+
+        assert result["job"]["status"] == "waiting_for_pack"
+        assert result["job"]["renderer_pack_id"] == expected_pack
+        assert result["presentation"] is None
+    finally:
+        service.close()
+
+
 def test_document_package_rejects_unsafe_xml_without_exposing_content(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()

@@ -295,11 +295,26 @@ function workspaceModel(): WorkspaceModel {
     presentWorkspaceFile: vi.fn(async () => {
       throw new Error("not used");
     }),
+    resolveWorkspaceFileSet: vi.fn(async (path: string) => ({
+      id: "019f566f-f8b4-7000-8000-000000000041",
+      workspace_id: workspaceTask().workspace_id,
+      version_id: workspaceTask().target_version_id as string,
+      kind: "single",
+      primary_path: path,
+      parser_version: "1.0.0",
+      manifest_hash: "a".repeat(64),
+      members: [],
+      missing_dependencies: [],
+      blocked_dependencies: [],
+    })),
     listFileAnnotations: vi.fn(async () => ({ document: null })),
     updateFileAnnotations: vi.fn(async () => {
       throw new Error("not used");
     }),
     createTextSelection: vi.fn(async () => {
+      throw new Error("not used");
+    }),
+    createSceneSelection: vi.fn(async () => {
       throw new Error("not used");
     }),
     revealWorkspaceFile: vi.fn(async () => undefined),

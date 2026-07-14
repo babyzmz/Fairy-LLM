@@ -12,6 +12,21 @@ const PDF_FIXTURE_BASE64 =
   "JVBERi0xLjMKJeLjz9MKMSAwIG9iago8PAovUHJvZHVjZXIgKHB5cGRmKQovVGl0bGUgKEZhaXJ5IFBERiBGaXh0dXJlKQo+PgplbmRvYmoKMiAwIG9iago8PAovVHlwZSAvUGFnZXMKL0NvdW50IDEKL0tpZHMgWyA0IDAgUiBdCj4+CmVuZG9iagozIDAgb2JqCjw8Ci9UeXBlIC9DYXRhbG9nCi9QYWdlcyAyIDAgUgo+PgplbmRvYmoKNCAwIG9iago8PAovVHlwZSAvUGFnZQovUmVzb3VyY2VzIDw8Cj4+Ci9NZWRpYUJveCBbIDAuMCAwLjAgMzAwIDIwMCBdCi9QYXJlbnQgMiAwIFIKPj4KZW5kb2JqCnhyZWYKMCA1CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAxNSAwMDAwIG4gCjAwMDAwMDAwODEgMDAwMDAgbiAKMDAwMDAwMDE0MCAwMDAwMCBuIAowMDAwMDAwMTg5IDAwMDAwIG4gCnRyYWlsZXIKPDwKL1NpemUgNQovUm9vdCAzIDAgUgovSW5mbyAxIDAgUgo+PgpzdGFydHhyZWYKMjg4CiUlRU9GCg==";
 const PDF_FIXTURE = Buffer.from(PDF_FIXTURE_BASE64, "base64");
 const PDF_FIXTURE_HASH = createHash("sha256").update(PDF_FIXTURE).digest("hex");
+const MODEL_BUFFER = Buffer.alloc(36);
+[-1, -1, 0, 1, -1, 0, 0, 1, 0].forEach((value, index) => MODEL_BUFFER.writeFloatLE(value, index * 4));
+const MODEL_FIXTURE_TEXT = JSON.stringify({
+  asset: { version: "2.0", generator: "Fairy fixture" },
+  buffers: [{ uri: `data:application/octet-stream;base64,${MODEL_BUFFER.toString("base64")}`, byteLength: 36 }],
+  bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36 }],
+  accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [-1, -1, 0], max: [1, 1, 0] }],
+  materials: [{ name: "Fairy mint", pbrMetallicRoughness: { baseColorFactor: [0.2, 0.8, 0.72, 1] } }],
+  meshes: [{ name: "Triangle", primitives: [{ attributes: { POSITION: 0 }, material: 0 }] }],
+  nodes: [{ name: "Fairy Triangle", mesh: 0 }],
+  scenes: [{ nodes: [0] }],
+  scene: 0,
+});
+const MODEL_FIXTURE = Buffer.from(MODEL_FIXTURE_TEXT);
+const MODEL_FIXTURE_HASH = createHash("sha256").update(MODEL_FIXTURE).digest("hex");
 
 export async function installWorkspaceFixture(page: Page) {
   await installCoreFixture(page);
@@ -36,6 +51,14 @@ export async function installWorkspaceFixture(page: Page) {
       });
       return;
     }
+    if (route.request().url().endsWith("/fixture.gltf")) {
+      await route.fulfill({
+        contentType: "model/gltf+json",
+        body: MODEL_FIXTURE,
+        headers: { "Access-Control-Allow-Origin": "*" },
+      });
+      return;
+    }
     await route.fulfill({
       contentType: "text/html",
       body: `<!doctype html><html><body style="margin:0;font-family:Segoe UI;background:#f4f6f3;color:#18201d"><main style="padding:28px"><h1>Atlas preview</h1><p>Durable candidate version</p></main></body></html>`,
@@ -53,6 +76,9 @@ async function installCoreFixture(page: Page) {
       capturePngHash,
       pdfFixtureHash,
       pdfFixtureByteLength,
+      modelFixtureText,
+      modelFixtureHash,
+      modelFixtureByteLength,
     }) => {
       const fixtureWindow = window as unknown as {
         isTauri: boolean;
@@ -546,6 +572,26 @@ async function installCoreFixture(page: Page) {
           capabilities: ["pages", "search", "zoom", "select", "annotate"],
         },
       };
+      const modelPresentation = {
+        job: {
+          ...filePresentation.job,
+          id: "0198f4de-0114-7000-8000-000000000042",
+          file_set_id: "0198f4de-0114-7000-8000-000000000043",
+          source_path: "models/triangle.gltf",
+          source_hash: modelFixtureHash,
+          cache_key: "fixture-model-presentation-cache",
+          public_summary: "Native 3D presentation ready",
+        },
+        presentation: {
+          ...filePresentation.presentation,
+          id: "0198f4de-0114-7000-8000-000000000044",
+          file_set_id: "0198f4de-0114-7000-8000-000000000043",
+          source_path: "models/triangle.gltf",
+          source_hash: modelFixtureHash,
+          renderer: "browser-native",
+          capabilities: ["orbit", "pan", "zoom", "inspect"],
+        },
+      };
       const results: Record<string, unknown> = {
         health: {
           status: "ok",
@@ -620,6 +666,13 @@ async function installCoreFixture(page: Page) {
               content_hash: capturePngHash,
               kind: "binary",
               language: null,
+            },
+            {
+              path: "models/triangle.gltf",
+              byte_length: modelFixtureByteLength,
+              content_hash: modelFixtureHash,
+              kind: "manifest",
+              language: "json",
             },
           ],
         },
@@ -1009,6 +1062,42 @@ async function installCoreFixture(page: Page) {
                         workspace_id: request.params.workspace_id,
                         version_id: request.params.version_id,
                       }
+                    : request.method === "file_sets.resolve"
+                      ? {
+                          id: "0198f4de-0114-7000-8000-000000000043",
+                          workspace_id: request.params.workspace_id,
+                          version_id: request.params.version_id,
+                          kind: request.params.path === "models/triangle.gltf" ? "gltf" : "single",
+                          primary_path: request.params.path,
+                          parser_version: "1.0.0",
+                          manifest_hash: "a".repeat(64),
+                          members: [
+                            {
+                              path: request.params.path,
+                              content_hash:
+                                request.params.path === "models/triangle.gltf" ? modelFixtureHash : "a".repeat(64),
+                              byte_length:
+                                request.params.path === "models/triangle.gltf" ? modelFixtureByteLength : 1,
+                              role: "primary",
+                            },
+                          ],
+                          missing_dependencies: [],
+                          blocked_dependencies: [],
+                        }
+                      : request.method === "workspaces.files.read" && request.params.path === "models/triangle.gltf"
+                        ? {
+                            file: {
+                              path: "models/triangle.gltf",
+                              byte_length: modelFixtureByteLength,
+                              content_hash: modelFixtureHash,
+                              kind: "manifest",
+                              language: "json",
+                            },
+                            media_type: "model/gltf+json",
+                            text: modelFixtureText,
+                            content_base64: null,
+                            stream_required: false,
+                          }
                     : request.method === "workspaces.files.read" && request.params.path === "docs/sample.pdf"
                       ? {
                           file: {
@@ -1044,17 +1133,38 @@ async function installCoreFixture(page: Page) {
                               version_id: request.params.version_id,
                               path: request.params.path,
                               content_hash:
-                                request.params.path === "media/generated.png" ? capturePngHash : pdfFixtureHash,
-                              byte_length: request.params.path === "media/generated.png" ? 68 : pdfFixtureByteLength,
+                                request.params.path === "media/generated.png"
+                                  ? capturePngHash
+                                  : request.params.path === "models/triangle.gltf"
+                                    ? modelFixtureHash
+                                    : pdfFixtureHash,
+                              byte_length:
+                                request.params.path === "media/generated.png"
+                                  ? 68
+                                  : request.params.path === "models/triangle.gltf"
+                                    ? modelFixtureByteLength
+                                    : pdfFixtureByteLength,
                               media_type:
-                                request.params.path === "media/generated.png" ? "image/png" : "application/pdf",
-                              url: `${previewUrl}${request.params.path === "media/generated.png" ? "fixture.png" : "fixture.pdf"}`,
+                                request.params.path === "media/generated.png"
+                                  ? "image/png"
+                                  : request.params.path === "models/triangle.gltf"
+                                    ? "model/gltf+json"
+                                    : "application/pdf",
+                              url: `${previewUrl}${
+                                request.params.path === "media/generated.png"
+                                  ? "fixture.png"
+                                  : request.params.path === "models/triangle.gltf"
+                                    ? "fixture.gltf"
+                                    : "fixture.pdf"
+                              }`,
                               expires_at: "2026-07-11T00:02:00Z",
                             }
                           : request.method === "files.present"
                             ? request.params.path === "docs/sample.pdf"
                               ? pdfPresentation
-                              : filePresentation
+                              : request.params.path === "models/triangle.gltf"
+                                ? modelPresentation
+                                : filePresentation
                             : request.method === "annotations.list"
                               ? { document: annotationDocument }
                               : request.method === "annotations.update"
@@ -1393,6 +1503,9 @@ async function installCoreFixture(page: Page) {
       capturePngHash: CAPTURE_PNG_HASH,
       pdfFixtureHash: PDF_FIXTURE_HASH,
       pdfFixtureByteLength: PDF_FIXTURE.length,
+      modelFixtureText: MODEL_FIXTURE_TEXT,
+      modelFixtureHash: MODEL_FIXTURE_HASH,
+      modelFixtureByteLength: MODEL_FIXTURE.length,
     },
   );
 }

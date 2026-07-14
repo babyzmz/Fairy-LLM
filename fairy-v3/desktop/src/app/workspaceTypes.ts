@@ -26,6 +26,7 @@ import type {
   WorkspaceFileContent,
   FileReadSession,
   FilePresentationResult,
+  FileSet,
   AnnotationDocument,
   AssetSet,
   AnnotationResult,
@@ -51,6 +52,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
     "get" | "listFiles" | "readFile" | "openStream" | "mutateFiles" | "export"
   >;
   files: Pick<CoreClient["files"], "present">;
+  fileSets: Pick<CoreClient["fileSets"], "resolve">;
   assetSets: Pick<CoreClient["assetSets"], "list">;
   annotations: Pick<CoreClient["annotations"], "list" | "update">;
   selections: Pick<CoreClient["selections"], "create">;
@@ -173,6 +175,7 @@ export interface WorkspaceModel {
   readWorkspaceFile(path: string): Promise<WorkspaceFileContent>;
   openWorkspaceFileStream(path: string): Promise<FileReadSession>;
   presentWorkspaceFile(path: string): Promise<FilePresentationResult>;
+  resolveWorkspaceFileSet(path: string): Promise<FileSet>;
   listFileAnnotations(presentation: FilePresentationResult): Promise<AnnotationResult>;
   updateFileAnnotations(
     presentation: FilePresentationResult,
@@ -180,6 +183,7 @@ export interface WorkspaceModel {
     annotations: Array<Record<string, unknown>>,
   ): Promise<AnnotationDocument>;
   createTextSelection(presentation: FilePresentationResult, start: number, end: number): Promise<SelectionReference>;
+  createSceneSelection(presentation: FilePresentationResult, nodePath: string): Promise<SelectionReference>;
   revealWorkspaceFile(path: string): Promise<void>;
   refreshWorkspaceFiles(): Promise<void>;
   uploadWorkspaceFiles(files: Array<{ path: string; contentBase64: string }>): Promise<void>;
