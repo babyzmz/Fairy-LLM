@@ -178,6 +178,43 @@ and independently verified worker attestations/results.
     empty source modules, Docker sockets, host namespaces, added container
     capabilities, and host bind mounts on project execution services. Run the
     gate before tests and make its malicious fixtures fail for each rule.
+44. Treat every imported file, extension, MIME label, container entry, embedded
+    preview, dependency path, and parser result as untrusted. Probe magic and
+    bounded structure independently; reject traversal, links outside the
+    immutable Version, ambiguous case-folded paths, alternate streams,
+    decompression bombs, excessive dimensions, and cyclic dependency graphs.
+45. Serve large Workspace objects only through short-lived loopback Range
+    sessions bound to tenant, Workspace, Version, path, digest, byte range, and
+    expiry. Persist only token hashes, use constant-time comparison, reject
+    proxy and non-loopback requests, and revoke sessions on Version disposal or
+    application shutdown.
+46. Verify renderer repository metadata, pack manifest signature, payload
+    SHA-256, and platform code signature before atomic activation. Pin one exact
+    pack version per job and never download, update, remove, or execute a pack
+    because a document or model requested it.
+47. Run converters without network, ambient credentials, shell expansion,
+    Workspace write access, user profile, plugin discovery, or inherited helper
+    paths. Use restricted process identity, Job Object or sandbox resource
+    limits, private temporary storage, explicit handles, cancellation, and
+    crash quarantine. Treat converter output and logs as untrusted.
+48. Disable Office macros and ActiveX, PDF JavaScript and launch actions, HTML
+    scripts, SVG external links, media callbacks, CAD scripts, 3D external
+    resources, Blender startup files, font installation, archive execution, and
+    automatic remote-content retrieval. Presentation is data processing and
+    cannot create Command authority.
+49. Validate every derivative against its declared media type, dimensions,
+    topology, page/frame count, member digests, byte quota, and source-bound
+    cache key before publication. A failed, partial, stale, or lower-fidelity
+    derivative remains typed and cannot replace source authority.
+50. Keep file passwords ephemeral in the initiating process and exclude them
+    from Ledger events, Command payloads, logs, manifests, derivatives, sync,
+    crash reports, and caches. Cloud conversion additionally requires an
+    explicit expiring grant naming source objects, region, purpose, and
+    retention policy.
+51. Bind annotations, edit recipes, and model-visible selections to the exact
+    Workspace Version and source digest. Recheck typed locator bounds before
+    extraction or apply. A revision conflict or unsupported export fails
+    without modifying the source and without silently retargeting a newer file.
 
 ## Environment verification
 
@@ -208,5 +245,9 @@ MCP_CREDENTIAL_UNAVAILABLE, MCP_DESTINATION_BLOCKED, MCP_OUTPUT_INVALID,
 MCP_OUTPUT_UNSUPPORTED,
 MCP_PROTOCOL_MISMATCH, MCP_RESULT_UNCERTAIN, MCP_SCHEMA_CHANGED,
 MCP_SCHEMA_INVALID, MCP_TOOL_ERROR, MCP_TRANSPORT_INTERRUPTED,
-MCP_TRANSPORT_NOT_ALLOWED, and MCP_UNAVAILABLE. Cloud maps every public code
-to an explicit HTTP status rather than relying on a generic fallback.
+MCP_TRANSPORT_NOT_ALLOWED, MCP_UNAVAILABLE, FORMAT_UNSUPPORTED, PACK_REQUIRED,
+PACK_UNTRUSTED, FILE_TOO_LARGE, FILE_ENCRYPTED, ACTIVE_CONTENT_BLOCKED,
+DEPENDENCY_MISSING, CONVERSION_TIMEOUT, DERIVATIVE_INVALID,
+FIDELITY_DEGRADED, CACHE_QUOTA_EXCEEDED, and EDIT_NOT_EXPORTABLE. Cloud maps
+every public code to an explicit HTTP status rather than relying on a generic
+fallback.

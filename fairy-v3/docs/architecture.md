@@ -50,6 +50,15 @@ Preview, Artifact, Checkpoint, and Memory state.
 21. MCP tools enter the Agent surface only after explicit schema and per-tool
     policy acceptance. Every invocation uses the same Task Scope, CommandRun,
     approval, cancellation, ledger, and Artifact pipeline as built-in tools.
+22. File presentation is derivative-first and separate from Runtime Preview.
+    Every source, FileSet, annotation, edit recipe, and selection binds one
+    immutable Workspace Version and content digest.
+23. Binary edits never overwrite a source object. Applying an AssetMutation or
+    EditRecipe publishes a new content-addressed object and candidate Version
+    through the Command Bus.
+24. Renderer packs are optional signed executables run by a restricted Broker.
+    Documents, models, and renderer code cannot install packs, gain network
+    access, or convert presentation output into command authority.
 
 ## Components
 
@@ -119,6 +128,28 @@ deployment secret, strips client credentials and internal headers, bounds
 streamed bodies, and revalidates the active lease before proxying. Runtime
 health and Chromium/Edge screenshots become generation- and Preview-manifest-
 bound Artifacts. Only those current Artifacts can join a Checkpoint.
+
+### Workspace Studio and file presentation
+
+Workspace Studio is the shared file surface for scratch Conversations and
+Projects. `WorkspaceObjectStore` retains immutable large and binary source
+objects by digest while Version manifests bind user-visible paths to those
+objects. Small text remains in the internal Git snapshot. Large reads use
+short-lived Rust loopback Range sessions; whole binary files do not cross the
+Core JSON-RPC boundary.
+
+`FileSet` manifests close over every member of a multi-file logical asset.
+`FilePresentation` and `FileRenderJob` produce validated `DerivedAsset` objects
+through exact-version renderer packs. Derivatives are disposable device cache,
+not source authority. Annotations, typed selections, and non-destructive edit
+recipes retain exact source provenance and use revision fencing.
+
+Runtime Preview remains the execution surface for runnable Workspace Versions.
+It may appear as a pinned Studio tab but cannot act as a document converter.
+File presentation cannot start a Runtime, process, macro, script, or external
+resource. Optional Office, media, image, data, CAD/BIM, DCC, archive, ebook,
+mail, and font packs run behind a no-network restricted Broker and report an
+explicit fidelity class.
 
 ### Storage and synchronization
 
