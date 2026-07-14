@@ -5,6 +5,8 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from fairy_core.workspace.models import ProjectIndex, TaskWorkspace
+from fairy_core.workspace.object_store import AssetMutation, WorkspaceObject
+from fairy_core.workspace.read_stream import FileReadSession
 
 WorkspaceId = UUID | str
 
@@ -65,6 +67,31 @@ class WorkspaceProvisioner(Protocol):
         project_id: WorkspaceId,
         version_id: WorkspaceId,
     ) -> None: ...
+
+    def import_asset(
+        self,
+        *,
+        project_id: WorkspaceId,
+        version_id: WorkspaceId,
+        mutation: AssetMutation,
+        max_file_bytes: int,
+        max_workspace_bytes: int,
+    ) -> WorkspaceObject: ...
+
+    def open_read_session(
+        self,
+        *,
+        session_id: UUID,
+        workspace_id: UUID,
+        version_id: UUID,
+        relative_path: str,
+        content_hash: str,
+        byte_length: int,
+        media_type: str,
+        expires_seconds: int,
+    ) -> FileReadSession: ...
+
+    def revoke_read_session(self, session_id: UUID) -> None: ...
 
 
 class WorkspaceRepository(Protocol):

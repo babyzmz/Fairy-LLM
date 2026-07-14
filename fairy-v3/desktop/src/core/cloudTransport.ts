@@ -117,6 +117,7 @@ const routes = {
       params,
       ["path", "version_id"],
     ),
+  "files.open_stream": (params) => post("/v1/files/open-stream", params),
   "workspaces.files.mutate": (params) =>
     postWithIdempotency("/v1/workspaces/files/mutate", params),
   "workspaces.export": (params) => post("/v1/workspaces/export", params),

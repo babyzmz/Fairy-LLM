@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import io
+import mimetypes
 import zipfile
 from uuid import UUID
 
 from fairy_core.domain.errors import InvalidTransitionError
+from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import Version, Workspace
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.security.path_guard import PathGuard
 from fairy_core.workspace.index import ProjectIndexer
 from fairy_core.workspace.models import ProjectFile, ProjectIndex
+from fairy_core.workspace.ports import WorkspaceProvisioner
+from fairy_core.workspace.read_stream import FileReadSession
 
 
 class WorkspaceApplication:
@@ -18,9 +22,11 @@ class WorkspaceApplication:
         self,
         unit_of_work_factory: CoreUnitOfWorkFactory,
         project_indexer: ProjectIndexer,
+        workspace_provisioner: WorkspaceProvisioner,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._project_indexer = project_indexer
+        self._workspace_provisioner = workspace_provisioner
 
     def get(self, workspace_id: UUID) -> Workspace:
         with self._unit_of_work_factory() as unit_of_work:
@@ -65,9 +71,15 @@ class WorkspaceApplication:
         workspace_id: UUID,
         path: str,
         version_id: UUID | None = None,
-    ) -> tuple[ProjectFile, bytes]:
+        inline_only: bool = False,
+    ) -> tuple[ProjectFile, bytes | None]:
         index = self.files(workspace_id=workspace_id, version_id=version_id)
         item = index.file(path)
+        if inline_only and (
+            item.kind not in {"source", "manifest", "config", "text"}
+            or item.byte_length > 2 * 1024 * 1024
+        ):
+            return item, None
         with self._unit_of_work_factory() as unit_of_work:
             version = unit_of_work.state.get_version(index.version_id)
         if version is None:
@@ -87,6 +99,32 @@ class WorkspaceApplication:
             raise InvalidTransitionError("Workspace file changed outside its indexed Version")
         return item, content
 
+    def open_read_session(
+        self,
+        *,
+        workspace_id: UUID,
+        path: str,
+        version_id: UUID | None = None,
+        expires_seconds: int = 120,
+    ) -> FileReadSession:
+        index = self.files(workspace_id=workspace_id, version_id=version_id)
+        item = index.file(path)
+        with self._unit_of_work_factory() as unit_of_work:
+            version = unit_of_work.state.get_version(index.version_id)
+        if version is None:
+            raise KeyError(f"Version not found: {index.version_id}")
+        media_type = mimetypes.guess_type(item.path)[0] or "application/octet-stream"
+        return self._workspace_provisioner.open_read_session(
+            session_id=new_id(),
+            workspace_id=workspace_id,
+            version_id=index.version_id,
+            relative_path=item.path,
+            content_hash=item.content_hash,
+            byte_length=item.byte_length,
+            media_type=media_type,
+            expires_seconds=expires_seconds,
+        )
+
     def export(
         self,
         *,
@@ -102,6 +140,7 @@ class WorkspaceApplication:
                     version_id=index.version_id,
                     path=item.path,
                 )
+                assert content is not None
                 info = zipfile.ZipInfo(indexed.path, date_time=(1980, 1, 1, 0, 0, 0))
                 info.compress_type = zipfile.ZIP_DEFLATED
                 info.external_attr = 0o600 << 16

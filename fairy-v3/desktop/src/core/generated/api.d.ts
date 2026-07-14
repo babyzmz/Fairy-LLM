@@ -381,6 +381,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/files/open-stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open File Stream */
+        post: operations["files.open_stream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/health": {
         parameters: {
             query?: never;
@@ -2163,6 +2180,39 @@ export interface components {
          * @enum {string}
          */
         FileMutationOperation: "upsert" | "create" | "update" | "delete" | "rename";
+        /** FileReadSessionModel */
+        FileReadSessionModel: {
+            /** Byte Length */
+            byte_length: number;
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Media Type */
+            media_type: string;
+            /** Path */
+            path: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+            /** Url */
+            url: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -4162,11 +4212,14 @@ export interface components {
         };
         /** WorkspaceFileContentModel */
         WorkspaceFileContentModel: {
-            /** Content Base64 */
-            content_base64?: string | null;
             file: components["schemas"]["WorkspaceFileModel"];
             /** Media Type */
             media_type: string;
+            /**
+             * Stream Required
+             * @default false
+             */
+            stream_required: boolean;
             /** Text */
             text?: string | null;
         };
@@ -4228,6 +4281,23 @@ export interface components {
              * Format: uuid
              */
             version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** WorkspaceFileStreamInput */
+        WorkspaceFileStreamInput: {
+            /**
+             * Expires Seconds
+             * @default 120
+             */
+            expires_seconds: number;
+            /** Path */
+            path: string;
+            /** Version Id */
+            version_id?: string | null;
             /**
              * Workspace Id
              * Format: uuid
@@ -5150,6 +5220,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExecutionPlanContextModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "files.open_stream": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceFileStreamInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileReadSessionModel"];
                 };
             };
             /** @description Validation Error */

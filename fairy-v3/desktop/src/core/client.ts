@@ -50,6 +50,7 @@ import type {
   VoiceSessionStartInput,
   VoiceTranscribeInput,
   WorkspaceFileReadInput,
+  WorkspaceFileStreamInput,
   WorkspaceFileMutateInput,
   WorkspaceExportInput,
   WorkspaceVersionInput,
@@ -170,6 +171,8 @@ export class CoreClient {
       this.transport.call("workspaces.files.list", input),
     readFile: (input: WorkspaceFileReadInput) =>
       this.transport.call("workspaces.files.read", input),
+    openStream: (input: WorkspaceFileStreamInput) =>
+      this.transport.call("files.open_stream", input),
     mutateFiles: (input: WorkspaceFileMutateInput) =>
       this.transport.call("workspaces.files.mutate", input),
     export: (input: WorkspaceExportInput) =>

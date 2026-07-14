@@ -53,6 +53,16 @@ export function createWorkspaceFileActions(context: WorkspaceFileActionContext) 
         path,
       });
     },
+    async openWorkspaceFileStream(path: string) {
+      const current = scope();
+      if (current.task.target_version_id === null) throw new Error("Version is unavailable");
+      return context.client.workspaces.openStream({
+        workspace_id: current.task.workspace_id,
+        version_id: current.task.target_version_id,
+        path,
+        expires_seconds: 120,
+      });
+    },
     async revealWorkspaceFile(path: string) {
       const current = scope();
       await context.runAction(() =>

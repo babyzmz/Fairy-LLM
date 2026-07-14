@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import base64
+from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 from fairy_core.workspace.mutations import decode_mutation
+from fairy_core.workspace.object_store import AssetMutation, WorkspaceObject
 from fairy_core.workspace.ports import WorkspaceId
+from fairy_core.workspace.read_stream import FileReadSession
 from fairy_core.workspace.worker_transport import WorkerTransport
 
 
@@ -142,6 +146,87 @@ class RustWorkspaceProvisioner:
         self._transport.call(
             "workspace.discard",
             {"project_id": str(project_id), "version_id": str(version_id)},
+        )
+
+    def import_asset(
+        self,
+        *,
+        project_id: WorkspaceId,
+        version_id: WorkspaceId,
+        mutation: AssetMutation,
+        max_file_bytes: int,
+        max_workspace_bytes: int,
+    ) -> WorkspaceObject:
+        result = self._transport.call(
+            "workspace.import_asset",
+            {
+                "project_id": str(project_id),
+                "version_id": str(version_id),
+                "operation": mutation.operation,
+                "relative_path": mutation.path,
+                "source": str(mutation.source.resolve(strict=True)),
+                "expected_hash": mutation.expected_source_hash,
+                "expected_target_hash": mutation.expected_target_hash,
+                "max_file_bytes": max_file_bytes,
+                "max_workspace_bytes": max_workspace_bytes,
+            },
+        )
+        content_hash = result.get("content_hash")
+        byte_length = result.get("byte_length")
+        storage_path = result.get("storage_path")
+        if (
+            not isinstance(content_hash, str)
+            or not isinstance(byte_length, int)
+            or not isinstance(storage_path, str)
+        ):
+            raise RuntimeError("worker result is missing Workspace object metadata")
+        return WorkspaceObject(content_hash, byte_length, Path(storage_path))
+
+    def open_read_session(
+        self,
+        *,
+        session_id: UUID,
+        workspace_id: UUID,
+        version_id: UUID,
+        relative_path: str,
+        content_hash: str,
+        byte_length: int,
+        media_type: str,
+        expires_seconds: int,
+    ) -> FileReadSession:
+        result = self._transport.call(
+            "workspace.open_read_stream",
+            {
+                "session_id": str(session_id),
+                "workspace_id": str(workspace_id),
+                "version_id": str(version_id),
+                "relative_path": relative_path,
+                "content_hash": content_hash,
+                "byte_length": byte_length,
+                "media_type": media_type,
+                "expires_seconds": expires_seconds,
+            },
+        )
+        expires_unix_ms = result.get("expires_unix_ms")
+        url = result.get("url")
+        if not isinstance(expires_unix_ms, int) or not isinstance(url, str):
+            raise RuntimeError("worker result is missing read session metadata")
+        return FileReadSession(
+            session_id=session_id,
+            workspace_id=workspace_id,
+            version_id=version_id,
+            path=relative_path,
+            content_hash=content_hash,
+            byte_length=byte_length,
+            media_type=media_type,
+            url=url,
+            expires_at=datetime.fromtimestamp(expires_unix_ms / 1000, tz=UTC),
+        )
+
+    def revoke_read_session(self, session_id: UUID) -> None:
+        self._transport.call(
+            "workspace.revoke_read_stream",
+            {"session_id": str(session_id)},
         )
 
     @staticmethod

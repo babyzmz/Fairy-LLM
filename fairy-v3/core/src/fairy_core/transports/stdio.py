@@ -96,6 +96,7 @@ def build_local_service(
             )
         else:
             workspace_provisioner = FileSystemWorkspaceProvisioner(workspace_root)
+            resources.callback(workspace_provisioner.close)
             configured_runtime_executor = UnavailableRuntimeExecutor(
                 executor="rust_local_worker",
                 diagnostic="Rust local worker is not configured",

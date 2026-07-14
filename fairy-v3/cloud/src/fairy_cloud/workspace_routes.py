@@ -5,12 +5,14 @@ from typing import Any
 from uuid import UUID
 
 from fairy_core.contracts.workspaces import (
+    FileReadSessionModel,
     WorkspaceExportInput,
     WorkspaceExportModel,
     WorkspaceFileContentModel,
     WorkspaceFileMutateInput,
     WorkspaceFileMutationResultModel,
     WorkspaceFilePageModel,
+    WorkspaceFileStreamInput,
     WorkspaceModel,
 )
 from fastapi import APIRouter, Query
@@ -56,6 +58,14 @@ def install_workspace_routes(
         if version_id is not None:
             params["version_id"] = str(version_id)
         return invoke("workspaces.files.read", params)
+
+    @router.post(
+        "/files/open-stream",
+        operation_id="files.open_stream",
+        response_model=FileReadSessionModel,
+    )
+    def open_file_stream(request: WorkspaceFileStreamInput) -> dict[str, Any]:
+        return invoke("files.open_stream", request.model_dump(mode="json"))
 
     @router.post(
         "/workspaces/files/mutate",

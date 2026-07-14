@@ -432,6 +432,9 @@ function createClient(
       readFile: async () => {
         throw new Error("not used");
       },
+      openStream: async () => {
+        throw new Error("not used");
+      },
       mutateFiles: async () => {
         throw new Error("not used");
       },

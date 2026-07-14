@@ -1,6 +1,8 @@
 mod error;
+mod object_store;
 pub mod preview;
 mod protocol;
+mod read_stream;
 pub mod system_actions;
 mod workspace;
 

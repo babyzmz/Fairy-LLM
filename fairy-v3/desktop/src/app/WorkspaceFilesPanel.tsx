@@ -12,12 +12,18 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { WorkspaceExport, WorkspaceFile, WorkspaceFileContent } from "../core/client";
+import type {
+  FileReadSession,
+  WorkspaceExport,
+  WorkspaceFile,
+  WorkspaceFileContent,
+} from "../core/client";
 
 interface WorkspaceFilesPanelProps {
   files: WorkspaceFile[];
   loading: boolean;
   onRead(path: string): Promise<WorkspaceFileContent>;
+  onOpenStream(path: string): Promise<FileReadSession>;
   onReveal(path: string): Promise<void>;
   onRefresh(): Promise<void>;
   onUpload(files: Array<{ path: string; contentBase64: string }>): Promise<void>;
@@ -30,6 +36,7 @@ export function WorkspaceFilesPanel({
   files,
   loading,
   onRead,
+  onOpenStream,
   onReveal,
   onRefresh,
   onUpload,
@@ -41,6 +48,7 @@ export function WorkspaceFilesPanel({
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [content, setContent] = useState<WorkspaceFileContent | null>(null);
+  const [readSession, setReadSession] = useState<FileReadSession | null>(null);
   const [error, setError] = useState<string | null>(null);
   const visibleFiles = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -53,15 +61,21 @@ export function WorkspaceFilesPanel({
     if (selectedPath !== null && !files.some((file) => file.path === selectedPath)) {
       setSelectedPath(null);
       setContent(null);
+      setReadSession(null);
     }
   }, [files, selectedPath]);
 
   const selectFile = async (path: string) => {
     setSelectedPath(path);
     setContent(null);
+    setReadSession(null);
     setError(null);
     try {
-      setContent(await onRead(path));
+      const nextContent = await onRead(path);
+      setContent(nextContent);
+      if (nextContent.stream_required) {
+        setReadSession(await onOpenStream(path));
+      }
     } catch (readError) {
       setError(readError instanceof Error ? readError.message : "File could not be read");
     }
@@ -196,13 +210,14 @@ export function WorkspaceFilesPanel({
                     type="button"
                     aria-label="Download file"
                     title="Download file"
-                    onClick={() => downloadContent(content)}
+                    disabled={content.stream_required && readSession === null}
+                    onClick={() => void downloadContent(content, readSession)}
                   >
                     <Download size={15} />
                   </button>
                 </div>
               </header>
-              <FileContent content={content} />
+              <FileContent content={content} readSession={readSession} />
             </>
           )}
         </section>
@@ -221,15 +236,21 @@ function FileKindIcon({ file }: { file: WorkspaceFile }) {
   );
 }
 
-function FileContent({ content }: { content: WorkspaceFileContent }) {
+function FileContent({
+  content,
+  readSession,
+}: {
+  content: WorkspaceFileContent;
+  readSession: FileReadSession | null;
+}) {
   if (content.text != null) {
     return <pre className="workspace-file-text"><code>{content.text}</code></pre>;
   }
-  if (content.content_base64 != null && content.media_type.startsWith("image/")) {
+  if (readSession !== null && content.media_type.startsWith("image/")) {
     return (
       <div className="workspace-file-image">
         <img
-          src={`data:${content.media_type};base64,${content.content_base64}`}
+          src={readSession.url}
           alt={content.file.path.split("/").at(-1) ?? content.file.path}
         />
       </div>
@@ -238,17 +259,26 @@ function FileContent({ content }: { content: WorkspaceFileContent }) {
   return <div className="workspace-file-placeholder"><File size={22} /><span>Binary preview unavailable</span></div>;
 }
 
-function downloadContent(content: WorkspaceFileContent): void {
-  const bytes =
-    content.text != null
-      ? new TextEncoder().encode(content.text)
-      : Uint8Array.from(atob(content.content_base64 ?? ""), (value) => value.charCodeAt(0));
-  const url = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer], { type: content.media_type }));
+async function downloadContent(
+  content: WorkspaceFileContent,
+  readSession: FileReadSession | null,
+): Promise<void> {
+  const blob = content.text != null
+    ? new Blob([content.text], { type: content.media_type })
+    : await fetchRequiredStream(readSession);
+  const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = content.file.path.split("/").at(-1) ?? "workspace-file";
   anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function fetchRequiredStream(readSession: FileReadSession | null): Promise<Blob> {
+  if (readSession === null) throw new Error("File stream is unavailable");
+  const response = await fetch(readSession.url, { cache: "no-store" });
+  if (!response.ok) throw new Error("File stream could not be read");
+  return response.blob();
 }
 
 function pathDepth(path: string): number {

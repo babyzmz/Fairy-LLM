@@ -139,6 +139,7 @@ export type VersionPage = Schemas["VersionPageModel"];
 export type Workspace = Schemas["WorkspaceModel"];
 export type WorkspaceFile = Schemas["WorkspaceFileModel"];
 export type WorkspaceFileContent = Schemas["WorkspaceFileContentModel"];
+export type FileReadSession = Schemas["FileReadSessionModel"];
 export type WorkspaceFileMutateInput = Schemas["WorkspaceFileMutateInput"];
 export type WorkspaceFileMutationResult = Schemas["WorkspaceFileMutationResultModel"];
 export type WorkspaceFilePage = Schemas["WorkspaceFilePageModel"];
@@ -147,6 +148,7 @@ export type WorkspaceExport = Schemas["WorkspaceExportModel"];
 export type WorkspaceIdInput = { workspace_id: string };
 export type WorkspaceVersionInput = WorkspaceIdInput & { version_id?: string | null };
 export type WorkspaceFileReadInput = WorkspaceVersionInput & { path: string };
+export type WorkspaceFileStreamInput = Schemas["WorkspaceFileStreamInput"];
 export type VoiceAudio = Schemas["VoiceAudioModel"];
 export type VoiceSession = Schemas["VoiceSessionModel"];
 export interface VoiceSessionIdInput {
@@ -294,6 +296,10 @@ export interface CoreMethodMap {
   "workspaces.files.read": {
     params: WorkspaceFileReadInput;
     result: WorkspaceFileContent;
+  };
+  "files.open_stream": {
+    params: WorkspaceFileStreamInput;
+    result: FileReadSession;
   };
   "workspaces.files.mutate": {
     params: WorkspaceFileMutateInput;

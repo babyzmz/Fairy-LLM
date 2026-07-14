@@ -68,7 +68,7 @@ class Workspace:
     active_preview_id: UUID | None = None
     revision: int = 0
     max_files: int = 200
-    max_bytes: int = 20 * 1024 * 1024
+    max_bytes: int = 50 * 1024 * 1024 * 1024
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
 

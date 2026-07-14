@@ -8,6 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::object_store::{ObjectStore, WorkspaceObject};
 use crate::WorkerError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,6 +248,73 @@ impl WorkspaceManager {
     ) -> Result<PathBuf, WorkerError> {
         let _operation = self.lock()?;
         self.write_file_unlocked(project_id, version_id, relative_path, content)
+    }
+
+    pub fn import_asset(
+        &self,
+        project_id: &str,
+        version_id: &str,
+        relative_path: &str,
+        source: &Path,
+        operation: &str,
+        expected_hash: Option<&str>,
+        expected_target_hash: Option<&str>,
+        max_file_bytes: u64,
+        max_workspace_bytes: u64,
+    ) -> Result<WorkspaceObject, WorkerError> {
+        let _operation = self.lock()?;
+        validate_identifier(project_id)?;
+        validate_identifier(version_id)?;
+        let version_root = self.version_root(project_id, version_id).canonicalize()?;
+        let target = validate_scoped_target(&version_root, relative_path)?;
+        match operation {
+            "create" if target.exists() => {
+                return Err(WorkerError::ObjectTargetConflict(relative_path.to_owned()))
+            }
+            "create" if expected_target_hash.is_some() => {
+                return Err(WorkerError::ObjectTargetConflict(relative_path.to_owned()))
+            }
+            "update" if !target.is_file() => {
+                return Err(WorkerError::ObjectTargetConflict(relative_path.to_owned()))
+            }
+            "update" => {
+                let expected = expected_target_hash
+                    .ok_or_else(|| WorkerError::ObjectTargetConflict(relative_path.to_owned()))?;
+                if sha256_file(&target)? != expected {
+                    return Err(WorkerError::ObjectTargetConflict(relative_path.to_owned()));
+                }
+            }
+            "create" => {}
+            _ => return Err(WorkerError::ObjectTargetConflict(relative_path.to_owned())),
+        }
+        let workspace_bytes = tree_bytes(&version_root)?;
+        let store = ObjectStore::new(&self.managed_root)?;
+        let workspace_object = store.put_file(
+            source,
+            expected_hash,
+            workspace_bytes,
+            max_file_bytes,
+            max_workspace_bytes,
+        )?;
+        let parent = target
+            .parent()
+            .ok_or_else(|| WorkerError::PathOutOfScope(relative_path.to_owned()))?;
+        fs::create_dir_all(parent)?;
+        let staged = self
+            .managed_root
+            .join(".transactions/assets")
+            .join(project_id)
+            .join(version_id)
+            .join("current.tmp");
+        if let Some(staged_parent) = staged.parent() {
+            fs::create_dir_all(staged_parent)?;
+        }
+        let _ignored = fs::remove_file(&staged);
+        if fs::hard_link(&workspace_object.storage_path, &staged).is_err() {
+            fs::copy(&workspace_object.storage_path, &staged)?;
+        }
+        replace_file(&staged, &target)?;
+        Ok(workspace_object)
     }
 
     pub(crate) fn resolve_existing_path(
@@ -491,6 +559,41 @@ impl WorkspaceManager {
             .join("versions")
             .join(version_id)
     }
+}
+
+fn tree_bytes(root: &Path) -> Result<u64, WorkerError> {
+    let mut total = 0_u64;
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_symlink() {
+                return Err(WorkerError::PathOutOfScope(path.display().to_string()));
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() {
+                total = total.saturating_add(metadata.len());
+            }
+        }
+    }
+    Ok(total)
+}
+
+fn sha256_file(path: &Path) -> Result<String, WorkerError> {
+    let mut source = fs::File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = vec![0_u8; 1024 * 1024];
+    loop {
+        let count = std::io::Read::read(&mut source, &mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 pub(crate) fn validate_identifier(value: &str) -> Result<(), WorkerError> {

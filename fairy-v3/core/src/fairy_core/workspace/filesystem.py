@@ -13,6 +13,13 @@ from fairy_core.workspace.file_transaction import (
     unlink_scoped,
 )
 from fairy_core.workspace.mutations import decode_mutation
+from fairy_core.workspace.object_store import (
+    AssetMutation,
+    FileSystemWorkspaceObjectStore,
+    WorkspaceObject,
+    WorkspaceStoragePolicy,
+)
+from fairy_core.workspace.read_stream import FileReadSession, LoopbackFileReadServer
 
 
 class FileSystemWorkspaceProvisioner:
@@ -23,6 +30,7 @@ class FileSystemWorkspaceProvisioner:
         self.managed_root.mkdir(parents=True, exist_ok=True)
         self._locks_guard = threading.Lock()
         self._version_locks: dict[tuple[str, str], threading.RLock] = {}
+        self._read_server = LoopbackFileReadServer()
 
     def project_versions_root(self, project_id: UUID | str) -> Path:
         return self.managed_root / "projects" / str(project_id) / "versions"
@@ -242,3 +250,76 @@ class FileSystemWorkspaceProvisioner:
             target = self.version_path(project_id, version_id)
             if target.exists():
                 shutil.rmtree(target)
+
+    def import_asset(
+        self,
+        *,
+        project_id: UUID | str,
+        version_id: UUID | str,
+        mutation: AssetMutation,
+        max_file_bytes: int,
+        max_workspace_bytes: int,
+    ) -> WorkspaceObject:
+        with self._version_lock(project_id, version_id):
+            root = self.version_path(project_id, version_id).resolve(strict=True)
+            guard = PathGuard(project_root=root, allowed_roots=(root,), forbidden_roots=())
+            target = guard.validate_write(mutation.path)
+            if mutation.operation == "create" and target.exists():
+                raise FileExistsError(mutation.path)
+            if mutation.operation == "update":
+                if not target.is_file():
+                    raise FileNotFoundError(mutation.path)
+                target_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+                if target_hash != mutation.expected_target_hash:
+                    raise ValueError("AssetMutation target digest changed")
+            workspace_bytes = sum(
+                path.stat().st_size for path in root.rglob("*") if path.is_file()
+            )
+            object_store = FileSystemWorkspaceObjectStore(
+                self.managed_root,
+                policy=WorkspaceStoragePolicy(
+                    max_file_bytes=max_file_bytes,
+                    max_workspace_bytes=max_workspace_bytes,
+                ),
+            )
+            workspace_object = object_store.put_file(
+                mutation.source,
+                expected_hash=mutation.expected_source_hash,
+                workspace_bytes=workspace_bytes,
+            )
+            object_store.materialize(workspace_object, target)
+            return workspace_object
+
+    def open_read_session(
+        self,
+        *,
+        session_id: UUID,
+        workspace_id: UUID,
+        version_id: UUID,
+        relative_path: str,
+        content_hash: str,
+        byte_length: int,
+        media_type: str,
+        expires_seconds: int,
+    ) -> FileReadSession:
+        root = self.version_path(workspace_id, version_id).resolve(strict=True)
+        guard = PathGuard(project_root=root, allowed_roots=(root,), forbidden_roots=())
+        lease = guard.issue_read_lease(relative_path)
+        source = guard.revalidate_read_lease(lease)
+        return self._read_server.open(
+            session_id=session_id,
+            workspace_id=workspace_id,
+            version_id=version_id,
+            path=relative_path,
+            source=source,
+            content_hash=content_hash,
+            byte_length=byte_length,
+            media_type=media_type,
+            expires_seconds=expires_seconds,
+        )
+
+    def revoke_read_session(self, session_id: UUID) -> None:
+        self._read_server.revoke(session_id)
+
+    def close(self) -> None:
+        self._read_server.close()

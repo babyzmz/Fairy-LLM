@@ -25,4 +25,14 @@ pub enum WorkerError {
     PreviewUnavailable(String),
     #[error("Preview server failed: {0}")]
     PreviewServer(String),
+    #[error("Workspace file exceeds the per-file limit: {0} bytes")]
+    FileTooLarge(u64),
+    #[error("Workspace byte quota exceeded: {0} bytes")]
+    WorkspaceQuotaExceeded(u64),
+    #[error("Workspace object digest does not match")]
+    ObjectDigestMismatch,
+    #[error("Workspace AssetMutation target conflict: {0}")]
+    ObjectTargetConflict(String),
+    #[error("file read stream failed: {0}")]
+    ReadStream(String),
 }

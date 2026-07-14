@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::preview::{StaticPreviewManager, StaticPreviewRequest};
+use crate::read_stream::{FileReadManager, FileReadRequest};
 use crate::system_actions::{SystemActionError, SystemActionManager, SystemActionRequest};
 use crate::workspace::{FileMutationParams, WorkspaceManager};
 use crate::WorkerError;
@@ -68,6 +69,26 @@ struct ApplyChangesetParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct ImportAssetParams {
+    operation: String,
+    project_id: String,
+    version_id: String,
+    relative_path: String,
+    source: PathBuf,
+    #[serde(default)]
+    expected_hash: Option<String>,
+    #[serde(default)]
+    expected_target_hash: Option<String>,
+    max_file_bytes: u64,
+    max_workspace_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct RevokeReadParams {
+    session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct CheckpointParams {
     project_id: String,
     version_id: String,
@@ -90,6 +111,10 @@ impl From<WorkerError> for ProtocolError {
     fn from(error: WorkerError) -> Self {
         let error_code = match error {
             WorkerError::PathOutOfScope(_) => "PATH_OUT_OF_SCOPE",
+            WorkerError::FileTooLarge(_) => "FILE_TOO_LARGE",
+            WorkerError::WorkspaceQuotaExceeded(_) => "CACHE_QUOTA_EXCEEDED",
+            WorkerError::ObjectDigestMismatch => "SCOPE_MISMATCH",
+            WorkerError::ObjectTargetConflict(_) => "VERSION_CONFLICT",
             WorkerError::InvalidIdentifier(_) | WorkerError::PreviewScopeMismatch(_) => {
                 "SCOPE_MISMATCH"
             }
@@ -99,7 +124,8 @@ impl From<WorkerError> for ProtocolError {
             | WorkerError::ChangesetJournal(_)
             | WorkerError::LockPoisoned
             | WorkerError::PreviewUnavailable(_)
-            | WorkerError::PreviewServer(_) => "WORKER_INTERRUPTED",
+            | WorkerError::PreviewServer(_)
+            | WorkerError::ReadStream(_) => "WORKER_INTERRUPTED",
         };
         Self {
             rpc_code: -32000,
@@ -124,6 +150,7 @@ pub struct LocalWorker {
     workspace: WorkspaceManager,
     previews: StaticPreviewManager,
     system_actions: SystemActionManager,
+    read_streams: FileReadManager,
 }
 
 impl LocalWorker {
@@ -134,6 +161,7 @@ impl LocalWorker {
             workspace,
             previews,
             system_actions,
+            read_streams: FileReadManager::new(),
         }
     }
 
@@ -146,6 +174,7 @@ impl LocalWorker {
             workspace,
             previews,
             system_actions,
+            read_streams: FileReadManager::new(),
         }
     }
 }
@@ -269,6 +298,36 @@ fn execute_method(
                 &params.mutations,
             )?;
             Ok(json!({"paths": paths}))
+        }
+        "workspace.import_asset" => {
+            let params: ImportAssetParams = parse_params(params)?;
+            let workspace_object = worker.workspace.import_asset(
+                &params.project_id,
+                &params.version_id,
+                &params.relative_path,
+                &params.source,
+                &params.operation,
+                params.expected_hash.as_deref(),
+                params.expected_target_hash.as_deref(),
+                params.max_file_bytes,
+                params.max_workspace_bytes,
+            )?;
+            Ok(serde_json::to_value(workspace_object).expect("serializable Workspace object"))
+        }
+        "workspace.open_read_stream" => {
+            let params: FileReadRequest = parse_params(params)?;
+            let source = worker.workspace.resolve_existing_path(
+                &params.workspace_id,
+                &params.version_id,
+                &params.relative_path,
+            )?;
+            let info = worker.read_streams.open(params, source)?;
+            Ok(serde_json::to_value(info).expect("serializable read stream"))
+        }
+        "workspace.revoke_read_stream" => {
+            let params: RevokeReadParams = parse_params(params)?;
+            worker.read_streams.revoke(&params.session_id)?;
+            Ok(json!({"revoked": true}))
         }
         "workspace.checkpoint" => {
             let params: CheckpointParams = parse_params(params)?;

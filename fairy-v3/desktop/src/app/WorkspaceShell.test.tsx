@@ -48,7 +48,7 @@ describe("WorkspaceShell", () => {
       file,
       media_type: "text/plain",
       text: "console.log('Fairy');",
-      content_base64: null,
+      stream_required: false,
     }));
 
     render(<WorkspaceShell model={model} />);
@@ -260,6 +260,9 @@ function workspaceModel(): WorkspaceModel {
     copyMessage: vi.fn(async () => undefined),
     openMessageLink: vi.fn(async () => undefined),
     readWorkspaceFile: vi.fn(async () => {
+      throw new Error("not used");
+    }),
+    openWorkspaceFileStream: vi.fn(async () => {
       throw new Error("not used");
     }),
     revealWorkspaceFile: vi.fn(async () => undefined),

@@ -42,6 +42,10 @@ class WorkspaceFileReadInput(WorkspaceVersionInput):
         return normalized
 
 
+class WorkspaceFileStreamInput(WorkspaceFileReadInput):
+    expires_seconds: int = Field(default=120, ge=1, le=300)
+
+
 class WorkspaceModel(ContractModel):
     id: UUID
     active_version_id: UUID | None
@@ -77,13 +81,25 @@ class WorkspaceFileContentModel(ContractModel):
     file: WorkspaceFileModel
     media_type: str
     text: str | None = None
-    content_base64: str | None = None
+    stream_required: bool = False
 
     @model_validator(mode="after")
-    def require_one_content_encoding(self) -> WorkspaceFileContentModel:
-        if (self.text is None) == (self.content_base64 is None):
-            raise ValueError("exactly one file content encoding is required")
+    def require_content_or_stream(self) -> WorkspaceFileContentModel:
+        if (self.text is None) != self.stream_required:
+            raise ValueError("exactly one inline text or stream_required result is required")
         return self
+
+
+class FileReadSessionModel(ContractModel):
+    session_id: UUID
+    workspace_id: UUID
+    version_id: UUID
+    path: str
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    byte_length: int = Field(ge=0)
+    media_type: str
+    url: str
+    expires_at: datetime
 
 
 class WorkspaceFileMutateInput(WorkspaceIdInput):
@@ -133,6 +149,7 @@ class WorkspaceExportModel(ContractModel):
 
 
 __all__ = [
+    "FileReadSessionModel",
     "WorkspaceExportInput",
     "WorkspaceExportModel",
     "WorkspaceFileContentModel",
@@ -141,6 +158,7 @@ __all__ = [
     "WorkspaceFileMutationResultModel",
     "WorkspaceFilePageModel",
     "WorkspaceFileReadInput",
+    "WorkspaceFileStreamInput",
     "WorkspaceIdInput",
     "WorkspaceModel",
     "WorkspaceVersionInput",

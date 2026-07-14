@@ -9,6 +9,7 @@ from fairy_core.application.workspaces import WorkspaceApplication
 from fairy_core.contracts.workspaces import (
     WorkspaceExportInput,
     WorkspaceFileReadInput,
+    WorkspaceFileStreamInput,
     WorkspaceIdInput,
     WorkspaceVersionInput,
 )
@@ -39,19 +40,30 @@ class WorkspaceService:
             workspace_id=request.workspace_id,
             version_id=request.version_id,
             path=request.path,
+            inline_only=True,
         )
         media_type = mimetypes.guess_type(item.path)[0] or "application/octet-stream"
         response: dict[str, Any] = {
             "file": item,
             "media_type": media_type,
             "text": None,
-            "content_base64": None,
+            "stream_required": False,
         }
-        if item.kind in {"source", "manifest", "config", "text"}:
+        if (
+            content is not None
+        ):
             response["text"] = content.decode("utf-8")
         else:
-            response["content_base64"] = base64.b64encode(content).decode("ascii")
+            response["stream_required"] = True
         return response
+
+    def open_stream(self, request: WorkspaceFileStreamInput) -> Any:
+        return self._application.open_read_session(
+            workspace_id=request.workspace_id,
+            version_id=request.version_id,
+            path=request.path,
+            expires_seconds=request.expires_seconds,
+        )
 
     def export(self, request: WorkspaceExportInput) -> dict[str, Any]:
         content = self._application.export(

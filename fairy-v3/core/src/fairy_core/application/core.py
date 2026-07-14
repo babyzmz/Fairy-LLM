@@ -90,6 +90,7 @@ class CoreApplication(CoreSupportMixin):
         self.workspace_access = WorkspaceApplication(
             unit_of_work_factory,
             self._project_indexer,
+            workspace_provisioner,
         )
         self.execution_planning = ExecutionPlanningApplication(unit_of_work_factory)
         self._execution_policy = execution_policy or ExecutionPolicyResolver()

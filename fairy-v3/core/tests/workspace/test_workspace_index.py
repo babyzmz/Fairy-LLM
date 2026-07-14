@@ -256,7 +256,7 @@ def test_scratch_workspace_applies_and_reads_a_changeset_without_a_project(
         assert applied["workspace_id"] == workspace_id
         assert [item["path"] for item in files["items"]] == ["hello.txt"]
         assert content["text"] == "hello Fairy\n"
-        assert content["content_base64"] is None
+        assert content["stream_required"] is False
     finally:
         service.close()
 

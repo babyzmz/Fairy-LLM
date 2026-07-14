@@ -2083,6 +2083,66 @@
         "title": "FileMutationOperation",
         "type": "string"
       },
+      "FileReadSessionModel": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_length": {
+            "minimum": 0.0,
+            "title": "Byte Length",
+            "type": "integer"
+          },
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "workspace_id",
+          "version_id",
+          "path",
+          "content_hash",
+          "byte_length",
+          "media_type",
+          "url",
+          "expires_at"
+        ],
+        "title": "FileReadSessionModel",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -7612,23 +7672,17 @@
       "WorkspaceFileContentModel": {
         "additionalProperties": false,
         "properties": {
-          "content_base64": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Content Base64"
-          },
           "file": {
             "$ref": "#/components/schemas/WorkspaceFileModel"
           },
           "media_type": {
             "title": "Media Type",
             "type": "string"
+          },
+          "stream_required": {
+            "default": false,
+            "title": "Stream Required",
+            "type": "boolean"
           },
           "text": {
             "anyOf": [
@@ -7820,6 +7874,47 @@
           "items"
         ],
         "title": "WorkspaceFilePageModel",
+        "type": "object"
+      },
+      "WorkspaceFileStreamInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_seconds": {
+            "default": 120,
+            "maximum": 300.0,
+            "minimum": 1.0,
+            "title": "Expires Seconds",
+            "type": "integer"
+          },
+          "path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "path"
+        ],
+        "title": "WorkspaceFileStreamInput",
         "type": "object"
       },
       "WorkspaceModel": {
@@ -9745,6 +9840,67 @@
           }
         ],
         "summary": "Create Execution Plan"
+      }
+    },
+    "/v1/files/open-stream": {
+      "post": {
+        "operationId": "files.open_stream",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceFileStreamInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileReadSessionModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Open File Stream"
       }
     },
     "/v1/health": {

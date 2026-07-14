@@ -28,6 +28,7 @@ import type {
   Version,
   WorkspaceFile,
   WorkspaceFileContent,
+  FileReadSession,
   WorkspaceExport,
 } from "../core/client";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
@@ -55,7 +56,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   versions: Pick<CoreClient["versions"], "list" | "accept" | "discard">;
   workspaces: Pick<
     CoreClient["workspaces"],
-    "get" | "listFiles" | "readFile" | "mutateFiles" | "export"
+    "get" | "listFiles" | "readFile" | "openStream" | "mutateFiles" | "export"
   >;
   runtimes: Pick<CoreClient["runtimes"], "health">;
   previews: Pick<CoreClient["previews"], "resolve" | "start" | "stop">;
@@ -200,6 +201,7 @@ export interface WorkspaceModel {
   copyMessage(taskId: string, content: string): Promise<void>;
   openMessageLink(taskId: string, url: string): Promise<void>;
   readWorkspaceFile(path: string): Promise<WorkspaceFileContent>;
+  openWorkspaceFileStream(path: string): Promise<FileReadSession>;
   revealWorkspaceFile(path: string): Promise<void>;
   refreshWorkspaceFiles(): Promise<void>;
   uploadWorkspaceFiles(files: Array<{ path: string; contentBase64: string }>): Promise<void>;

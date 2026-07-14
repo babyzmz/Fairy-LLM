@@ -59,6 +59,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
             files={model.workspaceFiles}
             loading={model.workspaceFilesLoading}
             onRead={model.readWorkspaceFile}
+            onOpenStream={model.openWorkspaceFileStream}
             onReveal={model.revealWorkspaceFile}
             onRefresh={model.refreshWorkspaceFiles}
             onUpload={model.uploadWorkspaceFiles}

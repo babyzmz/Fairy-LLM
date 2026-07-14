@@ -1049,6 +1049,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     copyMessage: actions.copyMessage,
     openMessageLink: actions.openMessageLink,
     readWorkspaceFile: actions.readWorkspaceFile,
+    openWorkspaceFileStream: actions.openWorkspaceFileStream,
     revealWorkspaceFile: actions.revealWorkspaceFile,
     refreshWorkspaceFiles: actions.refreshWorkspaceFiles,
     uploadWorkspaceFiles: actions.uploadWorkspaceFiles,

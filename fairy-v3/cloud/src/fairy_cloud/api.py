@@ -159,6 +159,18 @@ PUBLIC_ERROR_STATUS = {
     ErrorCode.MCP_TRANSPORT_INTERRUPTED.value: 503,
     ErrorCode.MCP_TRANSPORT_NOT_ALLOWED.value: 403,
     ErrorCode.MCP_UNAVAILABLE.value: 503,
+    ErrorCode.FORMAT_UNSUPPORTED.value: 415,
+    ErrorCode.PACK_REQUIRED.value: 409,
+    ErrorCode.PACK_UNTRUSTED.value: 403,
+    ErrorCode.FILE_TOO_LARGE.value: 413,
+    ErrorCode.FILE_ENCRYPTED.value: 409,
+    ErrorCode.ACTIVE_CONTENT_BLOCKED.value: 403,
+    ErrorCode.DEPENDENCY_MISSING.value: 409,
+    ErrorCode.CONVERSION_TIMEOUT.value: 504,
+    ErrorCode.DERIVATIVE_INVALID.value: 502,
+    ErrorCode.FIDELITY_DEGRADED.value: 409,
+    ErrorCode.CACHE_QUOTA_EXCEEDED.value: 507,
+    ErrorCode.EDIT_NOT_EXPORTABLE.value: 409,
     "INVALID_STATE_TRANSITION": 409,
 }
 

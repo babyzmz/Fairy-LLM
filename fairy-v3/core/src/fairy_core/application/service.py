@@ -390,6 +390,7 @@ class CoreService:
             "workspaces.files.list": self._workspace_service.list_files,
             "workspaces.files.mutate": self._mutate_workspace_files,
             "workspaces.files.read": self._workspace_service.read_file,
+            "files.open_stream": self._workspace_service.open_stream,
             "workspaces.export": self._workspace_service.export,
             "workspaces.get": self._workspace_service.get,
             "voice.synthesize": self._synthesize_voice,
