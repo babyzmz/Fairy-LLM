@@ -56,9 +56,7 @@ def test_gltf_file_set_is_deterministic_and_keeps_missing_and_blocked_members(
         encoding="utf-8",
     )
     (source / "models" / "scene.bin").write_bytes(b"geometry")
-    (source / "models" / "textures" / "albedo.png").write_bytes(
-        b"\x89PNG\r\n\x1a\ntexture"
-    )
+    (source / "models" / "textures" / "albedo.png").write_bytes(b"\x89PNG\r\n\x1a\ntexture")
     service = build_local_service(tmp_path / "data")
     try:
         project = service.invoke(

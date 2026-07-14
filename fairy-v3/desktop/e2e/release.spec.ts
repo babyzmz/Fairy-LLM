@@ -6,7 +6,7 @@ test.beforeEach(async ({ page }) => {
   await installWorkspaceFixture(page);
 });
 
-test("release shell and durable event delivery stay inside performance budgets", async ({
+test("@performance release shell and durable event delivery stay inside performance budgets", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -28,7 +28,11 @@ test("release shell and durable event delivery stay inside performance budgets",
       };
       return releaseWindow.__FAIRY_PUSH_EVENT__(eventMessage);
     }, message);
-    await expect(page.getByText(message)).toBeVisible();
+    await page.waitForFunction(
+      (eventMessage) => document.body.innerText.includes(eventMessage),
+      message,
+      { polling: "raf" },
+    );
     latencies.push(
       await page.evaluate((started) => performance.now() - started, startedAt),
     );

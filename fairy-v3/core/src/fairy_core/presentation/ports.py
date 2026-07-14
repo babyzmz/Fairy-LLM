@@ -3,6 +3,11 @@ from __future__ import annotations
 from typing import Protocol
 from uuid import UUID
 
+from fairy_core.presentation.collaboration import (
+    AnnotationDocument,
+    EditRecipe,
+    SelectionReference,
+)
 from fairy_core.presentation.models import FilePresentation, FileRenderJob
 from fairy_core.presentation.packs import RendererPackRecord
 
@@ -27,6 +32,18 @@ class PresentationRepository(Protocol):
     def save_pack(self, pack: RendererPackRecord) -> None: ...
 
     def delete_pack(self, pack_id: str, version: str) -> bool: ...
+
+    def list_annotations(
+        self, *, workspace_id: UUID, version_id: UUID, file_set_id: UUID
+    ) -> AnnotationDocument | None: ...
+
+    def save_annotations(self, document: AnnotationDocument) -> None: ...
+
+    def get_edit_recipe(self, recipe_id: UUID) -> EditRecipe | None: ...
+
+    def save_edit_recipe(self, recipe: EditRecipe) -> None: ...
+
+    def save_selection(self, selection: SelectionReference) -> None: ...
 
 
 __all__ = ["PresentationRepository"]

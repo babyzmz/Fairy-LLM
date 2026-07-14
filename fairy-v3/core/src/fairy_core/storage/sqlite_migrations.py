@@ -92,9 +92,7 @@ def _sqlite_rebuild_transaction(engine: Engine) -> Iterator[Connection]:
     """Run SQLite table rebuilds atomically without parent-table FK drop failures."""
 
     with engine.connect() as connection:
-        foreign_keys_enabled = bool(
-            connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one()
-        )
+        foreign_keys_enabled = bool(connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one())
         connection.commit()
         connection.exec_driver_sql("PRAGMA foreign_keys = OFF")
         connection.commit()

@@ -63,6 +63,59 @@ export function createWorkspaceFileActions(context: WorkspaceFileActionContext) 
         expires_seconds: 120,
       });
     },
+    async presentWorkspaceFile(path: string) {
+      const current = scope();
+      if (current.task.target_version_id === null) throw new Error("Version is unavailable");
+      return context.client.files.present({
+        workspace_id: current.task.workspace_id,
+        version_id: current.task.target_version_id,
+        path,
+        requested_mode: "auto",
+      });
+    },
+    async listFileAnnotations(presentation: Awaited<ReturnType<WorkspaceClient["files"]["present"]>>) {
+      const value = presentation.presentation;
+      if (value === null) return { document: null };
+      return context.client.annotations.list({
+        workspace_id: value.workspace_id,
+        version_id: value.version_id,
+        file_set_id: value.file_set_id,
+      });
+    },
+    async updateFileAnnotations(
+      presentation: Awaited<ReturnType<WorkspaceClient["files"]["present"]>>,
+      current: Awaited<ReturnType<WorkspaceClient["annotations"]["update"]>> | null,
+      annotations: Array<Record<string, unknown>>,
+    ) {
+      const value = presentation.presentation;
+      if (value === null) throw new Error("Presentation is not ready");
+      return context.client.annotations.update({
+        workspace_id: value.workspace_id,
+        version_id: value.version_id,
+        file_set_id: value.file_set_id,
+        source_hash: value.source_hash,
+        expected_revision: current?.revision ?? 0,
+        annotations,
+      });
+    },
+    async createTextSelection(
+      presentation: Awaited<ReturnType<WorkspaceClient["files"]["present"]>>,
+      start: number,
+      end: number,
+    ) {
+      const value = presentation.presentation;
+      if (value === null) throw new Error("Presentation is not ready");
+      return context.client.selections.create({
+        workspace_id: value.workspace_id,
+        version_id: value.version_id,
+        file_set_id: value.file_set_id,
+        source_path: value.source_path,
+        source_hash: value.source_hash,
+        viewer_kind: "text",
+        locator_kind: "text_range",
+        locator: { start, end },
+      });
+    },
     async revealWorkspaceFile(path: string) {
       const current = scope();
       await context.runAction(() =>

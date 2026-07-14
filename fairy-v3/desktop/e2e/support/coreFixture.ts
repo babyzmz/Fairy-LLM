@@ -111,6 +111,11 @@ async function installCoreFixture(page: Page) {
         resumedMessage: "0198f4de-0114-7000-8000-000000000018",
         checkpoint: "0198f4de-0114-7000-8000-000000000019",
         scratchVersion: "0198f4de-0114-7000-8000-000000000021",
+        fileSet: "0198f4de-0114-7000-8000-000000000022",
+        renderJob: "0198f4de-0114-7000-8000-000000000023",
+        presentation: "0198f4de-0114-7000-8000-000000000024",
+        annotation: "0198f4de-0114-7000-8000-000000000025",
+        selection: "0198f4de-0114-7000-8000-000000000026",
       };
       const timestamp = "2026-07-11T00:00:00Z";
       const initialTaskStatus =
@@ -461,6 +466,41 @@ async function installCoreFixture(page: Page) {
         updated_at: timestamp,
       };
       let permissionConflictPending = scenarios.has("permissionConflict");
+      let annotationDocument: Record<string, unknown> | null = null;
+      const filePresentation = {
+        job: {
+          id: id.renderJob,
+          workspace_id: id.project,
+          version_id: id.version,
+          file_set_id: id.fileSet,
+          source_path: "src/main.ts",
+          source_hash: "fixture-main",
+          requested_mode: "native",
+          renderer_pack_id: null,
+          renderer_pack_version: null,
+          cache_key: "fixture-presentation-cache",
+          status: "ready",
+          progress: 1,
+          public_summary: "Native text presentation ready",
+          error_code: null,
+          created_at: timestamp,
+          updated_at: timestamp,
+        },
+        presentation: {
+          id: id.presentation,
+          workspace_id: id.project,
+          version_id: id.version,
+          file_set_id: id.fileSet,
+          source_path: "src/main.ts",
+          source_hash: "fixture-main",
+          renderer: "native.text",
+          fidelity: "native",
+          status: "ready",
+          capabilities: ["select", "annotate"],
+          assets: [],
+          created_at: timestamp,
+        },
+      };
       const results: Record<string, unknown> = {
         health: { status: "ok", service: "fairy-core", protocol: "core-service-v1" },
         "projects.list": { items: [project], next_cursor: null },
@@ -508,6 +548,8 @@ async function installCoreFixture(page: Page) {
           text: "console.log('Fairy');",
           content_base64: null,
         },
+        "files.present": filePresentation,
+        "annotations.list": { document: null },
         "previews.resolve": { task, runtime, preview },
         "runtimes.health": {
           executor: {
@@ -875,6 +917,38 @@ async function installCoreFixture(page: Page) {
                     ...(results["workspaces.files.list"] as Record<string, unknown>),
                     workspace_id: request.params.workspace_id,
                     version_id: request.params.version_id,
+                  }
+              : request.method === "files.present"
+                ? filePresentation
+              : request.method === "annotations.list"
+                ? { document: annotationDocument }
+              : request.method === "annotations.update"
+                ? (() => {
+                    annotationDocument = {
+                      id: id.annotation,
+                      workspace_id: request.params.workspace_id,
+                      version_id: request.params.version_id,
+                      file_set_id: request.params.file_set_id,
+                      source_hash: request.params.source_hash,
+                      annotations: request.params.annotations,
+                      revision: Number(request.params.expected_revision) + 1,
+                      created_at: timestamp,
+                      updated_at: timestamp,
+                    };
+                    return annotationDocument;
+                  })()
+              : request.method === "selections.create"
+                ? {
+                    id: id.selection,
+                    workspace_id: request.params.workspace_id,
+                    version_id: request.params.version_id,
+                    file_set_id: request.params.file_set_id,
+                    source_path: request.params.source_path,
+                    source_hash: request.params.source_hash,
+                    viewer_kind: request.params.viewer_kind,
+                    locator_kind: request.params.locator_kind,
+                    locator: request.params.locator,
+                    created_at: timestamp,
                   }
               : request.method === "previews.resolve"
                 ? request.params.task_id === id.scratchTask

@@ -60,6 +60,11 @@ import type {
   FileRenderJobCancelInput,
   RendererPackInstallInput,
   RendererPackRemoveInput,
+  AnnotationListInput,
+  AnnotationUpdateInput,
+  SelectionCreateInput,
+  EditRecipeCreateInput,
+  EditRecipeUpdateInput,
 } from "./contracts";
 
 export const DEFAULT_EVENT_POLL_MS = 25;
@@ -203,6 +208,28 @@ export class CoreClient {
       this.transport.call("renderer_packs.update", input),
     remove: (input: RendererPackRemoveInput) =>
       this.transport.call("renderer_packs.remove", input),
+  };
+
+  readonly annotations = {
+    list: (input: AnnotationListInput) => this.transport.call("annotations.list", input),
+    update: (input: AnnotationUpdateInput) =>
+      this.transport.call("annotations.update", input),
+  };
+
+  readonly selections = {
+    create: (input: SelectionCreateInput) =>
+      this.transport.call("selections.create", input),
+  };
+
+  readonly editRecipes = {
+    create: (input: EditRecipeCreateInput) =>
+      this.transport.call("edit_recipes.create", input),
+    update: (input: EditRecipeUpdateInput) =>
+      this.transport.call("edit_recipes.update", input),
+    apply: (recipeId: string) =>
+      this.transport.call("edit_recipes.apply", { recipe_id: recipeId }),
+    discard: (recipeId: string) =>
+      this.transport.call("edit_recipes.discard", { recipe_id: recipeId }),
   };
 
   readonly fileSets = {

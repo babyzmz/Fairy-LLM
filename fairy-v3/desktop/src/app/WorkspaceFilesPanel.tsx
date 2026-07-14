@@ -9,6 +9,8 @@ import {
   Trash2,
   Upload,
   Pencil,
+  MessageSquarePlus,
+  Quote,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -17,6 +19,9 @@ import type {
   WorkspaceExport,
   WorkspaceFile,
   WorkspaceFileContent,
+  FilePresentationResult,
+  AnnotationDocument,
+  SelectionReference,
 } from "../core/client";
 
 interface WorkspaceFilesPanelProps {
@@ -24,6 +29,18 @@ interface WorkspaceFilesPanelProps {
   loading: boolean;
   onRead(path: string): Promise<WorkspaceFileContent>;
   onOpenStream(path: string): Promise<FileReadSession>;
+  onPresent(path: string): Promise<FilePresentationResult>;
+  onListAnnotations(presentation: FilePresentationResult): Promise<{ document: AnnotationDocument | null }>;
+  onUpdateAnnotations(
+    presentation: FilePresentationResult,
+    current: AnnotationDocument | null,
+    annotations: Array<Record<string, unknown>>,
+  ): Promise<AnnotationDocument>;
+  onCreateTextSelection(
+    presentation: FilePresentationResult,
+    start: number,
+    end: number,
+  ): Promise<SelectionReference>;
   onReveal(path: string): Promise<void>;
   onRefresh(): Promise<void>;
   onUpload(files: Array<{ path: string; contentBase64: string }>): Promise<void>;
@@ -37,6 +54,10 @@ export function WorkspaceFilesPanel({
   loading,
   onRead,
   onOpenStream,
+  onPresent,
+  onListAnnotations,
+  onUpdateAnnotations,
+  onCreateTextSelection,
   onReveal,
   onRefresh,
   onUpload,
@@ -45,10 +66,15 @@ export function WorkspaceFilesPanel({
   onExport,
 }: WorkspaceFilesPanelProps) {
   const uploadRef = useRef<HTMLInputElement>(null);
+  const selectionRequestRef = useRef(0);
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [content, setContent] = useState<WorkspaceFileContent | null>(null);
   const [readSession, setReadSession] = useState<FileReadSession | null>(null);
+  const [presentation, setPresentation] = useState<FilePresentationResult | null>(null);
+  const [annotations, setAnnotations] = useState<AnnotationDocument | null>(null);
+  const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
+  const [selectionSaved, setSelectionSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const visibleFiles = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -62,21 +88,39 @@ export function WorkspaceFilesPanel({
       setSelectedPath(null);
       setContent(null);
       setReadSession(null);
+      setPresentation(null);
+      setAnnotations(null);
+      setSelection(null);
     }
   }, [files, selectedPath]);
 
   const selectFile = async (path: string) => {
+    const request = ++selectionRequestRef.current;
     setSelectedPath(path);
     setContent(null);
     setReadSession(null);
+    setPresentation(null);
+    setAnnotations(null);
+    setSelection(null);
+    setSelectionSaved(false);
     setError(null);
     try {
-      const nextContent = await onRead(path);
+      const [nextContent, nextPresentation] = await Promise.all([onRead(path), onPresent(path)]);
+      if (request !== selectionRequestRef.current) return;
       setContent(nextContent);
+      setPresentation(nextPresentation);
+      if (nextPresentation.presentation !== null) {
+        const nextAnnotations = await onListAnnotations(nextPresentation);
+        if (request !== selectionRequestRef.current) return;
+        setAnnotations(nextAnnotations.document);
+      }
       if (nextContent.stream_required) {
-        setReadSession(await onOpenStream(path));
+        const nextSession = await onOpenStream(path);
+        if (request !== selectionRequestRef.current) return;
+        setReadSession(nextSession);
       }
     } catch (readError) {
+      if (request !== selectionRequestRef.current) return;
       setError(readError instanceof Error ? readError.message : "File could not be read");
     }
   };
@@ -217,10 +261,53 @@ export function WorkspaceFilesPanel({
                   </button>
                 </div>
               </header>
-              <FileContent content={content} readSession={readSession} />
+              <FileContent
+                content={content}
+                readSession={readSession}
+                presentation={presentation}
+                onTextSelection={(value) => {
+                  setSelection(value);
+                  setSelectionSaved(false);
+                }}
+              />
             </>
           )}
         </section>
+
+        <StudioProperties
+          content={content}
+          presentation={presentation}
+          annotations={annotations}
+          selection={selection}
+          selectionSaved={selectionSaved}
+          onAddAnnotation={async (body) => {
+            if (presentation === null) return;
+            const next = [
+              ...(annotations?.annotations ?? []),
+              {
+                id: crypto.randomUUID(),
+                body,
+                created_at: new Date().toISOString(),
+                ...(selection === null ? {} : { locator: { kind: "text_range", ...selection } }),
+              },
+            ];
+            try {
+              setAnnotations(await onUpdateAnnotations(presentation, annotations, next));
+            } catch (annotationError) {
+              setError(annotationError instanceof Error ? annotationError.message : "Annotation could not be saved");
+              throw annotationError;
+            }
+          }}
+          onAttachSelection={async () => {
+            if (presentation === null || selection === null) return;
+            try {
+              await onCreateTextSelection(presentation, selection.start, selection.end);
+              setSelectionSaved(true);
+            } catch (selectionError) {
+              setError(selectionError instanceof Error ? selectionError.message : "Selection could not be saved");
+            }
+          }}
+        />
       </div>
     </div>
   );
@@ -239,14 +326,26 @@ function FileKindIcon({ file }: { file: WorkspaceFile }) {
 function FileContent({
   content,
   readSession,
+  presentation,
+  onTextSelection,
 }: {
   content: WorkspaceFileContent;
   readSession: FileReadSession | null;
+  presentation: FilePresentationResult | null;
+  onTextSelection(value: { start: number; end: number } | null): void;
 }) {
-  if (content.text != null) {
-    return <pre className="workspace-file-text"><code>{content.text}</code></pre>;
+  if (presentation?.job.status === "waiting_for_pack") {
+    return (
+      <div className="workspace-file-placeholder">
+        <File size={22} />
+        <span>{presentation.job.public_summary ?? "Renderer Pack required"}</span>
+      </div>
+    );
   }
-  if (readSession !== null && content.media_type.startsWith("image/")) {
+  if (content.text != null) {
+    return <TextViewer text={content.text} onSelection={onTextSelection} />;
+  }
+  if (readSession !== null && /^image\/(png|jpeg|gif|webp|avif)$/.test(content.media_type)) {
     return (
       <div className="workspace-file-image">
         <img
@@ -256,7 +355,98 @@ function FileContent({
       </div>
     );
   }
+  if (readSession !== null && content.media_type.startsWith("audio/")) {
+    return <div className="workspace-file-media"><audio controls src={readSession.url} /></div>;
+  }
+  if (readSession !== null && content.media_type.startsWith("video/")) {
+    return <div className="workspace-file-media"><video controls src={readSession.url} /></div>;
+  }
+  if (readSession !== null && content.media_type === "application/pdf") {
+    return <iframe className="workspace-file-pdf" src={readSession.url} title={content.file.path} />;
+  }
   return <div className="workspace-file-placeholder"><File size={22} /><span>Binary preview unavailable</span></div>;
+}
+
+function TextViewer({ text, onSelection }: { text: string; onSelection(value: { start: number; end: number } | null): void }) {
+  const codeRef = useRef<HTMLElement>(null);
+  return (
+    <pre className="workspace-file-text" onMouseUp={() => {
+      const root = codeRef.current;
+      const selected = window.getSelection();
+      if (root === null || selected === null || selected.rangeCount === 0 || selected.isCollapsed) {
+        onSelection(null);
+        return;
+      }
+      const range = selected.getRangeAt(0);
+      if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) {
+        onSelection(null);
+        return;
+      }
+      const prefix = document.createRange();
+      prefix.selectNodeContents(root);
+      prefix.setEnd(range.startContainer, range.startOffset);
+      const start = prefix.toString().length;
+      onSelection({ start, end: start + range.toString().length });
+    }}><code ref={codeRef}>{text}</code></pre>
+  );
+}
+
+function StudioProperties({
+  content,
+  presentation,
+  annotations,
+  selection,
+  selectionSaved,
+  onAddAnnotation,
+  onAttachSelection,
+}: {
+  content: WorkspaceFileContent | null;
+  presentation: FilePresentationResult | null;
+  annotations: AnnotationDocument | null;
+  selection: { start: number; end: number } | null;
+  selectionSaved: boolean;
+  onAddAnnotation(body: string): Promise<void>;
+  onAttachSelection(): Promise<void>;
+}) {
+  const [note, setNote] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  if (content === null) return <aside className="studio-properties" aria-label="File properties" />;
+  return (
+    <aside className="studio-properties" aria-label="File properties">
+      <section>
+        <h3>Properties</h3>
+        <dl>
+          <dt>Type</dt><dd>{content.media_type}</dd>
+          <dt>Size</dt><dd>{formatBytes(content.file.byte_length)}</dd>
+          <dt>Fidelity</dt><dd>{presentation?.presentation?.fidelity ?? "Pending"}</dd>
+          <dt>Status</dt><dd>{presentation?.job.status ?? "Probing"}</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>Selection</h3>
+        <button type="button" disabled={selection === null || selectionSaved} onClick={() => void onAttachSelection()}>
+          <Quote size={14} /> {selectionSaved ? "Selection saved" : "Save selection"}
+        </button>
+      </section>
+      <section className="studio-annotations">
+        <h3>Annotations</h3>
+        <div className="studio-note-list">
+          {(annotations?.annotations ?? []).map((item, index) => (
+            <p key={String(item.id ?? index)}>{String(item.body ?? "Note")}</p>
+          ))}
+        </div>
+        <textarea value={note} maxLength={2000} placeholder="Add a note" onChange={(event) => setNote(event.target.value)} />
+        <button type="button" disabled={note.trim().length === 0 || savingNote} onClick={() => {
+          const value = note.trim();
+          setSavingNote(true);
+          void onAddAnnotation(value)
+            .then(() => setNote(""))
+            .catch(() => undefined)
+            .finally(() => setSavingNote(false));
+        }}><MessageSquarePlus size={14} /> Add note</button>
+      </section>
+    </aside>
+  );
 }
 
 async function downloadContent(

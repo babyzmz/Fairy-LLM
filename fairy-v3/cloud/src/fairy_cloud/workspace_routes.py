@@ -18,6 +18,18 @@ from fairy_core.contracts.files import (
     RendererPackRemoveInput,
     RendererPackRemoveResultModel,
 )
+from fairy_core.contracts.presentation import (
+    AnnotationDocumentModel,
+    AnnotationListInput,
+    AnnotationResultModel,
+    AnnotationUpdateInput,
+    EditRecipeCreateInput,
+    EditRecipeIdInput,
+    EditRecipeModel,
+    EditRecipeUpdateInput,
+    SelectionCreateInput,
+    SelectionReferenceModel,
+)
 from fairy_core.contracts.workspaces import (
     FileReadSessionModel,
     WorkspaceExportInput,
@@ -151,6 +163,56 @@ def install_workspace_routes(
     )
     def remove_renderer_pack(request: RendererPackRemoveInput) -> dict[str, Any]:
         return invoke("renderer_packs.remove", request.model_dump(mode="json"))
+
+    @router.post(
+        "/annotations/list", operation_id="annotations.list", response_model=AnnotationResultModel
+    )
+    def list_annotations(request: AnnotationListInput) -> dict[str, Any]:
+        return invoke("annotations.list", request.model_dump(mode="json"))
+
+    @router.post(
+        "/annotations/update",
+        operation_id="annotations.update",
+        response_model=AnnotationDocumentModel,
+    )
+    def update_annotations(request: AnnotationUpdateInput) -> dict[str, Any]:
+        return invoke("annotations.update", request.model_dump(mode="json"))
+
+    @router.post(
+        "/selections",
+        operation_id="selections.create",
+        response_model=SelectionReferenceModel,
+    )
+    def create_selection(request: SelectionCreateInput) -> dict[str, Any]:
+        return invoke("selections.create", request.model_dump(mode="json"))
+
+    @router.post(
+        "/edit-recipes", operation_id="edit_recipes.create", response_model=EditRecipeModel
+    )
+    def create_edit_recipe(request: EditRecipeCreateInput) -> dict[str, Any]:
+        return invoke("edit_recipes.create", request.model_dump(mode="json"))
+
+    @router.post(
+        "/edit-recipes/update",
+        operation_id="edit_recipes.update",
+        response_model=EditRecipeModel,
+    )
+    def update_edit_recipe(request: EditRecipeUpdateInput) -> dict[str, Any]:
+        return invoke("edit_recipes.update", request.model_dump(mode="json"))
+
+    @router.post(
+        "/edit-recipes/apply", operation_id="edit_recipes.apply", response_model=EditRecipeModel
+    )
+    def apply_edit_recipe(request: EditRecipeIdInput) -> dict[str, Any]:
+        return invoke("edit_recipes.apply", request.model_dump(mode="json"))
+
+    @router.post(
+        "/edit-recipes/discard",
+        operation_id="edit_recipes.discard",
+        response_model=EditRecipeModel,
+    )
+    def discard_edit_recipe(request: EditRecipeIdInput) -> dict[str, Any]:
+        return invoke("edit_recipes.discard", request.model_dump(mode="json"))
 
     @router.post(
         "/file-sets/resolve",

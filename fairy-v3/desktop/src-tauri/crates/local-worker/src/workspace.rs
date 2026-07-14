@@ -18,6 +18,19 @@ pub struct VersionWorkspace {
     pub root: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ImportAssetRequest<'a> {
+    pub(crate) project_id: &'a str,
+    pub(crate) version_id: &'a str,
+    pub(crate) relative_path: &'a str,
+    pub(crate) source: &'a Path,
+    pub(crate) operation: &'a str,
+    pub(crate) expected_hash: Option<&'a str>,
+    pub(crate) expected_target_hash: Option<&'a str>,
+    pub(crate) max_file_bytes: u64,
+    pub(crate) max_workspace_bytes: u64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct ChangesetJournal {
     schema_version: u32,
@@ -250,19 +263,22 @@ impl WorkspaceManager {
         self.write_file_unlocked(project_id, version_id, relative_path, content)
     }
 
-    pub fn import_asset(
+    pub(crate) fn import_asset(
         &self,
-        project_id: &str,
-        version_id: &str,
-        relative_path: &str,
-        source: &Path,
-        operation: &str,
-        expected_hash: Option<&str>,
-        expected_target_hash: Option<&str>,
-        max_file_bytes: u64,
-        max_workspace_bytes: u64,
+        request: ImportAssetRequest<'_>,
     ) -> Result<WorkspaceObject, WorkerError> {
         let _operation = self.lock()?;
+        let ImportAssetRequest {
+            project_id,
+            version_id,
+            relative_path,
+            source,
+            operation,
+            expected_hash,
+            expected_target_hash,
+            max_file_bytes,
+            max_workspace_bytes,
+        } = request;
         validate_identifier(project_id)?;
         validate_identifier(version_id)?;
         let version_root = self.version_root(project_id, version_id).canonicalize()?;

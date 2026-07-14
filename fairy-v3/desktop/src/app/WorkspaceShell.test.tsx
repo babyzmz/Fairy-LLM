@@ -50,6 +50,40 @@ describe("WorkspaceShell", () => {
       text: "console.log('Fairy');",
       stream_required: false,
     }));
+    model.presentWorkspaceFile = vi.fn(async () => ({
+      job: {
+        id: "019f566f-f8b4-7000-8000-000000000031",
+        workspace_id: workspaceTask().workspace_id,
+        version_id: workspaceTask().target_version_id!,
+        file_set_id: "019f566f-f8b4-7000-8000-000000000032",
+        source_path: file.path,
+        source_hash: file.content_hash.padEnd(64, "0").slice(0, 64),
+        cache_key: "a".repeat(64),
+        requested_mode: "auto",
+        renderer_pack_id: null,
+        renderer_pack_version: null,
+        status: "ready",
+        progress: 100,
+        error_code: null,
+        public_summary: "Ready",
+        created_at: "2026-07-14T00:00:00Z",
+        updated_at: "2026-07-14T00:00:00Z",
+      },
+      presentation: {
+        id: "019f566f-f8b4-7000-8000-000000000033",
+        workspace_id: workspaceTask().workspace_id,
+        version_id: workspaceTask().target_version_id!,
+        file_set_id: "019f566f-f8b4-7000-8000-000000000032",
+        source_path: file.path,
+        source_hash: file.content_hash.padEnd(64, "0").slice(0, 64),
+        renderer: "browser-native",
+        fidelity: "native",
+        status: "ready",
+        capabilities: ["search", "select", "copy"],
+        assets: [],
+        created_at: "2026-07-14T00:00:00Z",
+      },
+    }));
 
     render(<WorkspaceShell model={model} />);
     fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
@@ -263,6 +297,16 @@ function workspaceModel(): WorkspaceModel {
       throw new Error("not used");
     }),
     openWorkspaceFileStream: vi.fn(async () => {
+      throw new Error("not used");
+    }),
+    presentWorkspaceFile: vi.fn(async () => {
+      throw new Error("not used");
+    }),
+    listFileAnnotations: vi.fn(async () => ({ document: null })),
+    updateFileAnnotations: vi.fn(async () => {
+      throw new Error("not used");
+    }),
+    createTextSelection: vi.fn(async () => {
       throw new Error("not used");
     }),
     revealWorkspaceFile: vi.fn(async () => undefined),

@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/v1/annotations/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** List Annotations */
+        post: operations["annotations.list"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/annotations/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Update Annotations */
+        post: operations["annotations.update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/approvals": {
         parameters: {
             query?: never;
@@ -341,6 +375,74 @@ export interface paths {
         put?: never;
         /** Delete Document */
         post: operations["documents.delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/edit-recipes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Edit Recipe */
+        post: operations["edit_recipes.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/edit-recipes/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply Edit Recipe */
+        post: operations["edit_recipes.apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/edit-recipes/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discard Edit Recipe */
+        post: operations["edit_recipes.discard"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/edit-recipes/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Update Edit Recipe */
+        post: operations["edit_recipes.update"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1065,6 +1167,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/selections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Selection */
+        post: operations["selections.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/skills": {
         parameters: {
             query?: never;
@@ -1513,6 +1632,95 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AnnotationDocumentModel */
+        AnnotationDocumentModel: {
+            /** Annotations */
+            annotations: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * File Set Id
+             * Format: uuid
+             */
+            file_set_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Revision */
+            revision: number;
+            /** Source Hash */
+            source_hash: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** AnnotationListInput */
+        AnnotationListInput: {
+            /**
+             * File Set Id
+             * Format: uuid
+             */
+            file_set_id: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** AnnotationResultModel */
+        AnnotationResultModel: {
+            document: components["schemas"]["AnnotationDocumentModel"] | null;
+        };
+        /** AnnotationUpdateInput */
+        AnnotationUpdateInput: {
+            /** Annotations */
+            annotations: {
+                [key: string]: unknown;
+            }[];
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * File Set Id
+             * Format: uuid
+             */
+            file_set_id: string;
+            /** Source Hash */
+            source_hash: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
         /**
          * ApprovalDecision
          * @enum {string}
@@ -2181,6 +2389,99 @@ export interface components {
          * @enum {string}
          */
         DocumentVisibility: "conversation" | "project";
+        /** EditRecipeCreateInput */
+        EditRecipeCreateInput: {
+            /**
+             * File Set Id
+             * Format: uuid
+             */
+            file_set_id: string;
+            /** Kind */
+            kind: string;
+            /** Operations */
+            operations: {
+                [key: string]: unknown;
+            }[];
+            /** Source Hash */
+            source_hash: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** EditRecipeIdInput */
+        EditRecipeIdInput: {
+            /**
+             * Recipe Id
+             * Format: uuid
+             */
+            recipe_id: string;
+        };
+        /** EditRecipeModel */
+        EditRecipeModel: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * File Set Id
+             * Format: uuid
+             */
+            file_set_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Operations */
+            operations: {
+                [key: string]: unknown;
+            }[];
+            /** Revision */
+            revision: number;
+            /** Source Hash */
+            source_hash: string;
+            /** Status */
+            status: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** EditRecipeUpdateInput */
+        EditRecipeUpdateInput: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Operations */
+            operations: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Recipe Id
+             * Format: uuid
+             */
+            recipe_id: string;
+        };
         /** EventEnvelopeModel */
         EventEnvelopeModel: {
             /**
@@ -4058,6 +4359,76 @@ export interface components {
             workspace_id: string;
             workspace_type: components["schemas"]["WorkspaceType"];
         };
+        /** SelectionCreateInput */
+        SelectionCreateInput: {
+            /**
+             * File Set Id
+             * Format: uuid
+             */
+            file_set_id: string;
+            /** Locator */
+            locator: {
+                [key: string]: unknown;
+            };
+            /** Locator Kind */
+            locator_kind: string;
+            /** Source Hash */
+            source_hash: string;
+            /** Source Path */
+            source_path: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /** Viewer Kind */
+            viewer_kind: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** SelectionReferenceModel */
+        SelectionReferenceModel: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * File Set Id
+             * Format: uuid
+             */
+            file_set_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Locator */
+            locator: {
+                [key: string]: unknown;
+            };
+            /** Locator Kind */
+            locator_kind: string;
+            /** Source Hash */
+            source_hash: string;
+            /** Source Path */
+            source_path: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /** Viewer Kind */
+            viewer_kind: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
         /**
          * SideEffect
          * @enum {string}
@@ -4812,6 +5183,76 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "annotations.list": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnnotationListInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnotationResultModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "annotations.update": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnnotationUpdateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnnotationDocumentModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "approvals.list": {
         parameters: {
             query?: {
@@ -5616,6 +6057,146 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DocumentContextModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "edit_recipes.create": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditRecipeCreateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditRecipeModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "edit_recipes.apply": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditRecipeIdInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditRecipeModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "edit_recipes.discard": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditRecipeIdInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditRecipeModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "edit_recipes.update": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditRecipeUpdateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditRecipeModel"];
                 };
             };
             /** @description Validation Error */
@@ -7188,6 +7769,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuntimeModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "selections.create": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelectionCreateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SelectionReferenceModel"];
                 };
             };
             /** @description Validation Error */

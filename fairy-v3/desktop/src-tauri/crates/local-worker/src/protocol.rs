@@ -301,17 +301,20 @@ fn execute_method(
         }
         "workspace.import_asset" => {
             let params: ImportAssetParams = parse_params(params)?;
-            let workspace_object = worker.workspace.import_asset(
-                &params.project_id,
-                &params.version_id,
-                &params.relative_path,
-                &params.source,
-                &params.operation,
-                params.expected_hash.as_deref(),
-                params.expected_target_hash.as_deref(),
-                params.max_file_bytes,
-                params.max_workspace_bytes,
-            )?;
+            let workspace_object =
+                worker
+                    .workspace
+                    .import_asset(crate::workspace::ImportAssetRequest {
+                        project_id: &params.project_id,
+                        version_id: &params.version_id,
+                        relative_path: &params.relative_path,
+                        source: &params.source,
+                        operation: &params.operation,
+                        expected_hash: params.expected_hash.as_deref(),
+                        expected_target_hash: params.expected_target_hash.as_deref(),
+                        max_file_bytes: params.max_file_bytes,
+                        max_workspace_bytes: params.max_workspace_bytes,
+                    })?;
             Ok(serde_json::to_value(workspace_object).expect("serializable Workspace object"))
         }
         "workspace.open_read_stream" => {

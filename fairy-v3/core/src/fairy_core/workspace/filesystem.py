@@ -272,9 +272,7 @@ class FileSystemWorkspaceProvisioner:
                 target_hash = hashlib.sha256(target.read_bytes()).hexdigest()
                 if target_hash != mutation.expected_target_hash:
                     raise ValueError("AssetMutation target digest changed")
-            workspace_bytes = sum(
-                path.stat().st_size for path in root.rglob("*") if path.is_file()
-            )
+            workspace_bytes = sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
             object_store = FileSystemWorkspaceObjectStore(
                 self.managed_root,
                 policy=WorkspaceStoragePolicy(

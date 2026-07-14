@@ -67,12 +67,15 @@ class WorkspaceStoragePolicy:
     min_free_bytes: int = DEFAULT_MIN_FREE_BYTES
 
     def __post_init__(self) -> None:
-        if min(
-            self.max_file_bytes,
-            self.max_workspace_bytes,
-            self.derivative_cache_bytes,
-            self.min_free_bytes,
-        ) <= 0:
+        if (
+            min(
+                self.max_file_bytes,
+                self.max_workspace_bytes,
+                self.derivative_cache_bytes,
+                self.min_free_bytes,
+            )
+            <= 0
+        ):
             raise ValueError("Workspace storage limits must be positive")
         if self.max_file_bytes > self.max_workspace_bytes:
             raise ValueError("per-file limit cannot exceed Workspace limit")

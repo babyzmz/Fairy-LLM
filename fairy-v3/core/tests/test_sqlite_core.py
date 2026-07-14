@@ -136,15 +136,12 @@ def test_runtime_workspace_binding_rebuilds_referenced_runtime(tmp_path: Path) -
             "FOREIGN KEY (tenant_id, runtime_id) "
             "REFERENCES core_runtime_sessions (tenant_id, id) ON DELETE CASCADE)"
         )
-        connection.exec_driver_sql(
-            "INSERT INTO core_workspaces VALUES ('local', 'workspace-1')"
-        )
+        connection.exec_driver_sql("INSERT INTO core_workspaces VALUES ('local', 'workspace-1')")
         connection.exec_driver_sql(
             "INSERT INTO core_tasks VALUES ('local', 'task-1', 'workspace-1')"
         )
         connection.exec_driver_sql(
-            "INSERT INTO core_runtime_sessions VALUES "
-            "('local', 'runtime-1', 'task-1', 'version-1')"
+            "INSERT INTO core_runtime_sessions VALUES ('local', 'runtime-1', 'task-1', 'version-1')"
         )
         connection.exec_driver_sql(
             "INSERT INTO core_preview_sessions VALUES "
@@ -154,12 +151,18 @@ def test_runtime_workspace_binding_rebuilds_referenced_runtime(tmp_path: Path) -
     migrate_runtime_workspace_binding(engine)
 
     with engine.connect() as connection:
-        assert connection.execute(
-            text("SELECT workspace_id FROM core_runtime_sessions WHERE id = 'runtime-1'")
-        ).scalar_one() == "workspace-1"
-        assert connection.execute(
-            text("SELECT workspace_id FROM core_preview_sessions WHERE id = 'preview-1'")
-        ).scalar_one() == "workspace-1"
+        assert (
+            connection.execute(
+                text("SELECT workspace_id FROM core_runtime_sessions WHERE id = 'runtime-1'")
+            ).scalar_one()
+            == "workspace-1"
+        )
+        assert (
+            connection.execute(
+                text("SELECT workspace_id FROM core_preview_sessions WHERE id = 'preview-1'")
+            ).scalar_one()
+            == "workspace-1"
+        )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
         assert connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall() == []
     engine.dispose()

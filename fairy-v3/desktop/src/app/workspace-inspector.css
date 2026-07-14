@@ -59,7 +59,8 @@
 .workspace-files,
 .workspace-files-body,
 .workspace-file-tree,
-.workspace-file-viewer {
+.workspace-file-viewer,
+.studio-properties {
   min-width: 0;
   min-height: 0;
 }
@@ -108,7 +109,7 @@
 
 .workspace-files-body {
   display: grid;
-  grid-template-columns: minmax(150px, 34%) minmax(0, 66%);
+  grid-template-columns: minmax(150px, 24%) minmax(260px, 1fr) minmax(180px, 26%);
   overflow: hidden;
 }
 
@@ -196,6 +197,45 @@
 
 .workspace-file-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
 
+.workspace-file-media {
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  overflow: auto;
+  background: #111212;
+}
+
+.workspace-file-media audio { width: min(100%, 520px); }
+.workspace-file-media video { max-width: 100%; max-height: 100%; }
+.workspace-file-pdf { width: 100%; height: 100%; border: 0; background: #e8e9e7; }
+
+.studio-properties {
+  overflow: auto;
+  border-left: 1px solid #353736;
+  background: #191b1a;
+}
+
+.studio-properties section { padding: 12px; border-bottom: 1px solid #303330; }
+.studio-properties h3 { margin: 0 0 10px; font-size: 12px; color: #dce6e1; }
+.studio-properties dl { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 7px; margin: 0; }
+.studio-properties dt { color: #87908b; font-size: 11px; }
+.studio-properties dd { margin: 0; overflow-wrap: anywhere; color: #c7cfcb; font-size: 11px; }
+.studio-properties button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #414744;
+  color: #d7e2dd;
+  background: #242826;
+}
+.studio-properties button:disabled { opacity: 0.45; }
+.studio-note-list { display: grid; gap: 6px; margin-bottom: 8px; }
+.studio-note-list p { margin: 0; padding: 7px; border-left: 2px solid #d2a95d; background: #232522; color: #cbd3cf; font-size: 11px; }
+.studio-annotations textarea { width: 100%; min-height: 64px; resize: vertical; border: 1px solid #414744; color: #e5ece8; background: #111312; }
+.studio-annotations button { margin-top: 7px; }
+
 .workspace-files-empty,
 .workspace-file-placeholder,
 .workspace-file-error {
@@ -222,5 +262,9 @@
     min-height: 360px;
     border-top: 1px solid #353736;
     border-left: 0;
+  }
+
+  .workspace-files-body {
+    grid-template-columns: minmax(130px, 22%) minmax(240px, 1fr) minmax(170px, 25%);
   }
 }

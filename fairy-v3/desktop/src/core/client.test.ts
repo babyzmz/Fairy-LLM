@@ -118,6 +118,33 @@ describe("CoreClient", () => {
       version: "1",
       user_confirmed: true,
     });
+    const presentationScope = {
+      workspace_id: id,
+      version_id: id,
+      file_set_id: id,
+      source_hash: "a".repeat(64),
+    };
+    await client.annotations.list(presentationScope);
+    await client.annotations.update({
+      ...presentationScope,
+      expected_revision: 0,
+      annotations: [],
+    });
+    await client.selections.create({
+      ...presentationScope,
+      source_path: "README.md",
+      viewer_kind: "text",
+      locator_kind: "text_range",
+      locator: { start: 0, end: 1 },
+    });
+    await client.editRecipes.create({
+      ...presentationScope,
+      kind: "text_patch",
+      operations: [],
+    });
+    await client.editRecipes.update({ recipe_id: id, expected_revision: 1, operations: [] });
+    await client.editRecipes.apply(id);
+    await client.editRecipes.discard(id);
     await client.workspaces.mutateFiles({
       workspace_id: id,
       conversation_id: id,
@@ -338,6 +365,13 @@ describe("CoreClient", () => {
       "renderer_packs.install",
       "renderer_packs.update",
       "renderer_packs.remove",
+      "annotations.list",
+      "annotations.update",
+      "selections.create",
+      "edit_recipes.create",
+      "edit_recipes.update",
+      "edit_recipes.apply",
+      "edit_recipes.discard",
       "workspaces.files.mutate",
       "workspaces.export",
       "runtimes.get",

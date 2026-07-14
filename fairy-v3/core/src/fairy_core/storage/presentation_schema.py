@@ -19,7 +19,7 @@ from fairy_core.storage.types import UTCDateTime
 
 def build_presentation_schema(
     *, metadata: MetaData, workspaces: Table, versions: Table
-) -> tuple[Table, Table, Table, Table]:
+) -> tuple[Table, Table, Table, Table, Table, Table, Table]:
     jobs = Table(
         "core_file_render_jobs",
         metadata,
@@ -141,6 +141,111 @@ def build_presentation_schema(
             name="ck_core_renderer_packs_payload_hash",
         ),
     )
+    annotations = Table(
+        "core_annotation_documents",
+        metadata,
+        Column("tenant_id", String(128), nullable=False),
+        Column("id", String(36), nullable=False),
+        Column("workspace_id", String(36), nullable=False),
+        Column("version_id", String(36), nullable=False),
+        Column("file_set_id", String(36), nullable=False),
+        Column("source_hash", String(64), nullable=False),
+        Column("revision", BigInteger, nullable=False),
+        Column("annotations", JSON, nullable=False),
+        Column("created_at", UTCDateTime(), nullable=False),
+        Column("updated_at", UTCDateTime(), nullable=False),
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_core_annotation_documents"),
+        UniqueConstraint(
+            "tenant_id",
+            "workspace_id",
+            "version_id",
+            "file_set_id",
+            name="uq_core_annotation_documents_file_set",
+        ),
+        CheckConstraint("revision > 0", name="ck_core_annotation_documents_revision"),
+        CheckConstraint(
+            "length(source_hash) = 64 AND source_hash = lower(source_hash)",
+            name="ck_core_annotation_documents_source_hash",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "workspace_id"],
+            [workspaces.c.tenant_id, workspaces.c.id],
+            name="fk_core_annotation_documents_workspace",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "version_id"],
+            [versions.c.tenant_id, versions.c.id],
+            name="fk_core_annotation_documents_version",
+            ondelete="CASCADE",
+        ),
+    )
+    edit_recipes = Table(
+        "core_edit_recipes",
+        metadata,
+        Column("tenant_id", String(128), nullable=False),
+        Column("id", String(36), nullable=False),
+        Column("workspace_id", String(36), nullable=False),
+        Column("version_id", String(36), nullable=False),
+        Column("file_set_id", String(36), nullable=False),
+        Column("source_hash", String(64), nullable=False),
+        Column("kind", String(64), nullable=False),
+        Column("operations", JSON, nullable=False),
+        Column("status", String(32), nullable=False),
+        Column("revision", BigInteger, nullable=False),
+        Column("created_at", UTCDateTime(), nullable=False),
+        Column("updated_at", UTCDateTime(), nullable=False),
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_core_edit_recipes"),
+        CheckConstraint("revision > 0", name="ck_core_edit_recipes_revision"),
+        CheckConstraint(
+            "length(source_hash) = 64 AND source_hash = lower(source_hash)",
+            name="ck_core_edit_recipes_source_hash",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "workspace_id"],
+            [workspaces.c.tenant_id, workspaces.c.id],
+            name="fk_core_edit_recipes_workspace",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "version_id"],
+            [versions.c.tenant_id, versions.c.id],
+            name="fk_core_edit_recipes_version",
+            ondelete="CASCADE",
+        ),
+    )
+    selections = Table(
+        "core_selection_references",
+        metadata,
+        Column("tenant_id", String(128), nullable=False),
+        Column("id", String(36), nullable=False),
+        Column("workspace_id", String(36), nullable=False),
+        Column("version_id", String(36), nullable=False),
+        Column("file_set_id", String(36), nullable=False),
+        Column("source_path", String(4096), nullable=False),
+        Column("source_hash", String(64), nullable=False),
+        Column("viewer_kind", String(64), nullable=False),
+        Column("locator_kind", String(64), nullable=False),
+        Column("locator", JSON, nullable=False),
+        Column("created_at", UTCDateTime(), nullable=False),
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_core_selection_references"),
+        CheckConstraint(
+            "length(source_hash) = 64 AND source_hash = lower(source_hash)",
+            name="ck_core_selection_references_source_hash",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "workspace_id"],
+            [workspaces.c.tenant_id, workspaces.c.id],
+            name="fk_core_selection_references_workspace",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "version_id"],
+            [versions.c.tenant_id, versions.c.id],
+            name="fk_core_selection_references_version",
+            ondelete="CASCADE",
+        ),
+    )
     Index("ix_core_file_render_jobs_status", jobs.c.tenant_id, jobs.c.status)
     Index(
         "ix_core_file_presentations_version",
@@ -148,7 +253,7 @@ def build_presentation_schema(
         presentations.c.workspace_id,
         presentations.c.version_id,
     )
-    return jobs, presentations, assets, packs
+    return jobs, presentations, assets, packs, annotations, edit_recipes, selections
 
 
 __all__ = ["build_presentation_schema"]

@@ -152,6 +152,16 @@ export type RendererPackInstallInput = Schemas["RendererPackInstallInput"];
 export type RendererPackPage = Schemas["RendererPackPageModel"];
 export type RendererPackRemoveInput = Schemas["RendererPackRemoveInput"];
 export type RendererPackRemoveResult = Schemas["RendererPackRemoveResultModel"];
+export type AnnotationDocument = Schemas["AnnotationDocumentModel"];
+export type AnnotationListInput = Schemas["AnnotationListInput"];
+export type AnnotationResult = Schemas["AnnotationResultModel"];
+export type AnnotationUpdateInput = Schemas["AnnotationUpdateInput"];
+export type SelectionCreateInput = Schemas["SelectionCreateInput"];
+export type SelectionReference = Schemas["SelectionReferenceModel"];
+export type EditRecipe = Schemas["EditRecipeModel"];
+export type EditRecipeCreateInput = Schemas["EditRecipeCreateInput"];
+export type EditRecipeUpdateInput = Schemas["EditRecipeUpdateInput"];
+export type EditRecipeIdInput = Schemas["EditRecipeIdInput"];
 export type WorkspaceFileMutateInput = Schemas["WorkspaceFileMutateInput"];
 export type WorkspaceFileMutationResult = Schemas["WorkspaceFileMutationResultModel"];
 export type WorkspaceFilePage = Schemas["WorkspaceFilePageModel"];
@@ -338,6 +348,19 @@ export interface CoreMethodMap {
     params: RendererPackRemoveInput;
     result: RendererPackRemoveResult;
   };
+  "annotations.list": { params: AnnotationListInput; result: AnnotationResult };
+  "annotations.update": {
+    params: AnnotationUpdateInput;
+    result: AnnotationDocument;
+  };
+  "selections.create": {
+    params: SelectionCreateInput;
+    result: SelectionReference;
+  };
+  "edit_recipes.create": { params: EditRecipeCreateInput; result: EditRecipe };
+  "edit_recipes.update": { params: EditRecipeUpdateInput; result: EditRecipe };
+  "edit_recipes.apply": { params: EditRecipeIdInput; result: EditRecipe };
+  "edit_recipes.discard": { params: EditRecipeIdInput; result: EditRecipe };
   "workspaces.files.mutate": {
     params: WorkspaceFileMutateInput;
     result: WorkspaceFileMutationResult;

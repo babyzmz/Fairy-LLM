@@ -442,6 +442,22 @@ function createClient(
         throw new Error("not used");
       },
     },
+    files: {
+      present: async () => {
+        throw new Error("not used");
+      },
+    },
+    annotations: {
+      list: async () => ({ document: null }),
+      update: async () => {
+        throw new Error("not used");
+      },
+    },
+    selections: {
+      create: async () => {
+        throw new Error("not used");
+      },
+    },
     runtimes: {
       health: async () => ({
         executor: {

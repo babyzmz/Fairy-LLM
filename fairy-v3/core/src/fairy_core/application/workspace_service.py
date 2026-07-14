@@ -50,9 +50,7 @@ class WorkspaceService:
             "text": None,
             "stream_required": False,
         }
-        if (
-            content is not None
-        ):
+        if content is not None:
             response["text"] = content.decode("utf-8")
         else:
             response["stream_required"] = True

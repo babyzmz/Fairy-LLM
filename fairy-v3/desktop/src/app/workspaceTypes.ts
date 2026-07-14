@@ -29,6 +29,10 @@ import type {
   WorkspaceFile,
   WorkspaceFileContent,
   FileReadSession,
+  FilePresentationResult,
+  AnnotationDocument,
+  AnnotationResult,
+  SelectionReference,
   WorkspaceExport,
 } from "../core/client";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
@@ -58,6 +62,9 @@ export interface WorkspaceClient extends AssistantTurnClient {
     CoreClient["workspaces"],
     "get" | "listFiles" | "readFile" | "openStream" | "mutateFiles" | "export"
   >;
+  files: Pick<CoreClient["files"], "present">;
+  annotations: Pick<CoreClient["annotations"], "list" | "update">;
+  selections: Pick<CoreClient["selections"], "create">;
   runtimes: Pick<CoreClient["runtimes"], "health">;
   previews: Pick<CoreClient["previews"], "resolve" | "start" | "stop">;
   capabilities: Pick<CoreClient["capabilities"], "get">;
@@ -202,6 +209,18 @@ export interface WorkspaceModel {
   openMessageLink(taskId: string, url: string): Promise<void>;
   readWorkspaceFile(path: string): Promise<WorkspaceFileContent>;
   openWorkspaceFileStream(path: string): Promise<FileReadSession>;
+  presentWorkspaceFile(path: string): Promise<FilePresentationResult>;
+  listFileAnnotations(presentation: FilePresentationResult): Promise<AnnotationResult>;
+  updateFileAnnotations(
+    presentation: FilePresentationResult,
+    current: AnnotationDocument | null,
+    annotations: Array<Record<string, unknown>>,
+  ): Promise<AnnotationDocument>;
+  createTextSelection(
+    presentation: FilePresentationResult,
+    start: number,
+    end: number,
+  ): Promise<SelectionReference>;
   revealWorkspaceFile(path: string): Promise<void>;
   refreshWorkspaceFiles(): Promise<void>;
   uploadWorkspaceFiles(files: Array<{ path: string; contentBase64: string }>): Promise<void>;

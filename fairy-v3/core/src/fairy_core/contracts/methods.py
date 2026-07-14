@@ -139,6 +139,18 @@ from fairy_core.contracts.planning import (
     ExecutionPlanCreateInput,
     ExecutionPlanIdInput,
 )
+from fairy_core.contracts.presentation import (
+    AnnotationDocumentModel,
+    AnnotationListInput,
+    AnnotationResultModel,
+    AnnotationUpdateInput,
+    EditRecipeCreateInput,
+    EditRecipeIdInput,
+    EditRecipeModel,
+    EditRecipeUpdateInput,
+    SelectionCreateInput,
+    SelectionReferenceModel,
+)
 from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.contracts.voice_sessions import (
     VoiceSessionIdInput,
@@ -562,6 +574,25 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "renderer_packs.remove",
             RendererPackRemoveInput,
             RendererPackRemoveResultModel,
+        ),
+        "annotations.list": CoreMethod(
+            "annotations.list", AnnotationListInput, AnnotationResultModel
+        ),
+        "annotations.update": CoreMethod(
+            "annotations.update", AnnotationUpdateInput, AnnotationDocumentModel
+        ),
+        "selections.create": CoreMethod(
+            "selections.create", SelectionCreateInput, SelectionReferenceModel
+        ),
+        "edit_recipes.create": CoreMethod(
+            "edit_recipes.create", EditRecipeCreateInput, EditRecipeModel
+        ),
+        "edit_recipes.update": CoreMethod(
+            "edit_recipes.update", EditRecipeUpdateInput, EditRecipeModel
+        ),
+        "edit_recipes.apply": CoreMethod("edit_recipes.apply", EditRecipeIdInput, EditRecipeModel),
+        "edit_recipes.discard": CoreMethod(
+            "edit_recipes.discard", EditRecipeIdInput, EditRecipeModel
         ),
         "workspaces.export": CoreMethod(
             "workspaces.export",

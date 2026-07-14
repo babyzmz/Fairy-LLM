@@ -22,6 +22,17 @@ test("minimum desktop window renders the durable workspace without overflow", as
   await page.getByRole("tab", { name: /Files/ }).click();
   await page.getByRole("button", { name: "main.ts" }).click();
   await expect(page.getByText("console.log('Fairy');")).toBeVisible();
+  const properties = page.getByLabel("File properties");
+  await expect(properties).toBeVisible();
+  await expect(properties).toContainText("native");
+  await properties.getByPlaceholder("Add a note").fill("Verify the entry point");
+  await properties.getByRole("button", { name: "Add note" }).click();
+  await expect(properties.getByText("Verify the entry point")).toBeVisible();
+  expect(
+    (await page.evaluate(() => window.__FAIRY_FIXTURE_CALLS__)).some(
+      (call) => call.method === "annotations.update",
+    ),
+  ).toBe(true);
   await page.getByRole("tab", { name: "Preview" }).click();
   await expect(page.getByText("Developer diagnostic")).toHaveCount(0);
   await expect(page.getByLabel("Workspace status")).toContainText("standard");

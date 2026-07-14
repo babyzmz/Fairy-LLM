@@ -11,6 +11,11 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from fairy_core.domain.errors import (
+    CommandRejectedError,
+    PreviewScopeViolationError,
+    VersionConflictError,
+)
 from fairy_core.presentation.cache import presentation_cache_key
 from fairy_core.presentation.models import FileRenderJob, RenderJobStatus
 from fairy_core.presentation.packs import (
@@ -173,6 +178,109 @@ def test_renderer_pack_requires_confirmation_and_rejects_tampered_signature(
     )
     with pytest.raises(RendererPackVerificationError, match="signature"):
         installer.verify_and_install(bundle, user_confirmed=True)
+
+
+def test_annotations_selections_and_edit_drafts_are_version_bound(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "notes.txt").write_text("alpha beta gamma", encoding="utf-8")
+    service = build_local_service(tmp_path / "app")
+    try:
+        imported = service.invoke(
+            "projects.import",
+            {"name": "Collaboration", "residency": "local_only", "source_path": str(source)},
+        )
+        scope = {
+            "workspace_id": imported["project"]["workspace_id"],
+            "version_id": imported["project"]["active_version_id"],
+            "path": "notes.txt",
+        }
+        presented = service.invoke("files.present", scope)
+        identity = {
+            "workspace_id": scope["workspace_id"],
+            "version_id": scope["version_id"],
+            "file_set_id": presented["job"]["file_set_id"],
+            "source_hash": presented["job"]["source_hash"],
+        }
+        annotation = service.invoke(
+            "annotations.update",
+            {
+                **identity,
+                "expected_revision": 0,
+                "annotations": [
+                    {"id": "note-1", "body": "Review this", "locator": {"start": 0, "end": 5}}
+                ],
+            },
+        )
+        listed = service.invoke(
+            "annotations.list",
+            {key: identity[key] for key in ("workspace_id", "version_id", "file_set_id")},
+        )
+        selection = service.invoke(
+            "selections.create",
+            {
+                **identity,
+                "source_path": "notes.txt",
+                "viewer_kind": "text",
+                "locator_kind": "text_range",
+                "locator": {"start": 0, "end": 5},
+            },
+        )
+        recipe = service.invoke(
+            "edit_recipes.create",
+            {
+                **identity,
+                "kind": "text_patch",
+                "operations": [{"operation": "replace", "start": 0, "end": 5, "text": "delta"}],
+            },
+        )
+        discarded = service.invoke("edit_recipes.discard", {"recipe_id": recipe["id"]})
+
+        assert annotation["revision"] == 1
+        assert listed["document"] == annotation
+        assert selection["source_hash"] == identity["source_hash"]
+        assert discarded["status"] == "discarded"
+        with pytest.raises(VersionConflictError, match="revision changed"):
+            service.invoke(
+                "annotations.update",
+                {**identity, "expected_revision": 0, "annotations": []},
+            )
+        with pytest.raises(CommandRejectedError, match="trusted exporter"):
+            service.invoke("edit_recipes.apply", {"recipe_id": recipe["id"]})
+        with pytest.raises(PreviewScopeViolationError, match="source changed"):
+            service.invoke(
+                "selections.create",
+                {
+                    **identity,
+                    "source_hash": "f" * 64,
+                    "source_path": "notes.txt",
+                    "viewer_kind": "text",
+                    "locator_kind": "text_range",
+                    "locator": {"start": 0, "end": 5},
+                },
+            )
+        with pytest.raises(PreviewScopeViolationError, match="does not match"):
+            service.invoke(
+                "selections.create",
+                {
+                    **identity,
+                    "source_path": "other.txt",
+                    "viewer_kind": "text",
+                    "locator_kind": "text_range",
+                    "locator": {"start": 0, "end": 5},
+                },
+            )
+        with pytest.raises(KeyError, match="FileSet not found"):
+            service.invoke(
+                "annotations.list",
+                {
+                    "workspace_id": identity["workspace_id"],
+                    "version_id": identity["version_id"],
+                    "file_set_id": str(uuid4()),
+                },
+            )
+    finally:
+        service.close()
 
 
 def _renderer_bundle(

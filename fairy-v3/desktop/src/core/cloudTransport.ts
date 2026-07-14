@@ -133,6 +133,13 @@ const routes = {
   "renderer_packs.install": (params) => post("/v1/renderer-packs/install", params),
   "renderer_packs.update": (params) => post("/v1/renderer-packs/update", params),
   "renderer_packs.remove": (params) => post("/v1/renderer-packs/remove", params),
+  "annotations.list": (params) => post("/v1/annotations/list", params),
+  "annotations.update": (params) => post("/v1/annotations/update", params),
+  "selections.create": (params) => post("/v1/selections", params),
+  "edit_recipes.create": (params) => post("/v1/edit-recipes", params),
+  "edit_recipes.update": (params) => post("/v1/edit-recipes/update", params),
+  "edit_recipes.apply": (params) => post("/v1/edit-recipes/apply", params),
+  "edit_recipes.discard": (params) => post("/v1/edit-recipes/discard", params),
   "workspaces.files.mutate": (params) =>
     postWithIdempotency("/v1/workspaces/files/mutate", params),
   "workspaces.export": (params) => post("/v1/workspaces/export", params),

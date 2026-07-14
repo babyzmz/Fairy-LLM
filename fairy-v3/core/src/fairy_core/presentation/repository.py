@@ -7,9 +7,17 @@ from uuid import UUID
 
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.engine import Connection, RowMapping
+from sqlalchemy.exc import IntegrityError
 
+from fairy_core.domain.errors import VersionConflictError
 from fairy_core.persistence.session import SqlAlchemySession
 from fairy_core.persistence.tenant import normalize_tenant_id
+from fairy_core.presentation.collaboration import (
+    AnnotationDocument,
+    EditRecipe,
+    EditRecipeStatus,
+    SelectionReference,
+)
 from fairy_core.presentation.models import (
     DerivedAsset,
     FilePresentation,
@@ -19,10 +27,13 @@ from fairy_core.presentation.models import (
 )
 from fairy_core.presentation.packs import RendererPackManifest, RendererPackRecord
 from fairy_core.storage.schema import (
+    annotation_documents,
     derived_assets,
+    edit_recipes,
     file_presentations,
     file_render_jobs,
     renderer_packs,
+    selection_references,
 )
 
 
@@ -232,6 +243,166 @@ class SqlAlchemyPresentationRepository:
                         renderer_packs.c.version == version,
                     )
                 ).rowcount
+            )
+
+    def list_annotations(
+        self, *, workspace_id: UUID, version_id: UUID, file_set_id: UUID
+    ) -> AnnotationDocument | None:
+        with self._session.read() as connection:
+            row = (
+                connection.execute(
+                    select(annotation_documents).where(
+                        annotation_documents.c.tenant_id == self._tenant_id,
+                        annotation_documents.c.workspace_id == str(workspace_id),
+                        annotation_documents.c.version_id == str(version_id),
+                        annotation_documents.c.file_set_id == str(file_set_id),
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        if row is None:
+            return None
+        return AnnotationDocument(
+            id=UUID(row["id"]),
+            workspace_id=UUID(row["workspace_id"]),
+            version_id=UUID(row["version_id"]),
+            file_set_id=UUID(row["file_set_id"]),
+            source_hash=row["source_hash"],
+            revision=int(row["revision"]),
+            annotations=tuple(dict(item) for item in row["annotations"]),
+            created_at=_datetime(row["created_at"]),
+            updated_at=_datetime(row["updated_at"]),
+        )
+
+    def save_annotations(self, document: AnnotationDocument) -> None:
+        values = {
+            "tenant_id": self._tenant_id,
+            "id": str(document.id),
+            "workspace_id": str(document.workspace_id),
+            "version_id": str(document.version_id),
+            "file_set_id": str(document.file_set_id),
+            "source_hash": document.source_hash,
+            "revision": document.revision,
+            "annotations": list(document.annotations),
+            "created_at": document.created_at,
+            "updated_at": document.updated_at,
+        }
+        with self._session.write() as connection:
+            changed = connection.execute(
+                update(annotation_documents)
+                .where(
+                    annotation_documents.c.tenant_id == self._tenant_id,
+                    annotation_documents.c.id == str(document.id),
+                    annotation_documents.c.revision == document.revision - 1,
+                )
+                .values(
+                    revision=document.revision,
+                    annotations=list(document.annotations),
+                    updated_at=document.updated_at,
+                )
+            ).rowcount
+            if not changed:
+                existing = connection.execute(
+                    select(annotation_documents.c.id).where(
+                        annotation_documents.c.tenant_id == self._tenant_id,
+                        annotation_documents.c.id == str(document.id),
+                    )
+                ).first()
+                if existing is not None:
+                    raise VersionConflictError("Annotation revision changed concurrently")
+                try:
+                    connection.execute(insert(annotation_documents).values(**values))
+                except IntegrityError as error:
+                    raise VersionConflictError(
+                        "Annotation revision changed concurrently"
+                    ) from error
+
+    def get_edit_recipe(self, recipe_id: UUID) -> EditRecipe | None:
+        with self._session.read() as connection:
+            row = (
+                connection.execute(
+                    select(edit_recipes).where(
+                        edit_recipes.c.tenant_id == self._tenant_id,
+                        edit_recipes.c.id == str(recipe_id),
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        if row is None:
+            return None
+        return EditRecipe(
+            id=UUID(row["id"]),
+            workspace_id=UUID(row["workspace_id"]),
+            version_id=UUID(row["version_id"]),
+            file_set_id=UUID(row["file_set_id"]),
+            source_hash=row["source_hash"],
+            kind=row["kind"],
+            operations=tuple(dict(item) for item in row["operations"]),
+            status=EditRecipeStatus(row["status"]),
+            revision=int(row["revision"]),
+            created_at=_datetime(row["created_at"]),
+            updated_at=_datetime(row["updated_at"]),
+        )
+
+    def save_edit_recipe(self, recipe: EditRecipe) -> None:
+        values = {
+            "tenant_id": self._tenant_id,
+            "id": str(recipe.id),
+            "workspace_id": str(recipe.workspace_id),
+            "version_id": str(recipe.version_id),
+            "file_set_id": str(recipe.file_set_id),
+            "source_hash": recipe.source_hash,
+            "kind": recipe.kind,
+            "operations": list(recipe.operations),
+            "status": recipe.status.value,
+            "revision": recipe.revision,
+            "created_at": recipe.created_at,
+            "updated_at": recipe.updated_at,
+        }
+        with self._session.write() as connection:
+            changed = connection.execute(
+                update(edit_recipes)
+                .where(
+                    edit_recipes.c.tenant_id == self._tenant_id,
+                    edit_recipes.c.id == str(recipe.id),
+                    edit_recipes.c.revision == recipe.revision - 1,
+                )
+                .values(
+                    operations=list(recipe.operations),
+                    status=recipe.status.value,
+                    revision=recipe.revision,
+                    updated_at=recipe.updated_at,
+                )
+            ).rowcount
+            if not changed:
+                existing = connection.execute(
+                    select(edit_recipes.c.id).where(
+                        edit_recipes.c.tenant_id == self._tenant_id,
+                        edit_recipes.c.id == str(recipe.id),
+                    )
+                ).first()
+                if existing is not None:
+                    raise VersionConflictError("Edit Recipe revision changed concurrently")
+                connection.execute(insert(edit_recipes).values(**values))
+
+    def save_selection(self, selection: SelectionReference) -> None:
+        with self._session.write() as connection:
+            connection.execute(
+                insert(selection_references).values(
+                    tenant_id=self._tenant_id,
+                    id=str(selection.id),
+                    workspace_id=str(selection.workspace_id),
+                    version_id=str(selection.version_id),
+                    file_set_id=str(selection.file_set_id),
+                    source_path=selection.source_path,
+                    source_hash=selection.source_hash,
+                    viewer_kind=selection.viewer_kind,
+                    locator_kind=selection.locator_kind,
+                    locator=selection.locator,
+                    created_at=selection.created_at,
+                )
             )
 
     @staticmethod
