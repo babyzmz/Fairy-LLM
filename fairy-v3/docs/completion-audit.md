@@ -161,12 +161,12 @@ as part of the command and passed.
 
 ## Desktop Bundle Evidence
 
-`npm run release:windows` compiled the optimized Tauri application, bundled
-the Core sidecar, pinned MinGit, and the native CosyVoice/CUDA worker, then
-produced a split WiX release. `Fairy_0.2.0_x64_en-US.msi` is 2,055,747 bytes
-with SHA-256
-`311CEB14656BEFF8614972AE97E2C1A845A4A3EAFE5213B295D5F148E024ADD4`.
-Seven external cabinets bring the complete release to 3,799,944,968 bytes;
+The final Windows release rebuild compiled the optimized Tauri application,
+bundled the migration-fixed Core sidecar, pinned MinGit, and the native
+CosyVoice/CUDA worker, then produced a split WiX release.
+`Fairy_0.2.0_x64_en-US.msi` is 2,055,739 bytes with SHA-256
+`C3DFEB1195339921175A9D89752C90A559E61FDAEAA50A0FACFBFC3100BF6096`.
+Six external cabinets bring the complete release to 3,800,443,736 bytes;
 every file is listed with its SHA-256 in `release-manifest.json` and no cabinet
 exceeds the Windows Installer media limit.
 
