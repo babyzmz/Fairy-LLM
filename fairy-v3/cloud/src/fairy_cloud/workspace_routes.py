@@ -26,6 +26,7 @@ from fairy_core.contracts.presentation import (
     AnnotationListInput,
     AnnotationResultModel,
     AnnotationUpdateInput,
+    EditRecipeApplyInput,
     EditRecipeCreateInput,
     EditRecipeIdInput,
     EditRecipeModel,
@@ -238,7 +239,22 @@ def install_workspace_routes(
     @router.post(
         "/edit-recipes/apply", operation_id="edit_recipes.apply", response_model=EditRecipeModel
     )
-    def apply_edit_recipe(request: EditRecipeIdInput) -> dict[str, Any]:
+    def apply_edit_recipe(
+        request: EditRecipeApplyInput,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=255),
+        ],
+    ) -> dict[str, Any]:
+        if request.idempotency_key != idempotency_key:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "IDEMPOTENCY_CONFLICT",
+                    "message": "Idempotency-Key does not match Core params",
+                    "retryable": False,
+                },
+            )
         return invoke("edit_recipes.apply", request.model_dump(mode="json"))
 
     @router.post(

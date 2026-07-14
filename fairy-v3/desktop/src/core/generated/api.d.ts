@@ -2520,6 +2520,27 @@ export interface components {
          * @enum {string}
          */
         DocumentVisibility: "conversation" | "project";
+        /** EditRecipeApplyInput */
+        EditRecipeApplyInput: {
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /** Expected Recipe Revision */
+            expected_recipe_revision: number;
+            /** Expected Workspace Revision */
+            expected_workspace_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Recipe Id
+             * Format: uuid
+             */
+            recipe_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+        };
         /** EditRecipeCreateInput */
         EditRecipeCreateInput: {
             /**
@@ -2556,6 +2577,10 @@ export interface components {
         };
         /** EditRecipeModel */
         EditRecipeModel: {
+            /** Applied Version Id */
+            applied_version_id: string | null;
+            /** Apply Idempotency Key */
+            apply_idempotency_key: string | null;
             /**
              * Created At
              * Format: date-time
@@ -2577,6 +2602,8 @@ export interface components {
             operations: {
                 [key: string]: unknown;
             }[];
+            /** Output Hash */
+            output_hash: string | null;
             /** Revision */
             revision: number;
             /** Source Hash */
@@ -6320,7 +6347,8 @@ export interface operations {
     "edit_recipes.apply": {
         parameters: {
             query?: never;
-            header?: {
+            header: {
+                "Idempotency-Key": string;
                 "X-Fairy-Device-ID"?: string | null;
             };
             path?: never;
@@ -6328,7 +6356,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["EditRecipeIdInput"];
+                "application/json": components["schemas"]["EditRecipeApplyInput"];
             };
         };
         responses: {

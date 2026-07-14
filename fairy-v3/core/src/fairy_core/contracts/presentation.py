@@ -78,6 +78,14 @@ class EditRecipeIdInput(ContractModel):
     recipe_id: UUID
 
 
+class EditRecipeApplyInput(EditRecipeIdInput):
+    conversation_id: UUID
+    expected_recipe_revision: int = Field(ge=1)
+    expected_workspace_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=255)
+    user_confirmed: bool
+
+
 class EditRecipeModel(ContractModel):
     id: UUID
     workspace_id: UUID
@@ -88,6 +96,9 @@ class EditRecipeModel(ContractModel):
     operations: tuple[dict[str, Any], ...]
     status: str
     revision: int
+    apply_idempotency_key: str | None
+    applied_version_id: UUID | None
+    output_hash: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -97,6 +108,7 @@ __all__ = [
     "AnnotationListInput",
     "AnnotationResultModel",
     "AnnotationUpdateInput",
+    "EditRecipeApplyInput",
     "EditRecipeCreateInput",
     "EditRecipeIdInput",
     "EditRecipeModel",

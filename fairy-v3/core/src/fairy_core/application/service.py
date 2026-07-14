@@ -399,6 +399,7 @@ class CoreService:
                 unit_of_work_factory=unit_of_work_factory,
                 workspaces=application.workspace_access,
                 renderer_pack_installer=renderer_pack_installer,
+                mutate_workspace_files=application.workspace_mutations.mutate,
             ),
             "file_sets.resolve": self._workspace_service.resolve_file_set,
             "file_sets.get": self._workspace_service.get_file_set,

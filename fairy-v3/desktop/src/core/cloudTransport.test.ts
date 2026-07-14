@@ -425,6 +425,52 @@ describe("CloudCoreTransport", () => {
     expect(request?.headers.get("Idempotency-Key")).toBe("asset-set:image:1");
   });
 
+  it("binds edit recipe apply to the body and HTTP idempotency key", async () => {
+    let request: Request | undefined;
+    const id = "0198f4de-0114-7000-8000-000000000020";
+    const transport = new CloudCoreTransport({
+      baseUrl: "https://cloud.fairy.test/",
+      accessToken: () => "access-token",
+      deviceId: "device-1",
+      fetch: async (input, init) => {
+        request = new Request(input, init);
+        return Response.json({
+          id,
+          workspace_id: id,
+          version_id: id,
+          file_set_id: id,
+          source_hash: "a".repeat(64),
+          kind: "text_patch",
+          operations: [],
+          status: "applied",
+          revision: 3,
+          apply_idempotency_key: "edit-recipe:apply:1",
+          applied_version_id: id,
+          output_hash: "b".repeat(64),
+          created_at: "2026-07-14T00:00:00Z",
+          updated_at: "2026-07-14T00:00:01Z",
+        });
+      },
+    });
+
+    await transport.call("edit_recipes.apply", {
+      recipe_id: id,
+      conversation_id: id,
+      expected_recipe_revision: 1,
+      expected_workspace_revision: 1,
+      idempotency_key: "edit-recipe:apply:1",
+      user_confirmed: true,
+    });
+
+    expect(request?.url).toBe("https://cloud.fairy.test/v1/edit-recipes/apply");
+    expect(request?.headers.get("Idempotency-Key")).toBe("edit-recipe:apply:1");
+    await expect(request?.json()).resolves.toMatchObject({
+      recipe_id: id,
+      idempotency_key: "edit-recipe:apply:1",
+      user_confirmed: true,
+    });
+  });
+
   it("parses finite and live SSE with cursor deduplication", async () => {
     const requests: Request[] = [];
     const fetcher: typeof fetch = async (input, init) => {

@@ -193,6 +193,9 @@ def build_presentation_schema(
         Column("operations", JSON, nullable=False),
         Column("status", String(32), nullable=False),
         Column("revision", BigInteger, nullable=False),
+        Column("apply_idempotency_key", String(255), nullable=True),
+        Column("applied_version_id", String(36), nullable=True),
+        Column("output_hash", String(64), nullable=True),
         Column("created_at", UTCDateTime(), nullable=False),
         Column("updated_at", UTCDateTime(), nullable=False),
         PrimaryKeyConstraint("tenant_id", "id", name="pk_core_edit_recipes"),
@@ -200,6 +203,16 @@ def build_presentation_schema(
         CheckConstraint(
             "length(source_hash) = 64 AND source_hash = lower(source_hash)",
             name="ck_core_edit_recipes_source_hash",
+        ),
+        CheckConstraint(
+            "output_hash IS NULL OR "
+            "(length(output_hash) = 64 AND output_hash = lower(output_hash))",
+            name="ck_core_edit_recipes_output_hash",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "apply_idempotency_key",
+            name="uq_core_edit_recipes_apply_idempotency",
         ),
         ForeignKeyConstraint(
             ["tenant_id", "workspace_id"],
@@ -212,6 +225,11 @@ def build_presentation_schema(
             [versions.c.tenant_id, versions.c.id],
             name="fk_core_edit_recipes_version",
             ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "applied_version_id"],
+            [versions.c.tenant_id, versions.c.id],
+            name="fk_core_edit_recipes_applied_version",
         ),
     )
     selections = Table(

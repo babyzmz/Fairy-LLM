@@ -65,6 +65,7 @@ import type {
   AnnotationUpdateInput,
   SelectionCreateInput,
   EditRecipeCreateInput,
+  EditRecipeApplyInput,
   EditRecipeUpdateInput,
 } from "./contracts";
 
@@ -201,7 +202,7 @@ export class CoreClient {
   readonly editRecipes = {
     create: (input: EditRecipeCreateInput) => this.transport.call("edit_recipes.create", input),
     update: (input: EditRecipeUpdateInput) => this.transport.call("edit_recipes.update", input),
-    apply: (recipeId: string) => this.transport.call("edit_recipes.apply", { recipe_id: recipeId }),
+    apply: (input: EditRecipeApplyInput) => this.transport.call("edit_recipes.apply", input),
     discard: (recipeId: string) => this.transport.call("edit_recipes.discard", { recipe_id: recipeId }),
   };
 

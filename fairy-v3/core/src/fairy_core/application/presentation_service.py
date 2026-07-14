@@ -5,6 +5,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from fairy_core.application.contexts import WorkspaceMutationContext
 from fairy_core.application.workspaces import WorkspaceApplication
 from fairy_core.contracts.files import (
     AssetSetCreateInput,
@@ -16,12 +17,13 @@ from fairy_core.contracts.files import (
 from fairy_core.contracts.presentation import (
     AnnotationListInput,
     AnnotationUpdateInput,
+    EditRecipeApplyInput,
     EditRecipeCreateInput,
     EditRecipeIdInput,
     EditRecipeUpdateInput,
     SelectionCreateInput,
 )
-from fairy_core.contracts.workspaces import WorkspaceVersionInput
+from fairy_core.contracts.workspaces import WorkspaceFileMutateInput, WorkspaceVersionInput
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.presentation.application import PresentationApplication
 from fairy_core.presentation.asset_application import AssetSetApplication
@@ -35,6 +37,7 @@ def presentation_service_handlers(
     unit_of_work_factory: CoreUnitOfWorkFactory,
     workspaces: WorkspaceApplication,
     renderer_pack_installer: RendererPackInstaller | None,
+    mutate_workspace_files: Callable[[WorkspaceFileMutateInput], WorkspaceMutationContext],
 ) -> Mapping[str, Callable[[BaseModel], object]]:
     files = PresentationApplication(
         unit_of_work_factory=unit_of_work_factory,
@@ -47,6 +50,7 @@ def presentation_service_handlers(
     collaboration = CollaborationApplication(
         unit_of_work_factory=unit_of_work_factory,
         workspaces=workspaces,
+        mutate_workspace_files=mutate_workspace_files,
     )
     asset_sets = AssetSetApplication(
         unit_of_work_factory=unit_of_work_factory,
@@ -169,8 +173,15 @@ def presentation_service_handlers(
         return collaboration.discard_recipe(request.recipe_id)
 
     def apply_recipe(request: BaseModel) -> object:
-        assert isinstance(request, EditRecipeIdInput)
-        return collaboration.apply_recipe(request.recipe_id)
+        assert isinstance(request, EditRecipeApplyInput)
+        return collaboration.apply_recipe(
+            request.recipe_id,
+            conversation_id=request.conversation_id,
+            expected_recipe_revision=request.expected_recipe_revision,
+            expected_workspace_revision=request.expected_workspace_revision,
+            idempotency_key=request.idempotency_key,
+            user_confirmed=request.user_confirmed,
+        )
 
     return {
         "files.present": present,

@@ -442,6 +442,11 @@ class SqlAlchemyPresentationRepository:
             operations=tuple(dict(item) for item in row["operations"]),
             status=EditRecipeStatus(row["status"]),
             revision=int(row["revision"]),
+            apply_idempotency_key=row["apply_idempotency_key"],
+            applied_version_id=(
+                UUID(row["applied_version_id"]) if row["applied_version_id"] is not None else None
+            ),
+            output_hash=row["output_hash"],
             created_at=_datetime(row["created_at"]),
             updated_at=_datetime(row["updated_at"]),
         )
@@ -458,6 +463,11 @@ class SqlAlchemyPresentationRepository:
             "operations": list(recipe.operations),
             "status": recipe.status.value,
             "revision": recipe.revision,
+            "apply_idempotency_key": recipe.apply_idempotency_key,
+            "applied_version_id": (
+                str(recipe.applied_version_id) if recipe.applied_version_id is not None else None
+            ),
+            "output_hash": recipe.output_hash,
             "created_at": recipe.created_at,
             "updated_at": recipe.updated_at,
         }
@@ -473,6 +483,13 @@ class SqlAlchemyPresentationRepository:
                     operations=list(recipe.operations),
                     status=recipe.status.value,
                     revision=recipe.revision,
+                    apply_idempotency_key=recipe.apply_idempotency_key,
+                    applied_version_id=(
+                        str(recipe.applied_version_id)
+                        if recipe.applied_version_id is not None
+                        else None
+                    ),
+                    output_hash=recipe.output_hash,
                     updated_at=recipe.updated_at,
                 )
             ).rowcount

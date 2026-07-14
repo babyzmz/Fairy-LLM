@@ -1,21 +1,24 @@
 from __future__ import annotations
 
+import base64
 import json
+from collections.abc import Callable
 from uuid import UUID
 
+from fairy_core.application.contexts import WorkspaceMutationContext
 from fairy_core.application.workspaces import WorkspaceApplication
-from fairy_core.domain.errors import (
-    CommandRejectedError,
-    PreviewScopeViolationError,
-    VersionConflictError,
-)
+from fairy_core.contracts.models import FileMutation, FileMutationOperation
+from fairy_core.contracts.workspaces import WorkspaceFileMutateInput
+from fairy_core.domain.errors import PreviewScopeViolationError, VersionConflictError
 from fairy_core.domain.ids import new_id
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.presentation.collaboration import (
     AnnotationDocument,
     EditRecipe,
+    EditRecipeStatus,
     SelectionReference,
 )
+from fairy_core.presentation.edit_exporters import TrustedEditExporter
 
 _LOCATOR_FIELDS = {
     "text_range": frozenset({"start", "end"}),
@@ -35,9 +38,12 @@ class CollaborationApplication:
         *,
         unit_of_work_factory: CoreUnitOfWorkFactory,
         workspaces: WorkspaceApplication,
+        mutate_workspace_files: Callable[[WorkspaceFileMutateInput], WorkspaceMutationContext],
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._workspaces = workspaces
+        self._mutate_workspace_files = mutate_workspace_files
+        self._exporter = TrustedEditExporter()
 
     def annotations(
         self, *, workspace_id: UUID, version_id: UUID, file_set_id: UUID
@@ -190,12 +196,83 @@ class CollaborationApplication:
                 unit_of_work.commit()
             return discarded
 
-    @staticmethod
-    def apply_recipe(_recipe_id: UUID) -> None:
-        raise CommandRejectedError(
-            "No trusted exporter is available for this Edit Recipe",
-            code="EDIT_NOT_EXPORTABLE",
+    def apply_recipe(
+        self,
+        recipe_id: UUID,
+        *,
+        conversation_id: UUID,
+        expected_recipe_revision: int,
+        expected_workspace_revision: int,
+        idempotency_key: str,
+        user_confirmed: bool,
+    ) -> EditRecipe:
+        with self._unit_of_work_factory() as unit_of_work:
+            recipe = unit_of_work.presentations.get_edit_recipe(recipe_id)
+        if recipe is None:
+            raise KeyError(f"Edit Recipe not found: {recipe_id}")
+        if recipe.status is EditRecipeStatus.APPLIED:
+            return recipe.begin_apply(
+                expected_revision=expected_recipe_revision,
+                idempotency_key=idempotency_key,
+            )
+        source_path = self._require_file_set(
+            recipe.workspace_id,
+            recipe.version_id,
+            recipe.file_set_id,
+            recipe.source_hash,
         )
+        _, source = self._workspaces.read_file(
+            workspace_id=recipe.workspace_id,
+            version_id=recipe.version_id,
+            path=source_path,
+        )
+        assert source is not None
+        exported = self._exporter.export(recipe, source)
+        applying = recipe.begin_apply(
+            expected_revision=expected_recipe_revision,
+            idempotency_key=idempotency_key,
+        )
+        if applying != recipe:
+            with self._unit_of_work_factory() as unit_of_work:
+                current = unit_of_work.presentations.get_edit_recipe(recipe_id)
+                if current != recipe:
+                    raise VersionConflictError("Edit Recipe revision changed concurrently")
+                unit_of_work.presentations.save_edit_recipe(applying)
+                unit_of_work.commit()
+        mutation = self._mutate_workspace_files(
+            WorkspaceFileMutateInput(
+                workspace_id=applying.workspace_id,
+                conversation_id=conversation_id,
+                expected_workspace_revision=expected_workspace_revision,
+                files=(
+                    FileMutation(
+                        operation=FileMutationOperation.UPDATE,
+                        path=source_path,
+                        content_base64=base64.b64encode(exported.content).decode("ascii"),
+                        expected_hash=applying.source_hash,
+                    ),
+                ),
+                reason=f"Apply {applying.kind} Edit Recipe",
+                idempotency_key=idempotency_key,
+                user_confirmed=user_confirmed,
+            )
+        )
+        applied = applying.finish_apply(
+            applied_version_id=mutation.target_version.id,
+            output_hash=exported.content_hash,
+        )
+        with self._unit_of_work_factory() as unit_of_work:
+            current = unit_of_work.presentations.get_edit_recipe(recipe_id)
+            if current is None:
+                raise KeyError(f"Edit Recipe not found: {recipe_id}")
+            if current.status is EditRecipeStatus.APPLIED:
+                return current.begin_apply(
+                    expected_revision=expected_recipe_revision,
+                    idempotency_key=idempotency_key,
+                )
+            unit_of_work.presentations.save_edit_recipe(applied)
+            unit_of_work.commit()
+        return applied
 
     def _require_file_set(
         self, workspace_id: UUID, version_id: UUID, file_set_id: UUID, source_hash: str

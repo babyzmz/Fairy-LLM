@@ -147,6 +147,7 @@ export type SelectionCreateInput = Schemas["SelectionCreateInput"];
 export type SelectionReference = Schemas["SelectionReferenceModel"];
 export type EditRecipe = Schemas["EditRecipeModel"];
 export type EditRecipeCreateInput = Schemas["EditRecipeCreateInput"];
+export type EditRecipeApplyInput = Schemas["EditRecipeApplyInput"];
 export type EditRecipeUpdateInput = Schemas["EditRecipeUpdateInput"];
 export type EditRecipeIdInput = Schemas["EditRecipeIdInput"];
 export type WorkspaceFileMutateInput = Schemas["WorkspaceFileMutateInput"];
@@ -348,7 +349,7 @@ export interface CoreMethodMap {
   };
   "edit_recipes.create": { params: EditRecipeCreateInput; result: EditRecipe };
   "edit_recipes.update": { params: EditRecipeUpdateInput; result: EditRecipe };
-  "edit_recipes.apply": { params: EditRecipeIdInput; result: EditRecipe };
+  "edit_recipes.apply": { params: EditRecipeApplyInput; result: EditRecipe };
   "edit_recipes.discard": { params: EditRecipeIdInput; result: EditRecipe };
   "workspaces.files.mutate": {
     params: WorkspaceFileMutateInput;

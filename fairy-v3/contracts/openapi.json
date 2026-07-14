@@ -2055,6 +2055,51 @@
         "title": "DocumentVisibility",
         "type": "string"
       },
+      "EditRecipeApplyInput": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "expected_recipe_revision": {
+            "minimum": 1.0,
+            "title": "Expected Recipe Revision",
+            "type": "integer"
+          },
+          "expected_workspace_revision": {
+            "minimum": 0.0,
+            "title": "Expected Workspace Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "recipe_id": {
+            "format": "uuid",
+            "title": "Recipe Id",
+            "type": "string"
+          },
+          "user_confirmed": {
+            "title": "User Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recipe_id",
+          "conversation_id",
+          "expected_recipe_revision",
+          "expected_workspace_revision",
+          "idempotency_key",
+          "user_confirmed"
+        ],
+        "title": "EditRecipeApplyInput",
+        "type": "object"
+      },
       "EditRecipeCreateInput": {
         "additionalProperties": false,
         "properties": {
@@ -2123,6 +2168,29 @@
       "EditRecipeModel": {
         "additionalProperties": false,
         "properties": {
+          "applied_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Version Id"
+          },
+          "apply_idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apply Idempotency Key"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -2149,6 +2217,17 @@
             },
             "title": "Operations",
             "type": "array"
+          },
+          "output_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Hash"
           },
           "revision": {
             "title": "Revision",
@@ -2188,6 +2267,9 @@
           "operations",
           "status",
           "revision",
+          "apply_idempotency_key",
+          "applied_version_id",
+          "output_hash",
           "created_at",
           "updated_at"
         ],
@@ -11444,6 +11526,17 @@
         "parameters": [
           {
             "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
             "name": "X-Fairy-Device-ID",
             "required": false,
             "schema": {
@@ -11463,7 +11556,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EditRecipeIdInput"
+                "$ref": "#/components/schemas/EditRecipeApplyInput"
               }
             }
           },

@@ -147,6 +147,7 @@ from fairy_core.contracts.presentation import (
     AnnotationListInput,
     AnnotationResultModel,
     AnnotationUpdateInput,
+    EditRecipeApplyInput,
     EditRecipeCreateInput,
     EditRecipeIdInput,
     EditRecipeModel,
@@ -595,7 +596,9 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
         "edit_recipes.update": CoreMethod(
             "edit_recipes.update", EditRecipeUpdateInput, EditRecipeModel
         ),
-        "edit_recipes.apply": CoreMethod("edit_recipes.apply", EditRecipeIdInput, EditRecipeModel),
+        "edit_recipes.apply": CoreMethod(
+            "edit_recipes.apply", EditRecipeApplyInput, EditRecipeModel
+        ),
         "edit_recipes.discard": CoreMethod(
             "edit_recipes.discard", EditRecipeIdInput, EditRecipeModel
         ),

@@ -143,7 +143,14 @@ describe("CoreClient", () => {
       operations: [],
     });
     await client.editRecipes.update({ recipe_id: id, expected_revision: 1, operations: [] });
-    await client.editRecipes.apply(id);
+    await client.editRecipes.apply({
+      recipe_id: id,
+      conversation_id: id,
+      expected_recipe_revision: 1,
+      expected_workspace_revision: 1,
+      idempotency_key: "edit-recipe:apply",
+      user_confirmed: true,
+    });
     await client.editRecipes.discard(id);
     await client.workspaces.mutateFiles({
       workspace_id: id,

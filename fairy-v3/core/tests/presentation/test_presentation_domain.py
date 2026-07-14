@@ -400,6 +400,17 @@ def test_annotations_selections_and_edit_drafts_are_version_bound(tmp_path: Path
             "projects.import",
             {"name": "Collaboration", "residency": "local_only", "source_path": str(source)},
         )
+        conversation = service.invoke(
+            "conversations.create",
+            {
+                "project_id": imported["project"]["id"],
+                "workspace_type": "project_chat",
+            },
+        )
+        workspace = service.invoke(
+            "workspaces.get",
+            {"workspace_id": imported["project"]["workspace_id"]},
+        )
         scope = {
             "workspace_id": imported["project"]["workspace_id"],
             "version_id": imported["project"]["active_version_id"],
@@ -451,23 +462,73 @@ def test_annotations_selections_and_edit_drafts_are_version_bound(tmp_path: Path
             {
                 **identity,
                 "kind": "text_patch",
-                "operations": [{"operation": "replace", "start": 0, "end": 5, "text": "delta"}],
+                "operations": [
+                    {
+                        "operation": "replace",
+                        "start": 0,
+                        "end": 5,
+                        "expected_text": "alpha",
+                        "text": "delta",
+                    }
+                ],
             },
         )
-        discarded = service.invoke("edit_recipes.discard", {"recipe_id": recipe["id"]})
+        apply_request = {
+            "recipe_id": recipe["id"],
+            "conversation_id": conversation["id"],
+            "expected_recipe_revision": recipe["revision"],
+            "expected_workspace_revision": workspace["revision"],
+            "idempotency_key": "edit-recipe:notes",
+            "user_confirmed": True,
+        }
+        applied = service.invoke("edit_recipes.apply", apply_request)
+        replayed = service.invoke("edit_recipes.apply", apply_request)
+        content = service.invoke(
+            "workspaces.files.read",
+            {
+                "workspace_id": identity["workspace_id"],
+                "version_id": applied["applied_version_id"],
+                "path": "notes.txt",
+            },
+        )
+        unsupported = service.invoke(
+            "edit_recipes.create",
+            {
+                **identity,
+                "kind": "image_crop",
+                "operations": [{"x": 0, "y": 0, "width": 10, "height": 10}],
+            },
+        )
 
         assert annotation["revision"] == 1
         assert listed["document"] == annotation
         assert selection["source_hash"] == identity["source_hash"]
         assert scene_selection["locator"] == {"node_path": "0/2/1"}
-        assert discarded["status"] == "discarded"
+        assert applied["status"] == "applied"
+        assert applied["revision"] == 3
+        assert applied["output_hash"] == hashlib.sha256(b"delta beta gamma").hexdigest()
+        assert replayed == applied
+        assert content["text"] == "delta beta gamma"
         with pytest.raises(VersionConflictError, match="revision changed"):
             service.invoke(
                 "annotations.update",
                 {**identity, "expected_revision": 0, "annotations": []},
             )
-        with pytest.raises(CommandRejectedError, match="trusted exporter"):
-            service.invoke("edit_recipes.apply", {"recipe_id": recipe["id"]})
+        with pytest.raises(IdempotencyConflictError, match="different key"):
+            service.invoke(
+                "edit_recipes.apply",
+                {**apply_request, "idempotency_key": "edit-recipe:other"},
+            )
+        with pytest.raises(CommandRejectedError, match="trusted exporter") as rejected:
+            service.invoke(
+                "edit_recipes.apply",
+                {
+                    **apply_request,
+                    "recipe_id": unsupported["id"],
+                    "idempotency_key": "edit-recipe:unsupported",
+                },
+            )
+        assert rejected.value.code == "EDIT_NOT_EXPORTABLE"
         with pytest.raises(PreviewScopeViolationError, match="source changed"):
             service.invoke(
                 "selections.create",
