@@ -98,9 +98,15 @@ describe("Liquid Glass material", () => {
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("bezierBridgeDistance");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("smoothMinimum");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("opticalThickness");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("edgeLensing");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("screenSpaceEnvironment");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("chromaticDispersion");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("caustic");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("outsideShadow");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("capsuleContentMask");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uLensStrength");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uRimStrength");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uShadowStrength");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uSizeScale");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uOpacity");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toMatch(/sampler2D|texture2D|texture\s*\(/);

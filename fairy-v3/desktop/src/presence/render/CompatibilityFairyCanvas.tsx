@@ -38,8 +38,8 @@ interface StateStyle {
 
 const STYLES: Record<FairyVisualState, StateStyle> = {
   booting: style("#7dc8ff", "#f4fbff", 1.5, 0.9, 18),
-  idle: style("#58a9ef", "#e8f6ff", 0.35, 0.35, 10),
-  hover: style("#74c7ff", "#ffffff", 0.55, 0.55, 10),
+  idle: style("#1f74d6", "#e8f6ff", 0.35, 0.35, 10),
+  hover: style("#3492f2", "#ffffff", 0.55, 0.55, 10),
   listening: style("#62d7c5", "#eefefa", 0.8, 0.8, 12),
   analyzing: style("#65b9ff", "#f4fbff", 1.15, 0.85, 15),
   tool: style("#f2b84b", "#fff4cf", 1.3, 0.95, 14),

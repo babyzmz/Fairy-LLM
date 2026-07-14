@@ -104,6 +104,9 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
         uRefractionPx: { value: initialOptics.refraction_px },
         uDispersionPx: { value: initialOptics.dispersion_px },
         uCausticStrength: { value: initialOptics.caustic_strength },
+        uLensStrength: { value: initialOptics.lens_strength },
+        uRimStrength: { value: initialOptics.rim_strength },
+        uShadowStrength: { value: initialOptics.shadow_strength },
       },
     });
     this.scene.add(new THREE.Mesh(this.geometry, this.material));
@@ -231,6 +234,9 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.material.uniforms.uRefractionPx.value = optics.refraction_px;
     this.material.uniforms.uDispersionPx.value = optics.dispersion_px;
     this.material.uniforms.uCausticStrength.value = optics.caustic_strength;
+    this.material.uniforms.uLensStrength.value = optics.lens_strength;
+    this.material.uniforms.uRimStrength.value = optics.rim_strength;
+    this.material.uniforms.uShadowStrength.value = optics.shadow_strength;
     const gaze = interaction?.cursor.direction ?? { x: 0, y: 0 };
     this.material.uniforms.uGaze.value.set(gaze.x, -gaze.y);
     const direction = liquidDirectionForSnapshot(this.snapshot);

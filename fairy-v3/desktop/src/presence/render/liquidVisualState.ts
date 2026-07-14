@@ -12,8 +12,8 @@ export interface LiquidVisualStyle {
 
 const STYLES: Readonly<Record<FairyVisualState, LiquidVisualStyle>> = Object.freeze({
   booting: style([0.54, 0.82, 0.98], 0.82, 16, 11, 1.4),
-  idle: style([0.38, 0.75, 0.9], 0.28, 10, 23, 0.42),
-  hover: style([0.48, 0.82, 0.96], 0.48, 12, 29, 0.62),
+  idle: style([0.05, 0.38, 0.95], 0.28, 10, 23, 0.42),
+  hover: style([0.03, 0.42, 1.0], 0.48, 12, 29, 0.62),
   listening: style([0.4, 0.85, 0.76], 0.64, 13, 31, 0.82),
   analyzing: style([0.4, 0.72, 0.98], 0.76, 15, 37, 1.12),
   tool: style([0.94, 0.68, 0.25], 0.88, 16, 41, 1.24),

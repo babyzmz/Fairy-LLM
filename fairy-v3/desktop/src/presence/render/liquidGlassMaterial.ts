@@ -102,6 +102,9 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
   uniform float uRefractionPx;
   uniform float uDispersionPx;
   uniform float uCausticStrength;
+  uniform float uLensStrength;
+  uniform float uRimStrength;
+  uniform float uShadowStrength;
   varying vec2 vUv;
 
   float saturate(float value) {
@@ -260,9 +263,16 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
 
   float opticalThickness(float distanceField) {
     float interior = max(-distanceField, 0.0);
-    float depthScale = max(1.0, 18.0 * uDpr * uSizeScale);
-    float roundedDepth = 1.0 - exp(-interior / depthScale);
-    return pow(saturate(roundedDepth), 0.62);
+    float depthScale = max(1.0, 30.0 * uDpr * uSizeScale);
+    float normalizedDepth = saturate(interior / depthScale);
+    return sqrt(max(0.0, normalizedDepth * (2.0 - normalizedDepth)));
+  }
+
+  float edgeLensing(float distanceField, float thickness) {
+    float interiorBand = 1.0 - smoothstep(0.0, 30.0 * uDpr, max(-distanceField, 0.0));
+    float exteriorGate = 1.0 - smoothstep(0.0, 1.6 * uDpr, max(distanceField, 0.0));
+    float cleanCenter = pow(1.0 - thickness, 1.35);
+    return saturate(interiorBand * exteriorGate * cleanCenter * uLensStrength);
   }
 
   vec3 screenSpaceEnvironment(vec2 screenPixel) {
@@ -270,17 +280,21 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     vec2 screenUv = (screenPixel - uMonitorOrigin) / safeMonitorSize;
     float aspect = safeMonitorSize.x / safeMonitorSize.y;
     vec2 field = vec2(screenUv.x * aspect, screenUv.y);
-    float broad = 0.5 + 0.5 * sin(field.x * 4.8 + field.y * 3.1 + 0.35);
+    float broad = 0.5 + 0.5 * sin(field.x * 5.2 + field.y * 3.4 + 0.35);
     float diagonal = 0.5 + 0.5 * sin(
       screenPixel.x * 0.018 - screenPixel.y * 0.013 + 0.7
     );
     float fine = 0.5 + 0.5 * sin(
-      screenPixel.x * 0.051 + screenPixel.y * 0.034 + 1.4
+      screenPixel.x * 0.064 + screenPixel.y * 0.041 + 1.4
     );
     float cells = cellNoise(field * vec2(17.0, 11.0));
+    float hairline = pow(
+      0.5 + 0.5 * sin(screenPixel.x * 0.027 + screenPixel.y * 0.086 + cells * 3.2),
+      12.0
+    );
     vec2 keyDelta = (screenUv - vec2(0.76, 0.18)) / vec2(0.34, 0.26);
     float keyReflection = exp(-dot(keyDelta, keyDelta) * 2.2);
-    float luminance = saturate(0.34 + broad * 0.34 + cells * 0.18 + fine * 0.09);
+    float luminance = saturate(0.27 + broad * 0.38 + cells * 0.2 + fine * 0.13);
     vec3 environment = mix(
       vec3(0.31, 0.34, 0.37),
       vec3(0.94, 0.96, 0.98),
@@ -288,6 +302,7 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     );
     environment *= mix(0.91, 1.08, diagonal);
     environment += vec3(1.0, 0.985, 0.95) * keyReflection * 0.18;
+    environment += vec3(0.94, 0.97, 1.0) * hairline * 0.075;
     return clamp(environment, 0.0, 1.0);
   }
 
@@ -297,13 +312,17 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     float spectralDistance
   ) {
     vec3 redSample = screenSpaceEnvironment(
-      refractedPixel + spectralAxis * spectralDistance
+      refractedPixel + spectralAxis * spectralDistance * 1.16
     );
     vec3 greenSample = screenSpaceEnvironment(refractedPixel);
     vec3 blueSample = screenSpaceEnvironment(
-      refractedPixel - spectralAxis * spectralDistance
+      refractedPixel - spectralAxis * spectralDistance * 0.92
     );
-    return vec3(redSample.r, greenSample.g, blueSample.b);
+    vec3 split = vec3(redSample.r, greenSample.g, blueSample.b);
+    vec2 tangent = vec2(-spectralAxis.y, spectralAxis.x);
+    vec3 softA = screenSpaceEnvironment(refractedPixel + tangent * 0.7 * uDpr);
+    vec3 softB = screenSpaceEnvironment(refractedPixel - tangent * 0.7 * uDpr);
+    return mix(split, (split + softA + softB) / 3.0, 0.16);
   }
 
   float caustic(float distanceField, vec2 rimNormal) {
@@ -317,6 +336,24 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     return innerBand * directional * uCausticStrength;
   }
 
+  float outsideShadow(vec2 point, float distanceField) {
+    vec2 shadowOffset = vec2(2.0, -4.5) * uDpr;
+    float shiftedDistance = liquidDistance(point - shadowOffset);
+    float softShape = 1.0 - smoothstep(0.0, 9.5 * uDpr, shiftedDistance);
+    float exterior = smoothstep(-0.5 * uDpr, 1.6 * uDpr, distanceField);
+    return softShape * exterior * uShadowStrength;
+  }
+
+  float capsuleContentMask(vec2 point) {
+    vec2 axis = normalize(uDirection);
+    vec2 normalAxis = vec2(-axis.y, axis.x);
+    float axial = dot(point, axis) / uDpr;
+    float radial = abs(dot(point, normalAxis)) / uDpr;
+    float axialMask = smoothstep(82.0 * uSizeScale, 116.0 * uSizeScale, axial);
+    float radialMask = 1.0 - smoothstep(20.0 * uSizeScale, 31.0 * uSizeScale, radial);
+    return axialMask * radialMask * smoothstep(0.42, 0.92, saturate(uShape.z));
+  }
+
   void main() {
     vec2 pixel = vec2(vUv.x * uResolution.x, vUv.y * uResolution.y);
     vec2 point = pixel - uAnchor;
@@ -326,30 +363,36 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     vec2 gradient = vec2(dFdx(distanceField), dFdy(distanceField));
     vec2 rimNormal = normalize(gradient + vec2(0.0001));
     float thickness = opticalThickness(distanceField);
-    float rimSlope = 1.0 - smoothstep(
-      0.0,
-      28.0 * uDpr * uSizeScale,
-      max(-distanceField, 0.0)
-    );
+    float lensing = edgeLensing(distanceField, thickness);
     vec2 localScreenPixel = vec2(pixel.x, uResolution.y - pixel.y);
     vec2 absoluteScreenPixel = uRenderOrigin + localScreenPixel;
     float surfacePerturbation = sin(
       absoluteScreenPixel.x * 0.012 + absoluteScreenPixel.y * 0.009 + uTime * 0.12
     ) * 0.055 * uEnergy;
-    vec2 surfaceSlope = rimNormal * mix(1.62, 0.16, thickness);
+    vec2 surfaceSlope = rimNormal * mix(1.82, 0.08, thickness) * uLensStrength;
     surfaceSlope += vec2(surfacePerturbation, -surfacePerturbation * 0.72);
     vec3 surfaceNormal = normalize(vec3(
       surfaceSlope,
       mix(0.58, 1.0, thickness)
     ));
     vec2 internalRefraction = surfaceNormal.xy
-      * uRefractionPx * thickness * 0.12;
+      * uRefractionPx * (0.04 + lensing * 0.1);
     float particle = particleField(point + internalRefraction);
-    if (coverage + particle <= 0.001) discard;
+    float shadow = outsideShadow(point, distanceField);
+    float windowEdgeDistance = min(
+      min(pixel.x, uResolution.x - pixel.x),
+      min(pixel.y, uResolution.y - pixel.y)
+    );
+    shadow *= smoothstep(0.0, 7.0 * uDpr, windowEdgeDistance);
+    if (coverage + particle + shadow <= 0.001) discard;
 
     float edge = exp(-abs(distanceField) / (4.4 * uDpr));
     float fresnel = pow(1.0 - max(surfaceNormal.z, 0.0), 2.2);
-    vec3 lightDirection = normalize(vec3(-0.42, 0.66, 0.62));
+    vec3 lightDirection = normalize(vec3(
+      -0.46 + uGaze.x * 0.12,
+      0.68 - uGaze.y * 0.1,
+      0.6
+    ));
     vec3 fillDirection = normalize(vec3(0.54, -0.28, 0.8));
     float highlight = pow(max(dot(surfaceNormal, lightDirection), 0.0), 22.0);
     float fillHighlight = pow(max(dot(surfaceNormal, fillDirection), 0.0), 34.0);
@@ -357,39 +400,40 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     vec2 screenNormal = normalize(vec2(surfaceNormal.x, -surfaceNormal.y) + vec2(0.0001));
     float incidence = saturate(length(surfaceNormal.xy));
     float refractionDistance = uRefractionPx
-      * (0.24 + incidence * 0.76)
-      * (0.42 + thickness * 0.58)
-      * (0.72 + rimSlope * 0.28);
+      * lensing
+      * (0.52 + incidence * 0.48);
     vec2 refractedPixel = absoluteScreenPixel + screenNormal * refractionDistance;
     float spectralDistance = uDispersionPx
-      * (0.18 + edge * 0.82)
-      * (0.32 + incidence * 0.68);
+      * lensing
+      * (0.34 + incidence * 0.66);
     vec3 transmitted = chromaticDispersion(
       refractedPixel,
       screenNormal,
       spectralDistance
     );
     vec3 directEnvironment = screenSpaceEnvironment(absoluteScreenPixel);
-    vec3 glassColor = mix(directEnvironment, transmitted, 0.82);
+    vec3 refractionDelta = transmitted - directEnvironment;
+    vec3 glassColor = directEnvironment + refractionDelta * 1.42;
+    glassColor = mix(directEnvironment, glassColor, 0.2 + lensing * 0.8);
     float causticLight = caustic(distanceField, rimNormal);
     float oppositeAttenuation = exp(
       -abs(distanceField + 4.0 * uDpr) / max(1.0, 4.8 * uDpr)
     ) * pow(max(dot(rimNormal, normalize(vec2(0.62, -0.78))), 0.0), 1.35);
-    glassColor += vec3(1.0, 0.985, 0.94) * causticLight * 0.86;
+    glassColor += vec3(1.0, 0.985, 0.94) * causticLight * 0.92;
     glassColor *= 1.0 - oppositeAttenuation * 0.11;
-    glassColor += vec3(1.0, 0.99, 0.96) * highlight * 0.32;
-    glassColor += vec3(0.9, 0.97, 1.0) * fillHighlight * 0.14;
-    glassColor += vec3(0.42, 0.5, 0.56) * fresnel * 0.17;
+    glassColor += vec3(1.0, 0.99, 0.96) * highlight * 0.38;
+    glassColor += vec3(0.9, 0.97, 1.0) * fillHighlight * 0.16;
+    glassColor += vec3(0.42, 0.5, 0.56) * fresnel * 0.2;
     float rimLighting = 0.5 + 0.5 * dot(rimNormal, normalize(vec2(-0.58, 0.82)));
     vec3 rimColor = mix(vec3(0.30, 0.34, 0.38), vec3(0.99, 1.0, 1.0), rimLighting);
-    glassColor = mix(glassColor, rimColor, edge * 0.38);
+    glassColor = mix(glassColor, rimColor, edge * 0.34 * uRimStrength);
     float prismPolarity = dot(rimNormal, normalize(vec2(-0.76, 0.65)));
     vec3 warmPrism = vec3(0.28, 0.035, -0.10);
     vec3 coolPrism = vec3(-0.08, 0.03, 0.28);
     vec3 prismTint = mix(coolPrism, warmPrism, smoothstep(-0.2, 0.2, prismPolarity));
-    float prismStrength = edge * incidence
+    float prismStrength = edge * incidence * lensing
       * min(uDispersionPx / max(uDpr * 2.25, 0.001), 1.0);
-    glassColor += prismTint * prismStrength * 0.18;
+    glassColor += prismTint * prismStrength * 0.24;
     float spectralScale = min(uDispersionPx / max(uDpr * 2.25, 0.001), 1.0);
     float warmSpectralRim = exp(
       -abs(distanceField + uDispersionPx * 0.55) / max(0.8, uDpr * 0.92)
@@ -408,30 +452,31 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     glassColor = mix(
       glassColor,
       vec3(1.0, 0.58, 0.3),
-      warmSpectralRim * warmDirection * spectralScale * 0.3
+      warmSpectralRim * warmDirection * spectralScale * lensing * 0.5
     );
     glassColor = mix(
       glassColor,
       vec3(0.39, 0.75, 1.0),
-      coolSpectralRim * coolDirection * spectralScale * 0.17
+      coolSpectralRim * coolDirection * spectralScale * lensing * 0.38
     );
     float warmDirectionalRim = edge * pow(
       max(dot(rimNormal, vec2(1.0, 0.0)), 0.0),
       1.1
-    ) * spectralScale;
+    ) * spectralScale * lensing;
     glassColor = mix(
       glassColor,
       vec3(1.0, 0.46, 0.2),
       warmDirectionalRim * 0.68
     );
+    glassColor += vec3(0.34, 0.02, -0.18) * warmDirectionalRim;
     float coolDirectionalRim = edge * pow(
       max(dot(rimNormal, vec2(0.0, -1.0)), 0.0),
       1.1
-    ) * spectralScale;
+    ) * spectralScale * lensing;
     glassColor = mix(
       glassColor,
       vec3(0.2, 0.66, 1.0),
-      coolDirectionalRim * 0.4
+      coolDirectionalRim * 0.5
     );
 
     vec2 coreOffset = point + internalRefraction - uGaze * 3.5 * uDpr;
@@ -446,32 +491,66 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
       -abs(coreDistance - 30.0 * uDpr * uSizeScale)
         / (2.2 * uDpr * uSizeScale)
     );
-    vec3 aiLight = mix(vec3(0.8, 0.97, 1.0), uAccent, innerHalo * 0.72);
-    glassColor = mix(glassColor, aiLight, saturate(innerHalo * 0.34 + coreRing * 0.48));
+    float outerCoreRing = exp(
+      -abs(coreDistance - 44.0 * uDpr * uSizeScale)
+        / (1.5 * uDpr * uSizeScale)
+    );
+    float orbitHighlight = outerCoreRing * pow(
+      max(dot(normalize(coreOffset + vec2(0.0001)), normalize(vec2(-0.7, 0.72))), 0.0),
+      4.0
+    );
+    float coreChannel = smoothstep(
+      15.0 * uDpr * uSizeScale,
+      21.0 * uDpr * uSizeScale,
+      coreDistance
+    ) * (1.0 - smoothstep(
+      35.0 * uDpr * uSizeScale,
+      43.0 * uDpr * uSizeScale,
+      coreDistance
+    ));
+    vec3 aiLight = mix(uAccent * 0.82, vec3(0.88, 0.98, 1.0), innerCore * 0.72);
+    glassColor = mix(glassColor, vec3(0.04, 0.12, 0.17), coreChannel * 0.2);
+    glassColor = mix(
+      glassColor,
+      aiLight,
+      saturate(innerHalo * 0.28 + coreRing * 0.72 + outerCoreRing * 0.34)
+    );
+    glassColor += vec3(0.94, 0.99, 1.0) * orbitHighlight * 0.32;
     glassColor = mix(glassColor, vec3(0.98, 1.0, 1.0), innerCore * 0.78);
+
+    float capsuleContent = capsuleContentMask(point);
+    glassColor = mix(glassColor, vec3(0.16, 0.19, 0.21), capsuleContent * 0.24);
 
     float centerAlpha = mix(0.075, 0.052, thickness);
     float glassAlpha = clamp(
       centerAlpha
-        + edge * 0.185
+        + edge * 0.23 * uRimStrength
         + fresnel * 0.09
-        + highlight * 0.035
+        + highlight * 0.045
         + fillHighlight * 0.018
-        + causticLight * 0.18,
+        + causticLight * 0.18
+        + capsuleContent * 0.035,
       0.0,
       0.42
     ) * coverage;
     float speechPulse = uSpeechLevel * (0.5 + 0.5 * sin(uTime * 10.0));
     float lightAlpha = (
       innerCore * (0.42 + speechPulse * 0.18)
-      + coreRing * (0.23 + uEnergy * 0.04)
-      + innerHalo * 0.07
+      + coreRing * (0.36 + uEnergy * 0.06)
+      + outerCoreRing * 0.13
+      + innerHalo * 0.085
     )
       * coverage;
     float particleAlpha = particle * mix(0.2, 0.34, uEnergy);
     glassColor = mix(glassColor, uAccent, saturate(particle * 0.9 + coreRing * 0.18));
-    float alpha = clamp(glassAlpha + lightAlpha + particleAlpha, 0.0, 0.78)
-      * uOpacity;
-    gl_FragColor = vec4(clamp(glassColor, 0.0, 1.0) * alpha, alpha);
+    float foregroundAlpha = clamp(
+      glassAlpha + lightAlpha + particleAlpha,
+      0.0,
+      0.78
+    ) * uOpacity;
+    float shadowAlpha = shadow * (1.0 - foregroundAlpha) * uOpacity;
+    float alpha = clamp(foregroundAlpha + shadowAlpha, 0.0, 0.82);
+    vec3 premultiplied = clamp(glassColor, 0.0, 1.0) * foregroundAlpha;
+    gl_FragColor = vec4(premultiplied, alpha);
   }
 `;

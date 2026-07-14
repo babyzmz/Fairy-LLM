@@ -33,6 +33,31 @@ WebGL2 failure selects compatibility mode. It does not trigger a Unity fallback.
 A future Windows Composition experiment may use a host backdrop without exposing
 desktop pixels, but it is not part of this implementation.
 
+## Material Reference Selection
+
+The July 2026 material refresh uses the `awesome-liquid-glass` collection as a
+research index, not as a runtime dependency. Fairy keeps a clean-room shader so
+the material can share its SDF with the existing morph and avoid a second DOM or
+SVG silhouette.
+
+- `Muggleee/liquid-glass` is the primary implementation reference because its
+  WebGL2, GLSL, and SDF pipeline matches Fairy's renderer and demonstrates
+  texture refraction, bounded channel separation, highlight, and shadow stages.
+- `rdev/liquid-glass-react` is a secondary optical reference for keeping the
+  center legible while concentrating displacement and chromatic separation at
+  the edge. Its SVG/backdrop component is not embedded because it can only
+  displace content inside the same web document.
+- `shuding/liquid-glass` and the CSS/SVG recreations remain comparison fixtures,
+  not production code, for the same backdrop and continuously regenerated map
+  limitations.
+- Apple's WWDC25 material guidance remains authoritative for lensing, adaptive
+  thickness, directional highlights, interaction illumination, and restrained
+  use of the material.
+
+The stable shape follows the approved Fairy board: a 144-pixel circular core
+directly unions with one glass input capsule. The droplet and liquid bridge only
+exist during the reveal and return transitions.
+
 ## Privacy And Product Constraints
 
 The renderer never captures, caches, analyzes, or uploads desktop content. Its

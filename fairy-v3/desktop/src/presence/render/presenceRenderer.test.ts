@@ -32,6 +32,9 @@ describe("presence renderer scheduling", () => {
     expect(visualStateForSnapshot(snapshot({ speaking: true, work_state: "error" }))).toBe(
       "speaking",
     );
+    expect(visualStateForSnapshot(snapshot({ interaction: interactiveSnapshot() }))).toBe(
+      "hover",
+    );
   });
 
   it("uses 60 FPS while fresh, 30 FPS after idle, and 15 FPS when constrained", () => {
@@ -47,3 +50,31 @@ describe("presence renderer scheduling", () => {
     );
   });
 });
+
+function interactiveSnapshot(): NonNullable<PresenceRenderSnapshot["interaction"]> {
+  return {
+    schema_version: 1,
+    sequence: 1,
+    sampled_at_ms: 520,
+    phase: "interactive",
+    phase_started_at_ms: 520,
+    reduced_motion: false,
+    cursor: {
+      point: { x: 136, y: 130 },
+      direction: { x: 1, y: 0 },
+      distance_px: 40,
+      speed_px_s: 0,
+      dwell_ms: 520,
+      band: "active",
+    },
+    placement: {
+      anchor: { x: 96, y: 130 },
+      render_frame: { x: 0, y: 0, width: 640, height: 260 },
+      input_compact_frame: { x: 24, y: 58, width: 616, height: 144 },
+      input_expanded_frame: { x: 24, y: -158, width: 616, height: 360 },
+      monitor_work_area: { x: 0, y: 0, width: 1_920, height: 1_040 },
+      scale_factor: 1,
+      expansion_direction: "right",
+    },
+  };
+}

@@ -57,7 +57,7 @@ export function visualStateForSnapshot(
     snapshot.interaction?.phase === "input_reveal" ||
     snapshot.interaction?.phase === "interactive"
   ) {
-    return "listening";
+    return "hover";
   }
   if (
     snapshot.interaction !== null &&

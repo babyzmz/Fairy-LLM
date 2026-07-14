@@ -30,8 +30,18 @@ uploads desktop pixels.
 References:
 
 - <https://freefrontend.com/css-liquid-glass/>
+- <https://github.com/carolhsiaoo/awesome-liquid-glass>
+- <https://github.com/Muggleee/liquid-glass>
+- <https://github.com/rdev/liquid-glass-react>
+- <https://github.com/shuding/liquid-glass>
 - <https://developer.apple.com/videos/play/wwdc2025/219/>
 - <https://learn.microsoft.com/en-us/uwp/api/windows.ui.composition.compositor.createhostbackdropbrush>
+
+The production material is a clean-room implementation. It does not copy or
+ship any of the referenced repositories and introduces no new runtime package.
+The WebGL2/SDF project is the closest architectural reference; the React and
+SVG projects are used only to validate the edge-displacement profile and the
+rule that chromatic separation must leave the center clean.
 
 ## Decision
 

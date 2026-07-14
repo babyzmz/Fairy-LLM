@@ -8,16 +8,25 @@ export interface LiquidOpticsUniformState {
   refraction_px: number;
   dispersion_px: number;
   caustic_strength: number;
+  lens_strength: number;
+  rim_strength: number;
+  shadow_strength: number;
 }
 
 export const LIQUID_OPTICS_LIMITS = Object.freeze({
   minimum_dispersion_logical_px: 1.25,
   active_dispersion_logical_px: 2.25,
   maximum_dispersion_logical_px: 3,
-  idle_refraction_logical_px: 8.5,
-  active_refraction_logical_px: 12.5,
-  idle_caustic_strength: 0.2,
-  active_caustic_strength: 0.36,
+  idle_refraction_logical_px: 13,
+  active_refraction_logical_px: 22,
+  idle_caustic_strength: 0.22,
+  active_caustic_strength: 0.4,
+  idle_lens_strength: 0.72,
+  active_lens_strength: 1,
+  idle_rim_strength: 0.78,
+  active_rim_strength: 1,
+  idle_shadow_strength: 0.1,
+  active_shadow_strength: 0.18,
 });
 
 export function liquidOpticsForSnapshot(
@@ -48,6 +57,21 @@ export function liquidOpticsForSnapshot(
     LIQUID_OPTICS_LIMITS.active_caustic_strength,
     activity,
   );
+  const lensStrength = mix(
+    LIQUID_OPTICS_LIMITS.idle_lens_strength,
+    LIQUID_OPTICS_LIMITS.active_lens_strength,
+    activity,
+  );
+  const rimStrength = mix(
+    LIQUID_OPTICS_LIMITS.idle_rim_strength,
+    LIQUID_OPTICS_LIMITS.active_rim_strength,
+    activity,
+  );
+  const shadowStrength = mix(
+    LIQUID_OPTICS_LIMITS.idle_shadow_strength,
+    LIQUID_OPTICS_LIMITS.active_shadow_strength,
+    activity,
+  );
 
   return Object.freeze({
     render_origin: Object.freeze([
@@ -66,6 +90,9 @@ export function liquidOpticsForSnapshot(
       LIQUID_OPTICS_LIMITS.maximum_dispersion_logical_px,
     ) * deviceScale,
     caustic_strength: causticStrength,
+    lens_strength: lensStrength,
+    rim_strength: rimStrength,
+    shadow_strength: shadowStrength,
   });
 }
 
