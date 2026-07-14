@@ -16,6 +16,11 @@ use crate::{PET_INPUT_LABEL, PET_RENDER_LABEL};
 pub const PRESENCE_INTERACTION_EVENT: &str = "presence-interaction-snapshot";
 const CORE_ANCHOR_X: f64 = 96.0;
 const CORE_ANCHOR_Y: f64 = 130.0;
+pub const PET_CORE_EXTENT_LOGICAL: f64 = 144.0;
+pub const PET_INPUT_COMPACT_WIDTH_LOGICAL: f64 = 616.0;
+pub const PET_INPUT_COMPACT_HEIGHT_LOGICAL: f64 = 144.0;
+pub const PET_INPUT_EXPANDED_WIDTH_LOGICAL: f64 = 616.0;
+pub const PET_INPUT_EXPANDED_HEIGHT_LOGICAL: f64 = 360.0;
 const AWARE_RADIUS: f64 = 220.0;
 const ACTIVE_RADIUS: f64 = 120.0;
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
@@ -109,6 +114,16 @@ pub struct PresenceWindowPlacement {
 }
 
 impl PresenceWindowPlacement {
+    pub fn core_frame(self, extent: u32) -> PhysicalFrame {
+        let radius = i64::from(extent) / 2;
+        PhysicalFrame {
+            x: (i64::from(self.anchor.x) - radius) as i32,
+            y: (i64::from(self.anchor.y) - radius) as i32,
+            width: extent,
+            height: extent,
+        }
+    }
+
     pub fn input_frame(self, width: u32, height: u32, compact_height: u32) -> PhysicalFrame {
         input_frame(
             self.render_frame,
@@ -298,10 +313,10 @@ pub fn resolve_presence_placement(
     let scale = scale_factor.clamp(0.5, 4.0);
     let anchor_x_offset = (CORE_ANCHOR_X * scale).round() as i64;
     let anchor_y_offset = (CORE_ANCHOR_Y * scale).round() as i64;
-    let compact_width = (372.0 * scale).round() as u32;
-    let compact_height = (72.0 * scale).round() as u32;
-    let expanded_width = (420.0 * scale).round() as u32;
-    let expanded_height = (360.0 * scale).round() as u32;
+    let compact_width = (PET_INPUT_COMPACT_WIDTH_LOGICAL * scale).round() as u32;
+    let compact_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale).round() as u32;
+    let expanded_width = (PET_INPUT_EXPANDED_WIDTH_LOGICAL * scale).round() as u32;
+    let expanded_height = (PET_INPUT_EXPANDED_HEIGHT_LOGICAL * scale).round() as u32;
     let prior = previous_direction.unwrap_or(ExpansionDirection::Right);
     let original_anchor = PhysicalPoint {
         x: match prior {
@@ -762,9 +777,13 @@ fn refresh_placement(
     if let Some(input) = app.get_webview_window(PET_INPUT_LABEL) {
         if input.is_visible().unwrap_or(false) {
             if let Ok(input_size) = input.outer_size() {
-                let compact_height = (72.0 * scale).round() as u32;
-                let frame =
-                    placement.input_frame(input_size.width, input_size.height, compact_height);
+                let core_extent = (PET_CORE_EXTENT_LOGICAL * scale).round() as u32;
+                let compact_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale).round() as u32;
+                let frame = if input_size.width == core_extent && input_size.height == core_extent {
+                    placement.core_frame(core_extent)
+                } else {
+                    placement.input_frame(input_size.width, input_size.height, compact_height)
+                };
                 let _ = input.set_position(tauri::PhysicalPosition::new(frame.x, frame.y));
             }
         }

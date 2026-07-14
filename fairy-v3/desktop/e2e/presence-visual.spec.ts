@@ -7,7 +7,7 @@ import type { PresenceInteractionSnapshot } from "../src/presence/domain/interac
 const WIDTH = 640;
 const HEIGHT = 260;
 
-test("liquid bridge stays continuous and returns without a one-frame jump", async ({
+test("unified liquid body stays continuous and returns without a one-frame jump", async ({
   browser,
 }, testInfo) => {
   const context = await browser.newContext({ viewport: { width: WIDTH, height: HEIGHT } });
@@ -224,8 +224,8 @@ function interactionSnapshot(
     placement: {
       anchor: { x: renderX + 96, y: 130 },
       render_frame: { x: renderX, y: 0, width: WIDTH, height: HEIGHT },
-      input_compact_frame: { x: renderX + 268, y: 94, width: 372, height: 72 },
-      input_expanded_frame: { x: renderX + 220, y: -64, width: 420, height: 360 },
+      input_compact_frame: { x: renderX + 24, y: 58, width: 616, height: 144 },
+      input_expanded_frame: { x: renderX + 24, y: -158, width: 616, height: 360 },
       monitor_work_area: { x: 0, y: 0, width: 1920, height: 1040 },
       scale_factor: 1,
       expansion_direction: "right",

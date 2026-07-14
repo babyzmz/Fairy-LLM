@@ -3,6 +3,7 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
+  background: transparent;
   user-select: none;
 }
 
@@ -10,8 +11,37 @@
   pointer-events: none;
 }
 
+.presence-core-hit-target {
+  position: absolute;
+  z-index: 5;
+  bottom: 0;
+  left: 0;
+  width: 144px;
+  height: 144px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+}
+
+.presence-input-window[data-expansion-direction="left"] .presence-core-hit-target {
+  right: 0;
+  left: auto;
+}
+
+.presence-core-hit-target:focus-visible {
+  box-shadow: inset 0 0 0 2px rgb(218 246 255 / 72%);
+}
+
+.presence-input-window[data-interactive="false"] .presence-core-hit-target {
+  pointer-events: none;
+}
+
 .presence-input-window .presence-panel {
   inset: 0;
+  z-index: 6;
   width: 100%;
   max-height: 100%;
   padding: 8px;
@@ -25,51 +55,116 @@
   pointer-events: none;
 }
 
+.presence-input-window[data-layout="core"] .presence-panel {
+  display: none;
+}
+
 .presence-input-window[data-layout="compact"] .presence-panel {
-  padding: 5px;
+  padding: 0;
 }
 
 .presence-input-window[data-layout="compact"] .presence-input {
-  height: 62px;
-  grid-template-columns: 28px minmax(0, 1fr) 38px;
+  position: absolute;
+  top: 40px;
+  right: 12px;
+  left: 96px;
+  height: 64px;
+  grid-template-columns: 30px minmax(0, 1fr) 38px;
   align-items: center;
-  padding: 6px 7px;
-  border-radius: 28px;
-  border-color: transparent;
+  gap: 7px;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 32px;
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
 }
 
+.presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-input {
+  right: 96px;
+  left: 12px;
+}
+
+.presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-move-grip {
+  order: 3;
+}
+
+.presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-input textarea {
+  order: 2;
+}
+
+.presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-send-button {
+  order: 1;
+}
+
 .presence-input-window[data-layout="compact"] .presence-input textarea {
-  min-height: 36px;
-  max-height: 36px;
-  padding: 8px 0;
+  min-height: 38px;
+  max-height: 38px;
+  padding: 9px 1px;
   overflow: hidden;
+  color: #f3f8f8;
+  font-size: 13px;
+  text-shadow:
+    0 1px 2px rgb(0 0 0 / 88%),
+    0 0 7px rgb(0 0 0 / 56%);
   white-space: nowrap;
+}
+
+.presence-input-window[data-layout="compact"] .presence-input textarea::placeholder {
+  color: rgb(239 248 248 / 84%);
+  opacity: 1;
 }
 
 .presence-input-window[data-layout="compact"] .presence-send-button {
   width: 36px;
   height: 36px;
   border-radius: 50%;
+  border-color: rgb(225 246 255 / 24%);
+  background: rgb(225 246 255 / 16%);
+  color: #f7fbff;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 18%),
+    0 1px 3px rgb(0 0 0 / 42%);
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 55%));
+}
+
+.presence-input-window[data-layout="compact"] .presence-send-button:hover {
+  border-color: rgb(225 246 255 / 42%);
+  background: rgb(225 246 255 / 24%);
 }
 
 .presence-input-window .presence-move-grip {
   cursor: grab;
-  color: #a4b6b3;
+  color: rgb(239 250 249 / 86%);
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 72%));
   touch-action: none;
 }
 
 .presence-input-window .presence-input[data-moving="true"] .presence-move-grip {
   cursor: grabbing;
-  color: #9de2d0;
-  background: #293231;
+  color: #d9fff5;
+  background: rgb(35 55 53 / 68%);
+}
+
+.presence-input-window[data-layout="expanded"] .presence-panel {
+  padding: 8px 8px 8px 156px;
+}
+
+.presence-input-window[data-expansion-direction="left"][data-layout="expanded"] .presence-panel {
+  padding: 8px 156px 8px 8px;
 }
 
 .presence-input-window[data-layout="expanded"] .presence-card,
 .presence-input-window[data-layout="expanded"] .presence-menu {
   width: 100%;
+}
+
+.presence-input-window[data-layout="expanded"] .presence-menu {
+  border-color: rgb(175 213 220 / 38%);
+  background: rgb(18 24 25 / 94%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 6%),
+    0 18px 42px rgb(0 0 0 / 38%);
 }
 
 .presence-input-window[data-reduced-motion="true"] * {

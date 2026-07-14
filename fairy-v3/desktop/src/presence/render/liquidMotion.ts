@@ -191,10 +191,14 @@ function easeInOutCubic(value: number): number {
 function returnShapeAt(envelope: ReturnEnvelope, now: number): LiquidShapeTarget {
   const elapsed = Math.max(0, now - envelope.startedAt);
   const duration = envelope.reducedMotion ? 160 : 220;
-  const scale = 1 - easeInOutCubic(Math.min(1, elapsed / duration));
+  const progress = easeInOutCubic(Math.min(1, elapsed / duration));
+  const scale = 1 - progress;
+  const bridgeTransition = progress < 1 && envelope.origin.bridge < 0.01
+    ? Math.sin(Math.PI * progress) * envelope.origin.capsule
+    : 0;
   return {
-    droplet: envelope.origin.droplet * scale,
-    bridge: envelope.origin.bridge * scale,
+    droplet: Math.max(envelope.origin.droplet * scale, bridgeTransition * 0.72),
+    bridge: Math.max(envelope.origin.bridge * scale, bridgeTransition),
     capsule: envelope.origin.capsule * scale,
   };
 }

@@ -20,8 +20,8 @@ const snapshot = {
   placement: {
     anchor: { x: -300, y: 700 },
     render_frame: { x: -396, y: 570, width: 640, height: 260 },
-    input_compact_frame: { x: -128, y: 664, width: 372, height: 72 },
-    input_expanded_frame: { x: -176, y: 376, width: 420, height: 360 },
+    input_compact_frame: { x: -372, y: 628, width: 616, height: 144 },
+    input_expanded_frame: { x: -372, y: 412, width: 616, height: 360 },
     monitor_work_area: { x: -1920, y: 0, width: 1920, height: 1040 },
     scale_factor: 1,
     expansion_direction: "right",

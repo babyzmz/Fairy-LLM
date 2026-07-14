@@ -27,9 +27,14 @@ const BRIDGE_SHAPE: LiquidShapeTarget = Object.freeze({
   bridge: 1,
   capsule: 0,
 });
-const INTERACTIVE_SHAPE: LiquidShapeTarget = Object.freeze({
+const INPUT_REVEAL_SHAPE: LiquidShapeTarget = Object.freeze({
   droplet: 1,
   bridge: 1,
+  capsule: 1,
+});
+const INTERACTIVE_SHAPE: LiquidShapeTarget = Object.freeze({
+  droplet: 0,
+  bridge: 0,
   capsule: 1,
 });
 
@@ -42,6 +47,7 @@ export function liquidShapeTargetForPhase(
     case "stretching":
       return BRIDGE_SHAPE;
     case "input_reveal":
+      return INPUT_REVEAL_SHAPE;
     case "interactive":
       return INTERACTIVE_SHAPE;
     default:
@@ -193,10 +199,11 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
 
     float capsuleMorph = smoothstep(0.0, 1.0, saturate(uShape.z));
     float capsuleEnd = 500.0 - (uSizeScale - 1.0) * 64.0;
+    float capsuleStart = 56.0 * uSizeScale;
     float capsule = capsuleDistance(
       local,
-      vec2(176.0 + sizeOffset, 0.0) * uDpr,
-      vec2(mix(176.0 + sizeOffset, capsuleEnd, capsuleMorph), 0.0) * uDpr,
+      vec2(capsuleStart, 0.0) * uDpr,
+      vec2(mix(capsuleStart, capsuleEnd, capsuleMorph), 0.0) * uDpr,
       mix(0.0, 32.0 * uSizeScale, capsuleMorph) * uDpr
     );
     capsule += (1.0 - capsuleMorph) * 16.0 * uDpr;

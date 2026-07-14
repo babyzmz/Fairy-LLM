@@ -176,8 +176,8 @@ function interaction(sequence: number): PresenceInteractionSnapshot {
     placement: {
       anchor: { x: 96, y: 130 },
       render_frame: { x: 0, y: 0, width: 640, height: 260 },
-      input_compact_frame: { x: 0, y: 0, width: 372, height: 72 },
-      input_expanded_frame: { x: 0, y: 0, width: 420, height: 360 },
+      input_compact_frame: { x: 0, y: 58, width: 616, height: 144 },
+      input_expanded_frame: { x: 0, y: -158, width: 616, height: 360 },
       monitor_work_area: { x: 0, y: 0, width: 1920, height: 1040 },
       scale_factor: 1,
       expansion_direction: "left",
@@ -233,7 +233,7 @@ describe("dual presence surfaces", () => {
     );
   });
 
-  it("shows the input surface only for an explicit input request or projected card", async () => {
+  it("keeps a core hit proxy available and expands for input or projected cards", async () => {
     const channel = channelHarness();
     const host = hostHarness();
     render(
@@ -245,7 +245,8 @@ describe("dual presence surfaces", () => {
       />,
     );
 
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
+    expect(screen.getByRole("button", { name: "Open Fairy quick input" })).toBeInTheDocument();
     act(() => host.requestInput());
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("compact"));
     expect(screen.getByLabelText("Quick message to Fairy")).toBeInTheDocument();
@@ -266,6 +267,25 @@ describe("dual presence surfaces", () => {
     expect(screen.queryByLabelText("Fairy companion")).not.toBeInTheDocument();
   });
 
+  it("opens the companion menu from the core context target without a second input shell", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Open Fairy quick input" }));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("expanded"));
+    expect(screen.getByRole("menu", { name: "Fairy menu" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Quick message to Fairy")).not.toBeInTheDocument();
+  });
+
   it("gates hover reveal at 300ms, content at 430ms, and clicks at 520ms", async () => {
     const channel = channelHarness();
     const host = hostHarness();
@@ -280,7 +300,7 @@ describe("dual presence surfaces", () => {
       />,
     );
     const surface = screen.getByTestId("presence-input-surface");
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
 
     act(() => coordinator.emit(interactionAt(20, "input_reveal", 300, 300)));
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact"));
@@ -313,7 +333,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
     act(() => host.requestInput());
     const input = await screen.findByLabelText("Quick message to Fairy");
     fireEvent.change(input, { target: { value: "\u4f60\u597d Fairy" } });
@@ -343,7 +363,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
     act(() => host.requestInput());
     const input = await screen.findByLabelText("Quick message to Fairy");
     fireEvent.change(input, { target: { value: "Stream this reply" } });
@@ -389,7 +409,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
     act(() => host.requestInput());
     const input = await screen.findByLabelText("Quick message to Fairy");
     fireEvent.change(input, { target: { value: "Retry safely" } });
@@ -420,7 +440,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
     vi.useFakeTimers();
     act(() => channel.emit(projection({
       reply: {

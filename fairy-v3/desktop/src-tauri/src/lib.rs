@@ -21,6 +21,8 @@ use presence_coordinator::{
     anchor_from_ratios, anchor_ratios, resolve_presence_placement,
     resolve_presence_placement_for_anchor, select_work_area, ExpansionDirection, PhysicalFrame,
     PhysicalPoint, PresenceCoordinatorConfig, PresenceCoordinatorHandle, PresenceWindowPlacement,
+    PET_CORE_EXTENT_LOGICAL, PET_INPUT_COMPACT_HEIGHT_LOGICAL, PET_INPUT_COMPACT_WIDTH_LOGICAL,
+    PET_INPUT_EXPANDED_HEIGHT_LOGICAL, PET_INPUT_EXPANDED_WIDTH_LOGICAL,
 };
 use presence_renderer_supervisor::{
     PresenceRendererDirective, PresenceRendererHealthReport, PresenceRendererStatus,
@@ -196,6 +198,28 @@ pub fn anchored_pet_input_frame(
         y: y as i32,
         width: target_width,
         height: target_height,
+    }
+}
+
+pub fn anchored_pet_core_frame(
+    render: PetWindowFrame,
+    target_extent: u32,
+    scale_factor: f64,
+    direction: ExpansionDirection,
+) -> PetWindowFrame {
+    let scale = scale_factor.clamp(0.5, 4.0);
+    let anchor_x_offset = (96.0 * scale).round() as i64;
+    let anchor_y_offset = (130.0 * scale).round() as i64;
+    let radius = i64::from(target_extent) / 2;
+    let anchor_x = match direction {
+        ExpansionDirection::Right => i64::from(render.x) + anchor_x_offset,
+        ExpansionDirection::Left => i64::from(render.x) + i64::from(render.width) - anchor_x_offset,
+    };
+    PetWindowFrame {
+        x: (anchor_x - radius) as i32,
+        y: (i64::from(render.y) + anchor_y_offset - radius) as i32,
+        width: target_extent,
+        height: target_extent,
     }
 }
 
@@ -658,6 +682,7 @@ async fn pet_window_group_reset_position(
 #[serde(rename_all = "snake_case")]
 enum PetInputLayout {
     Hidden,
+    Core,
     Compact,
     Expanded,
 }
@@ -691,17 +716,30 @@ async fn pet_input_set_layout(
     let render_position = render.outer_position().map_err(|error| error.to_string())?;
     let render_size = render.outer_size().map_err(|error| error.to_string())?;
     let (logical_width, logical_height) = match layout {
-        PetInputLayout::Compact => (372.0, 72.0),
-        PetInputLayout::Expanded => (420.0, 360.0),
+        PetInputLayout::Core => (PET_CORE_EXTENT_LOGICAL, PET_CORE_EXTENT_LOGICAL),
+        PetInputLayout::Compact => (
+            PET_INPUT_COMPACT_WIDTH_LOGICAL,
+            PET_INPUT_COMPACT_HEIGHT_LOGICAL,
+        ),
+        PetInputLayout::Expanded => (
+            PET_INPUT_EXPANDED_WIDTH_LOGICAL,
+            PET_INPUT_EXPANDED_HEIGHT_LOGICAL,
+        ),
         PetInputLayout::Hidden => unreachable!(),
     };
     let target_width = (logical_width * scale).round() as u32;
     let target_height = (logical_height * scale).round() as u32;
-    let compact_height = (72.0 * scale).round() as u32;
+    let compact_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale).round() as u32;
     let frame = state
         .presence
         .latest_placement()
-        .map(|placement| placement.input_frame(target_width, target_height, compact_height))
+        .map(|placement| match layout {
+            PetInputLayout::Core => placement.core_frame(target_width),
+            PetInputLayout::Compact | PetInputLayout::Expanded => {
+                placement.input_frame(target_width, target_height, compact_height)
+            }
+            PetInputLayout::Hidden => unreachable!(),
+        })
         .map(|frame| PetWindowFrame {
             x: frame.x,
             y: frame.y,
@@ -709,17 +747,27 @@ async fn pet_input_set_layout(
             height: frame.height,
         })
         .unwrap_or_else(|| {
-            anchored_pet_input_frame(
-                PetWindowFrame {
-                    x: render_position.x,
-                    y: render_position.y,
-                    width: render_size.width,
-                    height: render_size.height,
-                },
-                target_width,
-                target_height,
-                compact_height,
-            )
+            let render_frame = PetWindowFrame {
+                x: render_position.x,
+                y: render_position.y,
+                width: render_size.width,
+                height: render_size.height,
+            };
+            match layout {
+                PetInputLayout::Core => anchored_pet_core_frame(
+                    render_frame,
+                    target_width,
+                    scale,
+                    ExpansionDirection::Right,
+                ),
+                PetInputLayout::Compact | PetInputLayout::Expanded => anchored_pet_input_frame(
+                    render_frame,
+                    target_width,
+                    target_height,
+                    compact_height,
+                ),
+                PetInputLayout::Hidden => unreachable!(),
+            }
         });
     input
         .set_size(tauri::PhysicalSize::new(frame.width, frame.height))
@@ -1091,21 +1139,19 @@ fn move_pet_window_group(
         return Ok(());
     }
     let input_size = input.outer_size().map_err(|error| error.to_string())?;
-    let was_expanded =
-        input_size.height > (100.0 * placement.scale_factor.clamp(0.5, 4.0)).round() as u32;
-    let (width, height) = if was_expanded {
-        (
-            (420.0 * placement.scale_factor).round() as u32,
-            (360.0 * placement.scale_factor).round() as u32,
-        )
+    let scale = placement.scale_factor.clamp(0.5, 4.0);
+    let core_extent = (PET_CORE_EXTENT_LOGICAL * scale).round() as u32;
+    let compact_width = (PET_INPUT_COMPACT_WIDTH_LOGICAL * scale).round() as u32;
+    let compact_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale).round() as u32;
+    let expanded_width = (PET_INPUT_EXPANDED_WIDTH_LOGICAL * scale).round() as u32;
+    let expanded_height = (PET_INPUT_EXPANDED_HEIGHT_LOGICAL * scale).round() as u32;
+    let frame = if input_size.width == core_extent && input_size.height == core_extent {
+        placement.core_frame(core_extent)
+    } else if input_size.height > compact_height {
+        placement.input_frame(expanded_width, expanded_height, compact_height)
     } else {
-        (
-            (372.0 * placement.scale_factor).round() as u32,
-            (72.0 * placement.scale_factor).round() as u32,
-        )
+        placement.input_frame(compact_width, compact_height, compact_height)
     };
-    let compact_height = (72.0 * placement.scale_factor).round() as u32;
-    let frame = placement.input_frame(width, height, compact_height);
     input
         .set_size(tauri::PhysicalSize::new(frame.width, frame.height))
         .map_err(|error| error.to_string())?;

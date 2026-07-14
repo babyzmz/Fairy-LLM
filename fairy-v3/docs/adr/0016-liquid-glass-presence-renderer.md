@@ -9,9 +9,17 @@ Canvas 2D renderer remains the compatibility path.
 
 The production design uses one permanent pass-through render window and one
 focusable input window. The render surface owns the complete visual silhouette;
-the input surface overlays only DOM controls. Rust owns window placement, global
-cursor proximity, monitor changes, and focus policy. Neither surface owns a Core
-client or project state.
+the input surface overlays only DOM controls. At rest the input window is a
+144-pixel transparent hit proxy over the visible core so click and context-menu
+interaction do not require a global mouse hook. During reveal it expands over the
+same physical bounds as the unified liquid capsule. The rest of the render window
+remains pass-through. Rust owns window placement, global cursor proximity,
+monitor changes, and focus policy. Neither surface owns a Core client or project
+state.
+
+The droplet and Bezier bridge are transition geometry only. The stable interactive
+shape directly unions the core and capsule, while the DOM form contributes no
+second border, background, blur layer, or glass silhouette.
 
 ## Feasibility Gate
 

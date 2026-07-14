@@ -44,7 +44,7 @@ for (const scale of DISPLAY_SCALES) {
 test("input surface owns cards and controls without duplicating the renderer", async ({
   browser,
 }, testInfo) => {
-  const context = await browser.newContext({ viewport: { width: 420, height: 360 } });
+  const context = await browser.newContext({ viewport: { width: 616, height: 360 } });
   const page = await context.newPage();
   await page.goto("/?surface=pet-input");
   await publishProjection(page, {
@@ -76,10 +76,33 @@ test("input surface owns cards and controls without duplicating the renderer", a
   await context.close();
 });
 
+test("core context target opens the pet menu and keeps the input shell singular", async ({
+  browser,
+}, testInfo) => {
+  const context = await browser.newContext({ viewport: { width: 616, height: 360 } });
+  const page = await context.newPage();
+  await page.goto("/?surface=pet-input");
+  const surface = page.getByTestId("presence-input-surface");
+
+  await expect(surface).toHaveAttribute("data-layout", "core");
+  await page.getByRole("button", { name: "Open Fairy quick input" }).click({
+    button: "right",
+  });
+  await expect(surface).toHaveAttribute("data-layout", "expanded");
+  await expect(page.getByRole("menu", { name: "Fairy menu" })).toBeVisible();
+  await expect(page.getByLabel("Quick message to Fairy")).toHaveCount(0);
+  expect(await overflow(page)).toEqual({ horizontal: 0, vertical: 0 });
+  await page.screenshot({
+    path: testInfo.outputPath("pet-core-context-menu.png"),
+    omitBackground: true,
+  });
+  await context.close();
+});
+
 test("pet input reuses one streaming turn and keeps voice and approval isolated", async ({
   browser,
 }, testInfo) => {
-  const context = await browser.newContext({ viewport: { width: 420, height: 360 } });
+  const context = await browser.newContext({ viewport: { width: 616, height: 360 } });
   const page = await context.newPage();
   await page.goto("/?surface=pet-input");
   await installPresenceRequestCapture(page);
@@ -186,7 +209,7 @@ test("pet input reuses one streaming turn and keeps voice and approval isolated"
 test("hover input stays passive until the 520ms interaction gate", async ({
   browser,
 }, testInfo) => {
-  const context = await browser.newContext({ viewport: { width: 372, height: 72 } });
+  const context = await browser.newContext({ viewport: { width: 616, height: 144 } });
   const page = await context.newPage();
   await page.goto("/?surface=pet-input");
   const surface = page.getByTestId("presence-input-surface");
@@ -452,7 +475,7 @@ test("runtime policy and renderer metrics remain bounded and non-visible", async
   const canvas = page.locator("canvas.presence-webgl-canvas");
   await page.evaluate(() => {
     const channel = new BroadcastChannel("fairy.presence.runtime-policy.v1");
-    channel.postMessage({
+    const message = {
       kind: "presence.runtime-policy",
       policy: {
         schema_version: 1,
@@ -460,8 +483,12 @@ test("runtime policy and renderer metrics remain bounded and non-visible", async
         power_saver: true,
         foreground_fullscreen: false,
       },
-    });
-    window.setTimeout(() => channel.close(), 100);
+    };
+    const publish = () => channel.postMessage(message);
+    publish();
+    window.setTimeout(publish, 30);
+    window.setTimeout(publish, 80);
+    window.setTimeout(() => channel.close(), 120);
   });
   await expect(surface).toHaveAttribute("data-frame-rate-limit", "15");
   await expect(surface).toHaveAttribute("data-power-saver", "true");
@@ -536,6 +563,7 @@ async function publishInteraction(
   page: Page,
   snapshot: PresenceInteractionSnapshot,
 ) {
+  await page.locator('[data-interaction-ready="true"]').waitFor({ state: "attached" });
   await page.evaluate((value) => {
     const channel = new BroadcastChannel("fairy.presence.interaction.v1");
     const publish = () => channel.postMessage({ kind: "presence.interaction", snapshot: value });
@@ -573,15 +601,15 @@ function interactionSnapshot(
       anchor: { x: anchorX, y: 130 },
       render_frame: { x: 0, y: 0, width: 640, height: 260 },
       input_compact_frame: {
-        x: expansion_direction === "right" ? 268 : 0,
-        y: 94,
-        width: 372,
-        height: 72,
+        x: expansion_direction === "right" ? 24 : 0,
+        y: 58,
+        width: 616,
+        height: 144,
       },
       input_expanded_frame: {
-        x: expansion_direction === "right" ? 220 : 0,
-        y: -64,
-        width: 420,
+        x: expansion_direction === "right" ? 24 : 0,
+        y: -158,
+        width: 616,
         height: 360,
       },
       monitor_work_area: { x: 0, y: 0, width: 1920, height: 1040 },

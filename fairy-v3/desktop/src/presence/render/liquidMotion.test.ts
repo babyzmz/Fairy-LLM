@@ -63,6 +63,19 @@ describe("Liquid motion", () => {
     });
   });
 
+  it("restores the bridge only while a stable capsule retracts", () => {
+    const motion = new LiquidMotionController({ droplet: 0, bridge: 0, capsule: 1 });
+    motion.sample(0);
+    motion.beginReturn(0);
+
+    expect(motion.sample(0)).toMatchObject({ droplet: 0, bridge: 0, capsule: 1 });
+    const midpoint = motion.sample(110);
+    expect(midpoint.bridge).toBeGreaterThan(0.9);
+    expect(midpoint.droplet).toBeGreaterThan(0.6);
+    expect(midpoint.capsule).toBeCloseTo(0.5, 5);
+    expect(motion.sample(220)).toMatchObject({ droplet: 0, bridge: 0, capsule: 0 });
+  });
+
   it("uses a 160ms opacity-safe return for reduced motion", () => {
     const motion = new LiquidMotionController({ droplet: 1, bridge: 1, capsule: 1 });
     motion.beginReturn(0, true);

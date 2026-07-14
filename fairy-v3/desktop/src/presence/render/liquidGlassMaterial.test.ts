@@ -31,8 +31,8 @@ function renderSnapshot(
       placement: {
         anchor: { x: 96, y: 130 },
         render_frame: { x: 0, y: 0, width: 640, height: 260 },
-        input_compact_frame: { x: 268, y: 94, width: 372, height: 72 },
-        input_expanded_frame: { x: 220, y: -64, width: 420, height: 360 },
+        input_compact_frame: { x: 24, y: 58, width: 616, height: 144 },
+        input_expanded_frame: { x: 24, y: -158, width: 616, height: 360 },
         monitor_work_area: { x: 0, y: 0, width: 1920, height: 1040 },
         scale_factor: 1,
         expansion_direction,
@@ -68,9 +68,14 @@ describe("Liquid Glass material", () => {
       bridge: 1,
       capsule: 0,
     });
-    expect(liquidShapeTargetForPhase("interactive")).toEqual({
+    expect(liquidShapeTargetForPhase("input_reveal")).toEqual({
       droplet: 1,
       bridge: 1,
+      capsule: 1,
+    });
+    expect(liquidShapeTargetForPhase("interactive")).toEqual({
+      droplet: 0,
+      bridge: 0,
       capsule: 1,
     });
     expect(liquidShapeTargetForPhase("returning")).toEqual({

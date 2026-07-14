@@ -28,6 +28,7 @@ import {
   createPresenceRuntimePolicySource,
   type PresenceRuntimePolicySource,
 } from "../transport/runtimePolicyEvents";
+import { useDeferredChannelClose } from "../transport/useDeferredChannelClose";
 import {
   DEFAULT_PRESENCE_RUNTIME_POLICY,
   type PresenceRuntimePolicy,
@@ -100,10 +101,7 @@ export function PresenceRenderApp({
     return stop;
   }, [channel, now]);
 
-  useEffect(() => {
-    if (suppliedChannel !== undefined) return;
-    return () => channel.close();
-  }, [channel, suppliedChannel]);
+  useDeferredChannelClose(channel, suppliedChannel === undefined);
 
   useEffect(() => {
     const stop = renderSettingsChannel.onSettings(setRenderSettings);
@@ -111,10 +109,10 @@ export function PresenceRenderApp({
     return stop;
   }, [renderSettingsChannel]);
 
-  useEffect(() => {
-    if (suppliedRenderSettingsChannel !== undefined) return;
-    return () => renderSettingsChannel.close();
-  }, [renderSettingsChannel, suppliedRenderSettingsChannel]);
+  useDeferredChannelClose(
+    renderSettingsChannel,
+    suppliedRenderSettingsChannel === undefined,
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(now()), 30_000);

@@ -51,6 +51,15 @@ fn placement_flips_left_near_the_right_edge_and_preserves_the_core_anchor() {
     assert_eq!(placement.render_frame.x, 1052);
     assert_eq!(placement.input_compact_frame.x, 1052);
     assert_eq!(placement.input_expanded_frame.x, 1052);
+    assert_eq!(
+        placement.core_frame(144),
+        PhysicalFrame {
+            x: 1524,
+            y: 558,
+            width: 144,
+            height: 144,
+        }
+    );
 }
 
 #[test]
@@ -95,10 +104,10 @@ fn placement_scales_anchor_and_input_frames_in_physical_pixels() {
         None,
     );
 
-    assert_eq!(placement.anchor, PhysicalPoint { x: 444, y: 486 });
-    assert_eq!(placement.input_compact_frame.width, 558);
-    assert_eq!(placement.input_compact_frame.height, 108);
-    assert_eq!(placement.input_expanded_frame.width, 630);
+    assert_eq!(placement.anchor, PhysicalPoint { x: 444, y: 432 });
+    assert_eq!(placement.input_compact_frame.width, 924);
+    assert_eq!(placement.input_compact_frame.height, 216);
+    assert_eq!(placement.input_expanded_frame.width, 924);
     assert_eq!(placement.input_expanded_frame.height, 540);
     assert!(placement.input_expanded_frame.y >= placement.monitor_work_area.y);
     assert!(

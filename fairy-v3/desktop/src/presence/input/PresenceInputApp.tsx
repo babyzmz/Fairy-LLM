@@ -16,6 +16,7 @@ import {
 import {
   createDefaultPetHost,
   type PetHost,
+  type PetInputLayout,
   type PetPreferencePatch,
 } from "../host/petHost";
 import {
@@ -40,6 +41,7 @@ import {
   safeRenderSettingsFromPreferences,
   type PresenceRenderSettingsChannel,
 } from "../transport/renderSettings";
+import { useDeferredChannelClose } from "../transport/useDeferredChannelClose";
 import { presenceInputGate } from "./inputGate";
 import {
   PresencePanel,
@@ -113,6 +115,7 @@ export function PresenceInputApp({
   const [submission, setSubmission] = useState<PresenceSubmissionState | null>(null);
   const [replyInteraction, setReplyInteraction] = useState(0);
   const [interaction, setInteraction] = useState<PresenceInteractionSnapshot | null>(null);
+  const [interactionReady, setInteractionReady] = useState(false);
   const [hoverSuppressed, setHoverSuppressed] = useState(false);
   const [focusRequest, setFocusRequest] = useState(0);
   const [moving, setMoving] = useState(false);
@@ -139,10 +142,7 @@ export function PresenceInputApp({
     return stop;
   }, [channel]);
 
-  useEffect(() => {
-    if (suppliedChannel !== undefined) return;
-    return () => channel.close();
-  }, [channel, suppliedChannel]);
+  useDeferredChannelClose(channel, suppliedChannel === undefined);
 
   useEffect(() => {
     let disposed = false;
@@ -230,10 +230,10 @@ export function PresenceInputApp({
     });
   }, [preferences, renderSettingsChannel]);
 
-  useEffect(() => {
-    if (suppliedRenderSettingsChannel !== undefined) return;
-    return () => renderSettingsChannel.close();
-  }, [renderSettingsChannel, suppliedRenderSettingsChannel]);
+  useDeferredChannelClose(
+    renderSettingsChannel,
+    suppliedRenderSettingsChannel === undefined,
+  );
 
   useEffect(() => {
     let disposed = false;
@@ -246,10 +246,14 @@ export function PresenceInputApp({
       }
     }).then((unlisten) => {
       if (disposed) unlisten();
-      else stop = unlisten;
+      else {
+        stop = unlisten;
+        setInteractionReady(true);
+      }
     });
     return () => {
       disposed = true;
+      setInteractionReady(false);
       stop?.();
     };
   }, [interactionSource]);
@@ -276,13 +280,14 @@ export function PresenceInputApp({
   const cardOpen =
     menuOpen || reply !== null || view.notice !== null || submissionCard !== null;
   const inputOpen = manualInputOpen || hoverGate.window_visible;
-  const layout = cardOpen
+  const layout: PetInputLayout = cardOpen
     ? "expanded"
     : inputOpen
       ? "compact"
-      : "hidden";
+      : "core";
   const contentVisible = cardOpen || manualInputOpen || hoverGate.content_visible;
-  const surfaceInteractive = cardOpen || manualInputOpen || hoverGate.interactive;
+  const surfaceInteractive =
+    layout === "core" || cardOpen || manualInputOpen || hoverGate.interactive;
 
   useEffect(() => {
     if (reply === null || reply.streaming) return;
@@ -310,9 +315,8 @@ export function PresenceInputApp({
       .catch(() => undefined)
       .then(async () => {
         await host.setInputLayout(layout);
-        await host.setInputInteractive(layout !== "hidden" && surfaceInteractive);
+        await host.setInputInteractive(surfaceInteractive);
         if (
-          layout !== "hidden" &&
           surfaceInteractive &&
           focusRequest > appliedFocusRequest.current
         ) {
@@ -369,6 +373,19 @@ export function PresenceInputApp({
     if (!open && document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
+  }
+
+  function openQuickInput() {
+    setMenuOpen(false);
+    setHoverSuppressed(false);
+    setManualInputOpen(true);
+    setFocusRequest((value) => value + 1);
+  }
+
+  function openContextMenu() {
+    setManualInputOpen(false);
+    setHoverSuppressed(true);
+    setMenuOpen(true);
   }
 
   function dismissInput() {
@@ -494,8 +511,13 @@ export function PresenceInputApp({
     <main
       className="presence-input-window"
       data-content-visible={String(contentVisible)}
+      data-expansion-direction={
+        interaction?.placement.expansion_direction ?? "right"
+      }
       data-interactive={String(surfaceInteractive)}
+      data-interaction-ready={String(interactionReady)}
       data-layout={layout}
+      data-menu-open={String(menuOpen)}
       data-moving={String(moving)}
       data-reduced-motion={String(
         interaction?.reduced_motion === true || preferences?.reduced_motion === true
@@ -506,15 +528,29 @@ export function PresenceInputApp({
       onWheel={() => setReplyInteraction((value) => value + 1)}
       onContextMenu={(event) => {
         event.preventDefault();
-        setManualInputOpen(false);
-        setHoverSuppressed(true);
-        setMenuOpen(true);
+        openContextMenu();
       }}
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;
         dismissInput();
       }}
     >
+      <button
+        aria-label="Open Fairy quick input"
+        className="presence-core-hit-target"
+        onClick={openQuickInput}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openContextMenu();
+        }}
+        onDoubleClick={() => {
+          channel.requestWorkspaceOpen();
+          void host.openMain().catch(() => undefined);
+        }}
+        title="Fairy"
+        type="button"
+      />
       <PresencePanel
         actions={{
           cancelTurn,
@@ -562,7 +598,7 @@ export function PresenceInputApp({
         alwaysOnTop={alwaysOnTop}
         autoPlay={autoPlay}
         focusRequest={focusRequest}
-        inputOpen={inputOpen}
+        inputOpen={inputOpen && !cardOpen}
         interactive={surfaceInteractive}
         menuOpen={menuOpen}
         moving={moving}

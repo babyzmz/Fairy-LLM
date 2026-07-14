@@ -1,10 +1,12 @@
 use fairy_core_bridge::CoreBridgeError;
+use fairy_desktop_v3::presence_coordinator::ExpansionDirection;
 use fairy_desktop_v3::{
-    anchored_pet_frame, anchored_pet_input_frame, authorize_core_rpc_window,
-    authorize_pet_input_window, authorize_pet_render_window, authorize_preferences_reader,
-    authorize_settings_window, authorize_voice_health_window, authorize_voice_settings_window,
-    auxiliary_window_policy, bridge_failure_response, fairy_tray_action, resolve_desktop_data_dir,
-    settings_method_allowed, FairyTrayAction, PetWindowFrame,
+    anchored_pet_core_frame, anchored_pet_frame, anchored_pet_input_frame,
+    authorize_core_rpc_window, authorize_pet_input_window, authorize_pet_render_window,
+    authorize_preferences_reader, authorize_settings_window, authorize_voice_health_window,
+    authorize_voice_settings_window, auxiliary_window_policy, bridge_failure_response,
+    fairy_tray_action, resolve_desktop_data_dir, settings_method_allowed, FairyTrayAction,
+    PetWindowFrame,
 };
 use serde_json::json;
 use std::ffi::OsString;
@@ -120,38 +122,49 @@ fn tauri_config_declares_separate_render_and_input_surfaces() {
     assert_eq!(render["alwaysOnTop"], true);
     assert_eq!(
         (input["width"].as_u64(), input["height"].as_u64()),
-        (Some(372), Some(72))
+        (Some(144), Some(144))
     );
     assert_eq!(input["visible"], false);
     assert_eq!(input["alwaysOnTop"], true);
 }
 
 #[test]
-fn pet_input_overlays_the_render_surface_without_a_material_gap() {
+fn pet_input_overlays_the_unified_liquid_surface_without_a_material_gap() {
     let render = PetWindowFrame {
         x: -1280,
         y: 240,
         width: 640,
         height: 260,
     };
-    let compact = anchored_pet_input_frame(render, 372, 72, 72);
+    let core = anchored_pet_core_frame(render, 144, 1.0, ExpansionDirection::Right);
     assert_eq!(
-        compact,
+        core,
         PetWindowFrame {
-            x: -1012,
-            y: 334,
-            width: 372,
-            height: 72,
+            x: -1256,
+            y: 298,
+            width: 144,
+            height: 144,
         }
     );
 
-    let expanded = anchored_pet_input_frame(render, 420, 360, 72);
+    let compact = anchored_pet_input_frame(render, 616, 144, 144);
+    assert_eq!(
+        compact,
+        PetWindowFrame {
+            x: -1256,
+            y: 298,
+            width: 616,
+            height: 144,
+        }
+    );
+
+    let expanded = anchored_pet_input_frame(render, 616, 360, 144);
     assert_eq!(
         expanded,
         PetWindowFrame {
-            x: -1060,
-            y: 46,
-            width: 420,
+            x: -1256,
+            y: 82,
+            width: 616,
             height: 360,
         }
     );

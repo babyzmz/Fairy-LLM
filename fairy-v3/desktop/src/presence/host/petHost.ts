@@ -33,7 +33,7 @@ export interface PetHost {
   exit(): Promise<void>;
 }
 
-export type PetInputLayout = "hidden" | "compact" | "expanded";
+export type PetInputLayout = "hidden" | "core" | "compact" | "expanded";
 
 export function createDefaultPetHost(): PetHost {
   if (!isTauri()) return createBrowserPetHost();
