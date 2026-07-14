@@ -1,16 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import {
-  useAssistantTurn,
-} from "../chat/useAssistantTurn";
-import type {
-  Conversation,
-  EventEnvelope,
-  McpToolPolicyInput,
-  Project,
-  Task,
-} from "../core/client";
+import { useAssistantTurn } from "../chat/useAssistantTurn";
+import type { Conversation, EventEnvelope, McpToolPolicyInput, Project, Task } from "../core/client";
 import type { McpServerDraft } from "../settings/extensionTypes";
 import type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 export type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
@@ -21,12 +13,7 @@ import {
   usePersistedSelection,
   writeEventCursor,
 } from "./workspacePreferences";
-import {
-  equalOverrides,
-  extensionUpdateKey,
-  permissionUpdateKey,
-  requireMcpServer,
-} from "./workspaceCommandKeys";
+import { equalOverrides, extensionUpdateKey, permissionUpdateKey, requireMcpServer } from "./workspaceCommandKeys";
 import { createWorkspaceFileActions } from "./workspaceFileActions";
 
 const workspaceKey = ["workspace"] as const;
@@ -40,29 +27,15 @@ const terminalAssistantEvents = new Set([
 
 export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const queryClient = useQueryClient();
-  const [mode, setMode] = usePersistedEnum<WorkspaceMode>(
-    "fairy.workspace.mode",
-    "project",
-    ["project", "chat"],
+  const [mode, setMode] = usePersistedEnum<WorkspaceMode>("fairy.workspace.mode", "project", ["project", "chat"]);
+  const [developerMode, setDeveloperMode] = usePersistedBoolean("fairy.workspace.developer", false);
+  const [projectSelection, setProjectSelection] = usePersistedSelection("fairy.workspace.project");
+  const [conversationSelection, setConversationSelection] = usePersistedSelection("fairy.workspace.conversation");
+  const [chatConversationSelection, setChatConversationSelection] = usePersistedSelection(
+    "fairy.workspace.chat-conversation",
   );
-  const [developerMode, setDeveloperMode] = usePersistedBoolean(
-    "fairy.workspace.developer",
-    false,
-  );
-  const [projectSelection, setProjectSelection] = usePersistedSelection(
-    "fairy.workspace.project",
-  );
-  const [conversationSelection, setConversationSelection] = usePersistedSelection(
-    "fairy.workspace.conversation",
-  );
-  const [chatConversationSelection, setChatConversationSelection] =
-    usePersistedSelection("fairy.workspace.chat-conversation");
-  const [taskSelection, setTaskSelection] = usePersistedSelection(
-    "fairy.workspace.task",
-  );
-  const [profileSelection, setProfileSelection] = usePersistedSelection(
-    "fairy.workspace.provider",
-  );
+  const [taskSelection, setTaskSelection] = usePersistedSelection("fairy.workspace.task");
+  const [profileSelection, setProfileSelection] = usePersistedSelection("fairy.workspace.provider");
   const [allEvents, setAllEvents] = useState<EventEnvelope[]>([]);
   const eventCursor = useRef(readEventCursor());
   const [actionError, setActionError] = useState<string | null>(null);
@@ -132,28 +105,20 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const projects = projectsQuery.data?.items ?? [];
   const selectedProject = selectedItem(projects, projectSelection);
   const allConversations = conversationsQuery.data?.items ?? [];
-  const conversations = allConversations.filter(
-    (conversation) => conversation.project_id === selectedProject?.id,
-  );
+  const conversations = allConversations.filter((conversation) => conversation.project_id === selectedProject?.id);
   const projectConversations = allConversations.filter(
     (conversation) => conversation.workspace_type === "project_chat",
   );
   const chatConversations = allConversations.filter(
-    (conversation) =>
-      conversation.project_id === null && conversation.workspace_type === "chat_scratch",
+    (conversation) => conversation.project_id === null && conversation.workspace_type === "chat_scratch",
   );
   const selectedConversation = selectedItem(conversations, conversationSelection);
-  const selectedChatConversation = selectedItem(
-    chatConversations,
-    chatConversationSelection,
-  );
+  const selectedChatConversation = selectedItem(chatConversations, chatConversationSelection);
   const providers = providersQuery.data?.items ?? [];
   const providerHealth = providerHealthQuery.data?.items ?? [];
   const selectedProfile =
     providers.find((profile) => profile.id === profileSelection) ??
-    providers.find(
-      (profile) => profile.enabled && profile.capabilities.includes("text"),
-    ) ??
+    providers.find((profile) => profile.enabled && profile.capabilities.includes("text")) ??
     null;
   const selectedProfileId = selectedProfile?.id ?? null;
 
@@ -164,17 +129,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
   const allTasks = tasksQuery.data?.items ?? [];
-  const tasks = allTasks.filter(
-    (task) => task.conversation_id === selectedConversation?.id,
-  );
+  const tasks = allTasks.filter((task) => task.conversation_id === selectedConversation?.id);
   const selectedTask = selectedItem(tasks, taskSelection);
-  const chatTasks = allTasks.filter(
-    (task) => task.conversation_id === selectedChatConversation?.id,
-  );
+  const chatTasks = allTasks.filter((task) => task.conversation_id === selectedChatConversation?.id);
   const workspaceTask =
-    mode === "chat"
-      ? chatTasks.find((task) => task.id === chatTaskId) ?? chatTasks.at(-1) ?? null
-      : selectedTask;
+    mode === "chat" ? (chatTasks.find((task) => task.id === chatTaskId) ?? chatTasks.at(-1) ?? null) : selectedTask;
   const messagesQuery = useQuery({
     queryKey: [...workspaceKey, "messages", selectedChatConversation?.id],
     queryFn: () =>
@@ -223,22 +182,14 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
   const previewQuery = useQuery({
-    queryKey: [
-      ...workspaceKey,
-      "preview",
-      workspaceTask?.id,
-      workspaceTask?.target_version_id,
-    ],
+    queryKey: [...workspaceKey, "preview", workspaceTask?.id, workspaceTask?.target_version_id],
     queryFn: () =>
       client.previews.resolve({
         task_id: requireId(workspaceTask?.id),
         workspace_id: requireId(workspaceTask?.workspace_id),
         version_id: requireId(workspaceTask?.target_version_id),
       }),
-    enabled:
-      workspaceTask !== null &&
-      workspaceTask.target_version_id !== null &&
-      selectedWorkspaceQuery.isSuccess,
+    enabled: workspaceTask !== null && workspaceTask.target_version_id !== null && selectedWorkspaceQuery.isSuccess,
     retry: false,
   });
   const runtimeHealthQuery = useQuery({
@@ -248,14 +199,19 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
   const workspaceFilesQuery = useQuery({
-    queryKey: [
-      ...workspaceKey,
-      "files",
-      workspaceTask?.workspace_id,
-      workspaceTask?.target_version_id,
-    ],
+    queryKey: [...workspaceKey, "files", workspaceTask?.workspace_id, workspaceTask?.target_version_id],
     queryFn: () =>
       client.workspaces.listFiles({
+        workspace_id: requireId(workspaceTask?.workspace_id),
+        version_id: requireId(workspaceTask?.target_version_id),
+      }),
+    enabled: workspaceTask?.target_version_id !== null && workspaceTask !== null,
+    retry: false,
+  });
+  const assetSetsQuery = useQuery({
+    queryKey: [...workspaceKey, "asset-sets", workspaceTask?.workspace_id, workspaceTask?.target_version_id],
+    queryFn: () =>
+      client.assetSets.list({
         workspace_id: requireId(workspaceTask?.workspace_id),
         version_id: requireId(workspaceTask?.target_version_id),
       }),
@@ -319,9 +275,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             void queryClient.invalidateQueries({
               queryKey: workspaceKey,
               predicate: (query) =>
-                !["health", "messages", "providers", "provider-health"].includes(
-                  String(query.queryKey[1]),
-                ),
+                !["health", "messages", "providers", "provider-health"].includes(String(query.queryKey[1])),
             });
           }
         }
@@ -336,7 +290,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   }, [client, healthQuery.isSuccess, queryClient]);
 
   const runAction = useCallback(
-    async <T,>(operation: () => Promise<T>): Promise<T> => {
+    async <T>(operation: () => Promise<T>): Promise<T> => {
       setIsActing(true);
       setActionError(null);
       setActionErrorCode(null);
@@ -356,16 +310,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   );
 
   const persistPermissions = useCallback(
-    async (
-      profile: PermissionProfile,
-      capabilityOverrides: Record<string, boolean>,
-    ): Promise<void> => {
+    async (profile: PermissionProfile, capabilityOverrides: Record<string, boolean>): Promise<void> => {
       const current = permissionsQuery.data;
       if (current === undefined) throw new Error("Core permission settings are unavailable");
-      if (
-        current.profile === profile &&
-        equalOverrides(current.capability_overrides, capabilityOverrides)
-      ) {
+      if (current.profile === profile && equalOverrides(current.capability_overrides, capabilityOverrides)) {
         return;
       }
       try {
@@ -374,11 +322,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             profile,
             capability_overrides: capabilityOverrides,
             expected_revision: current.revision,
-            idempotency_key: permissionUpdateKey(
-              current.revision,
-              profile,
-              capabilityOverrides,
-            ),
+            idempotency_key: permissionUpdateKey(current.revision, profile, capabilityOverrides),
           }),
         );
         queryClient.setQueryData(permissionQueryKey, updated);
@@ -388,9 +332,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           queryClient.refetchQueries({ queryKey: permissionQueryKey, exact: true }),
           queryClient.invalidateQueries({ queryKey: capabilityQueryKey }),
         ]);
-        const conflict = new Error(
-          "Permissions changed on another device. Latest settings loaded; review and retry.",
-        );
+        const conflict = new Error("Permissions changed on another device. Latest settings loaded; review and retry.");
         setActionError(conflict.message);
         setActionErrorCode("PERMISSION_CONFLICT");
         throw conflict;
@@ -449,9 +391,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
 
   const configureMcpServer = useCallback(
     async (input: McpServerDraft): Promise<void> => {
-      const current = mcpServersQuery.data?.items.find(
-        (server) => server.server_id === input.serverId,
-      );
+      const current = mcpServersQuery.data?.items.find((server) => server.server_id === input.serverId);
       const expectedRevision = current?.revision ?? 0;
       await runAction(() =>
         client.mcp.servers.configure({
@@ -464,12 +404,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           credential_ref: input.credentialRef,
           environment_refs: input.environmentRefs,
           expected_revision: expectedRevision,
-          idempotency_key: extensionUpdateKey(
-            "configure",
-            input.serverId,
-            expectedRevision,
-            input,
-          ),
+          idempotency_key: extensionUpdateKey("configure", input.serverId, expectedRevision, input),
         }),
       );
     },
@@ -486,15 +421,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           server_id: serverId,
           task_id: taskId,
           expected_revision: current.revision,
-          idempotency_key: extensionUpdateKey(
-            "discover",
-            serverId,
-            current.revision,
-            { taskId },
-          ),
+          idempotency_key: extensionUpdateKey("discover", serverId, current.revision, { taskId }),
         }),
       );
-    }, [chatTaskId, client.mcp.servers, mcpServersQuery.data?.items, runAction, selectedTask?.id],
+    },
+    [chatTaskId, client.mcp.servers, mcpServersQuery.data?.items, runAction, selectedTask?.id],
   );
 
   const acceptMcpServer = useCallback(
@@ -510,12 +441,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           schema_digest: current.pending_schema_digest as string,
           enabled: true,
           tools,
-          idempotency_key: extensionUpdateKey(
-            "accept",
-            serverId,
-            current.revision,
-            tools,
-          ),
+          idempotency_key: extensionUpdateKey("accept", serverId, current.revision, tools),
         }),
       );
     },
@@ -530,12 +456,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           server_id: serverId,
           expected_revision: current.revision,
           enabled,
-          idempotency_key: extensionUpdateKey(
-            enabled ? "enable" : "disable",
-            serverId,
-            current.revision,
-            { enabled },
-          ),
+          idempotency_key: extensionUpdateKey(enabled ? "enable" : "disable", serverId, current.revision, { enabled }),
         }),
       );
     },
@@ -549,12 +470,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         client.mcp.servers.delete({
           server_id: serverId,
           expected_revision: current.revision,
-          idempotency_key: extensionUpdateKey(
-            "delete",
-            serverId,
-            current.revision,
-            {},
-          ),
+          idempotency_key: extensionUpdateKey("delete", serverId, current.revision, {}),
         }),
       );
     },
@@ -573,9 +489,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         setTaskSelection(null);
       },
       async createProject(name: string) {
-        const result = await runAction(() =>
-          client.projects.create({ name, residency: "local_only" }),
-        );
+        const result = await runAction(() => client.projects.create({ name, residency: "local_only" }));
         setProjectSelection(result.project.id);
         setConversationSelection(null);
         setTaskSelection(null);
@@ -816,12 +730,14 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       },
       async deleteDocument(documentId: string) {
         const taskId = requireId(selectedTask?.id ?? chatTaskId);
-        await runAction(() => client.documents.delete({
-          task_id: taskId,
-          document_id: documentId,
-          user_confirmed: true,
-          idempotency_key: `desktop:document-delete:${documentId}:${crypto.randomUUID()}`,
-        }));
+        await runAction(() =>
+          client.documents.delete({
+            task_id: taskId,
+            document_id: documentId,
+            user_confirmed: true,
+            idempotency_key: `desktop:document-delete:${documentId}:${crypto.randomUUID()}`,
+          }),
+        );
       },
       async searchMemory(query: string) {
         const taskId = requireId(selectedTask?.id ?? chatTaskId);
@@ -830,30 +746,36 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       },
       async forgetMemory(targetKind: "observation" | "claim", targetId: string) {
         const taskId = requireId(selectedTask?.id ?? chatTaskId);
-        await runAction(() => client.memory.forget({
-          task_id: taskId,
-          target_kind: targetKind,
-          target_id: targetId,
-          reason: "User requested removal from the desktop Knowledge panel.",
-          user_confirmed: true,
-          idempotency_key: `desktop:memory-forget:${targetId}:${crypto.randomUUID()}`,
-        }));
+        await runAction(() =>
+          client.memory.forget({
+            task_id: taskId,
+            target_kind: targetKind,
+            target_id: targetId,
+            reason: "User requested removal from the desktop Knowledge panel.",
+            user_confirmed: true,
+            idempotency_key: `desktop:memory-forget:${targetId}:${crypto.randomUUID()}`,
+          }),
+        );
       },
       async copyMessage(taskId: string, content: string) {
-        await runAction(() => client.systemActions.execute({
-          task_id: taskId,
-          action: { type: "copy_text", text: content },
-          idempotency_key: `desktop:message-copy:${crypto.randomUUID()}`,
-          user_confirmed: true,
-        }));
+        await runAction(() =>
+          client.systemActions.execute({
+            task_id: taskId,
+            action: { type: "copy_text", text: content },
+            idempotency_key: `desktop:message-copy:${crypto.randomUUID()}`,
+            user_confirmed: true,
+          }),
+        );
       },
       async openMessageLink(taskId: string, url: string) {
-        await runAction(() => client.systemActions.execute({
-          task_id: taskId,
-          action: { type: "open_url", url },
-          idempotency_key: `desktop:message-link:${crypto.randomUUID()}`,
-          user_confirmed: true,
-        }));
+        await runAction(() =>
+          client.systemActions.execute({
+            task_id: taskId,
+            action: { type: "open_url", url },
+            idempotency_key: `desktop:message-link:${crypto.randomUUID()}`,
+            user_confirmed: true,
+          }),
+        );
       },
       ...createWorkspaceFileActions({
         client,
@@ -864,9 +786,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         runAction,
         selectTask: mode === "chat" ? setChatTaskId : setTaskSelection,
         invalidateWorkspace,
-        refreshFiles: () => queryClient.invalidateQueries({
-          queryKey: [...workspaceKey, "files"],
-        }),
+        refreshFiles: () =>
+          queryClient.invalidateQueries({
+            queryKey: [...workspaceKey, "files"],
+          }),
       }),
     }),
     [
@@ -910,6 +833,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     previewQuery.error,
     runtimeHealthQuery.error,
     workspaceFilesQuery.error,
+    assetSetsQuery.error,
     permissionsQuery.error,
     capabilitiesQuery.error,
   );
@@ -926,19 +850,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     (selectedProject !== null && conversationsQuery.isPending) ||
     (selectedConversation !== null && tasksQuery.isPending) ||
     (selectedChatConversation !== null && messagesQuery.isPending);
-  const state = healthQuery.isError
-    ? "offline"
-    : isLoading
-      ? "loading"
-      : projects.length === 0
-        ? "empty"
-        : "ready";
+  const state = healthQuery.isError ? "offline" : isLoading ? "loading" : projects.length === 0 ? "empty" : "ready";
 
   return {
     state,
     mode,
-    statusLabel:
-      state === "offline" ? "Core offline" : state === "loading" ? "Core starting" : "Core ready",
+    statusLabel: state === "offline" ? "Core offline" : state === "loading" ? "Core starting" : "Core ready",
     errorMessage: queryError === null ? null : errorMessage(queryError),
     actionError,
     actionErrorCode,
@@ -955,13 +872,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     versions,
     approvals,
     chatApprovals,
-    events: allEvents.filter(
-      (event) => event.task_id === selectedTask?.id && event.visibility === "user",
-    ),
+    events: allEvents.filter((event) => event.task_id === selectedTask?.id && event.visibility === "user"),
     chatEvents: allEvents.filter(
-      (event) =>
-        event.conversation_id === selectedChatConversation?.id &&
-        event.visibility === "user",
+      (event) => event.conversation_id === selectedChatConversation?.id && event.visibility === "user",
     ),
     presenceEvents: allEvents.filter((event) => event.visibility === "user"),
     messages,
@@ -980,6 +893,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     preview: previewQuery.data ?? null,
     runtimeHealth: runtimeHealthQuery.data ?? null,
     workspaceFiles: workspaceFilesQuery.data?.items ?? [],
+    assetSets: assetSetsQuery.data?.items ?? [],
     workspaceFilesLoading: workspaceFilesQuery.isPending && workspaceFilesQuery.isEnabled,
     capabilities: capabilitiesQuery.data ?? null,
     chatTurn: chatAssistant.turn,
@@ -1028,8 +942,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     sendChatMessage: chatAssistant.send,
     sendProjectMessage: async (...args: Parameters<typeof projectAssistant.send>) => {
       if (permissionProfile === "observe") {
-        const message =
-          "Project Tasks require Standard or Autonomous permissions. Observe remains read-only.";
+        const message = "Project Tasks require Standard or Autonomous permissions. Observe remains read-only.";
         setActionError(message);
         setActionErrorCode("CAPABILITY_NOT_AVAILABLE");
         throw new Error(message);
@@ -1088,16 +1001,10 @@ function requireId(value: string | null | undefined): string {
 }
 
 function appendEvent(events: EventEnvelope[], incoming: EventEnvelope): EventEnvelope[] {
-  if (
-    events.some(
-      (event) => event.id === incoming.id || event.cursor === incoming.cursor,
-    )
-  ) {
+  if (events.some((event) => event.id === incoming.id || event.cursor === incoming.cursor)) {
     return events;
   }
-  return [...events, incoming]
-    .sort((left, right) => left.cursor - right.cursor)
-    .slice(-500);
+  return [...events, incoming].sort((left, right) => left.cursor - right.cursor).slice(-500);
 }
 
 function firstError(...errors: (Error | null)[]): Error | null {

@@ -170,9 +170,7 @@ describe("App", () => {
     render(<App client={client} />);
 
     expect(screen.getByRole("banner")).toHaveTextContent("Core starting");
-    await waitFor(() =>
-      expect(screen.getByLabelText("History navigation")).toHaveTextContent("Atlas Console"),
-    );
+    await waitFor(() => expect(screen.getByLabelText("History navigation")).toHaveTextContent("Atlas Console"));
     expect(await screen.findByText("Scope resolved")).toBeVisible();
     expect(screen.queryByText("Developer diagnostic")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Task Timeline" })).toBeVisible();
@@ -345,7 +343,6 @@ describe("App", () => {
     expect(composer).toHaveValue("Keep this draft");
     expect(createTask).not.toHaveBeenCalled();
   });
-
 });
 
 function createClient(
@@ -374,10 +371,7 @@ function createClient(
     },
     conversations: {
       list: async () => ({
-        items: [
-          ...(projects.length > 0 ? [conversation] : []),
-          ...(options.scratch ? [scratchConversation] : []),
-        ],
+        items: [...(projects.length > 0 ? [conversation] : []), ...(options.scratch ? [scratchConversation] : [])],
         next_cursor: null,
       }),
       create: async () => scratchConversation,
@@ -391,7 +385,11 @@ function createClient(
     },
     tasks: {
       list: async () => ({ items: [task], next_cursor: null }),
-      create: options.createTask ?? (async () => { throw new Error("not used"); }),
+      create:
+        options.createTask ??
+        (async () => {
+          throw new Error("not used");
+        }),
       review: async () => {
         throw new Error("not used");
       },
@@ -446,6 +444,9 @@ function createClient(
       present: async () => {
         throw new Error("not used");
       },
+    },
+    assetSets: {
+      list: async () => ({ items: [] }),
     },
     annotations: {
       list: async () => ({ document: null }),
@@ -510,11 +511,21 @@ function createClient(
     mcp: {
       servers: {
         list: async () => ({ items: [] }),
-        configure: async () => { throw new Error("not used"); },
-        discover: async () => { throw new Error("not used"); },
-        accept: async () => { throw new Error("not used"); },
-        setEnabled: async () => { throw new Error("not used"); },
-        delete: async () => { throw new Error("not used"); },
+        configure: async () => {
+          throw new Error("not used");
+        },
+        discover: async () => {
+          throw new Error("not used");
+        },
+        accept: async () => {
+          throw new Error("not used");
+        },
+        setEnabled: async () => {
+          throw new Error("not used");
+        },
+        delete: async () => {
+          throw new Error("not used");
+        },
       },
     },
     messages: {
@@ -526,20 +537,28 @@ function createClient(
         })),
     },
     documents: {
-      import: async () => ({} as never),
+      import: async () => ({}) as never,
       list: async () => ({ items: [] }),
       search: async () => ({ items: [] }),
-      delete: async () => ({} as never),
+      delete: async () => ({}) as never,
     },
     memory: {
       search: async () => ({ items: [] }),
-      forget: async () => ({} as never),
+      forget: async () => ({}) as never,
     },
     assistant: {
       turns: {
-        create: options.createTurn ?? (async () => { throw new Error("not used"); }),
+        create:
+          options.createTurn ??
+          (async () => {
+            throw new Error("not used");
+          }),
         get: async () => completedTurn,
-        start: options.runTurn ?? (async () => { throw new Error("not used"); }),
+        start:
+          options.runTurn ??
+          (async () => {
+            throw new Error("not used");
+          }),
         cancel: async () => completedTurn,
         retry: async () => completedTurn,
       },
@@ -553,7 +572,7 @@ function createClient(
       },
     },
     systemActions: {
-      execute: async () => ({} as never),
+      execute: async () => ({}) as never,
     },
     events: {
       subscribe: () => visibleEvents(),
@@ -561,10 +580,7 @@ function createClient(
   };
 }
 
-function capabilityManifest(
-  profile: ExecutionSettings["profile"],
-  sandboxHealthy: boolean,
-): CapabilityManifest {
+function capabilityManifest(profile: ExecutionSettings["profile"], sandboxHealthy: boolean): CapabilityManifest {
   return {
     profile,
     operations: {

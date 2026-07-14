@@ -19,7 +19,7 @@ from fairy_core.storage.types import UTCDateTime
 
 def build_presentation_schema(
     *, metadata: MetaData, workspaces: Table, versions: Table
-) -> tuple[Table, Table, Table, Table, Table, Table, Table]:
+) -> tuple[Table, Table, Table, Table, Table, Table, Table, Table, Table]:
     jobs = Table(
         "core_file_render_jobs",
         metadata,
@@ -246,6 +246,71 @@ def build_presentation_schema(
             ondelete="CASCADE",
         ),
     )
+    asset_sets = Table(
+        "core_asset_sets",
+        metadata,
+        Column("tenant_id", String(128), nullable=False),
+        Column("id", String(36), nullable=False),
+        Column("workspace_id", String(36), nullable=False),
+        Column("version_id", String(36), nullable=False),
+        Column("kind", String(32), nullable=False),
+        Column("title", String(200), nullable=False),
+        Column("idempotency_key", String(512), nullable=False),
+        Column("input_digest", String(64), nullable=False),
+        Column("provenance", JSON, nullable=False),
+        Column("generation_parameters", JSON, nullable=False),
+        Column("created_at", UTCDateTime(), nullable=False),
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_core_asset_sets"),
+        UniqueConstraint(
+            "tenant_id",
+            "workspace_id",
+            "idempotency_key",
+            name="uq_core_asset_sets_idempotency",
+        ),
+        CheckConstraint(
+            "length(input_digest) = 64 AND input_digest = lower(input_digest)",
+            name="ck_core_asset_sets_input_digest",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "workspace_id"],
+            [workspaces.c.tenant_id, workspaces.c.id],
+            name="fk_core_asset_sets_workspace",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "version_id"],
+            [versions.c.tenant_id, versions.c.id],
+            name="fk_core_asset_sets_version",
+            ondelete="CASCADE",
+        ),
+    )
+    asset_variants = Table(
+        "core_asset_variants",
+        metadata,
+        Column("tenant_id", String(128), nullable=False),
+        Column("asset_set_id", String(36), nullable=False),
+        Column("ordinal", BigInteger, nullable=False),
+        Column("path", String(4096), nullable=False),
+        Column("content_hash", String(64), nullable=False),
+        Column("byte_length", BigInteger, nullable=False),
+        Column("media_type", String(255), nullable=False),
+        Column("role", String(64), nullable=False),
+        Column("label", String(200), nullable=False),
+        PrimaryKeyConstraint("tenant_id", "asset_set_id", "ordinal", name="pk_core_asset_variants"),
+        UniqueConstraint("tenant_id", "asset_set_id", "path", name="uq_core_asset_variants_path"),
+        CheckConstraint("ordinal >= 0", name="ck_core_asset_variants_ordinal"),
+        CheckConstraint("byte_length >= 0", name="ck_core_asset_variants_size"),
+        CheckConstraint(
+            "length(content_hash) = 64 AND content_hash = lower(content_hash)",
+            name="ck_core_asset_variants_content_hash",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "asset_set_id"],
+            [asset_sets.c.tenant_id, asset_sets.c.id],
+            name="fk_core_asset_variants_asset_set",
+            ondelete="CASCADE",
+        ),
+    )
     Index("ix_core_file_render_jobs_status", jobs.c.tenant_id, jobs.c.status)
     Index(
         "ix_core_file_presentations_version",
@@ -253,7 +318,23 @@ def build_presentation_schema(
         presentations.c.workspace_id,
         presentations.c.version_id,
     )
-    return jobs, presentations, assets, packs, annotations, edit_recipes, selections
+    Index(
+        "ix_core_asset_sets_version",
+        asset_sets.c.tenant_id,
+        asset_sets.c.workspace_id,
+        asset_sets.c.version_id,
+    )
+    return (
+        jobs,
+        presentations,
+        assets,
+        packs,
+        annotations,
+        edit_recipes,
+        selections,
+        asset_sets,
+        asset_variants,
+    )
 
 
 __all__ = ["build_presentation_schema"]

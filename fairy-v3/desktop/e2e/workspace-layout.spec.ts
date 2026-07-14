@@ -90,6 +90,19 @@ test("PDF files use the isolated native viewer with bounded controls", async ({ 
   ).toEqual({ width: 300, height: 200 });
 });
 
+test("generated images expose native inspection and durable provenance", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await page.goto("/");
+  await page.getByRole("tab", { name: /Files/ }).click();
+  await page.getByRole("button", { name: "generated.png" }).click();
+
+  await expect(page.getByRole("img", { name: "generated.png" })).toBeVisible();
+  await expect(page.getByText("1 x 1")).toBeVisible();
+  const properties = page.getByLabel("File properties");
+  await expect(properties).toContainText("Generated hero");
+  await expect(properties).toContainText("image-test");
+});
+
 test("governed Review promotes a previewing Task before Version acceptance", async ({ page }) => {
   await page.goto("/?taskStatus=previewing");
 

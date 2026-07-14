@@ -397,6 +397,8 @@ def test_public_method_manifest_is_stable() -> None:
             "approvals.list",
             "annotations.list",
             "annotations.update",
+            "asset_sets.create",
+            "asset_sets.list",
             "artifacts.list",
             "artifacts.read",
             "assistant.turns.cancel",

@@ -398,6 +398,33 @@ describe("CloudCoreTransport", () => {
     });
   });
 
+  it("sends generated Asset Set mutations with an idempotency header", async () => {
+    let request: Request | undefined;
+    const transport = new CloudCoreTransport({
+      baseUrl: "https://cloud.fairy.test",
+      accessToken: () => "token",
+      deviceId: "device-1",
+      fetch: async (input, init) => {
+        request = new Request(input, init);
+        return Response.json({});
+      },
+    });
+
+    await transport.call("asset_sets.create", {
+      workspace_id: "0198f4de-0114-7000-8000-000000000010",
+      version_id: "0198f4de-0114-7000-8000-000000000011",
+      idempotency_key: "asset-set:image:1",
+      kind: "image",
+      title: "Image variants",
+      variants: [],
+      provenance: {},
+      generation_parameters: {},
+    });
+
+    expect(request?.url).toBe("https://cloud.fairy.test/v1/asset-sets");
+    expect(request?.headers.get("Idempotency-Key")).toBe("asset-set:image:1");
+  });
+
   it("parses finite and live SSE with cursor deduplication", async () => {
     const requests: Request[] = [];
     const fetcher: typeof fetch = async (input, init) => {

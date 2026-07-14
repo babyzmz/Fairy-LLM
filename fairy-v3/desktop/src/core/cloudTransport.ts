@@ -1,11 +1,6 @@
 import { z } from "zod";
 
-import type {
-  CoreMethodMap,
-  CoreMethodName,
-  EventEnvelope,
-  EventSubscriptionOptions,
-} from "./contracts";
+import type { CoreMethodMap, CoreMethodName, EventEnvelope, EventSubscriptionOptions } from "./contracts";
 import type { CoreCallOptions, CoreTransport } from "./client";
 import { parseMemoryResult } from "./memoryValidation";
 import { parseRuntimeResult } from "./runtimeValidation";
@@ -33,58 +28,28 @@ const routes = {
   health: () => get("/v1/health"),
   "projects.create": (params) => post("/v1/projects", params),
   "projects.import": (params) => post("/v1/projects/import", params),
-  "projects.get": (params) =>
-    get(`/v1/projects/${pathParameter(params, "project_id")}`),
-  "projects.list": (params) =>
-    getWithQuery("/v1/projects", params, ["limit", "cursor"]),
+  "projects.get": (params) => get(`/v1/projects/${pathParameter(params, "project_id")}`),
+  "projects.list": (params) => getWithQuery("/v1/projects", params, ["limit", "cursor"]),
   "conversations.create": (params) => post("/v1/conversations", params),
-  "conversations.delete": (params) =>
-    remove(`/v1/conversations/${pathParameter(params, "conversation_id")}`, params),
-  "conversations.get": (params) =>
-    get(`/v1/conversations/${pathParameter(params, "conversation_id")}`),
-  "conversations.list": (params) =>
-    getWithQuery("/v1/conversations", params, ["limit", "cursor", "project_id"]),
+  "conversations.delete": (params) => remove(`/v1/conversations/${pathParameter(params, "conversation_id")}`, params),
+  "conversations.get": (params) => get(`/v1/conversations/${pathParameter(params, "conversation_id")}`),
+  "conversations.list": (params) => getWithQuery("/v1/conversations", params, ["limit", "cursor", "project_id"]),
   "conversations.move_to_project": (params) =>
-    post(
-      `/v1/conversations/${pathParameter(params, "conversation_id")}/move-to-project`,
-      params,
-    ),
-  "conversations.update": (params) =>
-    put(`/v1/conversations/${pathParameter(params, "conversation_id")}`, params),
-  "tasks.archive": (params) =>
-    post(`/v1/tasks/${pathParameter(params, "task_id")}/archive`, params),
+    post(`/v1/conversations/${pathParameter(params, "conversation_id")}/move-to-project`, params),
+  "conversations.update": (params) => put(`/v1/conversations/${pathParameter(params, "conversation_id")}`, params),
+  "tasks.archive": (params) => post(`/v1/tasks/${pathParameter(params, "task_id")}/archive`, params),
   "tasks.create": (params) => post("/v1/tasks", params),
   "tasks.get": (params) => get(`/v1/tasks/${pathParameter(params, "task_id")}`),
-  "tasks.list": (params) =>
-    getWithQuery("/v1/tasks", params, [
-      "limit",
-      "cursor",
-      "project_id",
-      "conversation_id",
-    ]),
-  "tasks.review": (params) =>
-    post(`/v1/tasks/${pathParameter(params, "task_id")}/review`),
-  "tasks.update_metadata": (params) =>
-    put(`/v1/tasks/${pathParameter(params, "task_id")}/metadata`, params),
+  "tasks.list": (params) => getWithQuery("/v1/tasks", params, ["limit", "cursor", "project_id", "conversation_id"]),
+  "tasks.review": (params) => post(`/v1/tasks/${pathParameter(params, "task_id")}/review`),
+  "tasks.update_metadata": (params) => put(`/v1/tasks/${pathParameter(params, "task_id")}/metadata`, params),
   "execution_plans.create": (params) => post("/v1/execution-plans", params),
-  "execution_plans.get": (params) =>
-    get(`/v1/tasks/${pathParameter(params, "task_id")}/execution-plan`),
+  "execution_plans.get": (params) => get(`/v1/tasks/${pathParameter(params, "task_id")}/execution-plan`),
   "changesets.propose": (params) => post("/v1/changesets", params),
-  "approvals.decide": (params) =>
-    post(
-      `/v1/approvals/${pathParameter(params, "approval_id")}/decision`,
-      params,
-    ),
+  "approvals.decide": (params) => post(`/v1/approvals/${pathParameter(params, "approval_id")}/decision`, params),
   "approvals.list": (params) =>
-    getWithQuery("/v1/approvals", params, [
-      "limit",
-      "cursor",
-      "project_id",
-      "conversation_id",
-      "task_id",
-    ]),
-  "versions.get": (params) =>
-    get(`/v1/versions/${pathParameter(params, "version_id")}`),
+    getWithQuery("/v1/approvals", params, ["limit", "cursor", "project_id", "conversation_id", "task_id"]),
+  "versions.get": (params) => get(`/v1/versions/${pathParameter(params, "version_id")}`),
   "versions.list": (params) =>
     getWithQuery("/v1/versions", params, [
       "limit",
@@ -94,38 +59,26 @@ const routes = {
       "conversation_id",
       "task_id",
     ]),
-  "versions.accept": (params) =>
-    post(
-      `/v1/tasks/${pathParameter(params, "task_id")}/accept-version`,
-      params,
-    ),
+  "versions.accept": (params) => post(`/v1/tasks/${pathParameter(params, "task_id")}/accept-version`, params),
   "versions.discard": (params) => ({
     method: "DELETE",
     path: `/v1/tasks/${pathParameter(params, "task_id")}/version`,
   }),
-  "workspaces.get": (params) =>
-    get(`/v1/workspaces/${pathParameter(params, "workspace_id")}`),
+  "workspaces.get": (params) => get(`/v1/workspaces/${pathParameter(params, "workspace_id")}`),
   "workspaces.files.list": (params) =>
-    getWithQuery(
-      `/v1/workspaces/${pathParameter(params, "workspace_id")}/files`,
-      params,
-      ["version_id"],
-    ),
+    getWithQuery(`/v1/workspaces/${pathParameter(params, "workspace_id")}/files`, params, ["version_id"]),
   "workspaces.files.read": (params) =>
-    getWithQuery(
-      `/v1/workspaces/${pathParameter(params, "workspace_id")}/file-content`,
-      params,
-      ["path", "version_id"],
-    ),
+    getWithQuery(`/v1/workspaces/${pathParameter(params, "workspace_id")}/file-content`, params, [
+      "path",
+      "version_id",
+    ]),
   "files.open_stream": (params) => post("/v1/files/open-stream", params),
   "files.probe": (params) =>
-    getWithQuery(
-      `/v1/workspaces/${pathParameter(params, "workspace_id")}/probe`,
-      params,
-      ["path", "version_id"],
-    ),
+    getWithQuery(`/v1/workspaces/${pathParameter(params, "workspace_id")}/probe`, params, ["path", "version_id"]),
   "files.present": (params) => post("/v1/files/present", params),
   "files.cancel": (params) => post("/v1/files/cancel", params),
+  "asset_sets.create": (params) => postWithIdempotency("/v1/asset-sets", params),
+  "asset_sets.list": (params) => post("/v1/asset-sets/list", params),
   "file_sets.resolve": (params) => post("/v1/file-sets/resolve", params),
   "file_sets.get": (params) => post("/v1/file-sets/get", params),
   "renderer_packs.list": () => get("/v1/renderer-packs"),
@@ -140,115 +93,54 @@ const routes = {
   "edit_recipes.update": (params) => post("/v1/edit-recipes/update", params),
   "edit_recipes.apply": (params) => post("/v1/edit-recipes/apply", params),
   "edit_recipes.discard": (params) => post("/v1/edit-recipes/discard", params),
-  "workspaces.files.mutate": (params) =>
-    postWithIdempotency("/v1/workspaces/files/mutate", params),
+  "workspaces.files.mutate": (params) => postWithIdempotency("/v1/workspaces/files/mutate", params),
   "workspaces.export": (params) => post("/v1/workspaces/export", params),
   "capabilities.get": () => get("/v1/capabilities"),
   "permissions.get": () => get("/v1/permissions"),
   "permissions.update": (params) => putWithIdempotency("/v1/permissions", params),
   "providers.list": () => get("/v1/providers"),
-  "providers.health": (params) =>
-    getWithQuery("/v1/providers/health", params, ["profile_id"]),
+  "providers.health": (params) => getWithQuery("/v1/providers/health", params, ["profile_id"]),
   "skills.list": () => get("/v1/skills"),
   "mcp.servers.list": () => get("/v1/mcp/servers"),
   "mcp.servers.configure": (params) =>
-    putWithIdempotency(
-      `/v1/mcp/servers/${pathParameter(params, "server_id")}`,
-      params,
-    ),
+    putWithIdempotency(`/v1/mcp/servers/${pathParameter(params, "server_id")}`, params),
   "mcp.servers.discover": (params) =>
-    postWithIdempotency(
-      `/v1/mcp/servers/${pathParameter(params, "server_id")}/discover`,
-      params,
-    ),
+    postWithIdempotency(`/v1/mcp/servers/${pathParameter(params, "server_id")}/discover`, params),
   "mcp.servers.accept": (params) =>
-    postWithIdempotency(
-      `/v1/mcp/servers/${pathParameter(params, "server_id")}/accept`,
-      params,
-    ),
+    postWithIdempotency(`/v1/mcp/servers/${pathParameter(params, "server_id")}/accept`, params),
   "mcp.servers.set_enabled": (params) =>
-    postWithIdempotency(
-      `/v1/mcp/servers/${pathParameter(params, "server_id")}/enabled`,
-      params,
-    ),
+    postWithIdempotency(`/v1/mcp/servers/${pathParameter(params, "server_id")}/enabled`, params),
   "mcp.servers.delete": (params) =>
-    deleteWithIdempotency(
-      `/v1/mcp/servers/${pathParameter(params, "server_id")}`,
-      params,
-    ),
-  "runtimes.get": (params) =>
-    get(`/v1/runtimes/${pathParameter(params, "runtime_id")}`),
-  "runtimes.health": (params) =>
-    getWithQuery("/v1/runtimes/health", params, ["task_id"]),
-  "system.actions.execute": (params) =>
-    postWithIdempotency("/v1/system/actions", params),
-  "previews.start": (params) =>
-    postWithIdempotency("/v1/previews/start", params),
-  "previews.get": (params) =>
-    get(`/v1/previews/${pathParameter(params, "preview_id")}`),
+    deleteWithIdempotency(`/v1/mcp/servers/${pathParameter(params, "server_id")}`, params),
+  "runtimes.get": (params) => get(`/v1/runtimes/${pathParameter(params, "runtime_id")}`),
+  "runtimes.health": (params) => getWithQuery("/v1/runtimes/health", params, ["task_id"]),
+  "system.actions.execute": (params) => postWithIdempotency("/v1/system/actions", params),
+  "previews.start": (params) => postWithIdempotency("/v1/previews/start", params),
+  "previews.get": (params) => get(`/v1/previews/${pathParameter(params, "preview_id")}`),
   "previews.resolve": (params) =>
-    getWithQuery("/v1/previews/resolve", params, [
-      "task_id",
-      "workspace_id",
-      "version_id",
-      "preview_id",
-    ]),
-  "previews.stop": (params) =>
-    postWithIdempotency(
-      `/v1/previews/${pathParameter(params, "preview_id")}/stop`,
-      params,
-    ),
-  "artifacts.list": (params) =>
-    getWithQuery("/v1/artifacts", params, ["task_id"]),
-  "artifacts.read": (params) =>
-    get(`/v1/artifacts/${pathParameter(params, "artifact_id")}`),
-  "documents.import": (params) =>
-    postWithIdempotency("/v1/documents/import", params),
-  "documents.list": (params) =>
-    getWithQuery("/v1/documents", params, ["task_id", "limit"]),
+    getWithQuery("/v1/previews/resolve", params, ["task_id", "workspace_id", "version_id", "preview_id"]),
+  "previews.stop": (params) => postWithIdempotency(`/v1/previews/${pathParameter(params, "preview_id")}/stop`, params),
+  "artifacts.list": (params) => getWithQuery("/v1/artifacts", params, ["task_id"]),
+  "artifacts.read": (params) => get(`/v1/artifacts/${pathParameter(params, "artifact_id")}`),
+  "documents.import": (params) => postWithIdempotency("/v1/documents/import", params),
+  "documents.list": (params) => getWithQuery("/v1/documents", params, ["task_id", "limit"]),
   "documents.get": (params) =>
-    get(
-      `/v1/documents/${pathParameter(params, "document_id")}` +
-        `?task_id=${stringParameter(params, "task_id")}`,
-    ),
+    get(`/v1/documents/${pathParameter(params, "document_id")}` + `?task_id=${stringParameter(params, "task_id")}`),
   "documents.search": (params) => post("/v1/documents/search", params),
   "documents.delete": (params) =>
-    postWithIdempotency(
-      `/v1/documents/${pathParameter(params, "document_id")}/delete`,
-      params,
-    ),
-  "assistant.turns.create": (params) =>
-    postWithIdempotency("/v1/assistant/turns", params),
-  "assistant.turns.get": (params) =>
-    get(`/v1/assistant/turns/${pathParameter(params, "turn_id")}`),
-  "assistant.turns.cancel": (params) =>
-    post(
-      `/v1/assistant/turns/${pathParameter(params, "turn_id")}/cancel`,
-      params,
-    ),
-  "assistant.turns.run": (params) =>
-    post(
-      `/v1/assistant/turns/${pathParameter(params, "turn_id")}/run`,
-      params,
-    ),
-  "assistant.turns.start": (params) =>
-    post(
-      `/v1/assistant/turns/${pathParameter(params, "turn_id")}/start`,
-      params,
-    ),
+    postWithIdempotency(`/v1/documents/${pathParameter(params, "document_id")}/delete`, params),
+  "assistant.turns.create": (params) => postWithIdempotency("/v1/assistant/turns", params),
+  "assistant.turns.get": (params) => get(`/v1/assistant/turns/${pathParameter(params, "turn_id")}`),
+  "assistant.turns.cancel": (params) => post(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/cancel`, params),
+  "assistant.turns.run": (params) => post(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/run`, params),
+  "assistant.turns.start": (params) => post(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/start`, params),
   "assistant.turns.retry": (params) =>
-    postWithIdempotency(
-      `/v1/assistant/turns/${pathParameter(params, "turn_id")}/retry`,
-      params,
-    ),
-  "messages.list": (params) =>
-    getWithQuery("/v1/messages", params, ["conversation_id", "limit", "cursor"]),
+    postWithIdempotency(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/retry`, params),
+  "messages.list": (params) => getWithQuery("/v1/messages", params, ["conversation_id", "limit", "cursor"]),
   "voice.synthesize": (params) => post("/v1/voice/speech", params),
   "voice.sessions.start": (params) => post("/v1/voice/sessions", params),
-  "voice.sessions.get": (params) =>
-    get(`/v1/voice/sessions/${pathParameter(params, "session_id")}`),
-  "voice.sessions.cancel": (params) =>
-    remove(`/v1/voice/sessions/${pathParameter(params, "session_id")}`),
+  "voice.sessions.get": (params) => get(`/v1/voice/sessions/${pathParameter(params, "session_id")}`),
+  "voice.sessions.cancel": (params) => remove(`/v1/voice/sessions/${pathParameter(params, "session_id")}`),
   "voice.transcribe": (params) => post("/v1/voice/transcriptions", params),
   "memory.observations.create": (params) => post("/v1/memory/observations", params),
   "memory.observations.list": (params) =>
@@ -258,25 +150,16 @@ const routes = {
     ),
   "memory.claims.promote": (params) => post("/v1/memory/claims/promote", params),
   "memory.claims.get": (params) =>
-    get(
-      `/v1/memory/claims/${pathParameter(params, "claim_id")}` +
-        `?task_id=${stringParameter(params, "task_id")}`,
-    ),
+    get(`/v1/memory/claims/${pathParameter(params, "claim_id")}` + `?task_id=${stringParameter(params, "task_id")}`),
   "memory.claims.list": (params) =>
     get(
       `/v1/memory/claims?task_id=${stringParameter(params, "task_id")}` +
         `&namespace=${stringParameter(params, "namespace")}`,
     ),
   "memory.claims.supersede": (params) =>
-    post(
-      `/v1/memory/claims/${pathParameter(params, "claim_id")}/supersede`,
-      params,
-    ),
+    post(`/v1/memory/claims/${pathParameter(params, "claim_id")}/supersede`, params),
   "memory.claims.resolve_conflict": (params) =>
-    post(
-      `/v1/memory/claims/${pathParameter(params, "claim_id")}/resolve-conflict`,
-      params,
-    ),
+    post(`/v1/memory/claims/${pathParameter(params, "claim_id")}/resolve-conflict`, params),
   "memory.forget": (params) => post("/v1/memory/forget", params),
   "memory.search": (params) =>
     get(
@@ -286,13 +169,11 @@ const routes = {
     ),
   "memory.snapshots.get": (params) =>
     get(
-      `/v1/memory/snapshots/${pathParameter(params, "snapshot_id")}` +
-        `?task_id=${stringParameter(params, "task_id")}`,
+      `/v1/memory/snapshots/${pathParameter(params, "snapshot_id")}` + `?task_id=${stringParameter(params, "task_id")}`,
     ),
   "memory.projection.health": (params) =>
     get(`/v1/memory/projection/health?task_id=${stringParameter(params, "task_id")}`),
-  "events.subscribe": (params) =>
-    get(`/v1/events?cursor=${integerParameter(params, "cursor")}&follow=false`),
+  "events.subscribe": (params) => get(`/v1/events?cursor=${integerParameter(params, "cursor")}&follow=false`),
 } satisfies Record<CoreMethodName, RouteBuilder>;
 
 const eventEnvelopeSchema = z
@@ -374,21 +255,15 @@ export class CloudCoreTransport implements CoreTransport {
     return validateCoreResult(method, await response.json()) as CoreMethodMap[M]["result"];
   }
 
-  async *subscribeEvents(
-    cursor: number,
-    options: EventSubscriptionOptions = {},
-  ): AsyncIterable<EventEnvelope> {
+  async *subscribeEvents(cursor: number, options: EventSubscriptionOptions = {}): AsyncIterable<EventEnvelope> {
     let current = cursor;
     while (!options.signal?.aborted) {
       try {
-        const response = await this.request(
-          get(`/v1/events?cursor=${current}&follow=true`),
-          {
-            accept: "text/event-stream",
-            lastEventId: current > 0 ? String(current) : undefined,
-            signal: options.signal,
-          },
-        );
+        const response = await this.request(get(`/v1/events?cursor=${current}&follow=true`), {
+          accept: "text/event-stream",
+          lastEventId: current > 0 ? String(current) : undefined,
+          signal: options.signal,
+        });
         await assertSuccessful(response);
         for await (const event of parseEventStream(response)) {
           if (event.cursor <= current) continue;
@@ -438,10 +313,7 @@ function isRetryableEventStreamError(error: unknown): boolean {
   if (error instanceof TypeError) return true;
   return (
     error instanceof CloudCoreError &&
-    (error.status === 408 ||
-      error.status === 425 ||
-      error.status === 429 ||
-      error.status >= 500)
+    (error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500)
   );
 }
 
@@ -488,11 +360,7 @@ function deleteWithIdempotency(path: string, params: RuntimeParams): RequestDesc
   };
 }
 
-function getWithQuery(
-  path: string,
-  params: RuntimeParams,
-  names: readonly string[],
-): RequestDescriptor {
+function getWithQuery(path: string, params: RuntimeParams, names: readonly string[]): RequestDescriptor {
   const query = new URLSearchParams();
   for (const name of names) {
     const value = params[name];
@@ -567,10 +435,7 @@ async function assertSuccessful(response: Response): Promise<void> {
   const detail = recordValue(root.detail);
   const errorCode = stringValue(detail.code) ?? stringValue(root.code) ?? `HTTP_${response.status}`;
   const message =
-    stringValue(detail.message) ??
-    stringValue(root.message) ??
-    response.statusText ??
-    "Cloud Core request failed";
+    stringValue(detail.message) ?? stringValue(root.message) ?? response.statusText ?? "Cloud Core request failed";
   throw new CloudCoreError(message, {
     status: response.status,
     errorCode,
@@ -635,9 +500,7 @@ function parseEventBlock(block: string): EventEnvelope | null {
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function stringValue(value: unknown): string | undefined {

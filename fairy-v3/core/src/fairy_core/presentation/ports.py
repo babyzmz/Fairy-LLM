@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 from uuid import UUID
 
+from fairy_core.presentation.asset_sets import AssetSet
 from fairy_core.presentation.collaboration import (
     AnnotationDocument,
     EditRecipe,
@@ -44,6 +45,14 @@ class PresentationRepository(Protocol):
     def save_edit_recipe(self, recipe: EditRecipe) -> None: ...
 
     def save_selection(self, selection: SelectionReference) -> None: ...
+
+    def save_asset_set(self, asset_set: AssetSet) -> None: ...
+
+    def find_asset_set_by_idempotency_key(
+        self, *, workspace_id: UUID, idempotency_key: str
+    ) -> AssetSet | None: ...
+
+    def list_asset_sets(self, *, workspace_id: UUID, version_id: UUID) -> tuple[AssetSet, ...]: ...
 
 
 __all__ = ["PresentationRepository"]

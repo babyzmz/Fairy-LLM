@@ -1,5 +1,6 @@
 import type {
   ApprovalDecisionInput,
+  AssetSetCreateInput,
   ApprovalListInput,
   AssistantTurnCancelInput,
   AssistantTurnCreateInput,
@@ -92,15 +93,10 @@ export interface CoreTransport {
     options?: CoreCallOptions,
   ): Promise<CoreMethodMap[M]["result"]>;
 
-  subscribeEvents?(
-    cursor: number,
-    options?: EventSubscriptionOptions,
-  ): AsyncIterable<EventEnvelope>;
+  subscribeEvents?(cursor: number, options?: EventSubscriptionOptions): AsyncIterable<EventEnvelope>;
 
   providerOpenRouterStatus?(): Promise<OpenRouterConfigurationStatus>;
-  providerOpenRouterConfigure?(
-    input: OpenRouterConfigurationInput,
-  ): Promise<OpenRouterConfigurationStatus>;
+  providerOpenRouterConfigure?(input: OpenRouterConfigurationInput): Promise<OpenRouterConfigurationStatus>;
   providerOpenRouterDelete?(): Promise<OpenRouterConfigurationStatus>;
   selectProjectFolder?(): Promise<string | null>;
   openSettingsWindow?(): Promise<void>;
@@ -119,8 +115,7 @@ export class CoreClient {
   readonly projects = {
     create: (input: ProjectCreateInput) => this.transport.call("projects.create", input),
     import: (input: ProjectImportInput) => this.transport.call("projects.import", input),
-    get: (projectId: string) =>
-      this.transport.call("projects.get", { project_id: projectId }),
+    get: (projectId: string) => this.transport.call("projects.get", { project_id: projectId }),
     list: (input: ProjectListInput = {}) => this.transport.call("projects.list", input),
     selectFolder: () => {
       if (this.transport.selectProjectFolder === undefined) {
@@ -131,16 +126,11 @@ export class CoreClient {
   };
 
   readonly conversations = {
-    create: (input: ConversationCreateInput) =>
-      this.transport.call("conversations.create", input),
-    get: (conversationId: string) =>
-      this.transport.call("conversations.get", { conversation_id: conversationId }),
-    list: (input: ConversationListInput = {}) =>
-      this.transport.call("conversations.list", input),
-    update: (input: ConversationUpdateInput) =>
-      this.transport.call("conversations.update", input),
-    delete: (input: ConversationDeleteInput) =>
-      this.transport.call("conversations.delete", input),
+    create: (input: ConversationCreateInput) => this.transport.call("conversations.create", input),
+    get: (conversationId: string) => this.transport.call("conversations.get", { conversation_id: conversationId }),
+    list: (input: ConversationListInput = {}) => this.transport.call("conversations.list", input),
+    update: (input: ConversationUpdateInput) => this.transport.call("conversations.update", input),
+    delete: (input: ConversationDeleteInput) => this.transport.call("conversations.delete", input),
     moveToProject: (input: ConversationMoveToProjectInput) =>
       this.transport.call("conversations.move_to_project", input),
   };
@@ -151,8 +141,7 @@ export class CoreClient {
     get: (taskId: string) => this.transport.call("tasks.get", { task_id: taskId }),
     list: (input: TaskListInput = {}) => this.transport.call("tasks.list", input),
     review: (taskId: string) => this.transport.call("tasks.review", { task_id: taskId }),
-    updateMetadata: (input: TaskMetadataUpdateInput) =>
-      this.transport.call("tasks.update_metadata", input),
+    updateMetadata: (input: TaskMetadataUpdateInput) => this.transport.call("tasks.update_metadata", input),
   };
 
   readonly changesets = {
@@ -161,81 +150,64 @@ export class CoreClient {
 
   readonly approvals = {
     decide: (input: ApprovalDecisionInput) => this.transport.call("approvals.decide", input),
-    list: (input: ApprovalListInput = {}) =>
-      this.transport.call("approvals.list", input),
+    list: (input: ApprovalListInput = {}) => this.transport.call("approvals.list", input),
   };
 
   readonly versions = {
-    get: (versionId: string) =>
-      this.transport.call("versions.get", { version_id: versionId }),
-    list: (input: VersionListInput = {}) =>
-      this.transport.call("versions.list", input),
+    get: (versionId: string) => this.transport.call("versions.get", { version_id: versionId }),
+    list: (input: VersionListInput = {}) => this.transport.call("versions.list", input),
     accept: (input: VersionAcceptInput) => this.transport.call("versions.accept", input),
-    discard: (taskId: string) =>
-      this.transport.call("versions.discard", { task_id: taskId }),
+    discard: (taskId: string) => this.transport.call("versions.discard", { task_id: taskId }),
   };
 
   readonly workspaces = {
-    get: (workspaceId: string) =>
-      this.transport.call("workspaces.get", { workspace_id: workspaceId }),
-    listFiles: (input: WorkspaceVersionInput) =>
-      this.transport.call("workspaces.files.list", input),
-    readFile: (input: WorkspaceFileReadInput) =>
-      this.transport.call("workspaces.files.read", input),
-    openStream: (input: WorkspaceFileStreamInput) =>
-      this.transport.call("files.open_stream", input),
-    mutateFiles: (input: WorkspaceFileMutateInput) =>
-      this.transport.call("workspaces.files.mutate", input),
-    export: (input: WorkspaceExportInput) =>
-      this.transport.call("workspaces.export", input),
+    get: (workspaceId: string) => this.transport.call("workspaces.get", { workspace_id: workspaceId }),
+    listFiles: (input: WorkspaceVersionInput) => this.transport.call("workspaces.files.list", input),
+    readFile: (input: WorkspaceFileReadInput) => this.transport.call("workspaces.files.read", input),
+    openStream: (input: WorkspaceFileStreamInput) => this.transport.call("files.open_stream", input),
+    mutateFiles: (input: WorkspaceFileMutateInput) => this.transport.call("workspaces.files.mutate", input),
+    export: (input: WorkspaceExportInput) => this.transport.call("workspaces.export", input),
   };
 
   readonly files = {
     probe: (input: WorkspaceFileReadInput) => this.transport.call("files.probe", input),
     present: (input: FilePresentInput) => this.transport.call("files.present", input),
-    cancel: (input: FileRenderJobCancelInput) =>
-      this.transport.call("files.cancel", input),
-    openStream: (input: WorkspaceFileStreamInput) =>
-      this.transport.call("files.open_stream", input),
+    cancel: (input: FileRenderJobCancelInput) => this.transport.call("files.cancel", input),
+    openStream: (input: WorkspaceFileStreamInput) => this.transport.call("files.open_stream", input),
+  };
+
+  readonly assetSets = {
+    create: (input: AssetSetCreateInput) => this.transport.call("asset_sets.create", input),
+    list: (input: WorkspaceVersionInput) => this.transport.call("asset_sets.list", input),
   };
 
   readonly rendererPacks = {
     list: () => this.transport.call("renderer_packs.list", {}),
     health: () => this.transport.call("renderer_packs.health", {}),
-    install: (input: RendererPackInstallInput) =>
-      this.transport.call("renderer_packs.install", input),
-    update: (input: RendererPackInstallInput) =>
-      this.transport.call("renderer_packs.update", input),
-    remove: (input: RendererPackRemoveInput) =>
-      this.transport.call("renderer_packs.remove", input),
+    install: (input: RendererPackInstallInput) => this.transport.call("renderer_packs.install", input),
+    update: (input: RendererPackInstallInput) => this.transport.call("renderer_packs.update", input),
+    remove: (input: RendererPackRemoveInput) => this.transport.call("renderer_packs.remove", input),
   };
 
   readonly annotations = {
     list: (input: AnnotationListInput) => this.transport.call("annotations.list", input),
-    update: (input: AnnotationUpdateInput) =>
-      this.transport.call("annotations.update", input),
+    update: (input: AnnotationUpdateInput) => this.transport.call("annotations.update", input),
   };
 
   readonly selections = {
-    create: (input: SelectionCreateInput) =>
-      this.transport.call("selections.create", input),
+    create: (input: SelectionCreateInput) => this.transport.call("selections.create", input),
   };
 
   readonly editRecipes = {
-    create: (input: EditRecipeCreateInput) =>
-      this.transport.call("edit_recipes.create", input),
-    update: (input: EditRecipeUpdateInput) =>
-      this.transport.call("edit_recipes.update", input),
-    apply: (recipeId: string) =>
-      this.transport.call("edit_recipes.apply", { recipe_id: recipeId }),
-    discard: (recipeId: string) =>
-      this.transport.call("edit_recipes.discard", { recipe_id: recipeId }),
+    create: (input: EditRecipeCreateInput) => this.transport.call("edit_recipes.create", input),
+    update: (input: EditRecipeUpdateInput) => this.transport.call("edit_recipes.update", input),
+    apply: (recipeId: string) => this.transport.call("edit_recipes.apply", { recipe_id: recipeId }),
+    discard: (recipeId: string) => this.transport.call("edit_recipes.discard", { recipe_id: recipeId }),
   };
 
   readonly fileSets = {
     get: (input: FileSetGetInput) => this.transport.call("file_sets.get", input),
-    resolve: (input: FileSetResolveInput) =>
-      this.transport.call("file_sets.resolve", input),
+    resolve: (input: FileSetResolveInput) => this.transport.call("file_sets.resolve", input),
   };
 
   readonly capabilities = {
@@ -244,8 +216,7 @@ export class CoreClient {
 
   readonly permissions = {
     get: () => this.transport.call("permissions.get", {}),
-    update: (input: ExecutionSettingsUpdateInput) =>
-      this.transport.call("permissions.update", input),
+    update: (input: ExecutionSettingsUpdateInput) => this.transport.call("permissions.update", input),
   };
 
   readonly providers = {
@@ -253,13 +224,10 @@ export class CoreClient {
     health: (profileId?: string) =>
       this.transport.call(
         "providers.health",
-        profileId === undefined
-          ? {}
-          : ({ profile_id: profileId } satisfies ProviderHealthInput),
+        profileId === undefined ? {} : ({ profile_id: profileId } satisfies ProviderHealthInput),
       ),
     openRouterStatus: () => this.requireProviderHost("status")(),
-    configureOpenRouter: (input: OpenRouterConfigurationInput) =>
-      this.requireProviderHost("configure")(input),
+    configureOpenRouter: (input: OpenRouterConfigurationInput) => this.requireProviderHost("configure")(input),
     deleteOpenRouter: () => this.requireProviderHost("delete")(),
   };
 
@@ -270,77 +238,55 @@ export class CoreClient {
   readonly mcp = {
     servers: {
       list: () => this.transport.call("mcp.servers.list", {}),
-      configure: (input: McpServerConfigureInput) =>
-        this.transport.call("mcp.servers.configure", input),
-      discover: (input: McpServerDiscoverInput) =>
-        this.transport.call("mcp.servers.discover", input),
-      accept: (input: McpServerAcceptInput) =>
-        this.transport.call("mcp.servers.accept", input),
-      setEnabled: (input: McpServerSetEnabledInput) =>
-        this.transport.call("mcp.servers.set_enabled", input),
-      delete: (input: McpServerDeleteInput) =>
-        this.transport.call("mcp.servers.delete", input),
+      configure: (input: McpServerConfigureInput) => this.transport.call("mcp.servers.configure", input),
+      discover: (input: McpServerDiscoverInput) => this.transport.call("mcp.servers.discover", input),
+      accept: (input: McpServerAcceptInput) => this.transport.call("mcp.servers.accept", input),
+      setEnabled: (input: McpServerSetEnabledInput) => this.transport.call("mcp.servers.set_enabled", input),
+      delete: (input: McpServerDeleteInput) => this.transport.call("mcp.servers.delete", input),
     },
   };
 
   readonly runtimes = {
-    get: (runtimeId: string) =>
-      this.transport.call("runtimes.get", { runtime_id: runtimeId }),
-    health: (taskId: string) =>
-      this.transport.call("runtimes.health", { task_id: taskId }),
+    get: (runtimeId: string) => this.transport.call("runtimes.get", { runtime_id: runtimeId }),
+    health: (taskId: string) => this.transport.call("runtimes.health", { task_id: taskId }),
   };
 
   readonly systemActions = {
-    execute: (input: SystemActionRequest) =>
-      this.transport.call("system.actions.execute", input),
+    execute: (input: SystemActionRequest) => this.transport.call("system.actions.execute", input),
   };
 
   readonly previews = {
     start: (input: PreviewStartInput) => this.transport.call("previews.start", input),
-    get: (previewId: string) =>
-      this.transport.call("previews.get", { preview_id: previewId }),
-    resolve: (input: PreviewResolveInput) =>
-      this.transport.call("previews.resolve", input),
+    get: (previewId: string) => this.transport.call("previews.get", { preview_id: previewId }),
+    resolve: (input: PreviewResolveInput) => this.transport.call("previews.resolve", input),
     stop: (input: PreviewStopInput) => this.transport.call("previews.stop", input),
   };
 
   readonly artifacts = {
-    list: (taskId: string) =>
-      this.transport.call("artifacts.list", { task_id: taskId }),
-    read: (artifactId: string) =>
-      this.transport.call("artifacts.read", { artifact_id: artifactId }),
+    list: (taskId: string) => this.transport.call("artifacts.list", { task_id: taskId }),
+    read: (artifactId: string) => this.transport.call("artifacts.read", { artifact_id: artifactId }),
   };
 
   readonly documents = {
-    import: (input: DocumentImportInput) =>
-      this.transport.call("documents.import", input),
-    list: (input: DocumentListInput) =>
-      this.transport.call("documents.list", input),
+    import: (input: DocumentImportInput) => this.transport.call("documents.import", input),
+    list: (input: DocumentListInput) => this.transport.call("documents.list", input),
     get: (taskId: string, documentId: string) =>
       this.transport.call("documents.get", {
         task_id: taskId,
         document_id: documentId,
       }),
-    search: (input: DocumentSearchInput) =>
-      this.transport.call("documents.search", input),
-    delete: (input: DocumentDeleteInput) =>
-      this.transport.call("documents.delete", input),
+    search: (input: DocumentSearchInput) => this.transport.call("documents.search", input),
+    delete: (input: DocumentDeleteInput) => this.transport.call("documents.delete", input),
   };
 
   readonly assistant = {
     turns: {
-      create: (input: AssistantTurnCreateInput) =>
-        this.transport.call("assistant.turns.create", input),
-      get: (turnId: string) =>
-        this.transport.call("assistant.turns.get", { turn_id: turnId }),
-      cancel: (input: AssistantTurnCancelInput) =>
-        this.transport.call("assistant.turns.cancel", input),
-      run: (turnId: string) =>
-        this.transport.call("assistant.turns.run", { turn_id: turnId }),
-      start: (turnId: string) =>
-        this.transport.call("assistant.turns.start", { turn_id: turnId }),
-      retry: (input: AssistantTurnRetryInput) =>
-        this.transport.call("assistant.turns.retry", input),
+      create: (input: AssistantTurnCreateInput) => this.transport.call("assistant.turns.create", input),
+      get: (turnId: string) => this.transport.call("assistant.turns.get", { turn_id: turnId }),
+      cancel: (input: AssistantTurnCancelInput) => this.transport.call("assistant.turns.cancel", input),
+      run: (turnId: string) => this.transport.call("assistant.turns.run", { turn_id: turnId }),
+      start: (turnId: string) => this.transport.call("assistant.turns.start", { turn_id: turnId }),
+      retry: (input: AssistantTurnRetryInput) => this.transport.call("assistant.turns.retry", input),
     },
   };
 
@@ -349,24 +295,19 @@ export class CoreClient {
   };
 
   readonly voice = {
-    transcribe: (input: VoiceTranscribeInput) =>
-      this.transport.call("voice.transcribe", input),
+    transcribe: (input: VoiceTranscribeInput) => this.transport.call("voice.transcribe", input),
     synthesize: (input: VoiceSynthesizeInput, signal?: AbortSignal) =>
       this.transport.call("voice.synthesize", input, { signal }),
     sessions: {
-      start: (input: VoiceSessionStartInput) =>
-        this.transport.call("voice.sessions.start", input),
-      get: (sessionId: string) =>
-        this.transport.call("voice.sessions.get", { session_id: sessionId }),
-      cancel: (sessionId: string) =>
-        this.transport.call("voice.sessions.cancel", { session_id: sessionId }),
+      start: (input: VoiceSessionStartInput) => this.transport.call("voice.sessions.start", input),
+      get: (sessionId: string) => this.transport.call("voice.sessions.get", { session_id: sessionId }),
+      cancel: (sessionId: string) => this.transport.call("voice.sessions.cancel", { session_id: sessionId }),
     },
   };
 
   readonly memory = {
     observations: {
-      create: (input: MemoryObserveInput) =>
-        this.transport.call("memory.observations.create", input),
+      create: (input: MemoryObserveInput) => this.transport.call("memory.observations.create", input),
       list: (taskId: string, namespace: MemoryNamespace) =>
         this.transport.call("memory.observations.list", {
           task_id: taskId,
@@ -374,8 +315,7 @@ export class CoreClient {
         }),
     },
     claims: {
-      promote: (input: MemoryClaimPromoteInput) =>
-        this.transport.call("memory.claims.promote", input),
+      promote: (input: MemoryClaimPromoteInput) => this.transport.call("memory.claims.promote", input),
       get: (taskId: string, claimId: string) =>
         this.transport.call("memory.claims.get", {
           task_id: taskId,
@@ -386,10 +326,8 @@ export class CoreClient {
           task_id: taskId,
           namespace,
         }),
-      supersede: (input: MemoryClaimSupersedeInput) =>
-        this.transport.call("memory.claims.supersede", input),
-      resolveConflict: (input: MemoryClaimResolveInput) =>
-        this.transport.call("memory.claims.resolve_conflict", input),
+      supersede: (input: MemoryClaimSupersedeInput) => this.transport.call("memory.claims.supersede", input),
+      resolveConflict: (input: MemoryClaimResolveInput) => this.transport.call("memory.claims.resolve_conflict", input),
     },
     search: (input: MemorySearchInput) => this.transport.call("memory.search", input),
     snapshots: {
@@ -400,15 +338,13 @@ export class CoreClient {
         }),
     },
     projection: {
-      health: (taskId: string) =>
-        this.transport.call("memory.projection.health", { task_id: taskId }),
+      health: (taskId: string) => this.transport.call("memory.projection.health", { task_id: taskId }),
     },
     forget: (input: MemoryForgetInput) => this.transport.call("memory.forget", input),
   };
 
   readonly events = {
-    subscribe: (cursor = 0, options: EventSubscriptionOptions = {}) =>
-      this.subscribeToEvents(cursor, options),
+    subscribe: (cursor = 0, options: EventSubscriptionOptions = {}) => this.subscribeToEvents(cursor, options),
   };
 
   constructor(private readonly transport: CoreTransport) {}
@@ -435,20 +371,11 @@ export class CoreClient {
     return selected.bind(this.transport);
   }
 
-  private subscribeToEvents(
-    cursor: number,
-    options: EventSubscriptionOptions,
-  ): AsyncIterable<EventEnvelope> {
-    return (
-      this.transport.subscribeEvents?.(cursor, options) ??
-      this.pollEvents(cursor, options)
-    );
+  private subscribeToEvents(cursor: number, options: EventSubscriptionOptions): AsyncIterable<EventEnvelope> {
+    return this.transport.subscribeEvents?.(cursor, options) ?? this.pollEvents(cursor, options);
   }
 
-  private async *pollEvents(
-    cursor: number,
-    options: EventSubscriptionOptions,
-  ): AsyncIterable<EventEnvelope> {
+  private async *pollEvents(cursor: number, options: EventSubscriptionOptions): AsyncIterable<EventEnvelope> {
     let current = cursor;
     while (!options.signal?.aborted) {
       const batch = await this.transport.call("events.subscribe", { cursor: current });

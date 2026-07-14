@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from fairy_core.domain.errors import (
     CommandRejectedError,
+    IdempotencyConflictError,
     PreviewScopeViolationError,
     VersionConflictError,
 )
@@ -196,6 +197,118 @@ def test_document_package_rejects_unsafe_xml_without_exposing_content(tmp_path: 
         assert result["job"]["status"] == "quarantined"
         assert result["job"]["error_code"] == "DOCUMENT_PACKAGE_INVALID"
         assert result["presentation"] is None
+    finally:
+        service.close()
+
+
+def test_generated_asset_sets_bind_variants_and_safe_provenance_to_version(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "hero.png").write_bytes(b"\x89PNG\r\n\x1a\nfixture")
+    service = build_local_service(tmp_path / "app")
+    try:
+        imported = service.invoke(
+            "projects.import",
+            {"name": "Generated", "residency": "local_only", "source_path": str(source)},
+        )
+        workspace_id = imported["project"]["workspace_id"]
+        version_id = imported["project"]["active_version_id"]
+        files = service.invoke(
+            "workspaces.files.list",
+            {"workspace_id": workspace_id, "version_id": version_id},
+        )
+        image = next(item for item in files["items"] if item["path"] == "hero.png")
+        created = service.invoke(
+            "asset_sets.create",
+            {
+                "workspace_id": workspace_id,
+                "version_id": version_id,
+                "idempotency_key": "asset-set:landing-hero",
+                "kind": "image",
+                "title": "Landing hero variants",
+                "variants": [
+                    {
+                        "path": "hero.png",
+                        "content_hash": image["content_hash"],
+                        "role": "primary",
+                        "label": "Hero",
+                    }
+                ],
+                "provenance": {"provider": "local", "model": "image-test"},
+                "generation_parameters": {"width": 1024, "height": 1024},
+            },
+        )
+        listed = service.invoke(
+            "asset_sets.list",
+            {"workspace_id": workspace_id, "version_id": version_id},
+        )
+
+        assert listed["items"] == [created]
+        assert created["variants"][0]["media_type"] == "image/png"
+        assert created["variants"][0]["content_hash"] == image["content_hash"]
+        replayed = service.invoke(
+            "asset_sets.create",
+            {
+                "workspace_id": workspace_id,
+                "version_id": version_id,
+                "idempotency_key": "asset-set:landing-hero",
+                "kind": "image",
+                "title": "Landing hero variants",
+                "variants": [
+                    {
+                        "path": "hero.png",
+                        "content_hash": image["content_hash"],
+                        "role": "primary",
+                        "label": "Hero",
+                    }
+                ],
+                "provenance": {"provider": "local", "model": "image-test"},
+                "generation_parameters": {"width": 1024, "height": 1024},
+            },
+        )
+        assert replayed == created
+        with pytest.raises(IdempotencyConflictError):
+            service.invoke(
+                "asset_sets.create",
+                {
+                    "workspace_id": workspace_id,
+                    "version_id": version_id,
+                    "idempotency_key": "asset-set:landing-hero",
+                    "kind": "image",
+                    "title": "Changed title",
+                    "variants": [
+                        {
+                            "path": "hero.png",
+                            "content_hash": image["content_hash"],
+                            "role": "primary",
+                            "label": "Hero",
+                        }
+                    ],
+                    "provenance": {"provider": "local", "model": "image-test"},
+                    "generation_parameters": {"width": 1024, "height": 1024},
+                },
+            )
+        with pytest.raises(ValueError, match="prohibited key"):
+            service.invoke(
+                "asset_sets.create",
+                {
+                    "workspace_id": workspace_id,
+                    "version_id": version_id,
+                    "idempotency_key": "asset-set:unsafe",
+                    "kind": "image",
+                    "title": "Unsafe metadata",
+                    "variants": [
+                        {
+                            "path": "hero.png",
+                            "content_hash": image["content_hash"],
+                            "role": "primary",
+                            "label": "Hero",
+                        }
+                    ],
+                    "provenance": {"api_key": "must-not-persist"},
+                    "generation_parameters": {},
+                },
+            )
     finally:
         service.close()
 

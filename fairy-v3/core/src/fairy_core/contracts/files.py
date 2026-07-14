@@ -106,6 +106,48 @@ class FilePresentationResultModel(ContractModel):
     presentation: FilePresentationModel | None
 
 
+class AssetVariantInput(ContractModel):
+    path: str = Field(min_length=1, max_length=4096)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    role: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9._-]*$")
+    label: str = Field(min_length=1, max_length=200)
+
+
+class AssetSetCreateInput(WorkspaceVersionInput):
+    version_id: UUID
+    kind: str = Field(pattern=r"^(image|audio|video)$")
+    title: str = Field(min_length=1, max_length=200)
+    variants: tuple[AssetVariantInput, ...] = Field(min_length=1, max_length=64)
+    provenance: dict[str, object] = Field(default_factory=dict)
+    generation_parameters: dict[str, object] = Field(default_factory=dict)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class AssetVariantModel(ContractModel):
+    path: str
+    content_hash: str
+    byte_length: int = Field(ge=0)
+    media_type: str
+    role: str
+    label: str
+
+
+class AssetSetModel(ContractModel):
+    id: UUID
+    workspace_id: UUID
+    version_id: UUID
+    kind: str
+    title: str
+    variants: tuple[AssetVariantModel, ...]
+    provenance: dict[str, object]
+    generation_parameters: dict[str, object]
+    created_at: datetime
+
+
+class AssetSetPageModel(ContractModel):
+    items: tuple[AssetSetModel, ...]
+
+
 class RendererPackModel(ContractModel):
     id: str
     version: str
@@ -141,6 +183,9 @@ class RendererPackRemoveResultModel(ContractModel):
 
 
 __all__ = [
+    "AssetSetCreateInput",
+    "AssetSetModel",
+    "AssetSetPageModel",
     "FileDescriptorModel",
     "FilePresentInput",
     "FilePresentationModel",

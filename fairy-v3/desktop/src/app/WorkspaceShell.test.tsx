@@ -94,9 +94,7 @@ describe("WorkspaceShell", () => {
 
     vi.spyOn(window, "prompt").mockReturnValue("src/bootstrap.ts");
     fireEvent.click(screen.getByRole("button", { name: "Rename file" }));
-    await waitFor(() =>
-      expect(model.renameWorkspaceFile).toHaveBeenCalledWith(file, "src/bootstrap.ts"),
-    );
+    await waitFor(() => expect(model.renameWorkspaceFile).toHaveBeenCalledWith(file, "src/bootstrap.ts"));
 
     vi.spyOn(window, "confirm").mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: "Delete file" }));
@@ -105,9 +103,7 @@ describe("WorkspaceShell", () => {
 
   it("renders the offline state without sample project truth and retries Core", () => {
     const model = { ...workspaceModel(), state: "offline" as const, statusLabel: "Core offline" };
-    render(
-      <WorkspaceShell model={model} />,
-    );
+    render(<WorkspaceShell model={model} />);
 
     expect(screen.getByRole("heading", { name: "Core offline" })).toBeVisible();
     expect(screen.queryByText("Homepage revision")).not.toBeInTheDocument();
@@ -145,9 +141,7 @@ describe("WorkspaceShell", () => {
     fireEvent.click(screen.getByRole("button", { name: "New project" }));
     fireEvent.click(screen.getByRole("button", { name: "Choose project folder" }));
 
-    await waitFor(() =>
-      expect(screen.getByLabelText("Folder path")).toHaveValue("C:\\Projects\\selected"),
-    );
+    await waitFor(() => expect(screen.getByLabelText("Folder path")).toHaveValue("C:\\Projects\\selected"));
     expect(model.selectProjectFolder).toHaveBeenCalledTimes(1);
   });
 
@@ -181,9 +175,7 @@ describe("WorkspaceShell", () => {
     const model = { ...workspaceModel(), chatConversations: [chat] };
     render(<WorkspaceShell model={model} />);
 
-    fireEvent.contextMenu(
-      screen.getByTitle("Research notes"),
-    );
+    fireEvent.contextMenu(screen.getByTitle("Research notes"));
     expect(screen.getByRole("menuitem", { name: "Rename" })).toBeVisible();
     expect(screen.getByRole("menuitem", { name: "Move to project" })).toBeVisible();
     fireEvent.click(screen.getByRole("menuitem", { name: "Pin" }));
@@ -237,6 +229,7 @@ function workspaceModel(): WorkspaceModel {
     preview: null,
     runtimeHealth: null,
     workspaceFiles: [],
+    assetSets: [],
     workspaceFilesLoading: false,
     capabilities: null,
     chatTurn: null,

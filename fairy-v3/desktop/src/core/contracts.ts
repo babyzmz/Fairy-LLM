@@ -5,9 +5,7 @@ type Schemas = components["schemas"];
 export type ApprovalDecisionInput = Schemas["ApprovalDecisionInput"];
 export type ApprovalDecisionResult = Schemas["ApprovalDecisionResultModel"];
 export type Approval = Schemas["ApprovalModel"];
-export type ApprovalListInput = NonNullable<
-  operations["approvals.list"]["parameters"]["query"]
->;
+export type ApprovalListInput = NonNullable<operations["approvals.list"]["parameters"]["query"]>;
 export type ApprovalPage = Schemas["ApprovalPageModel"];
 export type Artifact = Schemas["ArtifactModel"];
 export type ArtifactPage = Schemas["ArtifactPageModel"];
@@ -26,9 +24,7 @@ export type Checkpoint = Schemas["CheckpointModel"];
 export type Conversation = Schemas["ConversationModel"];
 export type ConversationCreateInput = Schemas["ConversationCreate"];
 export type ConversationDeleteInput = Schemas["ConversationDeleteInput"];
-export type ConversationListInput = NonNullable<
-  operations["conversations.list"]["parameters"]["query"]
->;
+export type ConversationListInput = NonNullable<operations["conversations.list"]["parameters"]["query"]>;
 export type ConversationMoveResult = Schemas["ConversationMoveResultModel"];
 export type ConversationMoveToProjectInput = Schemas["ConversationMoveToProjectInput"];
 export type ConversationPage = Schemas["ConversationPageModel"];
@@ -38,9 +34,7 @@ export type DocumentChunk = Schemas["DocumentChunkModel"];
 export type DocumentContext = Schemas["DocumentContextModel"];
 export type DocumentDeleteInput = Schemas["DocumentDeleteInput"];
 export type DocumentImportInput = Schemas["DocumentImportInput"];
-export type DocumentListInput = NonNullable<
-  operations["documents.list"]["parameters"]["query"]
->;
+export type DocumentListInput = NonNullable<operations["documents.list"]["parameters"]["query"]>;
 export type DocumentPage = Schemas["DocumentPageModel"];
 export type DocumentRevision = Schemas["DocumentRevisionModel"];
 export type DocumentSearchHit = Schemas["DocumentSearchHitModel"];
@@ -87,18 +81,14 @@ export type NativeMessage = Schemas["MessageModel"];
 export type ImportedMessage = Schemas["ImportedMessageModel"];
 export type ConversationTranscriptItem = NativeMessage | ImportedMessage;
 export type Message = ConversationTranscriptItem;
-export type MessageListInput = NonNullable<
-  operations["messages.list"]["parameters"]["query"]
->;
+export type MessageListInput = NonNullable<operations["messages.list"]["parameters"]["query"]>;
 export type MessagePage = Schemas["MessagePageModel"];
 export type PendingChangeset = Schemas["PendingChangesetModel"];
 export type Project = Schemas["ProjectModel"];
 export type ProjectContext = Schemas["ProjectContextModel"];
 export type ProjectCreateInput = Schemas["ProjectCreate"];
 export type ProjectImportInput = Schemas["ProjectImport"];
-export type ProjectListInput = NonNullable<
-  operations["projects.list"]["parameters"]["query"]
->;
+export type ProjectListInput = NonNullable<operations["projects.list"]["parameters"]["query"]>;
 export type ProjectPage = Schemas["ProjectPageModel"];
 export type Preview = Schemas["PreviewModel"];
 export type PreviewContext = Schemas["PreviewContextModel"];
@@ -107,9 +97,7 @@ export type PreviewResolution = Schemas["PreviewResolutionModel"];
 export type PreviewStartInput = Schemas["PreviewStartInput"];
 export type PreviewStopInput = Schemas["PreviewStopInput"];
 export type ProviderHealth = Schemas["ProviderHealthModel"];
-export type ProviderHealthInput = NonNullable<
-  operations["providers.health"]["parameters"]["query"]
->;
+export type ProviderHealthInput = NonNullable<operations["providers.health"]["parameters"]["query"]>;
 export type ProviderHealthPage = Schemas["ProviderHealthPageModel"];
 export type ProviderProfile = Schemas["ProviderProfileModel"];
 export type ProviderProfilePage = Schemas["ProviderProfilePageModel"];
@@ -125,16 +113,12 @@ export type Task = Schemas["TaskModel"];
 export type TaskArchiveInput = Schemas["TaskArchiveInput"];
 export type TaskContext = Schemas["TaskContextModel"];
 export type TaskCreateInput = Schemas["TaskCreate"];
-export type TaskListInput = NonNullable<
-  operations["tasks.list"]["parameters"]["query"]
->;
+export type TaskListInput = NonNullable<operations["tasks.list"]["parameters"]["query"]>;
 export type TaskMetadataUpdateInput = Schemas["TaskMetadataUpdateInput"];
 export type TaskPage = Schemas["TaskPageModel"];
 export type Version = Schemas["VersionModel"];
 export type VersionAcceptInput = Schemas["VersionAcceptInput"];
-export type VersionListInput = NonNullable<
-  operations["versions.list"]["parameters"]["query"]
->;
+export type VersionListInput = NonNullable<operations["versions.list"]["parameters"]["query"]>;
 export type VersionPage = Schemas["VersionPageModel"];
 export type Workspace = Schemas["WorkspaceModel"];
 export type WorkspaceFile = Schemas["WorkspaceFileModel"];
@@ -146,6 +130,9 @@ export type FileSetGetInput = Schemas["FileSetGetInput"];
 export type FileSetResolveInput = Schemas["FileSetResolveInput"];
 export type FilePresentInput = Schemas["FilePresentInput"];
 export type FilePresentationResult = Schemas["FilePresentationResultModel"];
+export type AssetSet = Schemas["AssetSetModel"];
+export type AssetSetCreateInput = Schemas["AssetSetCreateInput"];
+export type AssetSetPage = Schemas["AssetSetPageModel"];
 export type FileRenderJobCancelInput = Schemas["FileRenderJobCancelInput"];
 export type RendererPack = Schemas["RendererPackModel"];
 export type RendererPackInstallInput = Schemas["RendererPackInstallInput"];
@@ -332,6 +319,8 @@ export interface CoreMethodMap {
     params: FileRenderJobCancelInput;
     result: FilePresentationResult;
   };
+  "asset_sets.create": { params: AssetSetCreateInput; result: AssetSet };
+  "asset_sets.list": { params: WorkspaceVersionInput; result: AssetSetPage };
   "file_sets.get": { params: FileSetGetInput; result: FileSet };
   "file_sets.resolve": { params: FileSetResolveInput; result: FileSet };
   "renderer_packs.list": { params: EmptyParams; result: RendererPackPage };
@@ -413,10 +402,11 @@ export interface CoreMethodMap {
 export type CoreMethodName = keyof CoreMethodMap;
 
 type GeneratedRpcMethod = Exclude<keyof operations, "cloud.ready" | `sync.${string}`>;
-type CoreMethodContractCoverage = Exclude<GeneratedRpcMethod, CoreMethodName> extends never
-  ? Exclude<CoreMethodName, GeneratedRpcMethod> extends never
-    ? true
-    : never
-  : never;
+type CoreMethodContractCoverage =
+  Exclude<GeneratedRpcMethod, CoreMethodName> extends never
+    ? Exclude<CoreMethodName, GeneratedRpcMethod> extends never
+      ? true
+      : never
+    : never;
 
 export const CORE_METHOD_CONTRACT_COMPLETE: CoreMethodContractCoverage = true;

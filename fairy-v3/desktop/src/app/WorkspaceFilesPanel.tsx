@@ -12,7 +12,7 @@ import {
   MessageSquarePlus,
   Quote,
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   FileReadSession,
@@ -21,15 +21,20 @@ import type {
   WorkspaceFileContent,
   FilePresentationResult,
   AnnotationDocument,
+  AssetSet,
   SelectionReference,
 } from "../core/client";
 
 const PdfViewer = lazy(() => import("./viewers/PdfViewer"));
 const DocumentViewer = lazy(() => import("./viewers/DocumentViewer"));
 const DataViewer = lazy(() => import("./viewers/DataViewer"));
+const ImageViewer = lazy(() => import("./viewers/ImageViewer"));
+const MediaViewer = lazy(() => import("./viewers/MediaViewer"));
+const SvgViewer = lazy(() => import("./viewers/SvgViewer"));
 
 interface WorkspaceFilesPanelProps {
   files: WorkspaceFile[];
+  assetSets: AssetSet[];
   loading: boolean;
   onRead(path: string): Promise<WorkspaceFileContent>;
   onOpenStream(path: string): Promise<FileReadSession>;
@@ -51,6 +56,7 @@ interface WorkspaceFilesPanelProps {
 
 export function WorkspaceFilesPanel({
   files,
+  assetSets,
   loading,
   onRead,
   onOpenStream,
@@ -71,6 +77,7 @@ export function WorkspaceFilesPanel({
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [content, setContent] = useState<WorkspaceFileContent | null>(null);
   const [readSession, setReadSession] = useState<FileReadSession | null>(null);
+  const [captionSessions, setCaptionSessions] = useState<Array<{ label: string; language: string; src: string }>>([]);
   const [presentation, setPresentation] = useState<FilePresentationResult | null>(null);
   const [annotations, setAnnotations] = useState<AnnotationDocument | null>(null);
   const [selection, setSelection] = useState<{
@@ -89,6 +96,7 @@ export function WorkspaceFilesPanel({
       setSelectedPath(null);
       setContent(null);
       setReadSession(null);
+      setCaptionSessions([]);
       setPresentation(null);
       setAnnotations(null);
       setSelection(null);
@@ -100,6 +108,7 @@ export function WorkspaceFilesPanel({
     setSelectedPath(path);
     setContent(null);
     setReadSession(null);
+    setCaptionSessions([]);
     setPresentation(null);
     setAnnotations(null);
     setSelection(null);
@@ -116,9 +125,28 @@ export function WorkspaceFilesPanel({
         setAnnotations(nextAnnotations.document);
       }
       if (nextContent.stream_required) {
+        const captionPaths = mediaCaptionPaths(path, files);
         const nextSession = await onOpenStream(path);
+        const nextCaptions = await Promise.all(
+          captionPaths.map(async (caption) => {
+            try {
+              return { ...caption, session: await onOpenStream(caption.path) };
+            } catch {
+              return null;
+            }
+          }),
+        );
         if (request !== selectionRequestRef.current) return;
         setReadSession(nextSession);
+        setCaptionSessions(
+          nextCaptions
+            .filter((caption) => caption !== null)
+            .map((caption) => ({
+              label: caption.label,
+              language: caption.language,
+              src: caption.session.url,
+            })),
+        );
       }
     } catch (readError) {
       if (request !== selectionRequestRef.current) return;
@@ -269,6 +297,7 @@ export function WorkspaceFilesPanel({
               <FileContent
                 content={content}
                 readSession={readSession}
+                captionSessions={captionSessions}
                 presentation={presentation}
                 onTextSelection={(value) => {
                   setSelection(value);
@@ -281,6 +310,11 @@ export function WorkspaceFilesPanel({
 
         <StudioProperties
           content={content}
+          assetSet={
+            content === null
+              ? null
+              : (assetSets.find((item) => item.variants.some((variant) => variant.path === content.file.path)) ?? null)
+          }
           presentation={presentation}
           annotations={annotations}
           selection={selection}
@@ -331,11 +365,13 @@ function FileKindIcon({ file }: { file: WorkspaceFile }) {
 function FileContent({
   content,
   readSession,
+  captionSessions,
   presentation,
   onTextSelection,
 }: {
   content: WorkspaceFileContent;
   readSession: FileReadSession | null;
+  captionSessions: Array<{ label: string; language: string; src: string }>;
   presentation: FilePresentationResult | null;
   onTextSelection(value: { start: number; end: number } | null): void;
 }) {
@@ -355,6 +391,13 @@ function FileContent({
     );
   }
   if (content.text != null) {
+    if (content.media_type === "image/svg+xml" || /\.svg$/i.test(content.file.path)) {
+      return (
+        <Suspense fallback={<div className="workspace-file-placeholder">Sanitizing SVG</div>}>
+          <SvgViewer source={content.text} title={content.file.path} />
+        </Suspense>
+      );
+    }
     if (/\.(csv|tsv|json|jsonl|ndjson)$/i.test(content.file.path)) {
       return (
         <Suspense fallback={<div className="workspace-file-placeholder">Loading data</div>}>
@@ -366,23 +409,21 @@ function FileContent({
   }
   if (readSession !== null && /^image\/(png|jpeg|gif|webp|avif)$/.test(content.media_type)) {
     return (
-      <div className="workspace-file-image">
-        <img src={readSession.url} alt={content.file.path.split("/").at(-1) ?? content.file.path} />
-      </div>
+      <Suspense fallback={<div className="workspace-file-placeholder">Loading image</div>}>
+        <ImageViewer src={readSession.url} title={content.file.path.split("/").at(-1) ?? content.file.path} />
+      </Suspense>
     );
   }
-  if (readSession !== null && content.media_type.startsWith("audio/")) {
+  if (readSession !== null && (content.media_type.startsWith("audio/") || content.media_type.startsWith("video/"))) {
     return (
-      <div className="workspace-file-media">
-        <audio controls src={readSession.url} />
-      </div>
-    );
-  }
-  if (readSession !== null && content.media_type.startsWith("video/")) {
-    return (
-      <div className="workspace-file-media">
-        <video controls src={readSession.url} />
-      </div>
+      <Suspense fallback={<div className="workspace-file-placeholder">Loading media</div>}>
+        <MediaViewer
+          src={readSession.url}
+          mediaType={content.media_type}
+          title={content.file.path}
+          captions={captionSessions}
+        />
+      </Suspense>
     );
   }
   if (readSession !== null && content.media_type === "application/pdf") {
@@ -437,6 +478,7 @@ function TextViewer({
 
 function StudioProperties({
   content,
+  assetSet,
   presentation,
   annotations,
   selection,
@@ -445,6 +487,7 @@ function StudioProperties({
   onAttachSelection,
 }: {
   content: WorkspaceFileContent | null;
+  assetSet: AssetSet | null;
   presentation: FilePresentationResult | null;
   annotations: AnnotationDocument | null;
   selection: { start: number; end: number } | null;
@@ -470,6 +513,23 @@ function StudioProperties({
           <dd>{presentation?.job.status ?? "Probing"}</dd>
         </dl>
       </section>
+      {assetSet !== null ? (
+        <section>
+          <h3>Generated asset</h3>
+          <dl>
+            <dt>Set</dt>
+            <dd>{assetSet.title}</dd>
+            <dt>Variants</dt>
+            <dd>{assetSet.variants.length}</dd>
+            {Object.entries(assetSet.provenance).map(([key, value]) => (
+              <Fragment key={key}>
+                <dt>{key}</dt>
+                <dd>{displayMetadata(value)}</dd>
+              </Fragment>
+            ))}
+          </dl>
+        </section>
+      ) : null}
       <section>
         <h3>Selection</h3>
         <button type="button" disabled={selection === null || selectionSaved} onClick={() => void onAttachSelection()}>
@@ -532,10 +592,34 @@ function pathDepth(path: string): number {
   return Math.min(path.split("/").length - 1, 8);
 }
 
+function mediaCaptionPaths(
+  path: string,
+  files: WorkspaceFile[],
+): Array<{ path: string; label: string; language: string }> {
+  if (!/\.(mp4|webm|mov|m4v|mp3|m4a|wav|ogg|flac)$/i.test(path)) return [];
+  const base = path.replace(/\.[^./]+$/, "");
+  return files
+    .filter((file) => file.path === `${base}.vtt` || (file.path.startsWith(`${base}.`) && file.path.endsWith(".vtt")))
+    .slice(0, 16)
+    .map((file) => {
+      const suffix = file.path.slice(base.length + 1, -4);
+      const language = /^[a-z]{2,3}(?:-[A-Z]{2})?$/.test(suffix) ? suffix : "und";
+      return { path: file.path, label: language === "und" ? "Captions" : language, language };
+    });
+}
+
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function displayMetadata(value: unknown): string {
+  if (value === null) return "None";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
 }
 
 async function uploadFiles(

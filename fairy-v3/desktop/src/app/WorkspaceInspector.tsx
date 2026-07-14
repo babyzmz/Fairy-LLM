@@ -21,20 +21,10 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
   return (
     <aside className="workspace-inspector" aria-label="Workspace inspector">
       <div className="workspace-inspector-tabs" role="tablist" aria-label="Workspace view">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "preview"}
-          onClick={() => setTab("preview")}
-        >
+        <button type="button" role="tab" aria-selected={tab === "preview"} onClick={() => setTab("preview")}>
           <Eye size={14} /> Preview
         </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "files"}
-          onClick={() => setTab("files")}
-        >
+        <button type="button" role="tab" aria-selected={tab === "files"} onClick={() => setTab("files")}>
           <Files size={14} /> Files
           {hasFiles ? <span>{model.workspaceFiles.length}</span> : null}
         </button>
@@ -57,6 +47,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
         ) : (
           <WorkspaceFilesPanel
             files={model.workspaceFiles}
+            assetSets={model.assetSets}
             loading={model.workspaceFilesLoading}
             onRead={model.readWorkspaceFile}
             onOpenStream={model.openWorkspaceFileStream}

@@ -304,7 +304,7 @@ execution_plans, task_steps = build_planning_schema(
     versions=versions,
 )
 
-(file_render_jobs, file_presentations, derived_assets, renderer_packs, annotation_documents, edit_recipes, selection_references) = build_presentation_schema(metadata=state_metadata, workspaces=workspaces, versions=versions)  # fmt: skip  # noqa: E501
+(file_render_jobs, file_presentations, derived_assets, renderer_packs, annotation_documents, edit_recipes, selection_references, asset_sets, asset_variants) = build_presentation_schema(metadata=state_metadata, workspaces=workspaces, versions=versions)  # fmt: skip  # noqa: E501
 task_workspaces = Table(
     "core_task_workspaces",
     state_metadata,

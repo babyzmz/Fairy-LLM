@@ -20,6 +20,9 @@ from fairy_core.contracts.extensions import (
     SkillPageModel,
 )
 from fairy_core.contracts.files import (
+    AssetSetCreateInput,
+    AssetSetModel,
+    AssetSetPageModel,
     FileDescriptorModel,
     FilePresentationResultModel,
     FilePresentInput,
@@ -550,6 +553,8 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             FileRenderJobCancelInput,
             FilePresentationResultModel,
         ),
+        "asset_sets.create": CoreMethod("asset_sets.create", AssetSetCreateInput, AssetSetModel),
+        "asset_sets.list": CoreMethod("asset_sets.list", WorkspaceVersionInput, AssetSetPageModel),
         "file_sets.resolve": CoreMethod(
             "file_sets.resolve",
             FileSetResolveInput,

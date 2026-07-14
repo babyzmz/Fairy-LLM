@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from fairy_core.domain.errors import VersionConflictError
 from fairy_core.persistence.session import SqlAlchemySession
 from fairy_core.persistence.tenant import normalize_tenant_id
+from fairy_core.presentation.asset_sets import AssetSet, AssetVariant
 from fairy_core.presentation.collaboration import (
     AnnotationDocument,
     EditRecipe,
@@ -28,6 +29,8 @@ from fairy_core.presentation.models import (
 from fairy_core.presentation.packs import RendererPackManifest, RendererPackRecord
 from fairy_core.storage.schema import (
     annotation_documents,
+    asset_sets,
+    asset_variants,
     derived_assets,
     edit_recipes,
     file_presentations,
@@ -176,6 +179,103 @@ class SqlAlchemyPresentationRepository:
                         metadata=dict(asset.metadata),
                     )
                 )
+
+    def save_asset_set(self, asset_set: AssetSet) -> None:
+        with self._session.write() as connection:
+            connection.execute(
+                insert(asset_sets).values(
+                    tenant_id=self._tenant_id,
+                    id=str(asset_set.id),
+                    workspace_id=str(asset_set.workspace_id),
+                    version_id=str(asset_set.version_id),
+                    idempotency_key=asset_set.idempotency_key,
+                    input_digest=asset_set.input_digest,
+                    kind=asset_set.kind,
+                    title=asset_set.title,
+                    provenance=asset_set.provenance,
+                    generation_parameters=asset_set.generation_parameters,
+                    created_at=asset_set.created_at,
+                )
+            )
+            for ordinal, variant in enumerate(asset_set.variants):
+                connection.execute(
+                    insert(asset_variants).values(
+                        tenant_id=self._tenant_id,
+                        asset_set_id=str(asset_set.id),
+                        ordinal=ordinal,
+                        path=variant.path,
+                        content_hash=variant.content_hash,
+                        byte_length=variant.byte_length,
+                        media_type=variant.media_type,
+                        role=variant.role,
+                        label=variant.label,
+                    )
+                )
+
+    def find_asset_set_by_idempotency_key(
+        self, *, workspace_id: UUID, idempotency_key: str
+    ) -> AssetSet | None:
+        with self._session.read() as connection:
+            row = (
+                connection.execute(
+                    select(asset_sets).where(
+                        asset_sets.c.tenant_id == self._tenant_id,
+                        asset_sets.c.workspace_id == str(workspace_id),
+                        asset_sets.c.idempotency_key == idempotency_key,
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                return None
+            variants = (
+                connection.execute(
+                    select(asset_variants)
+                    .where(
+                        asset_variants.c.tenant_id == self._tenant_id,
+                        asset_variants.c.asset_set_id == row["id"],
+                    )
+                    .order_by(asset_variants.c.ordinal)
+                )
+                .mappings()
+                .all()
+            )
+        return self._asset_set(row, variants)
+
+    def list_asset_sets(self, *, workspace_id: UUID, version_id: UUID) -> tuple[AssetSet, ...]:
+        with self._session.read() as connection:
+            rows = (
+                connection.execute(
+                    select(asset_sets)
+                    .where(
+                        asset_sets.c.tenant_id == self._tenant_id,
+                        asset_sets.c.workspace_id == str(workspace_id),
+                        asset_sets.c.version_id == str(version_id),
+                    )
+                    .order_by(asset_sets.c.created_at, asset_sets.c.id)
+                )
+                .mappings()
+                .all()
+            )
+            if not rows:
+                return ()
+            variant_rows = (
+                connection.execute(
+                    select(asset_variants)
+                    .where(
+                        asset_variants.c.tenant_id == self._tenant_id,
+                        asset_variants.c.asset_set_id.in_([row["id"] for row in rows]),
+                    )
+                    .order_by(asset_variants.c.asset_set_id, asset_variants.c.ordinal)
+                )
+                .mappings()
+                .all()
+            )
+        grouped: dict[str, list[RowMapping]] = {}
+        for row in variant_rows:
+            grouped.setdefault(row["asset_set_id"], []).append(row)
+        return tuple(self._asset_set(row, grouped.get(row["id"], [])) for row in rows)
 
     def list_packs(self) -> tuple[RendererPackRecord, ...]:
         with self._session.read() as connection:
@@ -454,6 +554,32 @@ class SqlAlchemyPresentationRepository:
             status=RenderJobStatus(row["status"]),
             capabilities=tuple(row["capabilities"]),
             assets=assets,
+            created_at=_datetime(row["created_at"]),
+        )
+
+    @staticmethod
+    def _asset_set(row: RowMapping, variant_rows: list[RowMapping]) -> AssetSet:
+        return AssetSet(
+            id=UUID(row["id"]),
+            workspace_id=UUID(row["workspace_id"]),
+            version_id=UUID(row["version_id"]),
+            idempotency_key=row["idempotency_key"],
+            input_digest=row["input_digest"],
+            kind=row["kind"],
+            title=row["title"],
+            variants=tuple(
+                AssetVariant(
+                    path=variant["path"],
+                    content_hash=variant["content_hash"],
+                    byte_length=int(variant["byte_length"]),
+                    media_type=variant["media_type"],
+                    role=variant["role"],
+                    label=variant["label"],
+                )
+                for variant in variant_rows
+            ),
+            provenance=dict(row["provenance"]),
+            generation_parameters=dict(row["generation_parameters"]),
             created_at=_datetime(row["created_at"]),
         )
 

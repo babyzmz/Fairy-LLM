@@ -28,6 +28,14 @@ export async function installWorkspaceFixture(page: Page) {
       });
       return;
     }
+    if (route.request().url().endsWith("/fixture.png")) {
+      await route.fulfill({
+        contentType: "image/png",
+        body: Buffer.from(CAPTURE_PNG_BASE64, "base64"),
+        headers: { "Access-Control-Allow-Origin": "*" },
+      });
+      return;
+    }
     await route.fulfill({
       contentType: "text/html",
       body: `<!doctype html><html><body style="margin:0;font-family:Segoe UI;background:#f4f6f3;color:#18201d"><main style="padding:28px"><h1>Atlas preview</h1><p>Durable candidate version</p></main></body></html>`,
@@ -552,6 +560,30 @@ async function installCoreFixture(page: Page) {
         "tasks.list": { items: [task], next_cursor: null },
         "versions.list": { items: [version], next_cursor: null },
         "approvals.list": { items: [], next_cursor: null },
+        "asset_sets.list": {
+          items: [
+            {
+              id: "0198f4de-0114-7000-8000-000000000031",
+              workspace_id: id.project,
+              version_id: id.version,
+              kind: "image",
+              title: "Generated hero",
+              variants: [
+                {
+                  path: "media/generated.png",
+                  content_hash: capturePngHash,
+                  byte_length: 68,
+                  media_type: "image/png",
+                  role: "primary",
+                  label: "Primary",
+                },
+              ],
+              provenance: { provider: "fixture", model: "image-test" },
+              generation_parameters: { width: 1, height: 1 },
+              created_at: timestamp,
+            },
+          ],
+        },
         "workspaces.get": {
           id: id.project,
           active_version_id: id.version,
@@ -579,6 +611,13 @@ async function installCoreFixture(page: Page) {
               path: "docs/sample.pdf",
               byte_length: pdfFixtureByteLength,
               content_hash: pdfFixtureHash,
+              kind: "binary",
+              language: null,
+            },
+            {
+              path: "media/generated.png",
+              byte_length: 68,
+              content_hash: capturePngHash,
               kind: "binary",
               language: null,
             },
@@ -984,337 +1023,361 @@ async function installCoreFixture(page: Page) {
                           content_base64: null,
                           stream_required: true,
                         }
-                      : request.method === "files.open_stream"
+                      : request.method === "workspaces.files.read" && request.params.path === "media/generated.png"
                         ? {
-                            session_id: "0198f4de-0114-7000-8000-000000000030",
-                            workspace_id: request.params.workspace_id,
-                            version_id: request.params.version_id,
-                            path: request.params.path,
-                            content_hash: pdfFixtureHash,
-                            byte_length: pdfFixtureByteLength,
-                            media_type: "application/pdf",
-                            url: `${previewUrl}fixture.pdf`,
-                            expires_at: "2026-07-11T00:02:00Z",
+                            file: {
+                              path: "media/generated.png",
+                              byte_length: 68,
+                              content_hash: capturePngHash,
+                              kind: "binary",
+                              language: null,
+                            },
+                            media_type: "image/png",
+                            text: null,
+                            content_base64: null,
+                            stream_required: true,
                           }
-                        : request.method === "files.present"
-                          ? request.params.path === "docs/sample.pdf"
-                            ? pdfPresentation
-                            : filePresentation
-                          : request.method === "annotations.list"
-                            ? { document: annotationDocument }
-                            : request.method === "annotations.update"
-                              ? (() => {
-                                  annotationDocument = {
-                                    id: id.annotation,
-                                    workspace_id: request.params.workspace_id,
-                                    version_id: request.params.version_id,
-                                    file_set_id: request.params.file_set_id,
-                                    source_hash: request.params.source_hash,
-                                    annotations: request.params.annotations,
-                                    revision: Number(request.params.expected_revision) + 1,
-                                    created_at: timestamp,
-                                    updated_at: timestamp,
-                                  };
-                                  return annotationDocument;
-                                })()
-                              : request.method === "selections.create"
-                                ? {
-                                    id: id.selection,
-                                    workspace_id: request.params.workspace_id,
-                                    version_id: request.params.version_id,
-                                    file_set_id: request.params.file_set_id,
-                                    source_path: request.params.source_path,
-                                    source_hash: request.params.source_hash,
-                                    viewer_kind: request.params.viewer_kind,
-                                    locator_kind: request.params.locator_kind,
-                                    locator: request.params.locator,
-                                    created_at: timestamp,
-                                  }
-                                : request.method === "previews.resolve"
-                                  ? request.params.task_id === id.scratchTask
-                                    ? null
-                                    : {
-                                        task: { ...task },
-                                        runtime: { ...runtime },
-                                        preview: { ...preview },
-                                      }
-                                  : request.method === "voice.synthesize"
-                                    ? {
-                                        task_id: request.params.task_id,
-                                        turn_id: request.params.turn_id,
-                                        message_id: request.params.message_id,
-                                        profile_id: request.params.profile_id,
-                                        start_offset: request.params.start_offset,
-                                        end_offset: request.params.end_offset,
-                                        media_type: "audio/wav",
-                                        audio_base64: voiceWavBase64,
-                                        sample_rate: 24_000,
-                                        channels: 1,
-                                        frames: 2,
-                                        content_hash: voiceWavHash,
-                                      }
-                                    : request.method === "tasks.create"
-                                      ? (() => {
-                                          const userRequest = String(request.params.user_request ?? "");
-                                          latestUserRequest = userRequest;
-                                          approvalScenario = userRequest === "Request a governed notification";
-                                          approvalVisible = false;
-                                          approvalDecision = "pending";
-                                          messages = [scratchMessage, toolMessage];
-                                          return {
-                                            task: {
-                                              ...scratchTask,
-                                              user_request: userRequest,
-                                            },
-                                          };
-                                        })()
-                                      : request.method === "assistant.turns.create"
+                        : request.method === "files.open_stream"
+                          ? {
+                              session_id: "0198f4de-0114-7000-8000-000000000030",
+                              workspace_id: request.params.workspace_id,
+                              version_id: request.params.version_id,
+                              path: request.params.path,
+                              content_hash:
+                                request.params.path === "media/generated.png" ? capturePngHash : pdfFixtureHash,
+                              byte_length: request.params.path === "media/generated.png" ? 68 : pdfFixtureByteLength,
+                              media_type:
+                                request.params.path === "media/generated.png" ? "image/png" : "application/pdf",
+                              url: `${previewUrl}${request.params.path === "media/generated.png" ? "fixture.png" : "fixture.pdf"}`,
+                              expires_at: "2026-07-11T00:02:00Z",
+                            }
+                          : request.method === "files.present"
+                            ? request.params.path === "docs/sample.pdf"
+                              ? pdfPresentation
+                              : filePresentation
+                            : request.method === "annotations.list"
+                              ? { document: annotationDocument }
+                              : request.method === "annotations.update"
+                                ? (() => {
+                                    annotationDocument = {
+                                      id: id.annotation,
+                                      workspace_id: request.params.workspace_id,
+                                      version_id: request.params.version_id,
+                                      file_set_id: request.params.file_set_id,
+                                      source_hash: request.params.source_hash,
+                                      annotations: request.params.annotations,
+                                      revision: Number(request.params.expected_revision) + 1,
+                                      created_at: timestamp,
+                                      updated_at: timestamp,
+                                    };
+                                    return annotationDocument;
+                                  })()
+                                : request.method === "selections.create"
+                                  ? {
+                                      id: id.selection,
+                                      workspace_id: request.params.workspace_id,
+                                      version_id: request.params.version_id,
+                                      file_set_id: request.params.file_set_id,
+                                      source_path: request.params.source_path,
+                                      source_hash: request.params.source_hash,
+                                      viewer_kind: request.params.viewer_kind,
+                                      locator_kind: request.params.locator_kind,
+                                      locator: request.params.locator,
+                                      created_at: timestamp,
+                                    }
+                                  : request.method === "previews.resolve"
+                                    ? request.params.task_id === id.scratchTask
+                                      ? null
+                                      : {
+                                          task: { ...task },
+                                          runtime: { ...runtime },
+                                          preview: { ...preview },
+                                        }
+                                    : request.method === "voice.synthesize"
+                                      ? {
+                                          task_id: request.params.task_id,
+                                          turn_id: request.params.turn_id,
+                                          message_id: request.params.message_id,
+                                          profile_id: request.params.profile_id,
+                                          start_offset: request.params.start_offset,
+                                          end_offset: request.params.end_offset,
+                                          media_type: "audio/wav",
+                                          audio_base64: voiceWavBase64,
+                                          sample_rate: 24_000,
+                                          channels: 1,
+                                          frames: 2,
+                                          content_hash: voiceWavHash,
+                                        }
+                                      : request.method === "tasks.create"
                                         ? (() => {
-                                            messages = [
-                                              ...messages,
-                                              {
-                                                ...scratchMessage,
-                                                id: "0198f4de-0114-7000-8000-000000000030",
-                                                task_id: id.scratchTask,
-                                                turn_id: id.turn,
-                                                sequence: 3,
-                                                role: "user",
-                                                content: latestUserRequest,
-                                              },
-                                            ];
+                                            const userRequest = String(request.params.user_request ?? "");
+                                            latestUserRequest = userRequest;
+                                            approvalScenario = userRequest === "Request a governed notification";
+                                            approvalVisible = false;
+                                            approvalDecision = "pending";
+                                            messages = [scratchMessage, toolMessage];
                                             return {
-                                              ...completedTurn,
-                                              status: "created",
-                                              completed_at: null,
+                                              task: {
+                                                ...scratchTask,
+                                                user_request: userRequest,
+                                              },
                                             };
                                           })()
-                                        : request.method === "assistant.turns.start"
+                                        : request.method === "assistant.turns.create"
                                           ? (() => {
-                                              if (!approvalScenario) {
-                                                messages = [
-                                                  ...messages,
-                                                  {
-                                                    ...resumedMessage,
-                                                    id: "0198f4de-0114-7000-8000-000000000031",
-                                                    sequence: 4,
-                                                    content: "Fixture streamed response completed",
-                                                  },
-                                                ];
-                                                return completedTurn;
-                                              }
-                                              if (approvalDecision === "pending") {
-                                                approvalVisible = true;
-                                                return waitingTurn;
-                                              }
-                                              if (!messages.some((message) => message.id === resumedMessage.id)) {
-                                                messages = [...messages, resumedMessage];
-                                              }
-                                              return completedTurn;
+                                              messages = [
+                                                ...messages,
+                                                {
+                                                  ...scratchMessage,
+                                                  id: "0198f4de-0114-7000-8000-000000000030",
+                                                  task_id: id.scratchTask,
+                                                  turn_id: id.turn,
+                                                  sequence: 3,
+                                                  role: "user",
+                                                  content: latestUserRequest,
+                                                },
+                                              ];
+                                              return {
+                                                ...completedTurn,
+                                                status: "created",
+                                                completed_at: null,
+                                              };
                                             })()
-                                          : request.method === "messages.list"
-                                            ? {
-                                                items: messages,
-                                                next_cursor: null,
-                                              }
-                                            : request.method === "approvals.list"
+                                          : request.method === "assistant.turns.start"
+                                            ? (() => {
+                                                if (!approvalScenario) {
+                                                  messages = [
+                                                    ...messages,
+                                                    {
+                                                      ...resumedMessage,
+                                                      id: "0198f4de-0114-7000-8000-000000000031",
+                                                      sequence: 4,
+                                                      content: "Fixture streamed response completed",
+                                                    },
+                                                  ];
+                                                  return completedTurn;
+                                                }
+                                                if (approvalDecision === "pending") {
+                                                  approvalVisible = true;
+                                                  return waitingTurn;
+                                                }
+                                                if (!messages.some((message) => message.id === resumedMessage.id)) {
+                                                  messages = [...messages, resumedMessage];
+                                                }
+                                                return completedTurn;
+                                              })()
+                                            : request.method === "messages.list"
                                               ? {
-                                                  items:
-                                                    approvalVisible && request.params.task_id === id.scratchTask
-                                                      ? [
-                                                          {
-                                                            ...pendingApproval,
-                                                            decision: approvalDecision,
-                                                            decided_by: approvalDecision === "pending" ? null : "user",
-                                                            decided_at:
-                                                              approvalDecision === "pending" ? null : timestamp,
-                                                          },
-                                                        ]
-                                                      : [],
+                                                  items: messages,
                                                   next_cursor: null,
                                                 }
-                                              : request.method === "approvals.decide"
-                                                ? (() => {
-                                                    if (request.params.approval_id !== id.approval) {
-                                                      throw new Error("Approval is unavailable");
-                                                    }
-                                                    if ("decided_by" in request.params) {
-                                                      throw new Error("Renderer cannot choose decided_by");
-                                                    }
-                                                    approvalDecision = request.params.approved
-                                                      ? "approved"
-                                                      : "rejected";
-                                                    const cursor = (events.at(-1)?.cursor ?? 0) + 1;
-                                                    events.push({
-                                                      ...event,
-                                                      id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
-                                                      cursor,
-                                                      run_id: id.commandRun,
-                                                      project_id: null,
-                                                      conversation_id: id.scratchConversation,
-                                                      task_id: id.scratchTask,
-                                                      version_id: null,
-                                                      task_sequence: cursor,
-                                                      event_type: "approval.decided",
-                                                      message: `Approval ${approvalDecision}`,
-                                                      payload: {
-                                                        approval_id: id.approval,
-                                                        decision: approvalDecision,
-                                                      },
-                                                    });
-                                                    return {
-                                                      approval: {
-                                                        ...pendingApproval,
-                                                        decision: approvalDecision,
-                                                        decided_by: "user",
-                                                        decided_at: timestamp,
-                                                      },
-                                                      changeset: null,
-                                                    };
-                                                  })()
-                                                : request.method === "tasks.review"
+                                              : request.method === "approvals.list"
+                                                ? {
+                                                    items:
+                                                      approvalVisible && request.params.task_id === id.scratchTask
+                                                        ? [
+                                                            {
+                                                              ...pendingApproval,
+                                                              decision: approvalDecision,
+                                                              decided_by:
+                                                                approvalDecision === "pending" ? null : "user",
+                                                              decided_at:
+                                                                approvalDecision === "pending" ? null : timestamp,
+                                                            },
+                                                          ]
+                                                        : [],
+                                                    next_cursor: null,
+                                                  }
+                                                : request.method === "approvals.decide"
                                                   ? (() => {
-                                                      if (request.params.task_id !== id.task) {
-                                                        throw new Error("Task is unavailable");
+                                                      if (request.params.approval_id !== id.approval) {
+                                                        throw new Error("Approval is unavailable");
                                                       }
-                                                      task = {
-                                                        ...task,
-                                                        status: "ready",
-                                                      };
+                                                      if ("decided_by" in request.params) {
+                                                        throw new Error("Renderer cannot choose decided_by");
+                                                      }
+                                                      approvalDecision = request.params.approved
+                                                        ? "approved"
+                                                        : "rejected";
                                                       const cursor = (events.at(-1)?.cursor ?? 0) + 1;
                                                       events.push({
                                                         ...event,
                                                         id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
                                                         cursor,
+                                                        run_id: id.commandRun,
+                                                        project_id: null,
+                                                        conversation_id: id.scratchConversation,
+                                                        task_id: id.scratchTask,
+                                                        version_id: null,
                                                         task_sequence: cursor,
-                                                        event_type: "task.reviewed",
-                                                        message: "Review complete",
+                                                        event_type: "approval.decided",
+                                                        message: `Approval ${approvalDecision}`,
                                                         payload: {
-                                                          status: "ready",
-                                                          checkpoint_id: id.checkpoint,
+                                                          approval_id: id.approval,
+                                                          decision: approvalDecision,
                                                         },
                                                       });
                                                       return {
-                                                        id: id.checkpoint,
-                                                        task_id: id.task,
-                                                        version_id: id.version,
-                                                        changed_files: ["README.md"],
-                                                        command_run_ids: [id.commandRun],
-                                                        preview_artifact_id: null,
-                                                        created_at: timestamp,
+                                                        approval: {
+                                                          ...pendingApproval,
+                                                          decision: approvalDecision,
+                                                          decided_by: "user",
+                                                          decided_at: timestamp,
+                                                        },
+                                                        changeset: null,
                                                       };
                                                     })()
-                                                  : request.method === "versions.accept"
+                                                  : request.method === "tasks.review"
                                                     ? (() => {
+                                                        if (request.params.task_id !== id.task) {
+                                                          throw new Error("Task is unavailable");
+                                                        }
                                                         task = {
                                                           ...task,
-                                                          status: "accepted",
+                                                          status: "ready",
                                                         };
-                                                        project = {
-                                                          ...project,
-                                                          active_version_id: id.version,
-                                                          revision: project.revision + 1,
+                                                        const cursor = (events.at(-1)?.cursor ?? 0) + 1;
+                                                        events.push({
+                                                          ...event,
+                                                          id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
+                                                          cursor,
+                                                          task_sequence: cursor,
+                                                          event_type: "task.reviewed",
+                                                          message: "Review complete",
+                                                          payload: {
+                                                            status: "ready",
+                                                            checkpoint_id: id.checkpoint,
+                                                          },
+                                                        });
+                                                        return {
+                                                          id: id.checkpoint,
+                                                          task_id: id.task,
+                                                          version_id: id.version,
+                                                          changed_files: ["README.md"],
+                                                          command_run_ids: [id.commandRun],
+                                                          preview_artifact_id: null,
+                                                          created_at: timestamp,
                                                         };
-                                                        return project;
                                                       })()
-                                                    : request.method === "permissions.get"
-                                                      ? permissions
-                                                      : request.method === "permissions.update"
-                                                        ? (() => {
-                                                            if (
-                                                              request.params.expected_revision !== permissions.revision
-                                                            ) {
-                                                              throw new Error("VERSION_CONFLICT");
-                                                            }
-                                                            permissions = {
-                                                              profile: String(request.params.profile),
-                                                              capability_overrides:
-                                                                (request.params.capability_overrides as Record<
-                                                                  string,
-                                                                  boolean
-                                                                >) ?? {},
-                                                              revision: permissions.revision + 1,
-                                                              updated_at: "2026-07-11T00:00:01Z",
-                                                            };
-                                                            return permissions;
-                                                          })()
-                                                        : request.method === "capabilities.get"
+                                                    : request.method === "versions.accept"
+                                                      ? (() => {
+                                                          task = {
+                                                            ...task,
+                                                            status: "accepted",
+                                                          };
+                                                          project = {
+                                                            ...project,
+                                                            active_version_id: id.version,
+                                                            revision: project.revision + 1,
+                                                          };
+                                                          return project;
+                                                        })()
+                                                      : request.method === "permissions.get"
+                                                        ? permissions
+                                                        : request.method === "permissions.update"
                                                           ? (() => {
-                                                              const base = results["capabilities.get"] as {
-                                                                slash_commands: Array<{
-                                                                  required_operation: string | null;
-                                                                  available: boolean;
-                                                                }>;
-                                                                [key: string]: unknown;
-                                                              };
-                                                              const operations: Record<string, boolean> = {
-                                                                "model.generate": true,
-                                                                "workspace.create_scratch":
-                                                                  permissions.profile !== "observe",
-                                                                "web.search":
-                                                                  permissions.capability_overrides["web.search"] !==
-                                                                  false,
-                                                                "run.sandboxed":
-                                                                  permissions.profile === "autonomous" &&
-                                                                  !scenarios.has("sandboxUnavailable") &&
-                                                                  permissions.capability_overrides["run.sandboxed"] !==
-                                                                    false,
-                                                              };
-                                                              return {
-                                                                ...base,
-                                                                profile: permissions.profile,
-                                                                operations,
-                                                                sandbox_healthy: !scenarios.has("sandboxUnavailable"),
-                                                                slash_commands: base.slash_commands.map((command) => ({
-                                                                  ...command,
-                                                                  available:
-                                                                    command.required_operation === null ||
-                                                                    operations[command.required_operation] === true,
-                                                                })),
-                                                              };
-                                                            })()
-                                                          : request.method === "mcp.servers.list"
-                                                            ? {
-                                                                items: mcpServer === null ? [] : [mcpServer],
+                                                              if (
+                                                                request.params.expected_revision !==
+                                                                permissions.revision
+                                                              ) {
+                                                                throw new Error("VERSION_CONFLICT");
                                                               }
-                                                            : request.method === "mcp.servers.accept"
-                                                              ? (() => {
-                                                                  if (
-                                                                    mcpServer === null ||
-                                                                    request.params.server_id !== mcpServer.server_id ||
-                                                                    request.params.expected_revision !==
-                                                                      mcpServer.revision ||
-                                                                    request.params.schema_digest !==
-                                                                      mcpServer.pending_schema_digest
-                                                                  ) {
-                                                                    throw new Error("MCP acceptance revision mismatch");
-                                                                  }
-                                                                  mcpServer = {
-                                                                    ...mcpServer,
-                                                                    enabled: Boolean(request.params.enabled),
-                                                                    status: request.params.enabled
-                                                                      ? "ready"
-                                                                      : "disabled",
-                                                                    revision: mcpServer.revision + 1,
-                                                                    accepted_schema_digest:
-                                                                      mcpServer.pending_schema_digest,
-                                                                    accepted_tools: mcpServer.pending_tools,
-                                                                    policies: request.params.tools,
-                                                                    updated_at: "2026-07-11T00:00:01Z",
-                                                                  };
-                                                                  return mcpServer;
-                                                                })()
-                                                              : request.method === "events.subscribe"
+                                                              permissions = {
+                                                                profile: String(request.params.profile),
+                                                                capability_overrides:
+                                                                  (request.params.capability_overrides as Record<
+                                                                    string,
+                                                                    boolean
+                                                                  >) ?? {},
+                                                                revision: permissions.revision + 1,
+                                                                updated_at: "2026-07-11T00:00:01Z",
+                                                              };
+                                                              return permissions;
+                                                            })()
+                                                          : request.method === "capabilities.get"
+                                                            ? (() => {
+                                                                const base = results["capabilities.get"] as {
+                                                                  slash_commands: Array<{
+                                                                    required_operation: string | null;
+                                                                    available: boolean;
+                                                                  }>;
+                                                                  [key: string]: unknown;
+                                                                };
+                                                                const operations: Record<string, boolean> = {
+                                                                  "model.generate": true,
+                                                                  "workspace.create_scratch":
+                                                                    permissions.profile !== "observe",
+                                                                  "web.search":
+                                                                    permissions.capability_overrides["web.search"] !==
+                                                                    false,
+                                                                  "run.sandboxed":
+                                                                    permissions.profile === "autonomous" &&
+                                                                    !scenarios.has("sandboxUnavailable") &&
+                                                                    permissions.capability_overrides[
+                                                                      "run.sandboxed"
+                                                                    ] !== false,
+                                                                };
+                                                                return {
+                                                                  ...base,
+                                                                  profile: permissions.profile,
+                                                                  operations,
+                                                                  sandbox_healthy: !scenarios.has("sandboxUnavailable"),
+                                                                  slash_commands: base.slash_commands.map(
+                                                                    (command) => ({
+                                                                      ...command,
+                                                                      available:
+                                                                        command.required_operation === null ||
+                                                                        operations[command.required_operation] === true,
+                                                                    }),
+                                                                  ),
+                                                                };
+                                                              })()
+                                                            : request.method === "mcp.servers.list"
+                                                              ? {
+                                                                  items: mcpServer === null ? [] : [mcpServer],
+                                                                }
+                                                              : request.method === "mcp.servers.accept"
                                                                 ? (() => {
-                                                                    const cursor = Number(request.params.cursor ?? 0);
-                                                                    const items = events.filter(
-                                                                      (item) => item.cursor > cursor,
-                                                                    );
-                                                                    return {
-                                                                      items,
-                                                                      next_cursor: items.at(-1)?.cursor ?? cursor,
+                                                                    if (
+                                                                      mcpServer === null ||
+                                                                      request.params.server_id !==
+                                                                        mcpServer.server_id ||
+                                                                      request.params.expected_revision !==
+                                                                        mcpServer.revision ||
+                                                                      request.params.schema_digest !==
+                                                                        mcpServer.pending_schema_digest
+                                                                    ) {
+                                                                      throw new Error(
+                                                                        "MCP acceptance revision mismatch",
+                                                                      );
+                                                                    }
+                                                                    mcpServer = {
+                                                                      ...mcpServer,
+                                                                      enabled: Boolean(request.params.enabled),
+                                                                      status: request.params.enabled
+                                                                        ? "ready"
+                                                                        : "disabled",
+                                                                      revision: mcpServer.revision + 1,
+                                                                      accepted_schema_digest:
+                                                                        mcpServer.pending_schema_digest,
+                                                                      accepted_tools: mcpServer.pending_tools,
+                                                                      policies: request.params.tools,
+                                                                      updated_at: "2026-07-11T00:00:01Z",
                                                                     };
+                                                                    return mcpServer;
                                                                   })()
-                                                                : results[request.method];
+                                                                : request.method === "events.subscribe"
+                                                                  ? (() => {
+                                                                      const cursor = Number(request.params.cursor ?? 0);
+                                                                      const items = events.filter(
+                                                                        (item) => item.cursor > cursor,
+                                                                      );
+                                                                      return {
+                                                                        items,
+                                                                        next_cursor: items.at(-1)?.cursor ?? cursor,
+                                                                      };
+                                                                    })()
+                                                                  : results[request.method];
           if (result === undefined) {
             throw new Error(`Unexpected Core method: ${request.method}`);
           }

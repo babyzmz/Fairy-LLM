@@ -1,8 +1,4 @@
-import type {
-  AssistantDraft,
-  AssistantTurnClient,
-  OptimisticUserMessage,
-} from "../chat/useAssistantTurn";
+import type { AssistantDraft, AssistantTurnClient, OptimisticUserMessage } from "../chat/useAssistantTurn";
 import type {
   Approval,
   AssistantTurn,
@@ -31,6 +27,7 @@ import type {
   FileReadSession,
   FilePresentationResult,
   AnnotationDocument,
+  AssetSet,
   AnnotationResult,
   SelectionReference,
   WorkspaceExport,
@@ -44,18 +41,9 @@ export type PermissionProfile = "observe" | "standard" | "autonomous";
 export interface WorkspaceClient extends AssistantTurnClient {
   desktop: Pick<CoreClient["desktop"], "openSettings">;
   health: CoreClient["health"];
-  projects: Pick<
-    CoreClient["projects"],
-    "list" | "create" | "import" | "selectFolder"
-  >;
-  conversations: Pick<
-    CoreClient["conversations"],
-    "list" | "create" | "update" | "delete" | "moveToProject"
-  >;
-  tasks: Pick<
-    CoreClient["tasks"],
-    "list" | "create" | "review" | "updateMetadata" | "archive"
-  >;
+  projects: Pick<CoreClient["projects"], "list" | "create" | "import" | "selectFolder">;
+  conversations: Pick<CoreClient["conversations"], "list" | "create" | "update" | "delete" | "moveToProject">;
+  tasks: Pick<CoreClient["tasks"], "list" | "create" | "review" | "updateMetadata" | "archive">;
   approvals: Pick<CoreClient["approvals"], "list" | "decide">;
   versions: Pick<CoreClient["versions"], "list" | "accept" | "discard">;
   workspaces: Pick<
@@ -63,6 +51,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
     "get" | "listFiles" | "readFile" | "openStream" | "mutateFiles" | "export"
   >;
   files: Pick<CoreClient["files"], "present">;
+  assetSets: Pick<CoreClient["assetSets"], "list">;
   annotations: Pick<CoreClient["annotations"], "list" | "update">;
   selections: Pick<CoreClient["selections"], "create">;
   runtimes: Pick<CoreClient["runtimes"], "health">;
@@ -71,24 +60,14 @@ export interface WorkspaceClient extends AssistantTurnClient {
   permissions: Pick<CoreClient["permissions"], "get" | "update">;
   providers: Pick<
     CoreClient["providers"],
-    | "list"
-    | "health"
-    | "openRouterStatus"
-    | "configureOpenRouter"
-    | "deleteOpenRouter"
+    "list" | "health" | "openRouterStatus" | "configureOpenRouter" | "deleteOpenRouter"
   >;
   skills: Pick<CoreClient["skills"], "list">;
   mcp: {
-    servers: Pick<
-      CoreClient["mcp"]["servers"],
-      "list" | "configure" | "discover" | "accept" | "setEnabled" | "delete"
-    >;
+    servers: Pick<CoreClient["mcp"]["servers"], "list" | "configure" | "discover" | "accept" | "setEnabled" | "delete">;
   };
   messages: Pick<CoreClient["messages"], "list">;
-  documents: Pick<
-    CoreClient["documents"],
-    "import" | "list" | "search" | "delete"
-  >;
+  documents: Pick<CoreClient["documents"], "import" | "list" | "search" | "delete">;
   memory: Pick<CoreClient["memory"], "search" | "forget">;
   voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
   systemActions: Pick<CoreClient["systemActions"], "execute">;
@@ -134,6 +113,7 @@ export interface WorkspaceModel {
   preview: PreviewContext | null;
   runtimeHealth: RuntimeHealth | null;
   workspaceFiles: WorkspaceFile[];
+  assetSets: AssetSet[];
   workspaceFilesLoading: boolean;
   capabilities: CapabilityManifest | null;
   chatTurn: AssistantTurn | null;
@@ -157,10 +137,7 @@ export interface WorkspaceModel {
   searchDocuments(query: string): Promise<DocumentSearchHit[]>;
   deleteDocument(documentId: string): Promise<void>;
   searchMemory(query: string): Promise<MemorySearchHit[]>;
-  forgetMemory(
-    targetKind: "observation" | "claim",
-    targetId: string,
-  ): Promise<void>;
+  forgetMemory(targetKind: "observation" | "claim", targetId: string): Promise<void>;
   setDeveloperMode(enabled: boolean): void;
   selectProfile(profileId: string): void;
   configureOpenRouter(apiKey: string, modelId: string): Promise<void>;
@@ -175,29 +152,15 @@ export interface WorkspaceModel {
   createChatConversation(): Promise<void>;
   createPetChatConversation(): Promise<void>;
   renameConversation(conversation: Conversation, title: string): Promise<void>;
-  setConversationPinned(
-    conversation: Conversation,
-    pinned: boolean,
-  ): Promise<void>;
+  setConversationPinned(conversation: Conversation, pinned: boolean): Promise<void>;
   deleteConversation(conversation: Conversation): Promise<void>;
-  moveConversationToProject(
-    conversation: Conversation,
-    project: Project,
-  ): Promise<void>;
+  moveConversationToProject(conversation: Conversation, project: Project): Promise<void>;
   renameTask(task: Task, title: string): Promise<void>;
   setTaskPinned(task: Task, pinned: boolean): Promise<void>;
   archiveTask(task: Task): Promise<void>;
   createTask(userRequest: string): Promise<void>;
-  sendChatMessage(
-    value: string,
-    files: File[],
-    images?: PendingImageAttachment[],
-  ): Promise<void>;
-  sendProjectMessage(
-    value: string,
-    files: File[],
-    images?: PendingImageAttachment[],
-  ): Promise<void>;
+  sendChatMessage(value: string, files: File[], images?: PendingImageAttachment[]): Promise<void>;
+  sendProjectMessage(value: string, files: File[], images?: PendingImageAttachment[]): Promise<void>;
   sendPetMessage(value: string): Promise<void>;
   cancelPetTurn(): Promise<void>;
   cancelChatTurn(): Promise<void>;
@@ -216,11 +179,7 @@ export interface WorkspaceModel {
     current: AnnotationDocument | null,
     annotations: Array<Record<string, unknown>>,
   ): Promise<AnnotationDocument>;
-  createTextSelection(
-    presentation: FilePresentationResult,
-    start: number,
-    end: number,
-  ): Promise<SelectionReference>;
+  createTextSelection(presentation: FilePresentationResult, start: number, end: number): Promise<SelectionReference>;
   revealWorkspaceFile(path: string): Promise<void>;
   refreshWorkspaceFiles(): Promise<void>;
   uploadWorkspaceFiles(files: Array<{ path: string; contentBase64: string }>): Promise<void>;

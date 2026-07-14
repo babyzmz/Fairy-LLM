@@ -106,6 +106,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/asset-sets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Asset Set */
+        post: operations["asset_sets.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/asset-sets/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** List Asset Sets */
+        post: operations["asset_sets.list"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/assistant/turns": {
         parameters: {
             query?: never;
@@ -1845,6 +1879,103 @@ export interface components {
          * @enum {string}
          */
         ArtifactVisibility: "conversation" | "project" | "private";
+        /** AssetSetCreateInput */
+        AssetSetCreateInput: {
+            /** Generation Parameters */
+            generation_parameters?: {
+                [key: string]: unknown;
+            };
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Kind */
+            kind: string;
+            /** Provenance */
+            provenance?: {
+                [key: string]: unknown;
+            };
+            /** Title */
+            title: string;
+            /** Variants */
+            variants: components["schemas"]["AssetVariantInput"][];
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** AssetSetModel */
+        AssetSetModel: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Generation Parameters */
+            generation_parameters: {
+                [key: string]: unknown;
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Provenance */
+            provenance: {
+                [key: string]: unknown;
+            };
+            /** Title */
+            title: string;
+            /** Variants */
+            variants: components["schemas"]["AssetVariantModel"][];
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** AssetSetPageModel */
+        AssetSetPageModel: {
+            /** Items */
+            items: components["schemas"]["AssetSetModel"][];
+        };
+        /** AssetVariantInput */
+        AssetVariantInput: {
+            /** Content Hash */
+            content_hash: string;
+            /** Label */
+            label: string;
+            /** Path */
+            path: string;
+            /** Role */
+            role: string;
+        };
+        /** AssetVariantModel */
+        AssetVariantModel: {
+            /** Byte Length */
+            byte_length: number;
+            /** Content Hash */
+            content_hash: string;
+            /** Label */
+            label: string;
+            /** Media Type */
+            media_type: string;
+            /** Path */
+            path: string;
+            /** Role */
+            role: string;
+        };
         /** AssistantTurnCancelInput */
         AssistantTurnCancelInput: {
             /** Expected Cancellation Revision */
@@ -5174,6 +5305,16 @@ export interface components {
          * @enum {string}
          */
         WorkspaceType: "project_chat" | "chat_scratch";
+        /** WorkspaceVersionInput */
+        WorkspaceVersionInput: {
+            /** Version Id */
+            version_id?: string | null;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -5381,6 +5522,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArtifactModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "asset_sets.create": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssetSetCreateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetSetModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "asset_sets.list": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceVersionInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetSetPageModel"];
                 };
             };
             /** @description Validation Error */

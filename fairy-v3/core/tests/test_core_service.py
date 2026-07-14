@@ -258,6 +258,8 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "approvals.list",
         "annotations.list",
         "annotations.update",
+        "asset_sets.create",
+        "asset_sets.list",
         "artifacts.list",
         "artifacts.read",
         "assistant.turns.cancel",

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from fairy_core.contracts.files import (
+    AssetSetCreateInput,
+    AssetSetModel,
+    AssetSetPageModel,
     FileDescriptorModel,
     FilePresentationResultModel,
     FilePresentInput,
@@ -40,8 +43,9 @@ from fairy_core.contracts.workspaces import (
     WorkspaceFilePageModel,
     WorkspaceFileStreamInput,
     WorkspaceModel,
+    WorkspaceVersionInput,
 )
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 
 
 def install_workspace_routes(
@@ -123,6 +127,37 @@ def install_workspace_routes(
     )
     def cancel_file_presentation(request: FileRenderJobCancelInput) -> dict[str, Any]:
         return invoke("files.cancel", request.model_dump(mode="json"))
+
+    @router.post(
+        "/asset-sets",
+        operation_id="asset_sets.create",
+        response_model=AssetSetModel,
+    )
+    def create_asset_set(
+        request: AssetSetCreateInput,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=512),
+        ],
+    ) -> dict[str, Any]:
+        if request.idempotency_key != idempotency_key:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "IDEMPOTENCY_CONFLICT",
+                    "message": "Idempotency-Key does not match Core params",
+                    "retryable": False,
+                },
+            )
+        return invoke("asset_sets.create", request.model_dump(mode="json"))
+
+    @router.post(
+        "/asset-sets/list",
+        operation_id="asset_sets.list",
+        response_model=AssetSetPageModel,
+    )
+    def list_asset_sets(request: WorkspaceVersionInput) -> dict[str, Any]:
+        return invoke("asset_sets.list", request.model_dump(mode="json", exclude_none=True))
 
     @router.get(
         "/renderer-packs",

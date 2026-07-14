@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from fairy_core.application.workspaces import WorkspaceApplication
 from fairy_core.contracts.files import (
+    AssetSetCreateInput,
     FilePresentInput,
     FileRenderJobCancelInput,
     RendererPackInstallInput,
@@ -20,8 +21,10 @@ from fairy_core.contracts.presentation import (
     EditRecipeUpdateInput,
     SelectionCreateInput,
 )
+from fairy_core.contracts.workspaces import WorkspaceVersionInput
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.presentation.application import PresentationApplication
+from fairy_core.presentation.asset_application import AssetSetApplication
 from fairy_core.presentation.collaboration_application import CollaborationApplication
 from fairy_core.presentation.pack_application import RendererPackApplication
 from fairy_core.presentation.packs import RendererPackInstaller, RendererPackRecord
@@ -42,6 +45,10 @@ def presentation_service_handlers(
         installer=renderer_pack_installer,
     )
     collaboration = CollaborationApplication(
+        unit_of_work_factory=unit_of_work_factory,
+        workspaces=workspaces,
+    )
+    asset_sets = AssetSetApplication(
         unit_of_work_factory=unit_of_work_factory,
         workspaces=workspaces,
     )
@@ -77,6 +84,30 @@ def presentation_service_handlers(
                 request.pack_id,
                 request.version,
                 user_confirmed=request.user_confirmed,
+            )
+        }
+
+    def create_asset_set(request: BaseModel) -> object:
+        assert isinstance(request, AssetSetCreateInput)
+        return asset_sets.create(
+            workspace_id=request.workspace_id,
+            version_id=request.version_id,
+            kind=request.kind,
+            title=request.title,
+            variants=tuple(variant.model_dump() for variant in request.variants),
+            provenance=request.provenance,
+            generation_parameters=request.generation_parameters,
+            idempotency_key=request.idempotency_key,
+        )
+
+    def list_asset_sets(request: BaseModel) -> object:
+        assert isinstance(request, WorkspaceVersionInput)
+        if request.version_id is None:
+            raise ValueError("Asset Set listing requires a Version")
+        return {
+            "items": asset_sets.list(
+                workspace_id=request.workspace_id,
+                version_id=request.version_id,
             )
         }
 
@@ -149,6 +180,8 @@ def presentation_service_handlers(
         "renderer_packs.install": install_pack,
         "renderer_packs.update": install_pack,
         "renderer_packs.remove": remove_pack,
+        "asset_sets.create": create_asset_set,
+        "asset_sets.list": list_asset_sets,
         "annotations.list": list_annotations,
         "annotations.update": update_annotations,
         "selections.create": create_selection,
