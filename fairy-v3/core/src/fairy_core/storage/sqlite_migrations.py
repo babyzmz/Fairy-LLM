@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -86,10 +87,39 @@ def _changeset(row: Mapping[str, Any]) -> dict[str, Any]:
     return values
 
 
+@contextmanager
+def _sqlite_rebuild_transaction(engine: Engine) -> Iterator[Connection]:
+    """Run SQLite table rebuilds atomically without parent-table FK drop failures."""
+
+    with engine.connect() as connection:
+        foreign_keys_enabled = bool(
+            connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one()
+        )
+        connection.commit()
+        connection.exec_driver_sql("PRAGMA foreign_keys = OFF")
+        connection.commit()
+        try:
+            with connection.begin():
+                yield connection
+                violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    tables = sorted({str(row[0]) for row in violations})
+                    raise RuntimeError(
+                        "SQLite migration would violate foreign keys in: " + ", ".join(tables)
+                    )
+        finally:
+            if connection.in_transaction():
+                connection.rollback()
+            connection.exec_driver_sql(
+                f"PRAGMA foreign_keys = {'ON' if foreign_keys_enabled else 'OFF'}"
+            )
+            connection.commit()
+
+
 def migrate_workspace_identity(engine: Engine) -> None:
     """Make Workspace identity durable for existing canonical SQLite databases."""
 
-    with engine.begin() as connection:
+    with _sqlite_rebuild_transaction(engine) as connection:
         connection.exec_driver_sql(
             "CREATE TABLE IF NOT EXISTS core_local_migrations "
             "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
@@ -208,7 +238,7 @@ def migrate_workspace_identity(engine: Engine) -> None:
 def migrate_runtime_workspace_binding(engine: Engine) -> None:
     """Bind legacy Runtime rows to the Workspace identity owned by their Task."""
 
-    with engine.begin() as connection:
+    with _sqlite_rebuild_transaction(engine) as connection:
         connection.exec_driver_sql(
             "CREATE TABLE IF NOT EXISTS core_local_migrations "
             "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"

@@ -31,7 +31,7 @@ desktop pixels and does not claim true desktop refraction.
 
 | Requirement | Status | Implementation | Executable evidence |
 | --- | --- | --- | --- |
-| 1. Core Foundation | Proven | `core/src/fairy_core/domain`, `application`, `commanding`, `storage`, `runtime`, `memory`, `workspace`, and typed contracts define Project, Conversation, Task, Version, Workspace, Changeset, Approval, CommandRun/Event, Runtime, Preview, Artifact, Checkpoint, and Hermes Memory. | Core full suite: 606 passed; state, execution, storage, memory, workspace, and contract suites. |
+| 1. Core Foundation | Proven | `core/src/fairy_core/domain`, `application`, `commanding`, `storage`, `runtime`, `memory`, `workspace`, and typed contracts define Project, Conversation, Task, Version, Workspace, Changeset, Approval, CommandRun/Event, Runtime, Preview, Artifact, Checkpoint, and Hermes Memory. | Core full suite: 607 passed; state, execution, storage, memory, workspace, and contract suites. |
 | 2. Command, permission, and recovery authority | Proven | One thread-safe `ToolRegistry` generates Agent tools, capability manifest, policy metadata, and Slash availability. Device/cloud profiles and toggles are Core-owned. All model-visible schemas are closed. | `test_policy.py`, `test_execution_settings.py`, `test_command_bus.py`, `test_ledger.py`, `test_persistence_recovery.py`, and assistant approval/recovery tests. |
 | 3. Local project closure | Proven | Imported sources are copied to managed Git; each Task gets an isolated worktree. Changesets, dependency templates, Review, Preview, Checkpoint, accept, and discard are Core-orchestrated. WSL execution requires attestation and has no host fallback. | Local/Rust closure suites plus real FairySandbox 1.0.0 attestation and structured WSL execution passed. |
 | 4. Cloud and multi-device | Proven | PostgreSQL schema/leases/outbox, S3 object adapter, REST/SSE, optimistic Project revision, candidate conflict retention, execution worker, Runtime worker, and private Preview gateway are implemented. No Redis or NATS is present. | Cloud unit/contract suite: 112 passed; Alembic full upgrade/downgrade; 27 live PostgreSQL 18.4/S3/RLS/OCI/two-device integration tests passed in Docker. |
@@ -135,11 +135,14 @@ It exited successfully with:
 
 - repository boundary, Ruff format, and Ruff lint gates passed;
 - Sandbox Runner: 49 passed, 1 POSIX process-group case skipped on Windows;
-- Core: 606 passed;
+- Core: 607 passed after the populated legacy SQLite migration regression was added;
 - Capabilities: 104 passed;
 - Cloud: 112 unit/contract tests and 27 live Docker integration tests passed;
 - Alembic: offline upgrade from base through `20260712_0017` and full downgrade
   from head to base passed; deployment tests confirmed one linear head;
+- local SQLite table rebuilds passed populated parent/child foreign-key fixtures,
+  a production-shaped database-copy migration, `integrity_check`, and
+  `foreign_key_check`;
 - Rust: workspace format, Clippy with warnings denied, and all workspace tests
   passed;
 - Desktop: 43 Vitest files / 173 tests and 50 production Playwright workflows

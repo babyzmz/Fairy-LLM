@@ -23,7 +23,10 @@ from fairy_core.storage import SqliteStateStore
 from fairy_core.storage.schema import state_metadata
 from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
-from fairy_core.storage.sqlite_migrations import migrate_workspace_identity
+from fairy_core.storage.sqlite_migrations import (
+    migrate_runtime_workspace_binding,
+    migrate_workspace_identity,
+)
 
 
 def _scope(tmp_path: Path, name: str) -> ScopeContract:
@@ -69,7 +72,9 @@ def test_workspace_identity_migrates_legacy_project_version(tmp_path: Path) -> N
             "CREATE TABLE core_versions ("
             "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
             "project_id VARCHAR(36) NOT NULL, source_conversation_id VARCHAR(36), "
-            "PRIMARY KEY (tenant_id, id))"
+            "PRIMARY KEY (tenant_id, id), "
+            "CONSTRAINT fk_core_versions_project FOREIGN KEY (tenant_id, project_id) "
+            "REFERENCES core_projects (tenant_id, id) ON DELETE CASCADE)"
         )
         connection.exec_driver_sql(
             "INSERT INTO core_projects VALUES "
@@ -89,6 +94,8 @@ def test_workspace_identity_migrates_legacy_project_version(tmp_path: Path) -> N
             ).scalar_one()
             == "project-1"
         )
+        assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+        assert connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall() == []
     version_columns = {
         column["name"]: column for column in inspect(engine).get_columns("core_versions")
     }
@@ -98,6 +105,63 @@ def test_workspace_identity_migrates_legacy_project_version(tmp_path: Path) -> N
     assert version_columns["workspace_id"]["nullable"] is False
     assert version_columns["project_id"]["nullable"] is True
     assert "fk_core_versions_workspace" in workspace_foreign_keys
+    engine.dispose()
+
+
+def test_runtime_workspace_binding_rebuilds_referenced_runtime(tmp_path: Path) -> None:
+    engine = create_sqlite_engine(tmp_path / "legacy-runtime.db")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE core_workspaces ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "PRIMARY KEY (tenant_id, id))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE core_tasks ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "workspace_id VARCHAR(36) NOT NULL, PRIMARY KEY (tenant_id, id))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE core_runtime_sessions ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "task_id VARCHAR(36) NOT NULL, version_id VARCHAR(36), "
+            "PRIMARY KEY (tenant_id, id))"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE core_preview_sessions ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "task_id VARCHAR(36) NOT NULL, version_id VARCHAR(36), "
+            "runtime_id VARCHAR(36) NOT NULL, PRIMARY KEY (tenant_id, id), "
+            "CONSTRAINT fk_core_preview_sessions_runtime "
+            "FOREIGN KEY (tenant_id, runtime_id) "
+            "REFERENCES core_runtime_sessions (tenant_id, id) ON DELETE CASCADE)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_workspaces VALUES ('local', 'workspace-1')"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_tasks VALUES ('local', 'task-1', 'workspace-1')"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_runtime_sessions VALUES "
+            "('local', 'runtime-1', 'task-1', 'version-1')"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO core_preview_sessions VALUES "
+            "('local', 'preview-1', 'task-1', 'version-1', 'runtime-1')"
+        )
+
+    migrate_runtime_workspace_binding(engine)
+
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT workspace_id FROM core_runtime_sessions WHERE id = 'runtime-1'")
+        ).scalar_one() == "workspace-1"
+        assert connection.execute(
+            text("SELECT workspace_id FROM core_preview_sessions WHERE id = 'preview-1'")
+        ).scalar_one() == "workspace-1"
+        assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
+        assert connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall() == []
     engine.dispose()
 
 
