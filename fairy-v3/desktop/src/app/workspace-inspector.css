@@ -110,6 +110,20 @@
   color: #e8eeeb;
   background: transparent;
 }
+.workspace-compare-control {
+  flex: 0 1 126px;
+  min-width: 0;
+  display: flex;
+  gap: 4px;
+}
+.workspace-compare-control select {
+  min-width: 0;
+  width: 82px;
+  height: 30px;
+  color: #c8d0cc;
+  background: #1c1f1d;
+  border: 1px solid #424643;
+}
 
 .workspace-file-input {
   display: none;
@@ -198,6 +212,33 @@
   font:
     12px/1.55 "Cascadia Mono",
     monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.workspace-file-comparison {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 38px minmax(0, 1fr);
+  overflow: hidden;
+  background: #111212;
+}
+.workspace-file-comparison > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  color: #d7dfdb;
+  border-bottom: 1px solid #353736;
+}
+.workspace-file-comparison > header span {
+  margin-left: auto;
+}
+.workspace-file-comparison pre {
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  color: #d7dfdb;
+  font: 12px/1.55 "Cascadia Mono", monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

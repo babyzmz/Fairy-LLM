@@ -42,6 +42,38 @@ describe("document viewers", () => {
     expect(screen.getByText("Hosting")).toBeVisible();
   });
 
+  it("renders archive, ebook, and mail models without active content", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <DocumentViewer presentation={presentation({
+        kind: "archive",
+        format: "zip",
+        entries: [{ path: "docs/readme.txt", size: 5, kind: "file" }],
+      })} />,
+    );
+    expect(screen.getByText("docs/readme.txt")).toBeVisible();
+
+    rerender(<DocumentViewer presentation={presentation({
+      kind: "ebook",
+      chapters: [
+        { title: "One", text: "First" },
+        { title: "Two", text: "Second" },
+      ],
+    })} />);
+    await user.click(screen.getByRole("button", { name: /Two/ }));
+    expect(screen.getByText("Second")).toBeVisible();
+
+    rerender(<DocumentViewer presentation={presentation({
+      kind: "mail",
+      headers: { subject: "Review", from: "sender@example.test" },
+      body: "<img src=x onerror=alert(1)>",
+      attachments: [{ filename: "note.txt", size: 10 }],
+    })} />);
+    expect(screen.getByText("<img src=x onerror=alert(1)>")).toBeVisible();
+    expect(screen.getByText("Remote content blocked")).toBeVisible();
+    expect(document.querySelector("img")).toBeNull();
+  });
+
   it("parses quoted CSV and reports malformed JSON safely", () => {
     const { rerender } = render(
       <DataViewer path="report.csv" text={'name,note\nFairy,"hello, world"'} />,

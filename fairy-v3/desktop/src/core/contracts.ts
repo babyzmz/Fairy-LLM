@@ -125,6 +125,8 @@ export type WorkspaceFile = Schemas["WorkspaceFileModel"];
 export type WorkspaceFileContent = Schemas["WorkspaceFileContentModel"];
 export type FileReadSession = Schemas["FileReadSessionModel"];
 export type FileDescriptor = Schemas["FileDescriptorModel"];
+export type FileCompareInput = Schemas["FileCompareInput"];
+export type FileCompareResult = Schemas["FileCompareResultModel"];
 export type FileSet = Schemas["FileSetModel"];
 export type FileSetGetInput = Schemas["FileSetGetInput"];
 export type FileSetResolveInput = Schemas["FileSetResolveInput"];
@@ -316,6 +318,7 @@ export interface CoreMethodMap {
     result: FileDescriptor;
   };
   "files.present": { params: FilePresentInput; result: FilePresentationResult };
+  "files.compare": { params: FileCompareInput; result: FileCompareResult };
   "files.cancel": {
     params: FileRenderJobCancelInput;
     result: FilePresentationResult;

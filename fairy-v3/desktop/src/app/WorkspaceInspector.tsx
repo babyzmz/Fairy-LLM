@@ -48,10 +48,13 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
           <WorkspaceFilesPanel
             files={model.workspaceFiles}
             assetSets={model.assetSets}
+            versions={model.versions}
+            currentVersionId={model.workspaceTask?.target_version_id ?? model.selectedVersion?.id ?? null}
             loading={model.workspaceFilesLoading}
             onRead={model.readWorkspaceFile}
             onOpenStream={model.openWorkspaceFileStream}
             onPresent={model.presentWorkspaceFile}
+            onCompare={model.compareWorkspaceFile}
             onResolveFileSet={model.resolveWorkspaceFileSet}
             onListAnnotations={model.listFileAnnotations}
             onUpdateAnnotations={model.updateFileAnnotations}

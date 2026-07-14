@@ -444,6 +444,9 @@ function createClient(
       present: async () => {
         throw new Error("not used");
       },
+      compare: async () => {
+        throw new Error("not used");
+      },
     },
     fileSets: {
       resolve: async () => {

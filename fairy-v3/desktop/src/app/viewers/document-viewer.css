@@ -94,6 +94,117 @@
   display: grid;
   grid-template-rows: 38px minmax(0, 1fr);
 }
+.document-structured,
+.document-reader,
+.document-mail {
+  min-height: 0;
+  height: 100%;
+  color: #d2d9d5;
+  background: #1d201e;
+}
+.document-structured {
+  display: grid;
+  grid-template-rows: 42px minmax(0, 1fr);
+}
+.document-structured > header,
+.document-mail > header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #383d3a;
+}
+.document-structured > header span {
+  margin-left: auto;
+  color: #8f9893;
+  font-size: 11px;
+}
+.document-entry-list {
+  overflow: auto;
+}
+.document-entry-list > div,
+.document-mail section > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 7px 12px;
+  border-bottom: 1px solid #303532;
+}
+.document-entry-list span {
+  overflow-wrap: anywhere;
+}
+.document-entry-list small,
+.document-mail small {
+  flex: 0 0 auto;
+  color: #89928d;
+}
+.document-reader {
+  display: grid;
+  grid-template-columns: minmax(130px, 24%) minmax(0, 1fr);
+}
+.document-reader nav {
+  overflow: auto;
+  padding: 7px;
+  border-right: 1px solid #383d3a;
+}
+.document-reader nav button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px;
+  color: #bac3be;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+}
+.document-reader nav button.selected {
+  color: #75dcd1;
+  border-color: #4b7771;
+}
+.document-reader article {
+  overflow: auto;
+  padding: 30px clamp(22px, 7%, 64px);
+  color: #202522;
+  background: #fff;
+}
+.document-reader article p,
+.document-mail > p {
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.document-mail {
+  overflow: auto;
+  padding-bottom: 18px;
+}
+.document-mail > header div {
+  display: grid;
+  gap: 2px;
+}
+.document-mail > header span,
+.document-mail dt,
+.document-mail footer {
+  color: #8f9893;
+  font-size: 11px;
+}
+.document-mail dl,
+.document-mail > p,
+.document-mail section,
+.document-mail footer {
+  margin: 14px 18px;
+}
+.document-mail dl > div {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 8px;
+}
+.document-mail dt {
+  text-transform: uppercase;
+}
+.document-mail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 .document-workbook > [role="tablist"],
 .data-viewer-toolbar {
   display: flex;

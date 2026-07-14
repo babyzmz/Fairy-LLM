@@ -964,6 +964,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     readWorkspaceFile: actions.readWorkspaceFile,
     openWorkspaceFileStream: actions.openWorkspaceFileStream,
     presentWorkspaceFile: actions.presentWorkspaceFile,
+    compareWorkspaceFile: actions.compareWorkspaceFile,
     resolveWorkspaceFileSet: actions.resolveWorkspaceFileSet,
     listFileAnnotations: actions.listFileAnnotations,
     updateFileAnnotations: actions.updateFileAnnotations,

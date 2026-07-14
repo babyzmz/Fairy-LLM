@@ -2681,6 +2681,170 @@
         "title": "ExecutionTarget",
         "type": "string"
       },
+      "FileCompareEntryModel": {
+        "additionalProperties": false,
+        "properties": {
+          "diff_truncated": {
+            "title": "Diff Truncated",
+            "type": "boolean"
+          },
+          "left_byte_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left Byte Length"
+          },
+          "left_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left Hash"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "right_byte_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Right Byte Length"
+          },
+          "right_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Right Hash"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "text_diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Diff"
+          }
+        },
+        "required": [
+          "path",
+          "status",
+          "left_hash",
+          "right_hash",
+          "left_byte_length",
+          "right_byte_length",
+          "text_diff",
+          "diff_truncated"
+        ],
+        "title": "FileCompareEntryModel",
+        "type": "object"
+      },
+      "FileCompareInput": {
+        "additionalProperties": false,
+        "properties": {
+          "left_version_id": {
+            "format": "uuid",
+            "title": "Left Version Id",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "right_version_id": {
+            "format": "uuid",
+            "title": "Right Version Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "left_version_id",
+          "right_version_id"
+        ],
+        "title": "FileCompareInput",
+        "type": "object"
+      },
+      "FileCompareResultModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FileCompareEntryModel"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "left_version_id": {
+            "format": "uuid",
+            "title": "Left Version Id",
+            "type": "string"
+          },
+          "right_version_id": {
+            "format": "uuid",
+            "title": "Right Version Id",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace_id",
+          "left_version_id",
+          "right_version_id",
+          "items",
+          "truncated"
+        ],
+        "title": "FileCompareResultModel",
+        "type": "object"
+      },
       "FileDescriptorModel": {
         "additionalProperties": false,
         "properties": {
@@ -12059,6 +12223,67 @@
           }
         ],
         "summary": "Cancel File Presentation"
+      }
+    },
+    "/v1/files/compare": {
+      "post": {
+        "operationId": "files.compare",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileCompareInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileCompareResultModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Compare Files"
       }
     },
     "/v1/files/open-stream": {

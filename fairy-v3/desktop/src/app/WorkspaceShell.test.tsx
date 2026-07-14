@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceShell } from "./WorkspaceShell";
-import type { Conversation, Task, WorkspaceFile } from "../core/client";
+import type { Conversation, Task, Version, WorkspaceFile } from "../core/client";
 import type { WorkspaceModel } from "./workspaceModel";
 
 afterEach(() => {
@@ -44,6 +44,18 @@ describe("WorkspaceShell", () => {
     model.mode = "chat";
     model.workspaceTask = workspaceTask();
     model.workspaceFiles = [file];
+    const previousVersion: Version = {
+      id: "019f566f-f8b4-7000-8000-000000000014",
+      project_id: null,
+      workspace_id: workspaceTask().workspace_id,
+      source_conversation_id: workspaceTask().conversation_id,
+      source_task_id: workspaceTask().id,
+      parent_version_id: null,
+      project_root: "C:/Fairy/versions/previous",
+      visibility: "chat_draft",
+      created_at: "2026-07-13T00:00:00Z",
+    };
+    model.versions = [previousVersion];
     model.readWorkspaceFile = vi.fn(async () => ({
       file,
       media_type: "text/plain",
@@ -84,6 +96,22 @@ describe("WorkspaceShell", () => {
         created_at: "2026-07-14T00:00:00Z",
       },
     }));
+    model.compareWorkspaceFile = vi.fn(async () => ({
+      workspace_id: workspaceTask().workspace_id,
+      left_version_id: previousVersion.id,
+      right_version_id: workspaceTask().target_version_id!,
+      items: [{
+        path: file.path,
+        status: "modified",
+        left_hash: "a".repeat(64),
+        right_hash: "b".repeat(64),
+        left_byte_length: 18,
+        right_byte_length: 22,
+        text_diff: "-console.log('Old');\n+console.log('Fairy');",
+        diff_truncated: false,
+      }],
+      truncated: false,
+    }));
 
     render(<WorkspaceShell model={model} />);
     fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
@@ -91,6 +119,14 @@ describe("WorkspaceShell", () => {
 
     await waitFor(() => expect(screen.getByText("console.log('Fairy');")).toBeVisible());
     expect(screen.queryByText("Use this version")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Compare selected file" }));
+    await waitFor(() => expect(screen.getByText(/console\.log\('Old'\)/)).toBeVisible());
+    expect(model.compareWorkspaceFile).toHaveBeenCalledWith(
+      previousVersion.id,
+      workspaceTask().target_version_id,
+      file.path,
+    );
 
     vi.spyOn(window, "prompt").mockReturnValue("src/bootstrap.ts");
     fireEvent.click(screen.getByRole("button", { name: "Rename file" }));
@@ -293,6 +329,9 @@ function workspaceModel(): WorkspaceModel {
       throw new Error("not used");
     }),
     presentWorkspaceFile: vi.fn(async () => {
+      throw new Error("not used");
+    }),
+    compareWorkspaceFile: vi.fn(async () => {
       throw new Error("not used");
     }),
     resolveWorkspaceFileSet: vi.fn(async (path: string) => ({

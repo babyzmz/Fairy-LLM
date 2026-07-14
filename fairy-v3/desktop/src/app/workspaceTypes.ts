@@ -32,6 +32,7 @@ import type {
   AnnotationResult,
   SelectionReference,
   WorkspaceExport,
+  FileCompareResult,
 } from "../core/client";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
 import type { McpServerDraft } from "../settings/extensionTypes";
@@ -51,7 +52,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
     CoreClient["workspaces"],
     "get" | "listFiles" | "readFile" | "openStream" | "mutateFiles" | "export"
   >;
-  files: Pick<CoreClient["files"], "present">;
+  files: Pick<CoreClient["files"], "present" | "compare">;
   fileSets: Pick<CoreClient["fileSets"], "resolve">;
   assetSets: Pick<CoreClient["assetSets"], "list">;
   annotations: Pick<CoreClient["annotations"], "list" | "update">;
@@ -175,6 +176,7 @@ export interface WorkspaceModel {
   readWorkspaceFile(path: string): Promise<WorkspaceFileContent>;
   openWorkspaceFileStream(path: string): Promise<FileReadSession>;
   presentWorkspaceFile(path: string): Promise<FilePresentationResult>;
+  compareWorkspaceFile(leftVersionId: string, rightVersionId: string, path: string): Promise<FileCompareResult>;
   resolveWorkspaceFileSet(path: string): Promise<FileSet>;
   listFileAnnotations(presentation: FilePresentationResult): Promise<AnnotationResult>;
   updateFileAnnotations(

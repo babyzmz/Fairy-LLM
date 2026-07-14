@@ -100,6 +100,12 @@ describe("CoreClient", () => {
       path: "README.md",
       requested_mode: "auto",
     });
+    await client.files.compare({
+      workspace_id: id,
+      left_version_id: id,
+      right_version_id: id,
+      path: "README.md",
+    });
     await client.files.cancel({ job_id: id });
     await client.files.openStream({
       workspace_id: id,
@@ -363,6 +369,7 @@ describe("CoreClient", () => {
       "workspaces.files.read",
       "files.probe",
       "files.present",
+      "files.compare",
       "files.cancel",
       "files.open_stream",
       "file_sets.resolve",

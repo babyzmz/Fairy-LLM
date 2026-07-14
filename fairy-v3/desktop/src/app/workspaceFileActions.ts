@@ -73,6 +73,15 @@ export function createWorkspaceFileActions(context: WorkspaceFileActionContext) 
         requested_mode: "auto",
       });
     },
+    async compareWorkspaceFile(leftVersionId: string, rightVersionId: string, path: string) {
+      const current = scope();
+      return context.client.files.compare({
+        workspace_id: current.task.workspace_id,
+        left_version_id: leftVersionId,
+        right_version_id: rightVersionId,
+        path,
+      });
+    },
     async resolveWorkspaceFileSet(path: string) {
       const current = scope();
       if (current.task.target_version_id === null) throw new Error("Version is unavailable");

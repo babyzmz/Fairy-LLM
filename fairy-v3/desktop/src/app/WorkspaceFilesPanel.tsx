@@ -9,6 +9,7 @@ import {
   Trash2,
   Upload,
   Pencil,
+  GitCompareArrows,
   MessageSquarePlus,
   Quote,
 } from "lucide-react";
@@ -24,6 +25,8 @@ import type {
   AnnotationDocument,
   AssetSet,
   SelectionReference,
+  Version,
+  FileCompareResult,
 } from "../core/client";
 
 const PdfViewer = lazy(() => import("./viewers/PdfViewer"));
@@ -47,10 +50,13 @@ type ViewerSelection =
 interface WorkspaceFilesPanelProps {
   files: WorkspaceFile[];
   assetSets: AssetSet[];
+  versions: Version[];
+  currentVersionId: string | null;
   loading: boolean;
   onRead(path: string): Promise<WorkspaceFileContent>;
   onOpenStream(path: string): Promise<FileReadSession>;
   onPresent(path: string): Promise<FilePresentationResult>;
+  onCompare(leftVersionId: string, rightVersionId: string, path: string): Promise<FileCompareResult>;
   onResolveFileSet(path: string): Promise<FileSet>;
   onListAnnotations(presentation: FilePresentationResult): Promise<{ document: AnnotationDocument | null }>;
   onUpdateAnnotations(
@@ -71,10 +77,13 @@ interface WorkspaceFilesPanelProps {
 export function WorkspaceFilesPanel({
   files,
   assetSets,
+  versions,
+  currentVersionId,
   loading,
   onRead,
   onOpenStream,
   onPresent,
+  onCompare,
   onResolveFileSet,
   onListAnnotations,
   onUpdateAnnotations,
@@ -99,11 +108,23 @@ export function WorkspaceFilesPanel({
   const [annotations, setAnnotations] = useState<AnnotationDocument | null>(null);
   const [selection, setSelection] = useState<ViewerSelection | null>(null);
   const [selectionSaved, setSelectionSaved] = useState(false);
+  const [compareVersionId, setCompareVersionId] = useState("");
+  const [comparison, setComparison] = useState<FileCompareResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const visibleFiles = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     return normalized.length === 0 ? files : files.filter((file) => file.path.toLocaleLowerCase().includes(normalized));
   }, [files, query]);
+  const comparisonVersions = useMemo(
+    () => versions.filter((version) => version.id !== currentVersionId),
+    [currentVersionId, versions],
+  );
+
+  useEffect(() => {
+    if (!comparisonVersions.some((version) => version.id === compareVersionId)) {
+      setCompareVersionId(comparisonVersions[0]?.id ?? "");
+    }
+  }, [compareVersionId, comparisonVersions]);
 
   useEffect(() => {
     if (selectedPath !== null && !files.some((file) => file.path === selectedPath)) {
@@ -129,6 +150,7 @@ export function WorkspaceFilesPanel({
     setAnnotations(null);
     setSelection(null);
     setSelectionSaved(false);
+    setComparison(null);
     setError(null);
     try {
       const [nextContent, nextPresentation, nextFileSet] = await Promise.all([
@@ -216,6 +238,35 @@ export function WorkspaceFilesPanel({
         >
           <RefreshCw size={15} className={loading ? "spin" : undefined} />
         </button>
+        {currentVersionId !== null && comparisonVersions.length > 0 ? (
+          <div className="workspace-compare-control">
+            <select
+              aria-label="Compare with version"
+              value={compareVersionId}
+              onChange={(event) => setCompareVersionId(event.target.value)}
+            >
+              {comparisonVersions.map((version) => (
+                <option key={version.id} value={version.id}>{version.id.slice(0, 8)}</option>
+              ))}
+            </select>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Compare selected file"
+              title="Compare selected file"
+              disabled={selectedPath === null || compareVersionId === ""}
+              onClick={() => {
+                if (selectedPath === null || currentVersionId === null) return;
+                setError(null);
+                void onCompare(compareVersionId, currentVersionId, selectedPath)
+                  .then(setComparison)
+                  .catch((compareError) => setError(compareError instanceof Error ? compareError.message : "File comparison failed"));
+              }}
+            >
+              <GitCompareArrows size={15} />
+            </button>
+          </div>
+        ) : null}
         <button
           className="icon-button"
           type="button"
@@ -333,7 +384,7 @@ export function WorkspaceFilesPanel({
                   </button>
                 </div>
               </header>
-              <FileContent
+              {comparison !== null ? <ComparisonView comparison={comparison} /> : <FileContent
                 content={content}
                 readSession={readSession}
                 captionSessions={captionSessions}
@@ -347,7 +398,7 @@ export function WorkspaceFilesPanel({
                   setSelection({ kind: "scene_node", nodePath, label });
                   setSelectionSaved(false);
                 }}
-              />
+              />}
             </>
           )}
         </section>
@@ -403,6 +454,19 @@ export function WorkspaceFilesPanel({
           }}
         />
       </div>
+    </div>
+  );
+}
+
+function ComparisonView({ comparison }: { comparison: FileCompareResult }) {
+  const entry = comparison.items[0];
+  if (entry === undefined) {
+    return <div className="workspace-file-placeholder">File does not exist in either Version</div>;
+  }
+  return (
+    <div className="workspace-file-comparison">
+      <header><GitCompareArrows size={15} /><strong>{entry.status}</strong><span>{comparison.left_version_id.slice(0, 8)} → {comparison.right_version_id.slice(0, 8)}</span></header>
+      {entry.text_diff !== null ? <pre>{entry.text_diff}</pre> : <div className="workspace-file-placeholder">Binary or large-file metadata comparison only</div>}
     </div>
   );
 }

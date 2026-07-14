@@ -233,6 +233,41 @@ def test_document_package_rejects_unsafe_xml_without_exposing_content(tmp_path: 
         service.close()
 
 
+def test_service_routes_safe_archives_and_governed_fonts_explicitly(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    with zipfile.ZipFile(source / "bundle.zip", "w") as archive:
+        archive.writestr("docs/readme.txt", "Fairy")
+    (source / "display.ttf").write_bytes(b"\x00\x01\x00\x00font-fixture")
+    service = build_local_service(tmp_path / "app")
+    try:
+        imported = service.invoke(
+            "projects.import",
+            {"name": "Packages", "residency": "local_only", "source_path": str(source)},
+        )
+        scope = {
+            "workspace_id": imported["project"]["workspace_id"],
+            "version_id": imported["project"]["active_version_id"],
+        }
+        archive = service.invoke("files.present", {**scope, "path": "bundle.zip"})
+        font = service.invoke("files.present", {**scope, "path": "display.ttf"})
+
+        assert archive["job"]["status"] == "ready"
+        assert archive["presentation"]["renderer"] == "builtin.archive"
+        assert archive["presentation"]["assets"][0]["metadata"]["payload"]["entries"] == [
+            {
+                "path": "docs/readme.txt",
+                "size": 5,
+                "compressed_size": 5,
+                "kind": "file",
+            }
+        ]
+        assert font["job"]["status"] == "waiting_for_pack"
+        assert font["job"]["renderer_pack_id"] == "font"
+    finally:
+        service.close()
+
+
 def test_generated_asset_sets_bind_variants_and_safe_provenance_to_version(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
@@ -561,6 +596,71 @@ def test_annotations_selections_and_edit_drafts_are_version_bound(tmp_path: Path
                     "file_set_id": str(uuid4()),
                 },
             )
+    finally:
+        service.close()
+
+
+def test_compare_is_bound_to_two_workspace_versions_and_bounded_text_diff(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "notes.txt").write_text("alpha\n", encoding="utf-8")
+    service = build_local_service(tmp_path / "app")
+    try:
+        imported = service.invoke(
+            "projects.import",
+            {"name": "Compare", "residency": "local_only", "source_path": str(source)},
+        )
+        conversation = service.invoke(
+            "conversations.create",
+            {"project_id": imported["project"]["id"], "workspace_type": "project_chat"},
+        )
+        workspace = service.invoke(
+            "workspaces.get",
+            {"workspace_id": imported["project"]["workspace_id"]},
+        )
+        initial = imported["project"]["active_version_id"]
+        file = service.invoke(
+            "workspaces.files.list",
+            {"workspace_id": workspace["id"], "version_id": initial},
+        )["items"][0]
+        mutation = service.invoke(
+            "workspaces.files.mutate",
+            {
+                "workspace_id": workspace["id"],
+                "conversation_id": conversation["id"],
+                "expected_workspace_revision": workspace["revision"],
+                "files": [
+                    {
+                        "operation": "update",
+                        "path": "notes.txt",
+                        "content": "beta\n",
+                        "expected_hash": file["content_hash"],
+                    },
+                    {"operation": "create", "path": "added.txt", "content": "new\n"},
+                ],
+                "reason": "Build comparison fixture",
+                "idempotency_key": "compare:fixture",
+                "user_confirmed": True,
+            },
+        )
+        compared = service.invoke(
+            "files.compare",
+            {
+                "workspace_id": workspace["id"],
+                "left_version_id": initial,
+                "right_version_id": mutation["target_version"]["id"],
+            },
+        )
+
+        assert [(item["path"], item["status"]) for item in compared["items"]] == [
+            ("added.txt", "added"),
+            ("notes.txt", "modified"),
+        ]
+        assert "-alpha" in compared["items"][1]["text_diff"]
+        assert "+beta" in compared["items"][1]["text_diff"]
+        assert compared["truncated"] is False
     finally:
         service.close()
 

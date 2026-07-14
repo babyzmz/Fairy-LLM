@@ -76,6 +76,7 @@ const routes = {
   "files.probe": (params) =>
     getWithQuery(`/v1/workspaces/${pathParameter(params, "workspace_id")}/probe`, params, ["path", "version_id"]),
   "files.present": (params) => post("/v1/files/present", params),
+  "files.compare": (params) => post("/v1/files/compare", params),
   "files.cancel": (params) => post("/v1/files/cancel", params),
   "asset_sets.create": (params) => postWithIdempotency("/v1/asset-sets", params),
   "asset_sets.list": (params) => post("/v1/asset-sets/list", params),

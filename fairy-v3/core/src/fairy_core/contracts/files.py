@@ -53,6 +53,32 @@ class FilePresentInput(WorkspaceFileReadInput):
     requested_mode: str = Field(default="auto", pattern=r"^(auto|native|normalized)$")
 
 
+class FileCompareInput(ContractModel):
+    workspace_id: UUID
+    left_version_id: UUID
+    right_version_id: UUID
+    path: str | None = Field(default=None, min_length=1, max_length=4096)
+
+
+class FileCompareEntryModel(ContractModel):
+    path: str
+    status: str
+    left_hash: str | None
+    right_hash: str | None
+    left_byte_length: int | None
+    right_byte_length: int | None
+    text_diff: str | None
+    diff_truncated: bool
+
+
+class FileCompareResultModel(ContractModel):
+    workspace_id: UUID
+    left_version_id: UUID
+    right_version_id: UUID
+    items: tuple[FileCompareEntryModel, ...]
+    truncated: bool
+
+
 class FileRenderJobCancelInput(ContractModel):
     job_id: UUID
 
@@ -186,6 +212,8 @@ __all__ = [
     "AssetSetCreateInput",
     "AssetSetModel",
     "AssetSetPageModel",
+    "FileCompareInput",
+    "FileCompareResultModel",
     "FileDescriptorModel",
     "FilePresentInput",
     "FilePresentationModel",

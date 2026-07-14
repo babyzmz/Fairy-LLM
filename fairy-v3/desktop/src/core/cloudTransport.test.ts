@@ -305,6 +305,11 @@ describe("CloudCoreTransport", () => {
       idempotency_key: "system:reveal",
       user_confirmed: true,
     });
+    await transport.call("files.compare", {
+      workspace_id: "workspace-1",
+      left_version_id: "version-1",
+      right_version_id: "version-2",
+    });
 
     expect(requests.map(({ method, url }) => [method, url])).toEqual([
       ["GET", "https://cloud.fairy.test/v1/projects/project%2Fa"],
@@ -370,6 +375,7 @@ describe("CloudCoreTransport", () => {
       ["POST", "https://cloud.fairy.test/v1/voice/transcriptions"],
       ["POST", "https://cloud.fairy.test/v1/voice/speech"],
       ["POST", "https://cloud.fairy.test/v1/system/actions"],
+      ["POST", "https://cloud.fairy.test/v1/files/compare"],
     ]);
     expect(requests[0]?.headers.get("Authorization")).toBe("Bearer access-token");
     expect(requests[0]?.headers.get("X-Fairy-Device-ID")).toBe("device-1");

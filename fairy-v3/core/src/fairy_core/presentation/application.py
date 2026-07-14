@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import platform
 from uuid import UUID
 
@@ -17,6 +18,16 @@ from fairy_core.presentation.models import (
     PresentationFidelity,
     RenderJobStatus,
 )
+from fairy_core.presentation.supplemental_inspector import SupplementalPackageInspector
+
+_BUILTIN_SUPPLEMENTAL_EXTENSIONS = frozenset(
+    {"bz2", "eml", "epub", "gz", "tar", "tgz", "xz", "zip"}
+)
+_PACK_EXTENSION_FAMILIES = {
+    **{extension: "archive" for extension in ("7z", "rar")},
+    **{extension: "mail" for extension in ("mbox", "msg", "pst")},
+    **{extension: "font" for extension in ("otf", "ttc", "ttf", "woff", "woff2")},
+}
 
 _DIRECT_MEDIA_PREFIXES = ("text/", "image/", "audio/", "video/")
 _DIRECT_MEDIA_TYPES = frozenset(
@@ -66,6 +77,7 @@ _PACK_BY_EXTENSION = {
     },
     **{extension: "bim" for extension in ("ifc", "ifczip")},
     **{extension: "dcc-3d" for extension in ("3mf", "blend", "dae", "fbx", "usda", "usdc", "usdz")},
+    **_PACK_EXTENSION_FAMILIES,
 }
 
 
@@ -79,6 +91,7 @@ class PresentationApplication:
         self._unit_of_work_factory = unit_of_work_factory
         self._workspaces = workspaces
         self._documents = DocumentPackageInspector()
+        self._supplemental = SupplementalPackageInspector()
 
     def present(
         self,
@@ -165,9 +178,11 @@ class PresentationApplication:
                         path=file_set.primary_path,
                     )
                     assert content is not None
-                    inspection = self._documents.inspect(
-                        content,
-                        extension=descriptor.extension or "",
+                    extension = descriptor.extension or ""
+                    inspection = (
+                        self._supplemental.inspect(content, extension=extension)
+                        if extension in _BUILTIN_SUPPLEMENTAL_EXTENSIONS
+                        else self._documents.inspect(content, extension=extension)
                     )
                     target_status = (
                         RenderJobStatus.PARTIAL if inspection.partial else RenderJobStatus.READY
@@ -215,6 +230,112 @@ class PresentationApplication:
             unit_of_work.commit()
             return job, presentation
 
+    def compare(
+        self,
+        *,
+        workspace_id: UUID,
+        left_version_id: UUID,
+        right_version_id: UUID,
+        path: str | None,
+    ) -> dict[str, object]:
+        left_index = self._workspaces.files(
+            workspace_id=workspace_id,
+            version_id=left_version_id,
+        )
+        right_index = self._workspaces.files(
+            workspace_id=workspace_id,
+            version_id=right_version_id,
+        )
+        left = {item.path: item for item in left_index.files}
+        right = {item.path: item for item in right_index.files}
+        paths = [path] if path is not None else sorted(set(left) | set(right))
+        truncated = len(paths) > 500
+        items: list[dict[str, object]] = []
+        for candidate in paths[:500]:
+            left_file = left.get(candidate)
+            right_file = right.get(candidate)
+            if left_file is None and right_file is None:
+                continue
+            status = (
+                "added"
+                if left_file is None
+                else "removed"
+                if right_file is None
+                else "unchanged"
+                if left_file.content_hash == right_file.content_hash
+                else "modified"
+            )
+            text_diff = None
+            diff_truncated = False
+            if status == "modified" and left_file is not None and right_file is not None:
+                text_diff, diff_truncated = self._text_diff(
+                    workspace_id,
+                    left_version_id,
+                    right_version_id,
+                    candidate,
+                    left_file.byte_length,
+                    right_file.byte_length,
+                )
+            items.append(
+                {
+                    "path": candidate,
+                    "status": status,
+                    "left_hash": None if left_file is None else left_file.content_hash,
+                    "right_hash": None if right_file is None else right_file.content_hash,
+                    "left_byte_length": None if left_file is None else left_file.byte_length,
+                    "right_byte_length": None if right_file is None else right_file.byte_length,
+                    "text_diff": text_diff,
+                    "diff_truncated": diff_truncated,
+                }
+            )
+        return {
+            "workspace_id": workspace_id,
+            "left_version_id": left_version_id,
+            "right_version_id": right_version_id,
+            "items": tuple(items),
+            "truncated": truncated,
+        }
+
+    def _text_diff(
+        self,
+        workspace_id: UUID,
+        left_version_id: UUID,
+        right_version_id: UUID,
+        path: str,
+        left_size: int,
+        right_size: int,
+    ) -> tuple[str | None, bool]:
+        if max(left_size, right_size) > 256 * 1024:
+            return None, False
+        _, left_content = self._workspaces.read_file(
+            workspace_id=workspace_id,
+            version_id=left_version_id,
+            path=path,
+        )
+        _, right_content = self._workspaces.read_file(
+            workspace_id=workspace_id,
+            version_id=right_version_id,
+            path=path,
+        )
+        assert left_content is not None and right_content is not None
+        try:
+            left_text = left_content.decode("utf-8")
+            right_text = right_content.decode("utf-8")
+        except UnicodeDecodeError:
+            return None, False
+        diff = "".join(
+            difflib.unified_diff(
+                left_text.splitlines(keepends=True),
+                right_text.splitlines(keepends=True),
+                fromfile=f"{left_version_id}/{path}",
+                tofile=f"{right_version_id}/{path}",
+                n=3,
+            )
+        )
+        if len(diff) > 100_000:
+            return diff[:100_000], True
+        return diff, False
+
     def cancel(self, job_id: UUID) -> tuple[FileRenderJob, FilePresentation | None]:
         with self._unit_of_work_factory() as unit_of_work:
             job = unit_of_work.presentations.get_job(job_id)
@@ -238,6 +359,8 @@ class PresentationApplication:
 
     @staticmethod
     def _renderer_for(media_type: str, extension: str | None) -> tuple[str, str]:
+        if extension and extension.lower() in _BUILTIN_SUPPLEMENTAL_EXTENSIONS:
+            return "builtin-document", "1"
         if extension and extension.lower() in _BUILTIN_DOCUMENT_EXTENSIONS:
             return "builtin-document", "1"
         if extension and extension.lower() in _OFFICE_EXTENSIONS:

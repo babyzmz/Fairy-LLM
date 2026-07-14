@@ -1,6 +1,6 @@
 # File Format And Renderer Pack Inventory
 
-**Status:** Architecture baseline, 2026-07-14
+**Status:** Implemented capability inventory, 2026-07-14
 
 This inventory is a release and licensing gate. A format is not supported until
 its parser, converter, viewer, export path, license notice, sandbox profile, and
@@ -27,6 +27,24 @@ golden corpus are registered. “View” never implies pixel-identical authoring
 | Mail pack | EML, MSG | headers, body, attachment tree | normalized_high/approximate | remote content and tracking disabled |
 | Font pack | TTF, OTF, WOFF/2 | metadata, isolated glyph sheet | normalized_high | font embedding and malformed-table checks required |
 
+## Current Delivery State
+
+- Built in and bounded: text/source, JSON/YAML/XML/CSV, PDF, browser images,
+  browser media, glTF/GLB, ZIP/TAR/GZip containers, EPUB, and EML.
+- Signed Renderer Pack required: Office/ODF, iWork, professional images,
+  extended media, Parquet/Arrow/SQLite/Notebook, CAD/BIM/DCC, 7z/RAR,
+  MSG/PST/MBOX, and fonts.
+- Unsupported specialist formats remain download-only until their dedicated
+  semantic and safety contract is released.
+- files.compare compares immutable Workspace Versions. It emits metadata for
+  every bounded entry and unified text only for small UTF-8 files.
+
+Workspace file bytes synchronize as immutable Version snapshots with verified
+object hashes. Presentation jobs, annotations, selections, Edit Recipes, and
+generated Asset Sets remain tenant-scoped PostgreSQL collaboration state; all
+of those tables force row-level security and are not copied as a client
+database.
+
 ## Deferred Specialist Families
 
 GIS, DICOM, EDA, scientific volume/mesh, and discipline-specific proprietary
@@ -41,4 +59,3 @@ patent-sensitive codecs, signature certificate, payload digest, supported
 platforms, sandbox profile, reproducibility result, and golden-corpus result.
 Unknown or incompatible licensing blocks publication rather than silently
 removing notices or downloading an unsigned binary at runtime.
-

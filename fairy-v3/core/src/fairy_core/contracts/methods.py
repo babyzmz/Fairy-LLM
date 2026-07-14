@@ -23,6 +23,8 @@ from fairy_core.contracts.files import (
     AssetSetCreateInput,
     AssetSetModel,
     AssetSetPageModel,
+    FileCompareInput,
+    FileCompareResultModel,
     FileDescriptorModel,
     FilePresentationResultModel,
     FilePresentInput,
@@ -548,6 +550,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "files.present",
             FilePresentInput,
             FilePresentationResultModel,
+        ),
+        "files.compare": CoreMethod(
+            "files.compare",
+            FileCompareInput,
+            FileCompareResultModel,
         ),
         "files.cancel": CoreMethod(
             "files.cancel",

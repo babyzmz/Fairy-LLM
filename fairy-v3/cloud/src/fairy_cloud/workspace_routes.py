@@ -8,6 +8,8 @@ from fairy_core.contracts.files import (
     AssetSetCreateInput,
     AssetSetModel,
     AssetSetPageModel,
+    FileCompareInput,
+    FileCompareResultModel,
     FileDescriptorModel,
     FilePresentationResultModel,
     FilePresentInput,
@@ -120,6 +122,14 @@ def install_workspace_routes(
     )
     def present_file(request: FilePresentInput) -> dict[str, Any]:
         return invoke("files.present", request.model_dump(mode="json"))
+
+    @router.post(
+        "/files/compare",
+        operation_id="files.compare",
+        response_model=FileCompareResultModel,
+    )
+    def compare_files(request: FileCompareInput) -> dict[str, Any]:
+        return invoke("files.compare", request.model_dump(mode="json"))
 
     @router.post(
         "/files/cancel",

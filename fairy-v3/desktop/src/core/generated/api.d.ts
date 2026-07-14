@@ -568,6 +568,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/files/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Compare Files */
+        post: operations["files.compare"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/files/open-stream": {
         parameters: {
             query?: never;
@@ -2811,6 +2828,67 @@ export interface components {
          * @enum {string}
          */
         ExecutionTarget: "local" | "cloud";
+        /** FileCompareEntryModel */
+        FileCompareEntryModel: {
+            /** Diff Truncated */
+            diff_truncated: boolean;
+            /** Left Byte Length */
+            left_byte_length: number | null;
+            /** Left Hash */
+            left_hash: string | null;
+            /** Path */
+            path: string;
+            /** Right Byte Length */
+            right_byte_length: number | null;
+            /** Right Hash */
+            right_hash: string | null;
+            /** Status */
+            status: string;
+            /** Text Diff */
+            text_diff: string | null;
+        };
+        /** FileCompareInput */
+        FileCompareInput: {
+            /**
+             * Left Version Id
+             * Format: uuid
+             */
+            left_version_id: string;
+            /** Path */
+            path?: string | null;
+            /**
+             * Right Version Id
+             * Format: uuid
+             */
+            right_version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** FileCompareResultModel */
+        FileCompareResultModel: {
+            /** Items */
+            items: components["schemas"]["FileCompareEntryModel"][];
+            /**
+             * Left Version Id
+             * Format: uuid
+             */
+            left_version_id: string;
+            /**
+             * Right Version Id
+             * Format: uuid
+             */
+            right_version_id: string;
+            /** Truncated */
+            truncated: boolean;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
         /** FileDescriptorModel */
         FileDescriptorModel: {
             /** Byte Length */
@@ -6612,6 +6690,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FilePresentationResultModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "files.compare": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileCompareInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileCompareResultModel"];
                 };
             };
             /** @description Validation Error */

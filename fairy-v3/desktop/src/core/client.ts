@@ -58,6 +58,7 @@ import type {
   FileSetGetInput,
   FileSetResolveInput,
   FilePresentInput,
+  FileCompareInput,
   FileRenderJobCancelInput,
   RendererPackInstallInput,
   RendererPackRemoveInput,
@@ -173,6 +174,7 @@ export class CoreClient {
   readonly files = {
     probe: (input: WorkspaceFileReadInput) => this.transport.call("files.probe", input),
     present: (input: FilePresentInput) => this.transport.call("files.present", input),
+    compare: (input: FileCompareInput) => this.transport.call("files.compare", input),
     cancel: (input: FileRenderJobCancelInput) => this.transport.call("files.cancel", input),
     openStream: (input: WorkspaceFileStreamInput) => this.transport.call("files.open_stream", input),
   };

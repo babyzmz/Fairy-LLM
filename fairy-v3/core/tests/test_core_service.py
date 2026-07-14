@@ -288,6 +288,7 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "edit_recipes.update",
         "files.open_stream",
         "files.cancel",
+        "files.compare",
         "files.present",
         "files.probe",
         "file_sets.get",

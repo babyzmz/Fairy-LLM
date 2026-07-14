@@ -9,6 +9,7 @@ from fairy_core.application.contexts import WorkspaceMutationContext
 from fairy_core.application.workspaces import WorkspaceApplication
 from fairy_core.contracts.files import (
     AssetSetCreateInput,
+    FileCompareInput,
     FilePresentInput,
     FileRenderJobCancelInput,
     RendererPackInstallInput,
@@ -71,6 +72,15 @@ def presentation_service_handlers(
         assert isinstance(request, FileRenderJobCancelInput)
         job, presentation = files.cancel(request.job_id)
         return {"job": job, "presentation": presentation}
+
+    def compare(request: BaseModel) -> object:
+        assert isinstance(request, FileCompareInput)
+        return files.compare(
+            workspace_id=request.workspace_id,
+            left_version_id=request.left_version_id,
+            right_version_id=request.right_version_id,
+            path=request.path,
+        )
 
     def list_packs(_request: BaseModel) -> object:
         return {"items": [_pack_record(item) for item in packs.list()]}
@@ -185,6 +195,7 @@ def presentation_service_handlers(
 
     return {
         "files.present": present,
+        "files.compare": compare,
         "files.cancel": cancel,
         "renderer_packs.list": list_packs,
         "renderer_packs.health": list_packs,
