@@ -436,6 +436,16 @@ def test_annotations_selections_and_edit_drafts_are_version_bound(tmp_path: Path
                 "locator": {"start": 0, "end": 5},
             },
         )
+        scene_selection = service.invoke(
+            "selections.create",
+            {
+                **identity,
+                "source_path": "notes.txt",
+                "viewer_kind": "threejs",
+                "locator_kind": "scene_node",
+                "locator": {"node_path": "0/2/1"},
+            },
+        )
         recipe = service.invoke(
             "edit_recipes.create",
             {
@@ -449,6 +459,7 @@ def test_annotations_selections_and_edit_drafts_are_version_bound(tmp_path: Path
         assert annotation["revision"] == 1
         assert listed["document"] == annotation
         assert selection["source_hash"] == identity["source_hash"]
+        assert scene_selection["locator"] == {"node_path": "0/2/1"}
         assert discarded["status"] == "discarded"
         with pytest.raises(VersionConflictError, match="revision changed"):
             service.invoke(

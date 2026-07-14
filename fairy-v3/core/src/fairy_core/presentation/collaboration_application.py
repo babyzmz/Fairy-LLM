@@ -23,7 +23,7 @@ _LOCATOR_FIELDS = {
     "sheet_range": frozenset({"sheet", "range"}),
     "time_range": frozenset({"start_ms", "end_ms"}),
     "image_region": frozenset({"x", "y", "width", "height"}),
-    "scene_node": frozenset({"node_id"}),
+    "scene_node": frozenset({"node_path"}),
     "cad_entity": frozenset({"entity_id"}),
     "archive_entry": frozenset({"path"}),
 }
