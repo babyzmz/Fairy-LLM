@@ -140,10 +140,11 @@ export default function ModelViewer(props: ModelViewerProps) {
       if (item !== undefined) select(item.path);
     };
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
-    renderer.domElement.addEventListener("webglcontextlost", (event) => {
+    const onContextLost = (event: Event) => {
       event.preventDefault();
-      setError("3D graphics context was lost");
-    });
+      if (!disposed) setError("3D graphics context was lost");
+    };
+    renderer.domElement.addEventListener("webglcontextlost", onContextLost);
     const observer = new ResizeObserver(resize);
     observer.observe(host);
     resize();
@@ -176,6 +177,7 @@ export default function ModelViewer(props: ModelViewerProps) {
       observer.disconnect();
       renderer.setAnimationLoop(null);
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
       controls.dispose();
       if (model !== null) disposeObject(model);
       selectionHelper?.geometry.dispose();
