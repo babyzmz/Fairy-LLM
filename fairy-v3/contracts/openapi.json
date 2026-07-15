@@ -5989,6 +5989,382 @@
         "title": "MessageRole",
         "type": "string"
       },
+      "ModelAvailability": {
+        "enum": [
+          "available",
+          "unavailable",
+          "unknown"
+        ],
+        "title": "ModelAvailability",
+        "type": "string"
+      },
+      "ModelCatalogEntryModel": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/ModelAvailability"
+          },
+          "category": {
+            "$ref": "#/components/schemas/ModelCategory"
+          },
+          "context_length": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Length"
+          },
+          "description": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "display_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "endpoint_kind": {
+            "$ref": "#/components/schemas/ModelEndpointKind"
+          },
+          "input_modalities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Input Modalities",
+            "type": "array"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Output Tokens"
+          },
+          "model_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Model Id",
+            "type": "string"
+          },
+          "output_modalities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Output Modalities",
+            "type": "array"
+          },
+          "paid": {
+            "title": "Paid",
+            "type": "boolean"
+          },
+          "prices": {
+            "items": {
+              "$ref": "#/components/schemas/ModelPriceModel"
+            },
+            "title": "Prices",
+            "type": "array"
+          },
+          "supported_aspect_ratios": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Aspect Ratios",
+            "type": "array"
+          },
+          "supported_resolutions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Resolutions",
+            "type": "array"
+          },
+          "supports_streaming": {
+            "title": "Supports Streaming",
+            "type": "boolean"
+          },
+          "supports_structured_output": {
+            "title": "Supports Structured Output",
+            "type": "boolean"
+          },
+          "supports_tools": {
+            "title": "Supports Tools",
+            "type": "boolean"
+          },
+          "unavailable_reason": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Reason"
+          }
+        },
+        "required": [
+          "model_id",
+          "display_name",
+          "category",
+          "endpoint_kind",
+          "description",
+          "paid",
+          "availability",
+          "input_modalities",
+          "output_modalities",
+          "supports_tools",
+          "supports_structured_output",
+          "supports_streaming",
+          "supported_resolutions",
+          "supported_aspect_ratios",
+          "prices"
+        ],
+        "title": "ModelCatalogEntryModel",
+        "type": "object"
+      },
+      "ModelCatalogPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/ProviderAccountModel"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "fetched_at": {
+            "format": "date-time",
+            "title": "Fetched At",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ModelCatalogEntryModel"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "account",
+          "items",
+          "fetched_at",
+          "expires_at",
+          "stale",
+          "revision"
+        ],
+        "title": "ModelCatalogPageModel",
+        "type": "object"
+      },
+      "ModelCategory": {
+        "enum": [
+          "primary",
+          "strongest",
+          "code",
+          "image",
+          "music",
+          "video",
+          "free_general",
+          "free_code"
+        ],
+        "title": "ModelCategory",
+        "type": "string"
+      },
+      "ModelEndpointKind": {
+        "enum": [
+          "chat",
+          "images",
+          "audio",
+          "videos"
+        ],
+        "title": "ModelEndpointKind",
+        "type": "string"
+      },
+      "ModelPriceModel": {
+        "additionalProperties": false,
+        "properties": {
+          "billable": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Billable",
+            "type": "string"
+          },
+          "cost_usd": {
+            "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+            "title": "Cost Usd",
+            "type": "string"
+          },
+          "unit": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Unit",
+            "type": "string"
+          },
+          "variant": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant"
+          }
+        },
+        "required": [
+          "billable",
+          "unit",
+          "cost_usd"
+        ],
+        "title": "ModelPriceModel",
+        "type": "object"
+      },
+      "ModelSelectionMode": {
+        "enum": [
+          "auto",
+          "manual"
+        ],
+        "title": "ModelSelectionMode",
+        "type": "string"
+      },
+      "ModelSelectionPreferenceModel": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_free_fallback": {
+            "title": "Allow Free Fallback",
+            "type": "boolean"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ModelSelectionMode"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "zero_data_retention": {
+            "title": "Zero Data Retention",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode",
+          "allow_free_fallback",
+          "zero_data_retention",
+          "revision",
+          "updated_at"
+        ],
+        "title": "ModelSelectionPreferenceModel",
+        "type": "object"
+      },
+      "ModelSelectionUpdateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_free_fallback": {
+            "default": false,
+            "title": "Allow Free Fallback",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ModelSelectionMode"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "zero_data_retention": {
+            "default": false,
+            "title": "Zero Data Retention",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode",
+          "expected_revision",
+          "idempotency_key"
+        ],
+        "title": "ModelSelectionUpdateInput",
+        "type": "object"
+      },
       "NotificationLevel": {
         "enum": [
           "info",
@@ -6634,6 +7010,40 @@
         "title": "ProjectionState",
         "type": "string"
       },
+      "ProviderAccountModel": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Account Id",
+            "type": "string"
+          },
+          "credential_status": {
+            "$ref": "#/components/schemas/ProviderCredentialStatus"
+          },
+          "display_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "provider_kind": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Provider Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "provider_kind",
+          "display_name",
+          "credential_status"
+        ],
+        "title": "ProviderAccountModel",
+        "type": "object"
+      },
       "ProviderCapability": {
         "enum": [
           "text",
@@ -6644,6 +7054,15 @@
           "tts"
         ],
         "title": "ProviderCapability",
+        "type": "string"
+      },
+      "ProviderCredentialStatus": {
+        "enum": [
+          "configured",
+          "invalid",
+          "unavailable"
+        ],
+        "title": "ProviderCredentialStatus",
         "type": "string"
       },
       "ProviderHealthModel": {
@@ -13717,6 +14136,229 @@
           }
         ],
         "summary": "List Messages"
+      }
+    },
+    "/v1/models/catalog": {
+      "get": {
+        "operationId": "models.catalog.list",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalogPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Model Catalog"
+      }
+    },
+    "/v1/models/catalog/refresh": {
+      "post": {
+        "operationId": "models.catalog.refresh",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalogPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Refresh Model Catalog"
+      }
+    },
+    "/v1/models/selection": {
+      "get": {
+        "operationId": "models.selection.get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSelectionPreferenceModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Model Selection"
+      },
+      "put": {
+        "operationId": "models.selection.update",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelSelectionUpdateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSelectionPreferenceModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Model Selection"
       }
     },
     "/v1/permissions": {

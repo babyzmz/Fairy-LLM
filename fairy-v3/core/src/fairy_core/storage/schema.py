@@ -19,8 +19,10 @@ from sqlalchemy import (
 
 from fairy_core.persistence.tenant import TENANT_ID_LENGTH
 from fairy_core.storage.assistant_attempt_schema import build_assistant_attempt_tables
+from fairy_core.storage.execution_settings_schema import build_execution_settings_tables
 from fairy_core.storage.history_schema import build_history_tables
 from fairy_core.storage.index_schema import build_state_indexes
+from fairy_core.storage.model_catalog_schema import build_model_catalog_tables
 from fairy_core.storage.planning_schema import build_planning_schema
 from fairy_core.storage.presentation_schema import build_presentation_schema
 from fairy_core.storage.runtime_index_schema import build_runtime_scope_indexes
@@ -79,47 +81,12 @@ projects = Table(
     ),
 )
 
-execution_settings = Table(
-    "core_execution_settings",
-    state_metadata,
-    _tenant_id(),
-    Column("profile", String(32), nullable=False),
-    Column("capability_overrides", JSON, nullable=False),
-    Column("revision", BigInteger, nullable=False),
-    Column("updated_at", UTCDateTime(), nullable=False),
-    PrimaryKeyConstraint("tenant_id", name="pk_core_execution_settings"),
-    CheckConstraint(
-        "profile IN ('observe', 'standard', 'autonomous')",
-        name="ck_core_execution_settings_profile",
-    ),
-    CheckConstraint("revision >= 1", name="ck_core_execution_settings_revision"),
+execution_settings, execution_setting_updates = build_execution_settings_tables(state_metadata)
+
+model_catalogs, model_selections, model_selection_updates = build_model_catalog_tables(
+    state_metadata
 )
 
-execution_setting_updates = Table(
-    "core_execution_setting_updates",
-    state_metadata,
-    _tenant_id(),
-    Column("idempotency_key", String(512), primary_key=True),
-    Column("request_fingerprint", String(64), nullable=False),
-    Column("profile", String(32), nullable=False),
-    Column("capability_overrides", JSON, nullable=False),
-    Column("expected_revision", BigInteger, nullable=False),
-    Column("result_revision", BigInteger, nullable=False),
-    Column("result_updated_at", UTCDateTime(), nullable=False),
-    PrimaryKeyConstraint(
-        "tenant_id",
-        "idempotency_key",
-        name="pk_core_execution_setting_updates",
-    ),
-    CheckConstraint(
-        "profile IN ('observe', 'standard', 'autonomous')",
-        name="ck_core_execution_setting_updates_profile",
-    ),
-    CheckConstraint(
-        "expected_revision >= 0 AND result_revision = expected_revision + 1",
-        name="ck_core_execution_setting_updates_revision",
-    ),
-)
 mcp_servers = Table(
     "core_mcp_servers",
     state_metadata,

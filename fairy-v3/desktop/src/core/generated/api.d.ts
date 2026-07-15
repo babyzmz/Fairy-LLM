@@ -910,6 +910,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/models/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Model Catalog */
+        get: operations["models.catalog.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/models/catalog/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Model Catalog */
+        post: operations["models.catalog.refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/models/selection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Model Selection */
+        get: operations["models.selection.get"];
+        /** Update Model Selection */
+        put: operations["models.selection.update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/permissions": {
         parameters: {
             query?: never;
@@ -4013,6 +4065,132 @@ export interface components {
          */
         MessageRole: "user" | "assistant" | "tool" | "system_notice";
         /**
+         * ModelAvailability
+         * @enum {string}
+         */
+        ModelAvailability: "available" | "unavailable" | "unknown";
+        /** ModelCatalogEntryModel */
+        ModelCatalogEntryModel: {
+            availability: components["schemas"]["ModelAvailability"];
+            category: components["schemas"]["ModelCategory"];
+            /** Context Length */
+            context_length?: number | null;
+            /** Description */
+            description: string;
+            /** Display Name */
+            display_name: string;
+            endpoint_kind: components["schemas"]["ModelEndpointKind"];
+            /** Input Modalities */
+            input_modalities: string[];
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
+            /** Model Id */
+            model_id: string;
+            /** Output Modalities */
+            output_modalities: string[];
+            /** Paid */
+            paid: boolean;
+            /** Prices */
+            prices: components["schemas"]["ModelPriceModel"][];
+            /** Supported Aspect Ratios */
+            supported_aspect_ratios: string[];
+            /** Supported Resolutions */
+            supported_resolutions: string[];
+            /** Supports Streaming */
+            supports_streaming: boolean;
+            /** Supports Structured Output */
+            supports_structured_output: boolean;
+            /** Supports Tools */
+            supports_tools: boolean;
+            /** Unavailable Reason */
+            unavailable_reason?: string | null;
+        };
+        /** ModelCatalogPageModel */
+        ModelCatalogPageModel: {
+            account: components["schemas"]["ProviderAccountModel"];
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Fetched At
+             * Format: date-time
+             */
+            fetched_at: string;
+            /** Items */
+            items: components["schemas"]["ModelCatalogEntryModel"][];
+            /** Last Error Code */
+            last_error_code?: string | null;
+            /** Revision */
+            revision: number;
+            /** Stale */
+            stale: boolean;
+        };
+        /**
+         * ModelCategory
+         * @enum {string}
+         */
+        ModelCategory: "primary" | "strongest" | "code" | "image" | "music" | "video" | "free_general" | "free_code";
+        /**
+         * ModelEndpointKind
+         * @enum {string}
+         */
+        ModelEndpointKind: "chat" | "images" | "audio" | "videos";
+        /** ModelPriceModel */
+        ModelPriceModel: {
+            /** Billable */
+            billable: string;
+            /** Cost Usd */
+            cost_usd: string;
+            /** Unit */
+            unit: string;
+            /** Variant */
+            variant?: string | null;
+        };
+        /**
+         * ModelSelectionMode
+         * @enum {string}
+         */
+        ModelSelectionMode: "auto" | "manual";
+        /** ModelSelectionPreferenceModel */
+        ModelSelectionPreferenceModel: {
+            /** Allow Free Fallback */
+            allow_free_fallback: boolean;
+            mode: components["schemas"]["ModelSelectionMode"];
+            /** Model Id */
+            model_id?: string | null;
+            /** Revision */
+            revision: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Zero Data Retention */
+            zero_data_retention: boolean;
+        };
+        /** ModelSelectionUpdateInput */
+        ModelSelectionUpdateInput: {
+            /**
+             * Allow Free Fallback
+             * @default false
+             */
+            allow_free_fallback: boolean;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            mode: components["schemas"]["ModelSelectionMode"];
+            /** Model Id */
+            model_id?: string | null;
+            /**
+             * Zero Data Retention
+             * @default false
+             */
+            zero_data_retention: boolean;
+        };
+        /**
          * NotificationLevel
          * @enum {string}
          */
@@ -4291,11 +4469,26 @@ export interface components {
          * @enum {string}
          */
         ProjectionState: "ready" | "stale" | "unavailable" | "failed";
+        /** ProviderAccountModel */
+        ProviderAccountModel: {
+            /** Account Id */
+            account_id: string;
+            credential_status: components["schemas"]["ProviderCredentialStatus"];
+            /** Display Name */
+            display_name: string;
+            /** Provider Kind */
+            provider_kind: string;
+        };
         /**
          * ProviderCapability
          * @enum {string}
          */
         ProviderCapability: "text" | "tools" | "vision" | "structured_output" | "stt" | "tts";
+        /**
+         * ProviderCredentialStatus
+         * @enum {string}
+         */
+        ProviderCredentialStatus: "configured" | "invalid" | "unavailable";
         /** ProviderHealthModel */
         ProviderHealthModel: {
             /** Diagnostics */
@@ -7456,6 +7649,135 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessagePageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "models.catalog.list": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCatalogPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "models.catalog.refresh": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCatalogPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "models.selection.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelSelectionPreferenceModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "models.selection.update": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelSelectionUpdateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelSelectionPreferenceModel"];
                 };
             };
             /** @description Validation Error */

@@ -28,6 +28,8 @@ from fairy_core.memory.search_sqlalchemy import (
 )
 from fairy_core.memory.snapshot_sqlalchemy import SqlAlchemyMemorySnapshotRepository
 from fairy_core.memory.sqlalchemy import SqlAlchemyMemoryRepository
+from fairy_core.model_catalog.ports import ModelCatalogRepository
+from fairy_core.model_catalog.repository import SqlAlchemyModelCatalogRepository
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.presentation.ports import PresentationRepository
 from fairy_core.presentation.repository import SqlAlchemyPresentationRepository
@@ -55,6 +57,7 @@ class CoreUnitOfWork(Protocol):
     workspaces: WorkspaceRepository
     project_indexes: ProjectIndexRepository
     presentations: PresentationRepository
+    model_catalog: ModelCatalogRepository
 
     def __enter__(self) -> Self: ...
 
@@ -137,6 +140,10 @@ class SqlAlchemyUnitOfWork:
                 tenant_id=self._tenant_id,
             )
             self.presentations = SqlAlchemyPresentationRepository(
+                connection,
+                tenant_id=self._tenant_id,
+            )
+            self.model_catalog = SqlAlchemyModelCatalogRepository(
                 connection,
                 tenant_id=self._tenant_id,
             )

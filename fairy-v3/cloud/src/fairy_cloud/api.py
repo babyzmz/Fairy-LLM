@@ -107,6 +107,7 @@ from fairy_cloud.auth import AuthenticationError, DenyAllAuthenticator
 from fairy_cloud.auth.models import Authenticator, RequestIdentity
 from fairy_cloud.history_routes import install_history_routes
 from fairy_cloud.mcp.routes import install_extension_routes
+from fairy_cloud.model_routes import install_model_routes
 from fairy_cloud.planning_routes import install_planning_routes
 from fairy_cloud.runtime.proxy import CloudPreviewProxy
 from fairy_cloud.storage.objects import (
@@ -793,6 +794,7 @@ def create_cloud_app(
         return invoke("system.actions.execute", request.model_dump(mode="json"))
 
     install_voice_routes(protected, invoke=invoke, invoke_async=invoke_async)
+    install_model_routes(protected, invoke=invoke, guard=require_idempotency_match)
 
     @protected.post(
         "/memory/observations",

@@ -21,7 +21,7 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260714_0028"]
+    assert scripts.get_heads() == ["20260715_0029"]
     assert scripts.get_revision("20260712_0016").down_revision == "20260711_0015"
     assert scripts.get_revision("20260711_0015").down_revision == "20260711_0014"
     assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
@@ -41,6 +41,9 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_PROJECTS",
         "CORE_EXECUTION_SETTINGS",
         "CORE_EXECUTION_SETTING_UPDATES",
+        "CORE_MODEL_CATALOGS",
+        "CORE_MODEL_SELECTIONS",
+        "CORE_MODEL_SELECTION_UPDATES",
         "CORE_MCP_SERVERS",
         "CORE_MCP_SERVER_UPDATES",
         "CORE_CONVERSATIONS",

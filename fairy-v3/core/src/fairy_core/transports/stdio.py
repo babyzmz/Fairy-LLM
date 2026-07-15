@@ -19,6 +19,7 @@ from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
 from fairy_core.mcp.application import McpApplication
 from fairy_core.mcp.ports import McpConnector
 from fairy_core.mcp.sdk import MappingCredentialResolver, OfficialMcpConnector
+from fairy_core.model_catalog.ports import ModelCatalogSource
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.data_directory_lock import DataDirectoryLock
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
@@ -62,6 +63,7 @@ def build_local_service(
     sandbox_health_provider: SandboxHealthProvider | None = None,
     mcp_connector: McpConnector | None = None,
     skill_paths: Iterable[Path] | None = None,
+    model_catalog_source: ModelCatalogSource | None = None,
 ) -> CoreService:
     data_dir.mkdir(parents=True, exist_ok=True)
     resources = ExitStack()
@@ -216,6 +218,7 @@ def build_local_service(
             sandbox_health_provider=selected_sandbox_health,
             skill_registry=skills,
             mcp_application=mcp_application,
+            model_catalog_source=model_catalog_source,
             default_execution_target="local",
             on_close=resources.close,
         )
@@ -242,6 +245,7 @@ def build_local_dispatcher(
     sandbox_health_provider: SandboxHealthProvider | None = None,
     mcp_connector: McpConnector | None = None,
     skill_paths: Iterable[Path] | None = None,
+    model_catalog_source: ModelCatalogSource | None = None,
 ) -> JsonRpcDispatcher:
     return JsonRpcDispatcher(
         build_local_service(
@@ -259,6 +263,7 @@ def build_local_dispatcher(
             sandbox_health_provider=sandbox_health_provider,
             mcp_connector=mcp_connector,
             skill_paths=skill_paths,
+            model_catalog_source=model_catalog_source,
         )
     )
 

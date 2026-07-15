@@ -13,6 +13,7 @@ from weakref import finalize
 from pydantic import BaseModel, ValidationError
 
 from fairy_core.application.core import CoreApplication
+from fairy_core.application.model_catalog_service import ModelCatalogService
 from fairy_core.application.planning_service import planning_service_handlers
 from fairy_core.application.presentation_service import presentation_service_handlers
 from fairy_core.application.runtime import RuntimeApplication
@@ -108,6 +109,7 @@ from fairy_core.mcp.application import McpApplication
 from fairy_core.mcp.tools import McpToolExecutor
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
+from fairy_core.model_catalog.ports import ModelCatalogSource
 from fairy_core.perception import ImageAttachment, ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.presentation.packs import RendererPackInstaller
@@ -174,6 +176,7 @@ class CoreService:
         skill_registry: SkillRegistry | None = None,
         mcp_application: McpApplication | None = None,
         renderer_pack_installer: RendererPackInstaller | None = None,
+        model_catalog_source: ModelCatalogSource | None = None,
         default_execution_target: str = "local",
         on_close: Callable[[], None] | None = None,
     ) -> None:
@@ -186,6 +189,11 @@ class CoreService:
         self._skill_registry = skill_registry or SkillRegistry(registry)
         self._mcp_application = mcp_application
         self._provider_registry = provider_registry or ProviderRegistry()
+        self._model_catalog_service = ModelCatalogService(
+            unit_of_work_factory=unit_of_work_factory,
+            provider_registry=self._provider_registry,
+            source=model_catalog_source,
+        )
         self._voice_registry = voice_registry or VoiceRegistry()
         self._voice_application = VoiceApplication(
             unit_of_work_factory=unit_of_work_factory,
@@ -369,6 +377,7 @@ class CoreService:
             "mcp.servers.list": self._list_mcp_servers,
             "mcp.servers.set_enabled": self._set_mcp_server_enabled,
             "messages.list": self._list_messages,
+            **self._model_catalog_service.handlers,
             "projects.create": self._create_project,
             "projects.get": self._get_project,
             "projects.import": self._import_project,
@@ -423,6 +432,7 @@ class CoreService:
         with self._turn_cancellation_lock:
             self._turn_cancellations.clear()
         self._image_attachments.close()
+        self._model_catalog_service.close()
         self._provider_registry.close()
         self._voice_registry.close()
         if self._tool_executor is not None:

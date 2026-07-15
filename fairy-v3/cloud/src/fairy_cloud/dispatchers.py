@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fairy_capabilities.composition import (
     build_capability_bundle,
+    build_model_catalog_source,
     build_provider_registry,
     build_voice_registry,
 )
@@ -122,14 +123,21 @@ def build_postgres_core_service(
     )
     providers = build_provider_registry()
     try:
+        model_catalog = build_model_catalog_source()
+    except BaseException:
+        providers.close()
+        raise
+    try:
         voice = build_voice_registry()
     except BaseException:
+        model_catalog.close()
         providers.close()
         raise
     try:
         capabilities = build_capability_bundle()
     except BaseException:
         voice.close()
+        model_catalog.close()
         providers.close()
         raise
     try:
@@ -172,11 +180,13 @@ def build_postgres_core_service(
             sandbox_health_provider=sandbox.health,
             skill_registry=SkillRegistry(registry),
             mcp_application=mcp_application,
+            model_catalog_source=model_catalog,
             default_execution_target="cloud",
         )
     except BaseException:
         capabilities.executor.close()
         voice.close()
+        model_catalog.close()
         providers.close()
         raise
 

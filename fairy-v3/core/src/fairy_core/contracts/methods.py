@@ -46,6 +46,14 @@ from fairy_core.contracts.history import (
     TaskArchiveInput,
     TaskMetadataUpdateInput,
 )
+from fairy_core.contracts.model_catalog import (
+    ModelCatalogListInput,
+    ModelCatalogPageModel,
+    ModelCatalogRefreshInput,
+    ModelSelectionGetInput,
+    ModelSelectionPreferenceModel,
+    ModelSelectionUpdateInput,
+)
 from fairy_core.contracts.models import (
     ApprovalDecisionResultModel,
     ApprovalPageModel,
@@ -422,6 +430,26 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "messages.list",
             MessageListInput,
             MessagePageModel,
+        ),
+        "models.catalog.list": CoreMethod(
+            "models.catalog.list",
+            ModelCatalogListInput,
+            ModelCatalogPageModel,
+        ),
+        "models.catalog.refresh": CoreMethod(
+            "models.catalog.refresh",
+            ModelCatalogRefreshInput,
+            ModelCatalogPageModel,
+        ),
+        "models.selection.get": CoreMethod(
+            "models.selection.get",
+            ModelSelectionGetInput,
+            ModelSelectionPreferenceModel,
+        ),
+        "models.selection.update": CoreMethod(
+            "models.selection.update",
+            ModelSelectionUpdateInput,
+            ModelSelectionPreferenceModel,
         ),
         "projects.create": CoreMethod(
             "projects.create",

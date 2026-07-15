@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.information import InformationCapabilityHealth
+from fairy_core.model_catalog.ports import ModelCatalogSource
 from fairy_core.providers import ProviderCapability, ProviderRegistry
 from fairy_core.research.ports import FetchPort, SearchPort
 from fairy_core.sandbox.tools import ExecutorSandboxHealthProvider
@@ -18,6 +19,7 @@ from fairy_capabilities.information.open_meteo import OpenMeteoAdapter
 from fairy_capabilities.information.timezones import TimeZoneService
 from fairy_capabilities.information.tools import InformationToolExecutor
 from fairy_capabilities.models.openai_compatible import OpenAICompatibleProvider
+from fairy_capabilities.models.openrouter_catalog import OpenRouterCatalogSource
 from fairy_capabilities.settings import (
     EnvironmentProviderSecretResolver,
     ProviderSettings,
@@ -96,6 +98,35 @@ def build_provider_registry(
         for profile in settings.profiles
     )
     return ProviderRegistry(providers)
+
+
+def build_model_catalog_source(
+    environment: Mapping[str, str] | None = None,
+) -> ModelCatalogSource:
+    configured = os.environ if environment is None else environment
+    settings = ProviderSettings.from_environment(configured)
+    resolver = EnvironmentProviderSecretResolver(
+        settings.secret_environment_names,
+        configured,
+    )
+    openrouter_profile = next(
+        (
+            profile
+            for profile in settings.profiles
+            if "openrouter.ai" in profile.base_url.casefold()
+        ),
+        None,
+    )
+    return OpenRouterCatalogSource(
+        base_url=(
+            openrouter_profile.base_url
+            if openrouter_profile is not None
+            else "https://openrouter.ai/api/v1"
+        ),
+        secret=resolver.try_resolve(
+            openrouter_profile.credential_ref if openrouter_profile is not None else "openrouter"
+        ),
+    )
 
 
 def build_voice_registry(
