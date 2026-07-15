@@ -133,9 +133,7 @@ class EditRecipe:
             return self
         if self.status is not EditRecipeStatus.APPLYING:
             raise ValueError("Edit Recipe is not being applied")
-        if len(output_hash) != 64 or any(
-            value not in "0123456789abcdef" for value in output_hash
-        ):
+        if len(output_hash) != 64 or any(value not in "0123456789abcdef" for value in output_hash):
             raise ValueError("Edit Recipe output hash must be lowercase SHA-256")
         return replace(
             self,

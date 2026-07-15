@@ -23,9 +23,7 @@ def constrain_context_for_media(
     )
     tools = tuple(tool for tool in context.tools if tool.name == decision.media_tool_name)
     if len(tool_definitions) != 1 or len(tools) != 1:
-        raise ProviderUnavailableError(
-            "The selected media generation capability is unavailable"
-        )
+        raise ProviderUnavailableError("The selected media generation capability is unavailable")
 
     policy = ModelMessage.create(
         role=ModelRole.SYSTEM,

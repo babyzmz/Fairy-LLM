@@ -451,9 +451,7 @@ def test_ledger_recovery_honors_live_command_lease_then_interrupts_expired_run(
     assert recovered_trace is not None and recovered_trace.completed_at is not None
     assert len(recovered_steps) == 1
     assert recovered_steps[0].status is TraceStepStatus.FAILED
-    assert recovered_steps[0].public_detail == (
-        "Worker interrupted before the step completed."
-    )
+    assert recovered_steps[0].public_detail == ("Worker interrupted before the step completed.")
     assert [event.event_type for event in events].count("assistant.turn.failed") == 1
     assert [event.event_type for event in events].count("turn.trace.step.failed") == 1
 

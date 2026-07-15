@@ -22,19 +22,25 @@ from fairy_core.storage.schema import turn_trace_steps, turn_traces
 class TurnTraceRepositoryMixin:
     def create_trace_if_absent(self, trace: TurnTrace) -> tuple[TurnTrace, bool]:
         values = {"tenant_id": self._tenant_id, **self._trace_values(trace)}
-        statement = self._insert(turn_traces).values(**values).on_conflict_do_nothing(
-            index_elements=[turn_traces.c.tenant_id, turn_traces.c.turn_id]
+        statement = (
+            self._insert(turn_traces)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=[turn_traces.c.tenant_id, turn_traces.c.turn_id])
         )
         with self._session.write() as connection:
             inserted_id = connection.execute(
                 statement.returning(turn_traces.c.id)
             ).scalar_one_or_none()
-            row = connection.execute(
-                select(turn_traces).where(
-                    turn_traces.c.tenant_id == self._tenant_id,
-                    turn_traces.c.turn_id == str(trace.turn_id),
+            row = (
+                connection.execute(
+                    select(turn_traces).where(
+                        turn_traces.c.tenant_id == self._tenant_id,
+                        turn_traces.c.turn_id == str(trace.turn_id),
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
         persisted = self._trace_from_row(row)
         if (
             persisted.turn_id != trace.turn_id
@@ -148,14 +154,18 @@ class TurnTraceRepositoryMixin:
 
     def list_trace_steps(self, turn_id: UUID) -> tuple[TraceStep, ...]:
         with self._session.read() as connection:
-            rows = connection.execute(
-                select(turn_trace_steps)
-                .where(
-                    turn_trace_steps.c.tenant_id == self._tenant_id,
-                    turn_trace_steps.c.turn_id == str(turn_id),
+            rows = (
+                connection.execute(
+                    select(turn_trace_steps)
+                    .where(
+                        turn_trace_steps.c.tenant_id == self._tenant_id,
+                        turn_trace_steps.c.turn_id == str(turn_id),
+                    )
+                    .order_by(turn_trace_steps.c.sequence, turn_trace_steps.c.id)
                 )
-                .order_by(turn_trace_steps.c.sequence, turn_trace_steps.c.id)
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         return tuple(self._trace_step_from_row(row) for row in rows)
 
     @staticmethod
@@ -198,9 +208,7 @@ class TurnTraceRepositoryMixin:
             "turn_id": str(step.turn_id),
             "sequence": step.sequence,
             "parent_step_id": str(step.parent_step_id) if step.parent_step_id else None,
-            "caused_by_step_id": (
-                str(step.caused_by_step_id) if step.caused_by_step_id else None
-            ),
+            "caused_by_step_id": (str(step.caused_by_step_id) if step.caused_by_step_id else None),
             "kind": step.kind.value,
             **cls._trace_step_mutable_values(step),
             "created_at": step.created_at,
@@ -242,9 +250,7 @@ class TurnTraceRepositoryMixin:
             public_summary=row["public_summary"],
             public_detail=row["public_detail"],
             model_id=row["model_id"],
-            model_role=(
-                ModelExecutionRole(row["model_role"]) if row["model_role"] else None
-            ),
+            model_role=(ModelExecutionRole(row["model_role"]) if row["model_role"] else None),
             provider_attempt_id=(
                 UUID(row["provider_attempt_id"]) if row["provider_attempt_id"] else None
             ),

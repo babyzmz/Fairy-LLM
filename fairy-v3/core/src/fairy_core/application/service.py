@@ -461,8 +461,12 @@ class CoreService:
         with self._turn_cancellation_lock:
             self._turn_cancellations.clear()
         close_resources(
-            self._image_attachments, self._model_catalog_service, self._provider_registry,
-            self._voice_registry, self._tool_executor, self._media_provider,
+            self._image_attachments,
+            self._model_catalog_service,
+            self._provider_registry,
+            self._voice_registry,
+            self._tool_executor,
+            self._media_provider,
         )
         if self._finalizer is not None:
             self._finalizer()
@@ -473,8 +477,10 @@ class CoreService:
         verify_running_previews: bool = False,
     ) -> dict[str, int]:
         return recover_interrupted_work(
-            assistant=self._assistant_ledger, runtime=self._runtime_application,
-            media=self._media_application, verify_running_previews=verify_running_previews,
+            assistant=self._assistant_ledger,
+            runtime=self._runtime_application,
+            media=self._media_application,
+            verify_running_previews=verify_running_previews,
         )
 
     def invoke(self, method: str, params: Mapping[str, Any]) -> Any:

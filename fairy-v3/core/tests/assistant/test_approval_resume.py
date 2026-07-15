@@ -152,8 +152,7 @@ def test_rejected_tool_becomes_bounded_result_and_duplicate_decision_is_idempote
         assert approval_step["status"] == "cancelled"
         assert trace["completed_at"] is not None
         assert all(
-            step["status"] not in {"pending", "running", "waiting"}
-            for step in trace["steps"]
+            step["status"] not in {"pending", "running", "waiting"} for step in trace["steps"]
         )
 
         with pytest.raises(InvalidTransitionError):

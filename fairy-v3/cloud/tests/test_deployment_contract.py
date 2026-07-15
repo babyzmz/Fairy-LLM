@@ -150,10 +150,7 @@ def test_media_generation_migration_has_reversible_tenant_ddl() -> None:
     command.downgrade(config, "20260715_0031:20260715_0030", sql=True)
 
     ddl = " ".join(output.getvalue().upper().split())
-    assert (
-        'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_MEDIA_GENERATION_JOBS"'
-        in ddl
-    )
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_MEDIA_GENERATION_JOBS"' in ddl
     assert "DROP INDEX IX_CORE_MEDIA_GENERATION_JOBS_PROVIDER" in ddl
     assert "DROP TABLE CORE_MEDIA_GENERATION_JOBS" in ddl
 

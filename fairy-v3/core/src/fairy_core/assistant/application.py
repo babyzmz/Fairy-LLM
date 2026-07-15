@@ -1061,4 +1061,5 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
             )
             unit_of_work.commit()
 
+
 __all__ = ["AssistantApplication"]
