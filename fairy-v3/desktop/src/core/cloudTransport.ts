@@ -147,6 +147,8 @@ const routes = {
   "assistant.turns.start": (params) => post(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/start`, params),
   "assistant.turns.retry": (params) =>
     postWithIdempotency(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/retry`, params),
+  "assistant.turns.trace.list": (params) =>
+    get(`/v1/assistant/turns/${pathParameter(params, "turn_id")}/trace`),
   "messages.list": (params) => getWithQuery("/v1/messages", params, ["conversation_id", "limit", "cursor"]),
   "voice.synthesize": (params) => post("/v1/voice/speech", params),
   "voice.sessions.start": (params) => post("/v1/voice/sessions", params),

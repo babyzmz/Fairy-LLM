@@ -324,6 +324,8 @@ export class CoreClient {
       run: (turnId: string) => this.transport.call("assistant.turns.run", { turn_id: turnId }),
       start: (turnId: string) => this.transport.call("assistant.turns.start", { turn_id: turnId }),
       retry: (input: AssistantTurnRetryInput) => this.transport.call("assistant.turns.retry", input),
+      trace: (turnId: string) =>
+        this.transport.call("assistant.turns.trace.list", { turn_id: turnId }),
     },
   };
 

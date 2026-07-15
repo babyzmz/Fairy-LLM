@@ -49,6 +49,11 @@ export type ExecutionPlan = Schemas["ExecutionPlanModel"];
 export type ExecutionPlanContext = Schemas["ExecutionPlanContextModel"];
 export type ExecutionPlanCreateInput = Schemas["ExecutionPlanCreateInput"];
 export type TaskStep = Schemas["TaskStepModel"];
+export type TraceStep = Schemas["TraceStepModel"];
+export type TraceStepKind = Schemas["TraceStepKind"];
+export type TraceStepStatus = Schemas["TraceStepStatus"];
+export type TraceVisibility = Schemas["TraceVisibility"];
+export type TurnTrace = Schemas["TurnTraceModel"];
 export type Health = Schemas["HealthModel"];
 export type MemoryClaim = Schemas["MemoryClaimModel"];
 export type MemoryClaimContext = Schemas["MemoryClaimContextModel"];
@@ -334,6 +339,10 @@ export interface CoreMethodMap {
   "assistant.turns.retry": {
     params: AssistantTurnRetryInput;
     result: AssistantTurn;
+  };
+  "assistant.turns.trace.list": {
+    params: { turn_id: string };
+    result: TurnTrace;
   };
   "messages.list": { params: MessageListInput; result: MessagePage };
   "voice.synthesize": { params: VoiceSynthesizeInput; result: VoiceAudio };

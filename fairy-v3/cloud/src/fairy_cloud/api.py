@@ -91,6 +91,7 @@ from fairy_core.contracts.models import (
     VersionPageModel,
 )
 from fairy_core.contracts.transcript import MessagePageModel
+from fairy_core.contracts.turn_trace import TurnTraceModel
 from fairy_core.domain.errors import DomainError, IdempotencyConflictError, VersionConflictError
 from fairy_core.memory.models import MemoryNamespace
 from fairy_core.system_actions.models import SystemActionExecution, SystemActionRequest
@@ -494,6 +495,14 @@ def create_cloud_app(
     )
     def get_assistant_turn(turn_id: UUID) -> dict[str, Any]:
         return invoke("assistant.turns.get", {"turn_id": str(turn_id)})
+
+    @protected.get(
+        "/assistant/turns/{turn_id}/trace",
+        operation_id="assistant.turns.trace.list",
+        response_model=TurnTraceModel,
+    )
+    def get_assistant_turn_trace(turn_id: UUID) -> dict[str, Any]:
+        return invoke("assistant.turns.trace.list", {"turn_id": str(turn_id)})
 
     @protected.post(
         "/assistant/turns/{turn_id}/cancel",

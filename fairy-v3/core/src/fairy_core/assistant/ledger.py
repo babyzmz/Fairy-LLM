@@ -13,6 +13,8 @@ from fairy_core.assistant.models import (
     MessageVisibility,
     ToolInvocationStatus,
 )
+from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus, TurnTrace
+from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.commanding.models import CommandRun, CommandStatus, EventVisibility
 from fairy_core.domain.errors import (
     IdempotencyConflictError,
@@ -37,6 +39,7 @@ class AssistantLedgerApplication:
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._scope_resolver = scope_resolver
+        self._trace = TurnTraceRuntime(unit_of_work_factory)
 
     def create_turn(
         self,
@@ -70,6 +73,8 @@ class AssistantLedgerApplication:
                     profile_id=profile_id,
                     model_selection=model_selection,
                 )
+                if self._ensure_trace(unit_of_work, existing, legacy=True):
+                    unit_of_work.commit()
                 return existing
             turn = AssistantTurn.create(
                 task=task,
@@ -87,7 +92,10 @@ class AssistantLedgerApplication:
                     profile_id=profile_id,
                     model_selection=model_selection,
                 )
+                if self._ensure_trace(unit_of_work, persisted, legacy=True):
+                    unit_of_work.commit()
                 return persisted
+            self._ensure_trace(unit_of_work, turn, legacy=False)
             message = Message.create(
                 conversation_id=task.conversation_id,
                 task_id=task.id,
@@ -138,6 +146,8 @@ class AssistantLedgerApplication:
                     profile_id=original.profile_id,
                     model_selection=original.model_selection,
                 )
+                if self._ensure_trace(unit_of_work, existing, legacy=True):
+                    unit_of_work.commit()
                 return existing
             retry = AssistantTurn.create(
                 task=task,
@@ -155,9 +165,24 @@ class AssistantLedgerApplication:
                     profile_id=original.profile_id,
                     model_selection=original.model_selection,
                 )
+                if self._ensure_trace(unit_of_work, persisted, legacy=True):
+                    unit_of_work.commit()
                 return persisted
+            self._ensure_trace(unit_of_work, retry, legacy=False)
             unit_of_work.commit()
         return retry
+
+    @staticmethod
+    def _ensure_trace(unit_of_work, turn: AssistantTurn, *, legacy: bool) -> bool:
+        _trace, inserted = unit_of_work.assistant.create_trace_if_absent(
+            TurnTrace.create(
+                turn_id=turn.id,
+                conversation_id=turn.conversation_id,
+                task_id=turn.task_id,
+                legacy=legacy,
+            )
+        )
+        return inserted
 
     def cancel_turn(
         self,
@@ -213,6 +238,7 @@ class AssistantLedgerApplication:
                 live_turn_ids=effective_live_turn_ids
             )
             for turn in interrupted:
+                self._ensure_trace(unit_of_work, turn, legacy=True)
                 runs: dict[UUID, CommandRun] = {}
                 model_run = unit_of_work.commands.active_run_for_task(
                     turn.task_id,
@@ -237,15 +263,24 @@ class AssistantLedgerApplication:
                         if command is not None:
                             runs[command.id] = command
                 for run in runs.values():
-                    self._interrupt_command(unit_of_work.commands, turn.id, run)
+                    self._interrupt_command(unit_of_work, turn.id, run)
+                self._trace.finish_active_steps_in_unit(
+                    unit_of_work,
+                    turn_id=turn.id,
+                    run=None,
+                    status=TraceStepStatus.FAILED,
+                    public_detail="Worker interrupted before the step completed.",
+                    emit_events=False,
+                )
+                self._trace.complete_trace_in_unit(unit_of_work, turn_id=turn.id)
             if interrupted:
                 unit_of_work.commit()
         return interrupted
 
-    @staticmethod
-    def _interrupt_command(commands, turn_id: UUID, run: CommandRun) -> None:
+    def _interrupt_command(self, unit_of_work, turn_id: UUID, run: CommandRun) -> None:
         if run.status not in {CommandStatus.QUEUED, CommandStatus.RUNNING}:
             return
+        commands = unit_of_work.commands
         lease_owner: str | None = None
         lease_fence: int | None = None
         if run.status is CommandStatus.RUNNING:
@@ -256,6 +291,18 @@ class AssistantLedgerApplication:
             )
             lease_owner = run.lease_owner
             lease_fence = run.lease_fence
+        for kind in (
+            TraceStepKind.MODEL,
+            TraceStepKind.APPROVAL,
+            TraceStepKind.TOOL,
+        ):
+            self._trace.transition_command_step_in_unit(
+                unit_of_work,
+                run=run,
+                kind=kind,
+                status=TraceStepStatus.FAILED,
+                public_detail="Worker interrupted before the step completed.",
+            )
         commands.append_event(
             run_id=run.id,
             event_type="assistant.turn.failed",

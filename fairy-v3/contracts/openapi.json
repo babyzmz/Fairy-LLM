@@ -6710,6 +6710,15 @@
         "title": "ModelEndpointKind",
         "type": "string"
       },
+      "ModelExecutionRole": {
+        "enum": [
+          "coordinator",
+          "primary",
+          "reviewer"
+        ],
+        "title": "ModelExecutionRole",
+        "type": "string"
+      },
       "ModelPriceModel": {
         "additionalProperties": false,
         "properties": {
@@ -9653,6 +9662,252 @@
         "title": "ToolDefinitionMetadataModel",
         "type": "object"
       },
+      "TraceStepKind": {
+        "enum": [
+          "route",
+          "plan",
+          "reasoning",
+          "model",
+          "tool",
+          "approval",
+          "observation",
+          "verification",
+          "artifact",
+          "response",
+          "voice"
+        ],
+        "title": "TraceStepKind",
+        "type": "string"
+      },
+      "TraceStepModel": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_refs": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 256,
+            "title": "Artifact Refs",
+            "type": "array"
+          },
+          "caused_by_step_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caused By Step Id"
+          },
+          "command_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Run Id"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TraceStepKind"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "model_role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelExecutionRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "parent_step_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Step Id"
+          },
+          "provider_attempt_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Attempt Id"
+          },
+          "public_detail": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Detail"
+          },
+          "public_summary": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Public Summary",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "sequence": {
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TraceStepStatus"
+          },
+          "trace_id": {
+            "format": "uuid",
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/TraceVisibility"
+          }
+        },
+        "required": [
+          "id",
+          "trace_id",
+          "turn_id",
+          "sequence",
+          "parent_step_id",
+          "caused_by_step_id",
+          "kind",
+          "status",
+          "public_summary",
+          "model_role",
+          "provider_attempt_id",
+          "command_run_id",
+          "artifact_refs",
+          "visibility",
+          "revision",
+          "created_at",
+          "updated_at",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "TraceStepModel",
+        "type": "object"
+      },
+      "TraceStepStatus": {
+        "enum": [
+          "pending",
+          "running",
+          "waiting",
+          "succeeded",
+          "failed",
+          "cancelled",
+          "skipped"
+        ],
+        "title": "TraceStepStatus",
+        "type": "string"
+      },
+      "TraceVisibility": {
+        "enum": [
+          "user",
+          "developer",
+          "internal"
+        ],
+        "title": "TraceVisibility",
+        "type": "string"
+      },
       "TranscriptSegmentModel": {
         "additionalProperties": false,
         "properties": {
@@ -9685,6 +9940,102 @@
           "end_seconds"
         ],
         "title": "TranscriptSegmentModel",
+        "type": "object"
+      },
+      "TurnTraceModel": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_sequence": {
+            "minimum": 0.0,
+            "title": "Last Sequence",
+            "type": "integer"
+          },
+          "legacy": {
+            "title": "Legacy",
+            "type": "boolean"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/TraceStepModel"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "turn_id",
+          "conversation_id",
+          "task_id",
+          "legacy",
+          "last_sequence",
+          "revision",
+          "created_at",
+          "updated_at",
+          "started_at",
+          "completed_at",
+          "steps"
+        ],
+        "title": "TurnTraceModel",
         "type": "object"
       },
       "ValidationError": {
@@ -11821,6 +12172,67 @@
           }
         ],
         "summary": "Start Assistant Turn"
+      }
+    },
+    "/v1/assistant/turns/{turn_id}/trace": {
+      "get": {
+        "operationId": "assistant.turns.trace.list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "turn_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Turn Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnTraceModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Assistant Turn Trace"
       }
     },
     "/v1/capabilities": {

@@ -20,6 +20,7 @@ from fairy_core.assistant.routing import (
     manual_routing_decision,
     parse_router_output,
 )
+from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus
 from fairy_core.assistant.turn_reader import require_task, require_turn
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.bus import CommandRequest
@@ -138,7 +139,7 @@ class AssistantRoutingMixin:
             for delta in self._providers.stream(
                 request,
                 cancellation,
-                on_attempt=self._provider_attempts.observer(turn.id, 1),
+                on_attempt=self._provider_attempts.observer(turn.id, 1, run=run),
             ):
                 cancellation.raise_if_cancelled()
                 self._turns.require_active(turn.id)
@@ -186,6 +187,20 @@ class AssistantRoutingMixin:
                 expected_cancellation_revision=expected_revision,
             )
             if run is not None:
+                model_step = self._trace.transition_command_step_in_unit(
+                    unit_of_work,
+                    run=run,
+                    kind=TraceStepKind.MODEL,
+                    status=TraceStepStatus.SUCCEEDED,
+                    public_summary="Request analyzed",
+                )
+                self._append_route_trace_in_unit(
+                    unit_of_work,
+                    turn=turn,
+                    run=run,
+                    decision=decision,
+                    caused_by_step_id=model_step.id if model_step is not None else None,
+                )
                 self._append_route_selected_event(
                     unit_of_work,
                     run=run,
@@ -295,6 +310,21 @@ class AssistantRoutingMixin:
                     run=run,
                     decision=decision,
                 )
+            route_step = self._append_route_trace_in_unit(
+                unit_of_work,
+                turn=turn,
+                run=run,
+                decision=decision,
+            )
+            self._trace.append_step_in_unit(
+                unit_of_work,
+                turn=turn,
+                run=run,
+                kind=TraceStepKind.APPROVAL,
+                status=TraceStepStatus.WAITING,
+                public_summary="Waiting for model budget approval",
+                caused_by_step_id=route_step.id,
+            )
             unit_of_work.commands.append_event(
                 run_id=run.id,
                 event_type="assistant.budget.approval_requested",
@@ -325,6 +355,14 @@ class AssistantRoutingMixin:
             if command.status is CommandStatus.WAITING_APPROVAL:
                 return "waiting"
             if command.status in {CommandStatus.REJECTED, CommandStatus.CANCELLED}:
+                self._trace.transition_command_step_in_unit(
+                    unit_of_work,
+                    run=command,
+                    kind=TraceStepKind.APPROVAL,
+                    status=TraceStepStatus.CANCELLED,
+                    public_summary="Model budget approval declined",
+                )
+                unit_of_work.commit()
                 return "rejected"
             bus = self._command_bus(unit_of_work.commands)
             if command.status is CommandStatus.QUEUED:
@@ -341,6 +379,13 @@ class AssistantRoutingMixin:
                 )
 
             if running is not None:
+                self._trace.transition_command_step_in_unit(
+                    unit_of_work,
+                    run=running,
+                    kind=TraceStepKind.APPROVAL,
+                    status=TraceStepStatus.SUCCEEDED,
+                    public_summary="Model budget approved",
+                )
                 unit_of_work.commands.append_event(
                     run_id=running.id,
                     event_type="assistant.budget.approved",
@@ -415,6 +460,13 @@ class AssistantRoutingMixin:
                 return
             if persisted.status is not CommandStatus.RUNNING:
                 raise RuntimeError("model CommandRun is not running")
+            self._trace.transition_command_step_in_unit(
+                unit_of_work,
+                run=persisted,
+                kind=TraceStepKind.MODEL,
+                status=TraceStepStatus.SUCCEEDED,
+                public_summary="Model work completed",
+            )
             self._command_bus(unit_of_work.commands).complete(
                 run.id,
                 output=output,
@@ -487,7 +539,7 @@ class AssistantRoutingMixin:
             for delta in self._providers.stream(
                 request,
                 cancellation,
-                on_attempt=self._provider_attempts.observer(turn_id, model_round),
+                on_attempt=self._provider_attempts.observer(turn_id, model_round, run=run),
             ):
                 cancellation.raise_if_cancelled()
                 self._turns.require_active(turn_id)
@@ -711,6 +763,13 @@ class AssistantRoutingMixin:
         with self._unit_of_work_factory() as unit_of_work:
             persisted = unit_of_work.commands.get_run(run.id)
             if persisted is not None and persisted.status is CommandStatus.RUNNING:
+                self._trace.transition_command_step_in_unit(
+                    unit_of_work,
+                    run=persisted,
+                    kind=TraceStepKind.MODEL,
+                    status=TraceStepStatus.FAILED,
+                    public_detail=f"Model work failed ({error_code}).",
+                )
                 self._command_bus(unit_of_work.commands).fail(
                     run.id,
                     error_code=error_code,
@@ -723,6 +782,13 @@ class AssistantRoutingMixin:
         with self._unit_of_work_factory() as unit_of_work:
             persisted = unit_of_work.commands.get_run(run.id)
             if persisted is not None and persisted.status is CommandStatus.RUNNING:
+                self._trace.transition_command_step_in_unit(
+                    unit_of_work,
+                    run=persisted,
+                    kind=TraceStepKind.MODEL,
+                    status=TraceStepStatus.CANCELLED,
+                    public_summary="Model work cancelled",
+                )
                 self._command_bus(unit_of_work.commands).cancel(
                     run.id,
                     lease_owner=run.lease_owner,
@@ -828,6 +894,32 @@ class AssistantRoutingMixin:
                         run=running,
                         decision=turn.routing_decision,
                     )
+            route_step = None
+            if turn.routing_decision is not None:
+                route_step = self._append_route_trace_in_unit(
+                    unit_of_work,
+                    turn=turn,
+                    run=running,
+                    decision=turn.routing_decision,
+                )
+            model_cause = self._model_cause_step(
+                unit_of_work,
+                turn_id=turn.id,
+                model_role=model_role,
+                route_step=route_step,
+            )
+            profile = self._providers.profile(selected_profile_id)
+            self._trace.append_step_in_unit(
+                unit_of_work,
+                turn=turn,
+                run=running,
+                kind=TraceStepKind.MODEL,
+                status=TraceStepStatus.RUNNING,
+                public_summary=self._model_step_summary(model_role),
+                caused_by_step_id=model_cause.id if model_cause is not None else None,
+                model_id=profile.model_id,
+                model_role=model_role,
+            )
             unit_of_work.commit()
         return turn, running
 
@@ -877,6 +969,13 @@ class AssistantRoutingMixin:
                 expected_status=expected_status,
                 expected_cancellation_revision=expected_revision,
             )
+            self._trace.transition_command_step_in_unit(
+                unit_of_work,
+                run=run,
+                kind=TraceStepKind.MODEL,
+                status=TraceStepStatus.SUCCEEDED,
+                public_summary="Tool request prepared",
+            )
             self._command_bus(unit_of_work.commands).complete(
                 run.id,
                 output={"tool_candidates": candidate_count},
@@ -884,3 +983,66 @@ class AssistantRoutingMixin:
                 lease_fence=run.lease_fence,
             )
             unit_of_work.commit()
+
+    def _append_route_trace_in_unit(
+        self,
+        unit_of_work,
+        *,
+        turn: AssistantTurn,
+        run: CommandRun,
+        decision: RoutingDecision,
+        caused_by_step_id: UUID | None = None,
+    ):
+        existing = next(
+            (
+                step
+                for step in unit_of_work.assistant.list_trace_steps(turn.id)
+                if step.kind is TraceStepKind.ROUTE
+            ),
+            None,
+        )
+        if existing is not None:
+            return existing
+        return self._trace.append_step_in_unit(
+            unit_of_work,
+            turn=turn,
+            run=run,
+            kind=TraceStepKind.ROUTE,
+            status=TraceStepStatus.SUCCEEDED,
+            public_summary=decision.public_summary,
+            caused_by_step_id=caused_by_step_id,
+        )
+
+    @staticmethod
+    def _model_step_summary(model_role: ModelExecutionRole) -> str:
+        return {
+            ModelExecutionRole.COORDINATOR: "Analyzing the request",
+            ModelExecutionRole.PRIMARY: "Generating the response",
+            ModelExecutionRole.REVIEWER: "Reviewing the response",
+        }[model_role]
+
+    @staticmethod
+    def _model_cause_step(
+        unit_of_work,
+        *,
+        turn_id: UUID,
+        model_role: ModelExecutionRole,
+        route_step,
+    ):
+        steps = unit_of_work.assistant.list_trace_steps(turn_id)
+        if model_role is ModelExecutionRole.REVIEWER:
+            return next(
+                (
+                    step
+                    for step in reversed(steps)
+                    if step.kind is TraceStepKind.MODEL
+                    and step.model_role is ModelExecutionRole.PRIMARY
+                ),
+                route_step,
+            )
+        if model_role is ModelExecutionRole.PRIMARY:
+            return next(
+                (step for step in reversed(steps) if step.kind is TraceStepKind.OBSERVATION),
+                route_step,
+            )
+        return None

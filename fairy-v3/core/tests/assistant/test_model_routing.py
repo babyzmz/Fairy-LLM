@@ -210,6 +210,7 @@ def test_auto_router_is_durable_and_never_projects_router_text(tmp_path: Path) -
             {"conversation_id": task["conversation_id"]},
         )["items"]
         events = service.invoke("events.subscribe", {"cursor": 0})["items"]
+        trace = service.invoke("assistant.turns.trace.list", {"turn_id": turn["id"]})
 
         assert completed["status"] == "completed", (
             completed["error_code"],
@@ -240,6 +241,18 @@ def test_auto_router_is_durable_and_never_projects_router_text(tmp_path: Path) -
         ]
         assert deepseek.requests[0].response_schema_name == "fairy_routing_decision"
         assert deepseek.requests[1].response_schema is None
+        assert [step["kind"] for step in trace["steps"]] == [
+            "model",
+            "route",
+            "model",
+            "response",
+        ]
+        coordinator, route, primary, response = trace["steps"]
+        assert coordinator["model_role"] == "coordinator"
+        assert route["caused_by_step_id"] == coordinator["id"]
+        assert primary["caused_by_step_id"] == route["id"]
+        assert response["caused_by_step_id"] == primary["id"]
+        assert all(step["status"] == "succeeded" for step in trace["steps"])
     finally:
         service.close()
 
@@ -360,6 +373,7 @@ def test_multi_model_review_streams_only_the_single_final_answer(tmp_path: Path)
             {"conversation_id": task["conversation_id"]},
         )["items"]
         events = service.invoke("events.subscribe", {"cursor": 0})["items"]
+        trace = service.invoke("assistant.turns.trace.list", {"turn_id": turn["id"]})
 
         assert completed["status"] == "completed"
         assert completed["routing_decision"]["primary_model_id"] == GLM_MODEL_ID
@@ -379,6 +393,19 @@ def test_multi_model_review_streams_only_the_single_final_answer(tmp_path: Path)
         ]
         assert [request.model_role for request in glm.requests] == [ModelExecutionRole.PRIMARY]
         assert deepseek.requests[-1].messages[-2].content == "Unreviewed private draft."
+        assert [step["kind"] for step in trace["steps"]] == [
+            "model",
+            "route",
+            "model",
+            "model",
+            "verification",
+            "response",
+        ]
+        coordinator, route, primary, reviewer, verification, response = trace["steps"]
+        assert route["caused_by_step_id"] == coordinator["id"]
+        assert reviewer["caused_by_step_id"] == primary["id"]
+        assert verification["parent_step_id"] == reviewer["id"]
+        assert response["caused_by_step_id"] == verification["id"]
     finally:
         service.close()
 

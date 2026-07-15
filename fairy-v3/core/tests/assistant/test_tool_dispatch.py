@@ -14,7 +14,9 @@ def test_tool_candidates_receive_core_scope_and_repeated_arguments_are_rejected(
     tmp_path: Path,
 ) -> None:
     forged = (
-        '{"query":"Fairy architecture","task_id":"forged",'
+        '{"query":"Fairy architecture",'
+        '"public_intent":"Check current sources before answering",'
+        '"task_id":"forged",'
         '"project_root":"C:/forged","scope_digest":"' + "f" * 64 + '"}'
     )
     provider = ScriptedProvider(
@@ -65,6 +67,10 @@ def test_tool_candidates_receive_core_scope_and_repeated_arguments_are_rejected(
         turn = _turn(service, task, "turn:tools")
 
         completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        trace = service.invoke(
+            "assistant.turns.trace.list",
+            {"turn_id": turn["id"]},
+        )
         with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
             invocations = unit_of_work.assistant.list_tool_invocations(completed["id"])
 
@@ -94,6 +100,22 @@ def test_tool_candidates_receive_core_scope_and_repeated_arguments_are_rejected(
         assert len(tool_messages) == 2
         assert "bounded evidence" in tool_messages[0].content
         assert "duplicate" in tool_messages[1].content.lower()
+        assert [step["kind"] for step in trace["steps"]] == [
+            "model",
+            "reasoning",
+            "tool",
+            "observation",
+            "model",
+            "response",
+        ]
+        first_model, reasoning, tool, observation, final_model, response = trace["steps"]
+        assert first_model["provider_attempt_id"] is not None
+        assert final_model["provider_attempt_id"] is not None
+        assert reasoning["public_summary"] == "Check current sources before answering"
+        assert tool["parent_step_id"] == reasoning["id"]
+        assert observation["parent_step_id"] == tool["id"]
+        assert response["caused_by_step_id"] == final_model["id"]
+        assert all(step["status"] == "succeeded" for step in trace["steps"])
     finally:
         service.close()
 

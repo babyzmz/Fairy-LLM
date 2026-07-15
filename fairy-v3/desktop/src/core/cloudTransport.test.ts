@@ -258,6 +258,7 @@ describe("CloudCoreTransport", () => {
       turn_id: "turn/1",
       idempotency_key: "turn:retry",
     });
+    await transport.call("assistant.turns.trace.list", { turn_id: "turn/1" });
     await transport.call("documents.import", {
       task_id: "task/1",
       filename: "evidence.txt",
@@ -358,6 +359,7 @@ describe("CloudCoreTransport", () => {
       ["POST", "https://cloud.fairy.test/v1/assistant/turns/turn%2F1/run"],
       ["POST", "https://cloud.fairy.test/v1/assistant/turns/turn%2F1/start"],
       ["POST", "https://cloud.fairy.test/v1/assistant/turns/turn%2F1/retry"],
+      ["GET", "https://cloud.fairy.test/v1/assistant/turns/turn%2F1/trace"],
       ["POST", "https://cloud.fairy.test/v1/documents/import"],
       [
         "GET",
@@ -382,13 +384,13 @@ describe("CloudCoreTransport", () => {
     expect(requests[14]?.headers.get("Idempotency-Key")).toBe("preview:start");
     expect(requests[15]?.headers.get("Idempotency-Key")).toBe("preview:stop");
     expect(requests[18]?.headers.get("Idempotency-Key")).toBe("turn:retry");
-    expect(requests[19]?.headers.get("Idempotency-Key")).toBe("documents:import");
-    expect(requests[23]?.headers.get("Idempotency-Key")).toBe("documents:delete");
-    expect(requests[26]?.headers.get("Idempotency-Key")).toBe("system:reveal");
+    expect(requests[20]?.headers.get("Idempotency-Key")).toBe("documents:import");
+    expect(requests[24]?.headers.get("Idempotency-Key")).toBe("documents:delete");
+    expect(requests[27]?.headers.get("Idempotency-Key")).toBe("system:reveal");
     expect(requests[5]?.headers.get("Idempotency-Key")).toBe(
       "permissions:cloud:standard",
     );
-    await expect(requests[25]?.json()).resolves.not.toHaveProperty("text");
+    await expect(requests[26]?.json()).resolves.not.toHaveProperty("text");
     expect(requests[3]?.headers.has("Content-Type")).toBe(false);
     await expect(requests[5]?.json()).resolves.toEqual({
       profile: "standard",
@@ -396,7 +398,7 @@ describe("CloudCoreTransport", () => {
       expected_revision: 0,
       idempotency_key: "permissions:cloud:standard",
     });
-    await expect(requests[26]?.json()).resolves.toEqual({
+    await expect(requests[27]?.json()).resolves.toEqual({
       task_id: "task-1",
       action: { type: "reveal_path", relative_path: "README.md" },
       idempotency_key: "system:reveal",

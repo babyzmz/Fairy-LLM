@@ -8,7 +8,6 @@ from fairy_core.assistant import limits
 from fairy_core.assistant.candidates import ToolCandidate, arguments_for_definition
 from fairy_core.assistant.context import AssistantContextBuilder
 from fairy_core.assistant.durable_context import durable_tool_context
-from fairy_core.assistant.events import append_message_created
 from fairy_core.assistant.media_routing import constrain_context_for_media
 from fairy_core.assistant.models import (
     AssistantTurn,
@@ -22,17 +21,21 @@ from fairy_core.assistant.models import (
 from fairy_core.assistant.plan_budget import consume_tool_budget
 from fairy_core.assistant.provider_attempts import ProviderAttemptRecorder
 from fairy_core.assistant.routing_runtime import AssistantRoutingMixin
+from fairy_core.assistant.tool_trace import ToolTraceCoordinator
 from fairy_core.assistant.tools import (
     DIRECT_ANSWER_TOOL_NAME,
     ToolCandidateError,
     ToolExecutor,
     UnavailableToolExecutor,
     direct_answer,
+    sanitize_public_intent,
     tool_message_content,
 )
+from fairy_core.assistant.trace_runtime import TurnTraceRuntime
+from fairy_core.assistant.turn_lifecycle import AssistantTurnLifecycleMixin
 from fairy_core.assistant.turn_reader import AssistantTurnReader, require_task, require_turn
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
-from fairy_core.commanding.bus import CommandBus, CommandRequest
+from fairy_core.commanding.bus import CommandRequest
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
@@ -66,7 +69,7 @@ from fairy_core.providers import (
 )
 
 
-class AssistantApplication(AssistantRoutingMixin):
+class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
     def __init__(
         self,
         *,
@@ -86,7 +89,12 @@ class AssistantApplication(AssistantRoutingMixin):
         self._image_attachments = image_attachments
         self._tool_executor = tool_executor or UnavailableToolExecutor()
         self._execution_policy = execution_policy or ExecutionPolicyResolver()
-        self._provider_attempts = ProviderAttemptRecorder(unit_of_work_factory)
+        self._trace = TurnTraceRuntime(unit_of_work_factory)
+        self._tool_trace = ToolTraceCoordinator(self._trace)
+        self._provider_attempts = ProviderAttemptRecorder(
+            unit_of_work_factory,
+            trace_runtime=self._trace,
+        )
         self._turns = AssistantTurnReader(unit_of_work_factory)
         self._context = AssistantContextBuilder(
             unit_of_work_factory=unit_of_work_factory,
@@ -194,7 +202,11 @@ class AssistantApplication(AssistantRoutingMixin):
                 for delta in self._providers.stream(
                     request,
                     cancellation,
-                    on_attempt=self._provider_attempts.observer(turn_id, model_round),
+                    on_attempt=self._provider_attempts.observer(
+                        turn_id,
+                        model_round,
+                        run=current_run,
+                    ),
                 ):
                     cancellation.raise_if_cancelled()
                     self._turns.require_active(turn_id)
@@ -471,6 +483,11 @@ class AssistantApplication(AssistantRoutingMixin):
                 rejected=True,
             )
             return False, message
+        public_intent = candidate.public_intent() or sanitize_public_intent(
+            f"Use {definition.description}"
+        )
+        public_intent = public_intent or "Use a workspace tool"
+        tool_summary = sanitize_public_intent(definition.description) or "Workspace tool"
         try:
             arguments = arguments_for_definition(candidate, definition)
         except ToolCandidateError as error:
@@ -550,6 +567,15 @@ class AssistantApplication(AssistantRoutingMixin):
                         error_code=dispatch.error_code or "TOOL_REJECTED",
                     )
                     unit_of_work.assistant.save_tool_invocation(invocation)
+                    if dispatch.run is not None:
+                        self._tool_trace.start_in_unit(
+                            unit_of_work,
+                            turn=turn,
+                            run=dispatch.run,
+                            public_intent=public_intent,
+                            tool_summary=tool_summary,
+                            failed=True,
+                        )
                     unit_of_work.commit()
                     running = None
                 elif dispatch.requires_approval:
@@ -566,6 +592,14 @@ class AssistantApplication(AssistantRoutingMixin):
                     if task.status is TaskStatus.EXECUTING:
                         task.transition_to(TaskStatus.AWAITING_APPROVAL)
                         unit_of_work.state.save_task(task)
+                    self._tool_trace.start_in_unit(
+                        unit_of_work,
+                        turn=turn,
+                        run=dispatch.run,
+                        public_intent=public_intent,
+                        tool_summary=tool_summary,
+                        approval_required=True,
+                    )
                     unit_of_work.commit()
                     return True, None
                 else:
@@ -573,6 +607,13 @@ class AssistantApplication(AssistantRoutingMixin):
                     invocation.queue(command_run_id=running.id)
                     invocation.start()
                     unit_of_work.assistant.save_tool_invocation(invocation)
+                    self._tool_trace.start_in_unit(
+                        unit_of_work,
+                        turn=turn,
+                        run=running,
+                        public_intent=public_intent,
+                        tool_summary=tool_summary,
+                    )
                     unit_of_work.commit()
         if duplicate:
             message = self._append_tool_message(
@@ -669,6 +710,11 @@ class AssistantApplication(AssistantRoutingMixin):
                     invocation,
                     expected_status=expected_status,
                 )
+                self._tool_trace.fail_in_unit(
+                    unit_of_work,
+                    run=running,
+                    error_code=error_code,
+                )
                 self._command_bus(unit_of_work.commands).fail(
                     running.id,
                     error_code=error_code,
@@ -704,6 +750,13 @@ class AssistantApplication(AssistantRoutingMixin):
             unit_of_work.assistant.update_tool_invocation(
                 invocation,
                 expected_status=expected_status,
+            )
+            self._tool_trace.complete_in_unit(
+                unit_of_work,
+                turn=persisted_turn,
+                run=running,
+                public_summary=result.public_summary,
+                artifact_refs=result.artifact_ids,
             )
             self._command_bus(unit_of_work.commands).complete(
                 running.id,
@@ -785,6 +838,11 @@ class AssistantApplication(AssistantRoutingMixin):
                         lease_owner=command.lease_owner,
                         lease_fence=command.lease_fence,
                     )
+                self._tool_trace.fail_in_unit(
+                    unit_of_work,
+                    run=command,
+                    error_code="MCP_SCHEMA_CHANGED",
+                )
                 unit_of_work.commit()
                 return False
             task = require_task(unit_of_work, turn.task_id)
@@ -810,6 +868,7 @@ class AssistantApplication(AssistantRoutingMixin):
                     content=invocation.model_content or "The user rejected this tool execution.",
                     rejected=True,
                 )
+                self._tool_trace.reject_in_unit(unit_of_work, run=command)
                 unit_of_work.commit()
                 return False
             bus = self._command_bus(unit_of_work.commands)
@@ -843,9 +902,15 @@ class AssistantApplication(AssistantRoutingMixin):
                     content=invocation.model_content or "Tool execution did not complete.",
                     rejected=True,
                 )
+                self._tool_trace.fail_in_unit(
+                    unit_of_work,
+                    run=command,
+                    error_code=invocation.error_code or "TOOL_REJECTED",
+                )
                 unit_of_work.commit()
                 return False
 
+            self._tool_trace.approve_in_unit(unit_of_work, run=running)
             if invocation.status is ToolInvocationStatus.QUEUED:
                 expected_status = invocation.status
                 invocation.start()
@@ -898,6 +963,7 @@ class AssistantApplication(AssistantRoutingMixin):
                 invocation,
                 expected_status=expected_status,
             )
+        self._tool_trace.cancel_in_unit(unit_of_work, run=run)
         persisted_run = unit_of_work.commands.get_run(run.id)
         if persisted_run is not None and persisted_run.status is CommandStatus.RUNNING:
             unit_of_work.commands.append_event(
@@ -994,196 +1060,5 @@ class AssistantApplication(AssistantRoutingMixin):
                 expected_cancellation_revision=expected_revision,
             )
             unit_of_work.commit()
-
-    def _complete_turn(
-        self,
-        *,
-        turn_id: UUID,
-        run: CommandRun,
-        content: str,
-        usage: dict[str, int],
-    ) -> AssistantTurn:
-        with self._unit_of_work_factory() as unit_of_work:
-            turn = require_turn(unit_of_work, turn_id)
-            task = require_task(unit_of_work, turn.task_id)
-            completed_usage = usage
-            if turn.model_selection is not None:
-                attempt_usage: dict[str, int] = {}
-                for attempt in unit_of_work.assistant.list_provider_attempts(turn.id):
-                    for name, value in attempt.usage.items():
-                        attempt_usage[name] = attempt_usage.get(name, 0) + value
-                if attempt_usage:
-                    completed_usage = attempt_usage
-            message = Message.create(
-                conversation_id=turn.conversation_id,
-                task_id=turn.task_id,
-                turn_id=turn.id,
-                sequence=unit_of_work.assistant.next_message_sequence(turn.conversation_id),
-                role=MessageRole.ASSISTANT,
-                visibility=MessageVisibility.USER,
-                content=content,
-            )
-            expected_status = turn.status
-            expected_revision = turn.cancellation_revision
-            turn.complete(usage=completed_usage)
-            unit_of_work.assistant.append_message(message)
-            unit_of_work.assistant.update_turn(
-                turn,
-                expected_status=expected_status,
-                expected_cancellation_revision=expected_revision,
-            )
-            if task.project_id is None and task.status is TaskStatus.EXECUTING:
-                task.transition_to(TaskStatus.REVIEWING)
-                task.transition_to(TaskStatus.READY)
-                unit_of_work.state.save_task(task)
-            append_message_created(unit_of_work.commands, run=run, message=message)
-            unit_of_work.commands.append_event(
-                run_id=run.id,
-                event_type="assistant.turn.completed",
-                visibility=EventVisibility.USER,
-                message="Assistant turn completed",
-                payload={
-                    "turn_id": str(turn.id),
-                    "message_id": str(message.id),
-                    "usage": completed_usage,
-                },
-                lease_owner=run.lease_owner,
-                lease_fence=run.lease_fence,
-            )
-            self._command_bus(unit_of_work.commands).complete(
-                run.id,
-                output={"turn_id": str(turn.id), "message_id": str(message.id)},
-                lease_owner=run.lease_owner,
-                lease_fence=run.lease_fence,
-            )
-            unit_of_work.commit()
-        return turn
-
-    def _cancel_turn(
-        self,
-        turn_id: UUID,
-        run: CommandRun | None,
-    ) -> AssistantTurn:
-        with self._unit_of_work_factory() as unit_of_work:
-            turn = require_turn(unit_of_work, turn_id)
-            if turn.status is not AssistantTurnStatus.CANCELLED:
-                expected_status = turn.status
-                expected_revision = turn.cancellation_revision
-                turn.cancel()
-                unit_of_work.assistant.update_turn(
-                    turn,
-                    expected_status=expected_status,
-                    expected_cancellation_revision=expected_revision,
-                )
-            if run is not None:
-                persisted_run = unit_of_work.commands.get_run(run.id)
-                if persisted_run is not None and persisted_run.status in {
-                    CommandStatus.QUEUED,
-                    CommandStatus.WAITING_APPROVAL,
-                    CommandStatus.RUNNING,
-                }:
-                    if persisted_run.status is CommandStatus.RUNNING:
-                        unit_of_work.commands.append_event(
-                            run_id=run.id,
-                            event_type="assistant.turn.cancelled",
-                            visibility=EventVisibility.USER,
-                            message="Assistant turn cancelled",
-                            payload={"turn_id": str(turn.id)},
-                            lease_owner=run.lease_owner,
-                            lease_fence=run.lease_fence,
-                        )
-                    self._command_bus(unit_of_work.commands).cancel(
-                        run.id,
-                        lease_owner=(
-                            run.lease_owner
-                            if persisted_run.status is CommandStatus.RUNNING
-                            else None
-                        ),
-                        lease_fence=(
-                            run.lease_fence
-                            if persisted_run.status is CommandStatus.RUNNING
-                            else None
-                        ),
-                    )
-            task = require_task(unit_of_work, turn.task_id)
-            if task.status in {
-                TaskStatus.PLANNING,
-                TaskStatus.AWAITING_APPROVAL,
-                TaskStatus.EXECUTING,
-                TaskStatus.INSTALLING,
-                TaskStatus.PREVIEWING,
-                TaskStatus.REVIEWING,
-                TaskStatus.REPAIRING,
-            }:
-                task.transition_to(TaskStatus.FAILED)
-                unit_of_work.state.save_task(task)
-            unit_of_work.commit()
-        return turn
-
-    def _fail_turn(
-        self,
-        turn_id: UUID,
-        run: CommandRun | None,
-        *,
-        error_code: str,
-    ) -> AssistantTurn:
-        with self._unit_of_work_factory() as unit_of_work:
-            turn = require_turn(unit_of_work, turn_id)
-            if turn.status not in {
-                AssistantTurnStatus.COMPLETED,
-                AssistantTurnStatus.CANCELLED,
-                AssistantTurnStatus.FAILED,
-            }:
-                expected_status = turn.status
-                expected_revision = turn.cancellation_revision
-                turn.fail(error_code=error_code)
-                unit_of_work.assistant.update_turn(
-                    turn,
-                    expected_status=expected_status,
-                    expected_cancellation_revision=expected_revision,
-                )
-            if run is not None:
-                persisted_run = unit_of_work.commands.get_run(run.id)
-                if persisted_run is not None and persisted_run.status is CommandStatus.RUNNING:
-                    unit_of_work.commands.append_event(
-                        run_id=run.id,
-                        event_type="assistant.turn.failed",
-                        visibility=EventVisibility.USER,
-                        message="Assistant turn failed",
-                        payload={
-                            "turn_id": str(turn.id),
-                            "error_code": error_code,
-                        },
-                        lease_owner=run.lease_owner,
-                        lease_fence=run.lease_fence,
-                    )
-                    self._command_bus(unit_of_work.commands).fail(
-                        run.id,
-                        error_code=error_code,
-                        lease_owner=run.lease_owner,
-                        lease_fence=run.lease_fence,
-                    )
-            task = require_task(unit_of_work, turn.task_id)
-            if task.status in {
-                TaskStatus.PLANNING,
-                TaskStatus.AWAITING_APPROVAL,
-                TaskStatus.EXECUTING,
-                TaskStatus.INSTALLING,
-                TaskStatus.PREVIEWING,
-                TaskStatus.REVIEWING,
-                TaskStatus.REPAIRING,
-            }:
-                task.transition_to(TaskStatus.FAILED)
-                unit_of_work.state.save_task(task)
-            unit_of_work.commit()
-        return turn
-
-    def _command_bus(self, ledger) -> CommandBus:
-        return CommandBus(
-            registry=self._registry,
-            policy=self._policy,
-            ledger=ledger,
-        )
-
 
 __all__ = ["AssistantApplication"]

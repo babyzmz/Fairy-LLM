@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
@@ -12,6 +14,7 @@ from fairy_core.domain.models import ScopeContract
 from fairy_core.providers import ModelTool
 
 DIRECT_ANSWER_TOOL_NAME = "direct_answer"
+PUBLIC_INTENT_FIELD = "public_intent"
 _MAX_PUBLIC_SUMMARY = 16_000
 _MAX_MODEL_CONTENT = 32_000
 _SCOPE_FIELDS = frozenset(
@@ -34,6 +37,14 @@ _SCOPE_FIELDS = frozenset(
         "version_id",
         "workspace_type",
     }
+)
+_PUBLIC_SECRET_PATTERNS = (
+    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE),
+    re.compile(r"\b(?:sk|pk)-(?:or-)?[A-Za-z0-9_-]{8,}", re.IGNORECASE),
+    re.compile(
+        r"\b(?:api[_ -]?key|access[_ -]?token|secret)\s*[:=]\s*[^\s,;]+",
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -127,8 +138,11 @@ def model_tools_for_definitions(
     registered = tuple(
         ModelTool.create(
             name=definition.name,
-            description=definition.description,
-            input_schema=definition.input_schema,
+            description=(
+                f"{definition.description} Include a concise public_intent describing why this "
+                "capability is needed; never include secrets or hidden reasoning."
+            ),
+            input_schema=_schema_with_public_intent(definition.input_schema),
         )
         for definition in definitions
     )
@@ -140,6 +154,38 @@ def sanitize_model_arguments(arguments: Mapping[str, Any]) -> dict[str, object]:
     if not isinstance(sanitized, dict):
         raise ToolCandidateError("tool arguments must be an object")
     return sanitized
+
+
+def sanitize_public_intent(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split()).strip()
+    if not normalized:
+        return None
+    for pattern in _PUBLIC_SECRET_PATTERNS:
+        normalized = pattern.sub("[redacted]", normalized)
+    if len(normalized) > 240:
+        normalized = normalized[:237].rstrip() + "..."
+    return normalized
+
+
+def _schema_with_public_intent(schema: Mapping[str, object]) -> dict[str, object]:
+    enriched = deepcopy(dict(schema))
+    if enriched.get("type") != "object":
+        raise ValueError("model-visible tool schema must be an object")
+    properties = enriched.get("properties")
+    if properties is None:
+        properties = {}
+        enriched["properties"] = properties
+    elif not isinstance(properties, dict):
+        raise ValueError("model-visible tool schema properties must be an object")
+    properties[PUBLIC_INTENT_FIELD] = {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240,
+        "description": "Public, concise reason for this capability call. Never include secrets.",
+    }
+    return enriched
 
 
 def validate_tool_arguments(
@@ -297,6 +343,7 @@ def _bounded_text(value: str, name: str, maximum: int) -> str:
 
 __all__ = [
     "DIRECT_ANSWER_TOOL_NAME",
+    "PUBLIC_INTENT_FIELD",
     "ToolCandidateError",
     "ToolExecutionUnavailableError",
     "ToolExecutor",
@@ -306,6 +353,7 @@ __all__ = [
     "model_tools",
     "model_tools_for_definitions",
     "sanitize_model_arguments",
+    "sanitize_public_intent",
     "tool_message_content",
     "validate_tool_arguments",
     "validate_tool_schema_value",

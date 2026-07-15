@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from fairy_core.assistant.tools import (
     ToolCandidateError,
     sanitize_model_arguments,
+    sanitize_public_intent,
     validate_tool_arguments,
 )
 from fairy_core.commanding.registry import ToolDefinition
@@ -34,7 +35,13 @@ class ToolCandidate:
         self.argument_fragments.append(fragment)
 
     def arguments(self) -> dict[str, object]:
-        return sanitize_model_arguments(self.raw_arguments())
+        raw = self.raw_arguments()
+        raw.pop("public_intent", None)
+        return sanitize_model_arguments(raw)
+
+    def public_intent(self) -> str | None:
+        value = self.raw_arguments().get("public_intent")
+        return sanitize_public_intent(value)
 
     def raw_arguments(self) -> dict[str, object]:
         if self.name is None:

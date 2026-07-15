@@ -3,6 +3,9 @@ from __future__ import annotations
 from uuid import UUID
 
 from fairy_core.assistant.models import ProviderAttempt
+from fairy_core.assistant.trace_models import TraceStepKind
+from fairy_core.assistant.trace_runtime import TurnTraceRuntime
+from fairy_core.commanding import CommandRun
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.providers import (
     ProviderAttemptEvent,
@@ -12,10 +15,22 @@ from fairy_core.providers import (
 
 
 class ProviderAttemptRecorder:
-    def __init__(self, unit_of_work_factory: CoreUnitOfWorkFactory) -> None:
+    def __init__(
+        self,
+        unit_of_work_factory: CoreUnitOfWorkFactory,
+        *,
+        trace_runtime: TurnTraceRuntime | None = None,
+    ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
+        self._trace_runtime = trace_runtime
 
-    def observer(self, turn_id: UUID, model_round: int):
+    def observer(
+        self,
+        turn_id: UUID,
+        model_round: int,
+        *,
+        run: CommandRun | None = None,
+    ):
         attempts: dict[int, ProviderAttempt] = {}
         with self._unit_of_work_factory() as unit_of_work:
             existing = unit_of_work.assistant.list_provider_attempts(turn_id)
@@ -55,6 +70,19 @@ class ProviderAttemptRecorder:
                         model_role=event.model_role,
                     )
                     unit_of_work.assistant.save_provider_attempt(attempt)
+                    if self._trace_runtime is not None and run is not None:
+                        step = unit_of_work.assistant.find_trace_step_by_command_run_id(
+                            run.id,
+                            kind=TraceStepKind.MODEL,
+                        )
+                        if step is None:
+                            raise RuntimeError("model Provider Attempt has no Trace Step")
+                        self._trace_runtime.bind_provider_attempt_in_unit(
+                            unit_of_work,
+                            step_id=step.id,
+                            run=run,
+                            attempt_id=attempt.id,
+                        )
                     unit_of_work.commit()
                 attempts[event.attempt_number] = attempt
                 return

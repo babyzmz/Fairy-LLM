@@ -342,6 +342,7 @@ describe("CoreClient", () => {
       turn_id: id,
       idempotency_key: "turn-1-retry",
     });
+    await client.assistant.turns.trace(id);
     await client.messages.list({ conversation_id: id, limit: 20 });
 
     expect(transport.requests.map(({ method }) => method)).toEqual([
@@ -431,6 +432,7 @@ describe("CoreClient", () => {
       "assistant.turns.run",
       "assistant.turns.start",
       "assistant.turns.retry",
+      "assistant.turns.trace.list",
       "messages.list",
     ]);
     expect(transport.requests[3]?.params).toEqual({ project_id: id });

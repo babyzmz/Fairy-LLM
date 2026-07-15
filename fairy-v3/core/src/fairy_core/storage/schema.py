@@ -27,6 +27,7 @@ from fairy_core.storage.model_catalog_schema import build_model_catalog_tables
 from fairy_core.storage.planning_schema import build_planning_schema
 from fairy_core.storage.presentation_schema import build_presentation_schema
 from fairy_core.storage.runtime_index_schema import build_runtime_scope_indexes
+from fairy_core.storage.turn_trace_schema import build_turn_trace_tables
 from fairy_core.storage.types import UTCDateTime
 
 ID_LENGTH = 36
@@ -445,6 +446,12 @@ assistant_provider_attempts, assistant_message_sequences = build_assistant_attem
     state_metadata,
     assistant_turns=assistant_turns,
     conversations=conversations,
+)
+
+turn_traces, turn_trace_steps = build_turn_trace_tables(
+    state_metadata,
+    assistant_turns=assistant_turns,
+    provider_attempts=assistant_provider_attempts,
 )
 
 assistant_messages = Table(
@@ -1165,6 +1172,8 @@ build_state_indexes(
         "tasks": tasks,
         "assistant_turns": assistant_turns,
         "assistant_provider_attempts": assistant_provider_attempts,
+        "turn_traces": turn_traces,
+        "turn_trace_steps": turn_trace_steps,
         "assistant_messages": assistant_messages,
         "assistant_tool_invocations": assistant_tool_invocations,
         "changesets": changesets,

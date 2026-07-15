@@ -174,6 +174,7 @@ from fairy_core.contracts.presentation import (
     SelectionReferenceModel,
 )
 from fairy_core.contracts.transcript import MessagePageModel
+from fairy_core.contracts.turn_trace import TurnTraceModel
 from fairy_core.contracts.voice_sessions import (
     VoiceSessionIdInput,
     VoiceSessionModel,
@@ -267,6 +268,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "assistant.turns.start",
             AssistantTurnStartInput,
             AssistantTurnModel,
+        ),
+        "assistant.turns.trace.list": CoreMethod(
+            "assistant.turns.trace.list",
+            AssistantTurnIdInput,
+            TurnTraceModel,
         ),
         "capabilities.get": CoreMethod(
             "capabilities.get",

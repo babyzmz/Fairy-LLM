@@ -19,6 +19,12 @@ from fairy_core.assistant.models import (
     ProviderAttempt,
     ToolInvocation,
 )
+from fairy_core.assistant.trace_models import (
+    TraceStep,
+    TraceStepKind,
+    TraceStepStatus,
+    TurnTrace,
+)
 from fairy_core.commanding.bus import CommandBus, CommandRequest
 from fairy_core.commanding.policy import PermissionProfile, PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
@@ -169,6 +175,70 @@ def test_repository_persists_turn_messages_and_tool_invocations(tmp_path: Path) 
     assert second_page.next_cursor is None
     assert invocations == (invocation,)
     assert attempts == (attempt,)
+
+
+def test_repository_persists_ordered_turn_trace_and_fences_step_updates(
+    tmp_path: Path,
+) -> None:
+    engine = create_sqlite_core_engine(tmp_path / "trace.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
+    task, scope = _seed_task(factory, label="trace")
+    turn = _turn(task, scope, key="turn:trace")
+    trace = TurnTrace.create(
+        turn_id=turn.id,
+        conversation_id=turn.conversation_id,
+        task_id=turn.task_id,
+    )
+
+    with factory() as unit_of_work:
+        unit_of_work.assistant.save_turn(turn)
+        persisted, inserted = unit_of_work.assistant.create_trace_if_absent(trace)
+        first_sequence = unit_of_work.assistant.allocate_trace_sequence(persisted.id)
+        first = TraceStep.create(
+            trace_id=persisted.id,
+            turn_id=turn.id,
+            sequence=first_sequence,
+            kind=TraceStepKind.MODEL,
+            status=TraceStepStatus.RUNNING,
+            public_summary="Generating response",
+            model_id="local-model",
+            model_role=ModelExecutionRole.PRIMARY,
+            command_run_id=UUID(int=500),
+        )
+        unit_of_work.assistant.append_trace_step(first)
+        second_sequence = unit_of_work.assistant.allocate_trace_sequence(persisted.id)
+        second = TraceStep.create(
+            trace_id=persisted.id,
+            turn_id=turn.id,
+            sequence=second_sequence,
+            kind=TraceStepKind.RESPONSE,
+            status=TraceStepStatus.PENDING,
+            public_summary="Preparing final response",
+            caused_by_step_id=first.id,
+        )
+        unit_of_work.assistant.append_trace_step(second)
+        unit_of_work.commit()
+
+    assert inserted is True
+    assert (first_sequence, second_sequence) == (1, 2)
+    first.transition(TraceStepStatus.SUCCEEDED)
+    with factory() as unit_of_work:
+        unit_of_work.assistant.update_trace_step(first, expected_revision=0)
+        unit_of_work.commit()
+    with factory() as unit_of_work:
+        restored_trace = unit_of_work.assistant.get_trace_by_turn_id(turn.id)
+        restored_steps = unit_of_work.assistant.list_trace_steps(turn.id)
+        by_command = unit_of_work.assistant.find_trace_step_by_command_run_id(
+            UUID(int=500),
+            kind=TraceStepKind.MODEL,
+        )
+
+    assert restored_trace is not None
+    assert restored_trace.last_sequence == 2
+    assert restored_steps == (first, second)
+    assert by_command == first
+    with factory() as unit_of_work, pytest.raises(InvalidTransitionError, match="concurrently"):
+        unit_of_work.assistant.update_trace_step(first, expected_revision=0)
 
 
 def test_repository_is_tenant_scoped_and_cursor_is_conversation_bound(tmp_path: Path) -> None:
@@ -330,6 +400,25 @@ def test_ledger_recovery_honors_live_command_lease_then_interrupts_expired_run(
             worker_id="core-live",
             lease_until=datetime.now(UTC) + timedelta(minutes=1),
         )
+        trace = TurnTrace.create(
+            turn_id=turn.id,
+            conversation_id=turn.conversation_id,
+            task_id=turn.task_id,
+        )
+        trace.start()
+        unit_of_work.assistant.create_trace_if_absent(trace)
+        step = TraceStep.create(
+            trace_id=trace.id,
+            turn_id=turn.id,
+            sequence=unit_of_work.assistant.allocate_trace_sequence(trace.id),
+            kind=TraceStepKind.MODEL,
+            status=TraceStepStatus.RUNNING,
+            public_summary="Generating the response",
+            model_id="local-default",
+            model_role=ModelExecutionRole.PRIMARY,
+            command_run_id=running.id,
+        )
+        unit_of_work.assistant.append_trace_step(step)
         unit_of_work.commit()
 
     recovery = AssistantLedgerApplication(
@@ -351,13 +440,22 @@ def test_ledger_recovery_honors_live_command_lease_then_interrupts_expired_run(
         recovered_turn = unit_of_work.assistant.get_turn(turn.id)
         recovered_run = unit_of_work.commands.get_run(running.id)
         events = unit_of_work.commands.events_for_run(running.id)
+        recovered_trace = unit_of_work.assistant.get_trace_by_turn_id(turn.id)
+        recovered_steps = unit_of_work.assistant.list_trace_steps(turn.id)
 
     assert recovered_turn is not None
     assert recovered_turn.status is AssistantTurnStatus.FAILED
     assert recovered_turn.error_code == "WORKER_INTERRUPTED"
     assert recovered_run is not None
     assert recovered_run.status.value == "interrupted"
+    assert recovered_trace is not None and recovered_trace.completed_at is not None
+    assert len(recovered_steps) == 1
+    assert recovered_steps[0].status is TraceStepStatus.FAILED
+    assert recovered_steps[0].public_detail == (
+        "Worker interrupted before the step completed."
+    )
     assert [event.event_type for event in events].count("assistant.turn.failed") == 1
+    assert [event.event_type for event in events].count("turn.trace.step.failed") == 1
 
 
 def test_message_sequence_reservation_does_not_depend_on_existing_messages(

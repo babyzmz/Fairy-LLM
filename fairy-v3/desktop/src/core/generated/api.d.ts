@@ -242,6 +242,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/assistant/turns/{turn_id}/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Assistant Turn Trace */
+        get: operations["assistant.turns.trace.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/capabilities": {
         parameters: {
             query?: never;
@@ -4391,6 +4408,11 @@ export interface components {
          * @enum {string}
          */
         ModelEndpointKind: "chat" | "images" | "audio" | "videos";
+        /**
+         * ModelExecutionRole
+         * @enum {string}
+         */
+        ModelExecutionRole: "coordinator" | "primary" | "reviewer";
         /** ModelPriceModel */
         ModelPriceModel: {
             /** Billable */
@@ -5481,6 +5503,79 @@ export interface components {
              */
             source: "builtin" | "skill" | "mcp";
         };
+        /**
+         * TraceStepKind
+         * @enum {string}
+         */
+        TraceStepKind: "route" | "plan" | "reasoning" | "model" | "tool" | "approval" | "observation" | "verification" | "artifact" | "response" | "voice";
+        /** TraceStepModel */
+        TraceStepModel: {
+            /** Artifact Refs */
+            artifact_refs: string[];
+            /** Caused By Step Id */
+            caused_by_step_id: string | null;
+            /** Command Run Id */
+            command_run_id: string | null;
+            /** Completed At */
+            completed_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["TraceStepKind"];
+            /** Model Id */
+            model_id?: string | null;
+            model_role: components["schemas"]["ModelExecutionRole"] | null;
+            /** Parent Step Id */
+            parent_step_id: string | null;
+            /** Provider Attempt Id */
+            provider_attempt_id: string | null;
+            /** Public Detail */
+            public_detail?: string | null;
+            /** Public Summary */
+            public_summary: string;
+            /** Revision */
+            revision: number;
+            /** Sequence */
+            sequence: number;
+            /** Started At */
+            started_at: string | null;
+            status: components["schemas"]["TraceStepStatus"];
+            /**
+             * Trace Id
+             * Format: uuid
+             */
+            trace_id: string;
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            visibility: components["schemas"]["TraceVisibility"];
+        };
+        /**
+         * TraceStepStatus
+         * @enum {string}
+         */
+        TraceStepStatus: "pending" | "running" | "waiting" | "succeeded" | "failed" | "cancelled" | "skipped";
+        /**
+         * TraceVisibility
+         * @enum {string}
+         */
+        TraceVisibility: "user" | "developer" | "internal";
         /** TranscriptSegmentModel */
         TranscriptSegmentModel: {
             /** End Seconds */
@@ -5491,6 +5586,51 @@ export interface components {
             start_seconds: number;
             /** Text */
             text: string;
+        };
+        /** TurnTraceModel */
+        TurnTraceModel: {
+            /** Completed At */
+            completed_at: string | null;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Sequence */
+            last_sequence: number;
+            /** Legacy */
+            legacy: boolean;
+            /** Revision */
+            revision: number;
+            /** Started At */
+            started_at: string | null;
+            /** Steps */
+            steps: components["schemas"]["TraceStepModel"][];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /**
+             * Turn Id
+             * Format: uuid
+             */
+            turn_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -6419,6 +6559,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssistantTurnModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "assistant.turns.trace.list": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                turn_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TurnTraceModel"];
                 };
             };
             /** @description Validation Error */

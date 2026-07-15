@@ -86,6 +86,7 @@ def test_standard_profile_approval_resumes_one_tool_effect_once(tmp_path: Path) 
 
         completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
         replayed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        trace = service.invoke("assistant.turns.trace.list", {"turn_id": turn["id"]})
 
         assert completed["status"] == "completed"
         assert replayed == completed
@@ -95,6 +96,16 @@ def test_standard_profile_approval_resumes_one_tool_effect_once(tmp_path: Path) 
         assert protocol[0].tool_calls[0].id == "call-notify"
         assert protocol[1].tool_call_id == "call-notify"
         assert "Notification sent" in protocol[1].content
+        assert [step["kind"] for step in trace["steps"]] == [
+            "model",
+            "reasoning",
+            "tool",
+            "approval",
+            "observation",
+            "model",
+            "response",
+        ]
+        assert all(step["status"] == "succeeded" for step in trace["steps"])
     finally:
         service.close()
 
@@ -122,6 +133,7 @@ def test_rejected_tool_becomes_bounded_result_and_duplicate_decision_is_idempote
         first = service.invoke("approvals.decide", request)
         second = service.invoke("approvals.decide", request)
         completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        trace = service.invoke("assistant.turns.trace.list", {"turn_id": turn["id"]})
 
         assert first == second
         assert completed["status"] == "completed"
@@ -134,6 +146,15 @@ def test_rejected_tool_becomes_bounded_result_and_duplicate_decision_is_idempote
         assert command is not None and command.status is CommandStatus.REJECTED
         assert persisted_task is not None and persisted_task.status is TaskStatus.READY
         assert "rejected" in provider.requests[1].messages[-1].content.lower()
+        tool_step = next(step for step in trace["steps"] if step["kind"] == "tool")
+        approval_step = next(step for step in trace["steps"] if step["kind"] == "approval")
+        assert tool_step["status"] == "cancelled"
+        assert approval_step["status"] == "cancelled"
+        assert trace["completed_at"] is not None
+        assert all(
+            step["status"] not in {"pending", "running", "waiting"}
+            for step in trace["steps"]
+        )
 
         with pytest.raises(InvalidTransitionError):
             service.invoke(

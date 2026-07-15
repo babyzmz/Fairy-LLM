@@ -6,7 +6,9 @@ import pytest
 
 from fairy_core.assistant.tools import (
     ToolCandidateError,
+    model_tools_for_definitions,
     sanitize_model_arguments,
+    sanitize_public_intent,
     validate_tool_arguments,
 )
 from fairy_core.commanding.registry import build_default_registry
@@ -66,3 +68,29 @@ def test_information_schemas_enforce_units_and_numeric_bounds() -> None:
 def test_model_argument_sanitizer_rejects_non_finite_numbers(value: float) -> None:
     with pytest.raises(ToolCandidateError, match="finite"):
         sanitize_model_arguments({"value": value})
+
+
+def test_model_visible_tools_receive_a_bounded_public_intent_field() -> None:
+    definition = build_default_registry().get("web.search")
+    assert definition is not None
+
+    direct_answer, web_search = model_tools_for_definitions((definition,))
+
+    assert "public_intent" not in direct_answer.input_schema["properties"]
+    assert web_search.input_schema["properties"]["public_intent"]["maxLength"] == 240
+    assert "public_intent" not in definition.input_schema["properties"]
+    assert sanitize_public_intent("Use Bearer very-secret-token to search") == (
+        "Use [redacted] to search"
+    )
+
+
+def test_model_tool_adds_public_intent_when_properties_are_omitted() -> None:
+    definition = next(
+        item
+        for item in build_default_registry().definitions()
+        if item.model_visible and "properties" not in item.input_schema
+    )
+
+    tool = model_tools_for_definitions((definition,))[-1]
+
+    assert tool.input_schema["properties"]["public_intent"]["maxLength"] == 240

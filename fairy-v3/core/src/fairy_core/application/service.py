@@ -24,6 +24,7 @@ from fairy_core.assistant.image_inputs import build_image_attachments
 from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
 from fairy_core.assistant.tools import ToolExecutor
+from fairy_core.assistant.trace_service import TurnTraceService
 from fairy_core.assistant.turn_selection import resolve_turn_model_source
 from fairy_core.commanding import EventVisibility
 from fairy_core.commanding.policy import PolicyEngine
@@ -107,9 +108,8 @@ from fairy_core.execution.application import (
 )
 from fairy_core.mcp.application import McpApplication
 from fairy_core.mcp.tools import McpToolExecutor
-from fairy_core.media.application import MediaApplication
+from fairy_core.media.composition import build_media_composition
 from fairy_core.media.ports import MediaProvider
-from fairy_core.media.service import MediaService, UnavailableMediaService
 from fairy_core.media.staging import MediaStagingStore
 from fairy_core.media.tools import MediaToolExecutor
 from fairy_core.memory.application import MemoryApplication
@@ -265,44 +265,20 @@ class CoreService:
             unit_of_work_factory=unit_of_work_factory,
             scope_resolver=application.scope_for_task,
         )
+        self._turn_trace_service = TurnTraceService(unit_of_work_factory)
         self._execution_planning = application.execution_planning
-        media_dependencies = (
-            media_provider,
-            media_staging_store,
-            workspace_provisioner,
+        media = build_media_composition(
+            unit_of_work_factory=unit_of_work_factory,
+            scope_resolver=application.scope_for_task,
+            registry=registry,
+            execution_policy=self._execution_policy,
+            provider=media_provider,
+            staging=media_staging_store,
+            workspaces=workspace_provisioner,
         )
-        if any(value is not None for value in media_dependencies) and not all(
-            value is not None for value in media_dependencies
-        ):
-            raise ValueError(
-                "media provider, staging store, and workspace provisioner "
-                "must be configured together"
-            )
-        self._media_provider = media_provider
-        self._media_application = (
-            MediaApplication(
-                unit_of_work_factory=unit_of_work_factory,
-                scope_resolver=application.scope_for_task,
-                provider=media_provider,
-                workspaces=workspace_provisioner,
-                staging=media_staging_store,
-            )
-            if media_provider is not None
-            and media_staging_store is not None
-            and workspace_provisioner is not None
-            else None
-        )
-        self._media_service = (
-            MediaService(
-                application=self._media_application,
-                unit_of_work_factory=unit_of_work_factory,
-                registry=registry,
-                execution_policy=self._execution_policy,
-                scope_resolver=application.scope_for_task,
-            )
-            if self._media_application is not None
-            else UnavailableMediaService()
-        )
+        self._media_provider = media.provider
+        self._media_application = media.application
+        self._media_service = media.service
         effective_tool_executor = tool_executor
         if research_fetch_port is not None:
             effective_tool_executor = ResearchToolExecutor(
@@ -394,6 +370,7 @@ class CoreService:
             "assistant.turns.retry": self._retry_assistant_turn,
             "assistant.turns.run": self._run_assistant_turn,
             "assistant.turns.start": self._start_assistant_turn,
+            **self._turn_trace_service.handlers,
             "capabilities.get": self._get_capabilities,
             "changesets.propose": self._propose_changeset,
             "conversations.create": self._create_conversation,
