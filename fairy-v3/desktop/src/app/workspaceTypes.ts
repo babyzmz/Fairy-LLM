@@ -1,4 +1,5 @@
 import type { AssistantDraft, AssistantTurnClient, OptimisticUserMessage } from "../chat/useAssistantTurn";
+import type { TurnTraceQueryState } from "../chat/useTurnTraces";
 import type {
   Approval,
   AssistantTurn,
@@ -135,12 +136,14 @@ export interface WorkspaceModel {
   capabilities: CapabilityManifest | null;
   chatTurn: AssistantTurn | null;
   turnTraces: Record<string, TurnTrace>;
+  turnTraceStates: Record<string, TurnTraceQueryState>;
   chatStreamedText: string;
   chatPendingUserMessage: OptimisticUserMessage | null;
   chatBusy: boolean;
   chatError: string | null;
   projectTurn: AssistantTurn | null;
   projectTrace: TurnTrace | null;
+  projectTraceState: TurnTraceQueryState | null;
   projectBusy: boolean;
   projectError: string | null;
   petTaskId: string | null;

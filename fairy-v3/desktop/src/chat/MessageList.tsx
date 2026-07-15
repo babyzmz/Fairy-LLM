@@ -15,6 +15,7 @@ import type { AssistantTurn, EventEnvelope, Message, TurnTrace } from "../core/c
 import { VoiceSpeakControl } from "../voice/VoiceController";
 import { ActivityRail } from "./ActivityRail";
 import type { OptimisticUserMessage } from "./useAssistantTurn";
+import type { TurnTraceQueryState } from "./useTurnTraces";
 import { MessageContent } from "./MessageContent";
 
 interface MessageListProps {
@@ -22,6 +23,7 @@ interface MessageListProps {
   streamedText: string;
   turn: AssistantTurn | null;
   turnTraces: Record<string, TurnTrace>;
+  turnTraceStates: Record<string, TurnTraceQueryState>;
   events: EventEnvelope[];
   pendingUserMessage: OptimisticUserMessage | null;
   developerMode: boolean;
@@ -37,6 +39,7 @@ export function MessageList({
   streamedText,
   turn,
   turnTraces,
+  turnTraceStates,
   events,
   pendingUserMessage,
   developerMode,
@@ -99,11 +102,14 @@ export function MessageList({
             onOpenLink={onOpenLink}
           />
           {message.role === "user" && message.turn_id !== null &&
-          (turnTraces[message.turn_id] !== undefined || turn?.id === message.turn_id) ? (
+          (turnTraceStates[message.turn_id] !== undefined ||
+            turnTraces[message.turn_id] !== undefined ||
+            turn?.id === message.turn_id) ? (
             <ActivityRail
               turn={turn?.id === message.turn_id ? turn : null}
               turnId={message.turn_id}
               trace={turnTraces[message.turn_id] ?? null}
+              traceState={turnTraceStates[message.turn_id] ?? null}
               events={events}
               developerMode={developerMode}
             />
@@ -122,6 +128,7 @@ export function MessageList({
             <ActivityRail
               turn={turn}
               trace={turnTraces[turn.id] ?? null}
+              traceState={turnTraceStates[turn.id] ?? null}
               events={events}
               developerMode={developerMode}
             />

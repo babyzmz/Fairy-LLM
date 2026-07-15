@@ -24,7 +24,14 @@ interface UseTurnTracesOptions {
 
 interface TurnTraceQueries {
   turnTraces: Record<string, TurnTrace>;
+  turnTraceStates: Record<string, TurnTraceQueryState>;
   projectTrace: TurnTrace | null;
+  projectTraceState: TurnTraceQueryState | null;
+}
+
+export interface TurnTraceQueryState {
+  status: "loading" | "loaded" | "error";
+  error: string | null;
 }
 
 export function useTurnTraces(
@@ -47,13 +54,23 @@ export function useTurnTraces(
     })),
   });
   const turnTraces: Record<string, TurnTrace> = {};
+  const turnTraceStates: Record<string, TurnTraceQueryState> = {};
   for (const [index, query] of queries.entries()) {
     const turnId = turnIds[index];
-    if (turnId !== undefined && query.data !== undefined) turnTraces[turnId] = query.data;
+    if (turnId === undefined) continue;
+    if (query.data !== undefined) turnTraces[turnId] = query.data;
+    turnTraceStates[turnId] = query.isPending
+      ? { status: "loading", error: null }
+      : query.isError
+        ? { status: "error", error: queryErrorMessage(query.error) }
+        : { status: "loaded", error: null };
   }
   return {
     turnTraces,
+    turnTraceStates,
     projectTrace: projectTurnId === null ? null : (turnTraces[projectTurnId] ?? null),
+    projectTraceState:
+      projectTurnId === null ? null : (turnTraceStates[projectTurnId] ?? null),
   };
 }
 
@@ -80,4 +97,12 @@ function uniqueTurnIds(values: Array<string | null>): string[] {
     result.push(value);
   }
   return result;
+}
+
+function queryErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return "Durable work chain could not be loaded";
+  const value = error.message.trim();
+  return value.length === 0
+    ? "Durable work chain could not be loaded"
+    : value.slice(0, 240);
 }

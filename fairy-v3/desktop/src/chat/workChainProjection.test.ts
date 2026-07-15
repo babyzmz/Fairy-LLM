@@ -134,6 +134,77 @@ describe("projectWorkChain", () => {
 
     expect(projectWorkChain({ trace, turn }).terminal).toBe(false);
   });
+
+  it("treats a terminal turn as terminal when its trace has a stale running step", () => {
+    const trace = turnTrace([
+      step({
+        id: STEP_ID,
+        status: "running",
+        public_summary: "Stale worker activity",
+        completed_at: null,
+        duration_ms: null,
+      }),
+    ]);
+    const turn = {
+      id: TURN_ID,
+      conversation_id: CONVERSATION_ID,
+      task_id: TASK_ID,
+      status: "completed",
+      created_at: "2026-07-15T00:00:00Z",
+      updated_at: "2026-07-15T00:00:05Z",
+      started_at: "2026-07-15T00:00:00Z",
+      completed_at: "2026-07-15T00:00:05Z",
+    } as AssistantTurn;
+
+    const projection = projectWorkChain({ trace, turn });
+
+    expect(projection.terminal).toBe(true);
+    expect(projection.current.status).toBe("succeeded");
+  });
+
+  it.each([
+    ["failed", "failed"],
+    ["cancelled", "cancelled"],
+  ] as const)("stops stale activity for a %s historical turn", (turnStatus, stepStatus) => {
+    const trace = turnTrace([
+      step({ status: "running", completed_at: null, duration_ms: null }),
+    ]);
+    const turn = {
+      id: TURN_ID,
+      conversation_id: CONVERSATION_ID,
+      task_id: TASK_ID,
+      status: turnStatus,
+      created_at: "2026-07-15T00:00:00Z",
+      updated_at: "2026-07-15T00:00:05Z",
+      started_at: "2026-07-15T00:00:00Z",
+      completed_at: "2026-07-15T00:00:05Z",
+      error_code: turnStatus === "failed" ? "WORKER_INTERRUPTED" : null,
+    } as AssistantTurn;
+
+    const projection = projectWorkChain({ trace, turn });
+
+    expect(projection.terminal).toBe(true);
+    expect(projection.current.status).toBe(stepStatus);
+  });
+
+  it("settles missing and failed trace loads without leaving active work", () => {
+    const missing = projectWorkChain({
+      turnId: TURN_ID,
+      traceState: { status: "loaded", error: null },
+    });
+    const failed = projectWorkChain({
+      turnId: TURN_ID,
+      traceState: { status: "error", error: "Core unavailable" },
+    });
+    const loading = projectWorkChain({
+      turnId: TURN_ID,
+      traceState: { status: "loading", error: null },
+    });
+
+    expect(missing).toMatchObject({ terminal: true, current: { summary: "No work chain recorded" } });
+    expect(failed).toMatchObject({ terminal: true, current: { status: "failed", summary: "Work chain unavailable" } });
+    expect(loading).toMatchObject({ terminal: false, current: { status: "running", summary: "Loading work chain" } });
+  });
 });
 
 const TURN_ID = "019f5ad1-7df8-7000-8000-000000000001";

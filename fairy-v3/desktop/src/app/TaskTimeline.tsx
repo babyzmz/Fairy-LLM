@@ -1,6 +1,7 @@
 import { AlertTriangle, Check, Clock3, X } from "lucide-react";
 
 import { ActivityRail } from "../chat/ActivityRail";
+import type { TurnTraceQueryState } from "../chat/useTurnTraces";
 import type { Approval, AssistantTurn, EventEnvelope, Task, TurnTrace } from "../core/client";
 
 interface TaskTimelineProps {
@@ -10,6 +11,7 @@ interface TaskTimelineProps {
   approvals: Approval[];
   turn: AssistantTurn | null;
   trace: TurnTrace | null;
+  traceState: TurnTraceQueryState | null;
   developerMode: boolean;
   isActing: boolean;
   onSelectTask(taskId: string): void;
@@ -23,6 +25,7 @@ export function TaskTimeline({
   approvals,
   turn,
   trace,
+  traceState,
   developerMode,
   isActing,
   onSelectTask,
@@ -74,10 +77,11 @@ export function TaskTimeline({
           </div>
 
           <div className="task-work-chain">
-            {turn !== null || trace !== null || events.length > 0 ? (
+            {turn !== null || trace !== null || traceState !== null || events.length > 0 ? (
               <ActivityRail
                 turn={turn?.task_id === task.id ? turn : null}
                 trace={trace}
+                traceState={traceState}
                 events={events}
                 developerMode={developerMode}
               />

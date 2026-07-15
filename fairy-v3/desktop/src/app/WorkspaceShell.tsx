@@ -77,6 +77,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               pendingUserMessage={model.chatPendingUserMessage}
               turn={model.chatTurn}
               turnTraces={model.turnTraces}
+              turnTraceStates={model.turnTraceStates}
               approvals={model.chatApprovals}
               providers={model.providers}
               providerHealth={model.providerHealth}
@@ -119,6 +120,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
                 approvals={model.approvals}
                 turn={model.projectTurn}
                 trace={model.projectTrace}
+                traceState={model.projectTraceState}
                 developerMode={model.developerMode}
                 isActing={model.isActing}
                 onSelectTask={model.selectTask}

@@ -311,7 +311,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     onTaskCreated: setTaskSelection,
     onSettled: invalidateWorkspace,
   });
-  const { turnTraces, projectTrace } = useTurnTraces(client, {
+  const { turnTraces, turnTraceStates, projectTrace, projectTraceState } = useTurnTraces(client, {
     enabled: healthQuery.isSuccess,
     chatMessages: messageItems,
     projectMessages: projectMessageItems,
@@ -1000,12 +1000,14 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     capabilities: capabilitiesQuery.data ?? null,
     chatTurn: chatAssistant.turn,
     turnTraces,
+    turnTraceStates,
     chatStreamedText: chatAssistant.streamedText,
     chatPendingUserMessage: chatAssistant.pendingUserMessage,
     chatBusy: chatAssistant.isBusy,
     chatError: chatAssistant.error,
     projectTurn: projectAssistant.turn,
     projectTrace,
+    projectTraceState,
     projectBusy: projectAssistant.isBusy,
     projectError: projectAssistant.error,
     petTaskId,

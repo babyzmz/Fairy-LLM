@@ -7,6 +7,7 @@ import type {
   TurnTrace,
 } from "../core/client";
 import { publicActivities } from "./legacyActivityProjection";
+import type { TurnTraceQueryState } from "./useTurnTraces";
 
 export { publicActivities } from "./legacyActivityProjection";
 export type { PublicActivity } from "./legacyActivityProjection";
@@ -50,6 +51,7 @@ export interface WorkChainProjection {
 
 interface ProjectWorkChainInput {
   trace?: TurnTrace | null;
+  traceState?: TurnTraceQueryState | null;
   turn?: AssistantTurn | null;
   turnId?: string | null;
   events?: EventEnvelope[];
@@ -90,6 +92,7 @@ const STEP_STATUSES = new Set<TraceStepStatus>([
 
 export function projectWorkChain({
   trace = null,
+  traceState = null,
   turn = null,
   turnId = null,
   events = [],
@@ -97,10 +100,19 @@ export function projectWorkChain({
   now = Date.now(),
 }: ProjectWorkChainInput): WorkChainProjection {
   const resolvedTurnId = trace?.turn_id ?? turn?.id ?? turnId;
+  const boundCommandRuns = new Set(
+    (trace?.steps ?? [])
+      .map((step) => step.command_run_id)
+      .filter((runId): runId is string => runId !== null),
+  );
   const relevantEvents = resolvedTurnId === null
     ? []
     : events
-        .filter((event) => event.payload.turn_id === resolvedTurnId || event.run_id !== null)
+        .filter(
+          (event) =>
+            event.payload.turn_id === resolvedTurnId ||
+            (event.run_id !== null && boundCommandRuns.has(event.run_id)),
+        )
         .sort((left, right) => left.cursor - right.cursor);
   const commandNames = commandNamesByRun(relevantEvents);
   const steps = new Map<string, WorkChainStep>();
@@ -143,17 +155,27 @@ export function projectWorkChain({
     ordered = legacySteps(turn, resolvedTurnId, events);
   }
   if (ordered.length === 0) {
-    ordered = [fallbackStep(turn, trace, resolvedTurnId)];
+    ordered = [fallbackStep(turn, trace, traceState, resolvedTurnId)];
   }
 
+  const terminalStatus = resolvedTerminalStatus(turn, trace, traceState, ordered);
+  if (terminalStatus !== null) {
+    ordered = ordered.map((step) =>
+      ACTIVE_STATUSES.has(step.status)
+        ? {
+            ...step,
+            status: terminalStatus,
+            completedAt: turn?.completed_at ?? trace?.completed_at ?? step.completedAt,
+          }
+        : step,
+    );
+  }
   const active = ordered.filter((step) => ACTIVE_STATUSES.has(step.status));
-  const current = active.at(-1) ?? ordered.at(-1) ?? fallbackStep(turn, trace, resolvedTurnId);
-  const explicitlyTerminal = turn !== null
-    ? ["completed", "cancelled", "failed"].includes(turn.status)
-    : trace !== null
-      ? trace.completed_at !== null
-      : ordered.every((step) => TERMINAL_STATUSES.has(step.status));
-  const terminal = active.length === 0 && explicitlyTerminal;
+  const current =
+    active.at(-1) ?? ordered.at(-1) ?? fallbackStep(turn, trace, traceState, resolvedTurnId);
+  const terminal =
+    terminalStatus !== null ||
+    (turn === null && trace === null && traceState === null && active.length === 0);
 
   return {
     steps: ordered,
@@ -345,16 +367,22 @@ function legacySteps(
 function fallbackStep(
   turn: AssistantTurn | null,
   trace: TurnTrace | null,
+  traceState: TurnTraceQueryState | null,
   turnId: string | null,
 ): WorkChainStep {
-  const status = fallbackStatus(turn);
+  const status = fallbackStatus(turn, trace, traceState);
   return {
     id: `fallback:${turnId ?? trace?.id ?? "unknown"}`,
     sequence: 1,
     kind: "reasoning",
     status,
-    summary: fallbackLabel(turn, trace),
-    detail: trace?.legacy ? "This Turn predates the durable work-chain format." : null,
+    summary: fallbackLabel(turn, trace, traceState),
+    detail:
+      traceState?.status === "error"
+        ? traceState.error
+        : trace?.legacy
+          ? "This Turn predates the durable work-chain format."
+          : null,
     parentStepId: null,
     causedByStepId: null,
     modelRole: null,
@@ -373,21 +401,54 @@ function fallbackStep(
   };
 }
 
-function fallbackStatus(turn: AssistantTurn | null): TraceStepStatus {
+function fallbackStatus(
+  turn: AssistantTurn | null,
+  trace: TurnTrace | null,
+  traceState: TurnTraceQueryState | null,
+): TraceStepStatus {
   if (turn?.status === "completed") return "succeeded";
   if (turn?.status === "failed") return "failed";
   if (turn?.status === "cancelled") return "cancelled";
   if (turn?.status === "waiting_for_tool") return "waiting";
+  if (traceState?.status === "error") return "failed";
+  if (traceState?.status === "loading") return "running";
+  if (trace !== null && (trace.legacy || trace.completed_at !== null)) return "succeeded";
   return turn === null ? "succeeded" : "running";
 }
 
-function fallbackLabel(turn: AssistantTurn | null, trace: TurnTrace | null): string {
+function fallbackLabel(
+  turn: AssistantTurn | null,
+  trace: TurnTrace | null,
+  traceState: TurnTraceQueryState | null,
+): string {
   if (turn?.status === "completed") return "Response ready";
   if (turn?.status === "failed") return "Response failed";
   if (turn?.status === "cancelled") return "Response stopped";
   if (turn?.status === "waiting_for_tool") return "Waiting for approval";
   if (turn !== null) return "Preparing response";
+  if (traceState?.status === "error") return "Work chain unavailable";
+  if (traceState?.status === "loading") return "Loading work chain";
+  if (traceState?.status === "loaded" && trace === null) return "No work chain recorded";
   return trace?.legacy ? "Previous activity" : "Waiting for durable activity";
+}
+
+function resolvedTerminalStatus(
+  turn: AssistantTurn | null,
+  trace: TurnTrace | null,
+  traceState: TurnTraceQueryState | null,
+  steps: WorkChainStep[],
+): TraceStepStatus | null {
+  if (turn?.status === "completed") return "succeeded";
+  if (turn?.status === "failed") return "failed";
+  if (turn?.status === "cancelled") return "cancelled";
+  if (traceState?.status === "error") return "failed";
+  if (traceState?.status === "loaded" && trace === null && turn === null) return "succeeded";
+  if (trace !== null && (trace.legacy || trace.completed_at !== null)) {
+    if (steps.some((step) => step.status === "failed")) return "failed";
+    if (steps.some((step) => step.status === "cancelled")) return "cancelled";
+    return "succeeded";
+  }
+  return null;
 }
 
 function commandNamesByRun(events: EventEnvelope[]): Map<string, string> {

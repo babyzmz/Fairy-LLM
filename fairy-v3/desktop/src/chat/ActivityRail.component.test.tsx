@@ -67,6 +67,10 @@ describe("ActivityRail", () => {
         streamedText=""
         turn={null}
         turnTraces={{ [TURN_ID]: firstTrace, [SECOND_TURN_ID]: secondTrace }}
+        turnTraceStates={{
+          [TURN_ID]: { status: "loaded", error: null },
+          [SECOND_TURN_ID]: { status: "loaded", error: null },
+        }}
         events={[]}
         pendingUserMessage={null}
         developerMode={false}
@@ -81,6 +85,42 @@ describe("ActivityRail", () => {
     const order = [...view.container.querySelectorAll("[data-message-sequence], [data-turn-id]")]
       .map((node) => node.getAttribute("data-message-sequence") ?? node.getAttribute("data-turn-id"));
     expect(order).toEqual(["1", TURN_ID, "2", "3", SECOND_TURN_ID, "4"]);
+  });
+
+  it("does not animate a terminal turn with a stale running trace step", () => {
+    const trace = makeTrace([
+      makeStep({ status: "running", completed_at: null, duration_ms: null }),
+    ]);
+    render(
+      <ActivityRail
+        trace={trace}
+        turn={{
+          id: TURN_ID,
+          conversation_id: CONVERSATION_ID,
+          task_id: TASK_ID,
+          status: "completed",
+          created_at: "2026-07-15T00:00:00Z",
+          updated_at: "2026-07-15T00:00:04Z",
+          started_at: "2026-07-15T00:00:00Z",
+          completed_at: "2026-07-15T00:00:04Z",
+        } as never}
+      />,
+    );
+
+    expect(document.querySelector(".activity-spinner")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Fairy work chain")).toHaveClass("activity-terminal");
+  });
+
+  it("shows a settled trace error without a spinner", () => {
+    render(
+      <ActivityRail
+        turnId={TURN_ID}
+        traceState={{ status: "error", error: "Core unavailable" }}
+      />,
+    );
+
+    expect(screen.getByText("Work chain unavailable")).toBeVisible();
+    expect(document.querySelector(".activity-spinner")).not.toBeInTheDocument();
   });
 });
 

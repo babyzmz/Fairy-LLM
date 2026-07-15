@@ -289,6 +289,7 @@ function workspaceProps(
     pendingUserMessage: null,
     turn: TURN,
     turnTraces: {},
+    turnTraceStates: {},
     approvals: [],
     providers: PROVIDERS,
     providerHealth: providerAvailable

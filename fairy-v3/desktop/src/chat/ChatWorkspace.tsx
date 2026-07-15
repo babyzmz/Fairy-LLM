@@ -17,6 +17,7 @@ import type { PendingImageAttachment } from "../perception/CaptureControl";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
 import type { AssistantDraft, OptimisticUserMessage } from "./useAssistantTurn";
+import type { TurnTraceQueryState } from "./useTurnTraces";
 import { parseSlashCommand, slashCommandHelp } from "./slashCommands";
 import "./streaming.css";
 
@@ -28,6 +29,7 @@ export interface ChatWorkspaceProps {
   pendingUserMessage: OptimisticUserMessage | null;
   turn: AssistantTurn | null;
   turnTraces: Record<string, TurnTrace>;
+  turnTraceStates: Record<string, TurnTraceQueryState>;
   approvals: Approval[];
   providers: ProviderProfile[];
   providerHealth: ProviderHealth[];
@@ -177,6 +179,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           streamedText={props.streamedText}
           turn={props.turn}
           turnTraces={props.turnTraces}
+          turnTraceStates={props.turnTraceStates}
           pendingUserMessage={props.pendingUserMessage}
           developerMode={props.developerMode}
           onRetryPending={props.onRetryPending}

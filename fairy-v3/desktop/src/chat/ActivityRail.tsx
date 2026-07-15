@@ -30,6 +30,7 @@ import {
   type WorkChainProjection,
   type WorkChainStep,
 } from "./workChainProjection";
+import type { TurnTraceQueryState } from "./useTurnTraces";
 
 export { publicActivities } from "./workChainProjection";
 export type { PublicActivity } from "./workChainProjection";
@@ -38,6 +39,7 @@ interface ActivityRailProps {
   turn?: AssistantTurn | null;
   turnId?: string | null;
   trace?: TurnTrace | null;
+  traceState?: TurnTraceQueryState | null;
   events?: EventEnvelope[];
   developerMode?: boolean;
 }
@@ -46,6 +48,7 @@ export function ActivityRail({
   turn = null,
   turnId = null,
   trace = null,
+  traceState = null,
   events = [],
   developerMode = false,
 }: ActivityRailProps) {
@@ -54,8 +57,8 @@ export function ActivityRail({
   const resolvedTurnId = trace?.turn_id ?? turn?.id ?? turnId;
   const voiceState = useVoicePlaybackState(resolvedTurnId ?? "no-active-turn");
   const baseProjection = useMemo(
-    () => projectWorkChain({ trace, turn, turnId, events, developerMode, now: clock }),
-    [clock, developerMode, events, trace, turn, turnId],
+    () => projectWorkChain({ trace, traceState, turn, turnId, events, developerMode, now: clock }),
+    [clock, developerMode, events, trace, traceState, turn, turnId],
   );
   const projection = useMemo(
     () => resolvedTurnId === null
@@ -76,6 +79,7 @@ export function ActivityRail({
       className={`activity-rail work-chain activity-${tone}${projection.terminal ? " activity-terminal" : ""}`}
       aria-label="Fairy work chain"
       data-turn-id={resolvedTurnId ?? undefined}
+      data-trace-state={traceState?.status ?? undefined}
     >
       <button
         type="button"
