@@ -97,7 +97,6 @@ from fairy_core.system_actions.models import SystemActionExecution, SystemAction
 from fairy_core.workspace.worker_transport import WorkerRpcError
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
@@ -105,8 +104,10 @@ from starlette.types import Lifespan
 
 from fairy_cloud.auth import AuthenticationError, DenyAllAuthenticator
 from fairy_cloud.auth.models import Authenticator, RequestIdentity
+from fairy_cloud.event_routes import install_event_routes
 from fairy_cloud.history_routes import install_history_routes
 from fairy_cloud.mcp.routes import install_extension_routes
+from fairy_cloud.media_routes import install_media_routes
 from fairy_cloud.model_routes import install_model_routes
 from fairy_cloud.planning_routes import install_planning_routes
 from fairy_cloud.runtime.proxy import CloudPreviewProxy
@@ -120,7 +121,6 @@ from fairy_cloud.sync.contracts import (
     SyncProjectRegistration,
     VersionManifestInput,
 )
-from fairy_cloud.sync.models import SyncedEvent
 from fairy_cloud.sync.ports import SyncStore
 from fairy_cloud.voice_routes import install_voice_routes
 from fairy_cloud.workspace_routes import install_workspace_routes
@@ -795,6 +795,12 @@ def create_cloud_app(
 
     install_voice_routes(protected, invoke=invoke, invoke_async=invoke_async)
     install_model_routes(protected, invoke=invoke, guard=require_idempotency_match)
+    install_media_routes(
+        protected,
+        invoke=invoke,
+        invoke_async=invoke_async,
+        guard=require_idempotency_match,
+    )
 
     @protected.post(
         "/memory/observations",
@@ -1069,50 +1075,13 @@ def create_cloud_app(
             "revision": state.revision,
         }
 
-    @protected.get(
-        "/events",
-        response_class=EventSourceResponse,
-        operation_id="events.subscribe",
+    install_event_routes(
+        protected,
+        invoke_async=invoke_async,
+        sync_store=sync_store,
+        identity_for=identity_for,
+        event_poll_seconds=event_poll_seconds,
     )
-    async def events(
-        request: Request,
-        cursor: Annotated[int, Query(ge=0)] = 0,
-        follow: Annotated[bool, Query()] = True,
-        last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
-    ) -> AsyncIterator[ServerSentEvent]:
-        current = cursor
-        if last_event_id is not None:
-            try:
-                current = max(current, int(last_event_id))
-            except ValueError as error:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Last-Event-ID must be an integer",
-                ) from error
-        while True:
-            if sync_store is None:
-                batch = await invoke_async("events.subscribe", {"cursor": current})
-                items = batch["items"]
-            else:
-                identity = identity_for(request)
-                synced_events = await sync_store.events_after(
-                    user_id=identity.user_id,
-                    cursor=current,
-                )
-                items = [_synced_event_json(event) for event in synced_events]
-            for item in items:
-                current = int(item["cursor"])
-                yield ServerSentEvent(
-                    data=item,
-                    event=str(item["event_type"]),
-                    id=str(current),
-                    retry=1_000,
-                )
-            if not follow or await request.is_disconnected():
-                break
-            if not items:
-                yield ServerSentEvent(comment="keepalive")
-            await asyncio.sleep(event_poll_seconds)
 
     install_extension_routes(protected, invoke)
     install_history_routes(protected, invoke)
@@ -1128,28 +1097,6 @@ def create_cloud_app(
         raise RuntimeError(f"FastAPI routes are missing Core methods: {sorted(missing_methods)}")
     app.include_router(protected)
     return app
-
-
-def _synced_event_json(event: SyncedEvent) -> dict[str, Any]:
-    item = dict(event.payload)
-    item.update(
-        {
-            "id": event.event_id,
-            "cursor": event.cursor,
-            "run_id": event.run_id,
-            "project_id": event.project_id,
-            "conversation_id": event.conversation_id,
-            "task_id": event.task_id,
-            "version_id": event.version_id,
-            "task_sequence": event.task_sequence,
-            "event_type": event.event_type,
-            "visibility": event.visibility,
-            "message": event.message,
-            "schema_version": event.schema_version,
-        }
-    )
-    item.setdefault("created_at", event.created_at.isoformat())
-    return item
 
 
 def _core_http_exception(error: Exception) -> HTTPException:

@@ -83,6 +83,11 @@ export type ConversationTranscriptItem = NativeMessage | ImportedMessage;
 export type Message = ConversationTranscriptItem;
 export type MessageListInput = NonNullable<operations["messages.list"]["parameters"]["query"]>;
 export type MessagePage = Schemas["MessagePageModel"];
+export type MediaAudioGenerateInput = Schemas["MediaAudioGenerateInput"];
+export type MediaGenerationJob = Schemas["MediaGenerationJobModel"];
+export type MediaImageGenerateInput = Schemas["MediaImageGenerateInput"];
+export type MediaVideoCancelInput = Schemas["MediaVideoCancelInput"];
+export type MediaVideoStartInput = Schemas["MediaVideoStartInput"];
 export type ModelCatalogEntry = Schemas["ModelCatalogEntryModel"];
 export type ModelCatalogPage = Schemas["ModelCatalogPageModel"];
 export type ModelEndpointKind = Schemas["ModelEndpointKind"];
@@ -254,6 +259,26 @@ export interface CoreMethodMap {
   "models.selection.update": {
     params: ModelSelectionUpdateInput;
     result: ModelSelectionPreference;
+  };
+  "media.images.generate": {
+    params: MediaImageGenerateInput;
+    result: MediaGenerationJob;
+  };
+  "media.audio.generate": {
+    params: MediaAudioGenerateInput;
+    result: MediaGenerationJob;
+  };
+  "media.videos.start": {
+    params: MediaVideoStartInput;
+    result: MediaGenerationJob;
+  };
+  "media.videos.get": {
+    params: { job_id: string };
+    result: MediaGenerationJob;
+  };
+  "media.videos.cancel": {
+    params: MediaVideoCancelInput;
+    result: MediaGenerationJob;
   };
   "skills.list": { params: EmptyParams; result: SkillPage };
   "mcp.servers.list": { params: EmptyParams; result: McpServerPage };

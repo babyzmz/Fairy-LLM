@@ -197,9 +197,7 @@ class AssistantLedgerApplication:
                 conversation_id=conversation_id,
                 limit=limit,
                 cursor=cursor,
-                allowed_visibilities=frozenset(
-                    {MessageVisibility.USER, MessageVisibility.DEVELOPER}
-                ),
+                allowed_visibilities=frozenset({MessageVisibility.USER}),
             )
 
     def recover_orphaned_turns(

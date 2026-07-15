@@ -31,6 +31,7 @@ from fairy_core.model_catalog.models import (
     ModelAvailability,
     ModelCatalogSnapshot,
     ModelSelectionMode,
+    ModelSelectionSnapshot,
     ProviderCredentialStatus,
     baseline_catalog,
 )
@@ -73,6 +74,7 @@ class AssistantRoutingMixin:
                 user_request=user_request,
             )
             self._require_available_route(decision, catalog)
+            self._require_selection_compatibility(turn.model_selection, decision)
             self._bind_routing(turn.id, decision)
             return decision
         return self._run_auto_router(
@@ -156,6 +158,7 @@ class AssistantRoutingMixin:
                 allow_free_fallback=selection.allow_free_fallback,
             )
             self._require_available_route(decision, catalog)
+            self._require_selection_compatibility(selection, decision)
             self._bind_routing(turn.id, decision, run=run)
             return decision
         except (ProviderCancelledError, McpCancelledError):
@@ -387,6 +390,16 @@ class AssistantRoutingMixin:
             entry = entries.get(model_id)
             if entry is None or entry.availability is ModelAvailability.UNAVAILABLE:
                 raise ProviderUnavailableError(f"routed model {model_id!r} is unavailable")
+
+    @staticmethod
+    def _require_selection_compatibility(
+        selection: ModelSelectionSnapshot,
+        decision: RoutingDecision,
+    ) -> None:
+        if selection.zero_data_retention and decision.task_kind is RoutingTaskKind.VIDEO:
+            raise ProviderUnavailableError(
+                "Video generation is unavailable while zero data retention is enabled"
+            )
 
     def _complete_model_round(
         self,

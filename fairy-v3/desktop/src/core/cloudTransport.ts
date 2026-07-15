@@ -105,6 +105,12 @@ const routes = {
   "models.catalog.refresh": () => post("/v1/models/catalog/refresh", {}),
   "models.selection.get": () => get("/v1/models/selection"),
   "models.selection.update": (params) => putWithIdempotency("/v1/models/selection", params),
+  "media.images.generate": (params) => postWithIdempotency("/v1/media/images", params),
+  "media.audio.generate": (params) => postWithIdempotency("/v1/media/audio", params),
+  "media.videos.start": (params) => postWithIdempotency("/v1/media/videos", params),
+  "media.videos.get": (params) => get(`/v1/media/videos/${pathParameter(params, "job_id")}`),
+  "media.videos.cancel": (params) =>
+    deleteWithIdempotency(`/v1/media/videos/${pathParameter(params, "job_id")}`, params),
   "skills.list": () => get("/v1/skills"),
   "mcp.servers.list": () => get("/v1/mcp/servers"),
   "mcp.servers.configure": (params) =>

@@ -118,6 +118,14 @@ class RoutingDecision:
             if model_id is not None
         )
 
+    @property
+    def media_tool_name(self) -> str | None:
+        return {
+            IMAGE_MODEL_ID: "media.images.generate",
+            MUSIC_MODEL_ID: "media.audio.generate",
+            VIDEO_MODEL_ID: "media.videos.start",
+        }.get(self.media_model_id)
+
 
 def build_router_request(
     *,
@@ -255,8 +263,7 @@ def auto_routing_decision(
         1 for model_id in set(execution_models) if MODEL_ALLOWLIST_BY_ID[model_id].paid
     )
     approval_required = (
-        task_kind in {RoutingTaskKind.MUSIC, RoutingTaskKind.VIDEO}
-        or (task_kind is RoutingTaskKind.IMAGE and estimate is None)
+        (task_kind is RoutingTaskKind.IMAGE and estimate is None)
         or (
             task_kind is RoutingTaskKind.IMAGE
             and estimate is not None
@@ -294,7 +301,40 @@ def manual_routing_decision(
         raise ValueError("manual routing requires a selected model")
     allowed = MODEL_ALLOWLIST_BY_ID[selection.model_id]
     if allowed.endpoint_kind is not ModelEndpointKind.CHAT:
-        raise ValueError("manual media selections require the media generation API")
+        task_kind = {
+            ModelEndpointKind.IMAGES: RoutingTaskKind.IMAGE,
+            ModelEndpointKind.AUDIO: RoutingTaskKind.MUSIC,
+            ModelEndpointKind.VIDEOS: RoutingTaskKind.VIDEO,
+        }[allowed.endpoint_kind]
+        estimate = estimate_text_cost(
+            catalog,
+            calls=((DEEPSEEK_MODEL_ID, 1_024),),
+            prompt_characters=max(1, len(user_request)),
+        )
+        if task_kind is RoutingTaskKind.IMAGE:
+            media_estimate = _single_media_request_cost(catalog, selection.model_id)
+            estimate = (
+                estimate + media_estimate
+                if estimate is not None and media_estimate is not None
+                else None
+            )
+        approval_required = (
+            estimate is None
+            or estimate > TURN_AUTO_APPROVAL_USD
+            or (task_kind is RoutingTaskKind.IMAGE and estimate > TURN_AUTOMATIC_TARGET_USD)
+        )
+        return RoutingDecision(
+            task_kind=task_kind,
+            complexity=RoutingComplexity.MEDIUM,
+            primary_model_id=DEEPSEEK_MODEL_ID,
+            reviewer_model_id=None,
+            media_model_id=selection.model_id,
+            estimated_output_tokens=1_024,
+            estimated_cost_usd=_decimal_text(estimate) if estimate is not None else None,
+            cost_estimate_known=estimate is not None,
+            approval_required=approval_required,
+            public_summary=(f"DeepSeek will prepare the specification for {allowed.display_name}."),
+        )
     task_kind = (
         RoutingTaskKind.CODE
         if allowed.category in {ModelCategory.CODE, ModelCategory.FREE_CODE}

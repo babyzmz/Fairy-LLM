@@ -14,6 +14,7 @@ from fairy_core.application.core import CoreApplication
 from fairy_core.application.model_catalog_service import ModelCatalogService
 from fairy_core.application.planning_service import planning_service_handlers
 from fairy_core.application.presentation_service import presentation_service_handlers
+from fairy_core.application.recovery import close_resources, recover_interrupted_work
 from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.runtime_review import RuntimeReviewApplication
 from fairy_core.application.runtime_service import runtime_service_handlers
@@ -106,6 +107,11 @@ from fairy_core.execution.application import (
 )
 from fairy_core.mcp.application import McpApplication
 from fairy_core.mcp.tools import McpToolExecutor
+from fairy_core.media.application import MediaApplication
+from fairy_core.media.ports import MediaProvider
+from fairy_core.media.service import MediaService, UnavailableMediaService
+from fairy_core.media.staging import MediaStagingStore
+from fairy_core.media.tools import MediaToolExecutor
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
 from fairy_core.model_catalog.ports import ModelCatalogSource
@@ -131,6 +137,7 @@ from fairy_core.system_actions.application import (
 from fairy_core.system_actions.models import SystemActionRequest
 from fairy_core.voice.application import VoiceApplication
 from fairy_core.voice.registry import VoiceRegistry
+from fairy_core.workspace.ports import WorkspaceProvisioner
 from fairy_core.workspace.tools import ProjectToolExecutor
 
 
@@ -176,6 +183,9 @@ class CoreService:
         mcp_application: McpApplication | None = None,
         renderer_pack_installer: RendererPackInstaller | None = None,
         model_catalog_source: ModelCatalogSource | None = None,
+        media_provider: MediaProvider | None = None,
+        media_staging_store: MediaStagingStore | None = None,
+        workspace_provisioner: WorkspaceProvisioner | None = None,
         default_execution_target: str = "local",
         on_close: Callable[[], None] | None = None,
     ) -> None:
@@ -256,6 +266,43 @@ class CoreService:
             scope_resolver=application.scope_for_task,
         )
         self._execution_planning = application.execution_planning
+        media_dependencies = (
+            media_provider,
+            media_staging_store,
+            workspace_provisioner,
+        )
+        if any(value is not None for value in media_dependencies) and not all(
+            value is not None for value in media_dependencies
+        ):
+            raise ValueError(
+                "media provider, staging store, and workspace provisioner "
+                "must be configured together"
+            )
+        self._media_provider = media_provider
+        self._media_application = (
+            MediaApplication(
+                unit_of_work_factory=unit_of_work_factory,
+                scope_resolver=application.scope_for_task,
+                provider=media_provider,
+                workspaces=workspace_provisioner,
+                staging=media_staging_store,
+            )
+            if media_provider is not None
+            and media_staging_store is not None
+            and workspace_provisioner is not None
+            else None
+        )
+        self._media_service = (
+            MediaService(
+                application=self._media_application,
+                unit_of_work_factory=unit_of_work_factory,
+                registry=registry,
+                execution_policy=self._execution_policy,
+                scope_resolver=application.scope_for_task,
+            )
+            if self._media_application is not None
+            else UnavailableMediaService()
+        )
         effective_tool_executor = tool_executor
         if research_fetch_port is not None:
             effective_tool_executor = ResearchToolExecutor(
@@ -315,6 +362,11 @@ class CoreService:
                 unit_of_work_factory=unit_of_work_factory,
                 delegate=effective_tool_executor,
             )
+        if self._media_application is not None:
+            effective_tool_executor = MediaToolExecutor(
+                application=self._media_application,
+                delegate=effective_tool_executor,
+            )
         self._tool_executor = effective_tool_executor
         self._assistant_application = AssistantApplication(
             unit_of_work_factory=unit_of_work_factory,
@@ -369,6 +421,7 @@ class CoreService:
             "memory.projection.health": self._memory_projection_health,
             "memory.search": self._search_memory,
             "memory.snapshots.get": self._get_memory_snapshot,
+            **self._media_service.handlers,
             "mcp.servers.accept": self._accept_mcp_server,
             "mcp.servers.configure": self._configure_mcp_server,
             "mcp.servers.delete": self._delete_mcp_server,
@@ -430,14 +483,10 @@ class CoreService:
         self._assistant_executor.shutdown(wait=True, cancel_futures=True)
         with self._turn_cancellation_lock:
             self._turn_cancellations.clear()
-        self._image_attachments.close()
-        self._model_catalog_service.close()
-        self._provider_registry.close()
-        self._voice_registry.close()
-        if self._tool_executor is not None:
-            close_tool_executor = getattr(self._tool_executor, "close", None)
-            if callable(close_tool_executor):
-                close_tool_executor()
+        close_resources(
+            self._image_attachments, self._model_catalog_service, self._provider_registry,
+            self._voice_registry, self._tool_executor, self._media_provider,
+        )
         if self._finalizer is not None:
             self._finalizer()
 
@@ -446,18 +495,10 @@ class CoreService:
         *,
         verify_running_previews: bool = False,
     ) -> dict[str, int]:
-        turns = self._assistant_ledger.recover_orphaned_turns()
-        previews = (
-            self._runtime_application.recover_interrupted(
-                verify_running=verify_running_previews,
-            )
-            if self._runtime_application is not None
-            else ()
+        return recover_interrupted_work(
+            assistant=self._assistant_ledger, runtime=self._runtime_application,
+            media=self._media_application, verify_running_previews=verify_running_previews,
         )
-        return {
-            "assistant_turns": len(turns),
-            "previews": len(previews),
-        }
 
     def invoke(self, method: str, params: Mapping[str, Any]) -> Any:
         definition = CORE_METHODS.get(method)

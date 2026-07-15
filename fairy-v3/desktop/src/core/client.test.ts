@@ -453,4 +453,90 @@ describe("CoreClient", () => {
     expect(events.map(({ cursor }) => cursor)).toEqual([8]);
     expect(transport.subscriptions).toEqual([{ cursor: 7, signal: controller.signal }]);
   });
+
+  it("exposes media generation through the shared transport", async () => {
+    const transport = new RecordingTransport();
+    const client = new CoreClient(transport);
+    const id = "0198f4de-0114-7000-8000-000000000001";
+
+    await client.media.images.generate({
+      task_id: id,
+      prompt: "A glass Fairy core",
+      size: "1024x1024",
+      aspect_ratio: "1:1",
+      idempotency_key: "media:image:1",
+      user_confirmed: true,
+    });
+    await client.media.audio.generate({
+      task_id: id,
+      prompt: "A calm ambient theme",
+      output_format: "wav",
+      idempotency_key: "media:music:1",
+      user_confirmed: true,
+    });
+    await client.media.videos.start({
+      task_id: id,
+      prompt: "The Fairy core unfolding",
+      duration_seconds: 5,
+      resolution: "720p",
+      aspect_ratio: "16:9",
+      generate_audio: true,
+      idempotency_key: "media:video:1",
+      user_confirmed: true,
+    });
+    await client.media.videos.get(id);
+    await client.media.videos.cancel({
+      job_id: id,
+      expected_revision: 1,
+      idempotency_key: "media:video:cancel:1",
+      user_confirmed: true,
+    });
+
+    expect(transport.requests).toEqual([
+      {
+        method: "media.images.generate",
+        params: {
+          task_id: id,
+          prompt: "A glass Fairy core",
+          size: "1024x1024",
+          aspect_ratio: "1:1",
+          idempotency_key: "media:image:1",
+          user_confirmed: true,
+        },
+      },
+      {
+        method: "media.audio.generate",
+        params: {
+          task_id: id,
+          prompt: "A calm ambient theme",
+          output_format: "wav",
+          idempotency_key: "media:music:1",
+          user_confirmed: true,
+        },
+      },
+      {
+        method: "media.videos.start",
+        params: {
+          task_id: id,
+          prompt: "The Fairy core unfolding",
+          duration_seconds: 5,
+          resolution: "720p",
+          aspect_ratio: "16:9",
+          generate_audio: true,
+          idempotency_key: "media:video:1",
+          user_confirmed: true,
+        },
+      },
+      { method: "media.videos.get", params: { job_id: id } },
+      {
+        method: "media.videos.cancel",
+        params: {
+          job_id: id,
+          expected_revision: 1,
+          idempotency_key: "media:video:cancel:1",
+          user_confirmed: true,
+        },
+      },
+    ]);
+  });
 });

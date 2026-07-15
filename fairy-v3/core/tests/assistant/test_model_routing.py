@@ -68,6 +68,15 @@ class PricedCatalogSource:
                             ),
                         )
                         if allowed.paid and allowed.endpoint_kind is ModelEndpointKind.CHAT
+                        else (
+                            ModelPrice(
+                                billable="generation",
+                                unit="request",
+                                cost_usd="0.04",
+                                variant="1k",
+                            ),
+                        )
+                        if allowed.endpoint_kind is ModelEndpointKind.IMAGES
                         else ()
                     ),
                 )

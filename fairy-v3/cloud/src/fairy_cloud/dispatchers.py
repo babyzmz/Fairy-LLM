@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fairy_capabilities.composition import (
     build_capability_bundle,
+    build_media_provider,
     build_model_catalog_source,
     build_provider_registry,
     build_voice_registry,
@@ -20,6 +21,7 @@ from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.mcp.application import McpApplication
+from fairy_core.media.staging import MediaStagingStore
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.runtime.evidence_store import FileRuntimeEvidenceStore
@@ -80,9 +82,10 @@ def build_postgres_core_service(
     sandbox = build_cloud_sandbox(engine, tenant_id=tenant_id)
     execution_policy = ExecutionPolicyResolver(sandbox.health)
     unit_of_work_factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id=tenant_id)
+    workspace_provisioner = FileSystemWorkspaceProvisioner(workspace_root)
     application = CoreApplication(
         unit_of_work_factory=unit_of_work_factory,
-        workspace_provisioner=FileSystemWorkspaceProvisioner(workspace_root),
+        workspace_provisioner=workspace_provisioner,
         registry=registry,
         policy=PolicyEngine(registry),
         execution_policy=execution_policy,
@@ -128,8 +131,15 @@ def build_postgres_core_service(
         providers.close()
         raise
     try:
+        media = build_media_provider()
+    except BaseException:
+        model_catalog.close()
+        providers.close()
+        raise
+    try:
         voice = build_voice_registry()
     except BaseException:
+        media.close()
         model_catalog.close()
         providers.close()
         raise
@@ -137,6 +147,7 @@ def build_postgres_core_service(
         capabilities = build_capability_bundle()
     except BaseException:
         voice.close()
+        media.close()
         model_catalog.close()
         providers.close()
         raise
@@ -181,11 +192,15 @@ def build_postgres_core_service(
             skill_registry=SkillRegistry(registry),
             mcp_application=mcp_application,
             model_catalog_source=model_catalog,
+            media_provider=media,
+            media_staging_store=MediaStagingStore(workspace_root / "media-staging"),
+            workspace_provisioner=workspace_provisioner,
             default_execution_target="cloud",
         )
     except BaseException:
         capabilities.executor.close()
         voice.close()
+        media.close()
         model_catalog.close()
         providers.close()
         raise

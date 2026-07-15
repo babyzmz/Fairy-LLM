@@ -431,6 +431,67 @@ describe("CloudCoreTransport", () => {
     expect(request?.headers.get("Idempotency-Key")).toBe("asset-set:image:1");
   });
 
+  it("maps media jobs to endpoint-specific REST routes", async () => {
+    const requests: Request[] = [];
+    const transport = new CloudCoreTransport({
+      baseUrl: "https://cloud.fairy.test",
+      accessToken: () => "token",
+      deviceId: "device-1",
+      fetch: async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({});
+      },
+    });
+
+    await transport.call("media.images.generate", {
+      task_id: "task-1",
+      prompt: "Fairy image",
+      size: "1024x1024",
+      aspect_ratio: "1:1",
+      idempotency_key: "media:image:1",
+      user_confirmed: true,
+    });
+    await transport.call("media.audio.generate", {
+      task_id: "task-1",
+      prompt: "Fairy theme",
+      output_format: "wav",
+      idempotency_key: "media:music:1",
+      user_confirmed: true,
+    });
+    await transport.call("media.videos.start", {
+      task_id: "task-1",
+      prompt: "Fairy motion",
+      duration_seconds: 5,
+      resolution: "720p",
+      aspect_ratio: "16:9",
+      generate_audio: true,
+      idempotency_key: "media:video:1",
+      user_confirmed: true,
+    });
+    await transport.call("media.videos.get", { job_id: "job/1" });
+    await transport.call("media.videos.cancel", {
+      job_id: "job/1",
+      expected_revision: 2,
+      idempotency_key: "media:video:cancel:1",
+      user_confirmed: true,
+    });
+
+    expect(requests.map(({ method, url }) => [method, url])).toEqual([
+      ["POST", "https://cloud.fairy.test/v1/media/images"],
+      ["POST", "https://cloud.fairy.test/v1/media/audio"],
+      ["POST", "https://cloud.fairy.test/v1/media/videos"],
+      ["GET", "https://cloud.fairy.test/v1/media/videos/job%2F1"],
+      ["DELETE", "https://cloud.fairy.test/v1/media/videos/job%2F1"],
+    ]);
+    expect(requests.map((request) => request.headers.get("Idempotency-Key"))).toEqual([
+      "media:image:1",
+      "media:music:1",
+      "media:video:1",
+      null,
+      "media:video:cancel:1",
+    ]);
+  });
+
   it("binds edit recipe apply to the body and HTTP idempotency key", async () => {
     let request: Request | undefined;
     const id = "0198f4de-0114-7000-8000-000000000020";

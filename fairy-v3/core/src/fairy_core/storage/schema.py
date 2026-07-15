@@ -22,6 +22,7 @@ from fairy_core.storage.assistant_attempt_schema import build_assistant_attempt_
 from fairy_core.storage.execution_settings_schema import build_execution_settings_tables
 from fairy_core.storage.history_schema import build_history_tables
 from fairy_core.storage.index_schema import build_state_indexes
+from fairy_core.storage.media_schema import build_media_schema
 from fairy_core.storage.model_catalog_schema import build_model_catalog_tables
 from fairy_core.storage.planning_schema import build_planning_schema
 from fairy_core.storage.presentation_schema import build_presentation_schema
@@ -913,6 +914,16 @@ artifacts = Table(
     ),
 )
 
+media_generation_jobs = build_media_schema(
+    metadata=state_metadata,
+    projects=projects,
+    workspaces=workspaces,
+    conversations=conversations,
+    tasks=tasks,
+    versions=versions,
+    assistant_turns=assistant_turns,
+)
+
 documents = Table(
     "core_documents",
     state_metadata,
@@ -1162,6 +1173,7 @@ build_state_indexes(
         "runtime_sessions": runtime_sessions,
         "preview_sessions": preview_sessions,
         "artifacts": artifacts,
+        "media_generation_jobs": media_generation_jobs,
         "documents": documents,
         "document_revisions": document_revisions,
         "document_chunks": document_chunks,

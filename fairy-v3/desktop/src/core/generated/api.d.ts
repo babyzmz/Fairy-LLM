@@ -722,6 +722,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/media/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate Audio */
+        post: operations["media.audio.generate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/media/images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate Image */
+        post: operations["media.images.generate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/media/videos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Video */
+        post: operations["media.videos.start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/media/videos/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Video */
+        get: operations["media.videos.get"];
+        put?: never;
+        post?: never;
+        /** Cancel Video */
+        delete: operations["media.videos.cancel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/memory/claims": {
         parameters: {
             query?: never;
@@ -1942,7 +2011,7 @@ export interface components {
          * ArtifactType
          * @enum {string}
          */
-        ArtifactType: "document" | "prompt" | "patch" | "component" | "full_project" | "preview_manifest" | "preview_snapshot" | "report" | "log" | "screenshot";
+        ArtifactType: "document" | "prompt" | "patch" | "component" | "full_project" | "preview_manifest" | "preview_snapshot" | "report" | "log" | "screenshot" | "generated_image" | "generated_audio" | "generated_video";
         /**
          * ArtifactVisibility
          * @enum {string}
@@ -3533,6 +3602,186 @@ export interface components {
          * @enum {string}
          */
         McpTransport: "stdio" | "streamable_http";
+        /** MediaAudioGenerateInput */
+        MediaAudioGenerateInput: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Output Format
+             * @default wav
+             * @constant
+             */
+            output_format: "wav";
+            /** Output Path */
+            output_path?: string | null;
+            /** Prompt */
+            prompt: string;
+            /** Seed */
+            seed?: number | null;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+        };
+        /** MediaGenerationJobModel */
+        MediaGenerationJobModel: {
+            /** Artifact Ids */
+            artifact_ids: string[];
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            endpoint_kind: components["schemas"]["ModelEndpointKind"];
+            /** Error Code */
+            error_code: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            kind: components["schemas"]["MediaGenerationKind"];
+            /** Model Id */
+            model_id: string;
+            /** Output Path */
+            output_path: string;
+            /** Progress */
+            progress: number;
+            /** Project Id */
+            project_id: string | null;
+            /** Revision */
+            revision: number;
+            status: components["schemas"]["MediaGenerationStatus"];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Turn Id */
+            turn_id: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Usage Cost */
+            usage_cost: string | null;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /**
+         * MediaGenerationKind
+         * @enum {string}
+         */
+        MediaGenerationKind: "image" | "music" | "video";
+        /**
+         * MediaGenerationStatus
+         * @enum {string}
+         */
+        MediaGenerationStatus: "created" | "generating" | "pending" | "in_progress" | "completed" | "failed" | "cancelled" | "interrupted";
+        /** MediaImageGenerateInput */
+        MediaImageGenerateInput: {
+            /**
+             * Aspect Ratio
+             * @default 1:1
+             * @enum {string}
+             */
+            aspect_ratio: "1:1" | "3:2" | "2:3" | "4:3" | "3:4" | "16:9" | "9:16";
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Output Path */
+            output_path?: string | null;
+            /** Prompt */
+            prompt: string;
+            /** Seed */
+            seed?: number | null;
+            /**
+             * Size
+             * @default 1024x1024
+             * @constant
+             */
+            size: "1024x1024";
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /**
+             * User Confirmed
+             * @default true
+             */
+            user_confirmed: boolean;
+        };
+        /** MediaVideoCancelInput */
+        MediaVideoCancelInput: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+        };
+        /** MediaVideoStartInput */
+        MediaVideoStartInput: {
+            /**
+             * Aspect Ratio
+             * @default 16:9
+             * @enum {string}
+             */
+            aspect_ratio: "1:1" | "16:9" | "9:16";
+            /**
+             * Duration Seconds
+             * @default 5
+             */
+            duration_seconds: number;
+            /**
+             * Generate Audio
+             * @default true
+             */
+            generate_audio: boolean;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Output Path */
+            output_path?: string | null;
+            /** Prompt */
+            prompt: string;
+            /**
+             * Resolution
+             * @default 720p
+             * @enum {string}
+             */
+            resolution: "720p" | "1080p";
+            /** Seed */
+            seed?: number | null;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+        };
         /**
          * MemoryAuthority
          * @enum {string}
@@ -7290,6 +7539,185 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["McpServerModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "media.audio.generate": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MediaAudioGenerateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaGenerationJobModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "media.images.generate": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MediaImageGenerateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaGenerationJobModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "media.videos.start": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MediaVideoStartInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaGenerationJobModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "media.videos.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaGenerationJobModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "media.videos.cancel": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MediaVideoCancelInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaGenerationJobModel"];
                 };
             };
             /** @description Validation Error */

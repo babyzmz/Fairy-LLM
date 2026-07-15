@@ -60,7 +60,7 @@ describe("model selection projection", () => {
     })).toBe(false);
   });
 
-  it("blocks missing credentials and media models without hiding the selection", () => {
+  it("blocks missing credentials while allowing available media generation", () => {
     expect(selectionBlockReason({
       catalog: catalogFixture("unavailable"),
       selection: auto,
@@ -72,7 +72,7 @@ describe("model selection projection", () => {
       selection: { ...auto, mode: "manual", model_id: "google/lyria-3-pro-preview" },
       providers: [profile],
       health: [health],
-    })).toContain("music generation");
+    })).toBeNull();
     expect(selectionBlockReason({
       catalog,
       selection: auto,

@@ -35,6 +35,7 @@ from fairy_core.persistence.session import SqlAlchemySession
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.storage.collection_store import CollectionStateStoreMixin
 from fairy_core.storage.execution_store import ExecutionStateStoreMixin
+from fairy_core.storage.media_store import MediaStateStoreMixin
 from fairy_core.storage.planning_store import PlanningStateStoreMixin
 from fairy_core.storage.schema import (
     approvals,
@@ -65,6 +66,7 @@ def _optional_datetime(value: datetime | str | None) -> datetime | None:
 class SqlAlchemyStateStore(
     CollectionStateStoreMixin,
     ExecutionStateStoreMixin,
+    MediaStateStoreMixin,
     PlanningStateStoreMixin,
 ):
     """Tenant-scoped Core state persisted through a caller-owned SQLAlchemy engine."""

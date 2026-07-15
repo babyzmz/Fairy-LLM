@@ -57,11 +57,14 @@ export function selectionBlockReason(input: {
     return "Connect OpenRouter in Model settings before sending.";
   }
   const entry = selectedCatalogEntry(catalog, selection);
-  if (selection?.mode === "manual" && entry?.endpoint_kind !== "chat") {
-    return `This is a ${mediaLabel(entry?.endpoint_kind)} model. Use Auto for chat or send a compatible generation request.`;
-  }
   if (entry?.availability === "unavailable") {
     return entry.unavailable_reason ?? "The selected model is currently unavailable.";
+  }
+  if (selection?.mode === "manual" && entry?.endpoint_kind !== "chat") {
+    if (entry?.endpoint_kind === "videos" && selection.zero_data_retention) {
+      return "Video generation is unavailable while zero data retention is enabled.";
+    }
+    return null;
   }
   const profileId = selectedProfileId(selection);
   const profile = providers.find((item) => item.id === profileId);
@@ -73,13 +76,4 @@ export function selectionBlockReason(input: {
     return "The selected model provider is unavailable.";
   }
   return null;
-}
-
-function mediaLabel(endpoint: ModelCatalogEntry["endpoint_kind"] | undefined): string {
-  switch (endpoint) {
-    case "images": return "image generation";
-    case "audio": return "music generation";
-    case "videos": return "video generation";
-    default: return "specialized";
-  }
 }

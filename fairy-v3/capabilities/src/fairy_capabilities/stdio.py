@@ -11,6 +11,7 @@ from fairy_core.transports.stdio import build_local_service, process_stream
 from fairy_capabilities.composition import (
     build_capability_bundle,
     build_local_sandbox,
+    build_media_provider,
     build_model_catalog_source,
     build_provider_registry,
     build_voice_registry,
@@ -31,8 +32,15 @@ def build_composed_local_dispatcher(
         providers.close()
         raise
     try:
+        media = build_media_provider(configured)
+    except BaseException:
+        model_catalog.close()
+        providers.close()
+        raise
+    try:
         voice = build_voice_registry(configured)
     except BaseException:
+        media.close()
         model_catalog.close()
         providers.close()
         raise
@@ -40,6 +48,7 @@ def build_composed_local_dispatcher(
         capabilities = build_capability_bundle(configured)
     except BaseException:
         voice.close()
+        media.close()
         model_catalog.close()
         providers.close()
         raise
@@ -57,10 +66,12 @@ def build_composed_local_dispatcher(
             sandbox_executor=sandbox.executor,
             sandbox_health_provider=sandbox.health,
             model_catalog_source=model_catalog,
+            media_provider=media,
         )
     except BaseException:
         capabilities.executor.close()
         voice.close()
+        media.close()
         model_catalog.close()
         providers.close()
         raise

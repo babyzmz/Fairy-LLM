@@ -477,7 +477,10 @@
           "preview_snapshot",
           "report",
           "log",
-          "screenshot"
+          "screenshot",
+          "generated_image",
+          "generated_audio",
+          "generated_video"
         ],
         "title": "ArtifactType",
         "type": "string"
@@ -4459,6 +4462,444 @@
         ],
         "title": "McpTransport",
         "type": "string"
+      },
+      "MediaAudioGenerateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "output_format": {
+            "const": "wav",
+            "default": "wav",
+            "title": "Output Format",
+            "type": "string"
+          },
+          "output_path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Path"
+          },
+          "prompt": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "user_confirmed": {
+            "title": "User Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "prompt",
+          "idempotency_key",
+          "user_confirmed"
+        ],
+        "title": "MediaAudioGenerateInput",
+        "type": "object"
+      },
+      "MediaGenerationJobModel": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Artifact Ids",
+            "type": "array"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "endpoint_kind": {
+            "$ref": "#/components/schemas/ModelEndpointKind"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MediaGenerationKind"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "output_path": {
+            "title": "Output Path",
+            "type": "string"
+          },
+          "progress": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "type": "integer"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MediaGenerationStatus"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Id"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "usage_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage Cost"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "workspace_id",
+          "conversation_id",
+          "task_id",
+          "version_id",
+          "turn_id",
+          "kind",
+          "model_id",
+          "endpoint_kind",
+          "output_path",
+          "status",
+          "progress",
+          "artifact_ids",
+          "usage_cost",
+          "error_code",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "MediaGenerationJobModel",
+        "type": "object"
+      },
+      "MediaGenerationKind": {
+        "enum": [
+          "image",
+          "music",
+          "video"
+        ],
+        "title": "MediaGenerationKind",
+        "type": "string"
+      },
+      "MediaGenerationStatus": {
+        "enum": [
+          "created",
+          "generating",
+          "pending",
+          "in_progress",
+          "completed",
+          "failed",
+          "cancelled",
+          "interrupted"
+        ],
+        "title": "MediaGenerationStatus",
+        "type": "string"
+      },
+      "MediaImageGenerateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "aspect_ratio": {
+            "default": "1:1",
+            "enum": [
+              "1:1",
+              "3:2",
+              "2:3",
+              "4:3",
+              "3:4",
+              "16:9",
+              "9:16"
+            ],
+            "title": "Aspect Ratio",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "output_path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Path"
+          },
+          "prompt": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
+          "size": {
+            "const": "1024x1024",
+            "default": "1024x1024",
+            "title": "Size",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "user_confirmed": {
+            "default": true,
+            "title": "User Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "prompt",
+          "idempotency_key"
+        ],
+        "title": "MediaImageGenerateInput",
+        "type": "object"
+      },
+      "MediaVideoCancelInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "user_confirmed": {
+            "title": "User Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "job_id",
+          "expected_revision",
+          "idempotency_key",
+          "user_confirmed"
+        ],
+        "title": "MediaVideoCancelInput",
+        "type": "object"
+      },
+      "MediaVideoStartInput": {
+        "additionalProperties": false,
+        "properties": {
+          "aspect_ratio": {
+            "default": "16:9",
+            "enum": [
+              "1:1",
+              "16:9",
+              "9:16"
+            ],
+            "title": "Aspect Ratio",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "default": 5,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Duration Seconds",
+            "type": "integer"
+          },
+          "generate_audio": {
+            "default": true,
+            "title": "Generate Audio",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "output_path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Path"
+          },
+          "prompt": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "resolution": {
+            "default": "720p",
+            "enum": [
+              "720p",
+              "1080p"
+            ],
+            "title": "Resolution",
+            "type": "string"
+          },
+          "seed": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "user_confirmed": {
+            "title": "User Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "prompt",
+          "idempotency_key",
+          "user_confirmed"
+        ],
+        "title": "MediaVideoStartInput",
+        "type": "object"
       },
       "MemoryAuthority": {
         "enum": [
@@ -13535,6 +13976,363 @@
           }
         ],
         "summary": "Set Mcp Server Enabled"
+      }
+    },
+    "/v1/media/audio": {
+      "post": {
+        "operationId": "media.audio.generate",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MediaAudioGenerateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaGenerationJobModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Generate Audio"
+      }
+    },
+    "/v1/media/images": {
+      "post": {
+        "operationId": "media.images.generate",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MediaImageGenerateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaGenerationJobModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Generate Image"
+      }
+    },
+    "/v1/media/videos": {
+      "post": {
+        "operationId": "media.videos.start",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MediaVideoStartInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaGenerationJobModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start Video"
+      }
+    },
+    "/v1/media/videos/{job_id}": {
+      "delete": {
+        "operationId": "media.videos.cancel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MediaVideoCancelInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaGenerationJobModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Cancel Video"
+      },
+      "get": {
+        "operationId": "media.videos.get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaGenerationJobModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Video"
       }
     },
     "/v1/memory/claims": {

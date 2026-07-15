@@ -709,6 +709,9 @@ class ArtifactType(StrEnum):
     REPORT = "report"
     LOG = "log"
     SCREENSHOT = "screenshot"
+    GENERATED_IMAGE = "generated_image"
+    GENERATED_AUDIO = "generated_audio"
+    GENERATED_VIDEO = "generated_video"
 
 
 @dataclass(frozen=True, slots=True)

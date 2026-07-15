@@ -506,6 +506,18 @@ class SqlAlchemyAssistantRepository:
         )
         return self._tool_from_row(row) if row is not None else None
 
+    def find_tool_invocation_by_command_run_id(
+        self,
+        command_run_id: UUID,
+    ) -> ToolInvocation | None:
+        row = self._first(
+            select(assistant_tool_invocations).where(
+                assistant_tool_invocations.c.tenant_id == self._tenant_id,
+                assistant_tool_invocations.c.command_run_id == str(command_run_id),
+            )
+        )
+        return self._tool_from_row(row) if row is not None else None
+
     def list_tool_invocations(self, turn_id: UUID) -> tuple[ToolInvocation, ...]:
         with self._session.read() as connection:
             rows = (

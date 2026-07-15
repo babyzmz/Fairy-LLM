@@ -14,11 +14,31 @@ from fairy_core.domain.execution import (
 )
 from fairy_core.domain.models import Conversation, Project, Task, Version, Workspace
 from fairy_core.execution.plans import ExecutionPlan, TaskStep, TaskStepStatus
+from fairy_core.media.models import MediaGenerationJob, MediaGenerationStatus
 from fairy_core.research.models import ResearchEvidence
 from fairy_core.storage.pagination import StatePage
 
 
 class StateStore(Protocol):
+    def save_media_job(self, job: MediaGenerationJob) -> MediaGenerationJob: ...
+
+    def update_media_job(
+        self,
+        job: MediaGenerationJob,
+        *,
+        expected_revision: int,
+        expected_status: MediaGenerationStatus,
+    ) -> MediaGenerationJob: ...
+
+    def get_media_job(self, job_id: UUID) -> MediaGenerationJob | None: ...
+
+    def find_media_job_by_idempotency_key(
+        self,
+        idempotency_key: str,
+    ) -> MediaGenerationJob | None: ...
+
+    def recoverable_media_jobs(self) -> list[MediaGenerationJob]: ...
+
     def save_execution_plan(
         self,
         plan: ExecutionPlan,

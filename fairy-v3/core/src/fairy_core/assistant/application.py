@@ -9,6 +9,7 @@ from fairy_core.assistant.candidates import ToolCandidate, arguments_for_definit
 from fairy_core.assistant.context import AssistantContextBuilder
 from fairy_core.assistant.durable_context import durable_tool_context
 from fairy_core.assistant.events import append_message_created
+from fairy_core.assistant.media_routing import constrain_context_for_media
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
@@ -161,6 +162,7 @@ class AssistantApplication(AssistantRoutingMixin):
                     turn,
                     provider_capabilities=profile.capabilities,
                 )
+                context = constrain_context_for_media(context, decision)
                 request = ModelRequest.create(
                     profile_id=profile.id,
                     messages=(*context.messages, *ephemeral_context),
@@ -623,16 +625,30 @@ class AssistantApplication(AssistantRoutingMixin):
                 error = RuntimeError("tool definition changed before execution")
                 error.error_code = "MCP_SCHEMA_CHANGED"  # type: ignore[attr-defined]
                 raise error
-            execute_command = getattr(self._tool_executor, "execute_command", None)
-            if callable(execute_command):
-                result = execute_command(
+            execute_with_cancellation = getattr(
+                self._tool_executor,
+                "execute_command_with_cancellation",
+                None,
+            )
+            if callable(execute_with_cancellation):
+                result = execute_with_cancellation(
                     definition,
                     scope,
                     arguments,
                     command_run=running,
+                    cancellation=cancellation,
                 )
             else:
-                result = self._tool_executor.execute(definition, scope, arguments)
+                execute_command = getattr(self._tool_executor, "execute_command", None)
+                if callable(execute_command):
+                    result = execute_command(
+                        definition,
+                        scope,
+                        arguments,
+                        command_run=running,
+                    )
+                else:
+                    result = self._tool_executor.execute(definition, scope, arguments)
             cancellation.raise_if_cancelled()
             self._turns.require_waiting_for_tool(turn_id)
         except (ProviderCancelledError, McpCancelledError):

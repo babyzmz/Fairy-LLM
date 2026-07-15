@@ -27,6 +27,10 @@ import type {
   MemoryNamespace,
   MemoryObserveInput,
   MemorySearchInput,
+  MediaAudioGenerateInput,
+  MediaImageGenerateInput,
+  MediaVideoCancelInput,
+  MediaVideoStartInput,
   ModelSelectionUpdateInput,
   McpServerAcceptInput,
   McpServerConfigureInput,
@@ -243,6 +247,24 @@ export class CoreClient {
       get: () => this.transport.call("models.selection.get", {}),
       update: (input: ModelSelectionUpdateInput) =>
         this.transport.call("models.selection.update", input),
+    },
+  };
+
+  readonly media = {
+    images: {
+      generate: (input: MediaImageGenerateInput) =>
+        this.transport.call("media.images.generate", input),
+    },
+    audio: {
+      generate: (input: MediaAudioGenerateInput) =>
+        this.transport.call("media.audio.generate", input),
+    },
+    videos: {
+      start: (input: MediaVideoStartInput) =>
+        this.transport.call("media.videos.start", input),
+      get: (jobId: string) => this.transport.call("media.videos.get", { job_id: jobId }),
+      cancel: (input: MediaVideoCancelInput) =>
+        this.transport.call("media.videos.cancel", input),
     },
   };
 

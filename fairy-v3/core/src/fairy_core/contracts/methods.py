@@ -46,6 +46,14 @@ from fairy_core.contracts.history import (
     TaskArchiveInput,
     TaskMetadataUpdateInput,
 )
+from fairy_core.contracts.media import (
+    MediaAudioGenerateInput,
+    MediaGenerationJobModel,
+    MediaImageGenerateInput,
+    MediaVideoCancelInput,
+    MediaVideoJobInput,
+    MediaVideoStartInput,
+)
 from fairy_core.contracts.model_catalog import (
     ModelCatalogListInput,
     ModelCatalogPageModel,
@@ -430,6 +438,31 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "messages.list",
             MessageListInput,
             MessagePageModel,
+        ),
+        "media.audio.generate": CoreMethod(
+            "media.audio.generate",
+            MediaAudioGenerateInput,
+            MediaGenerationJobModel,
+        ),
+        "media.images.generate": CoreMethod(
+            "media.images.generate",
+            MediaImageGenerateInput,
+            MediaGenerationJobModel,
+        ),
+        "media.videos.cancel": CoreMethod(
+            "media.videos.cancel",
+            MediaVideoCancelInput,
+            MediaGenerationJobModel,
+        ),
+        "media.videos.get": CoreMethod(
+            "media.videos.get",
+            MediaVideoJobInput,
+            MediaGenerationJobModel,
+        ),
+        "media.videos.start": CoreMethod(
+            "media.videos.start",
+            MediaVideoStartInput,
+            MediaGenerationJobModel,
         ),
         "models.catalog.list": CoreMethod(
             "models.catalog.list",
