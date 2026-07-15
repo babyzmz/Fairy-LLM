@@ -204,13 +204,24 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   });
   const chatApprovals = chatApprovalsQuery.data?.items ?? [];
   const selectedWorkspaceQuery = useQuery({
-    queryKey: [...workspaceKey, "workspace", workspaceTask?.workspace_id],
+    queryKey: [
+      ...workspaceKey,
+      "workspace",
+      workspaceTask?.conversation_id,
+      workspaceTask?.workspace_id,
+    ],
     queryFn: () => client.workspaces.get(requireId(workspaceTask?.workspace_id)),
     enabled: workspaceTask !== null,
     retry: false,
   });
   const previewQuery = useQuery({
-    queryKey: [...workspaceKey, "preview", workspaceTask?.id, workspaceTask?.target_version_id],
+    queryKey: [
+      ...workspaceKey,
+      "preview",
+      workspaceTask?.conversation_id,
+      workspaceTask?.id,
+      workspaceTask?.target_version_id,
+    ],
     queryFn: () =>
       client.previews.resolve({
         task_id: requireId(workspaceTask?.id),
@@ -221,13 +232,24 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
   const runtimeHealthQuery = useQuery({
-    queryKey: [...workspaceKey, "runtime-health", workspaceTask?.id],
+    queryKey: [
+      ...workspaceKey,
+      "runtime-health",
+      workspaceTask?.conversation_id,
+      workspaceTask?.id,
+    ],
     queryFn: () => client.runtimes.health(requireId(workspaceTask?.id)),
     enabled: workspaceTask !== null,
     retry: false,
   });
   const workspaceFilesQuery = useQuery({
-    queryKey: [...workspaceKey, "files", workspaceTask?.workspace_id, workspaceTask?.target_version_id],
+    queryKey: [
+      ...workspaceKey,
+      "files",
+      workspaceTask?.conversation_id,
+      workspaceTask?.workspace_id,
+      workspaceTask?.target_version_id,
+    ],
     queryFn: () =>
       client.workspaces.listFiles({
         workspace_id: requireId(workspaceTask?.workspace_id),
@@ -237,7 +259,13 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
   const assetSetsQuery = useQuery({
-    queryKey: [...workspaceKey, "asset-sets", workspaceTask?.workspace_id, workspaceTask?.target_version_id],
+    queryKey: [
+      ...workspaceKey,
+      "asset-sets",
+      workspaceTask?.conversation_id,
+      workspaceTask?.workspace_id,
+      workspaceTask?.target_version_id,
+    ],
     queryFn: () =>
       client.assetSets.list({
         workspace_id: requireId(workspaceTask?.workspace_id),

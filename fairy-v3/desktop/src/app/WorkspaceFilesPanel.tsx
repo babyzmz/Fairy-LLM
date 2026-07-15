@@ -48,6 +48,7 @@ type ViewerSelection =
   | { kind: "scene_node"; nodePath: string; label: string };
 
 interface WorkspaceFilesPanelProps {
+  scopeKey: string;
   files: WorkspaceFile[];
   assetSets: AssetSet[];
   versions: Version[];
@@ -75,6 +76,7 @@ interface WorkspaceFilesPanelProps {
 }
 
 export function WorkspaceFilesPanel({
+  scopeKey,
   files,
   assetSets,
   versions,
@@ -119,6 +121,23 @@ export function WorkspaceFilesPanel({
     () => versions.filter((version) => version.id !== currentVersionId),
     [currentVersionId, versions],
   );
+
+  useEffect(() => {
+    selectionRequestRef.current += 1;
+    setQuery("");
+    setSelectedPath(null);
+    setContent(null);
+    setReadSession(null);
+    setModelSource(null);
+    setCaptionSessions([]);
+    setPresentation(null);
+    setAnnotations(null);
+    setSelection(null);
+    setSelectionSaved(false);
+    setCompareVersionId("");
+    setComparison(null);
+    setError(null);
+  }, [scopeKey]);
 
   useEffect(() => {
     if (!comparisonVersions.some((version) => version.id === compareVersionId)) {

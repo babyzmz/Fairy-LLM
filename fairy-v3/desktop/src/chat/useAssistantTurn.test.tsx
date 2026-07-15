@@ -51,6 +51,70 @@ describe("assistantDeltaText", () => {
 });
 
 describe("useAssistantTurn", () => {
+  it("does not project an active turn into a newly selected conversation", async () => {
+    const running = assistantTurn({ status: "running" });
+    const client = assistantClient({
+      createTask: async () => ({ task: { id: taskId } }) as never,
+      createTurn: async () => running,
+      startTurn: async () => running,
+    });
+    const conversationB = "00000000-0000-4000-8000-000000000011";
+    const { result, rerender } = renderHook(
+      ({ selectedConversation }: { selectedConversation: string }) =>
+        useAssistantTurn({
+          client,
+          conversationId: selectedConversation,
+          profileId: "openrouter-free",
+          operationMode: "answer",
+          events: [],
+        }),
+      { initialProps: { selectedConversation: conversationId } },
+    );
+
+    await act(async () => result.current.send("Run only in A", []));
+    expect(result.current.turn?.conversation_id).toBe(conversationId);
+    expect(result.current.isBusy).toBe(true);
+
+    rerender({ selectedConversation: conversationB });
+
+    expect(result.current.turn).toBeNull();
+    expect(result.current.isBusy).toBe(false);
+    expect(result.current.pendingUserMessage).toBeNull();
+  });
+
+  it("ignores a delayed start result after selecting another conversation", async () => {
+    let resolveStart: ((value: AssistantTurn) => void) | null = null;
+    const startResult = new Promise<AssistantTurn>((resolve) => {
+      resolveStart = resolve;
+    });
+    const created = assistantTurn({ status: "created" });
+    const running = assistantTurn({ status: "running" });
+    const conversationB = "00000000-0000-4000-8000-000000000011";
+    const { result, rerender } = renderHook(
+      ({ selectedConversation }: { selectedConversation: string }) =>
+        useAssistantTurn({
+          client: assistantClient({
+            createTask: async () => ({ task: { id: taskId } }) as never,
+            createTurn: async () => created,
+            startTurn: async () => startResult,
+          }),
+          conversationId: selectedConversation,
+          profileId: "openrouter-free",
+          operationMode: "answer",
+          events: [],
+        }),
+      { initialProps: { selectedConversation: conversationId } },
+    );
+
+    act(() => { void result.current.send("Delayed A", []); });
+    await waitFor(() => expect(result.current.turn?.status).toBe("created"));
+    rerender({ selectedConversation: conversationB });
+    await act(async () => { resolveStart?.(running); });
+
+    expect(result.current.turn).toBeNull();
+    expect(result.current.isBusy).toBe(false);
+  });
+
   it("projects the user message before task creation returns", async () => {
     let resolveTask: ((value: never) => void) | null = null;
     const createTask = vi.fn(

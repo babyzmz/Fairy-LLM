@@ -98,14 +98,30 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
   const [error, setError] = useState<string | null>(null);
   const [pendingUserMessage, setPendingUserMessage] =
     useState<OptimisticUserMessage | null>(null);
+  const [stateConversationId, setStateConversationId] = useState(options.conversationId);
   const operationRef = useRef(0);
   const busyRef = useRef(false);
+  const conversationRef = useRef(options.conversationId);
   const statusEventCursorRef = useRef(0);
   const pendingDraftRef = useRef<AssistantDraft | null>(null);
 
   const settle = useCallback(async () => {
     await options.onSettled?.();
   }, [options]);
+
+  useEffect(() => {
+    if (conversationRef.current === options.conversationId) return;
+    conversationRef.current = options.conversationId;
+    ++operationRef.current;
+    busyRef.current = false;
+    statusEventCursorRef.current = 0;
+    pendingDraftRef.current = null;
+    setStateConversationId(options.conversationId);
+    setTurn(null);
+    setIsBusy(false);
+    setError(null);
+    setPendingUserMessage(null);
+  }, [options.conversationId]);
 
   const executeDraft = useCallback(
     async (draft: AssistantDraft, conversationOverride?: string) => {
@@ -114,6 +130,12 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
         conversationOverride ?? options.conversationId,
         "Conversation is unavailable",
       );
+      if (conversationRef.current !== conversationId) {
+        ++operationRef.current;
+        conversationRef.current = conversationId;
+        busyRef.current = false;
+        statusEventCursorRef.current = 0;
+      }
       const modelSource =
         options.modelSelection === null || options.modelSelection === undefined
           ? {
@@ -127,6 +149,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
               },
             };
       const operation = ++operationRef.current;
+      setStateConversationId(conversationId);
       pendingDraftRef.current = draft;
       setPendingUserMessage({
         id: draft.id,
@@ -384,19 +407,23 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     setError(null);
     pendingDraftRef.current = null;
     setPendingUserMessage(null);
-  }, []);
+    conversationRef.current = options.conversationId;
+    setStateConversationId(options.conversationId);
+  }, [options.conversationId]);
 
   const streamedText = useMemo(
     () => (turn !== null && isTerminal(turn) ? "" : assistantDeltaText(options.events, turn?.id ?? null)),
     [options.events, turn?.id, turn?.status],
   );
 
+  const visibleInConversation = stateConversationId === options.conversationId;
+
   return {
-    turn,
-    isBusy,
-    error,
-    streamedText,
-    pendingUserMessage,
+    turn: visibleInConversation ? turn : null,
+    isBusy: visibleInConversation && isBusy,
+    error: visibleInConversation ? error : null,
+    streamedText: visibleInConversation ? streamedText : "",
+    pendingUserMessage: visibleInConversation ? pendingUserMessage : null,
     send,
     sendToConversation,
     cancel,

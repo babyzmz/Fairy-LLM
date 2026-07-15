@@ -10,6 +10,12 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
   const hasFiles = model.workspaceFiles.length > 0;
   const previewReady = model.preview?.preview.status === "ready";
   const [tab, setTab] = useState<"preview" | "files">(previewReady ? "preview" : "files");
+  const scopeKey = [
+    model.workspaceTask?.conversation_id ?? "no-conversation",
+    model.workspaceTask?.id ?? "no-task",
+    model.workspaceTask?.workspace_id ?? "no-workspace",
+    model.workspaceTask?.target_version_id ?? "no-version",
+  ].join(":");
 
   useEffect(() => {
     if (previewReady) setTab("preview");
@@ -46,6 +52,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
           />
         ) : (
           <WorkspaceFilesPanel
+            scopeKey={scopeKey}
             files={model.workspaceFiles}
             assetSets={model.assetSets}
             versions={model.versions}
