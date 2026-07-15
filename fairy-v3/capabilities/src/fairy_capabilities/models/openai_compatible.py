@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Iterator, Mapping
+from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fairy_core.providers import (
@@ -184,6 +186,7 @@ class OpenAICompatibleProvider:
                             profile_id=self.profile.id,
                             sequence=sequence,
                             usage=_integer_usage(usage),
+                            usage_cost=_usage_cost(usage.get("cost")),
                         )
                         cancellation.raise_if_cancelled()
                     if finish_reason is not None and not done_emitted:
@@ -256,8 +259,26 @@ class OpenAICompatibleProvider:
             "messages": messages,
             "max_tokens": request.max_output_tokens,
             "stream": True,
-            "stream_options": {"include_usage": True},
         }
+        if request.response_schema is not None:
+            assert request.response_schema_name is not None
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": request.response_schema_name,
+                    "strict": True,
+                    "schema": dict(request.response_schema),
+                },
+            }
+        if urlsplit(self.profile.base_url).hostname == "openrouter.ai":
+            provider_preferences: dict[str, Any] = {
+                "allow_fallbacks": True,
+                "require_parameters": request.require_parameters,
+                "data_collection": "deny" if request.deny_data_collection else "allow",
+            }
+            if request.zero_data_retention:
+                provider_preferences["zdr"] = True
+            payload["provider"] = provider_preferences
         if request.tools:
             payload["tools"] = [
                 {
@@ -345,6 +366,18 @@ def _integer_usage(usage: Mapping[str, Any]) -> dict[str, int]:
             continue
         result[str(key)] = value
     return result
+
+
+def _usage_cost(value: object) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    try:
+        amount = Decimal(str(value))
+    except InvalidOperation:
+        return None
+    if not amount.is_finite() or amount < 0:
+        return None
+    return format(amount.normalize(), "f")
 
 
 def _openai_role(role: ModelRole) -> str:

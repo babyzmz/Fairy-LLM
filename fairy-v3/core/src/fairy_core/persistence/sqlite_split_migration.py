@@ -35,6 +35,7 @@ from fairy_core.storage.schema import (
 )
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
 from fairy_core.storage.sqlite_migrations import (
+    migrate_assistant_model_routing,
     migrate_checkpoint_evidence,
     migrate_pre_tenant_schema,
     migrate_runtime_graph,
@@ -216,6 +217,7 @@ def _normalized_copy(
 
 def _normalize_state_database(engine: Engine, tenant_id: str) -> None:
     state_metadata.create_all(engine)
+    migrate_assistant_model_routing(engine)
     migrate_workspace_identity(engine)
     migrate_runtime_workspace_binding(engine)
     migrate_runtime_graph(engine)

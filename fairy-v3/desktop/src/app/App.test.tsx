@@ -189,6 +189,9 @@ const completedTurn: AssistantTurn = {
   scope_digest: "scope",
   memory_snapshot_id: "0198f4de-0114-7000-8000-000000000014",
   memory_snapshot_hash: "memory",
+  model_selection: null,
+  routing_decision: null,
+  budget_approval_run_id: null,
   cancellation_revision: 0,
   usage: {},
   created_at: timestamp,
@@ -309,7 +312,10 @@ describe("App", () => {
       }),
     );
     expect(createTurn).toHaveBeenCalledWith(
-      expect.objectContaining({ task_id: ID.scratchTask, profile_id: provider.id }),
+      expect.objectContaining({
+        task_id: ID.scratchTask,
+        model_selection: { mode: "auto", model_id: null, revision: 0 },
+      }),
     );
     expect(listMessages).toHaveBeenCalledWith({
       conversation_id: ID.scratchConversation,

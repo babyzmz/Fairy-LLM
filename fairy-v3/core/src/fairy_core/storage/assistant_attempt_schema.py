@@ -35,9 +35,13 @@ def build_assistant_attempt_tables(
         Column("model_round", BigInteger, nullable=False),
         Column("attempt_number", BigInteger, nullable=False),
         Column("profile_id", String(255), nullable=False),
+        Column("model_id", String(255), nullable=False),
+        Column("endpoint_kind", String(32), nullable=False),
+        Column("model_role", String(32), nullable=False),
         Column("status", String(32), nullable=False),
         Column("error_category", String(32)),
         Column("usage", JSON, nullable=False),
+        Column("usage_cost", String(64)),
         Column("created_at", UTCDateTime(), nullable=False),
         Column("completed_at", UTCDateTime()),
         PrimaryKeyConstraint("tenant_id", "id", name="pk_core_assistant_provider_attempts"),
@@ -53,6 +57,14 @@ def build_assistant_attempt_tables(
         CheckConstraint(
             "status IN ('started', 'succeeded', 'failed')",
             name="ck_core_provider_attempts_status",
+        ),
+        CheckConstraint(
+            "endpoint_kind IN ('chat', 'images', 'audio', 'videos')",
+            name="ck_core_provider_attempts_endpoint_kind",
+        ),
+        CheckConstraint(
+            "model_role IN ('coordinator', 'primary', 'reviewer')",
+            name="ck_core_provider_attempts_model_role",
         ),
         ForeignKeyConstraint(
             ["tenant_id", "turn_id", "task_id"],

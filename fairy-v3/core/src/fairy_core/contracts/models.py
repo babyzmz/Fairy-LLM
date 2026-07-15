@@ -30,6 +30,11 @@ from fairy_core.contracts.common import (
 from fairy_core.contracts.common import (
     PermissionProfileModel as PermissionProfileModel,
 )
+from fairy_core.contracts.model_routing import (
+    ModelSelectionSnapshotInput,
+    ModelSelectionSnapshotModel,
+    RoutingDecisionModel,
+)
 from fairy_core.contracts.runtime import PreviewModel, RuntimeModel
 from fairy_core.documents import (
     DocumentStatus,
@@ -199,12 +204,19 @@ class ImageAttachmentInput(ContractModel):
 
 class AssistantTurnCreateInput(ContractModel):
     task_id: UUID
-    profile_id: str = Field(min_length=1, max_length=255)
+    profile_id: str | None = Field(default=None, min_length=1, max_length=255)
+    model_selection: ModelSelectionSnapshotInput | None = None
     idempotency_key: str = Field(min_length=1, max_length=512)
     image_attachments: tuple[ImageAttachmentInput, ...] = Field(
         default_factory=tuple,
         max_length=4,
     )
+
+    @model_validator(mode="after")
+    def require_one_model_source(self) -> AssistantTurnCreateInput:
+        if (self.profile_id is None) == (self.model_selection is None):
+            raise ValueError("provide exactly one of profile_id or model_selection")
+        return self
 
 
 class AssistantTurnCancelInput(AssistantTurnIdInput):
@@ -548,6 +560,9 @@ class AssistantTurnModel(ContractModel):
     memory_snapshot_id: UUID
     memory_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     idempotency_key: str = Field(min_length=1, max_length=512)
+    model_selection: ModelSelectionSnapshotModel | None
+    routing_decision: RoutingDecisionModel | None
+    budget_approval_run_id: UUID | None
     status: AssistantTurnStatus
     cancellation_revision: int = Field(ge=0)
     usage: dict[str, int]

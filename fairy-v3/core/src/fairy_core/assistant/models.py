@@ -5,14 +5,24 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
+from fairy_core.assistant.routing import RoutingDecision
 from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.ids import new_id
 from fairy_core.domain.models import ScopeContract, Task
-from fairy_core.providers.models import ProviderAttemptStatus, ProviderErrorCategory
+from fairy_core.model_catalog.models import (
+    ModelEndpointKind,
+    ModelSelectionSnapshot,
+)
+from fairy_core.providers.models import (
+    ModelExecutionRole,
+    ProviderAttemptStatus,
+    ProviderErrorCategory,
+)
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _MAX_MESSAGE_LENGTH = 1_000_000
@@ -64,9 +74,13 @@ class ProviderAttempt:
     model_round: int
     attempt_number: int
     profile_id: str
+    model_id: str
+    endpoint_kind: ModelEndpointKind
+    model_role: ModelExecutionRole
     status: ProviderAttemptStatus = ProviderAttemptStatus.STARTED
     error_category: ProviderErrorCategory | None = None
     usage: dict[str, int] = field(default_factory=dict)
+    usage_cost: str | None = None
     created_at: datetime = field(default_factory=_now)
     completed_at: datetime | None = None
 
@@ -78,6 +92,9 @@ class ProviderAttempt:
         model_round: int,
         attempt_number: int,
         profile_id: str,
+        model_id: str,
+        endpoint_kind: ModelEndpointKind,
+        model_role: ModelExecutionRole,
     ) -> ProviderAttempt:
         if isinstance(model_round, bool) or model_round < 1:
             raise ValueError("provider attempt model_round must be positive")
@@ -90,13 +107,17 @@ class ProviderAttempt:
             model_round=model_round,
             attempt_number=attempt_number,
             profile_id=_required_text(profile_id, "profile_id", maximum=255),
+            model_id=_required_text(model_id, "model_id", maximum=255),
+            endpoint_kind=ModelEndpointKind(endpoint_kind),
+            model_role=ModelExecutionRole(model_role),
         )
 
-    def succeed(self, usage: dict[str, int]) -> None:
+    def succeed(self, usage: dict[str, int], *, usage_cost: str | None = None) -> None:
         if self.status is not ProviderAttemptStatus.STARTED:
             raise InvalidTransitionError("provider attempt is already terminal")
         self.status = ProviderAttemptStatus.SUCCEEDED
         self.usage = _normalized_usage(usage)
+        self.usage_cost = _normalized_cost(usage_cost)
         self.completed_at = _now()
 
     def fail(
@@ -104,12 +125,14 @@ class ProviderAttempt:
         *,
         error_category: ProviderErrorCategory,
         usage: dict[str, int],
+        usage_cost: str | None = None,
     ) -> None:
         if self.status is not ProviderAttemptStatus.STARTED:
             raise InvalidTransitionError("provider attempt is already terminal")
         self.status = ProviderAttemptStatus.FAILED
         self.error_category = ProviderErrorCategory(error_category)
         self.usage = _normalized_usage(usage)
+        self.usage_cost = _normalized_cost(usage_cost)
         self.completed_at = _now()
 
 
@@ -289,6 +312,9 @@ class AssistantTurn:
     memory_snapshot_id: UUID
     memory_snapshot_hash: str
     idempotency_key: str
+    model_selection: ModelSelectionSnapshot | None = None
+    routing_decision: RoutingDecision | None = None
+    budget_approval_run_id: UUID | None = None
     status: AssistantTurnStatus = AssistantTurnStatus.CREATED
     cancellation_revision: int = 0
     usage: dict[str, int] = field(default_factory=dict)
@@ -306,6 +332,7 @@ class AssistantTurn:
         scope: ScopeContract,
         profile_id: str,
         idempotency_key: str,
+        model_selection: ModelSelectionSnapshot | None = None,
     ) -> AssistantTurn:
         if scope.task_id != task.id or scope.conversation_id != task.conversation_id:
             raise ValueError("Scope does not match the Task")
@@ -330,7 +357,31 @@ class AssistantTurn:
             memory_snapshot_id=task.memory_snapshot_id,
             memory_snapshot_hash=task.memory_snapshot_hash,
             idempotency_key=normalized_key,
+            model_selection=model_selection,
         )
+
+    def bind_routing(self, decision: RoutingDecision) -> None:
+        if self.routing_decision is not None:
+            if self.routing_decision != decision:
+                raise InvalidTransitionError("Assistant Turn routing is already bound")
+            return
+        if self.is_terminal:
+            raise InvalidTransitionError("terminal Assistant Turn cannot bind routing")
+        self.routing_decision = decision
+        self.updated_at = _now()
+
+    def wait_for_budget_approval(self, *, command_run_id: UUID) -> None:
+        if self.routing_decision is None or not self.routing_decision.approval_required:
+            raise InvalidTransitionError("Assistant Turn does not require budget approval")
+        if self.budget_approval_run_id not in {None, command_run_id}:
+            raise InvalidTransitionError("Assistant Turn budget approval is already bound")
+        self.budget_approval_run_id = command_run_id
+        self.wait_for_tool()
+
+    def resume_budget_approval(self) -> None:
+        if self.budget_approval_run_id is None:
+            raise InvalidTransitionError("Assistant Turn has no budget approval")
+        self.resume()
 
     def start(self) -> None:
         self._transition_to(AssistantTurnStatus.RUNNING)
@@ -534,6 +585,18 @@ def _normalized_usage(usage: dict[str, int]) -> dict[str, int]:
             raise ValueError("provider attempt usage must contain non-negative integers")
         result[_required_text(name, "usage name", maximum=128)] = value
     return result
+
+
+def _normalized_cost(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        amount = Decimal(value)
+    except InvalidOperation as error:
+        raise ValueError("provider attempt usage cost is invalid") from error
+    if not amount.is_finite() or amount < 0:
+        raise ValueError("provider attempt usage cost must be finite and non-negative")
+    return format(amount, "f").rstrip("0").rstrip(".") or "0"
 
 
 __all__ = [

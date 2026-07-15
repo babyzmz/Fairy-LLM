@@ -1,7 +1,11 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { AssistantTurn, EventEnvelope } from "../core/client";
+import type {
+  AssistantTurn,
+  EventEnvelope,
+  ModelSelectionPreference,
+} from "../core/client";
 import {
   assistantDeltaText,
   type AssistantTurnClient,
@@ -24,6 +28,25 @@ describe("assistantDeltaText", () => {
     ];
 
     expect(assistantDeltaText(events, turnId)).toBe("Hello durable world");
+  });
+
+  it("drops provisional text after a projection reset", () => {
+    const reset = {
+      ...deltaEvent("reset", 2, turnId, 0, 0, ""),
+      event_type: "assistant.message.projection_reset",
+      payload: { turn_id: turnId },
+    };
+
+    expect(
+      assistantDeltaText(
+        [
+          deltaEvent("draft", 1, turnId, 0, 0, "Draft response"),
+          reset,
+          deltaEvent("final", 3, turnId, 1, 0, "Reviewed response"),
+        ],
+        turnId,
+      ),
+    ).toBe("Reviewed response");
   });
 });
 
@@ -207,6 +230,45 @@ describe("useAssistantTurn", () => {
     expect(result.current.isBusy).toBe(false);
     expect(onTaskCreated).toHaveBeenCalledWith(taskId);
     expect(onSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it("captures the global model selection before asynchronous preparation", async () => {
+    let resolveTask: ((value: never) => void) | null = null;
+    const createTask = vi.fn<AssistantTurnClient["tasks"]["create"]>(
+      () => new Promise((resolve) => { resolveTask = resolve; }),
+    );
+    const createTurn = vi.fn<AssistantTurnClient["assistant"]["turns"]["create"]>(
+      async () => assistantTurn(),
+    );
+    const initialSelection = selection("auto", null, 7);
+    const { result, rerender } = renderHook(
+      ({ modelSelection }: { modelSelection: ModelSelectionPreference }) =>
+        useAssistantTurn({
+          client: assistantClient({ createTask, createTurn }),
+          conversationId,
+          modelSelection,
+          operationMode: "answer",
+          events: [],
+        }),
+      { initialProps: { modelSelection: initialSelection } },
+    );
+
+    act(() => { void result.current.send("Route this", []); });
+    rerender({
+      modelSelection: selection("manual", "z-ai/glm-5.2", 8),
+    });
+    await act(async () => {
+      resolveTask?.({ task: { id: taskId } } as never);
+    });
+    await waitFor(() => expect(createTurn).toHaveBeenCalledTimes(1));
+
+    expect(createTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_id: taskId,
+        model_selection: { mode: "auto", model_id: null, revision: 7 },
+      }),
+    );
+    expect(createTurn.mock.calls[0]?.[0]).not.toHaveProperty("profile_id");
   });
 
   it("cancels with the current revision and retries a terminal turn", async () => {
@@ -431,6 +493,9 @@ function assistantTurn(overrides: Partial<AssistantTurn> = {}): AssistantTurn {
     scope_digest: "scope-digest",
     memory_snapshot_id: "00000000-0000-4000-8000-000000000040",
     memory_snapshot_hash: "memory-hash",
+    model_selection: null,
+    routing_decision: null,
+    budget_approval_run_id: null,
     cancellation_revision: 2,
     usage: {},
     created_at: "2026-07-11T00:00:00Z",
@@ -439,6 +504,21 @@ function assistantTurn(overrides: Partial<AssistantTurn> = {}): AssistantTurn {
     completed_at: null,
     error_code: null,
     ...overrides,
+  };
+}
+
+function selection(
+  mode: ModelSelectionPreference["mode"],
+  modelId: string | null,
+  revision: number,
+): ModelSelectionPreference {
+  return {
+    mode,
+    model_id: modelId,
+    allow_free_fallback: false,
+    zero_data_retention: false,
+    revision,
+    updated_at: "2026-07-11T00:00:00Z",
   };
 }
 

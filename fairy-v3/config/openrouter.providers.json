@@ -19,7 +19,7 @@
     "model_id": "z-ai/glm-5.2",
     "capabilities": ["text", "tools", "structured_output"],
     "credential_ref": "openrouter",
-    "fallback_profile_id": "openrouter-deepseek-v4-pro",
+    "fallback_profile_id": null,
     "timeout_seconds": 180,
     "enabled": true
   },

@@ -14,8 +14,13 @@ from fairy_core.assistant.models import (
     ToolInvocationStatus,
 )
 from fairy_core.commanding.models import CommandRun, CommandStatus, EventVisibility
-from fairy_core.domain.errors import IdempotencyConflictError, InvalidTransitionError
+from fairy_core.domain.errors import (
+    IdempotencyConflictError,
+    InvalidTransitionError,
+    VersionConflictError,
+)
 from fairy_core.domain.models import ScopeContract, Task
+from fairy_core.model_catalog.models import ModelSelectionSnapshot
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.storage.pagination import StatePage
 from fairy_core.storage.ports import StateStore
@@ -39,12 +44,23 @@ class AssistantLedgerApplication:
         task_id: UUID,
         profile_id: str,
         idempotency_key: str,
+        model_selection: ModelSelectionSnapshot | None = None,
     ) -> AssistantTurn:
         with self._unit_of_work_factory() as unit_of_work:
             task = unit_of_work.state.get_task(task_id)
             if task is None:
                 raise KeyError(f"task not found: {task_id}")
             scope = self._scope_resolver(unit_of_work.state, task)
+            if model_selection is not None:
+                current_selection = unit_of_work.model_catalog.get_selection()
+                if (
+                    current_selection.mode is not model_selection.mode
+                    or current_selection.model_id != model_selection.model_id
+                    or current_selection.allow_free_fallback != model_selection.allow_free_fallback
+                    or current_selection.zero_data_retention != model_selection.zero_data_retention
+                    or current_selection.revision != model_selection.revision
+                ):
+                    raise VersionConflictError("model selection changed before Turn creation")
             existing = unit_of_work.assistant.find_turn_by_idempotency_key(idempotency_key.strip())
             if existing is not None:
                 self._validate_replay(
@@ -52,6 +68,7 @@ class AssistantLedgerApplication:
                     task=task,
                     scope=scope,
                     profile_id=profile_id,
+                    model_selection=model_selection,
                 )
                 return existing
             turn = AssistantTurn.create(
@@ -59,6 +76,7 @@ class AssistantLedgerApplication:
                 scope=scope,
                 profile_id=profile_id,
                 idempotency_key=idempotency_key,
+                model_selection=model_selection,
             )
             persisted, inserted = unit_of_work.assistant.create_turn_if_absent(turn)
             if not inserted:
@@ -67,6 +85,7 @@ class AssistantLedgerApplication:
                     task=task,
                     scope=scope,
                     profile_id=profile_id,
+                    model_selection=model_selection,
                 )
                 return persisted
             message = Message.create(
@@ -117,6 +136,7 @@ class AssistantLedgerApplication:
                     task=task,
                     scope=scope,
                     profile_id=original.profile_id,
+                    model_selection=original.model_selection,
                 )
                 return existing
             retry = AssistantTurn.create(
@@ -124,6 +144,7 @@ class AssistantLedgerApplication:
                 scope=scope,
                 profile_id=original.profile_id,
                 idempotency_key=normalized_key,
+                model_selection=original.model_selection,
             )
             persisted, inserted = unit_of_work.assistant.create_turn_if_absent(retry)
             if not inserted:
@@ -132,6 +153,7 @@ class AssistantLedgerApplication:
                     task=task,
                     scope=scope,
                     profile_id=original.profile_id,
+                    model_selection=original.model_selection,
                 )
                 return persisted
             unit_of_work.commit()
@@ -259,6 +281,7 @@ class AssistantLedgerApplication:
         task: Task,
         scope: ScopeContract,
         profile_id: str,
+        model_selection: ModelSelectionSnapshot | None,
     ) -> None:
         if (
             existing.task_id != task.id
@@ -267,6 +290,7 @@ class AssistantLedgerApplication:
             or existing.scope_digest != scope.scope_digest
             or existing.memory_snapshot_id != task.memory_snapshot_id
             or existing.memory_snapshot_hash != task.memory_snapshot_hash
+            or existing.model_selection != model_selection
         ):
             raise IdempotencyConflictError(
                 "turn idempotency key was already used for a different request"

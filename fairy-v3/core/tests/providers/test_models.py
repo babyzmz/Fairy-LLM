@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from fairy_core.providers.models import (
+    ModelDelta,
     ModelMessage,
     ModelRequest,
     ModelRole,
@@ -129,3 +130,14 @@ def test_secret_value_never_reveals_itself_through_string_conversion() -> None:
 
     with pytest.raises(ValueError, match="secret"):
         SecretValue.from_text("   ")
+
+
+def test_usage_cost_normalization_preserves_integer_magnitude() -> None:
+    delta = ModelDelta.usage_delta(
+        profile_id="cloud-default",
+        sequence=1,
+        usage={"input_tokens": 1},
+        usage_cost="10.00",
+    )
+
+    assert delta.usage_cost == "10"

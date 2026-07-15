@@ -1,0 +1,480 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from enum import StrEnum
+from math import ceil
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from fairy_core.model_catalog.models import (
+    MODEL_ALLOWLIST_BY_ID,
+    ModelAvailability,
+    ModelCatalogSnapshot,
+    ModelCategory,
+    ModelEndpointKind,
+    ModelSelectionMode,
+    ModelSelectionSnapshot,
+)
+from fairy_core.providers import (
+    ModelExecutionRole,
+    ModelMessage,
+    ModelRequest,
+    ModelRole,
+    ProviderCapability,
+)
+
+DEEPSEEK_MODEL_ID = "deepseek/deepseek-v4-pro"
+GLM_MODEL_ID = "z-ai/glm-5.2"
+KIMI_MODEL_ID = "moonshotai/kimi-k2.7-code"
+IMAGE_MODEL_ID = "google/gemini-3.1-flash-lite-image"
+MUSIC_MODEL_ID = "google/lyria-3-pro-preview"
+VIDEO_MODEL_ID = "bytedance/seedance-2.0"
+NEMOTRON_FREE_MODEL_ID = "nvidia/nemotron-3-ultra-550b-a55b:free"
+QWEN_FREE_MODEL_ID = "qwen/qwen3-coder:free"
+
+ROUTER_MAX_OUTPUT_TOKENS = 384
+TURN_AUTO_APPROVAL_USD = Decimal("0.25")
+TURN_AUTOMATIC_TARGET_USD = Decimal("0.10")
+
+
+class RoutingTaskKind(StrEnum):
+    GENERAL = "general"
+    REASONING = "reasoning"
+    CODE = "code"
+    IMAGE = "image"
+    MUSIC = "music"
+    VIDEO = "video"
+
+
+class RoutingComplexity(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class _RoutingPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    task_kind: RoutingTaskKind
+    complexity: RoutingComplexity
+    needs_review: bool
+    estimated_output_tokens: int = Field(ge=256, le=16_384)
+    public_summary: str = Field(min_length=1, max_length=240)
+
+
+@dataclass(frozen=True, slots=True)
+class RoutingDecision:
+    task_kind: RoutingTaskKind
+    complexity: RoutingComplexity
+    primary_model_id: str
+    reviewer_model_id: str | None
+    media_model_id: str | None
+    estimated_output_tokens: int
+    estimated_cost_usd: str | None
+    cost_estimate_known: bool
+    approval_required: bool
+    public_summary: str
+
+    def __post_init__(self) -> None:
+        for model_id in (
+            self.primary_model_id,
+            self.reviewer_model_id,
+            self.media_model_id,
+        ):
+            if model_id is not None and model_id not in MODEL_ALLOWLIST_BY_ID:
+                raise ValueError("routing decision must use an allowlisted model")
+        primary = MODEL_ALLOWLIST_BY_ID[self.primary_model_id]
+        if primary.endpoint_kind is not ModelEndpointKind.CHAT:
+            raise ValueError("routing primary model must use the chat endpoint")
+        if self.reviewer_model_id is not None:
+            reviewer = MODEL_ALLOWLIST_BY_ID[self.reviewer_model_id]
+            if reviewer.endpoint_kind is not ModelEndpointKind.CHAT:
+                raise ValueError("routing reviewer must use the chat endpoint")
+        if self.media_model_id is not None:
+            media = MODEL_ALLOWLIST_BY_ID[self.media_model_id]
+            if media.endpoint_kind is ModelEndpointKind.CHAT:
+                raise ValueError("routing media model must use a specialized endpoint")
+        if not 256 <= self.estimated_output_tokens <= 16_384:
+            raise ValueError("routing output estimate is outside the supported range")
+        if not self.public_summary.strip() or len(self.public_summary) > 240:
+            raise ValueError("routing public summary is invalid")
+        if self.cost_estimate_known != (self.estimated_cost_usd is not None):
+            raise ValueError("routing cost estimate state is inconsistent")
+        if self.estimated_cost_usd is not None:
+            _non_negative_decimal(self.estimated_cost_usd, "estimated_cost_usd")
+
+    @property
+    def execution_model_ids(self) -> tuple[str, ...]:
+        return tuple(
+            model_id
+            for model_id in (
+                self.primary_model_id,
+                self.reviewer_model_id,
+                self.media_model_id,
+            )
+            if model_id is not None
+        )
+
+
+def build_router_request(
+    *,
+    profile_id: str,
+    user_request: str,
+    attachment_count: int,
+    selection: ModelSelectionSnapshot,
+    fallback_profile_ids: tuple[str, ...],
+) -> ModelRequest:
+    if selection.mode is not ModelSelectionMode.AUTO:
+        raise ValueError("only Auto selection can invoke the model router")
+    schema = _RoutingPayload.model_json_schema()
+    return ModelRequest.create(
+        profile_id=profile_id,
+        messages=(
+            ModelMessage.create(
+                role=ModelRole.SYSTEM,
+                content=(
+                    "Classify the user's requested outcome for Fairy. Return only the strict "
+                    "RoutingDecision JSON. Do not expose hidden reasoning. public_summary must be "
+                    "a short user-safe explanation of the route. Select image, music, or video "
+                    "only when generation of that medium is the requested deliverable."
+                ),
+            ),
+            ModelMessage.create(
+                role=ModelRole.USER,
+                content=json.dumps(
+                    {
+                        "attachment_count": attachment_count,
+                        "request": user_request,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+            ),
+        ),
+        tools=(),
+        required_capabilities=frozenset(
+            {ProviderCapability.TEXT, ProviderCapability.STRUCTURED_OUTPUT}
+        ),
+        max_output_tokens=ROUTER_MAX_OUTPUT_TOKENS,
+        model_role=ModelExecutionRole.COORDINATOR,
+        fallback_profile_ids=fallback_profile_ids,
+        allow_profile_fallback=False,
+        response_schema_name="fairy_routing_decision",
+        response_schema=schema,
+        require_parameters=True,
+        deny_data_collection=True,
+        zero_data_retention=selection.zero_data_retention,
+    )
+
+
+def parse_router_output(value: str) -> _RoutingPayload:
+    try:
+        return _RoutingPayload.model_validate_json(value)
+    except ValidationError as error:
+        raise ValueError("router returned invalid structured output") from error
+
+
+def auto_routing_decision(
+    *,
+    routed: _RoutingPayload,
+    catalog: ModelCatalogSnapshot,
+    user_request: str,
+    attachment_count: int,
+    allow_free_fallback: bool,
+) -> RoutingDecision:
+    task_kind = routed.task_kind
+    media_model_id = {
+        RoutingTaskKind.IMAGE: IMAGE_MODEL_ID,
+        RoutingTaskKind.MUSIC: MUSIC_MODEL_ID,
+        RoutingTaskKind.VIDEO: VIDEO_MODEL_ID,
+    }.get(task_kind)
+    if task_kind is RoutingTaskKind.CODE:
+        primary_model_id = KIMI_MODEL_ID
+    elif task_kind is RoutingTaskKind.REASONING or (
+        task_kind is RoutingTaskKind.GENERAL and routed.complexity is RoutingComplexity.HIGH
+    ):
+        primary_model_id = GLM_MODEL_ID
+    else:
+        primary_model_id = DEEPSEEK_MODEL_ID
+    if attachment_count and task_kind not in {
+        RoutingTaskKind.IMAGE,
+        RoutingTaskKind.MUSIC,
+        RoutingTaskKind.VIDEO,
+    }:
+        primary_model_id = KIMI_MODEL_ID
+
+    preferred_model_id = primary_model_id
+    if attachment_count == 0 and not _catalog_model_usable(catalog, primary_model_id):
+        candidates = {
+            KIMI_MODEL_ID: (DEEPSEEK_MODEL_ID, GLM_MODEL_ID),
+            GLM_MODEL_ID: (DEEPSEEK_MODEL_ID,),
+            DEEPSEEK_MODEL_ID: (GLM_MODEL_ID,),
+        }.get(primary_model_id, ())
+        if allow_free_fallback:
+            candidates = (
+                *candidates,
+                QWEN_FREE_MODEL_ID if task_kind is RoutingTaskKind.CODE else NEMOTRON_FREE_MODEL_ID,
+            )
+        primary_model_id = next(
+            (model_id for model_id in candidates if _catalog_model_usable(catalog, model_id)),
+            primary_model_id,
+        )
+
+    reviewer_model_id: str | None = None
+    if routed.needs_review or routed.complexity is RoutingComplexity.HIGH:
+        preferred_reviewer = DEEPSEEK_MODEL_ID if primary_model_id == GLM_MODEL_ID else GLM_MODEL_ID
+        if _catalog_model_usable(catalog, preferred_reviewer):
+            reviewer_model_id = preferred_reviewer
+
+    route_calls = (
+        (DEEPSEEK_MODEL_ID, ROUTER_MAX_OUTPUT_TOKENS),
+        (primary_model_id, routed.estimated_output_tokens),
+        *(((reviewer_model_id, routed.estimated_output_tokens),) if reviewer_model_id else ()),
+    )
+    estimate = estimate_text_cost(
+        catalog,
+        calls=route_calls,
+        prompt_characters=max(1, len(user_request)),
+    )
+    if media_model_id is not None and task_kind is RoutingTaskKind.IMAGE:
+        media_estimate = _single_media_request_cost(catalog, media_model_id)
+        estimate = (
+            estimate + media_estimate
+            if estimate is not None and media_estimate is not None
+            else None
+        )
+    execution_models = tuple(
+        model_id
+        for model_id in (primary_model_id, reviewer_model_id, media_model_id)
+        if model_id is not None
+    )
+    paid_execution_count = sum(
+        1 for model_id in set(execution_models) if MODEL_ALLOWLIST_BY_ID[model_id].paid
+    )
+    approval_required = (
+        task_kind in {RoutingTaskKind.MUSIC, RoutingTaskKind.VIDEO}
+        or (task_kind is RoutingTaskKind.IMAGE and estimate is None)
+        or (
+            task_kind is RoutingTaskKind.IMAGE
+            and estimate is not None
+            and estimate > TURN_AUTOMATIC_TARGET_USD
+        )
+        or estimate is None
+        or estimate > TURN_AUTO_APPROVAL_USD
+        or paid_execution_count > 2
+    )
+    public_summary = routed.public_summary.strip()
+    if primary_model_id != preferred_model_id:
+        fallback_note = " A compatible available model was selected."
+        public_summary = f"{public_summary[: 240 - len(fallback_note)]}{fallback_note}"
+    return RoutingDecision(
+        task_kind=task_kind,
+        complexity=routed.complexity,
+        primary_model_id=primary_model_id,
+        reviewer_model_id=reviewer_model_id,
+        media_model_id=media_model_id,
+        estimated_output_tokens=routed.estimated_output_tokens,
+        estimated_cost_usd=_decimal_text(estimate) if estimate is not None else None,
+        cost_estimate_known=estimate is not None,
+        approval_required=approval_required,
+        public_summary=public_summary,
+    )
+
+
+def manual_routing_decision(
+    *,
+    selection: ModelSelectionSnapshot,
+    catalog: ModelCatalogSnapshot,
+    user_request: str,
+) -> RoutingDecision:
+    if selection.mode is not ModelSelectionMode.MANUAL or selection.model_id is None:
+        raise ValueError("manual routing requires a selected model")
+    allowed = MODEL_ALLOWLIST_BY_ID[selection.model_id]
+    if allowed.endpoint_kind is not ModelEndpointKind.CHAT:
+        raise ValueError("manual media selections require the media generation API")
+    task_kind = (
+        RoutingTaskKind.CODE
+        if allowed.category in {ModelCategory.CODE, ModelCategory.FREE_CODE}
+        else RoutingTaskKind.GENERAL
+    )
+    estimate = estimate_text_cost(
+        catalog,
+        calls=((selection.model_id, 4_096),),
+        prompt_characters=max(1, len(user_request)),
+    )
+    return RoutingDecision(
+        task_kind=task_kind,
+        complexity=RoutingComplexity.MEDIUM,
+        primary_model_id=selection.model_id,
+        reviewer_model_id=None,
+        media_model_id=None,
+        estimated_output_tokens=4_096,
+        estimated_cost_usd=_decimal_text(estimate) if estimate is not None else None,
+        cost_estimate_known=estimate is not None,
+        approval_required=(allowed.paid and estimate is None)
+        or (estimate is not None and estimate > TURN_AUTO_APPROVAL_USD),
+        public_summary=f"Using {allowed.display_name} for this turn.",
+    )
+
+
+def estimate_text_cost(
+    catalog: ModelCatalogSnapshot,
+    *,
+    calls: tuple[tuple[str, int], ...],
+    prompt_characters: int,
+) -> Decimal | None:
+    entries = {entry.model_id: entry for entry in catalog.entries}
+    prompt_tokens = max(1, ceil(prompt_characters / 4)) + 2_048
+    total = Decimal(0)
+    prior_output = 0
+    for model_id, output_tokens in calls:
+        allowed = MODEL_ALLOWLIST_BY_ID[model_id]
+        if not allowed.paid:
+            continue
+        entry = entries.get(model_id)
+        if entry is None:
+            return None
+        prompt_price = next(
+            (
+                price
+                for price in entry.prices
+                if price.billable == "prompt" and price.unit == "token"
+            ),
+            None,
+        )
+        completion_price = next(
+            (
+                price
+                for price in entry.prices
+                if price.billable == "completion" and price.unit == "token"
+            ),
+            None,
+        )
+        request_prices = tuple(price for price in entry.prices if price.unit == "request")
+        if prompt_price is None or completion_price is None:
+            if len(request_prices) != 1:
+                return None
+            total += _non_negative_decimal(request_prices[0].cost_usd, "request price")
+        else:
+            total += _non_negative_decimal(prompt_price.cost_usd, "prompt price") * (
+                prompt_tokens + prior_output
+            )
+            total += (
+                _non_negative_decimal(
+                    completion_price.cost_usd,
+                    "completion price",
+                )
+                * output_tokens
+            )
+        prior_output += output_tokens
+    return total
+
+
+def routing_decision_record(decision: RoutingDecision) -> dict[str, Any]:
+    return {
+        "task_kind": decision.task_kind.value,
+        "complexity": decision.complexity.value,
+        "primary_model_id": decision.primary_model_id,
+        "reviewer_model_id": decision.reviewer_model_id,
+        "media_model_id": decision.media_model_id,
+        "estimated_output_tokens": decision.estimated_output_tokens,
+        "estimated_cost_usd": decision.estimated_cost_usd,
+        "cost_estimate_known": decision.cost_estimate_known,
+        "approval_required": decision.approval_required,
+        "public_summary": decision.public_summary,
+    }
+
+
+def routing_decision_from_record(record: object) -> RoutingDecision | None:
+    if record is None:
+        return None
+    if not isinstance(record, dict):
+        raise ValueError("stored routing decision is invalid")
+    return RoutingDecision(
+        task_kind=RoutingTaskKind(record["task_kind"]),
+        complexity=RoutingComplexity(record["complexity"]),
+        primary_model_id=str(record["primary_model_id"]),
+        reviewer_model_id=(
+            str(record["reviewer_model_id"])
+            if record.get("reviewer_model_id") is not None
+            else None
+        ),
+        media_model_id=(
+            str(record["media_model_id"]) if record.get("media_model_id") is not None else None
+        ),
+        estimated_output_tokens=int(record["estimated_output_tokens"]),
+        estimated_cost_usd=(
+            str(record["estimated_cost_usd"])
+            if record.get("estimated_cost_usd") is not None
+            else None
+        ),
+        cost_estimate_known=bool(record["cost_estimate_known"]),
+        approval_required=bool(record["approval_required"]),
+        public_summary=str(record["public_summary"]),
+    )
+
+
+def _non_negative_decimal(value: str, name: str) -> Decimal:
+    try:
+        result = Decimal(value)
+    except InvalidOperation as error:
+        raise ValueError(f"{name} is invalid") from error
+    if not result.is_finite() or result < 0:
+        raise ValueError(f"{name} must be finite and non-negative")
+    return result
+
+
+def _catalog_model_usable(catalog: ModelCatalogSnapshot, model_id: str) -> bool:
+    return any(
+        entry.model_id == model_id and entry.availability is not ModelAvailability.UNAVAILABLE
+        for entry in catalog.entries
+    )
+
+
+def _single_media_request_cost(
+    catalog: ModelCatalogSnapshot,
+    model_id: str,
+) -> Decimal | None:
+    entry = next((item for item in catalog.entries if item.model_id == model_id), None)
+    if entry is None:
+        return None
+    prices = tuple(
+        price
+        for price in entry.prices
+        if price.unit in {"request", "image"} and price.variant in {None, "1k", "1024x1024"}
+    )
+    if len(prices) != 1:
+        return None
+    return _non_negative_decimal(prices[0].cost_usd, "media request price")
+
+
+def _decimal_text(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
+__all__ = [
+    "DEEPSEEK_MODEL_ID",
+    "GLM_MODEL_ID",
+    "IMAGE_MODEL_ID",
+    "KIMI_MODEL_ID",
+    "MUSIC_MODEL_ID",
+    "NEMOTRON_FREE_MODEL_ID",
+    "QWEN_FREE_MODEL_ID",
+    "ROUTER_MAX_OUTPUT_TOKENS",
+    "TURN_AUTOMATIC_TARGET_USD",
+    "VIDEO_MODEL_ID",
+    "ModelExecutionRole",
+    "RoutingComplexity",
+    "RoutingDecision",
+    "RoutingTaskKind",
+    "auto_routing_decision",
+    "build_router_request",
+    "estimate_text_cost",
+    "manual_routing_decision",
+    "parse_router_output",
+    "routing_decision_from_record",
+    "routing_decision_record",
+]

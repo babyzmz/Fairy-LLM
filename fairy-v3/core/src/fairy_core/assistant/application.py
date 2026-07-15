@@ -18,8 +18,9 @@ from fairy_core.assistant.models import (
     ToolInvocation,
     ToolInvocationStatus,
 )
-from fairy_core.assistant.plan_budget import consume_model_budget, consume_tool_budget
+from fairy_core.assistant.plan_budget import consume_tool_budget
 from fairy_core.assistant.provider_attempts import ProviderAttemptRecorder
+from fairy_core.assistant.routing_runtime import AssistantRoutingMixin
 from fairy_core.assistant.tools import (
     DIRECT_ANSWER_TOOL_NAME,
     ToolCandidateError,
@@ -37,11 +38,15 @@ from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.domain.execution import Approval
 from fairy_core.domain.models import TaskStatus
 from fairy_core.mcp.ports import McpCancelledError
+from fairy_core.model_catalog.models import (
+    ModelSelectionMode,
+)
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.providers import (
     CancellationToken,
     ModelDeltaKind,
+    ModelExecutionRole,
     ModelMessage,
     ModelRequest,
     ModelRole,
@@ -60,7 +65,7 @@ from fairy_core.providers import (
 )
 
 
-class AssistantApplication:
+class AssistantApplication(AssistantRoutingMixin):
     def __init__(
         self,
         *,
@@ -108,25 +113,76 @@ class AssistantApplication:
         ephemeral_context: list[ModelMessage] = []
         try:
             if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
-                if self._resume_pending_tool(turn_id, cancellation):
-                    return self._turns.get(turn_id)
-                self._resume_after_tools(turn_id)
-                ephemeral_context.extend(self._durable_tool_context(turn_id))
-                model_round_start = self._next_model_round(turn_id)
-            for model_round in range(model_round_start, limits.MAX_MODEL_ROUNDS + 1):
+                if turn.budget_approval_run_id is not None:
+                    budget_state = self._resume_budget_approval(turn_id, cancellation)
+                    if budget_state == "waiting":
+                        return self._turns.get(turn_id)
+                    if budget_state == "rejected":
+                        return self._fail_turn(
+                            turn_id,
+                            None,
+                            error_code="USER_REJECTED",
+                        )
+                else:
+                    if self._resume_pending_tool(turn_id, cancellation):
+                        return self._turns.get(turn_id)
+                    self._resume_after_tools(turn_id)
+                    ephemeral_context.extend(self._durable_tool_context(turn_id))
+                    model_round_start = self._next_model_round(turn_id)
+
+            turn = self._turns.get(turn_id)
+            decision = self._ensure_routing(turn, cancellation)
+            turn = self._turns.get(turn_id)
+            if decision is not None and decision.approval_required:
+                if turn.budget_approval_run_id is None:
+                    return self._request_budget_approval(turn_id, decision)
+                if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
+                    return turn
+            if (
+                turn.model_selection is not None
+                and turn.model_selection.mode is ModelSelectionMode.AUTO
+                and model_round_start == 1
+            ):
+                model_round_start = 2
+
+            final_model_round = limits.MAX_MODEL_ROUNDS
+            if decision is not None and decision.reviewer_model_id is not None:
+                final_model_round -= 1
+            for model_round in range(model_round_start, final_model_round + 1):
                 cancellation.raise_if_cancelled()
-                turn, current_run = self._start_model_round(turn_id, model_round)
-                profile = self._providers.profile(turn.profile_id)
+                profile = self._execution_profile(turn, decision)
+                turn, current_run = self._start_model_round(
+                    turn_id,
+                    model_round,
+                    profile_id=profile.id,
+                    model_role=ModelExecutionRole.PRIMARY,
+                )
                 context = self._context.build(
                     turn,
                     provider_capabilities=profile.capabilities,
                 )
                 request = ModelRequest.create(
-                    profile_id=turn.profile_id,
+                    profile_id=profile.id,
                     messages=(*context.messages, *ephemeral_context),
                     tools=context.tools,
                     required_capabilities=context.required_capabilities,
-                    max_output_tokens=16_384,
+                    max_output_tokens=(
+                        decision.estimated_output_tokens if decision is not None else 16_384
+                    ),
+                    model_role=ModelExecutionRole.PRIMARY,
+                    fallback_profile_ids=self._fallback_profile_ids(
+                        turn=turn,
+                        decision=decision,
+                        required_capabilities=context.required_capabilities,
+                    ),
+                    allow_profile_fallback=turn.model_selection is None,
+                    require_parameters=turn.model_selection is not None,
+                    deny_data_collection=True,
+                    zero_data_retention=(
+                        turn.model_selection.zero_data_retention
+                        if turn.model_selection is not None
+                        else False
+                    ),
                 )
                 offered_definitions = {
                     definition.name: definition for definition in context.tool_definitions
@@ -142,21 +198,28 @@ class AssistantApplication:
                     self._turns.require_active(turn_id)
                     if delta.kind is ModelDeltaKind.TEXT:
                         assert delta.text is not None
+                        visible_length = sum(map(len, all_text))
+                        buffered_length = (
+                            sum(map(len, round_text))
+                            if decision is not None and decision.reviewer_model_id is not None
+                            else 0
+                        )
                         if (
-                            sum(map(len, all_text)) + len(delta.text)
+                            visible_length + buffered_length + len(delta.text)
                             > limits.MAX_ASSISTANT_CHARACTERS
                         ):
                             raise ValueError("assistant output exceeds the durable message limit")
-                        chunk_index += 1
-                        self._append_delta(
-                            turn_id=turn_id,
-                            run=current_run,
-                            model_round=model_round,
-                            chunk_index=chunk_index,
-                            text=delta.text,
-                        )
                         round_text.append(delta.text)
-                        all_text.append(delta.text)
+                        if decision is None or decision.reviewer_model_id is None:
+                            chunk_index += 1
+                            self._append_delta(
+                                turn_id=turn_id,
+                                run=current_run,
+                                model_round=model_round,
+                                chunk_index=chunk_index,
+                                text=delta.text,
+                            )
+                            all_text.append(delta.text)
                     elif delta.kind is ModelDeltaKind.TOOL_CALL:
                         if delta.tool_call_id is None:
                             raise ToolCandidateError("tool candidate has no call id")
@@ -182,6 +245,21 @@ class AssistantApplication:
                 ]
                 if len(direct_candidates) == 1 and not external_candidates:
                     answer = direct_answer(direct_candidates[0].arguments())
+                    if decision is not None and decision.reviewer_model_id is not None:
+                        self._complete_model_round(
+                            current_run,
+                            output={"draft_ready": True},
+                        )
+                        return self._review_and_complete(
+                            turn_id=turn_id,
+                            decision=decision,
+                            source_messages=request.messages,
+                            draft=answer,
+                            model_round=model_round + 1,
+                            chunk_index=chunk_index,
+                            usage=usage,
+                            cancellation=cancellation,
+                        )
                     chunk_index += 1
                     self._append_delta(
                         turn_id=turn_id,
@@ -200,6 +278,17 @@ class AssistantApplication:
                 if direct_candidates:
                     external_candidates = list(candidates.values())
                 if external_candidates:
+                    if turn.model_selection is not None and round_text:
+                        self._reset_message_projection(
+                            turn_id=turn_id,
+                            run=current_run,
+                            through_chunk_index=chunk_index,
+                        )
+                        return self._fail_turn(
+                            turn_id,
+                            current_run,
+                            error_code="PROVIDER_PROTOCOL_ERROR",
+                        )
                     if tool_count + len(external_candidates) > limits.MAX_TOOL_INVOCATIONS:
                         return self._fail_turn(
                             turn_id,
@@ -246,6 +335,21 @@ class AssistantApplication:
                     current_run = None
                     continue
                 if round_text:
+                    if decision is not None and decision.reviewer_model_id is not None:
+                        self._complete_model_round(
+                            current_run,
+                            output={"draft_ready": True},
+                        )
+                        return self._review_and_complete(
+                            turn_id=turn_id,
+                            decision=decision,
+                            source_messages=request.messages,
+                            draft="".join(round_text),
+                            model_round=model_round + 1,
+                            chunk_index=chunk_index,
+                            usage=usage,
+                            cancellation=cancellation,
+                        )
                     return self._complete_turn(
                         turn_id=turn_id,
                         run=current_run,
@@ -333,142 +437,6 @@ class AssistantApplication:
             raise
         finally:
             self._turns.release_terminal_images(turn_id, self._image_attachments)
-
-    def _start_model_round(
-        self,
-        turn_id: UUID,
-        model_round: int,
-    ) -> tuple[AssistantTurn, CommandRun]:
-        with self._unit_of_work_factory() as unit_of_work:
-            turn = require_turn(unit_of_work, turn_id)
-            task = require_task(unit_of_work, turn.task_id)
-            scope = self._scope_resolver(unit_of_work.state, task)
-            consume_model_budget(unit_of_work, task.id)
-            started = turn.status is AssistantTurnStatus.CREATED
-            if started:
-                expected_status = turn.status
-                expected_revision = turn.cancellation_revision
-                turn.start()
-                unit_of_work.assistant.update_turn(
-                    turn,
-                    expected_status=expected_status,
-                    expected_cancellation_revision=expected_revision,
-                )
-                if task.status is TaskStatus.PLANNING:
-                    task.transition_to(TaskStatus.EXECUTING)
-                    unit_of_work.state.save_task(task)
-                elif task.status is TaskStatus.FAILED:
-                    task.transition_to(TaskStatus.REPAIRING)
-                    task.transition_to(TaskStatus.EXECUTING)
-                    unit_of_work.state.save_task(task)
-            elif turn.status is not AssistantTurnStatus.RUNNING:
-                raise ValueError(f"Assistant Turn cannot run from {turn.status.value}")
-            bus = self._command_bus(unit_of_work.commands)
-            policy = self._execution_policy.resolve(
-                unit_of_work.execution_settings,
-                execution_target=scope.execution_target,
-            )
-            dispatch = bus.submit(
-                CommandRequest(
-                    tool_name="model.generate",
-                    actor="assistant",
-                    scope=scope,
-                    payload={
-                        "turn_id": str(turn.id),
-                        "profile_id": turn.profile_id,
-                        "model_round": model_round,
-                    },
-                    idempotency_key=f"assistant:{turn.id}:model:{model_round}",
-                ),
-                profile=policy.profile,
-                capability_overrides=dict(policy.capability_overrides),
-                sandbox_healthy=policy.sandbox_healthy,
-            )
-            if not dispatch.accepted or dispatch.run is None:
-                raise ProviderUnavailableError(
-                    dispatch.error_code or "model provider command was rejected"
-                )
-            if dispatch.requires_approval:
-                raise RuntimeError("model generation cannot require approval")
-            if dispatch.run.status is not CommandStatus.QUEUED:
-                raise RuntimeError("model generation command is not queued")
-            running = bus.start(dispatch.run.id)
-            if started:
-                user_message = unit_of_work.assistant.message_for_turn(
-                    turn.id,
-                    MessageRole.USER,
-                )
-                if user_message is not None:
-                    append_message_created(
-                        unit_of_work.commands,
-                        run=running,
-                        message=user_message,
-                    )
-                unit_of_work.commands.append_event(
-                    run_id=running.id,
-                    event_type="assistant.turn.started",
-                    visibility=EventVisibility.USER,
-                    message="Assistant turn started",
-                    payload={"turn_id": str(turn.id), "profile_id": turn.profile_id},
-                    lease_owner=running.lease_owner,
-                    lease_fence=running.lease_fence,
-                )
-            unit_of_work.commit()
-        return turn, running
-
-    def _append_delta(
-        self,
-        *,
-        turn_id: UUID,
-        run: CommandRun,
-        model_round: int,
-        chunk_index: int,
-        text: str,
-    ) -> None:
-        with self._unit_of_work_factory() as unit_of_work:
-            turn = require_turn(unit_of_work, turn_id)
-            if turn.status is not AssistantTurnStatus.RUNNING:
-                raise ProviderCancelledError("Assistant Turn is no longer running")
-            unit_of_work.commands.append_event(
-                run_id=run.id,
-                event_type="assistant.message.delta",
-                visibility=EventVisibility.USER,
-                message="Assistant response updated",
-                payload={
-                    "turn_id": str(turn_id),
-                    "model_round": model_round,
-                    "chunk_index": chunk_index,
-                    "text": text,
-                },
-                lease_owner=run.lease_owner,
-                lease_fence=run.lease_fence,
-            )
-            unit_of_work.commit()
-
-    def _wait_for_tools(
-        self,
-        *,
-        turn_id: UUID,
-        run: CommandRun,
-        candidate_count: int,
-    ) -> None:
-        with self._unit_of_work_factory() as unit_of_work:
-            turn = require_turn(unit_of_work, turn_id)
-            expected_status = turn.status
-            expected_revision = turn.cancellation_revision
-            turn.wait_for_tool()
-            unit_of_work.assistant.update_turn(
-                turn,
-                expected_status=expected_status,
-                expected_cancellation_revision=expected_revision,
-            )
-            self._command_bus(unit_of_work.commands).complete(
-                run.id,
-                output={"tool_candidates": candidate_count},
-                lease_owner=run.lease_owner,
-                lease_fence=run.lease_fence,
-            )
-            unit_of_work.commit()
 
     def _execute_candidate(
         self,
@@ -1022,6 +990,14 @@ class AssistantApplication:
         with self._unit_of_work_factory() as unit_of_work:
             turn = require_turn(unit_of_work, turn_id)
             task = require_task(unit_of_work, turn.task_id)
+            completed_usage = usage
+            if turn.model_selection is not None:
+                attempt_usage: dict[str, int] = {}
+                for attempt in unit_of_work.assistant.list_provider_attempts(turn.id):
+                    for name, value in attempt.usage.items():
+                        attempt_usage[name] = attempt_usage.get(name, 0) + value
+                if attempt_usage:
+                    completed_usage = attempt_usage
             message = Message.create(
                 conversation_id=turn.conversation_id,
                 task_id=turn.task_id,
@@ -1033,7 +1009,7 @@ class AssistantApplication:
             )
             expected_status = turn.status
             expected_revision = turn.cancellation_revision
-            turn.complete(usage=usage)
+            turn.complete(usage=completed_usage)
             unit_of_work.assistant.append_message(message)
             unit_of_work.assistant.update_turn(
                 turn,
@@ -1053,7 +1029,7 @@ class AssistantApplication:
                 payload={
                     "turn_id": str(turn.id),
                     "message_id": str(message.id),
-                    "usage": usage,
+                    "usage": completed_usage,
                 },
                 lease_owner=run.lease_owner,
                 lease_fence=run.lease_fence,

@@ -62,11 +62,7 @@ def test_openrouter_profile_preset_is_secret_free_and_allowlisted() -> None:
         "nvidia/nemotron-3-ultra-550b-a55b:free",
         "qwen/qwen3-coder:free",
     ]
-    assert settings.profiles[1].fallback_profile_id == settings.profiles[0].id
-    assert all(
-        profile.fallback_profile_id is None
-        for profile in settings.profiles[2:]
-    )
+    assert all(profile.fallback_profile_id is None for profile in settings.profiles)
     assert "tencent/hy3:free" not in raw
     assert "openrouter/free" not in raw
     assert "sk-or-" not in raw

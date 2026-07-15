@@ -108,9 +108,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-all.ps1 -Requir
 Use `-SkipDocker` when an intentionally local-only gate is required. Static
 Preview itself does not require Docker or WSL.
 
-For local OpenRouter development, the checked-in free-model preset uses
-NVIDIA Nemotron 3 Ultra first and Tencent Hy3 as its explicit fallback. Start
-the Tauri application through the repository launcher. It creates a temporary
+For local OpenRouter development, the checked-in preset exposes only the fixed
+Composer allowlist. Cross-model fallback is chosen per Auto Turn by Core and is
+never applied to a manual model selection. Start the Tauri application through
+the repository launcher. It creates a temporary
 ASCII path alias when Vite cannot safely serve the repository path. The key is
 optional; when supplied, the script reads it only into the child-process
 environment and never copies it into the repository:

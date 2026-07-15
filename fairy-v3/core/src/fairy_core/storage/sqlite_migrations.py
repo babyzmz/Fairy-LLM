@@ -32,6 +32,7 @@ _HISTORY_METADATA_REVISION = "20260712_history_metadata"
 _WORKSPACE_IDENTITY_REVISION = "20260713_workspace_identity"
 _RUNTIME_WORKSPACE_BINDING_REVISION = "20260713_runtime_workspace_binding"
 _RUNTIME_GRAPH_REVISION = "20260713_runtime_graph"
+_ASSISTANT_MODEL_ROUTING_REVISION = "20260715_assistant_model_routing"
 
 
 def _datetime(value: str | None) -> datetime | None:
@@ -776,6 +777,60 @@ def migrate_mcp_request_results(engine: Engine) -> None:
             ),
             {
                 "revision": _MCP_REQUEST_RESULTS_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_assistant_model_routing(engine: Engine) -> None:
+    """Add immutable selection, routing, and provider accounting fields."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE IF NOT EXISTS core_local_migrations (
+                revision TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _ASSISTANT_MODEL_ROUTING_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        additions = {
+            "core_assistant_turns": {
+                "model_selection": "JSON",
+                "routing_decision": "JSON",
+                "budget_approval_run_id": "VARCHAR(36)",
+            },
+            "core_assistant_provider_attempts": {
+                "model_id": "VARCHAR(255) NOT NULL DEFAULT 'legacy'",
+                "endpoint_kind": "VARCHAR(32) NOT NULL DEFAULT 'chat'",
+                "model_role": "VARCHAR(32) NOT NULL DEFAULT 'primary'",
+                "usage_cost": "VARCHAR(64)",
+            },
+        }
+        for table_name, columns_to_add in additions.items():
+            if table_name not in tables:
+                continue
+            columns = {column["name"] for column in inspect(connection).get_columns(table_name)}
+            for name, definition in columns_to_add.items():
+                if name not in columns:
+                    connection.exec_driver_sql(
+                        f'ALTER TABLE "{table_name}" ADD COLUMN "{name}" {definition}'
+                    )
+        connection.execute(
+            text(
+                """
+                INSERT INTO core_local_migrations (revision, applied_at)
+                VALUES (:revision, :applied_at)
+                """
+            ),
+            {
+                "revision": _ASSISTANT_MODEL_ROUTING_REVISION,
                 "applied_at": datetime.now(UTC).isoformat(),
             },
         )

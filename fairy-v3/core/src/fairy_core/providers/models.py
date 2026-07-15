@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
@@ -62,13 +64,23 @@ class ProviderErrorCategory(StrEnum):
     UNKNOWN = "unknown"
 
 
+class ModelExecutionRole(StrEnum):
+    COORDINATOR = "coordinator"
+    PRIMARY = "primary"
+    REVIEWER = "reviewer"
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderAttemptEvent:
     profile_id: str
+    model_id: str
+    endpoint_kind: str
+    model_role: ModelExecutionRole
     attempt_number: int
     status: ProviderAttemptStatus
     error_category: ProviderErrorCategory | None = None
     usage: Mapping[str, int] = field(default_factory=dict)
+    usage_cost: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,6 +332,14 @@ class ModelRequest:
     tools: tuple[ModelTool, ...]
     required_capabilities: frozenset[ProviderCapability]
     max_output_tokens: int
+    model_role: ModelExecutionRole
+    fallback_profile_ids: tuple[str, ...]
+    allow_profile_fallback: bool
+    response_schema_name: str | None
+    response_schema: Mapping[str, Any] | None
+    require_parameters: bool
+    deny_data_collection: bool
+    zero_data_retention: bool
 
     @classmethod
     def create(
@@ -330,6 +350,14 @@ class ModelRequest:
         tools: tuple[ModelTool, ...],
         required_capabilities: frozenset[ProviderCapability],
         max_output_tokens: int,
+        model_role: ModelExecutionRole = ModelExecutionRole.PRIMARY,
+        fallback_profile_ids: tuple[str, ...] = (),
+        allow_profile_fallback: bool = True,
+        response_schema_name: str | None = None,
+        response_schema: Mapping[str, Any] | None = None,
+        require_parameters: bool = False,
+        deny_data_collection: bool = True,
+        zero_data_retention: bool = False,
     ) -> ModelRequest:
         if not messages:
             raise ValueError("model request messages are required")
@@ -344,12 +372,52 @@ class ModelRequest:
             raise ValueError("model request with images requires vision capability")
         if isinstance(max_output_tokens, bool) or not 1 <= max_output_tokens <= 131_072:
             raise ValueError("max_output_tokens is outside the supported range")
+        fallback_ids = tuple(
+            _required_text(value, "fallback_profile_id", maximum=128)
+            for value in fallback_profile_ids
+        )
+        normalized_profile_id = _required_text(profile_id, "profile_id", maximum=128)
+        if normalized_profile_id in fallback_ids or len(fallback_ids) != len(set(fallback_ids)):
+            raise ValueError("model request fallback profiles must be unique and exclude primary")
+        schema_name = _optional_text(
+            response_schema_name,
+            "response_schema_name",
+            maximum=64,
+        )
+        normalized_schema: Mapping[str, Any] | None = None
+        if (response_schema is None) != (schema_name is None):
+            raise ValueError("structured output requires both schema name and schema")
+        if response_schema is not None:
+            try:
+                canonical = json.dumps(
+                    dict(response_schema),
+                    ensure_ascii=True,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                parsed = json.loads(canonical)
+            except (TypeError, ValueError) as error:
+                raise ValueError("response schema must contain canonical JSON") from error
+            if not isinstance(parsed, dict) or parsed.get("type") != "object":
+                raise ValueError("response schema must describe an object")
+            if ProviderCapability.STRUCTURED_OUTPUT not in capabilities:
+                raise ValueError("response schema requires structured output capability")
+            normalized_schema = MappingProxyType(parsed)
         return cls(
-            profile_id=_required_text(profile_id, "profile_id", maximum=128),
+            profile_id=normalized_profile_id,
             messages=tuple(messages),
             tools=tuple(tools),
             required_capabilities=capabilities,
             max_output_tokens=max_output_tokens,
+            model_role=ModelExecutionRole(model_role),
+            fallback_profile_ids=fallback_ids,
+            allow_profile_fallback=bool(allow_profile_fallback),
+            response_schema_name=schema_name,
+            response_schema=normalized_schema,
+            require_parameters=bool(require_parameters),
+            deny_data_collection=bool(deny_data_collection),
+            zero_data_retention=bool(zero_data_retention),
         )
 
     def for_profile(self, profile_id: str) -> ModelRequest:
@@ -359,6 +427,16 @@ class ModelRequest:
             tools=self.tools,
             required_capabilities=self.required_capabilities,
             max_output_tokens=self.max_output_tokens,
+            model_role=self.model_role,
+            fallback_profile_ids=tuple(
+                value for value in self.fallback_profile_ids if value != profile_id
+            ),
+            allow_profile_fallback=self.allow_profile_fallback,
+            response_schema_name=self.response_schema_name,
+            response_schema=self.response_schema,
+            require_parameters=self.require_parameters,
+            deny_data_collection=self.deny_data_collection,
+            zero_data_retention=self.zero_data_retention,
         )
 
 
@@ -383,6 +461,7 @@ class ModelDelta:
     tool_name: str | None = None
     tool_arguments_fragment: str | None = None
     usage: Mapping[str, int] = field(default_factory=dict)
+    usage_cost: str | None = None
     finish_reason: str | None = None
 
     text = _TextDeltaAccessor()
@@ -435,17 +514,28 @@ class ModelDelta:
         profile_id: str,
         sequence: int,
         usage: Mapping[str, int],
+        usage_cost: str | None = None,
     ) -> ModelDelta:
         normalized = {
             str(key): int(value)
             for key, value in usage.items()
             if not isinstance(value, bool) and int(value) >= 0
         }
+        normalized_cost = None
+        if usage_cost is not None:
+            try:
+                amount = Decimal(usage_cost)
+            except InvalidOperation as error:
+                raise ValueError("usage cost is invalid") from error
+            if not amount.is_finite() or amount < 0:
+                raise ValueError("usage cost must be finite and non-negative")
+            normalized_cost = format(amount.normalize(), "f")
         return cls(
             profile_id=_required_text(profile_id, "profile_id", maximum=128),
             sequence=_positive_sequence(sequence),
             kind=ModelDeltaKind.USAGE,
             usage=MappingProxyType(normalized),
+            usage_cost=normalized_cost,
         )
 
     @classmethod

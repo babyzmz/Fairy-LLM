@@ -289,6 +289,41 @@ class ModelSelectionPreference:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ModelSelectionSnapshot:
+    mode: ModelSelectionMode
+    model_id: str | None
+    allow_free_fallback: bool
+    zero_data_retention: bool
+    revision: int
+    captured_at: datetime
+
+    def __post_init__(self) -> None:
+        if self.mode is ModelSelectionMode.AUTO and self.model_id is not None:
+            raise ValueError("auto model selection snapshot cannot include a model id")
+        if self.mode is ModelSelectionMode.MANUAL and self.model_id not in MODEL_ALLOWLIST_BY_ID:
+            raise ValueError("manual model selection snapshot must use an allowlisted model")
+        if self.revision < 0:
+            raise ValueError("model selection snapshot revision cannot be negative")
+        object.__setattr__(self, "captured_at", _aware(self.captured_at))
+
+    @classmethod
+    def from_preference(
+        cls,
+        preference: ModelSelectionPreference,
+        *,
+        captured_at: datetime | None = None,
+    ) -> ModelSelectionSnapshot:
+        return cls(
+            mode=preference.mode,
+            model_id=preference.model_id,
+            allow_free_fallback=preference.allow_free_fallback,
+            zero_data_retention=preference.zero_data_retention,
+            revision=preference.revision,
+            captured_at=captured_at or datetime.now(UTC),
+        )
+
+
 def baseline_catalog(
     *,
     now: datetime,
@@ -361,6 +396,7 @@ __all__ = [
     "ModelPrice",
     "ModelSelectionMode",
     "ModelSelectionPreference",
+    "ModelSelectionSnapshot",
     "ProviderAccount",
     "ProviderCredentialStatus",
     "baseline_catalog",

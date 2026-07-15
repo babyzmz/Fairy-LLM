@@ -103,7 +103,7 @@ pub fn openrouter_profiles_json(_configuration: &OpenRouterConfiguration) -> Str
             "GLM 5.2",
             "z-ai/glm-5.2",
             &["text", "tools", "structured_output"],
-            Some("openrouter-deepseek-v4-pro"),
+            None,
         ),
         profile(
             "openrouter-kimi-k2-7-code",

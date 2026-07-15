@@ -2061,8 +2061,9 @@ export interface components {
             idempotency_key: string;
             /** Image Attachments */
             image_attachments?: components["schemas"]["ImageAttachmentInput"][];
+            model_selection?: components["schemas"]["ModelSelectionSnapshotInput"] | null;
             /** Profile Id */
-            profile_id: string;
+            profile_id?: string | null;
             /**
              * Task Id
              * Format: uuid
@@ -2071,6 +2072,8 @@ export interface components {
         };
         /** AssistantTurnModel */
         AssistantTurnModel: {
+            /** Budget Approval Run Id */
+            budget_approval_run_id: string | null;
             /** Cancellation Revision */
             cancellation_revision: number;
             /** Completed At */
@@ -2101,8 +2104,10 @@ export interface components {
              * Format: uuid
              */
             memory_snapshot_id: string;
+            model_selection: components["schemas"]["ModelSelectionSnapshotModel"] | null;
             /** Profile Id */
             profile_id: string;
+            routing_decision: components["schemas"]["RoutingDecisionModel"] | null;
             /** Scope Digest */
             scope_digest: string;
             /** Started At */
@@ -4170,6 +4175,31 @@ export interface components {
             /** Zero Data Retention */
             zero_data_retention: boolean;
         };
+        /** ModelSelectionSnapshotInput */
+        ModelSelectionSnapshotInput: {
+            mode: components["schemas"]["ModelSelectionMode"];
+            /** Model Id */
+            model_id?: string | null;
+            /** Revision */
+            revision: number;
+        };
+        /** ModelSelectionSnapshotModel */
+        ModelSelectionSnapshotModel: {
+            /** Allow Free Fallback */
+            allow_free_fallback: boolean;
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
+            mode: components["schemas"]["ModelSelectionMode"];
+            /** Model Id */
+            model_id?: string | null;
+            /** Revision */
+            revision: number;
+            /** Zero Data Retention */
+            zero_data_retention: boolean;
+        };
         /** ModelSelectionUpdateInput */
         ModelSelectionUpdateInput: {
             /**
@@ -4621,6 +4651,37 @@ export interface components {
          * @enum {string}
          */
         RiskLevel: "low" | "medium" | "high";
+        /**
+         * RoutingComplexity
+         * @enum {string}
+         */
+        RoutingComplexity: "low" | "medium" | "high";
+        /** RoutingDecisionModel */
+        RoutingDecisionModel: {
+            /** Approval Required */
+            approval_required: boolean;
+            complexity: components["schemas"]["RoutingComplexity"];
+            /** Cost Estimate Known */
+            cost_estimate_known: boolean;
+            /** Estimated Cost Usd */
+            estimated_cost_usd?: string | null;
+            /** Estimated Output Tokens */
+            estimated_output_tokens: number;
+            /** Media Model Id */
+            media_model_id?: string | null;
+            /** Primary Model Id */
+            primary_model_id: string;
+            /** Public Summary */
+            public_summary: string;
+            /** Reviewer Model Id */
+            reviewer_model_id?: string | null;
+            task_kind: components["schemas"]["RoutingTaskKind"];
+        };
+        /**
+         * RoutingTaskKind
+         * @enum {string}
+         */
+        RoutingTaskKind: "general" | "reasoning" | "code" | "image" | "music" | "video";
         /** RuntimeExecutorHealthModel */
         RuntimeExecutorHealthModel: {
             /** Available */

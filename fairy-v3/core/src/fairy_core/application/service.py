@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import base64
-import binascii
 import logging
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -21,9 +19,11 @@ from fairy_core.application.runtime_review import RuntimeReviewApplication
 from fairy_core.application.runtime_service import runtime_service_handlers
 from fairy_core.application.workspace_service import WorkspaceService
 from fairy_core.assistant.application import AssistantApplication
+from fairy_core.assistant.image_inputs import build_image_attachments
 from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
 from fairy_core.assistant.tools import ToolExecutor
+from fairy_core.assistant.turn_selection import resolve_turn_model_source
 from fairy_core.commanding import EventVisibility
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
@@ -97,7 +97,6 @@ from fairy_core.contracts.workspaces import WorkspaceFileMutateInput
 from fairy_core.documents.application import DocumentApplication, DocumentToolExecutor
 from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
 from fairy_core.domain.errors import (
-    CapabilityUnavailableError,
     InvalidTransitionError,
     MemoryScopeViolationError,
 )
@@ -110,10 +109,10 @@ from fairy_core.mcp.tools import McpToolExecutor
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
 from fairy_core.model_catalog.ports import ModelCatalogSource
-from fairy_core.perception import ImageAttachment, ImageAttachmentStore
+from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.presentation.packs import RendererPackInstaller
-from fairy_core.providers import CancellationToken, ProviderCapability, ProviderRegistry
+from fairy_core.providers import CancellationToken, ProviderRegistry
 from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
 from fairy_core.research.ports import FetchPort
 from fairy_core.runtime.models import RuntimeExecutorError
@@ -633,52 +632,31 @@ class CoreService:
 
     def _create_assistant_turn(self, request: BaseModel) -> Any:
         validated = cast(AssistantTurnCreateInput, request)
-        attachments = self._build_image_attachments(validated)
+        attachments = build_image_attachments(
+            validated.task_id,
+            validated.image_attachments,
+        )
         try:
+            requested = validated.model_selection
+            profile_id, model_selection = resolve_turn_model_source(
+                requested_mode=requested.mode if requested is not None else None,
+                requested_model_id=requested.model_id if requested is not None else None,
+                requested_revision=requested.revision if requested is not None else None,
+                legacy_profile_id=validated.profile_id,
+                has_attachments=bool(attachments),
+                unit_of_work_factory=self._unit_of_work_factory,
+                providers=self._provider_registry,
+            )
             if attachments:
-                profile = self._provider_registry.profile(validated.profile_id)
-                if ProviderCapability.VISION not in profile.capabilities:
-                    raise CapabilityUnavailableError(
-                        f"provider profile {profile.id!r} lacks vision capability"
-                    )
                 self._image_attachments.prepare(attachments)
             turn = self._assistant_ledger.create_turn(
                 task_id=validated.task_id,
-                profile_id=validated.profile_id,
+                profile_id=profile_id,
                 idempotency_key=validated.idempotency_key,
+                model_selection=model_selection,
             )
             self._image_attachments.register(turn.id, attachments)
             return turn
-        except BaseException:
-            for attachment in attachments:
-                attachment.zero()
-            raise
-
-    @staticmethod
-    def _build_image_attachments(
-        request: AssistantTurnCreateInput,
-    ) -> tuple[ImageAttachment, ...]:
-        attachments: list[ImageAttachment] = []
-        try:
-            for value in request.image_attachments:
-                try:
-                    png = base64.b64decode(value.png_base64, validate=True)
-                except (binascii.Error, ValueError) as error:
-                    raise ValueError("screen attachment must use canonical base64") from error
-                attachments.append(
-                    ImageAttachment.create(
-                        task_id=request.task_id,
-                        media_type=value.media_type,
-                        png=png,
-                        content_hash=value.content_hash,
-                        width=value.width,
-                        height=value.height,
-                        source_label=value.source_label,
-                        captured_at_ms=value.captured_at_ms,
-                        persistence=value.persistence,
-                    )
-                )
-            return tuple(attachments)
         except BaseException:
             for attachment in attachments:
                 attachment.zero()

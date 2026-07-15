@@ -24,13 +24,15 @@ class ScriptedProvider:
         *,
         cancel_after_first_delta: bool = False,
         capabilities: frozenset[ProviderCapability] | None = None,
+        profile_id: str = "scripted",
+        model_id: str = "scripted-model",
     ) -> None:
         self.profile = ProviderProfile.create(
-            profile_id="scripted",
-            display_name="Scripted",
+            profile_id=profile_id,
+            display_name=profile_id,
             kind=ProviderKind.OPENAI_COMPATIBLE,
             base_url="https://models.example.test/v1",
-            model_id="scripted-model",
+            model_id=model_id,
             capabilities=capabilities
             or frozenset({ProviderCapability.TEXT, ProviderCapability.TOOLS}),
             credential_ref=None,

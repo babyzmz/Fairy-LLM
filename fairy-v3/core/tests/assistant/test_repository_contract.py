@@ -33,9 +33,10 @@ from fairy_core.domain.models import (
     Task,
     WorkspaceType,
 )
+from fairy_core.model_catalog.models import ModelEndpointKind
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
 from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
-from fairy_core.providers import ProviderErrorCategory
+from fairy_core.providers import ModelExecutionRole, ProviderErrorCategory
 
 _SNAPSHOT_HASH = "a" * 64
 
@@ -128,6 +129,9 @@ def test_repository_persists_turn_messages_and_tool_invocations(tmp_path: Path) 
         model_round=1,
         attempt_number=1,
         profile_id="local-default",
+        model_id="local-model",
+        endpoint_kind=ModelEndpointKind.CHAT,
+        model_role=ModelExecutionRole.PRIMARY,
     )
 
     with factory() as unit_of_work:

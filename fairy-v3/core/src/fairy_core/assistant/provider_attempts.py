@@ -28,6 +28,7 @@ class ProviderAttemptRecorder:
                     attempt.fail(
                         error_category=ProviderErrorCategory.UNKNOWN,
                         usage=dict(attempt.usage),
+                        usage_cost=attempt.usage_cost,
                     )
                     unit_of_work.assistant.update_provider_attempt(attempt)
                     interrupted = True
@@ -49,6 +50,9 @@ class ProviderAttemptRecorder:
                         model_round=model_round,
                         attempt_number=attempt_offset + event.attempt_number,
                         profile_id=event.profile_id,
+                        model_id=event.model_id,
+                        endpoint_kind=event.endpoint_kind,
+                        model_role=event.model_role,
                     )
                     unit_of_work.assistant.save_provider_attempt(attempt)
                     unit_of_work.commit()
@@ -58,13 +62,14 @@ class ProviderAttemptRecorder:
             if attempt is None:
                 raise RuntimeError("Provider Attempt terminal event has no durable start")
             if event.status is ProviderAttemptStatus.SUCCEEDED:
-                attempt.succeed(dict(event.usage))
+                attempt.succeed(dict(event.usage), usage_cost=event.usage_cost)
             else:
                 if event.error_category is None:
                     raise RuntimeError("failed Provider Attempt has no error category")
                 attempt.fail(
                     error_category=event.error_category,
                     usage=dict(event.usage),
+                    usage_cost=event.usage_cost,
                 )
             with self._unit_of_work_factory() as unit_of_work:
                 unit_of_work.assistant.update_provider_attempt(attempt)

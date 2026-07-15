@@ -251,6 +251,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     client,
     conversationId: selectedChatConversation?.id ?? null,
     profileId: selectedProfileId,
+    modelSelection: modelController.selection,
     operationMode: "answer",
     events: allEvents,
     onTaskCreated(taskId) {
@@ -263,6 +264,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     client,
     conversationId: selectedConversation?.id ?? null,
     profileId: selectedProfileId,
+    modelSelection: modelController.selection,
     operationMode: "continue_current_chat_draft",
     events: allEvents,
     onTaskCreated: setTaskSelection,
@@ -662,7 +664,6 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             approved,
           }),
         );
-        if (result.approval.tool_invocation_id === null) return;
         if (result.approval.task_id === chatAssistant.turn?.task_id) {
           await chatAssistant.resume();
         } else if (result.approval.task_id === projectAssistant.turn?.task_id) {

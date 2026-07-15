@@ -27,11 +27,25 @@ from fairy_core.assistant.models import (
     ToolInvocation,
     ToolInvocationStatus,
 )
+from fairy_core.assistant.routing import (
+    routing_decision_from_record,
+    routing_decision_record,
+)
 from fairy_core.commanding.models import CommandStatus
 from fairy_core.commanding.schema import command_runs
 from fairy_core.domain.errors import InvalidTransitionError
+from fairy_core.model_catalog.models import (
+    ModelEndpointKind,
+    ModelSelectionMode,
+    ModelSelectionSnapshot,
+)
 from fairy_core.persistence.session import SqlAlchemySession
 from fairy_core.persistence.tenant import normalize_tenant_id
+from fairy_core.providers import (
+    ModelExecutionRole,
+    ProviderAttemptStatus,
+    ProviderErrorCategory,
+)
 from fairy_core.storage.pagination import StatePage, validate_limit
 from fairy_core.storage.schema import (
     assistant_imported_messages,
@@ -153,6 +167,7 @@ class SqlAlchemyAssistantRepository:
                         attempt.error_category.value if attempt.error_category is not None else None
                     ),
                     usage=dict(attempt.usage),
+                    usage_cost=attempt.usage_cost,
                     completed_at=attempt.completed_at,
                 )
             )
@@ -656,6 +671,15 @@ class SqlAlchemyAssistantRepository:
             "memory_snapshot_id": str(turn.memory_snapshot_id),
             "memory_snapshot_hash": turn.memory_snapshot_hash,
             "idempotency_key": turn.idempotency_key,
+            "model_selection": _model_selection_record(turn.model_selection),
+            "routing_decision": (
+                routing_decision_record(turn.routing_decision)
+                if turn.routing_decision is not None
+                else None
+            ),
+            "budget_approval_run_id": (
+                str(turn.budget_approval_run_id) if turn.budget_approval_run_id else None
+            ),
             "status": turn.status.value,
             "cancellation_revision": turn.cancellation_revision,
             "usage": dict(turn.usage),
@@ -673,6 +697,14 @@ class SqlAlchemyAssistantRepository:
             "cancellation_revision": turn.cancellation_revision,
             "usage": dict(turn.usage),
             "error_code": turn.error_code,
+            "routing_decision": (
+                routing_decision_record(turn.routing_decision)
+                if turn.routing_decision is not None
+                else None
+            ),
+            "budget_approval_run_id": (
+                str(turn.budget_approval_run_id) if turn.budget_approval_run_id else None
+            ),
             "updated_at": turn.updated_at,
             "started_at": turn.started_at,
             "completed_at": turn.completed_at,
@@ -689,6 +721,13 @@ class SqlAlchemyAssistantRepository:
             memory_snapshot_id=UUID(row["memory_snapshot_id"]),
             memory_snapshot_hash=row["memory_snapshot_hash"],
             idempotency_key=row["idempotency_key"],
+            model_selection=_model_selection_from_record(row.get("model_selection")),
+            routing_decision=routing_decision_from_record(row.get("routing_decision")),
+            budget_approval_run_id=(
+                UUID(row["budget_approval_run_id"])
+                if row.get("budget_approval_run_id") is not None
+                else None
+            ),
             status=AssistantTurnStatus(row["status"]),
             cancellation_revision=int(row["cancellation_revision"]),
             usage={name: int(value) for name, value in row["usage"].items()},
@@ -708,19 +747,21 @@ class SqlAlchemyAssistantRepository:
             "model_round": attempt.model_round,
             "attempt_number": attempt.attempt_number,
             "profile_id": attempt.profile_id,
+            "model_id": attempt.model_id,
+            "endpoint_kind": attempt.endpoint_kind.value,
+            "model_role": attempt.model_role.value,
             "status": attempt.status.value,
             "error_category": (
                 attempt.error_category.value if attempt.error_category is not None else None
             ),
             "usage": dict(attempt.usage),
+            "usage_cost": attempt.usage_cost,
             "created_at": attempt.created_at,
             "completed_at": attempt.completed_at,
         }
 
     @staticmethod
     def _provider_attempt_from_row(row: Mapping[str, Any]) -> ProviderAttempt:
-        from fairy_core.providers import ProviderAttemptStatus, ProviderErrorCategory
-
         return ProviderAttempt(
             id=UUID(row["id"]),
             turn_id=UUID(row["turn_id"]),
@@ -728,6 +769,9 @@ class SqlAlchemyAssistantRepository:
             model_round=int(row["model_round"]),
             attempt_number=int(row["attempt_number"]),
             profile_id=row["profile_id"],
+            model_id=row["model_id"],
+            endpoint_kind=ModelEndpointKind(row["endpoint_kind"]),
+            model_role=ModelExecutionRole(row["model_role"]),
             status=ProviderAttemptStatus(row["status"]),
             error_category=(
                 ProviderErrorCategory(row["error_category"])
@@ -735,6 +779,7 @@ class SqlAlchemyAssistantRepository:
                 else None
             ),
             usage={name: int(value) for name, value in row["usage"].items()},
+            usage_cost=row["usage_cost"],
             created_at=_datetime(row["created_at"]),
             completed_at=_optional_datetime(row["completed_at"]),
         )
@@ -863,6 +908,36 @@ def _message_cursor_scope(
     )
     value = f"assistant-messages:{conversation_id}:{visibility_scope}"
     return hashlib.sha256(value.encode("ascii")).hexdigest()
+
+
+def _model_selection_record(
+    selection: ModelSelectionSnapshot | None,
+) -> dict[str, object] | None:
+    if selection is None:
+        return None
+    return {
+        "mode": selection.mode.value,
+        "model_id": selection.model_id,
+        "allow_free_fallback": selection.allow_free_fallback,
+        "zero_data_retention": selection.zero_data_retention,
+        "revision": selection.revision,
+        "captured_at": selection.captured_at.isoformat(),
+    }
+
+
+def _model_selection_from_record(record: object) -> ModelSelectionSnapshot | None:
+    if record is None:
+        return None
+    if not isinstance(record, dict):
+        raise ValueError("stored model selection snapshot is invalid")
+    return ModelSelectionSnapshot(
+        mode=ModelSelectionMode(record["mode"]),
+        model_id=str(record["model_id"]) if record.get("model_id") is not None else None,
+        allow_free_fallback=bool(record["allow_free_fallback"]),
+        zero_data_retention=bool(record["zero_data_retention"]),
+        revision=int(record["revision"]),
+        captured_at=_datetime(str(record["captured_at"])),
+    )
 
 
 def _datetime(value: datetime | str) -> datetime:

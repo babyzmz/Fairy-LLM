@@ -152,6 +152,92 @@ def test_stream_normalizes_text_tools_usage_and_done() -> None:
     assert deltas[-1].finish_reason == "tool_calls"
 
 
+def test_openrouter_request_enforces_structured_privacy_and_cost_accounting() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_sse(
+                {
+                    "choices": [{"delta": {"content": '{"ok":true}'}}],
+                    "usage": {
+                        "prompt_tokens": 8,
+                        "completion_tokens": 3,
+                        "total_tokens": 11,
+                        "cost": 10.0,
+                    },
+                },
+                {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+                "[DONE]",
+            ),
+        )
+
+    profile = ProviderProfile.create(
+        profile_id="openrouter",
+        display_name="OpenRouter",
+        kind=ProviderKind.OPENAI_COMPATIBLE,
+        base_url="https://openrouter.ai/api/v1",
+        model_id="deepseek/deepseek-v4-pro",
+        capabilities=frozenset({ProviderCapability.TEXT, ProviderCapability.STRUCTURED_OUTPUT}),
+        credential_ref="openrouter",
+        fallback_profile_id=None,
+        timeout_seconds=30,
+        enabled=True,
+    )
+    request = ModelRequest.create(
+        profile_id=profile.id,
+        messages=(ModelMessage.create(role=ModelRole.USER, content="Classify"),),
+        tools=(),
+        required_capabilities=frozenset(
+            {ProviderCapability.TEXT, ProviderCapability.STRUCTURED_OUTPUT}
+        ),
+        max_output_tokens=384,
+        response_schema_name="route",
+        response_schema={
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+            "additionalProperties": False,
+        },
+        require_parameters=True,
+        deny_data_collection=True,
+        zero_data_retention=True,
+    )
+    provider = OpenAICompatibleProvider(
+        profile=profile,
+        secret=SecretValue.from_text("fixture-secret"),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    deltas = tuple(provider.stream(request, CancellationToken()))
+
+    assert captured["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "route",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {"ok": {"type": "boolean"}},
+                "required": ["ok"],
+                "additionalProperties": False,
+            },
+        },
+    }
+    assert captured["provider"] == {
+        "allow_fallbacks": True,
+        "require_parameters": True,
+        "data_collection": "deny",
+        "zdr": True,
+    }
+    assert "stream_options" not in captured
+    usage = next(delta for delta in deltas if delta.kind is ModelDeltaKind.USAGE)
+    assert usage.usage_cost == "10"
+
+
 def test_stream_emits_one_done_when_upstream_repeats_finish_reason() -> None:
     provider = OpenAICompatibleProvider(
         profile=_profile(credential_ref=None),

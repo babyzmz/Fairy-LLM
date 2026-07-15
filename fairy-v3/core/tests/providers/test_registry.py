@@ -134,6 +134,56 @@ def test_registry_falls_back_only_before_the_first_delta() -> None:
     assert fallback.calls == 1
 
 
+def test_registry_honors_request_scoped_fallback_without_static_profile_link() -> None:
+    primary = FakeProvider(
+        _profile("primary"),
+        [ProviderUnavailableError("primary unavailable")],
+    )
+    fallback = FakeProvider(
+        _profile("fallback"),
+        [_text("fallback", 1, "Recovered")],
+    )
+    request = ModelRequest.create(
+        profile_id="primary",
+        messages=(ModelMessage.create(role=ModelRole.USER, content="Hello"),),
+        tools=(),
+        required_capabilities=frozenset({ProviderCapability.TEXT}),
+        max_output_tokens=256,
+        fallback_profile_ids=("fallback",),
+    )
+
+    deltas = tuple(ProviderRegistry((primary, fallback)).stream(request, CancellationToken()))
+
+    assert [(delta.profile_id, delta.text) for delta in deltas] == [("fallback", "Recovered")]
+    assert primary.calls == 2
+    assert fallback.calls == 1
+
+
+def test_registry_can_disable_a_static_profile_fallback_for_manual_selection() -> None:
+    primary = FakeProvider(
+        _profile("primary", fallback="fallback"),
+        [ProviderUnavailableError("primary unavailable")],
+    )
+    fallback = FakeProvider(
+        _profile("fallback"),
+        [_text("fallback", 1, "Must not be used")],
+    )
+    request = ModelRequest.create(
+        profile_id="primary",
+        messages=(ModelMessage.create(role=ModelRole.USER, content="Hello"),),
+        tools=(),
+        required_capabilities=frozenset({ProviderCapability.TEXT}),
+        max_output_tokens=256,
+        allow_profile_fallback=False,
+    )
+
+    with pytest.raises(ProviderUnavailableError, match="primary unavailable"):
+        tuple(ProviderRegistry((primary, fallback)).stream(request, CancellationToken()))
+
+    assert primary.calls == 2
+    assert fallback.calls == 0
+
+
 def test_registry_reports_each_retry_and_fallback_attempt() -> None:
     primary = FakeProvider(
         _profile("primary", fallback="fallback"),

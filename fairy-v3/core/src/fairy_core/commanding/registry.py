@@ -679,22 +679,14 @@ def _project_definitions(
 
 
 def build_default_registry() -> ToolRegistry:
+    from fairy_core.commanding.model_definitions import model_generation_definitions
     from fairy_core.commanding.slash_commands import default_slash_commands
 
     all_profiles = frozenset(PermissionProfile)
     active_profiles = frozenset({PermissionProfile.STANDARD, PermissionProfile.AUTONOMOUS})
     autonomous = frozenset({PermissionProfile.AUTONOMOUS})
     definitions = [
-        _tool(
-            "model.generate",
-            SideEffect.READ,
-            RiskLevel.LOW,
-            ApprovalPolicy.NEVER,
-            all_profiles,
-            "model_provider",
-            idempotent=True,
-            model_visible=False,
-        ),
+        *model_generation_definitions(all_profiles),
         _tool(
             "extensions.mcp.discover",
             SideEffect.READ,

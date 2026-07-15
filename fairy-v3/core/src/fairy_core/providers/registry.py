@@ -50,6 +50,18 @@ class ProviderRegistry:
     def profile(self, profile_id: str) -> ProviderProfile:
         return self._require_provider(profile_id).profile
 
+    def profile_for_model(self, model_id: str) -> ProviderProfile:
+        matches = tuple(
+            provider.profile
+            for provider in self._providers.values()
+            if provider.profile.model_id == model_id
+        )
+        if len(matches) != 1:
+            raise ProviderUnavailableError(
+                f"model {model_id!r} does not resolve to one provider profile"
+            )
+        return matches[0]
+
     def close(self) -> None:
         for provider in self._providers.values():
             close = getattr(provider, "close", None)
@@ -71,8 +83,14 @@ class ProviderRegistry:
         cancellation.raise_if_cancelled()
         primary = self._require_provider(request.profile_id)
         candidates = [primary, primary]
-        if primary.profile.fallback_profile_id is not None:
-            candidates.append(self._require_provider(primary.profile.fallback_profile_id))
+        fallback_ids = request.fallback_profile_ids
+        if (
+            request.allow_profile_fallback
+            and not fallback_ids
+            and primary.profile.fallback_profile_id is not None
+        ):
+            fallback_ids = (primary.profile.fallback_profile_id,)
+        candidates.extend(self._require_provider(profile_id) for profile_id in fallback_ids)
         last_error: ProviderError | None = None
         for attempt_number, provider in enumerate(candidates, start=1):
             cancellation.raise_if_cancelled()
@@ -82,26 +100,36 @@ class ProviderRegistry:
                 on_attempt,
                 ProviderAttemptEvent(
                     profile_id=provider.profile.id,
+                    model_id=provider.profile.model_id,
+                    endpoint_kind="chat",
+                    model_role=request.model_role,
                     attempt_number=attempt_number,
                     status=ProviderAttemptStatus.STARTED,
                 ),
             )
             emitted = False
             usage: dict[str, int] = {}
+            usage_cost: str | None = None
             try:
                 for delta in self._validated_stream(provider, attempt_request, cancellation):
                     emitted = True
                     if delta.kind is ModelDeltaKind.USAGE:
                         for key, value in delta.usage.items():
                             usage[key] = usage.get(key, 0) + value
+                        if delta.usage_cost is not None:
+                            usage_cost = delta.usage_cost
                     yield delta
                 _notify_attempt(
                     on_attempt,
                     ProviderAttemptEvent(
                         profile_id=provider.profile.id,
+                        model_id=provider.profile.model_id,
+                        endpoint_kind="chat",
+                        model_role=request.model_role,
                         attempt_number=attempt_number,
                         status=ProviderAttemptStatus.SUCCEEDED,
                         usage=usage,
+                        usage_cost=usage_cost,
                     ),
                 )
                 return
@@ -110,10 +138,14 @@ class ProviderRegistry:
                     on_attempt,
                     ProviderAttemptEvent(
                         profile_id=provider.profile.id,
+                        model_id=provider.profile.model_id,
+                        endpoint_kind="chat",
+                        model_role=request.model_role,
                         attempt_number=attempt_number,
                         status=ProviderAttemptStatus.FAILED,
                         error_category=ProviderErrorCategory.CANCELLED,
                         usage=usage,
+                        usage_cost=usage_cost,
                     ),
                 )
                 raise
@@ -124,10 +156,14 @@ class ProviderRegistry:
                     on_attempt,
                     ProviderAttemptEvent(
                         profile_id=provider.profile.id,
+                        model_id=provider.profile.model_id,
+                        endpoint_kind="chat",
+                        model_role=request.model_role,
                         attempt_number=attempt_number,
                         status=ProviderAttemptStatus.FAILED,
                         error_category=category,
                         usage=usage,
+                        usage_cost=usage_cost,
                     ),
                 )
                 if emitted or not _retryable(category):

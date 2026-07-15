@@ -747,11 +747,28 @@
             "title": "Image Attachments",
             "type": "array"
           },
+          "model_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelSelectionSnapshotInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "profile_id": {
-            "maxLength": 255,
-            "minLength": 1,
-            "title": "Profile Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
           },
           "task_id": {
             "format": "uuid",
@@ -761,7 +778,6 @@
         },
         "required": [
           "task_id",
-          "profile_id",
           "idempotency_key"
         ],
         "title": "AssistantTurnCreateInput",
@@ -770,6 +786,18 @@
       "AssistantTurnModel": {
         "additionalProperties": false,
         "properties": {
+          "budget_approval_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Approval Run Id"
+          },
           "cancellation_revision": {
             "minimum": 0.0,
             "title": "Cancellation Revision",
@@ -829,11 +857,31 @@
             "title": "Memory Snapshot Id",
             "type": "string"
           },
+          "model_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelSelectionSnapshotModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "profile_id": {
             "maxLength": 255,
             "minLength": 1,
             "title": "Profile Id",
             "type": "string"
+          },
+          "routing_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingDecisionModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "scope_digest": {
             "pattern": "^[0-9a-f]{64}$",
@@ -882,6 +930,9 @@
           "memory_snapshot_id",
           "memory_snapshot_hash",
           "idempotency_key",
+          "model_selection",
+          "routing_decision",
+          "budget_approval_run_id",
           "status",
           "cancellation_revision",
           "usage",
@@ -6316,6 +6367,86 @@
         "title": "ModelSelectionPreferenceModel",
         "type": "object"
       },
+      "ModelSelectionSnapshotInput": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/ModelSelectionMode"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mode",
+          "revision"
+        ],
+        "title": "ModelSelectionSnapshotInput",
+        "type": "object"
+      },
+      "ModelSelectionSnapshotModel": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_free_fallback": {
+            "title": "Allow Free Fallback",
+            "type": "boolean"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ModelSelectionMode"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "zero_data_retention": {
+            "title": "Zero Data Retention",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode",
+          "allow_free_fallback",
+          "zero_data_retention",
+          "revision",
+          "captured_at"
+        ],
+        "title": "ModelSelectionSnapshotModel",
+        "type": "object"
+      },
       "ModelSelectionUpdateInput": {
         "additionalProperties": false,
         "properties": {
@@ -7438,6 +7569,113 @@
           "high"
         ],
         "title": "RiskLevel",
+        "type": "string"
+      },
+      "RoutingComplexity": {
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "title": "RoutingComplexity",
+        "type": "string"
+      },
+      "RoutingDecisionModel": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_required": {
+            "title": "Approval Required",
+            "type": "boolean"
+          },
+          "complexity": {
+            "$ref": "#/components/schemas/RoutingComplexity"
+          },
+          "cost_estimate_known": {
+            "title": "Cost Estimate Known",
+            "type": "boolean"
+          },
+          "estimated_cost_usd": {
+            "anyOf": [
+              {
+                "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]+)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Cost Usd"
+          },
+          "estimated_output_tokens": {
+            "maximum": 16384.0,
+            "minimum": 256.0,
+            "title": "Estimated Output Tokens",
+            "type": "integer"
+          },
+          "media_model_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media Model Id"
+          },
+          "primary_model_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Primary Model Id",
+            "type": "string"
+          },
+          "public_summary": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Public Summary",
+            "type": "string"
+          },
+          "reviewer_model_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Model Id"
+          },
+          "task_kind": {
+            "$ref": "#/components/schemas/RoutingTaskKind"
+          }
+        },
+        "required": [
+          "task_kind",
+          "complexity",
+          "primary_model_id",
+          "estimated_output_tokens",
+          "cost_estimate_known",
+          "approval_required",
+          "public_summary"
+        ],
+        "title": "RoutingDecisionModel",
+        "type": "object"
+      },
+      "RoutingTaskKind": {
+        "enum": [
+          "general",
+          "reasoning",
+          "code",
+          "image",
+          "music",
+          "video"
+        ],
+        "title": "RoutingTaskKind",
         "type": "string"
       },
       "RuntimeExecutorHealthModel": {

@@ -4,6 +4,7 @@ import type {
   AssistantTurn,
   CoreClient,
   EventEnvelope,
+  ModelSelectionPreference,
   TaskCreateInput,
 } from "../core/client";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
@@ -38,7 +39,8 @@ export interface OptimisticUserMessage {
 interface UseAssistantTurnOptions {
   client: AssistantTurnClient;
   conversationId: string | null;
-  profileId: string | null;
+  profileId?: string | null;
+  modelSelection?: ModelSelectionPreference | null;
   operationMode: TaskCreateInput["operation_mode"];
   events: EventEnvelope[];
   onTaskCreated?(taskId: string): void;
@@ -112,7 +114,18 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
         conversationOverride ?? options.conversationId,
         "Conversation is unavailable",
       );
-      const profileId = required(options.profileId, "Model provider is unavailable");
+      const modelSource =
+        options.modelSelection === null || options.modelSelection === undefined
+          ? {
+              profile_id: required(options.profileId, "Model provider is unavailable"),
+            }
+          : {
+              model_selection: {
+                mode: options.modelSelection.mode,
+                model_id: options.modelSelection.model_id,
+                revision: options.modelSelection.revision,
+              },
+            };
       const operation = ++operationRef.current;
       pendingDraftRef.current = draft;
       setPendingUserMessage({
@@ -150,7 +163,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
         }
         const created = await options.client.assistant.turns.create({
           task_id: taskContext.task.id,
-          profile_id: profileId,
+          ...modelSource,
           idempotency_key: idempotencyKey("assistant"),
           image_attachments: draft.images.map((image) => ({
             media_type: image.media_type,
@@ -401,6 +414,7 @@ const STATUS_EVENT_TYPES = new Set([
   "assistant.turn.completed",
   "assistant.turn.cancelled",
   "assistant.turn.failed",
+  "assistant.budget.approval_requested",
   "command.waiting_approval",
   "approval.requested",
 ]);
@@ -414,10 +428,19 @@ export function assistantDeltaText(
   turnId: string | null,
 ): string {
   if (turnId === null) return "";
+  const resetCursor = events.reduce(
+    (latest, event) =>
+      event.event_type === "assistant.message.projection_reset" &&
+      event.payload.turn_id === turnId
+        ? Math.max(latest, event.cursor)
+        : latest,
+    0,
+  );
   const ordered = events
     .map(toAssistantDelta)
     .filter((delta): delta is AssistantDelta => delta !== null)
     .filter((delta) => delta.turnId === turnId)
+    .filter((delta) => delta.cursor > resetCursor)
     .filter((delta) => delta.eventId.length > 0)
     .sort(
       (left, right) =>
@@ -464,8 +487,10 @@ function isTerminal(turn: AssistantTurn): boolean {
   return ["completed", "cancelled", "failed"].includes(turn.status);
 }
 
-function required(value: string | null, message: string): string {
-  if (value === null || value.trim().length === 0) throw new Error(message);
+function required(value: string | null | undefined, message: string): string {
+  if (value === undefined || value === null || value.trim().length === 0) {
+    throw new Error(message);
+  }
   return value;
 }
 

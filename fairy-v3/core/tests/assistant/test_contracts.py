@@ -38,6 +38,7 @@ def test_turn_create_input_rejects_every_client_scope_field() -> None:
     assert set(AssistantTurnCreateInput.model_validate(payload).model_dump()) == {
         "task_id",
         "profile_id",
+        "model_selection",
         "idempotency_key",
         "image_attachments",
     }
