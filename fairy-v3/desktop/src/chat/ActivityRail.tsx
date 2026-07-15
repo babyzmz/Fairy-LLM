@@ -1,67 +1,112 @@
 import {
   AlertCircle,
+  BadgeCheck,
+  Bot,
+  BrainCircuit,
   CheckCircle2,
   ChevronDown,
   CircleDot,
+  FileOutput,
+  ListChecks,
   LoaderCircle,
+  MessageSquareText,
+  Route,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Volume2,
   Wrench,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { m } from "motion/react";
 
-import type { AssistantTurn, EventEnvelope } from "../core/client";
+import type { AssistantTurn, EventEnvelope, TurnTrace } from "../core/client";
 import { useVoicePlaybackState } from "../voice/VoiceController";
+import {
+  modelRoleLabel,
+  projectWorkChain,
+  withVoiceStep,
+  workChainTone,
+  type WorkChainProjection,
+  type WorkChainStep,
+} from "./workChainProjection";
 
-export interface PublicActivity {
-  id: string;
-  label: string;
-  tone: "active" | "tool" | "success" | "error" | "muted";
-  createdAt: string;
-}
+export { publicActivities } from "./workChainProjection";
+export type { PublicActivity } from "./workChainProjection";
 
 interface ActivityRailProps {
-  turn: AssistantTurn;
-  events: EventEnvelope[];
+  turn?: AssistantTurn | null;
+  turnId?: string | null;
+  trace?: TurnTrace | null;
+  events?: EventEnvelope[];
+  developerMode?: boolean;
 }
 
-export function ActivityRail({ turn, events }: ActivityRailProps) {
+export function ActivityRail({
+  turn = null,
+  turnId = null,
+  trace = null,
+  events = [],
+  developerMode = false,
+}: ActivityRailProps) {
   const [expanded, setExpanded] = useState(false);
-  const activities = useMemo(() => publicActivities(turn, events), [events, turn]);
-  const voiceState = useVoicePlaybackState(turn.id);
-  const voiceActivity = transientVoiceActivity(turn, voiceState);
-  const visibleActivities = voiceActivity === null ? activities : [...activities, voiceActivity];
-  const current = visibleActivities.at(-1) ?? fallbackActivity(turn);
-  const previous = visibleActivities.length > 1 ? (visibleActivities.at(-2) ?? null) : null;
-  const terminal =
-    ["completed", "cancelled", "failed"].includes(turn.status) &&
-    !["preparing", "speaking"].includes(voiceState);
+  const [clock, setClock] = useState(() => Date.now());
+  const resolvedTurnId = trace?.turn_id ?? turn?.id ?? turnId;
+  const voiceState = useVoicePlaybackState(resolvedTurnId ?? "no-active-turn");
+  const baseProjection = useMemo(
+    () => projectWorkChain({ trace, turn, turnId, events, developerMode, now: clock }),
+    [clock, developerMode, events, trace, turn, turnId],
+  );
+  const projection = useMemo(
+    () => resolvedTurnId === null
+      ? baseProjection
+      : withVoiceStep(baseProjection, resolvedTurnId, voiceState),
+    [baseProjection, resolvedTurnId, voiceState],
+  );
+  const tone = workChainTone(projection.current);
+
+  useEffect(() => {
+    if (projection.terminal) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [projection.terminal]);
 
   return (
     <section
-      className={`activity-rail activity-${current.tone}${terminal ? " activity-terminal" : ""}`}
-      aria-label="Fairy activity"
+      className={`activity-rail work-chain activity-${tone}${projection.terminal ? " activity-terminal" : ""}`}
+      aria-label="Fairy work chain"
+      data-turn-id={resolvedTurnId ?? undefined}
     >
       <button
         type="button"
         className="activity-summary"
+        aria-label="Fairy activity"
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
       >
-        <ActivityIcon tone={current.tone} active={!terminal} />
-        <span className="activity-current">{current.label}</span>
-        {!terminal && previous !== null ? (
-          <span className="activity-recent">{previous.label}</span>
-        ) : null}
+        <ActivityIcon step={projection.current} active={!projection.terminal} />
+        <span className="activity-summary-copy">
+          <span className="activity-current">{projection.current.summary}</span>
+          <span className="activity-recent">{summaryLine(projection)}</span>
+        </span>
+        <span className="activity-duration">{formatDuration(projection.durationMs)}</span>
         <ChevronDown className={expanded ? "activity-chevron expanded" : "activity-chevron"} size={14} />
       </button>
       {expanded ? (
-        <m.ol className="activity-history" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}>
-          {visibleActivities.map((activity) => (
-            <li key={activity.id}>
-              <ActivityIcon tone={activity.tone} active={false} />
-              <span>{activity.label}</span>
-              <time dateTime={activity.createdAt}>{formatTime(activity.createdAt)}</time>
-            </li>
+        <m.ol
+          className="activity-history work-chain-steps"
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          transition={{ duration: 0.16 }}
+        >
+          {projection.steps.map((step) => (
+            <WorkChainStepRow
+              key={step.id}
+              step={step}
+              steps={projection.steps}
+              active={step.id === projection.current.id && !projection.terminal}
+              developerMode={developerMode}
+            />
           ))}
         </m.ol>
       ) : null}
@@ -69,133 +114,129 @@ export function ActivityRail({ turn, events }: ActivityRailProps) {
   );
 }
 
-function transientVoiceActivity(
-  turn: AssistantTurn,
-  state: ReturnType<typeof useVoicePlaybackState>,
-): PublicActivity | null {
-  if (state === "idle") return null;
-  const labels = {
-    preparing: ["Preparing voice", "active"],
-    speaking: ["Speaking reply", "active"],
-    failed: ["Voice playback failed", "error"],
-  } as const;
-  const [label, tone] = labels[state];
-  return {
-    id: `voice:${turn.id}:${state}`,
-    label,
-    tone,
-    createdAt: turn.updated_at,
-  };
+function WorkChainStepRow({
+  step,
+  steps,
+  active,
+  developerMode,
+}: {
+  step: WorkChainStep;
+  steps: WorkChainStep[];
+  active: boolean;
+  developerMode: boolean;
+}) {
+  const depth = stepDepth(step, steps);
+  const roleLabel = modelRoleLabel(step);
+  const tone = workChainTone(step);
+  return (
+    <li
+      className={`work-chain-step work-chain-step-${tone}`}
+      data-kind={step.kind}
+      data-status={step.status}
+      style={{ paddingLeft: `${depth * 18}px` }}
+      aria-current={active ? "step" : undefined}
+    >
+      <span className="work-chain-node" aria-hidden="true">
+        <ActivityIcon step={step} active={active} />
+      </span>
+      <div className="work-chain-step-copy">
+        <div className="work-chain-step-heading">
+          {roleLabel === null ? null : <span className="work-chain-role">{roleLabel}</span>}
+          <strong>{step.summary}</strong>
+        </div>
+        {step.detail === null ? null : <p>{step.detail}</p>}
+        {step.artifactRefs.length > 0 ? (
+          <span className="work-chain-artifacts">
+            {step.artifactRefs.length} artifact{step.artifactRefs.length === 1 ? "" : "s"}
+          </span>
+        ) : null}
+        {developerMode ? <StepDiagnostics step={step} /> : null}
+      </div>
+      <time dateTime={step.startedAt ?? step.createdAt}>
+        {step.durationMs === null ? formatTime(step.startedAt ?? step.createdAt) : formatDuration(step.durationMs)}
+      </time>
+    </li>
+  );
 }
 
-export function publicActivities(
-  turn: AssistantTurn,
-  events: EventEnvelope[],
-): PublicActivity[] {
-  const runNames = new Map<string, string>();
-  const activities: PublicActivity[] = [];
-  const turnCreatedAt = Date.parse(turn.created_at);
-  const relevant = events
-    .filter((event) => event.task_id === turn.task_id)
-    .filter((event) => {
-      const createdAt = Date.parse(event.created_at);
-      return Number.isNaN(turnCreatedAt) || Number.isNaN(createdAt) || createdAt >= turnCreatedAt;
-    })
-    .sort((left, right) => left.cursor - right.cursor);
-
-  for (const event of relevant) {
-    const commandName = stringPayload(event, "command_name");
-    if (event.run_id !== null && commandName !== null) runNames.set(event.run_id, commandName);
-    const activity = activityFromEvent(event, commandName ?? runNames.get(event.run_id ?? "") ?? null);
-    if (activity === null) continue;
-    const previous = activities.at(-1);
-    if (previous?.label === activity.label && previous.tone === activity.tone) continue;
-    activities.push(activity);
-  }
-  return activities;
-}
-
-function activityFromEvent(
-  event: EventEnvelope,
-  commandName: string | null,
-): PublicActivity | null {
-  const activity = (label: string, tone: PublicActivity["tone"]): PublicActivity => ({
-    id: event.id,
-    label,
-    tone,
-    createdAt: event.created_at,
-  });
-  if (event.event_type === "assistant.turn.started") return activity("Preparing response", "active");
-  if (event.event_type === "assistant.message.delta") return activity("Writing response", "active");
-  if (event.event_type === "assistant.turn.completed") return activity("Response ready", "success");
-  if (event.event_type === "assistant.turn.cancelled") return activity("Response stopped", "muted");
-  if (event.event_type === "assistant.turn.failed") return activity("Response failed", "error");
-  if (["approval.requested", "command.waiting_approval"].includes(event.event_type)) {
-    return activity("Waiting for approval", "tool");
-  }
-  if (event.event_type === "approval.decided") return activity("Approval received", "success");
-  if (event.event_type === "command.created") {
-    return commandName === "model.generate"
-      ? activity("Analyzing request", "active")
-      : activity(`Preparing ${commandLabel(commandName)}`, "tool");
-  }
-  if (["command.running", "command.reclaimed"].includes(event.event_type)) {
-    return commandName === "model.generate"
-      ? activity("Generating response", "active")
-      : activity(`Using ${commandLabel(commandName)}`, "tool");
-  }
-  if (event.event_type === "command.succeeded") {
-    const summary = stringPayload(event, "public_summary");
-    return activity(
-      summary ?? (commandName === "model.generate" ? "Generation complete" : "Tool completed"),
-      "success",
-    );
-  }
-  if (["command.failed", "command.rejected", "command.interrupted"].includes(event.event_type)) {
-    return activity(commandName === "model.generate" ? "Generation failed" : "Tool failed", "error");
-  }
-  return null;
-}
-
-function fallbackActivity(turn: AssistantTurn): PublicActivity {
-  const states: Record<AssistantTurn["status"], [string, PublicActivity["tone"]]> = {
-    created: ["Starting", "active"],
-    running: ["Generating response", "active"],
-    waiting_for_tool: ["Waiting for approval", "tool"],
-    completed: ["Response ready", "success"],
-    cancelled: ["Response stopped", "muted"],
-    failed: ["Response failed", "error"],
-  };
-  const [label, tone] = states[turn.status];
-  return { id: `fallback:${turn.id}`, label, tone, createdAt: turn.updated_at };
-}
-
-function commandLabel(value: string | null): string {
-  if (value === null || value === "") return "tool";
-  return value
-    .split(".")
-    .slice(-2)
-    .join(" ")
-    .replaceAll("_", " ");
-}
-
-function stringPayload(event: EventEnvelope, key: string): string | null {
-  const value = event.payload[key];
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+function StepDiagnostics({ step }: { step: WorkChainStep }) {
+  const diagnostics = [
+    `seq ${step.sequence}`,
+    step.modelId === null ? null : `model ${step.modelId}`,
+    step.commandName === null ? null : `command ${step.commandName}`,
+    step.providerAttemptId === null ? null : `attempt ${shortId(step.providerAttemptId)}`,
+    step.commandRunId === null ? null : `run ${shortId(step.commandRunId)}`,
+    `status ${step.status}`,
+  ].filter((value): value is string => value !== null);
+  return <div className="work-chain-diagnostics">{diagnostics.join(" | ")}</div>;
 }
 
 function ActivityIcon({
-  tone,
+  step,
   active,
 }: {
-  tone: PublicActivity["tone"];
+  step: WorkChainStep;
   active: boolean;
 }) {
   if (active) return <LoaderCircle className="activity-spinner" size={14} />;
-  if (tone === "tool") return <Wrench size={14} />;
-  if (tone === "success") return <CheckCircle2 size={14} />;
-  if (tone === "error") return <AlertCircle size={14} />;
-  return <CircleDot size={14} />;
+  if (step.status === "failed") return <AlertCircle size={14} />;
+  if (step.status === "succeeded") return <CheckCircle2 size={14} />;
+  const icons = {
+    route: Route,
+    plan: ListChecks,
+    reasoning: BrainCircuit,
+    model: Bot,
+    tool: Wrench,
+    approval: ShieldCheck,
+    observation: Search,
+    verification: BadgeCheck,
+    artifact: FileOutput,
+    response: MessageSquareText,
+    voice: Volume2,
+  } as const;
+  const Icon = icons[step.kind] ?? Sparkles;
+  return step.status === "cancelled" || step.status === "skipped"
+    ? <CircleDot size={14} />
+    : <Icon size={14} />;
+}
+
+function summaryLine(projection: WorkChainProjection): string {
+  if (!projection.terminal) {
+    return `${projection.completedSteps}/${projection.totalSteps} steps`;
+  }
+  const parts = [`${projection.totalSteps} ${projection.totalSteps === 1 ? "step" : "steps"}`];
+  if (projection.toolCount > 0) parts.push(`${projection.toolCount} ${projection.toolCount === 1 ? "tool" : "tools"}`);
+  if (projection.modelCount > 0) parts.push(`${projection.modelCount} ${projection.modelCount === 1 ? "model" : "models"}`);
+  return parts.join(" · ");
+}
+
+function stepDepth(step: WorkChainStep, steps: WorkChainStep[]): number {
+  const byId = new Map(steps.map((item) => [item.id, item]));
+  let parentId = step.parentStepId;
+  let depth = 0;
+  const visited = new Set<string>();
+  while (parentId !== null && depth < 2 && !visited.has(parentId)) {
+    visited.add(parentId);
+    const parent = byId.get(parentId);
+    if (parent === undefined) break;
+    depth += 1;
+    parentId = parent.parentStepId;
+  }
+  return depth;
+}
+
+function shortId(value: string): string {
+  return value.length <= 12 ? value : `${value.slice(0, 8)}…`;
+}
+
+function formatDuration(value: number | null): string {
+  if (value === null) return "";
+  if (value < 1_000) return `${Math.round(value)}ms`;
+  const seconds = Math.round(value / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}m ${remainder}s`;
 }
 
 function formatTime(value: string): string {

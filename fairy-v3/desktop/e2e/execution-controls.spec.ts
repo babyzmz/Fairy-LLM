@@ -35,11 +35,13 @@ test("permission conflicts reload the latest Core revision", async ({ page }) =>
   });
 });
 
-test("durable progress and recovery events remain user visible", async ({ page }) => {
+test("durable progress and recovery trace remains user visible", async ({ page }) => {
   await page.goto("/?executionRecovery=1");
 
-  await expect(page.getByText("Sandbox command running")).toBeVisible();
   await expect(page.getByText("Runtime recovered after worker interruption")).toBeVisible();
+  const workChain = page.getByRole("region", { name: "Fairy work chain" });
+  await workChain.getByRole("button", { name: "Fairy activity" }).click();
+  await expect(workChain.getByText("Sandbox command running")).toBeVisible();
 });
 
 interface FixtureCall {

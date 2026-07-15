@@ -1,12 +1,16 @@
 import { AlertTriangle, Check, Clock3, X } from "lucide-react";
 
-import type { Approval, EventEnvelope, Task } from "../core/client";
+import { ActivityRail } from "../chat/ActivityRail";
+import type { Approval, AssistantTurn, EventEnvelope, Task, TurnTrace } from "../core/client";
 
 interface TaskTimelineProps {
   task: Task | null;
   tasks: Task[];
   events: EventEnvelope[];
   approvals: Approval[];
+  turn: AssistantTurn | null;
+  trace: TurnTrace | null;
+  developerMode: boolean;
   isActing: boolean;
   onSelectTask(taskId: string): void;
   onDecision(approvalId: string, approved: boolean): Promise<void>;
@@ -17,6 +21,9 @@ export function TaskTimeline({
   tasks,
   events,
   approvals,
+  turn,
+  trace,
+  developerMode,
   isActing,
   onSelectTask,
   onDecision,
@@ -66,29 +73,24 @@ export function TaskTimeline({
             <p>{task.user_request}</p>
           </div>
 
-          <ol className="event-timeline" aria-label="Execution events">
-            {events.length === 0 ? (
-              <li className="event-empty">
-                <span className="event-node" />
-                <time>--:--:--</time>
-                <div>
-                  <strong>Waiting for durable events</strong>
-                  <p>{humanStatus(task.status)}</p>
-                </div>
-              </li>
+          <div className="task-work-chain">
+            {turn !== null || trace !== null || events.length > 0 ? (
+              <ActivityRail
+                turn={turn?.task_id === task.id ? turn : null}
+                trace={trace}
+                events={events}
+                developerMode={developerMode}
+              />
             ) : (
-              events.map((event) => (
-                <li key={event.id} className={isPresenceEvent(event) ? "event-active" : ""}>
-                  <span className="event-node" />
-                  <time dateTime={event.created_at}>{eventTime(event.created_at)}</time>
-                  <div>
-                    <strong>{event.message || humanEventType(event.event_type)}</strong>
-                    <p>{humanEventType(event.event_type)}</p>
-                  </div>
-                </li>
-              ))
+              <div className="task-trace-empty" role="status">
+                <Clock3 size={16} />
+                <div>
+                  <strong>Waiting for durable activity</strong>
+                  <span>{humanStatus(task.status)}</span>
+                </div>
+              </div>
             )}
-          </ol>
+          </div>
 
           {pendingApproval !== null ? (
             <div className="approval-block" role="group" aria-label="Pending approval">
@@ -137,34 +139,12 @@ const activeTaskStatuses = new Set([
   "repairing",
 ]);
 
-function isPresenceEvent(event: EventEnvelope): boolean {
-  return ["running", "starting", "previewing", "applying"].some((part) =>
-    event.event_type.includes(part),
-  );
-}
-
-function humanEventType(value: string): string {
-  return value.replaceAll(".", " / ").replaceAll("_", " ");
-}
-
 function humanStatus(value: string): string {
   return value.replaceAll("_", " ");
 }
 
 function compactRequest(value: string): string {
   return value.length > 42 ? `${value.slice(0, 39)}...` : value;
-}
-
-function eventTime(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.valueOf())
-    ? "--:--:--"
-    : parsed.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      });
 }
 
 function settle(operation: Promise<void>): void {

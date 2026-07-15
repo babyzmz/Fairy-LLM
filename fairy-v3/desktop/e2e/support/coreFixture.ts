@@ -154,6 +154,7 @@ async function installCoreFixture(page: Page) {
         scratchConversation: "0198f4de-0114-7000-8000-000000000010",
         scratchTask: "0198f4de-0114-7000-8000-000000000011",
         turn: "0198f4de-0114-7000-8000-000000000012",
+        projectTurn: "0198f4de-0114-7000-8000-000000000014",
         message: "0198f4de-0114-7000-8000-000000000013",
         commandRun: "0198f4de-0114-7000-8000-000000000015",
         toolInvocation: "0198f4de-0114-7000-8000-000000000016",
@@ -171,8 +172,9 @@ async function installCoreFixture(page: Page) {
         pdfPresentation: "0198f4de-0114-7000-8000-000000000029",
       };
       const timestamp = "2026-07-11T00:00:00Z";
-      const initialTaskStatus =
-        new URLSearchParams(window.location.search).get("taskStatus") === "previewing" ? "previewing" : "ready";
+      const fixtureParams = new URLSearchParams(window.location.search);
+      const initialTaskStatus = fixtureParams.get("taskStatus") === "previewing" ? "previewing" : "ready";
+      const executionRecovery = fixtureParams.get("executionRecovery") === "1";
       let project = {
         id: id.project,
         workspace_id: id.project,
@@ -271,6 +273,107 @@ async function installCoreFixture(page: Page) {
         started_at: timestamp,
         completed_at: timestamp,
         error_code: null,
+      };
+      const projectMessage = {
+        id: "0198f4de-0114-7000-8000-000000000160",
+        conversation_id: id.conversation,
+        task_id: id.task,
+        turn_id: id.projectTurn,
+        sequence: 1,
+        role: "user",
+        visibility: "user",
+        content: "Tighten the project boundary",
+        created_at: timestamp,
+      };
+      const projectTraceId = "0198f4de-0114-7000-8000-000000000161";
+      const projectTraceStep = (
+        stepId: string,
+        sequence: number,
+        kind: string,
+        publicSummary: string,
+        overrides: Record<string, unknown> = {},
+      ) => ({
+        id: stepId,
+        trace_id: projectTraceId,
+        turn_id: id.projectTurn,
+        sequence,
+        parent_step_id: null,
+        caused_by_step_id: null,
+        kind,
+        status: "succeeded",
+        public_summary: publicSummary,
+        public_detail: null,
+        model_id: null,
+        model_role: null,
+        provider_attempt_id: null,
+        command_run_id: null,
+        artifact_refs: [],
+        visibility: "user",
+        revision: 1,
+        created_at: timestamp,
+        updated_at: timestamp,
+        started_at: timestamp,
+        completed_at: timestamp,
+        duration_ms: 40,
+        ...overrides,
+      });
+      const projectTraceSteps = [
+        projectTraceStep(
+          "0198f4de-0114-7000-8000-000000000162",
+          1,
+          "plan",
+          "Project scope prepared",
+        ),
+        projectTraceStep(
+          "0198f4de-0114-7000-8000-000000000163",
+          2,
+          "verification",
+          "Preview is ready",
+          {
+            caused_by_step_id: "0198f4de-0114-7000-8000-000000000162",
+            duration_ms: 120,
+          },
+        ),
+        ...(executionRecovery
+          ? [
+              projectTraceStep(
+                "0198f4de-0114-7000-8000-000000000164",
+                3,
+                "tool",
+                "Sandbox command running",
+                {
+                  parent_step_id: "0198f4de-0114-7000-8000-000000000162",
+                  caused_by_step_id: "0198f4de-0114-7000-8000-000000000162",
+                  command_run_id: id.commandRun,
+                  duration_ms: 300,
+                },
+              ),
+              projectTraceStep(
+                "0198f4de-0114-7000-8000-000000000165",
+                4,
+                "observation",
+                "Runtime recovered after worker interruption",
+                {
+                  caused_by_step_id: "0198f4de-0114-7000-8000-000000000164",
+                  duration_ms: 75,
+                },
+              ),
+            ]
+          : []),
+      ];
+      const projectTrace = {
+        id: projectTraceId,
+        turn_id: id.projectTurn,
+        conversation_id: id.conversation,
+        task_id: id.task,
+        legacy: false,
+        last_sequence: projectTraceSteps.length,
+        revision: projectTraceSteps.length,
+        created_at: timestamp,
+        updated_at: timestamp,
+        started_at: timestamp,
+        completed_at: timestamp,
+        steps: projectTraceSteps,
       };
       const scratchMessage = {
         id: id.message,
@@ -429,10 +532,26 @@ async function installCoreFixture(page: Page) {
           ...event,
           id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
           cursor,
+          run_id: id.commandRun,
           task_sequence: cursor,
-          event_type: "command.output",
+          event_type: "turn.trace.step.completed",
           message,
-          payload: { release_sequence: cursor },
+          payload: {
+            trace_step_id: `0198f4de-0114-7000-8001-${String(100_000_000_000 + cursor)}`,
+            trace_id: projectTraceId,
+            turn_id: id.projectTurn,
+            sequence: 100 + cursor,
+            parent_step_id: null,
+            caused_by_step_id: "0198f4de-0114-7000-8000-000000000163",
+            kind: "observation",
+            status: "succeeded",
+            public_summary: message,
+            public_detail: null,
+            model_role: null,
+            artifact_refs: [],
+            duration_ms: 1,
+          },
+          created_at: new Date().toISOString(),
         });
         return startedAt;
       };
@@ -875,7 +994,7 @@ async function installCoreFixture(page: Page) {
               kind: "openai_compatible",
               base_url: "https://openrouter.ai/api/v1",
               model_id: "deepseek/deepseek-v4-pro",
-              capabilities: ["text", "tools", "structured_output"],
+              capabilities: ["text", "tools", "structured_output", "stt"],
               credential_required: true,
               credential_configured: true,
               enabled: true,
@@ -985,6 +1104,117 @@ async function installCoreFixture(page: Page) {
         "assistant.turns.start": completedTurn,
         "assistant.turns.cancel": { ...completedTurn, status: "cancelled" },
         "assistant.turns.retry": { ...completedTurn, status: "created" },
+        "assistant.turns.trace.list": {
+          id: "0198f4de-0114-7000-8000-000000000150",
+          turn_id: id.turn,
+          conversation_id: id.scratchConversation,
+          task_id: id.scratchTask,
+          legacy: false,
+          last_sequence: 4,
+          revision: 4,
+          created_at: timestamp,
+          updated_at: timestamp,
+          started_at: timestamp,
+          completed_at: timestamp,
+          steps: [
+            {
+              id: "0198f4de-0114-7000-8000-000000000151",
+              trace_id: "0198f4de-0114-7000-8000-000000000150",
+              turn_id: id.turn,
+              sequence: 1,
+              parent_step_id: null,
+              caused_by_step_id: null,
+              kind: "route",
+              status: "succeeded",
+              public_summary: "Request routed for implementation",
+              public_detail: "Kimi implements the request and Fairy verifies the result.",
+              model_id: null,
+              model_role: null,
+              provider_attempt_id: null,
+              command_run_id: null,
+              artifact_refs: [],
+              visibility: "user",
+              revision: 1,
+              created_at: timestamp,
+              updated_at: timestamp,
+              started_at: timestamp,
+              completed_at: timestamp,
+              duration_ms: 20,
+            },
+            {
+              id: "0198f4de-0114-7000-8000-000000000152",
+              trace_id: "0198f4de-0114-7000-8000-000000000150",
+              turn_id: id.turn,
+              sequence: 2,
+              parent_step_id: "0198f4de-0114-7000-8000-000000000151",
+              caused_by_step_id: "0198f4de-0114-7000-8000-000000000151",
+              kind: "model",
+              status: "succeeded",
+              public_summary: "Implementation generated",
+              public_detail: null,
+              model_id: "moonshotai/kimi-k2.7-code",
+              model_role: "primary",
+              provider_attempt_id: "0198f4de-0114-7000-8000-000000000153",
+              command_run_id: null,
+              artifact_refs: [],
+              visibility: "user",
+              revision: 1,
+              created_at: timestamp,
+              updated_at: timestamp,
+              started_at: timestamp,
+              completed_at: timestamp,
+              duration_ms: 420,
+            },
+            {
+              id: "0198f4de-0114-7000-8000-000000000154",
+              trace_id: "0198f4de-0114-7000-8000-000000000150",
+              turn_id: id.turn,
+              sequence: 3,
+              parent_step_id: "0198f4de-0114-7000-8000-000000000152",
+              caused_by_step_id: "0198f4de-0114-7000-8000-000000000152",
+              kind: "tool",
+              status: "succeeded",
+              public_summary: "Workspace files verified",
+              public_detail: null,
+              model_id: null,
+              model_role: null,
+              provider_attempt_id: null,
+              command_run_id: id.commandRun,
+              artifact_refs: [],
+              visibility: "user",
+              revision: 1,
+              created_at: timestamp,
+              updated_at: timestamp,
+              started_at: timestamp,
+              completed_at: timestamp,
+              duration_ms: 80,
+            },
+            {
+              id: "0198f4de-0114-7000-8000-000000000155",
+              trace_id: "0198f4de-0114-7000-8000-000000000150",
+              turn_id: id.turn,
+              sequence: 4,
+              parent_step_id: null,
+              caused_by_step_id: "0198f4de-0114-7000-8000-000000000154",
+              kind: "response",
+              status: "succeeded",
+              public_summary: "Response ready",
+              public_detail: null,
+              model_id: null,
+              model_role: null,
+              provider_attempt_id: null,
+              command_run_id: null,
+              artifact_refs: [],
+              visibility: "user",
+              revision: 1,
+              created_at: timestamp,
+              updated_at: timestamp,
+              started_at: timestamp,
+              completed_at: timestamp,
+              duration_ms: 30,
+            },
+          ],
+        },
         "conversations.create": scratchConversation,
         "voice.transcribe": {
           conversation_id: id.scratchConversation,
@@ -1411,9 +1641,16 @@ async function installCoreFixture(page: Page) {
                                                 }
                                                 return completedTurn;
                                               })()
+                                            : request.method === "assistant.turns.trace.list"
+                                              ? request.params.turn_id === id.projectTurn
+                                                ? projectTrace
+                                                : results[request.method]
                                             : request.method === "messages.list"
                                               ? {
-                                                  items: messages,
+                                                  items:
+                                                    request.params.conversation_id === id.conversation
+                                                      ? [projectMessage]
+                                                      : messages,
                                                   next_cursor: null,
                                                 }
                                               : request.method === "approvals.list"

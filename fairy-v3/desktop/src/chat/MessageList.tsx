@@ -11,7 +11,7 @@ import {
 import { Fragment, useEffect, useRef, useState } from "react";
 import { m } from "motion/react";
 
-import type { AssistantTurn, EventEnvelope, Message } from "../core/client";
+import type { AssistantTurn, EventEnvelope, Message, TurnTrace } from "../core/client";
 import { VoiceSpeakControl } from "../voice/VoiceController";
 import { ActivityRail } from "./ActivityRail";
 import type { OptimisticUserMessage } from "./useAssistantTurn";
@@ -21,6 +21,7 @@ interface MessageListProps {
   messages: Message[];
   streamedText: string;
   turn: AssistantTurn | null;
+  turnTraces: Record<string, TurnTrace>;
   events: EventEnvelope[];
   pendingUserMessage: OptimisticUserMessage | null;
   developerMode: boolean;
@@ -35,6 +36,7 @@ export function MessageList({
   messages,
   streamedText,
   turn,
+  turnTraces,
   events,
   pendingUserMessage,
   developerMode,
@@ -48,9 +50,7 @@ export function MessageList({
   const endRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
   const [showJump, setShowJump] = useState(false);
-  const visibleMessages = developerMode
-    ? messages
-    : messages.filter((message) => message.role !== "tool");
+  const visibleMessages = messages.filter((message) => message.role !== "tool");
   const durableAssistantForTurn =
     turn !== null &&
     visibleMessages.some(
@@ -72,7 +72,11 @@ export function MessageList({
     );
   }
 
-  const railTurnId = turn?.id ?? null;
+  const durableUserTurnIds = new Set(
+    visibleMessages
+      .filter((message) => message.role === "user" && message.turn_id !== null)
+      .map((message) => message.turn_id as string),
+  );
   return (
     <div
       ref={listRef}
@@ -94,9 +98,16 @@ export function MessageList({
             onCopy={onCopy}
             onOpenLink={onOpenLink}
           />
-          {message.role === "user" && message.turn_id === railTurnId && turn !== null ? (
-            <ActivityRail turn={turn} events={events} />
-          ) : null}
+          {message.role === "user" && message.turn_id !== null &&
+          (turnTraces[message.turn_id] !== undefined || turn?.id === message.turn_id) ? (
+            <ActivityRail
+              turn={turn?.id === message.turn_id ? turn : null}
+              turnId={message.turn_id}
+              trace={turnTraces[message.turn_id] ?? null}
+              events={events}
+              developerMode={developerMode}
+            />
+            ) : null}
         </Fragment>
       ))}
       {pendingUserMessage !== null ? (
@@ -107,7 +118,14 @@ export function MessageList({
             onEdit={onEditPending}
             onDelete={onDeletePending}
           />
-          {turn !== null ? <ActivityRail turn={turn} events={events} /> : null}
+          {turn !== null && !durableUserTurnIds.has(turn.id) ? (
+            <ActivityRail
+              turn={turn}
+              trace={turnTraces[turn.id] ?? null}
+              events={events}
+              developerMode={developerMode}
+            />
+          ) : null}
         </>
       ) : null}
       {visibleStreamedText ? (

@@ -23,6 +23,7 @@ import type {
   RuntimeHealth,
   Skill,
   Task,
+  TurnTrace,
   Version,
   WorkspaceFile,
   WorkspaceFileContent,
@@ -43,6 +44,10 @@ export type WorkspaceMode = "project" | "chat";
 export type PermissionProfile = "observe" | "standard" | "autonomous";
 
 export interface WorkspaceClient extends AssistantTurnClient {
+  assistant: {
+    turns: AssistantTurnClient["assistant"]["turns"] &
+      Pick<CoreClient["assistant"]["turns"], "trace">;
+  };
   desktop: Pick<CoreClient["desktop"], "openSettings">;
   health: CoreClient["health"];
   projects: Pick<CoreClient["projects"], "list" | "create" | "import" | "selectFolder">;
@@ -129,11 +134,13 @@ export interface WorkspaceModel {
   workspaceFilesLoading: boolean;
   capabilities: CapabilityManifest | null;
   chatTurn: AssistantTurn | null;
+  turnTraces: Record<string, TurnTrace>;
   chatStreamedText: string;
   chatPendingUserMessage: OptimisticUserMessage | null;
   chatBusy: boolean;
   chatError: string | null;
   projectTurn: AssistantTurn | null;
+  projectTrace: TurnTrace | null;
   projectBusy: boolean;
   projectError: string | null;
   petTaskId: string | null;

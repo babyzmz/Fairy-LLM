@@ -47,6 +47,7 @@ test("input surface owns cards and controls without duplicating the renderer", a
   const context = await browser.newContext({ viewport: { width: 616, height: 360 } });
   const page = await context.newPage();
   await page.goto("/?surface=pet-input");
+  await expect(page.getByRole("button", { name: "Open Fairy quick input" })).toBeAttached();
   await publishProjection(page, {
     activity: "working",
     work_state: "streaming",

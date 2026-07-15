@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAssistantTurn } from "../chat/useAssistantTurn";
+import { useTurnTraces } from "../chat/useTurnTraces";
 import type { Conversation, EventEnvelope, McpToolPolicyInput, Project, Task } from "../core/client";
 import type { McpServerDraft } from "../settings/extensionTypes";
 import {
@@ -159,9 +160,21 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     enabled: selectedChatConversation !== null,
     retry: false,
   });
-  const messages = (messagesQuery.data?.items ?? []).filter(
+  const messageItems = messagesQuery.data?.items ?? [];
+  const messages = messageItems.filter(
     (message) => developerMode || message.visibility === "user",
   );
+  const projectMessagesQuery = useQuery({
+    queryKey: [...workspaceKey, "project-messages", selectedConversation?.id],
+    queryFn: () =>
+      client.messages.list({
+        conversation_id: requireId(selectedConversation?.id),
+        limit: 100,
+      }),
+    enabled: mode === "project" && selectedConversation !== null,
+    retry: false,
+  });
+  const projectMessageItems = projectMessagesQuery.data?.items ?? [];
 
   const versionsQuery = useQuery({
     queryKey: [...workspaceKey, "versions", selectedProject?.id],
@@ -270,6 +283,14 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     onTaskCreated: setTaskSelection,
     onSettled: invalidateWorkspace,
   });
+  const { turnTraces, projectTrace } = useTurnTraces(client, {
+    enabled: healthQuery.isSuccess,
+    chatMessages: messageItems,
+    projectMessages: projectMessageItems,
+    chatTurn: chatAssistant.turn,
+    projectTurn: mode === "project" ? projectAssistant.turn : null,
+    selectedTaskId: mode === "project" ? (selectedTask?.id ?? null) : null,
+  });
 
   useEffect(() => {
     if (!healthQuery.isSuccess) return;
@@ -286,13 +307,18 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             setAllEvents((current) => appendEvent(current, event));
           }
           if (terminalAssistantEvents.has(event.event_type) || event.event_type === "message.created") {
-            void queryClient.invalidateQueries({ queryKey: [...workspaceKey, "messages"] });
+            void queryClient.invalidateQueries({
+              queryKey: workspaceKey,
+              predicate: (query) => ["messages", "project-messages"].includes(String(query.queryKey[1])),
+            });
             void queryClient.invalidateQueries({ queryKey: [...workspaceKey, "tasks"] });
           } else if (event.event_type !== "assistant.message.delta") {
             void queryClient.invalidateQueries({
               queryKey: workspaceKey,
               predicate: (query) =>
-                !["health", "messages", "providers", "provider-health"].includes(String(query.queryKey[1])),
+                !["health", "messages", "project-messages", "providers", "provider-health"].includes(
+                  String(query.queryKey[1]),
+                ),
             });
           }
         }
@@ -512,6 +538,15 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       selectConversation(conversationId: string) {
         setConversationSelection(conversationId);
         setTaskSelection(null);
+      },
+      selectChatConversation(conversationId: string) {
+        setMode("chat");
+        if (chatConversationSelection === conversationId) return;
+        setChatConversationSelection(conversationId);
+        setChatTaskId(null);
+        setPetTaskId(null);
+        petConversationIdRef.current = null;
+        chatAssistant.reset();
       },
       async createProject(name: string) {
         const result = await runAction(() => client.projects.create({ name, residency: "local_only" }));
@@ -852,6 +887,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     mcpServersQuery.error,
     tasksQuery.error,
     messagesQuery.error,
+    projectMessagesQuery.error,
     versionsQuery.error,
     approvalsQuery.error,
     chatApprovalsQuery.error,
@@ -898,9 +934,15 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     versions,
     approvals,
     chatApprovals,
-    events: allEvents.filter((event) => event.task_id === selectedTask?.id && event.visibility === "user"),
+    events: allEvents.filter(
+      (event) =>
+        event.task_id === selectedTask?.id &&
+        (event.visibility === "user" || developerMode && event.visibility === "developer"),
+    ),
     chatEvents: allEvents.filter(
-      (event) => event.conversation_id === selectedChatConversation?.id && event.visibility === "user",
+      (event) =>
+        event.conversation_id === selectedChatConversation?.id &&
+        (event.visibility === "user" || developerMode && event.visibility === "developer"),
     ),
     presenceEvents: allEvents.filter((event) => event.visibility === "user"),
     messages,
@@ -929,11 +971,13 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     workspaceFilesLoading: workspaceFilesQuery.isPending && workspaceFilesQuery.isEnabled,
     capabilities: capabilitiesQuery.data ?? null,
     chatTurn: chatAssistant.turn,
+    turnTraces,
     chatStreamedText: chatAssistant.streamedText,
     chatPendingUserMessage: chatAssistant.pendingUserMessage,
     chatBusy: chatAssistant.isBusy,
     chatError: chatAssistant.error,
     projectTurn: projectAssistant.turn,
+    projectTrace,
     projectBusy: projectAssistant.isBusy,
     projectError: projectAssistant.error,
     petTaskId,
@@ -958,7 +1002,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     deleteOpenRouter,
     selectProject: actions.selectProject,
     selectConversation: actions.selectConversation,
-    selectChatConversation: setChatConversationSelection,
+    selectChatConversation: actions.selectChatConversation,
     selectTask: setTaskSelection,
     createProject: actions.createProject,
     importProject: actions.importProject,

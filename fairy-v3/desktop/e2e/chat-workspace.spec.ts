@@ -49,11 +49,17 @@ for (const viewport of [
   });
 }
 
-test("tool protocol is visible only in developer mode", async ({ page }) => {
+test("developer mode shows bounded trace diagnostics without raw tool protocol", async ({ page }) => {
   await enableDeveloperMode(page);
   await openScratchChat(page);
 
-  await expect(page.getByText(/fixture provider payload/)).toBeVisible();
+  const composer = page.getByLabel("Message Fairy");
+  await composer.fill("Inspect the durable work trace");
+  await page.getByRole("button", { name: "Send message" }).click();
+  const workChain = page.getByRole("region", { name: "Fairy work chain" });
+  await workChain.getByRole("button", { name: "Fairy activity" }).click();
+  await expect(workChain.getByText(/model moonshotai\/kimi-k2\.7-code/)).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("fixture provider payload");
 });
 
 test("ordinary chat exposes the shared workspace file inspector", async ({ page }) => {
@@ -105,7 +111,8 @@ test("model selector stays inside the window and persists the global choice", as
   await page.screenshot({ path: testInfo.outputPath("model-selector.png") });
 });
 
-test("a user message appears before Core task creation returns", async ({ page }) => {
+test("a user message appears before Core task creation returns", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 640, height: 700 });
   await page.goto("/");
   await openScratchChat(page);
   const composer = page.getByLabel("Message Fairy");
@@ -117,9 +124,21 @@ test("a user message appears before Core task creation returns", async ({ page }
   ).toBeVisible();
   await expect(page.getByText("Sending", { exact: true })).toBeVisible();
   await expect(page.getByText("Fixture streamed response completed")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Fairy activity" })).toContainText(
+  const workChain = page.getByRole("region", { name: "Fairy work chain" });
+  await expect(workChain).toContainText(
     "Response ready",
   );
+  await workChain.getByRole("button", { name: "Fairy activity" }).click();
+  await expect(workChain.getByText("Kimi implementation")).toBeVisible();
+  await expect(workChain).not.toContainText("moonshotai/kimi-k2.7-code");
+  await page.waitForTimeout(250);
+  const workChainBounds = await workChain.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect();
+    return { left: rectangle.left, right: rectangle.right, width: innerWidth };
+  });
+  expect(workChainBounds.left).toBeGreaterThanOrEqual(0);
+  expect(workChainBounds.right).toBeLessThanOrEqual(workChainBounds.width);
+  await page.screenshot({ path: testInfo.outputPath("work-chain-expanded.png") });
 });
 
 test("reduced motion disables repeated chat activity animation", async ({ page }) => {

@@ -315,57 +315,40 @@ h2 {
   line-height: 1.5;
 }
 
-.event-timeline {
+.task-work-chain {
   flex: 1;
-  list-style: none;
+  min-height: 0;
+  padding-bottom: 12px;
+}
+
+.task-work-chain .activity-rail {
   margin: 0;
-  padding: 4px 0 8px 2px;
 }
 
-.event-timeline li {
-  position: relative;
+.task-trace-empty {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #303432;
+  color: #818b86;
+  background: #181a19;
+}
+
+.task-trace-empty div {
   display: grid;
-  grid-template-columns: 66px minmax(0, 1fr);
-  gap: 11px;
-  padding: 0 0 18px 17px;
-  border-left: 1px solid #3a3e3c;
+  gap: 3px;
 }
 
-.event-node {
-  position: absolute;
-  top: 2px;
-  left: -4px;
-  width: 7px;
-  height: 7px;
-  background: #69706c;
-}
-
-.event-active .event-node {
-  background: #70ddd2;
-  box-shadow: 0 0 9px rgb(112 221 210 / 70%);
-  animation: signal-pulse 1.4s ease-in-out infinite;
-}
-
-.event-timeline time {
-  color: #7e8581;
-  font: 10px/1.2 "Cascadia Mono", monospace;
-}
-
-.event-timeline strong {
-  display: block;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-}
-
-.event-timeline p {
-  margin-top: 3px;
-  color: #8c938f;
+.task-trace-empty strong {
+  color: #c5ccc8;
   font-size: 11px;
-  text-transform: lowercase;
 }
 
-.event-empty {
-  opacity: 0.72;
+.task-trace-empty span {
+  font-size: 10px;
+  text-transform: capitalize;
 }
 
 .approval-block {

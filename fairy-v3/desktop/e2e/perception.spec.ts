@@ -26,7 +26,7 @@ test("captures only after a user gesture and sends the confirmed image to Core",
     path: testInfo.outputPath("perception-preview-640x700.png"),
   });
   const dialogBox = await page.getByRole("dialog", { name: "Screen capture" }).boundingBox();
-  const composerBox = await page.locator(".composer-controls").boundingBox();
+  const composerBox = await page.locator(".composer-toolbar").boundingBox();
   expect(dialogBox).not.toBeNull();
   expect(composerBox).not.toBeNull();
   if (dialogBox !== null && composerBox !== null) {

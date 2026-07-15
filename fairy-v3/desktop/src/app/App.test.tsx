@@ -205,7 +205,7 @@ beforeEach(() => window.localStorage.clear());
 afterEach(cleanup);
 
 describe("App", () => {
-  it("renders durable workspace data and user-visible events only", async () => {
+  it("renders durable workspace data without exposing raw Ledger events", async () => {
     const health = vi.fn(async () => ({
       status: "ok",
       service: "fairy-core",
@@ -217,7 +217,8 @@ describe("App", () => {
 
     expect(screen.getByRole("banner")).toHaveTextContent("Core starting");
     await waitFor(() => expect(screen.getByLabelText("History navigation")).toHaveTextContent("Atlas Console"));
-    expect(await screen.findByText("Scope resolved")).toBeVisible();
+    expect(await screen.findByText("Waiting for durable activity")).toBeVisible();
+    expect(screen.queryByText("Scope resolved")).not.toBeInTheDocument();
     expect(screen.queryByText("Developer diagnostic")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Task Timeline" })).toBeVisible();
     await userEvent.click(screen.getByRole("tab", { name: "Preview" }));
@@ -633,6 +634,20 @@ function createClient(
           }),
         cancel: async () => completedTurn,
         retry: async () => completedTurn,
+        trace: async (turnId) => ({
+          id: "0198f4de-0114-7000-8000-000000000071",
+          turn_id: turnId,
+          conversation_id: completedTurn.conversation_id,
+          task_id: completedTurn.task_id,
+          legacy: true,
+          last_sequence: 0,
+          revision: 0,
+          created_at: completedTurn.created_at,
+          updated_at: completedTurn.updated_at,
+          started_at: completedTurn.started_at,
+          completed_at: completedTurn.completed_at,
+          steps: [],
+        }),
       },
     },
     voice: {

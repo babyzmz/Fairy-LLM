@@ -11,6 +11,7 @@ import type {
   ProviderHealth,
   ProviderProfile,
   SlashCommandMetadata,
+  TurnTrace,
 } from "../core/client";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
 import { Composer } from "./Composer";
@@ -26,6 +27,7 @@ export interface ChatWorkspaceProps {
   streamedText: string;
   pendingUserMessage: OptimisticUserMessage | null;
   turn: AssistantTurn | null;
+  turnTraces: Record<string, TurnTrace>;
   approvals: Approval[];
   providers: ProviderProfile[];
   providerHealth: ProviderHealth[];
@@ -174,6 +176,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           events={props.events}
           streamedText={props.streamedText}
           turn={props.turn}
+          turnTraces={props.turnTraces}
           pendingUserMessage={props.pendingUserMessage}
           developerMode={props.developerMode}
           onRetryPending={props.onRetryPending}

@@ -76,6 +76,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               streamedText={model.chatStreamedText}
               pendingUserMessage={model.chatPendingUserMessage}
               turn={model.chatTurn}
+              turnTraces={model.turnTraces}
               approvals={model.chatApprovals}
               providers={model.providers}
               providerHealth={model.providerHealth}
@@ -116,6 +117,9 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
                 tasks={model.tasks}
                 events={model.events}
                 approvals={model.approvals}
+                turn={model.projectTurn}
+                trace={model.projectTrace}
+                developerMode={model.developerMode}
                 isActing={model.isActing}
                 onSelectTask={model.selectTask}
                 onDecision={model.decideApproval}

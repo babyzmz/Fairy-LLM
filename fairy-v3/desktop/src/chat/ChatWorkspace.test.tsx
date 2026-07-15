@@ -77,7 +77,7 @@ describe("ChatWorkspace", () => {
     );
   });
 
-  it("keeps durable tool protocol messages inside developer mode", () => {
+  it("never projects durable tool protocol as a second chat message", () => {
     const toolMessage: Message = {
       ...MESSAGES[0],
       id: "0198f4de-0114-7000-8000-000000000099",
@@ -91,7 +91,7 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByText(toolMessage.content)).not.toBeInTheDocument();
 
     rerender(<ChatWorkspace {...props} developerMode />);
-    expect(screen.getByText(toolMessage.content)).toBeVisible();
+    expect(screen.queryByText(toolMessage.content)).not.toBeInTheDocument();
   });
 
   it("routes slash commands without sending them as model text", async () => {
@@ -288,6 +288,7 @@ function workspaceProps(
     streamedText: "",
     pendingUserMessage: null,
     turn: TURN,
+    turnTraces: {},
     approvals: [],
     providers: PROVIDERS,
     providerHealth: providerAvailable
