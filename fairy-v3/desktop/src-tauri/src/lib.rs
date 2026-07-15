@@ -155,6 +155,10 @@ pub fn settings_method_allowed(method: &str) -> bool {
             | "permissions.update"
             | "providers.list"
             | "providers.health"
+            | "models.catalog.list"
+            | "models.catalog.refresh"
+            | "models.selection.get"
+            | "models.selection.update"
             | "skills.list"
             | "mcp.servers.list"
             | "mcp.servers.configure"
@@ -386,13 +390,12 @@ async fn settings_rpc(
 #[derive(serde::Deserialize)]
 struct OpenRouterConfigureInput {
     api_key: String,
-    model_id: String,
 }
 
 #[derive(serde::Serialize)]
 struct OpenRouterStatus {
     configured: bool,
-    model_id: Option<String>,
+    account_id: Option<String>,
 }
 
 #[tauri::command]
@@ -411,7 +414,7 @@ async fn provider_openrouter_status(
     Ok(OpenRouterStatus {
         configured: ProviderCredentialStore::new(&state.data_dir).configured()
             && configuration.is_some(),
-        model_id: configuration.map(|value| value.model_id),
+        account_id: configuration.map(|value| value.account_id),
     })
 }
 
@@ -425,7 +428,7 @@ async fn provider_openrouter_configure(
     let credentials = ProviderCredentialStore::new(&state.data_dir);
     let configurations = ProviderConfigurationStore::new(&state.data_dir);
     let configuration = configurations
-        .save_openrouter(&input.model_id)
+        .save_openrouter()
         .map_err(|error| error.to_string())?;
     credentials
         .save_openrouter(&input.api_key)
@@ -433,7 +436,7 @@ async fn provider_openrouter_configure(
     restart_core(&state).map_err(|error| error.to_string())?;
     Ok(OpenRouterStatus {
         configured: true,
-        model_id: Some(configuration.model_id),
+        account_id: Some(configuration.account_id),
     })
 }
 
@@ -452,7 +455,7 @@ async fn provider_openrouter_delete(
     restart_core(&state).map_err(|error| error.to_string())?;
     Ok(OpenRouterStatus {
         configured: false,
-        model_id: None,
+        account_id: None,
     })
 }
 

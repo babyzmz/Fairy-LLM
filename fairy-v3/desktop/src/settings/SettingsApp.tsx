@@ -27,10 +27,10 @@ import { m } from "motion/react";
 import type {
   CapabilityManifest,
   ExecutionSettings,
+  ModelCatalogPage,
+  ModelSelectionPreference,
   McpServer,
   McpToolPolicyInput,
-  ProviderHealth,
-  ProviderProfile,
   Skill,
 } from "../core/client";
 import { startNativeVoiceTest } from "../voice/nativeVoice";
@@ -72,10 +72,10 @@ const categories: readonly {
 
 interface SettingsData {
   preferences: DesktopPreferences;
-  providers: ProviderProfile[];
-  health: ProviderHealth[];
   openRouterConfigured: boolean;
-  openRouterModelId: string | null;
+  openRouterAccountId: string | null;
+  modelCatalog: ModelCatalogPage;
+  modelSelection: ModelSelectionPreference;
   permissions: ExecutionSettings;
   capabilities: CapabilityManifest;
   skills: Skill[];
@@ -93,12 +93,12 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [preferences, providers, health, status, permissions, capabilities, skills, servers, voiceHealth] =
+      const [preferences, status, modelCatalog, modelSelection, permissions, capabilities, skills, servers, voiceHealth] =
         await Promise.all([
           client.preferences.get(),
-          client.providers.list(),
-          client.providers.health(),
           client.providers.openRouterStatus(),
+          client.models.catalog.list(),
+          client.models.selection.get(),
           client.permissions.get(),
           client.permissions.capabilities(),
           client.extensions.skills(),
@@ -107,10 +107,10 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
         ]);
       setData({
         preferences,
-        providers: providers.items,
-        health: health.items,
         openRouterConfigured: status.configured,
-        openRouterModelId: status.model_id,
+        openRouterAccountId: status.account_id,
+        modelCatalog,
+        modelSelection,
         permissions,
         capabilities,
         skills: skills.items,
@@ -199,7 +199,7 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
         </button>
       </aside>
 
-      <m.section className="settings-content" key={visibleCategory} initial={{ opacity: 0.4, x: 8 }} animate={{ opacity: 1, x: 0 }}>
+      <m.section className="settings-content" key={visibleCategory} initial={{ opacity: 0.4 }} animate={{ opacity: 1 }}>
         {error ? <div className="settings-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}><X size={14} /></button></div> : null}
         {data === null ? <div className="settings-loading" role="status"><span className="settings-spinner" />Connecting to Fairy Core</div> : (
           <SettingsCategory
@@ -301,28 +301,73 @@ function SettingsCategory(props: {
 }
 
 function ModelsPanel(props: Parameters<typeof SettingsCategory>[0]) {
-  const { data, busy, client, act, reload, updatePreferences } = props;
+  const { data, busy, client, act, reload, updateData } = props;
   const [apiKey, setApiKey] = useState("");
-  const [modelId, setModelId] = useState(data.openRouterModelId ?? "tencent/hy3:free");
-  const status = new Map(data.health.map((item) => [item.profile_id, item.status]));
+  const selectedEntry = data.modelSelection.mode === "manual"
+    ? data.modelCatalog.items.find((entry) => entry.model_id === data.modelSelection.model_id)
+    : null;
+  const updatePolicy = (patch: Partial<Pick<ModelSelectionPreference, "mode" | "model_id" | "allow_free_fallback" | "zero_data_retention">>) =>
+    act(async () => {
+      const current = data.modelSelection;
+      const saved = await client.models.selection.update({
+        mode: patch.mode ?? current.mode,
+        model_id: patch.model_id === undefined ? current.model_id : patch.model_id,
+        allow_free_fallback: patch.allow_free_fallback ?? current.allow_free_fallback,
+        zero_data_retention: patch.zero_data_retention ?? current.zero_data_retention,
+        expected_revision: current.revision,
+        idempotency_key: `settings:model-selection:${current.revision}:${crypto.randomUUID()}`,
+      });
+      updateData((value) => value === null ? null : { ...value, modelSelection: saved });
+    });
   return <Category title="Models" subtitle="Providers and credentials">
-    <div className="settings-provider-list">
-      {data.providers.map((provider) => <button key={provider.id} type="button" className={data.preferences.selected_profile_id === provider.id ? "selected" : ""} disabled={busy || !provider.enabled} onClick={() => void updatePreferences({ selected_profile_id: provider.id })}>
-        <span className={`settings-health-dot ${status.get(provider.id) ?? "unknown"}`} />
-        <span><strong>{provider.display_name}</strong><small>{provider.model_id}</small></span>
-        <span>{provider.credential_required ? provider.credential_configured ? "Connected" : "Credential required" : "Ready"}</span>
-        {data.preferences.selected_profile_id === provider.id ? <Check size={16} /> : null}
-      </button>)}
+    <div className="settings-model-account">
+      <div className="settings-form-heading"><KeyRound size={17} /><div><strong>OpenRouter</strong><span>{data.openRouterConfigured ? "Credential protected by Windows" : "Credential not configured"}</span></div></div>
+      <span className={`settings-account-status ${data.modelCatalog.account.credential_status}`}>{titleCase(data.modelCatalog.account.credential_status)}</span>
     </div>
-    <form className="settings-form" onSubmit={(event) => { event.preventDefault(); void act(async () => { await client.providers.configureOpenRouter({ api_key: apiKey, model_id: modelId }); setApiKey(""); await reload(); }); }}>
+    <div className="settings-model-selection">
+      <div><strong>Global selection</strong><small>{data.modelSelection.mode === "auto" ? "Auto routes each new Turn" : selectedEntry?.display_name ?? "Selected model unavailable"}</small></div>
+      {data.modelSelection.mode !== "auto" ? <button className="secondary-command" type="button" disabled={busy} onClick={() => void updatePolicy({ mode: "auto", model_id: null })}><Sparkles size={14} />Use Auto</button> : <span className="settings-selection-badge"><Check size={13} />Auto</span>}
+    </div>
+    <SettingToggle label="Zero data retention routing" detail="Require compatible ZDR endpoints when available" checked={data.modelSelection.zero_data_retention} disabled={busy} onChange={(value) => void updatePolicy({ zero_data_retention: value })} />
+    <SettingToggle label="Allow free fallback" detail="Disabled by default; Auto may use approved free text models" checked={data.modelSelection.allow_free_fallback} disabled={busy} onChange={(value) => void updatePolicy({ allow_free_fallback: value })} />
+    <div className="settings-section-command"><span>{data.modelCatalog.items.length} approved models · {data.modelCatalog.stale ? "Last known catalog" : "Catalog current"}</span><button className="secondary-command" type="button" disabled={busy} onClick={() => void act(async () => { const catalog = await client.models.catalog.refresh(); updateData((value) => value === null ? null : { ...value, modelCatalog: catalog }); })}><RefreshCw size={14} />Refresh catalog</button></div>
+    <div className="settings-model-catalog">
+      {data.modelCatalog.items.map((entry) => <div className="settings-model-row" key={entry.model_id}>
+        <span className={`settings-health-dot ${entry.availability}`} />
+        <div><strong>{entry.display_name}</strong><small>{modelPurpose(entry.category)}</small></div>
+        <span>{entry.paid ? "Paid" : "Free"} · {modelModality(entry.endpoint_kind)}</span>
+      </div>)}
+    </div>
+    <form className="settings-form" onSubmit={(event) => { event.preventDefault(); void act(async () => { await client.providers.configureOpenRouter({ api_key: apiKey }); setApiKey(""); await reload(); }); }}>
       <div className="settings-form-heading"><KeyRound size={17} /><div><strong>OpenRouter credential</strong><span>{data.openRouterConfigured ? "Configured" : "Not configured"}</span></div></div>
       <label><span>API key</span><input type="password" autoComplete="off" required value={apiKey} disabled={busy} placeholder={data.openRouterConfigured ? "Enter a new key to replace" : "sk-or-v1-..."} onChange={(event) => setApiKey(event.target.value)} /></label>
-      <label><span>Model ID</span><input value={modelId} list="settings-free-models" required disabled={busy} onChange={(event) => setModelId(event.target.value)} /><datalist id="settings-free-models"><option value="tencent/hy3:free" /><option value="nvidia/nemotron-3-ultra-550b-a55b:free" /></datalist></label>
       <div className="settings-form-actions"><button className="primary-command" type="submit" disabled={busy || !apiKey.trim()}><KeyRound size={14} />Save and connect</button>
         {data.openRouterConfigured ? <button className="danger-icon" type="button" aria-label="Remove OpenRouter credential" title="Remove OpenRouter credential" disabled={busy} onClick={() => { if (!window.confirm("Remove the OpenRouter credential from this device?")) return; void act(async () => { await client.providers.deleteOpenRouter(); await reload(); }); }}><Trash2 size={15} /></button> : null}
       </div>
     </form>
   </Category>;
+}
+
+function modelPurpose(category: ModelCatalogPage["items"][number]["category"]): string {
+  switch (category) {
+    case "primary": return "Primary orchestration and general work";
+    case "strongest": return "Complex reasoning and review";
+    case "code": return "Code implementation and debugging";
+    case "image": return "Image generation";
+    case "music": return "Music generation";
+    case "video": return "Video generation";
+    case "free_general": return "Free general model";
+    case "free_code": return "Free code model";
+  }
+}
+
+function modelModality(endpoint: ModelCatalogPage["items"][number]["endpoint_kind"]): string {
+  switch (endpoint) {
+    case "images": return "Image";
+    case "audio": return "Music";
+    case "videos": return "Video";
+    case "chat": return "Text";
+  }
 }
 
 function PermissionsPanel(props: Parameters<typeof SettingsCategory>[0]) {

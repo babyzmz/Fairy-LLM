@@ -9,6 +9,9 @@ import type {
   McpServerDeleteInput,
   McpServerDiscoverInput,
   McpServerSetEnabledInput,
+  ModelCatalogPage,
+  ModelSelectionPreference,
+  ModelSelectionUpdateInput,
   OpenRouterConfigurationInput,
   OpenRouterConfigurationStatus,
   ProviderHealthPage,
@@ -125,6 +128,18 @@ export class SettingsClient {
       this.invoke<OpenRouterConfigurationStatus>("provider_openrouter_delete"),
   };
 
+  readonly models = {
+    catalog: {
+      list: () => this.call("models.catalog.list", {}) as Promise<ModelCatalogPage>,
+      refresh: () => this.call("models.catalog.refresh", {}) as Promise<ModelCatalogPage>,
+    },
+    selection: {
+      get: () => this.call("models.selection.get", {}) as Promise<ModelSelectionPreference>,
+      update: (input: ModelSelectionUpdateInput) =>
+        this.call("models.selection.update", input) as Promise<ModelSelectionPreference>,
+    },
+  };
+
   readonly permissions = {
     get: () => this.call("permissions.get", {}) as Promise<ExecutionSettings>,
     update: (input: CoreMethodMap["permissions.update"]["params"]) =>
@@ -180,8 +195,7 @@ export function applyDesktopPreferences(preferences: DesktopPreferences): void {
   document.documentElement.dataset.density = preferences.compact_density ? "compact" : "comfortable";
   try {
     localStorage.setItem("fairy.workspace.developer", String(preferences.developer_mode));
-    if (preferences.selected_profile_id === null) localStorage.removeItem("fairy.workspace.provider");
-    else localStorage.setItem("fairy.workspace.provider", preferences.selected_profile_id);
+    localStorage.removeItem("fairy.workspace.provider");
   } catch {
     // Rust preferences remain authoritative when browser storage is unavailable.
   }

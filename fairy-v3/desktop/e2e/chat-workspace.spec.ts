@@ -68,6 +68,43 @@ test("ordinary chat exposes the shared workspace file inspector", async ({ page 
   await expect(page.getByRole("button", { name: "Use this version" })).toHaveCount(0);
 });
 
+test("model selector stays inside the window and persists the global choice", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 880, height: 680 });
+  await page.goto("/");
+  await openScratchChat(page);
+
+  await page.getByRole("button", { name: "Model: Auto" }).click();
+  await expect(page.getByText("General & reasoning")).toBeVisible();
+  await expect(page.getByText("Professional generation")).toBeVisible();
+  const bounds = await page.locator(".model-selector-popover").evaluate((element) => {
+    const rectangle = element.getBoundingClientRect();
+    return {
+      left: rectangle.left,
+      top: rectangle.top,
+      right: rectangle.right,
+      bottom: rectangle.bottom,
+      viewportWidth: innerWidth,
+      viewportHeight: innerHeight,
+    };
+  });
+  expect(bounds.left).toBeGreaterThanOrEqual(8);
+  expect(bounds.top).toBeGreaterThanOrEqual(8);
+  expect(bounds.right).toBeLessThanOrEqual(bounds.viewportWidth - 8);
+  expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewportHeight - 8);
+
+  await page.getByRole("menuitemradio", { name: /Kimi K2.7 Code/ }).click();
+  await expect(page.getByRole("button", { name: "Model: Kimi K2.7 Code" })).toBeVisible();
+  await expect(page.locator(".model-selector-popover")).toBeHidden();
+  const calls = await page.evaluate(() => window.__FAIRY_FIXTURE_CALLS__);
+  expect(calls.some((call) => call.method === "models.selection.update" &&
+    call.params.model_id === "moonshotai/kimi-k2.7-code")).toBe(true);
+  await page.getByRole("button", { name: "Model: Kimi K2.7 Code" }).click();
+  await expect(page.locator(".model-selector-popover")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("model-selector.png") });
+});
+
 test("a user message appears before Core task creation returns", async ({ page }) => {
   await page.goto("/");
   await openScratchChat(page);
@@ -110,23 +147,35 @@ test("model settings stay inside the narrow settings window and expose no secret
 
   const panel = page.locator(".settings-category");
   await expect(panel).toBeVisible();
-  await expect(panel).toContainText("Connected");
+  await expect(panel).toContainText("Credential protected by Windows");
   await expect(page.locator("body")).not.toContainText("sk-or-v1-");
-  const bounds = await panel.evaluate((element) => {
+  const bounds = await page.locator(".settings-content").evaluate((element) => {
     const rectangle = element.getBoundingClientRect();
     return {
       left: rectangle.left,
       right: rectangle.right,
       top: rectangle.top,
       bottom: rectangle.bottom,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      overflowY: getComputedStyle(element).overflowY,
       width: window.innerWidth,
       height: window.innerHeight,
+      documentWidth: document.documentElement.scrollWidth,
+      documentHeight: document.documentElement.scrollHeight,
     };
   });
   expect(bounds.left).toBeGreaterThanOrEqual(0);
   expect(bounds.top).toBeGreaterThanOrEqual(0);
   expect(bounds.right).toBeLessThanOrEqual(bounds.width);
   expect(bounds.bottom).toBeLessThanOrEqual(bounds.height);
+  expect(bounds.clientHeight).toBeLessThanOrEqual(bounds.height);
+  expect(bounds.scrollHeight).toBeGreaterThan(bounds.clientHeight);
+  expect(bounds.overflowY).toBe("auto");
+  expect(bounds.documentWidth).toBeLessThanOrEqual(bounds.width);
+  expect(bounds.documentHeight).toBeLessThanOrEqual(bounds.height);
+  await page.getByRole("button", { name: "Save and connect" }).scrollIntoViewIfNeeded();
+  await expect(page.getByRole("button", { name: "Save and connect" })).toBeVisible();
 });
 
 test("Liquid Glass pet settings persist without overflowing the settings window", async ({

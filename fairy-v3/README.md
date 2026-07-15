@@ -126,9 +126,9 @@ Opening the Vite URL in a normal browser intentionally shows the desktop-host
 boundary instead of a disabled workspace because local Core IPC exists only in
 the Tauri application.
 
-The preset is stored in `config/openrouter-free.providers.json`. Free model
-availability and rate limits are controlled by OpenRouter, so provider health
-remains authoritative at runtime.
+The secret-free allowlist is stored in `config/openrouter.providers.json`.
+Model availability, pricing, and rate limits are controlled by OpenRouter, so
+the live catalog and provider health remain authoritative at runtime.
 
 Run only the dependency and layer boundary gate with:
 

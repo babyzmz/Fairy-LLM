@@ -83,6 +83,12 @@ export type ConversationTranscriptItem = NativeMessage | ImportedMessage;
 export type Message = ConversationTranscriptItem;
 export type MessageListInput = NonNullable<operations["messages.list"]["parameters"]["query"]>;
 export type MessagePage = Schemas["MessagePageModel"];
+export type ModelCatalogEntry = Schemas["ModelCatalogEntryModel"];
+export type ModelCatalogPage = Schemas["ModelCatalogPageModel"];
+export type ModelEndpointKind = Schemas["ModelEndpointKind"];
+export type ModelSelectionPreference = Schemas["ModelSelectionPreferenceModel"];
+export type ModelSelectionUpdateInput = Schemas["ModelSelectionUpdateInput"];
+export type ProviderAccount = Schemas["ProviderAccountModel"];
 export type PendingChangeset = Schemas["PendingChangesetModel"];
 export type Project = Schemas["ProjectModel"];
 export type ProjectContext = Schemas["ProjectContextModel"];
@@ -239,6 +245,16 @@ export interface CoreMethodMap {
   };
   "providers.list": { params: EmptyParams; result: ProviderProfilePage };
   "providers.health": { params: ProviderHealthInput; result: ProviderHealthPage };
+  "models.catalog.list": { params: EmptyParams; result: ModelCatalogPage };
+  "models.catalog.refresh": { params: EmptyParams; result: ModelCatalogPage };
+  "models.selection.get": {
+    params: EmptyParams;
+    result: ModelSelectionPreference;
+  };
+  "models.selection.update": {
+    params: ModelSelectionUpdateInput;
+    result: ModelSelectionPreference;
+  };
   "skills.list": { params: EmptyParams; result: SkillPage };
   "mcp.servers.list": { params: EmptyParams; result: McpServerPage };
   "mcp.servers.configure": {

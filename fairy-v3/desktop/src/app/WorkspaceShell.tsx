@@ -15,16 +15,11 @@ import "./project-manager.css";
 interface WorkspaceShellProps {
   model: WorkspaceModel;
 }
-
 export function WorkspaceShell({ model }: WorkspaceShellProps) {
   const [projectName, setProjectName] = useState("");
   const [importPath, setImportPath] = useState("");
   const [projectManagerOpen, setProjectManagerOpen] = useState(false);
-  const providerAvailable = selectedProviderAvailable(model);
-  const visionAvailable =
-    model.providers
-      .find((provider) => provider.id === model.selectedProfileId)
-      ?.capabilities.includes("vision") ?? false;
+  const providerAvailable = model.modelSelectionBlockReason === null;
 
   return (
     <div className="workspace-shell" data-workspace-state={model.state}>
@@ -85,6 +80,11 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               providers={model.providers}
               providerHealth={model.providerHealth}
               selectedProfileId={model.selectedProfileId}
+              modelCatalog={model.modelCatalog}
+              modelSelection={model.modelSelection}
+              modelSelectionLoading={model.modelSelectionLoading}
+              modelSelectionBlockReason={model.modelSelectionBlockReason}
+              visionAvailable={model.visionAvailable}
               isBusy={model.chatBusy}
               isActing={model.isActing}
               offline={false}
@@ -103,6 +103,8 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               onCopyMessage={model.copyMessage}
               onOpenMessageLink={model.openMessageLink}
               onDecision={model.decideApproval}
+              onSelectModel={model.selectModel}
+              onOpenModelSettings={model.openSettings}
             />
             <WorkspaceInspector model={model} />
           </div>
@@ -127,9 +129,15 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
                 model.isActing
               }
               isBusy={model.projectBusy}
-              visionAvailable={visionAvailable}
+              visionAvailable={model.visionAvailable}
+              modelCatalog={model.modelCatalog}
+              modelSelection={model.modelSelection}
+              modelSelectionDisabled={model.modelSelectionLoading}
+              submissionBlockedReason={model.modelSelectionBlockReason}
               onSubmit={model.sendProjectMessage}
               onStop={model.cancelProjectTurn}
+              onSelectModel={model.selectModel}
+              onOpenModelSettings={model.openSettings}
             />
           </section>
         ) : (
@@ -171,19 +179,5 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
         )}
       </div>
     </div>
-  );
-}
-
-
-function selectedProviderAvailable(model: WorkspaceModel): boolean {
-  const provider = model.providers.find((item) => item.id === model.selectedProfileId);
-  const health = model.providerHealth.find(
-    (item) => item.profile_id === model.selectedProfileId,
-  );
-  return (
-    provider !== undefined &&
-    provider.enabled &&
-    (!provider.credential_required || provider.credential_configured) &&
-    health?.status !== "unavailable"
   );
 }

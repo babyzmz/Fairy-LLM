@@ -43,8 +43,8 @@ def _environment() -> dict[str, str]:
     }
 
 
-def test_openrouter_free_profile_preset_is_secret_free_and_fallback_safe() -> None:
-    preset_path = _REPOSITORY_ROOT / "config" / "openrouter-free.providers.json"
+def test_openrouter_profile_preset_is_secret_free_and_allowlisted() -> None:
+    preset_path = _REPOSITORY_ROOT / "config" / "openrouter.providers.json"
     raw = preset_path.read_text(encoding="utf-8")
     settings = ProviderSettings.from_environment(
         {
@@ -55,14 +55,20 @@ def test_openrouter_free_profile_preset_is_secret_free_and_fallback_safe() -> No
         }
     )
 
-    assert [profile.id for profile in settings.profiles] == [
-        "openrouter-nemotron-ultra-free",
-        "openrouter-hy3-free",
+    assert [profile.model_id for profile in settings.profiles] == [
+        "deepseek/deepseek-v4-pro",
+        "z-ai/glm-5.2",
+        "moonshotai/kimi-k2.7-code",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "qwen/qwen3-coder:free",
     ]
-    assert settings.profiles[0].model_id == "nvidia/nemotron-3-ultra-550b-a55b:free"
-    assert settings.profiles[0].fallback_profile_id == settings.profiles[1].id
-    assert settings.profiles[1].model_id == "tencent/hy3:free"
-    assert settings.profiles[1].fallback_profile_id is None
+    assert settings.profiles[1].fallback_profile_id == settings.profiles[0].id
+    assert all(
+        profile.fallback_profile_id is None
+        for profile in settings.profiles[2:]
+    )
+    assert "tencent/hy3:free" not in raw
+    assert "openrouter/free" not in raw
     assert "sk-or-" not in raw
 
 

@@ -258,7 +258,7 @@ async function installCoreFixture(page: Page) {
         id: id.turn,
         task_id: id.scratchTask,
         conversation_id: id.scratchConversation,
-        profile_id: "openrouter-free",
+        profile_id: "openrouter-deepseek-v4-pro",
         status: "completed",
         idempotency_key: "e2e-turn",
         scope_digest: "e2e-scope",
@@ -445,8 +445,65 @@ async function installCoreFixture(page: Page) {
       };
       let openRouterStatus = {
         configured: true,
-        model_id: "openrouter/free" as string | null,
+        account_id: "openrouter-default" as string | null,
       };
+      let modelSelection = {
+        mode: "auto" as "auto" | "manual",
+        model_id: null as string | null,
+        allow_free_fallback: false,
+        zero_data_retention: false,
+        revision: 0,
+        updated_at: "2026-07-11T00:00:00Z",
+      };
+      const modelCatalogFixture = () => ({
+        account: {
+          account_id: "openrouter-default",
+          provider_kind: "openrouter",
+          display_name: "OpenRouter",
+          credential_status: "configured",
+        },
+        items: [
+          modelEntry("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "primary", "chat", true),
+          modelEntry("z-ai/glm-5.2", "GLM 5.2", "strongest", "chat", true),
+          modelEntry("moonshotai/kimi-k2.7-code", "Kimi K2.7 Code", "code", "chat", true),
+          modelEntry("google/gemini-3.1-flash-lite-image", "Gemini 3.1 Flash Lite Image", "image", "images", true),
+          modelEntry("google/lyria-3-pro-preview", "Lyria 3 Pro Preview", "music", "audio", true),
+          modelEntry("bytedance/seedance-2.0", "Seedance 2.0", "video", "videos", true),
+          modelEntry("nvidia/nemotron-3-ultra-550b-a55b:free", "Nemotron 3 Ultra", "free_general", "chat", false),
+          modelEntry("qwen/qwen3-coder:free", "Qwen3 Coder", "free_code", "chat", false),
+        ],
+        fetched_at: "2026-07-11T00:00:00Z",
+        expires_at: "2026-07-11T06:00:00Z",
+        stale: false,
+        revision: 1,
+        last_error_code: null,
+      });
+      const modelEntry = (
+        modelId: string,
+        displayName: string,
+        category: string,
+        endpointKind: "chat" | "images" | "audio" | "videos",
+        paid: boolean,
+      ) => ({
+        model_id: modelId,
+        display_name: displayName,
+        category,
+        endpoint_kind: endpointKind,
+        description: displayName,
+        paid,
+        availability: "available",
+        unavailable_reason: null,
+        input_modalities: ["text"],
+        output_modalities: [endpointKind === "chat" ? "text" : endpointKind],
+        context_length: endpointKind === "chat" ? 131072 : null,
+        max_output_tokens: endpointKind === "chat" ? 16384 : null,
+        supports_tools: endpointKind === "chat",
+        supports_structured_output: endpointKind === "chat" && paid,
+        supports_streaming: endpointKind === "chat",
+        supported_resolutions: [],
+        supported_aspect_ratios: [],
+        prices: [],
+      });
       let desktopPreferences = {
         schema_version: 2,
         revision: 0,
@@ -456,7 +513,7 @@ async function installCoreFixture(page: Page) {
         theme: "system",
         reduced_motion: false,
         compact_density: false,
-        selected_profile_id: "openrouter-free" as string | null,
+        selected_profile_id: null as string | null,
         voice_auto_play_chat: false,
         voice_auto_play_pet: true,
         voice_volume_percent: 80,
@@ -813,16 +870,68 @@ async function installCoreFixture(page: Page) {
         "providers.list": {
           items: [
             {
-              id: "openrouter-free",
-              display_name: "OpenRouter Free",
+              id: "openrouter-deepseek-v4-pro",
+              display_name: "DeepSeek V4 Pro",
               kind: "openai_compatible",
               base_url: "https://openrouter.ai/api/v1",
-              model_id: "openrouter/free",
-              capabilities: ["text", "tools", "vision", "stt", "tts"],
+              model_id: "deepseek/deepseek-v4-pro",
+              capabilities: ["text", "tools", "structured_output"],
               credential_required: true,
               credential_configured: true,
               enabled: true,
               timeout_seconds: 60,
+              fallback_profile_id: null,
+            },
+            {
+              id: "openrouter-glm-5-2",
+              display_name: "GLM 5.2",
+              kind: "openai_compatible",
+              base_url: "https://openrouter.ai/api/v1",
+              model_id: "z-ai/glm-5.2",
+              capabilities: ["text", "tools", "structured_output"],
+              credential_required: true,
+              credential_configured: true,
+              enabled: true,
+              timeout_seconds: 180,
+              fallback_profile_id: "openrouter-deepseek-v4-pro",
+            },
+            {
+              id: "openrouter-kimi-k2-7-code",
+              display_name: "Kimi K2.7 Code",
+              kind: "openai_compatible",
+              base_url: "https://openrouter.ai/api/v1",
+              model_id: "moonshotai/kimi-k2.7-code",
+              capabilities: ["text", "tools", "vision", "structured_output"],
+              credential_required: true,
+              credential_configured: true,
+              enabled: true,
+              timeout_seconds: 180,
+              fallback_profile_id: null,
+            },
+            {
+              id: "openrouter-nemotron-free",
+              display_name: "Nemotron 3 Ultra",
+              kind: "openai_compatible",
+              base_url: "https://openrouter.ai/api/v1",
+              model_id: "nvidia/nemotron-3-ultra-550b-a55b:free",
+              capabilities: ["text", "tools"],
+              credential_required: true,
+              credential_configured: true,
+              enabled: true,
+              timeout_seconds: 180,
+              fallback_profile_id: null,
+            },
+            {
+              id: "openrouter-qwen3-coder-free",
+              display_name: "Qwen3 Coder",
+              kind: "openai_compatible",
+              base_url: "https://openrouter.ai/api/v1",
+              model_id: "qwen/qwen3-coder:free",
+              capabilities: ["text", "tools"],
+              credential_required: true,
+              credential_configured: true,
+              enabled: true,
+              timeout_seconds: 180,
               fallback_profile_id: null,
             },
           ],
@@ -830,13 +939,26 @@ async function installCoreFixture(page: Page) {
         "providers.health": {
           items: [
             {
-              profile_id: "openrouter-free",
+              profile_id: "openrouter-deepseek-v4-pro",
               status: "available",
               error_code: null,
               diagnostics: [],
             },
+            ...[
+              "openrouter-glm-5-2",
+              "openrouter-kimi-k2-7-code",
+              "openrouter-nemotron-free",
+              "openrouter-qwen3-coder-free",
+            ].map((profileId) => ({
+              profile_id: profileId,
+              status: "available",
+              error_code: null,
+              diagnostics: [],
+            })),
           ],
         },
+        "models.catalog.list": modelCatalogFixture(),
+        "models.catalog.refresh": modelCatalogFixture(),
         "messages.list": {
           items: [scratchMessage, toolMessage],
           next_cursor: null,
@@ -866,7 +988,7 @@ async function installCoreFixture(page: Page) {
         "conversations.create": scratchConversation,
         "voice.transcribe": {
           conversation_id: id.scratchConversation,
-          profile_id: "openrouter-free",
+          profile_id: "openrouter-deepseek-v4-pro",
           text: "Fixture voice transcript",
           language: "en",
           segments: [],
@@ -939,12 +1061,11 @@ async function installCoreFixture(page: Page) {
             return openRouterStatus;
           }
           if (command === "provider_openrouter_configure") {
-            const input = args.input as { model_id: string };
-            openRouterStatus = { configured: true, model_id: input.model_id };
+            openRouterStatus = { configured: true, account_id: "openrouter-default" };
             return openRouterStatus;
           }
           if (command === "provider_openrouter_delete") {
-            openRouterStatus = { configured: false, model_id: null };
+            openRouterStatus = { configured: false, account_id: null };
             return openRouterStatus;
           }
           if (command === "desktop_preferences_get") {
@@ -1039,6 +1160,20 @@ async function installCoreFixture(page: Page) {
           }
           if (request.method === "tasks.create") {
             await new Promise((resolve) => window.setTimeout(resolve, 180));
+          }
+          if (request.method === "models.selection.get") {
+            return { jsonrpc: "2.0", id: request.id, result: modelSelection };
+          }
+          if (request.method === "models.selection.update") {
+            modelSelection = {
+              mode: request.params.mode as "auto" | "manual",
+              model_id: (request.params.model_id as string | null | undefined) ?? null,
+              allow_free_fallback: Boolean(request.params.allow_free_fallback),
+              zero_data_retention: Boolean(request.params.zero_data_retention),
+              revision: Number(request.params.expected_revision) + 1,
+              updated_at: "2026-07-11T00:00:01Z",
+            };
+            return { jsonrpc: "2.0", id: request.id, result: modelSelection };
           }
           const result =
             request.method === "projects.list"

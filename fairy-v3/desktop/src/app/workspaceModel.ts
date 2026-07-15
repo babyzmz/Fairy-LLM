@@ -4,6 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAssistantTurn } from "../chat/useAssistantTurn";
 import type { Conversation, EventEnvelope, McpToolPolicyInput, Project, Task } from "../core/client";
 import type { McpServerDraft } from "../settings/extensionTypes";
+import {
+  selectedProfileId as profileIdForSelection,
+  selectionBlockReason,
+  selectionSupportsVision,
+} from "../models/modelSelection";
+import { useModelSelection } from "../models/useModelSelection";
 import type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 export type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 import {
@@ -35,7 +41,6 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     "fairy.workspace.chat-conversation",
   );
   const [taskSelection, setTaskSelection] = usePersistedSelection("fairy.workspace.task");
-  const [profileSelection, setProfileSelection] = usePersistedSelection("fairy.workspace.provider");
   const [allEvents, setAllEvents] = useState<EventEnvelope[]>([]);
   const eventCursor = useRef(readEventCursor());
   const [actionError, setActionError] = useState<string | null>(null);
@@ -101,6 +106,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     enabled: healthQuery.isSuccess,
     retry: false,
   });
+  const modelController = useModelSelection(client, healthQuery.isSuccess);
 
   const projects = projectsQuery.data?.items ?? [];
   const selectedProject = selectedItem(projects, projectSelection);
@@ -116,11 +122,20 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const selectedChatConversation = selectedItem(chatConversations, chatConversationSelection);
   const providers = providersQuery.data?.items ?? [];
   const providerHealth = providerHealthQuery.data?.items ?? [];
-  const selectedProfile =
-    providers.find((profile) => profile.id === profileSelection) ??
-    providers.find((profile) => profile.enabled && profile.capabilities.includes("text")) ??
-    null;
-  const selectedProfileId = selectedProfile?.id ?? null;
+  const selectedProfileCandidate = profileIdForSelection(modelController.selection);
+  const selectedProfileId = providers.some((profile) => profile.id === selectedProfileCandidate)
+    ? selectedProfileCandidate
+    : null;
+  const modelBlockedReason = selectionBlockReason({
+    catalog: modelController.catalog,
+    selection: modelController.selection,
+    providers,
+    health: providerHealth,
+  });
+  const visionAvailable = selectionSupportsVision(
+    modelController.catalog,
+    modelController.selection,
+  );
 
   const tasksQuery = useQuery({
     queryKey: [...workspaceKey, "tasks"],
@@ -368,14 +383,18 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   );
 
   const configureOpenRouter = useCallback(
-    async (apiKey: string, modelId: string): Promise<void> => {
+    async (apiKey: string): Promise<void> => {
       const status = await runAction(() =>
-        client.providers.configureOpenRouter({ api_key: apiKey, model_id: modelId }),
+        client.providers.configureOpenRouter({ api_key: apiKey }),
       );
       queryClient.setQueryData([...workspaceKey, "openrouter-status"], status);
-      setProfileSelection("openrouter");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [...workspaceKey, "providers"] }),
+        queryClient.invalidateQueries({ queryKey: [...workspaceKey, "provider-health"] }),
+        modelController.refresh(),
+      ]);
     },
-    [client.providers, queryClient, runAction, setProfileSelection],
+    [client.providers, modelController, queryClient, runAction],
   );
 
   const selectProjectFolder = useCallback(
@@ -386,8 +405,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const deleteOpenRouter = useCallback(async (): Promise<void> => {
     const status = await runAction(() => client.providers.deleteOpenRouter());
     queryClient.setQueryData([...workspaceKey, "openrouter-status"], status);
-    setProfileSelection(null);
-  }, [client.providers, queryClient, runAction, setProfileSelection]);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: [...workspaceKey, "providers"] }),
+      queryClient.invalidateQueries({ queryKey: [...workspaceKey, "provider-health"] }),
+      modelController.refresh(),
+    ]);
+  }, [client.providers, modelController, queryClient, runAction]);
 
   const configureMcpServer = useCallback(
     async (input: McpServerDraft): Promise<void> => {
@@ -823,6 +846,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     providersQuery.error,
     providerHealthQuery.error,
     openRouterStatusQuery.error,
+    modelController.error,
     skillsQuery.error,
     mcpServersQuery.error,
     tasksQuery.error,
@@ -846,6 +870,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         providersQuery.isPending ||
         providerHealthQuery.isPending ||
         openRouterStatusQuery.isPending)) ||
+    modelController.loading ||
     (healthQuery.isSuccess && (skillsQuery.isPending || mcpServersQuery.isPending)) ||
     (selectedProject !== null && conversationsQuery.isPending) ||
     (selectedConversation !== null && tasksQuery.isPending) ||
@@ -884,6 +909,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     skills: skillsQuery.data?.items ?? [],
     mcpServers: mcpServersQuery.data?.items ?? [],
     selectedProfileId,
+    modelCatalog: modelController.catalog,
+    modelSelection: modelController.selection,
+    modelSelectionLoading: modelController.loading,
+    modelSelectionRefreshing: modelController.refreshing,
+    modelSelectionBlockReason: modelBlockedReason,
+    visionAvailable,
     selectedProject,
     selectedConversation,
     selectedChatConversation,
@@ -919,7 +950,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     searchMemory: actions.searchMemory,
     forgetMemory: actions.forgetMemory,
     setDeveloperMode,
-    selectProfile: setProfileSelection,
+    selectModel: (selectionMode, modelId) =>
+      runAction(() => modelController.update({ mode: selectionMode, model_id: modelId })),
+    refreshModelCatalog: () => runAction(modelController.refresh),
     configureOpenRouter,
     deleteOpenRouter,
     selectProject: actions.selectProject,

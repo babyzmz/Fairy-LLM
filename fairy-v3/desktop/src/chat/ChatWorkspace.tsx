@@ -6,6 +6,8 @@ import type {
   AssistantTurn,
   EventEnvelope,
   Message,
+  ModelCatalogPage,
+  ModelSelectionPreference,
   ProviderHealth,
   ProviderProfile,
   SlashCommandMetadata,
@@ -28,6 +30,11 @@ export interface ChatWorkspaceProps {
   providers: ProviderProfile[];
   providerHealth: ProviderHealth[];
   selectedProfileId: string | null;
+  modelCatalog: ModelCatalogPage | null;
+  modelSelection: ModelSelectionPreference | null;
+  modelSelectionLoading: boolean;
+  modelSelectionBlockReason: string | null;
+  visionAvailable: boolean;
   isBusy: boolean;
   isActing: boolean;
   offline: boolean;
@@ -52,22 +59,14 @@ export interface ChatWorkspaceProps {
   onCopyMessage(taskId: string, content: string): Promise<void>;
   onOpenMessageLink(taskId: string, url: string): Promise<void>;
   onDecision(approvalId: string, approved: boolean): Promise<void>;
+  onSelectModel(mode: "auto" | "manual", modelId: string | null): Promise<void>;
+  onOpenModelSettings(): Promise<void>;
 }
 
 export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [composerDraft, setComposerDraft] = useState<AssistantDraft | null>(null);
-  const selectedProvider = props.providers.find(
-    (provider) => provider.id === props.selectedProfileId,
-  );
-  const selectedHealth = props.providerHealth.find(
-    (health) => health.profile_id === props.selectedProfileId,
-  );
-  const providerAvailable =
-    selectedProvider !== undefined &&
-    selectedProvider.enabled &&
-    (!selectedProvider.credential_required || selectedProvider.credential_configured) &&
-    selectedHealth?.status !== "unavailable";
+  const providerAvailable = props.modelSelectionBlockReason === null;
   const retryAvailable = ["failed", "cancelled"].includes(props.turn?.status ?? "");
   const newConversationAvailable = props.slashCommands.some(
     (command) => command.name === "new" && command.available,
@@ -242,12 +241,18 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         </div>
       ) : null}
       <Composer
-        disabled={props.offline || !providerAvailable || !props.conversationAvailable}
+        disabled={props.offline || !props.conversationAvailable}
         isBusy={props.isBusy}
-        visionAvailable={selectedProvider?.capabilities.includes("vision") ?? false}
+        visionAvailable={props.visionAvailable}
+        modelCatalog={props.modelCatalog}
+        modelSelection={props.modelSelection}
+        modelSelectionDisabled={props.offline || props.modelSelectionLoading}
+        submissionBlockedReason={props.modelSelectionBlockReason}
         draft={composerDraft}
         onSubmit={submit}
         onStop={props.onCancel}
+        onSelectModel={props.onSelectModel}
+        onOpenModelSettings={props.onOpenModelSettings}
       />
     </section>
   );

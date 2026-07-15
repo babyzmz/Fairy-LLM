@@ -28,7 +28,7 @@ function New-DesktopPathAlias {
 }
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$profilesPath = Join-Path $repositoryRoot "config\openrouter-free.providers.json"
+$profilesPath = Join-Path $repositoryRoot "config\openrouter.providers.json"
 
 $profiles = Get-Content -LiteralPath $profilesPath -Raw
 $null = $profiles | ConvertFrom-Json -ErrorAction Stop

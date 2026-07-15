@@ -6,6 +6,8 @@ import {
   type PendingImageAttachment,
 } from "../perception/CaptureControl";
 import { VoiceRecordControl } from "../voice/VoiceController";
+import type { ModelCatalogPage, ModelSelectionPreference } from "../core/client";
+import { ModelSelector } from "../models/ModelSelector";
 import type { AssistantDraft } from "./useAssistantTurn";
 
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -15,6 +17,10 @@ interface ComposerProps {
   disabled: boolean;
   isBusy: boolean;
   visionAvailable: boolean;
+  modelCatalog: ModelCatalogPage | null;
+  modelSelection: ModelSelectionPreference | null;
+  modelSelectionDisabled?: boolean;
+  submissionBlockedReason?: string | null;
   draft?: AssistantDraft | null;
   onSubmit(
     value: string,
@@ -22,15 +28,23 @@ interface ComposerProps {
     images: PendingImageAttachment[],
   ): Promise<void>;
   onStop(): Promise<void>;
+  onSelectModel(mode: "auto" | "manual", modelId: string | null): Promise<void>;
+  onOpenModelSettings(): Promise<void>;
 }
 
 export function Composer({
   disabled,
   isBusy,
   visionAvailable,
+  modelCatalog,
+  modelSelection,
+  modelSelectionDisabled = false,
+  submissionBlockedReason = null,
   draft = null,
   onSubmit,
   onStop,
+  onSelectModel,
+  onOpenModelSettings,
 }: ComposerProps) {
   const [value, setValue] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -43,6 +57,7 @@ export function Composer({
   const canSubmit =
     !disabled &&
     !effectiveBusy &&
+    submissionBlockedReason === null &&
     (value.trim().length > 0 || files.length > 0 || capture !== null);
 
   useEffect(() => {
@@ -52,6 +67,13 @@ export function Composer({
     setCapture(draft.images[0] ?? null);
     inputRef.current?.focus();
   }, [draft]);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (input === null) return;
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
+  }, [value]);
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -98,7 +120,34 @@ export function Composer({
           {attachmentError}
         </div>
       ) : null}
-      <div className="composer-controls">
+      <div className="composer-input-surface">
+        <label className="composer-field chat-composer-field">
+          <span className="sr-only">Message Fairy</span>
+          <textarea
+            ref={inputRef}
+            aria-label="Message Fairy"
+            value={value}
+            rows={1}
+            placeholder="Message Fairy"
+            disabled={disabled}
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                void submit().catch(() => undefined);
+              }
+              if (event.key === "Escape" && effectiveBusy) {
+                event.preventDefault();
+                void onStop();
+              }
+            }}
+          />
+        </label>
+        {submissionBlockedReason ? (
+          <div className="composer-guidance" role="status">{submissionBlockedReason}</div>
+        ) : null}
+        <div className="composer-toolbar">
+          <div className="composer-toolbar-start">
         <input
           ref={fileInputRef}
           className="sr-only"
@@ -135,28 +184,15 @@ export function Composer({
           value={capture}
           onChange={setCapture}
         />
-        <label className="composer-field chat-composer-field">
-          <span className="sr-only">Message Fairy</span>
-          <textarea
-            ref={inputRef}
-            aria-label="Message Fairy"
-            value={value}
-            rows={1}
-            placeholder="Message Fairy"
-            disabled={disabled}
-            onChange={(event) => setValue(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                void submit().catch(() => undefined);
-              }
-              if (event.key === "Escape" && effectiveBusy) {
-                event.preventDefault();
-                void onStop();
-              }
-            }}
-          />
-        </label>
+        <ModelSelector
+          catalog={modelCatalog}
+          selection={modelSelection}
+          disabled={modelSelectionDisabled}
+          onSelect={onSelectModel}
+          onOpenSettings={onOpenModelSettings}
+        />
+          </div>
+          <div className="composer-toolbar-end">
         <VoiceRecordControl
           disabled={disabled || effectiveBusy}
           onTranscript={(text) =>
@@ -182,8 +218,10 @@ export function Composer({
             disabled={!canSubmit}
           >
             <Send size={17} />
-          </button>
-        )}
+            </button>
+          )}
+          </div>
+        </div>
       </div>
     </form>
   );

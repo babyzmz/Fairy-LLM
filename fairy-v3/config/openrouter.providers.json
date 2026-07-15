@@ -1,0 +1,62 @@
+[
+  {
+    "id": "openrouter-deepseek-v4-pro",
+    "display_name": "DeepSeek V4 Pro",
+    "kind": "openai_compatible",
+    "base_url": "https://openrouter.ai/api/v1",
+    "model_id": "deepseek/deepseek-v4-pro",
+    "capabilities": ["text", "tools", "structured_output"],
+    "credential_ref": "openrouter",
+    "fallback_profile_id": null,
+    "timeout_seconds": 180,
+    "enabled": true
+  },
+  {
+    "id": "openrouter-glm-5-2",
+    "display_name": "GLM 5.2",
+    "kind": "openai_compatible",
+    "base_url": "https://openrouter.ai/api/v1",
+    "model_id": "z-ai/glm-5.2",
+    "capabilities": ["text", "tools", "structured_output"],
+    "credential_ref": "openrouter",
+    "fallback_profile_id": "openrouter-deepseek-v4-pro",
+    "timeout_seconds": 180,
+    "enabled": true
+  },
+  {
+    "id": "openrouter-kimi-k2-7-code",
+    "display_name": "Kimi K2.7 Code",
+    "kind": "openai_compatible",
+    "base_url": "https://openrouter.ai/api/v1",
+    "model_id": "moonshotai/kimi-k2.7-code",
+    "capabilities": ["text", "tools", "vision", "structured_output"],
+    "credential_ref": "openrouter",
+    "fallback_profile_id": null,
+    "timeout_seconds": 180,
+    "enabled": true
+  },
+  {
+    "id": "openrouter-nemotron-free",
+    "display_name": "Nemotron 3 Ultra",
+    "kind": "openai_compatible",
+    "base_url": "https://openrouter.ai/api/v1",
+    "model_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "capabilities": ["text", "tools"],
+    "credential_ref": "openrouter",
+    "fallback_profile_id": null,
+    "timeout_seconds": 180,
+    "enabled": true
+  },
+  {
+    "id": "openrouter-qwen3-coder-free",
+    "display_name": "Qwen3 Coder",
+    "kind": "openai_compatible",
+    "base_url": "https://openrouter.ai/api/v1",
+    "model_id": "qwen/qwen3-coder:free",
+    "capabilities": ["text", "tools"],
+    "credential_ref": "openrouter",
+    "fallback_profile_id": null,
+    "timeout_seconds": 180,
+    "enabled": true
+  }
+]

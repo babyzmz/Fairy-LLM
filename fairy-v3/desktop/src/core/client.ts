@@ -27,6 +27,7 @@ import type {
   MemoryNamespace,
   MemoryObserveInput,
   MemorySearchInput,
+  ModelSelectionUpdateInput,
   McpServerAcceptInput,
   McpServerConfigureInput,
   McpServerDeleteInput,
@@ -80,12 +81,11 @@ export interface CoreCallOptions {
 
 export interface OpenRouterConfigurationInput {
   api_key: string;
-  model_id: string;
 }
 
 export interface OpenRouterConfigurationStatus {
   configured: boolean;
-  model_id: string | null;
+  account_id: string | null;
 }
 
 export interface CoreTransport {
@@ -232,6 +232,18 @@ export class CoreClient {
     openRouterStatus: () => this.requireProviderHost("status")(),
     configureOpenRouter: (input: OpenRouterConfigurationInput) => this.requireProviderHost("configure")(input),
     deleteOpenRouter: () => this.requireProviderHost("delete")(),
+  };
+
+  readonly models = {
+    catalog: {
+      list: () => this.transport.call("models.catalog.list", {}),
+      refresh: () => this.transport.call("models.catalog.refresh", {}),
+    },
+    selection: {
+      get: () => this.transport.call("models.selection.get", {}),
+      update: (input: ModelSelectionUpdateInput) =>
+        this.transport.call("models.selection.update", input),
+    },
   };
 
   readonly skills = {

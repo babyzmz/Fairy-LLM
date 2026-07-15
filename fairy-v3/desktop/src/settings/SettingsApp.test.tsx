@@ -60,6 +60,28 @@ describe("SettingsApp", () => {
     expect(screen.queryByRole("button", { name: /Models/ })).not.toBeInTheDocument();
   });
 
+  it("manages one OpenRouter account and model routing policy without arbitrary model ids", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+
+    await userEvent.click(screen.getByRole("button", { name: /Models/ }));
+    expect(screen.getByText("DeepSeek V4 Pro")).toBeVisible();
+    expect(screen.queryByLabelText("Model ID")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: /^Zero data retention routing/ }));
+
+    await vi.waitFor(() => {
+      expect(rpcRequest(invoke, "models.selection.update")?.params).toEqual(
+        expect.objectContaining({
+          mode: "auto",
+          model_id: null,
+          zero_data_retention: true,
+          expected_revision: 0,
+        }),
+      );
+    });
+  });
+
   it("persists the complete Liquid Glass pet settings through the same revision fence", async () => {
     const invoke = settingsInvoke();
     render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
@@ -98,7 +120,7 @@ function settingsInvoke() {
       preferences = { ...input.preferences, revision: input.preferences.revision + 1 };
       return preferences;
     }
-    if (command === "provider_openrouter_status") return { configured: true, model_id: "tencent/hy3:free" };
+    if (command === "provider_openrouter_status") return { configured: true, account_id: "openrouter-default" };
     if (command === "settings_rpc") {
       const request = args?.request as { id: number; method: CoreMethodName; params: Record<string, unknown> };
       return { jsonrpc: "2.0", id: request.id, result: resultFor(request.method, request.params) };
@@ -109,8 +131,15 @@ function settingsInvoke() {
 
 function resultFor(method: CoreMethodName, params: Record<string, unknown>) {
   switch (method) {
-    case "providers.list": return { items: [{ id: "openrouter", display_name: "OpenRouter", kind: "openai_compatible", base_url: "https://openrouter.ai/api/v1", model_id: "tencent/hy3:free", capabilities: ["text", "tools"], credential_required: true, credential_configured: true, enabled: true, timeout_seconds: 60, fallback_profile_id: null }], next_cursor: null };
-    case "providers.health": return { items: [{ profile_id: "openrouter", status: "available", error_code: null, diagnostics: [] }], next_cursor: null };
+    case "models.catalog.list":
+    case "models.catalog.refresh": return modelCatalog;
+    case "models.selection.get": return modelSelection;
+    case "models.selection.update": return {
+      ...modelSelection,
+      ...params,
+      revision: Number(params.expected_revision) + 1,
+      updated_at: "2026-07-12T00:00:01Z",
+    };
     case "permissions.get": return { profile: "standard", capability_overrides: {}, revision: 7, updated_at: "2026-07-12T00:00:00Z" };
     case "permissions.update": return { profile: params.profile, capability_overrides: params.capability_overrides ?? {}, revision: 8, updated_at: "2026-07-12T00:00:01Z" };
     case "capabilities.get": return manifest;
@@ -119,6 +148,49 @@ function resultFor(method: CoreMethodName, params: Record<string, unknown>) {
     default: return {};
   }
 }
+
+const modelSelection = {
+  mode: "auto",
+  model_id: null,
+  allow_free_fallback: false,
+  zero_data_retention: false,
+  revision: 0,
+  updated_at: "2026-07-12T00:00:00Z",
+};
+
+const modelCatalog = {
+  account: {
+    account_id: "openrouter-default",
+    provider_kind: "openrouter",
+    display_name: "OpenRouter",
+    credential_status: "configured",
+  },
+  items: [{
+    model_id: "deepseek/deepseek-v4-pro",
+    display_name: "DeepSeek V4 Pro",
+    category: "primary",
+    endpoint_kind: "chat",
+    description: "Primary model",
+    paid: true,
+    availability: "available",
+    unavailable_reason: null,
+    input_modalities: ["text"],
+    output_modalities: ["text"],
+    context_length: 131072,
+    max_output_tokens: 16384,
+    supports_tools: true,
+    supports_structured_output: true,
+    supports_streaming: true,
+    supported_resolutions: [],
+    supported_aspect_ratios: [],
+    prices: [],
+  }],
+  fetched_at: "2026-07-12T00:00:00Z",
+  expires_at: "2026-07-12T06:00:00Z",
+  stale: false,
+  revision: 1,
+  last_error_code: null,
+};
 
 function rpcRequest(invoke: ReturnType<typeof settingsInvoke>, method: string) {
   return invoke.mock.calls

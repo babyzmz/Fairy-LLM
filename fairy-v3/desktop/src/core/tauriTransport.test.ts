@@ -52,21 +52,19 @@ describe("TauriCoreTransport", () => {
   it("keeps OpenRouter credentials on host-only commands", async () => {
     const invoke = vi.fn().mockResolvedValue({
       configured: true,
-      model_id: "tencent/hy3:free",
+      account_id: "openrouter-default",
     });
     const transport = new TauriCoreTransport(invoke);
 
     await expect(
       transport.providerOpenRouterConfigure({
         api_key: "private-test-key",
-        model_id: "tencent/hy3:free",
       }),
-    ).resolves.toEqual({ configured: true, model_id: "tencent/hy3:free" });
+    ).resolves.toEqual({ configured: true, account_id: "openrouter-default" });
 
     expect(invoke).toHaveBeenCalledWith("provider_openrouter_configure", {
       input: {
         api_key: "private-test-key",
-        model_id: "tencent/hy3:free",
       },
     });
     expect(invoke).not.toHaveBeenCalledWith("core_rpc", expect.anything());

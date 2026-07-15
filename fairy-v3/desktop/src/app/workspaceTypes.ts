@@ -11,6 +11,8 @@ import type {
   ExecutionSettings,
   Message,
   MemorySearchHit,
+  ModelCatalogPage,
+  ModelSelectionPreference,
   McpServer,
   McpToolPolicyInput,
   OpenRouterConfigurationStatus,
@@ -65,6 +67,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
     CoreClient["providers"],
     "list" | "health" | "openRouterStatus" | "configureOpenRouter" | "deleteOpenRouter"
   >;
+  models: Pick<CoreClient["models"], "catalog" | "selection">;
   skills: Pick<CoreClient["skills"], "list">;
   mcp: {
     servers: Pick<CoreClient["mcp"]["servers"], "list" | "configure" | "discover" | "accept" | "setEnabled" | "delete">;
@@ -107,6 +110,12 @@ export interface WorkspaceModel {
   skills: Skill[];
   mcpServers: McpServer[];
   selectedProfileId: string | null;
+  modelCatalog: ModelCatalogPage | null;
+  modelSelection: ModelSelectionPreference | null;
+  modelSelectionLoading: boolean;
+  modelSelectionRefreshing: boolean;
+  modelSelectionBlockReason: string | null;
+  visionAvailable: boolean;
   selectedProject: Project | null;
   selectedConversation: Conversation | null;
   selectedChatConversation: Conversation | null;
@@ -142,8 +151,9 @@ export interface WorkspaceModel {
   searchMemory(query: string): Promise<MemorySearchHit[]>;
   forgetMemory(targetKind: "observation" | "claim", targetId: string): Promise<void>;
   setDeveloperMode(enabled: boolean): void;
-  selectProfile(profileId: string): void;
-  configureOpenRouter(apiKey: string, modelId: string): Promise<void>;
+  selectModel(mode: "auto" | "manual", modelId: string | null): Promise<void>;
+  refreshModelCatalog(): Promise<void>;
+  configureOpenRouter(apiKey: string): Promise<void>;
   deleteOpenRouter(): Promise<void>;
   selectProject(projectId: string): void;
   selectConversation(conversationId: string): void;

@@ -11,6 +11,8 @@ import type {
   EventEnvelope,
   ExecutionSettings,
   Message,
+  ModelCatalogPage,
+  ModelSelectionPreference,
   Project,
   ProviderHealth,
   ProviderProfile,
@@ -118,12 +120,12 @@ const scratchMessage: Message = {
   created_at: timestamp,
 };
 const provider: ProviderProfile = {
-  id: "openrouter-free",
-  display_name: "OpenRouter Free",
+  id: "openrouter-deepseek-v4-pro",
+  display_name: "DeepSeek V4 Pro",
   kind: "openai_compatible",
   base_url: "https://openrouter.ai/api/v1",
-  model_id: "openrouter/free",
-  capabilities: ["text", "tools"],
+  model_id: "deepseek/deepseek-v4-pro",
+  capabilities: ["text", "tools", "structured_output"],
   credential_required: true,
   credential_configured: true,
   enabled: true,
@@ -135,6 +137,47 @@ const providerHealth: ProviderHealth = {
   status: "available",
   error_code: null,
   diagnostics: [],
+};
+const modelSelection: ModelSelectionPreference = {
+  mode: "auto",
+  model_id: null,
+  allow_free_fallback: false,
+  zero_data_retention: false,
+  revision: 0,
+  updated_at: timestamp,
+};
+const modelCatalog: ModelCatalogPage = {
+  account: {
+    account_id: "openrouter-default",
+    provider_kind: "openrouter",
+    display_name: "OpenRouter",
+    credential_status: "configured",
+  },
+  items: [{
+    model_id: provider.model_id,
+    display_name: provider.display_name,
+    category: "primary",
+    endpoint_kind: "chat",
+    description: "Primary model",
+    paid: true,
+    availability: "available",
+    unavailable_reason: null,
+    input_modalities: ["text"],
+    output_modalities: ["text"],
+    context_length: 131072,
+    max_output_tokens: 16384,
+    supports_tools: true,
+    supports_structured_output: true,
+    supports_streaming: true,
+    supported_resolutions: [],
+    supported_aspect_ratios: [],
+    prices: [],
+  }],
+  fetched_at: timestamp,
+  expires_at: timestamp,
+  stale: false,
+  revision: 1,
+  last_error_code: null,
 };
 const completedTurn: AssistantTurn = {
   id: ID.turn,
@@ -509,9 +552,24 @@ function createClient(
     providers: {
       list: async () => ({ items: [provider] }),
       health: async () => ({ items: [providerHealth] }),
-      openRouterStatus: async () => ({ configured: true, model_id: provider.model_id }),
-      configureOpenRouter: async (input) => ({ configured: true, model_id: input.model_id }),
-      deleteOpenRouter: async () => ({ configured: false, model_id: null }),
+      openRouterStatus: async () => ({ configured: true, account_id: "openrouter-default" }),
+      configureOpenRouter: async () => ({ configured: true, account_id: "openrouter-default" }),
+      deleteOpenRouter: async () => ({ configured: false, account_id: null }),
+    },
+    models: {
+      catalog: {
+        list: async () => modelCatalog,
+        refresh: async () => modelCatalog,
+      },
+      selection: {
+        get: async () => modelSelection,
+        update: async (input) => ({
+          ...modelSelection,
+          mode: input.mode,
+          model_id: input.model_id,
+          revision: input.expected_revision + 1,
+        }),
+      },
     },
     skills: {
       list: async () => ({ items: [] }),

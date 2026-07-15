@@ -1,0 +1,222 @@
+.model-selector {
+  position: relative;
+  min-width: 0;
+}
+
+.model-selector-trigger {
+  width: 126px;
+  height: 32px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 13px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid #454b48;
+  border-radius: 4px;
+  color: #bfc7c2;
+  background: #242725;
+  cursor: pointer;
+}
+
+.model-selector-trigger > span {
+  overflow: hidden;
+  font-size: 10px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-selector-trigger:hover,
+.model-selector-trigger[data-pressed] {
+  border-color: #4c7973;
+  color: #8ee3d9;
+  background: #202b29;
+}
+
+.model-selector-trigger[data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.model-selector-trigger[data-tooltip]::after {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 6px);
+  left: 0;
+  max-width: 240px;
+  padding: 4px 6px;
+  border: 1px solid #484e4b;
+  border-radius: 3px;
+  color: #d7dcd9;
+  background: #1b1e1c;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  content: attr(data-tooltip);
+  font-size: 9px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(2px);
+  transition: opacity 100ms ease, transform 100ms ease;
+  white-space: nowrap;
+}
+
+.model-selector-trigger[data-tooltip]:hover::after,
+.model-selector-trigger[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.model-selector-popover {
+  width: min(360px, calc(100vw - 16px));
+  max-height: min(560px, calc(100vh - 16px));
+  border: 1px solid #4c514f;
+  border-radius: 6px;
+  overflow: hidden;
+  color: #d3d8d5;
+  background: #1d201f;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 48%);
+}
+
+.model-selector-popover[data-entering] {
+  animation: model-popover-in 120ms ease-out;
+}
+
+.model-selector-popover[data-exiting] {
+  animation: model-popover-out 90ms ease-in;
+}
+
+.model-selector-menu {
+  max-height: min(560px, calc(100vh - 16px));
+  padding: 6px;
+  overflow-y: auto;
+  outline: none;
+}
+
+.model-selector-menu [role="group"] + [role="group"] {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #353a38;
+}
+
+.model-selector-menu header {
+  padding: 5px 7px 4px;
+  color: #79827d;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.model-selector-item {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 7px;
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+}
+
+.model-selector-item[data-focused],
+.model-selector-item[data-hovered] {
+  background: #292e2c;
+}
+
+.model-selector-item[data-selected] {
+  color: #91e5dc;
+  background: #20302e;
+}
+
+.model-selector-item[data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.model-item-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #454b48;
+  border-radius: 4px;
+  color: #9bdcd5;
+  background: #242826;
+}
+
+.model-item-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.model-item-copy strong,
+.model-item-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-item-copy strong {
+  font-size: 11px;
+}
+
+.model-item-copy small {
+  color: #939c97;
+  font-size: 9px;
+}
+
+.model-item-copy > span {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.model-item-copy em {
+  color: #78827c;
+  font-size: 8px;
+  font-style: normal;
+}
+
+.model-item-copy em[data-availability="available"] {
+  color: #7fc8a6;
+}
+
+.model-item-copy em[data-availability="unavailable"] {
+  color: #e39189;
+}
+
+.model-selector-settings {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  border-radius: 4px;
+  outline: none;
+  color: #aab2ad;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.model-selector-settings[data-focused],
+.model-selector-settings[data-hovered] {
+  color: #d8dedb;
+  background: #292e2c;
+}
+
+@keyframes model-popover-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes model-popover-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(3px) scale(0.99); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-selector-popover[data-entering],
+  .model-selector-popover[data-exiting] {
+    animation: none;
+  }
+}

@@ -164,14 +164,17 @@ describe("ChatWorkspace", () => {
   });
 
   it("disables sending while offline or when the selected provider is unavailable", () => {
-    const props = workspaceProps({ offline: true, providerAvailable: false });
-    render(<ChatWorkspace {...props} />);
+    const props = workspaceProps({ providerAvailable: false });
+    const view = render(<ChatWorkspace {...props} />);
 
     const composer = screen.getByLabelText("Message Fairy");
     fireEvent.change(composer, { target: { value: "Cannot send" } });
-    expect(composer).toBeDisabled();
-    expect(screen.getByText("Provider unavailable")).toBeVisible();
+    expect(composer).toBeEnabled();
+    expect(screen.getAllByText("Provider unavailable")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+
+    view.rerender(<ChatWorkspace {...workspaceProps({ offline: true })} />);
+    expect(screen.getByLabelText("Message Fairy")).toBeDisabled();
   });
 
   it("renders a durable tool approval and submits only its decision", async () => {
@@ -206,7 +209,7 @@ const TURN: AssistantTurn = {
   id: "0198f4de-0114-7000-8000-000000000011",
   conversation_id: "0198f4de-0114-7000-8000-000000000002",
   task_id: "0198f4de-0114-7000-8000-000000000003",
-  profile_id: "openrouter-free",
+  profile_id: "openrouter-deepseek-v4-pro",
   scope_digest: "a".repeat(64),
   memory_snapshot_id: "0198f4de-0114-7000-8000-000000000004",
   memory_snapshot_hash: "b".repeat(64),
@@ -248,12 +251,12 @@ const MESSAGES: Message[] = [
 
 const PROVIDERS: ProviderProfile[] = [
   {
-    id: "openrouter-free",
-    display_name: "OpenRouter Free",
+    id: "openrouter-deepseek-v4-pro",
+    display_name: "DeepSeek V4 Pro",
     kind: "openai_compatible",
     base_url: "https://openrouter.ai/api/v1",
-    model_id: "openrouter/free",
-    capabilities: ["text", "tools"],
+    model_id: "deepseek/deepseek-v4-pro",
+    capabilities: ["text", "tools", "structured_output"],
     fallback_profile_id: null,
     timeout_seconds: 60,
     enabled: true,
@@ -264,7 +267,7 @@ const PROVIDERS: ProviderProfile[] = [
 
 const HEALTH: ProviderHealth[] = [
   {
-    profile_id: "openrouter-free",
+    profile_id: "openrouter-deepseek-v4-pro",
     status: "available",
     error_code: null,
     diagnostics: [],
@@ -287,7 +290,12 @@ function workspaceProps(
     providerHealth: providerAvailable
       ? HEALTH
       : [{ ...HEALTH[0], status: "unavailable", error_code: "PROVIDER_UNAVAILABLE" }],
-    selectedProfileId: "openrouter-free",
+    selectedProfileId: "openrouter-deepseek-v4-pro",
+    modelCatalog: null,
+    modelSelection: null,
+    modelSelectionLoading: false,
+    modelSelectionBlockReason: providerAvailable ? null : "Provider unavailable",
+    visionAvailable: false,
     isBusy: false,
     isActing: false,
     offline: false,
@@ -321,6 +329,8 @@ function workspaceProps(
     onCopyMessage: vi.fn(async () => undefined),
     onOpenMessageLink: vi.fn(async () => undefined),
     onDecision: vi.fn(async () => undefined),
+    onSelectModel: vi.fn(async () => undefined),
+    onOpenModelSettings: vi.fn(async () => undefined),
     ...props,
   };
 }

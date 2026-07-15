@@ -768,7 +768,9 @@ h2 {
 .mode-controls,
 .provider-control,
 .execution-control,
-.composer-controls,
+.composer-toolbar,
+.composer-toolbar-start,
+.composer-toolbar-end,
 .chat-retry-bar,
 .attachment-item,
 .message-meta,
@@ -1070,10 +1072,49 @@ h2 {
   font-size: 10px;
 }
 
-.composer-controls {
+.composer-input-surface {
   position: relative;
   min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid #444946;
+  border-radius: 5px;
+  background: #111212;
+}
+
+.composer-toolbar {
+  position: relative;
+  min-width: 0;
+  justify-content: space-between;
   gap: 8px;
+}
+
+.composer-toolbar-start,
+.composer-toolbar-end {
+  min-width: 0;
+  gap: 6px;
+}
+
+.composer-toolbar-start {
+  overflow: visible;
+}
+
+.composer-toolbar-end {
+  flex: 0 0 auto;
+}
+
+.composer-toolbar .icon-button,
+.composer-toolbar .send-button {
+  width: 32px;
+  height: 32px;
+}
+
+.composer-guidance {
+  padding: 1px 3px;
+  color: #d8b878;
+  font-size: 9px;
+  line-height: 1.35;
 }
 
 .voice-button.active {
@@ -1294,18 +1335,22 @@ h2 {
   min-height: 40px;
   max-height: 120px;
   display: block;
-  resize: vertical;
-  padding: 9px 11px;
-  border: 1px solid #4a4f4c;
+  resize: none;
+  padding: 7px 5px;
+  border: 0;
   border-radius: 3px;
   outline: none;
   color: #eceeed;
-  background: #111212;
+  background: transparent;
   line-height: 20px;
 }
 
 .chat-composer-field textarea:focus {
-  border-color: #67d8cf;
+  outline: none;
+}
+
+.composer-input-surface:focus-within {
+  border-color: #5ba89f;
 }
 
 .stop-button {
