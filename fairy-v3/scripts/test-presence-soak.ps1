@@ -14,6 +14,10 @@ param(
     [ValidateSet("auto", "power_saving", "high_performance")]
     [string]$GpuPreference = "auto",
     [string]$ExpectedGpuPattern,
+    [ValidateSet("normal", "static-backdrop", "capture-only", "ipc-upload-only", "single-renderer", "no-particles", "no-refraction")]
+    [string]$ExperimentMode = "normal",
+    [ValidateSet(60, 144)]
+    [int]$TargetFps = 60,
     [switch]$SkipRendererProbe,
     [string]$OutputPath
 )
@@ -174,6 +178,8 @@ try {
             $probeScript,
             "--port", $port,
             "--expected-mode", "liquid",
+            "--experiment", $ExperimentMode,
+            "--target-fps", $TargetFps,
             "--warmup-seconds", $WarmupSeconds,
             "--duration-seconds", $durationSeconds,
             "--output", $rendererOutput
@@ -254,6 +260,8 @@ try {
         warmup_seconds = $WarmupSeconds
         duration_seconds = $durationSeconds
         gpu_preference = $GpuPreference
+        experiment_mode = $ExperimentMode
+        target_fps = $TargetFps
         renderer_probe_attached = -not $SkipRendererProbe
         samples = $samples
         average_single_core_cpu_percent = [Math]::Round($averageCpu, 3)

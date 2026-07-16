@@ -17,6 +17,7 @@ export const INPUT_GLASS_FRAGMENT_SHADER = `#version 300 es
   uniform vec2 uResolution;
   uniform float uDpr;
   uniform float uReady;
+  uniform float uRefractionEnabled;
   in vec2 vUv;
   out vec4 outputColor;
 
@@ -76,9 +77,11 @@ export const INPUT_GLASS_FRAGMENT_SHADER = `#version 300 es
       * (1.75 * uDpr * bodyLens)
       / max(uResolution, vec2(1.0));
     vec2 tangent = vec2(-textureNormal.y, textureNormal.x);
+    refraction *= uRefractionEnabled;
     vec2 dispersion = tangent
       * (1.35 * uDpr * edgeLens)
-      / max(uResolution, vec2(1.0));
+      / max(uResolution, vec2(1.0))
+      * uRefractionEnabled;
 
     vec3 direct = sampleBackdrop(directUv);
     vec3 redSample = sampleBackdrop(directUv + refraction + dispersion * 1.08);
@@ -124,11 +127,15 @@ export class InputLiquidGlassRenderer {
   private readonly resolutionLocation: WebGLUniformLocation;
   private readonly dprLocation: WebGLUniformLocation;
   private readonly readyLocation: WebGLUniformLocation;
+  private readonly refractionEnabledLocation: WebGLUniformLocation;
   private textureWidth = 0;
   private textureHeight = 0;
   private disposed = false;
 
-  constructor(private readonly canvas: HTMLCanvasElement) {
+  constructor(
+    private readonly canvas: HTMLCanvasElement,
+    options: { refractionEnabled?: boolean } = {},
+  ) {
     const gl = canvas.getContext("webgl2", {
       alpha: true,
       antialias: true,
@@ -143,6 +150,11 @@ export class InputLiquidGlassRenderer {
     this.resolutionLocation = requireUniform(gl, this.program, "uResolution");
     this.dprLocation = requireUniform(gl, this.program, "uDpr");
     this.readyLocation = requireUniform(gl, this.program, "uReady");
+    this.refractionEnabledLocation = requireUniform(
+      gl,
+      this.program,
+      "uRefractionEnabled",
+    );
 
     gl.useProgram(this.program);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
@@ -161,6 +173,10 @@ export class InputLiquidGlassRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.uniform1i(requireUniform(gl, this.program, "uBackdrop"), 0);
+    gl.uniform1f(
+      this.refractionEnabledLocation,
+      options.refractionEnabled === false ? 0 : 1,
+    );
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.BLEND);
   }

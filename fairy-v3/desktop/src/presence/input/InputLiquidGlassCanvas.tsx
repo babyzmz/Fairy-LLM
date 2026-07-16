@@ -1,33 +1,71 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { useLayoutEffect, useRef } from "react";
 
+import {
+  resolvePresenceExperimentMode,
+  type PresenceExperimentMode,
+} from "../diagnostics/experimentMode";
+import {
+  PRESENCE_RUNTIME_METRICS_RESET_EVENT,
+  PresenceRuntimeMetrics,
+  writeRuntimeMetricsDataset,
+} from "../diagnostics/PresenceRuntimeMetrics";
 import { NativeBackdropStream } from "../render/nativeBackdrop";
 import { InputLiquidGlassRenderer } from "./inputLiquidGlassRenderer";
 
-export function InputLiquidGlassCanvas({ paused = false }: { paused?: boolean }) {
+export function InputLiquidGlassCanvas({
+  paused = false,
+  experimentMode = resolvePresenceExperimentMode(),
+}: {
+  paused?: boolean;
+  experimentMode?: PresenceExperimentMode;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     const field = canvas?.parentElement;
     if (canvas == null || field == null) return;
+    field.dataset.experimentMode = experimentMode;
     if (paused) {
       canvas.dataset.backdropStatus = "paused";
       delete canvas.dataset.backdropError;
-      return;
+      return () => {
+        delete field.dataset.experimentMode;
+      };
     }
-    if (!isTauri()) return;
+    if (experimentMode === "single-renderer") {
+      canvas.dataset.backdropStatus = "disabled";
+      canvas.dataset.experimentMode = experimentMode;
+      return () => {
+        delete field.dataset.experimentMode;
+      };
+    }
+    if (!isTauri()) {
+      return () => {
+        delete field.dataset.experimentMode;
+      };
+    }
 
     let renderer: InputLiquidGlassRenderer;
     try {
-      renderer = new InputLiquidGlassRenderer(canvas);
+      renderer = new InputLiquidGlassRenderer(canvas, {
+        refractionEnabled: experimentMode !== "no-refraction",
+      });
     } catch (error) {
       canvas.dataset.backdropStatus = "unavailable";
       canvas.dataset.backdropError = safeError(error);
-      return;
+      return () => {
+        delete field.dataset.experimentMode;
+      };
     }
 
     const stream = new NativeBackdropStream();
+    const metrics = new PresenceRuntimeMetrics();
+    const resetMetrics = () => {
+      metrics.reset();
+      writeRuntimeMetricsDataset(canvas, metrics.snapshot());
+    };
     let scheduledFrame: number | null = null;
     const update = () => {
       scheduledFrame = null;
@@ -40,6 +78,7 @@ export function InputLiquidGlassCanvas({ paused = false }: { paused?: boolean })
       canvas.dataset.backdropStatus = "starting";
       stream.start({
         framesPerSecond: 30,
+        experimentMode,
         geometry: {
           visible: true,
           left: bounds.left,
@@ -50,7 +89,18 @@ export function InputLiquidGlassCanvas({ paused = false }: { paused?: boolean })
           device_pixel_ratio: dpr,
         },
         onFrame: (frame) => {
+          metrics.recordBackdrop({
+            sequence: frame.sequence,
+            captured_at_ms: frame.capturedAtMs,
+            capture_total_ms: frame.captureTotalMs,
+            frame_pack_ms: frame.framePackMs,
+            ipc_roundtrip_ms: frame.ipcRoundtripMs,
+            js_parse_ms: frame.jsParseMs,
+          });
+          const uploadStartedAt = performance.now();
           renderer.render(frame);
+          metrics.recordTextureUploadCpu(performance.now() - uploadStartedAt);
+          writeRuntimeMetricsDataset(canvas, metrics.snapshot());
           canvas.dataset.backdropStatus = "ready";
           canvas.dataset.backdropSequence = String(frame.sequence);
           canvas.dataset.backdropAgeMs = String(
@@ -76,14 +126,27 @@ export function InputLiquidGlassCanvas({ paused = false }: { paused?: boolean })
       : new ResizeObserver(scheduleUpdate);
     observer?.observe(field);
     window.addEventListener("resize", scheduleUpdate);
+    if (import.meta.env.DEV) {
+      window.addEventListener(
+        PRESENCE_RUNTIME_METRICS_RESET_EVENT,
+        resetMetrics,
+      );
+    }
     return () => {
       if (scheduledFrame !== null) window.cancelAnimationFrame(scheduledFrame);
       observer?.disconnect();
       window.removeEventListener("resize", scheduleUpdate);
+      if (import.meta.env.DEV) {
+        window.removeEventListener(
+          PRESENCE_RUNTIME_METRICS_RESET_EVENT,
+          resetMetrics,
+        );
+      }
       stream.stop();
       renderer.dispose();
+      delete field.dataset.experimentMode;
     };
-  }, [paused]);
+  }, [experimentMode, paused]);
 
   return (
     <canvas
@@ -91,6 +154,7 @@ export function InputLiquidGlassCanvas({ paused = false }: { paused?: boolean })
       className="presence-input-glass"
       data-backdrop-status="idle"
       data-paused={String(paused)}
+      data-experiment-mode={experimentMode}
       data-testid="presence-input-glass"
       ref={canvasRef}
     />

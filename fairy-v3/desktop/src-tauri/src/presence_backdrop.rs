@@ -1,4 +1,4 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::ipc::Response;
 use tauri::WebviewWindow;
@@ -6,8 +6,8 @@ use tauri::WebviewWindow;
 use crate::presence_coordinator::PhysicalFrame;
 use crate::{authorize_pet_input_window, authorize_pet_render_window, PET_INPUT_LABEL};
 
-const BACKDROP_MAGIC: &[u8; 4] = b"FBG1";
-const BACKDROP_HEADER_BYTES: usize = 32;
+const BACKDROP_MAGIC: &[u8; 4] = b"FBG2";
+const BACKDROP_HEADER_BYTES: usize = 64;
 const MAX_BACKDROP_WIDTH: u32 = 1_024;
 const MAX_BACKDROP_HEIGHT: u32 = 512;
 
@@ -26,9 +26,22 @@ pub struct InputBackdropGeometry {
 struct CapturedBackdrop {
     width: u32,
     height: u32,
+    source_width: u32,
+    source_height: u32,
     sequence: u64,
     captured_at_ms: u64,
+    capture_total_us: u64,
+    kind: u32,
     rgba: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BackdropExperimentMode {
+    #[default]
+    Normal,
+    CaptureOnly,
+    IpcUploadOnly,
 }
 
 #[tauri::command]
@@ -36,6 +49,7 @@ pub async fn pet_backdrop_capture(
     window: WebviewWindow,
     geometry: Option<InputBackdropGeometry>,
     sequence: u64,
+    experiment_mode: Option<BackdropExperimentMode>,
 ) -> Result<Response, String> {
     let label = window.label().to_owned();
     if label == PET_INPUT_LABEL {
@@ -56,10 +70,15 @@ pub async fn pet_backdrop_capture(
         surface_frame
     };
     validate_capture_frame(capture_frame)?;
-    let captured =
-        tauri::async_runtime::spawn_blocking(move || capture_backdrop(capture_frame, sequence))
-            .await
-            .map_err(|_| "PRESENCE_BACKDROP_WORKER_INTERRUPTED".to_owned())??;
+    let experiment_mode = experiment_mode.unwrap_or_default();
+    if !cfg!(debug_assertions) && experiment_mode != BackdropExperimentMode::Normal {
+        return Err("PRESENCE_BACKDROP_EXPERIMENT_UNAVAILABLE".to_owned());
+    }
+    let captured = tauri::async_runtime::spawn_blocking(move || {
+        capture_backdrop(capture_frame, sequence, experiment_mode)
+    })
+    .await
+    .map_err(|_| "PRESENCE_BACKDROP_WORKER_INTERRUPTED".to_owned())??;
     if window_frame(&window)? != surface_frame {
         return Err("PRESENCE_BACKDROP_WINDOW_MOVED".to_owned());
     }
@@ -152,9 +171,18 @@ fn validate_capture_frame(frame: PhysicalFrame) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn capture_backdrop(frame: PhysicalFrame, sequence: u64) -> Result<CapturedBackdrop, String> {
+fn capture_backdrop(
+    frame: PhysicalFrame,
+    sequence: u64,
+    experiment_mode: BackdropExperimentMode,
+) -> Result<CapturedBackdrop, String> {
     use xcap::Monitor;
 
+    if experiment_mode == BackdropExperimentMode::IpcUploadOnly {
+        return synthetic_backdrop(frame, sequence);
+    }
+
+    let capture_started = Instant::now();
     let center_x = frame
         .x
         .saturating_add(i32::try_from(frame.width / 2).unwrap_or(i32::MAX));
@@ -194,18 +222,64 @@ fn capture_backdrop(frame: PhysicalFrame, sequence: u64) -> Result<CapturedBackd
     let image = monitor
         .capture_region(relative_x, relative_y, frame.width, frame.height)
         .map_err(|_| "PRESENCE_BACKDROP_CAPTURE_FAILED".to_owned())?;
-    Ok(CapturedBackdrop {
+    let mut captured = CapturedBackdrop {
         width: image.width(),
         height: image.height(),
+        source_width: image.width(),
+        source_height: image.height(),
         sequence,
         captured_at_ms,
+        capture_total_us: elapsed_microseconds(capture_started),
+        kind: 0,
         rgba: image.into_raw(),
-    })
+    };
+    if experiment_mode == BackdropExperimentMode::CaptureOnly {
+        captured.width = 1;
+        captured.height = 1;
+        captured.kind = 1;
+        captured.rgba = vec![0, 0, 0, 0];
+    }
+    Ok(captured)
 }
 
 #[cfg(not(target_os = "windows"))]
-fn capture_backdrop(_frame: PhysicalFrame, _sequence: u64) -> Result<CapturedBackdrop, String> {
+fn capture_backdrop(
+    _frame: PhysicalFrame,
+    _sequence: u64,
+    _experiment_mode: BackdropExperimentMode,
+) -> Result<CapturedBackdrop, String> {
     Err("PRESENCE_BACKDROP_UNAVAILABLE".to_owned())
+}
+
+fn synthetic_backdrop(frame: PhysicalFrame, sequence: u64) -> Result<CapturedBackdrop, String> {
+    let pixel_count = usize::try_from(frame.width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(frame.height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .ok_or_else(|| "PRESENCE_BACKDROP_FRAME_OUT_OF_RANGE".to_owned())?;
+    let mut rgba = vec![0_u8; pixel_count.saturating_mul(4)];
+    for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+        let value = ((index * 31) % 251) as u8;
+        pixel.copy_from_slice(&[value, value.wrapping_add(17), value.wrapping_add(41), 255]);
+    }
+    Ok(CapturedBackdrop {
+        width: frame.width,
+        height: frame.height,
+        source_width: frame.width,
+        source_height: frame.height,
+        sequence,
+        captured_at_ms: now_ms()?,
+        capture_total_us: 0,
+        kind: 2,
+        rgba,
+    })
+}
+
+fn elapsed_microseconds(started: Instant) -> u64 {
+    started.elapsed().as_micros().try_into().unwrap_or(u64::MAX)
 }
 
 fn now_ms() -> Result<u64, String> {
@@ -218,6 +292,7 @@ fn now_ms() -> Result<u64, String> {
 }
 
 fn encode_backdrop(frame: CapturedBackdrop) -> Result<Vec<u8>, String> {
+    let pack_started = Instant::now();
     let expected = usize::try_from(frame.width)
         .ok()
         .and_then(|width| {
@@ -241,7 +316,15 @@ fn encode_backdrop(frame: CapturedBackdrop) -> Result<Vec<u8>, String> {
     packet.extend_from_slice(&stride.to_le_bytes());
     packet.extend_from_slice(&frame.sequence.to_le_bytes());
     packet.extend_from_slice(&frame.captured_at_ms.to_le_bytes());
+    packet.extend_from_slice(&frame.capture_total_us.to_le_bytes());
+    packet.extend_from_slice(&0_u64.to_le_bytes());
+    packet.extend_from_slice(&frame.kind.to_le_bytes());
+    packet.extend_from_slice(&(BACKDROP_HEADER_BYTES as u32).to_le_bytes());
+    packet.extend_from_slice(&frame.source_width.to_le_bytes());
+    packet.extend_from_slice(&frame.source_height.to_le_bytes());
     packet.extend_from_slice(&frame.rgba);
+    let pack_us = elapsed_microseconds(pack_started);
+    packet[40..48].copy_from_slice(&pack_us.to_le_bytes());
     Ok(packet)
 }
 
@@ -271,8 +354,12 @@ mod tests {
         let packet = encode_backdrop(CapturedBackdrop {
             width: 2,
             height: 1,
+            source_width: 2,
+            source_height: 1,
             sequence: 7,
             captured_at_ms: 11,
+            capture_total_us: 3_000,
+            kind: 0,
             rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
         })
         .expect("valid packet");
@@ -282,7 +369,29 @@ mod tests {
         assert_eq!(u32::from_le_bytes(packet[12..16].try_into().unwrap()), 8);
         assert_eq!(u64::from_le_bytes(packet[16..24].try_into().unwrap()), 7);
         assert_eq!(u64::from_le_bytes(packet[24..32].try_into().unwrap()), 11);
+        assert_eq!(
+            u64::from_le_bytes(packet[32..40].try_into().unwrap()),
+            3_000
+        );
+        let _pack_duration = u64::from_le_bytes(packet[40..48].try_into().unwrap());
+        assert_eq!(u32::from_le_bytes(packet[52..56].try_into().unwrap()), 64);
         assert_eq!(&packet[BACKDROP_HEADER_BYTES..], &[1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn ipc_upload_experiment_generates_a_bounded_deterministic_payload() {
+        let frame = PhysicalFrame {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 2,
+        };
+        let first = synthetic_backdrop(frame, 1).expect("synthetic frame");
+        let second = synthetic_backdrop(frame, 2).expect("synthetic frame");
+        assert_eq!(first.kind, 2);
+        assert_eq!(first.rgba, second.rgba);
+        assert_eq!(first.rgba.len(), 16);
+        assert_eq!(first.capture_total_us, 0);
     }
 
     #[test]

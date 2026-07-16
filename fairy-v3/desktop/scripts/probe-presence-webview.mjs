@@ -7,6 +7,17 @@ const expectedMode = argumentsMap["expected-mode"] ?? "liquid";
 const warmupSeconds = Number(argumentsMap["warmup-seconds"] ?? 0);
 const durationSeconds = Number(argumentsMap["duration-seconds"] ?? 0);
 const outputPath = argumentsMap.output ?? null;
+const experimentMode = argumentsMap.experiment ?? "normal";
+const targetFps = Number(argumentsMap["target-fps"] ?? 60);
+const experimentModes = new Set([
+  "normal",
+  "static-backdrop",
+  "capture-only",
+  "ipc-upload-only",
+  "single-renderer",
+  "no-particles",
+  "no-refraction",
+]);
 
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error("--port must be a valid TCP port");
@@ -20,8 +31,15 @@ if (!Number.isFinite(warmupSeconds) || warmupSeconds < 0) {
 if (!Number.isFinite(durationSeconds) || durationSeconds < 0) {
   throw new Error("--duration-seconds must be non-negative");
 }
+if (!experimentModes.has(experimentMode)) {
+  throw new Error("--experiment must be a supported Presence experiment mode");
+}
+if (![60, 144].includes(targetFps)) {
+  throw new Error("--target-fps must be 60 or 144");
+}
 
 const browser = await connectWithRetry(`http://127.0.0.1:${port}`, 30_000);
+await configureExperiment(browser, experimentMode, targetFps);
 const page = await findPresencePage(browser, 30_000);
 const renderer = page.getByTestId("presence-renderer");
 await renderer.waitFor({ state: "visible", timeout: 30_000 });
@@ -53,6 +71,8 @@ await page.waitForFunction(() => {
 if (warmupSeconds > 0) {
   await page.waitForTimeout(warmupSeconds * 1_000);
 }
+await resetRuntimeMetrics(browser);
+await page.waitForTimeout(Math.max(50, 1_000 / targetFps));
 const initial = await readMetrics(page, expectedMode);
 const pagesInitial = await readPageHeaps(browser);
 if (durationSeconds > 0) {
@@ -64,6 +84,8 @@ const gpu = await readGpuInfo(browser);
 const result = {
   url: page.url(),
   expected_mode: expectedMode,
+  experiment_mode: experimentMode,
+  target_fps: targetFps,
   warmup_seconds: warmupSeconds,
   duration_seconds: durationSeconds,
   live_heap_growth_bytes:
@@ -115,6 +137,52 @@ async function findPresencePage(browser, timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error(`pet-render WebView was not exposed through CDP: ${JSON.stringify(discovered)}`);
+}
+
+async function configureExperiment(browser, mode, framesPerSecond) {
+  const startedAt = Date.now();
+  let presencePages = [];
+  while (presencePages.length < 2 && Date.now() - startedAt < 30_000) {
+    presencePages = [];
+    for (const context of browser.contexts()) {
+      for (const page of context.pages()) {
+        const surface = await page.evaluate(
+          () => document.documentElement.dataset.surface ?? null,
+        ).catch(() => null);
+        if (surface === "pet-render" || surface === "pet-input") {
+          presencePages.push(page);
+        }
+      }
+    }
+    if (presencePages.length < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+  if (presencePages.length < 2) throw new Error("Presence experiment surfaces are unavailable");
+  for (const page of presencePages) {
+    await page.evaluate(({ value, target }) => {
+      localStorage.setItem("fairy.presence.experiment", value);
+      localStorage.setItem("fairy.presence.target-fps-experiment", String(target));
+    }, { value: mode, target: framesPerSecond });
+  }
+  await Promise.all(presencePages.map((page) => page.reload({ waitUntil: "domcontentloaded" })));
+}
+
+async function resetRuntimeMetrics(browser) {
+  const resetEventName = "fairy:presence-runtime-metrics-reset";
+  for (const context of browser.contexts()) {
+    for (const page of context.pages()) {
+      const isPresenceSurface = await page.evaluate(
+        () => ["pet-render", "pet-input"].includes(
+          document.documentElement.dataset.surface ?? "",
+        ),
+      ).catch(() => false);
+      if (!isPresenceSurface) continue;
+      await page.evaluate((eventName) => {
+        window.dispatchEvent(new Event(eventName));
+      }, resetEventName);
+    }
+  }
 }
 
 async function readGpuInfo(browser) {
@@ -212,6 +280,21 @@ async function readMetrics(page, mode) {
       cpu_frame_p95_ms: numberOrNull(canvas.dataset.cpuFrameP95Ms),
       gpu_frame_p95_ms: numberOrNull(canvas.dataset.gpuFrameP95Ms),
       heap_growth_bytes: numberOrNull(canvas.dataset.heapGrowthBytes),
+      frame_samples: numberOrNull(canvas.dataset.frameSamples),
+      fps_avg: numberOrNull(canvas.dataset.fpsAvg),
+      fps_p1: numberOrNull(canvas.dataset.fpsP1),
+      deadline_miss_count: numberOrNull(canvas.dataset.deadlineMissCount),
+      capture_p95_ms: numberOrNull(canvas.dataset.captureP95Ms),
+      pack_p95_ms: numberOrNull(canvas.dataset.packP95Ms),
+      ipc_p95_ms: numberOrNull(canvas.dataset.ipcP95Ms),
+      parse_p95_ms: numberOrNull(canvas.dataset.parseP95Ms),
+      upload_cpu_p95_ms: numberOrNull(canvas.dataset.uploadCpuP95Ms),
+      backdrop_age_p95_ms: numberOrNull(canvas.dataset.backdropAgeP95Ms),
+      dropped_frame_count: numberOrNull(canvas.dataset.droppedFrameCount),
+      experiment_mode: canvas.dataset.experimentMode ?? null,
+      target_frame_rate: surface instanceof HTMLElement
+        ? numberOrNull(surface.dataset.targetFrameRate)
+        : null,
       used_js_heap_bytes: numberOrNull(performance.memory?.usedJSHeapSize),
       visible_controls: document.querySelectorAll("button, input, textarea, select").length,
       horizontal_overflow: Math.max(0, document.documentElement.scrollWidth - innerWidth),

@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import type { PresenceExperimentMode } from "../diagnostics/experimentMode";
 import { PresenceRendererHost } from "./PresenceRendererHost";
 import {
   type PresenceRendererHealth,
@@ -9,6 +10,7 @@ import type { PresenceRendererMode } from "./rendererSupport";
 
 interface PresenceRendererCanvasProps {
   requestedMode?: PresenceRendererMode;
+  experimentMode?: PresenceExperimentMode;
   snapshot: PresenceRenderSnapshot;
   onHealth?: (health: PresenceRendererHealth) => void;
 }
@@ -21,6 +23,7 @@ const INITIAL_HEALTH: PresenceRendererHealth = {
 
 export function PresenceRendererCanvas({
   requestedMode = "auto",
+  experimentMode = "normal",
   snapshot,
   onHealth,
 }: PresenceRendererCanvasProps) {
@@ -42,6 +45,7 @@ export function PresenceRendererCanvas({
       webglCanvas,
       compatibilityCanvas,
       requestedMode,
+      experimentMode,
       initialSnapshot: snapshotRef.current,
       onHealth: (nextHealth) => {
         if (mounted) {
@@ -79,7 +83,7 @@ export function PresenceRendererCanvas({
       host.dispose();
       hostRef.current = null;
     };
-  }, [requestedMode]);
+  }, [experimentMode, requestedMode]);
 
   useEffect(() => {
     hostRef.current?.setSnapshot(snapshot);
@@ -91,6 +95,7 @@ export function PresenceRendererCanvas({
       data-error-code={health.error_code ?? ""}
       data-renderer={health.mode}
       data-renderer-health={health.status}
+      data-experiment-mode={experimentMode}
       data-testid="presence-renderer"
     >
       <canvas

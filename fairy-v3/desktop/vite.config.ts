@@ -14,6 +14,14 @@ export default defineConfig({
     port: 1430,
     // Vite 8 rejects every Windows path containing "~" before checking fs.allow.
     fs: { strict: !rootDirectory.includes("~") },
+    watch: {
+      ignored: [
+        "**/src-tauri/runtime/**",
+        "**/src-tauri/target/**",
+        "**/playwright-report/**",
+        "**/test-results/**",
+      ],
+    },
   },
   build: {
     manifest: true,

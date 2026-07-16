@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 
 import {
+  resolvePresenceExperimentMode,
+  resolvePresenceTargetFpsOverride,
+} from "../diagnostics/experimentMode";
+
+import {
   derivePresenceView,
   PresenceProjection,
   type PresenceProjectionState,
@@ -91,6 +96,9 @@ export function PresenceRenderApp({
   );
   const [forcedCompatibility, setForcedCompatibility] = useState(false);
   const [sessionDisabled, setSessionDisabled] = useState(false);
+  const [experimentMode] = useState(resolvePresenceExperimentMode);
+  const [targetFpsOverride] = useState(resolvePresenceTargetFpsOverride);
+  const targetFrameRate = targetFpsOverride ?? renderSettings.target_frame_rate;
 
   useEffect(() => {
     const stop = channel.onProjection((next) => {
@@ -205,16 +213,18 @@ export function PresenceRenderApp({
       data-reduced-motion={String(reducedMotion)}
       data-speaking={String(projection.speaking)}
       data-work-state={view.work_state}
-      data-target-frame-rate={renderSettings.target_frame_rate}
+      data-target-frame-rate={targetFrameRate}
       data-frame-rate-limit={runtimePolicy.frame_rate_limit}
       data-power-saver={String(runtimePolicy.power_saver)}
       data-foreground-fullscreen={String(runtimePolicy.foreground_fullscreen)}
       data-session-disabled={String(sessionDisabled)}
+      data-experiment-mode={experimentMode}
       data-testid="presence-render-surface"
     >
       {!sessionDisabled && (
         <PresenceRendererCanvas
           requestedMode={requestedMode}
+          experimentMode={experimentMode}
           onHealth={(health) => {
             void rendererHealthHost.report(health).then((directive) => {
               if (directive === "force_compatibility") setForcedCompatibility(true);
@@ -230,9 +240,10 @@ export function PresenceRenderApp({
             work_state: view.work_state,
             size_scale: renderSettings.size_scale,
             opacity: renderSettings.opacity,
-            particles_enabled: renderSettings.particles_enabled,
+            particles_enabled:
+              renderSettings.particles_enabled && experimentMode !== "no-particles",
             idle_for_ms: idleForMs,
-            target_frame_rate: renderSettings.target_frame_rate,
+            target_frame_rate: targetFrameRate,
             frame_rate_limit: runtimePolicy.frame_rate_limit,
           }}
         />

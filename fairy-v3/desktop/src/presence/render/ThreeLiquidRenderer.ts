@@ -1,5 +1,11 @@
 import * as THREE from "three";
 
+import type { PresenceExperimentMode } from "../diagnostics/experimentMode";
+import {
+  PRESENCE_RUNTIME_METRICS_RESET_EVENT,
+  PresenceRuntimeMetrics,
+  writeRuntimeMetricsDataset,
+} from "../diagnostics/PresenceRuntimeMetrics";
 import {
   rendererFrameInterval,
   type PresenceRenderer,
@@ -42,6 +48,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
   private readonly loop: RendererFrameLoop;
   private readonly performanceSampler = new RendererPerformanceSampler();
   private readonly gpuTimer: WebGlGpuTimer;
+  private readonly runtimeMetrics = new PresenceRuntimeMetrics();
   private renderedFrames = 0;
   private hasRendered = false;
   private gpuTimerSamplesStarted = 0;
@@ -54,12 +61,18 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
   private width = 1;
   private height = 1;
   private dpr = 1;
+  private readonly resetRuntimeMetrics = () => {
+    this.runtimeMetrics.reset();
+    writeRuntimeMetricsDataset(this.canvas, this.runtimeMetrics.snapshot());
+  };
 
   constructor(
     canvas: HTMLCanvasElement,
     initialSnapshot: PresenceRenderSnapshot,
+    private readonly experimentMode: PresenceExperimentMode = "normal",
   ) {
     this.canvas = canvas;
+    this.canvas.dataset.experimentMode = experimentMode;
     this.snapshot = initialSnapshot;
     this.interactionPhase = initialSnapshot.interaction?.phase ?? null;
     this.motion = new LiquidMotionController(
@@ -141,6 +154,12 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
       (now) => this.drawFrame(now),
       () => rendererFrameInterval(this.snapshot),
     );
+    if (import.meta.env.DEV) {
+      window.addEventListener(
+        PRESENCE_RUNTIME_METRICS_RESET_EVENT,
+        this.resetRuntimeMetrics,
+      );
+    }
   }
 
   start(): void {
@@ -196,6 +215,12 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.backdropTexture.dispose();
     this.renderer.dispose();
     this.gpuTimer.dispose();
+    if (import.meta.env.DEV) {
+      window.removeEventListener(
+        PRESENCE_RUNTIME_METRICS_RESET_EVENT,
+        this.resetRuntimeMetrics,
+      );
+    }
   }
 
   private startBackdrop() {
@@ -204,6 +229,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.canvas.dataset.backdropStatus = "starting";
     this.backdropStream.start({
       framesPerSecond: backdropFrameRate(this.snapshot),
+      experimentMode: this.experimentMode,
       onFrame: (frame) => this.acceptBackdropFrame(frame),
       onError: (error) => {
         if (!this.backdropRunning) return;
@@ -229,12 +255,22 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
 
   private acceptBackdropFrame(frame: NativeBackdropFrame) {
     if (!this.backdropRunning || this.disposed) return;
+    this.runtimeMetrics.recordBackdrop({
+      sequence: frame.sequence,
+      captured_at_ms: frame.capturedAtMs,
+      capture_total_ms: frame.captureTotalMs,
+      frame_pack_ms: frame.framePackMs,
+      ipc_roundtrip_ms: frame.ipcRoundtripMs,
+      js_parse_ms: frame.jsParseMs,
+    });
+    const uploadStartedAt = performance.now();
     this.backdropTexture.image = {
       data: frame.rgba,
       width: frame.width,
       height: frame.height,
     };
     this.backdropTexture.needsUpdate = true;
+    this.runtimeMetrics.recordTextureUploadCpu(performance.now() - uploadStartedAt);
     this.material.uniforms.uBackdropSize.value.set(frame.width, frame.height);
     this.material.uniforms.uBackdropReady.value = 1;
     this.canvas.dataset.backdropStatus = "ready";
@@ -245,11 +281,14 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
       Math.max(0, Date.now() - frame.capturedAtMs),
     );
     delete this.canvas.dataset.backdropError;
-    this.loop.drawImmediately();
   }
 
   private drawFrame(now: number) {
     const cpuStartedAt = performance.now();
+    const frameInterval = rendererFrameInterval(this.snapshot);
+    if (Number.isFinite(frameInterval)) {
+      this.runtimeMetrics.recordAnimationFrame(now, 1_000 / frameInterval);
+    }
     const motion = this.motion.sample(now);
     this.material.uniforms.uShape.value.set(
       motion.droplet,
@@ -293,6 +332,12 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
         this.performanceSamplingComplete,
       );
     }
+    if (this.renderedFrames % 60 === 0) {
+      writeRuntimeMetricsDataset(
+        this.renderer.domElement,
+        this.runtimeMetrics.snapshot(),
+      );
+    }
     if (!this.hasRendered) {
       this.hasRendered = true;
       this.renderer.domElement.dataset.rendered = "true";
@@ -322,6 +367,12 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.material.uniforms.uLensStrength.value = optics.lens_strength;
     this.material.uniforms.uRimStrength.value = optics.rim_strength;
     this.material.uniforms.uShadowStrength.value = optics.shadow_strength;
+    if (this.experimentMode === "no-refraction") {
+      this.material.uniforms.uRefractionPx.value = 0;
+      this.material.uniforms.uDispersionPx.value = 0;
+      this.material.uniforms.uCausticStrength.value = 0;
+      this.material.uniforms.uLensStrength.value = 0;
+    }
     const gaze = interaction?.cursor.direction ?? { x: 0, y: 0 };
     this.material.uniforms.uGaze.value.set(gaze.x, -gaze.y);
     const direction = liquidDirectionForSnapshot(this.snapshot);

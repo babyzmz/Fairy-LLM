@@ -249,6 +249,17 @@ textarea:focus-visible {
   z-index: 1;
 }
 
+.presence-input-field[data-experiment-mode="single-renderer"] {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.presence-input-field[data-experiment-mode="single-renderer"]::before,
+.presence-input-field[data-experiment-mode="single-renderer"]::after {
+  display: none;
+}
+
 .presence-input-glass {
   position: absolute;
   inset: 0;

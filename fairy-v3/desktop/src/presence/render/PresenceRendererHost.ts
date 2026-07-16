@@ -1,4 +1,5 @@
 import { CanvasCompatibilityRenderer } from "./CanvasCompatibilityRenderer";
+import type { PresenceExperimentMode } from "../diagnostics/experimentMode";
 import {
   type PresenceRenderer,
   type PresenceRendererHealth,
@@ -15,6 +16,7 @@ interface PresenceRendererHostOptions {
   webglCanvas: HTMLCanvasElement;
   compatibilityCanvas: HTMLCanvasElement;
   requestedMode: PresenceRendererMode;
+  experimentMode?: PresenceExperimentMode;
   initialSnapshot: PresenceRenderSnapshot;
   onHealth(health: PresenceRendererHealth): void;
   now?: () => number;
@@ -101,7 +103,11 @@ export class PresenceRendererHost implements PresenceRenderer {
     try {
       const { ThreeLiquidRenderer } = await import("./ThreeLiquidRenderer");
       if (this.disposed || generation !== this.generation) return;
-      const next = new ThreeLiquidRenderer(this.options.webglCanvas, this.snapshot);
+      const next = new ThreeLiquidRenderer(
+        this.options.webglCanvas,
+        this.snapshot,
+        this.options.experimentMode ?? "normal",
+      );
       next.resize(this.width, this.height, this.dpr);
       next.setSnapshot(this.snapshot);
       if (this.running && !this.suspended) next.start();
