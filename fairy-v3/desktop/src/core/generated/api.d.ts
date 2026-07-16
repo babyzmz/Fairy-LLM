@@ -534,6 +534,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/extensions/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Extension Catalog */
+        get: operations["extensions.catalog.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/file-sets/get": {
         parameters: {
             query?: never;
@@ -1384,6 +1401,58 @@ export interface paths {
         get: operations["skills.list"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{catalog_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install Skill */
+        post: operations["skills.install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Skill */
+        put: operations["skills.update"];
+        post?: never;
+        /** Remove Skill */
+        delete: operations["skills.remove"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/{name}/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set Skill Enabled */
+        post: operations["skills.set_enabled"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2971,6 +3040,34 @@ export interface components {
          * @enum {string}
          */
         ExecutionTarget: "local" | "cloud";
+        /** ExtensionCatalogEntryModel */
+        ExtensionCatalogEntryModel: {
+            /** Description */
+            description: string;
+            /** Experimental */
+            experimental: boolean;
+            /** Extension Id */
+            extension_id: string;
+            /** Installed */
+            installed: boolean;
+            /** Kind */
+            kind: string;
+            /** License */
+            license: string;
+            /** Name */
+            name: string;
+            /** Publisher */
+            publisher: string;
+            /** Source */
+            source: string;
+            /** Version */
+            version: string;
+        };
+        /** ExtensionCatalogPageModel */
+        ExtensionCatalogPageModel: {
+            /** Items */
+            items: components["schemas"]["ExtensionCatalogEntryModel"][];
+        };
         /** FileCompareEntryModel */
         FileCompareEntryModel: {
             /** Diff Truncated */
@@ -5195,6 +5292,13 @@ export interface components {
          * @enum {string}
          */
         SideEffect: "none" | "read" | "write" | "execute";
+        /** SkillInstallInput */
+        SkillInstallInput: {
+            /** Catalog Id */
+            catalog_id: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+        };
         /** SkillModel */
         SkillModel: {
             /** Available */
@@ -5205,6 +5309,8 @@ export interface components {
             content_sha256: string;
             /** Description */
             description: string;
+            /** Enabled */
+            enabled: boolean;
             /** Name */
             name: string;
             provenance: components["schemas"]["SkillProvenanceModel"];
@@ -5228,6 +5334,42 @@ export interface components {
             publisher: string;
             /** Source */
             source: string;
+        };
+        /** SkillRemoveInput */
+        SkillRemoveInput: {
+            /** Expected Content Sha256 */
+            expected_content_sha256: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Name */
+            name: string;
+        };
+        /** SkillRemoveResult */
+        SkillRemoveResult: {
+            /** Name */
+            name: string;
+            /** Removed */
+            removed: boolean;
+        };
+        /** SkillSetEnabledInput */
+        SkillSetEnabledInput: {
+            /** Enabled */
+            enabled: boolean;
+            /** Expected Content Sha256 */
+            expected_content_sha256: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Name */
+            name: string;
+        };
+        /** SkillUpdateInput */
+        SkillUpdateInput: {
+            /** Expected Content Sha256 */
+            expected_content_sha256: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Name */
+            name: string;
         };
         /** SlashCommandMetadataModel */
         SlashCommandMetadataModel: {
@@ -7274,6 +7416,37 @@ export interface operations {
             };
         };
     };
+    "extensions.catalog.list": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionCatalogPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "file_sets.get": {
         parameters: {
             query?: never;
@@ -9164,6 +9337,158 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "skills.install": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                catalog_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillInstallInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "skills.update": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillUpdateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "skills.remove": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillRemoveInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillRemoveResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "skills.set_enabled": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillSetEnabledInput"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

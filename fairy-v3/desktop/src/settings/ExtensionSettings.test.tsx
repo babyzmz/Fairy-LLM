@@ -60,6 +60,7 @@ const skill: Skill = {
     license: "Apache-2.0",
   },
   content_sha256: "a".repeat(64),
+  enabled: true,
   available: true,
 };
 

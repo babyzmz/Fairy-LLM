@@ -111,7 +111,16 @@ const routes = {
   "media.videos.get": (params) => get(`/v1/media/videos/${pathParameter(params, "job_id")}`),
   "media.videos.cancel": (params) =>
     deleteWithIdempotency(`/v1/media/videos/${pathParameter(params, "job_id")}`, params),
+  "extensions.catalog.list": () => get("/v1/extensions/catalog"),
+  "skills.install": (params) =>
+    postWithIdempotency(`/v1/skills/${pathParameter(params, "catalog_id")}`, params),
   "skills.list": () => get("/v1/skills"),
+  "skills.remove": (params) =>
+    deleteWithIdempotency(`/v1/skills/${pathParameter(params, "name")}`, params),
+  "skills.set_enabled": (params) =>
+    postWithIdempotency(`/v1/skills/${pathParameter(params, "name")}/enabled`, params),
+  "skills.update": (params) =>
+    putWithIdempotency(`/v1/skills/${pathParameter(params, "name")}`, params),
   "mcp.servers.list": () => get("/v1/mcp/servers"),
   "mcp.servers.configure": (params) =>
     putWithIdempotency(`/v1/mcp/servers/${pathParameter(params, "server_id")}`, params),

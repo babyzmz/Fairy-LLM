@@ -38,6 +38,7 @@ from fairy_core.sandbox.ports import SandboxExecutor
 from fairy_core.sandbox.tools import ExecutorSandboxHealthProvider
 from fairy_core.sandbox.wsl import WslSandboxExecutor
 from fairy_core.skills.loader import SkillPackageLoader
+from fairy_core.skills.manager import SkillManager
 from fairy_core.skills.registry import SkillRegistry
 from fairy_core.transports.jsonrpc import JsonRpcDispatcher
 from fairy_core.voice import VoiceRegistry
@@ -125,13 +126,13 @@ def build_local_service(
         skills = SkillRegistry(registry)
         configured_skill_paths = tuple(skill_paths or ())
         default_skills_root = data_dir / "skills"
-        if not configured_skill_paths and default_skills_root.is_dir():
-            configured_skill_paths = tuple(
-                path for path in sorted(default_skills_root.iterdir()) if path.is_dir()
-            )
+        skill_manager = SkillManager(default_skills_root, skills)
         loader = SkillPackageLoader()
-        for skill_path in configured_skill_paths:
-            skills.install(loader.load(skill_path))
+        if configured_skill_paths:
+            for skill_path in configured_skill_paths:
+                skills.install(loader.load(skill_path))
+        else:
+            skill_manager.load_installed()
         engine = create_sqlite_core_engine(
             data_dir / "core.db",
             legacy_state_path=data_dir / "state.db",
@@ -221,6 +222,7 @@ def build_local_service(
             sandbox_executor=selected_sandbox_executor,
             sandbox_health_provider=selected_sandbox_health,
             skill_registry=skills,
+            skill_manager=skill_manager,
             mcp_application=mcp_application,
             model_catalog_source=model_catalog_source,
             media_provider=media_provider,

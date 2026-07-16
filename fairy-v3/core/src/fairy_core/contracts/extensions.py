@@ -26,11 +26,58 @@ class SkillModel(ContractModel):
     required_capabilities: tuple[str, ...]
     compatible_mcp_servers: tuple[str, ...]
     provenance: SkillProvenanceModel
+    enabled: bool
     available: bool
 
 
 class SkillPageModel(ContractModel):
     items: tuple[SkillModel, ...]
+
+
+class ExtensionCatalogEntryModel(ContractModel):
+    extension_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    kind: str = Field(pattern=r"^(skill|mcp_preset)$")
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(min_length=1, max_length=1_024)
+    publisher: str = Field(min_length=1, max_length=200)
+    version: str = Field(min_length=1, max_length=128)
+    source: str = Field(min_length=1, max_length=500)
+    license: str = Field(min_length=1, max_length=200)
+    experimental: bool
+    installed: bool
+
+
+class ExtensionCatalogPageModel(ContractModel):
+    items: tuple[ExtensionCatalogEntryModel, ...]
+
+
+class SkillInstallInput(ContractModel):
+    catalog_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class SkillUpdateInput(ContractModel):
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    expected_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class SkillSetEnabledInput(ContractModel):
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    expected_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    enabled: bool
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class SkillRemoveInput(ContractModel):
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    expected_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class SkillRemoveResult(ContractModel):
+    name: str
+    removed: bool
 
 
 class McpToolDescriptorModel(ContractModel):
@@ -148,6 +195,8 @@ class McpServerDeleteResult(ContractModel):
 
 
 __all__ = [
+    "ExtensionCatalogEntryModel",
+    "ExtensionCatalogPageModel",
     "McpServerAcceptInput",
     "McpServerConfigureInput",
     "McpServerDeleteInput",
@@ -158,7 +207,12 @@ __all__ = [
     "McpServerSetEnabledInput",
     "McpToolDescriptorModel",
     "McpToolPolicyInput",
+    "SkillInstallInput",
     "SkillModel",
     "SkillPageModel",
     "SkillProvenanceModel",
+    "SkillRemoveInput",
+    "SkillRemoveResult",
+    "SkillSetEnabledInput",
+    "SkillUpdateInput",
 ]

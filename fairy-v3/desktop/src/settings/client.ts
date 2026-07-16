@@ -4,6 +4,7 @@ import type {
   CoreMethodMap,
   CoreMethodName,
   ExecutionSettings,
+  ExtensionCatalogPage,
   McpServerAcceptInput,
   McpServerConfigureInput,
   McpServerDeleteInput,
@@ -17,6 +18,11 @@ import type {
   ProviderHealthPage,
   ProviderProfilePage,
   SkillPage,
+  SkillInstallInput,
+  SkillRemoveInput,
+  SkillSetEnabledInput,
+  SkillUpdateInput,
+  TaskPage,
   McpServerPage,
 } from "../core/client";
 import { CoreRpcError, type InvokeFunction } from "../core/tauriTransport";
@@ -149,7 +155,14 @@ export class SettingsClient {
   };
 
   readonly extensions = {
+    catalog: () =>
+      this.call("extensions.catalog.list", {}) as Promise<ExtensionCatalogPage>,
     skills: () => this.call("skills.list", {}) as Promise<SkillPage>,
+    installSkill: (input: SkillInstallInput) => this.call("skills.install", input),
+    updateSkill: (input: SkillUpdateInput) => this.call("skills.update", input),
+    setSkillEnabled: (input: SkillSetEnabledInput) =>
+      this.call("skills.set_enabled", input),
+    removeSkill: (input: SkillRemoveInput) => this.call("skills.remove", input),
     servers: () => this.call("mcp.servers.list", {}) as Promise<McpServerPage>,
     configure: (input: McpServerConfigureInput) =>
       this.call("mcp.servers.configure", input),
@@ -159,6 +172,11 @@ export class SettingsClient {
     setEnabled: (input: McpServerSetEnabledInput) =>
       this.call("mcp.servers.set_enabled", input),
     delete: (input: McpServerDeleteInput) => this.call("mcp.servers.delete", input),
+  };
+
+  readonly context = {
+    latestTask: () =>
+      this.call("tasks.list", { limit: 1 }) as Promise<TaskPage>,
   };
 
   readonly voice = {

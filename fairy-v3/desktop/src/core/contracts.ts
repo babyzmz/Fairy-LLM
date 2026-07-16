@@ -121,6 +121,13 @@ export type Runtime = Schemas["RuntimeModel"];
 export type RuntimeHealth = Schemas["RuntimeHealthModel"];
 export type Skill = Schemas["SkillModel"];
 export type SkillPage = Schemas["SkillPageModel"];
+export type ExtensionCatalogEntry = Schemas["ExtensionCatalogEntryModel"];
+export type ExtensionCatalogPage = Schemas["ExtensionCatalogPageModel"];
+export type SkillInstallInput = Schemas["SkillInstallInput"];
+export type SkillUpdateInput = Schemas["SkillUpdateInput"];
+export type SkillSetEnabledInput = Schemas["SkillSetEnabledInput"];
+export type SkillRemoveInput = Schemas["SkillRemoveInput"];
+export type SkillRemoveResult = Schemas["SkillRemoveResult"];
 export type SystemActionExecution = Schemas["SystemActionExecution"];
 export type SystemActionRequest = Schemas["SystemActionRequest"];
 export type SystemAction = SystemActionRequest["action"];
@@ -285,7 +292,12 @@ export interface CoreMethodMap {
     params: MediaVideoCancelInput;
     result: MediaGenerationJob;
   };
+  "extensions.catalog.list": { params: EmptyParams; result: ExtensionCatalogPage };
+  "skills.install": { params: SkillInstallInput; result: SkillPage };
   "skills.list": { params: EmptyParams; result: SkillPage };
+  "skills.remove": { params: SkillRemoveInput; result: SkillRemoveResult };
+  "skills.set_enabled": { params: SkillSetEnabledInput; result: SkillPage };
+  "skills.update": { params: SkillUpdateInput; result: SkillPage };
   "mcp.servers.list": { params: EmptyParams; result: McpServerPage };
   "mcp.servers.configure": {
     params: McpServerConfigureInput;

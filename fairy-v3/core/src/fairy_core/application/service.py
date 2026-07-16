@@ -38,6 +38,10 @@ from fairy_core.contracts.extensions import (
     McpServerDeleteInput,
     McpServerDiscoverInput,
     McpServerSetEnabledInput,
+    SkillInstallInput,
+    SkillRemoveInput,
+    SkillSetEnabledInput,
+    SkillUpdateInput,
 )
 from fairy_core.contracts.history import (
     ConversationDeleteInput,
@@ -125,6 +129,7 @@ from fairy_core.runtime.review import RuntimeEvidenceStore, RuntimeReviewer
 from fairy_core.sandbox.archive import WorkspaceArchiveBuilder
 from fairy_core.sandbox.ports import SandboxExecutor
 from fairy_core.sandbox.tools import SandboxToolExecutor
+from fairy_core.skills.manager import SkillManager
 from fairy_core.skills.registry import SkillRegistry
 from fairy_core.skills.tools import SkillToolExecutor
 from fairy_core.system_actions.application import (
@@ -176,6 +181,7 @@ class CoreService:
         sandbox_executor: SandboxExecutor | None = None,
         sandbox_health_provider: SandboxHealthProvider | None = None,
         skill_registry: SkillRegistry | None = None,
+        skill_manager: SkillManager | None = None,
         mcp_application: McpApplication | None = None,
         renderer_pack_installer: RendererPackInstaller | None = None,
         model_catalog_source: ModelCatalogSource | None = None,
@@ -192,6 +198,7 @@ class CoreService:
         self._unit_of_work_factory = unit_of_work_factory
         self._registry = registry
         self._skill_registry = skill_registry or SkillRegistry(registry)
+        self._skill_manager = skill_manager
         self._mcp_application = mcp_application
         self._provider_registry = provider_registry or ProviderRegistry()
         self._model_catalog_service = ModelCatalogService(
@@ -378,6 +385,7 @@ class CoreService:
             "documents.list": self._list_documents,
             "documents.search": self._search_documents,
             "events.subscribe": self._subscribe_events,
+            "extensions.catalog.list": self._list_extension_catalog,
             **planning_service_handlers(self._execution_planning),
             "health": self._health,
             "memory.claims.get": self._get_memory_claim,
@@ -410,6 +418,10 @@ class CoreService:
             "providers.health": self._provider_health,
             "providers.list": self._list_providers,
             "skills.list": self._list_skills,
+            "skills.install": self._install_skill,
+            "skills.remove": self._remove_skill,
+            "skills.set_enabled": self._set_skill_enabled,
+            "skills.update": self._update_skill,
             "system.actions.execute": self._execute_system_action,
             "tasks.archive": self._archive_task,
             "tasks.create": self._create_task,
@@ -545,11 +557,74 @@ class CoreService:
                     "required_capabilities": package.manifest.required_capabilities,
                     "compatible_mcp_servers": package.manifest.compatible_mcp_servers,
                     "provenance": package.manifest.provenance.model_dump(mode="json"),
+                    "enabled": self._skill_registry.enabled(package.manifest.name),
                     "available": operations.get(package.manifest.tool_name, False),
                 }
                 for package in self._skill_registry.packages()
             ]
         }
+
+    def _list_extension_catalog(self, _request: BaseModel) -> dict[str, Any]:
+        manager = self._skills()
+        installed = {package.manifest.name for package in self._skill_registry.packages()}
+        if self._mcp_application is not None:
+            installed.update(
+                record.connection.server_id for record in self._mcp_application.list_servers()
+            )
+        return {
+            "items": [
+                {
+                    "extension_id": entry.extension_id,
+                    "kind": entry.kind,
+                    "name": entry.name,
+                    "description": entry.description,
+                    "publisher": entry.publisher,
+                    "version": entry.version,
+                    "source": entry.source,
+                    "license": entry.license,
+                    "experimental": entry.experimental,
+                    "installed": entry.extension_id in installed,
+                }
+                for entry in manager.catalog()
+            ]
+        }
+
+    def _install_skill(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(SkillInstallInput, request)
+        self._skills().install(validated.catalog_id)
+        return self._list_skills(request)
+
+    def _update_skill(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(SkillUpdateInput, request)
+        self._skills().update(
+            validated.name,
+            expected_content_sha256=validated.expected_content_sha256,
+        )
+        return self._list_skills(request)
+
+    def _set_skill_enabled(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(SkillSetEnabledInput, request)
+        self._require_skill_digest(validated.name, validated.expected_content_sha256)
+        self._skills().set_enabled(validated.name, enabled=validated.enabled)
+        return self._list_skills(request)
+
+    def _remove_skill(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(SkillRemoveInput, request)
+        self._require_skill_digest(validated.name, validated.expected_content_sha256)
+        self._skills().remove(validated.name)
+        return {"name": validated.name, "removed": True}
+
+    def _require_skill_digest(self, name: str, digest: str) -> None:
+        package = self._skill_registry.get(name)
+        if package is None:
+            raise KeyError(f"Skill is not installed: {name}")
+        if package.content_sha256 != digest:
+            raise ValueError("Skill content changed since it was displayed")
+
+    def _skills(self) -> SkillManager:
+        if self._skill_manager is None:
+            raise RuntimeError("Skill installation is unavailable")
+        return self._skill_manager
 
     def _list_mcp_servers(self, _request: BaseModel) -> dict[str, Any]:
         application = self._mcp()

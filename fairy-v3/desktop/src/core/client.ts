@@ -46,6 +46,10 @@ import type {
   PreviewStopInput,
   ProviderHealthInput,
   SystemActionRequest,
+  SkillInstallInput,
+  SkillRemoveInput,
+  SkillSetEnabledInput,
+  SkillUpdateInput,
   TaskCreateInput,
   TaskArchiveInput,
   TaskListInput,
@@ -269,7 +273,13 @@ export class CoreClient {
   };
 
   readonly skills = {
+    catalog: () => this.transport.call("extensions.catalog.list", {}),
+    install: (input: SkillInstallInput) => this.transport.call("skills.install", input),
     list: () => this.transport.call("skills.list", {}),
+    remove: (input: SkillRemoveInput) => this.transport.call("skills.remove", input),
+    setEnabled: (input: SkillSetEnabledInput) =>
+      this.transport.call("skills.set_enabled", input),
+    update: (input: SkillUpdateInput) => this.transport.call("skills.update", input),
   };
 
   readonly mcp = {

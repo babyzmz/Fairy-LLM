@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Annotated, Any
 
 from fairy_core.contracts.extensions import (
+    ExtensionCatalogPageModel,
     McpServerAcceptInput,
     McpServerConfigureInput,
     McpServerDeleteInput,
@@ -12,7 +13,12 @@ from fairy_core.contracts.extensions import (
     McpServerModel,
     McpServerPageModel,
     McpServerSetEnabledInput,
+    SkillInstallInput,
     SkillPageModel,
+    SkillRemoveInput,
+    SkillRemoveResult,
+    SkillSetEnabledInput,
+    SkillUpdateInput,
 )
 from fastapi import APIRouter, Header, HTTPException
 
@@ -21,12 +27,80 @@ CoreInvoker = Callable[[str, dict[str, Any]], Any]
 
 def install_extension_routes(router: APIRouter, invoke: CoreInvoker) -> None:
     @router.get(
+        "/extensions/catalog",
+        operation_id="extensions.catalog.list",
+        response_model=ExtensionCatalogPageModel,
+    )
+    def list_extension_catalog() -> dict[str, Any]:
+        return invoke("extensions.catalog.list", {})
+
+    @router.get(
         "/skills",
         operation_id="skills.list",
         response_model=SkillPageModel,
     )
     def list_skills() -> dict[str, Any]:
         return invoke("skills.list", {})
+
+    @router.post(
+        "/skills/{catalog_id}",
+        operation_id="skills.install",
+        response_model=SkillPageModel,
+    )
+    def install_skill(
+        catalog_id: str,
+        request: SkillInstallInput,
+        idempotency_key: Annotated[
+            str, Header(alias="Idempotency-Key", min_length=1, max_length=512)
+        ],
+    ) -> dict[str, Any]:
+        _validate_request(catalog_id, request.catalog_id, request.idempotency_key, idempotency_key)
+        return invoke("skills.install", request.model_dump(mode="json"))
+
+    @router.put(
+        "/skills/{name}",
+        operation_id="skills.update",
+        response_model=SkillPageModel,
+    )
+    def update_skill(
+        name: str,
+        request: SkillUpdateInput,
+        idempotency_key: Annotated[
+            str, Header(alias="Idempotency-Key", min_length=1, max_length=512)
+        ],
+    ) -> dict[str, Any]:
+        _validate_request(name, request.name, request.idempotency_key, idempotency_key)
+        return invoke("skills.update", request.model_dump(mode="json"))
+
+    @router.post(
+        "/skills/{name}/enabled",
+        operation_id="skills.set_enabled",
+        response_model=SkillPageModel,
+    )
+    def set_skill_enabled(
+        name: str,
+        request: SkillSetEnabledInput,
+        idempotency_key: Annotated[
+            str, Header(alias="Idempotency-Key", min_length=1, max_length=512)
+        ],
+    ) -> dict[str, Any]:
+        _validate_request(name, request.name, request.idempotency_key, idempotency_key)
+        return invoke("skills.set_enabled", request.model_dump(mode="json"))
+
+    @router.delete(
+        "/skills/{name}",
+        operation_id="skills.remove",
+        response_model=SkillRemoveResult,
+    )
+    def remove_skill(
+        name: str,
+        request: SkillRemoveInput,
+        idempotency_key: Annotated[
+            str, Header(alias="Idempotency-Key", min_length=1, max_length=512)
+        ],
+    ) -> dict[str, Any]:
+        _validate_request(name, request.name, request.idempotency_key, idempotency_key)
+        return invoke("skills.remove", request.model_dump(mode="json"))
 
     @router.get(
         "/mcp/servers",

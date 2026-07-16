@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from fairy_core.skills.models import SkillManifest, SkillPackage
 
 _MANIFEST = "fairy-skill.json"
-_MAX_INSTRUCTION_BYTES = 64 * 1024
+_MAX_INSTRUCTION_BYTES = 128 * 1024
 _MAX_PACKAGE_BYTES = 512 * 1024
 _MAX_FILES = 64
 _EXECUTABLE_SUFFIXES = frozenset({".bat", ".cmd", ".com", ".exe", ".ps1", ".sh"})

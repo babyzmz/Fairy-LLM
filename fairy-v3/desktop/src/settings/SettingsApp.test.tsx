@@ -109,6 +109,20 @@ describe("SettingsApp", () => {
     expect(updates.some((preferences) => preferences.pet_do_not_disturb)).toBe(true);
     expect(updates.at(-1)?.pet_remember_position).toBe(false);
   });
+
+  it("installs a curated Skill through the governed settings RPC", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+    await userEvent.click(screen.getByRole("button", { name: /Skills \/ MCP/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Store" }));
+    expect(screen.getByText("Taste Skill")).toBeVisible();
+    await userEvent.click(screen.getAllByRole("button", { name: "Install" })[0]);
+    await vi.waitFor(() => expect(rpcRequest(invoke, "skills.install")?.params).toEqual({
+      catalog_id: "design-taste-frontend",
+      idempotency_key: "settings:catalog:design-taste-frontend:install",
+    }));
+  });
 });
 
 function settingsInvoke() {
@@ -143,8 +157,21 @@ function resultFor(method: CoreMethodName, params: Record<string, unknown>) {
     case "permissions.get": return { profile: "standard", capability_overrides: {}, revision: 7, updated_at: "2026-07-12T00:00:00Z" };
     case "permissions.update": return { profile: params.profile, capability_overrides: params.capability_overrides ?? {}, revision: 8, updated_at: "2026-07-12T00:00:01Z" };
     case "capabilities.get": return manifest;
+    case "extensions.catalog.list": return { items: [{
+      extension_id: "design-taste-frontend",
+      kind: "skill",
+      name: "Taste Skill",
+      description: "Frontend design guidance.",
+      publisher: "Leonxlnx",
+      version: "2.0.0-experimental.1",
+      source: "https://github.com/Leonxlnx/taste-skill",
+      license: "MIT",
+      experimental: true,
+      installed: false,
+    }] };
     case "skills.list": return { items: [], next_cursor: null };
     case "mcp.servers.list": return { items: [], next_cursor: null };
+    case "tasks.list": return { items: [], next_cursor: null };
     default: return {};
   }
 }

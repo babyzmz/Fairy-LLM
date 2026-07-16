@@ -326,6 +326,15 @@ select {
 .settings-mcp-review select { min-width: 0; height: 29px; border: 1px solid #414642; border-radius: 3px; background: #242725; color: #e0e4e1; }
 .settings-mcp-review > button { justify-self: end; }
 .settings-section-command { display: flex; align-items: center; justify-content: space-between; min-height: 44px; color: #8a928d; font-size: 11px; }
+.settings-section-command > div { display: flex; gap: 6px; }
+.settings-store-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 14px 4px; border-bottom: 1px solid #2d312f; }
+.settings-store-entry > div { display: grid; gap: 5px; min-width: 0; }
+.settings-store-entry small { color: #aeb5b1; }
+.settings-store-entry span,
+.settings-callout,
+.settings-empty { color: #858d88; font-size: 11px; }
+.settings-callout { margin: 8px 0; padding: 10px 12px; border-left: 2px solid #d9b569; background: #211f19; }
+.settings-empty { padding: 24px 4px; }
 
 .primary-command,
 .secondary-command { min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 4px; padding: 0 11px; cursor: pointer; }

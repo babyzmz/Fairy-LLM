@@ -27,6 +27,7 @@ import { m } from "motion/react";
 import type {
   CapabilityManifest,
   ExecutionSettings,
+  ExtensionCatalogEntry,
   ModelCatalogPage,
   ModelSelectionPreference,
   McpServer,
@@ -79,7 +80,9 @@ interface SettingsData {
   permissions: ExecutionSettings;
   capabilities: CapabilityManifest;
   skills: Skill[];
+  extensionCatalog: ExtensionCatalogEntry[];
   servers: McpServer[];
+  latestTaskId: string | null;
   voiceHealth: VoiceWorkerHealth;
 }
 
@@ -93,7 +96,7 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [preferences, status, modelCatalog, modelSelection, permissions, capabilities, skills, servers, voiceHealth] =
+      const [preferences, status, modelCatalog, modelSelection, permissions, capabilities, catalog, skills, servers, tasks, voiceHealth] =
         await Promise.all([
           client.preferences.get(),
           client.providers.openRouterStatus(),
@@ -101,8 +104,10 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
           client.models.selection.get(),
           client.permissions.get(),
           client.permissions.capabilities(),
+          client.extensions.catalog(),
           client.extensions.skills(),
           client.extensions.servers(),
+          client.context.latestTask(),
           client.voice.health().catch(() => unavailableVoiceHealth()),
         ]);
       setData({
@@ -113,8 +118,10 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
         modelSelection,
         permissions,
         capabilities,
+        extensionCatalog: catalog.items,
         skills: skills.items,
         servers: servers.items,
+        latestTaskId: tasks.items.at(-1)?.id ?? null,
         voiceHealth,
       });
       applyDesktopPreferences(preferences);
@@ -389,15 +396,33 @@ function PermissionsPanel(props: Parameters<typeof SettingsCategory>[0]) {
 function ExtensionsPanel(props: Parameters<typeof SettingsCategory>[0]) {
   const { data, busy, client, act, reload } = props;
   const [tab, setTab] = useState<"skills" | "mcp">("skills");
+  const [skillView, setSkillView] = useState<"installed" | "store">("installed");
   const [adding, setAdding] = useState(false);
   return <Category title="Skills / MCP" subtitle="Governed extensions">
     <div className="settings-tabs" role="tablist"><button type="button" role="tab" aria-selected={tab === "skills"} className={tab === "skills" ? "active" : ""} onClick={() => setTab("skills")}>Skills <span>{data.skills.length}</span></button><button type="button" role="tab" aria-selected={tab === "mcp"} className={tab === "mcp" ? "active" : ""} onClick={() => setTab("mcp")}>MCP <span>{data.servers.length}</span></button></div>
-    {tab === "skills" ? <div className="settings-extension-list">{data.skills.map((skill) => <div className="settings-extension-row" key={`${skill.name}@${skill.version}`}><span className={`settings-health-dot ${skill.available ? "available" : "unavailable"}`} /><div><strong>{skill.name}</strong><small>{skill.description}</small></div><code>{skill.version}</code></div>)}</div> : <>
+    {tab === "skills" ? <>
+      <div className="settings-section-command"><div role="tablist" aria-label="Skill source"><button type="button" role="tab" aria-selected={skillView === "installed"} className="secondary-command" onClick={() => setSkillView("installed")}>Installed</button><button type="button" role="tab" aria-selected={skillView === "store"} className="secondary-command" onClick={() => setSkillView("store")}>Store</button></div><span>{skillView === "installed" ? `${data.skills.length} installed` : `${data.extensionCatalog.length} curated`}</span></div>
+      {skillView === "installed" ? <InstalledSkills data={data} busy={busy} client={client} act={act} reload={reload} /> : <ExtensionStore data={data} busy={busy} client={client} act={act} reload={reload} />}
+    </> : <>
       <div className="settings-section-command"><span>{data.servers.length} configured servers</span><button className="secondary-command" type="button" onClick={() => setAdding((value) => !value)}>{adding ? <X size={14} /> : <Plus size={14} />}{adding ? "Cancel" : "Add server"}</button></div>
       {adding ? <McpForm busy={busy} onSave={(input) => act(async () => { await client.extensions.configure(input); setAdding(false); await reload(); })} /> : null}
-      <div className="settings-extension-list">{data.servers.map((server) => <section className="settings-mcp-server" key={server.server_id}><div className="settings-extension-row"><span className={`settings-health-dot ${server.enabled ? "available" : "unknown"}`} /><div><strong>{server.display_name}</strong><small>{server.transport}</small></div><label className="compact-switch"><input type="checkbox" aria-label={`Enable ${server.display_name}`} checked={server.enabled} disabled={busy || server.accepted_schema_digest === null} onChange={(event) => void act(async () => { await client.extensions.setEnabled({ server_id: server.server_id, expected_revision: server.revision, enabled: event.target.checked, idempotency_key: extensionKey(server, "enabled", event.target.checked) }); await reload(); })} /><span /></label><button className="danger-icon" type="button" aria-label={`Delete ${server.display_name}`} title={`Delete ${server.display_name}`} disabled={busy} onClick={() => { if (!window.confirm(`Delete MCP server “${server.display_name}”?`)) return; void act(async () => { await client.extensions.delete({ server_id: server.server_id, expected_revision: server.revision, idempotency_key: extensionKey(server, "delete", true) }); await reload(); }); }}><Trash2 size={14} /></button></div>{server.pending_schema_digest !== null && server.pending_schema_digest !== server.accepted_schema_digest ? <PendingMcpReview server={server} busy={busy} onAccept={(tools) => act(async () => { await client.extensions.accept({ server_id: server.server_id, expected_revision: server.revision, schema_digest: server.pending_schema_digest as string, enabled: true, tools, idempotency_key: extensionKey(server, "accept", true) }); await reload(); })} /> : null}</section>)}</div>
+      {data.latestTaskId === null ? <p className="settings-callout">Create a chat or project Task before discovering MCP tools. Discovery is attached to an auditable Task scope.</p> : null}
+      <McpServerList data={data} busy={busy} client={client} act={act} reload={reload} />
     </>}
   </Category>;
+}
+
+function InstalledSkills({ data, busy, client, act, reload }: Pick<Parameters<typeof SettingsCategory>[0], "data" | "busy" | "client" | "act" | "reload">) {
+  if (data.skills.length === 0) return <p className="settings-empty">No Skills installed</p>;
+  return <div className="settings-extension-list">{data.skills.map((skill) => <section className="settings-mcp-server" key={`${skill.name}@${skill.version}`}><div className="settings-extension-row"><span className={`settings-health-dot ${skill.available ? "available" : "unavailable"}`} /><div><strong>{skill.name}</strong><small>{skill.description}</small></div><code>{skill.version}</code><label className="compact-switch"><input type="checkbox" aria-label={`Enable ${skill.name}`} checked={skill.enabled} disabled={busy} onChange={(event) => void act(async () => { await client.extensions.setSkillEnabled({ name: skill.name, expected_content_sha256: skill.content_sha256, enabled: event.target.checked, idempotency_key: `settings:skill:${skill.name}:${skill.content_sha256}:enabled:${event.target.checked}` }); await reload(); })} /><span /></label><button className="danger-icon" type="button" aria-label={`Remove ${skill.name}`} disabled={busy} onClick={() => { if (!window.confirm(`Remove Skill “${skill.name}”?`)) return; void act(async () => { await client.extensions.removeSkill({ name: skill.name, expected_content_sha256: skill.content_sha256, idempotency_key: `settings:skill:${skill.name}:${skill.content_sha256}:remove` }); await reload(); }); }}><Trash2 size={14} /></button></div></section>)}</div>;
+}
+
+function ExtensionStore({ data, busy, client, act, reload }: Pick<Parameters<typeof SettingsCategory>[0], "data" | "busy" | "client" | "act" | "reload">) {
+  return <div className="settings-extension-list">{data.extensionCatalog.map((entry) => <section className="settings-store-entry" key={entry.extension_id}><div><strong>{entry.name}</strong><small>{entry.description}</small><span>{entry.publisher} · {entry.license}{entry.experimental ? " · Experimental" : ""}</span></div><button className="secondary-command" type="button" disabled={busy || entry.installed} onClick={() => void act(async () => { if (entry.kind === "skill") await client.extensions.installSkill({ catalog_id: entry.extension_id, idempotency_key: `settings:catalog:${entry.extension_id}:install` }); else if (entry.extension_id === "context7") await client.extensions.configure({ server_id: "context7", display_name: "Context7", transport: "streamable_http", command: null, arguments: [], endpoint: "https://mcp.context7.com/mcp", credential_ref: null, environment_refs: {}, expected_revision: 0, idempotency_key: "settings:mcp:context7:install" }); await reload(); })}>{entry.installed ? <Check size={14} /> : <Plus size={14} />}{entry.installed ? "Installed" : "Install"}</button></section>)}</div>;
+}
+
+function McpServerList({ data, busy, client, act, reload }: Pick<Parameters<typeof SettingsCategory>[0], "data" | "busy" | "client" | "act" | "reload">) {
+  return <div className="settings-extension-list">{data.servers.map((server) => <section className="settings-mcp-server" key={server.server_id}><div className="settings-extension-row"><span className={`settings-health-dot ${server.enabled ? "available" : "unknown"}`} /><div><strong>{server.display_name}</strong><small>{server.transport}</small></div><button className="secondary-command" type="button" disabled={busy || data.latestTaskId === null} onClick={() => void act(async () => { await client.extensions.discover({ server_id: server.server_id, task_id: data.latestTaskId as string, expected_revision: server.revision, idempotency_key: extensionKey(server, "discover", true) }); await reload(); })}><RefreshCw size={14} />Discover</button><label className="compact-switch"><input type="checkbox" aria-label={`Enable ${server.display_name}`} checked={server.enabled} disabled={busy || server.accepted_schema_digest === null} onChange={(event) => void act(async () => { await client.extensions.setEnabled({ server_id: server.server_id, expected_revision: server.revision, enabled: event.target.checked, idempotency_key: extensionKey(server, "enabled", event.target.checked) }); await reload(); })} /><span /></label><button className="danger-icon" type="button" aria-label={`Delete ${server.display_name}`} disabled={busy} onClick={() => { if (!window.confirm(`Delete MCP server “${server.display_name}”?`)) return; void act(async () => { await client.extensions.delete({ server_id: server.server_id, expected_revision: server.revision, idempotency_key: extensionKey(server, "delete", true) }); await reload(); }); }}><Trash2 size={14} /></button></div>{server.pending_schema_digest !== null && server.pending_schema_digest !== server.accepted_schema_digest ? <PendingMcpReview server={server} busy={busy} onAccept={(tools) => act(async () => { await client.extensions.accept({ server_id: server.server_id, expected_revision: server.revision, schema_digest: server.pending_schema_digest as string, enabled: true, tools, idempotency_key: extensionKey(server, "accept", true) }); await reload(); })} /> : null}</section>)}</div>;
 }
 
 function PendingMcpReview({ server, busy, onAccept }: { server: McpServer; busy: boolean; onAccept(tools: McpToolPolicyInput[]): Promise<void> }) {

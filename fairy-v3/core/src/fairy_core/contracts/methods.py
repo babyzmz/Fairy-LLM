@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
 from fairy_core.contracts.capabilities import CapabilityManifestModel
 from fairy_core.contracts.extensions import (
+    ExtensionCatalogPageModel,
     McpServerAcceptInput,
     McpServerConfigureInput,
     McpServerDeleteInput,
@@ -17,7 +18,12 @@ from fairy_core.contracts.extensions import (
     McpServerModel,
     McpServerPageModel,
     McpServerSetEnabledInput,
+    SkillInstallInput,
     SkillPageModel,
+    SkillRemoveInput,
+    SkillRemoveResult,
+    SkillSetEnabledInput,
+    SkillUpdateInput,
 )
 from fairy_core.contracts.files import (
     AssetSetCreateInput,
@@ -561,9 +567,34 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             RuntimeHealthInput,
             RuntimeHealthModel,
         ),
+        "extensions.catalog.list": CoreMethod(
+            "extensions.catalog.list",
+            EmptyInput,
+            ExtensionCatalogPageModel,
+        ),
+        "skills.install": CoreMethod(
+            "skills.install",
+            SkillInstallInput,
+            SkillPageModel,
+        ),
         "skills.list": CoreMethod(
             "skills.list",
             EmptyInput,
+            SkillPageModel,
+        ),
+        "skills.remove": CoreMethod(
+            "skills.remove",
+            SkillRemoveInput,
+            SkillRemoveResult,
+        ),
+        "skills.set_enabled": CoreMethod(
+            "skills.set_enabled",
+            SkillSetEnabledInput,
+            SkillPageModel,
+        ),
+        "skills.update": CoreMethod(
+            "skills.update",
+            SkillUpdateInput,
             SkillPageModel,
         ),
         "tasks.archive": CoreMethod("tasks.archive", TaskArchiveInput, TaskModel),

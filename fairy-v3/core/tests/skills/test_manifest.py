@@ -61,7 +61,7 @@ def test_skill_package_rejects_traversal_scripts_and_oversized_instructions(
         SkillPackageLoader().load(scripted)
 
     large = write_skill(tmp_path / "large", name="large")
-    (large / "SKILL.md").write_text("x" * 70_000, encoding="utf-8")
+    (large / "SKILL.md").write_text("x" * 140_000, encoding="utf-8")
 
     with pytest.raises(SkillPackageError, match="too large"):
         SkillPackageLoader().load(large)
