@@ -27,7 +27,9 @@ import {
   liquidShapeTargetForSnapshot,
 } from "./liquidGlassMaterial";
 import { liquidAnchorForSnapshot } from "./liquidGeometry";
+import { backdropFrameRate } from "./backdropCadence";
 import { shouldCaptureBackdrop } from "./backdropPolicy";
+import { ReusableBackdropTextureBuffer } from "./backdropTextureBuffer";
 import { LiquidMotionController } from "./liquidMotion";
 import { liquidOpticsForSnapshot } from "./liquidOptics";
 import { liquidVisualStyleForSnapshot } from "./liquidVisualState";
@@ -43,6 +45,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
   private readonly scene: THREE.Scene;
   private readonly geometry: THREE.PlaneGeometry;
   private readonly material: THREE.ShaderMaterial;
+  private readonly backdropBuffer = new ReusableBackdropTextureBuffer();
   private readonly backdropTexture: THREE.DataTexture;
   private readonly backdropStream = new NativeBackdropStream();
   private readonly motion: LiquidMotionController;
@@ -97,9 +100,9 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.scene = new THREE.Scene();
     this.geometry = new THREE.PlaneGeometry(2, 2);
     this.backdropTexture = new THREE.DataTexture(
-      new Uint8Array([0, 0, 0, 0]),
-      1,
-      1,
+      this.backdropBuffer.data,
+      this.backdropBuffer.width,
+      this.backdropBuffer.height,
       THREE.RGBAFormat,
       THREE.UnsignedByteType,
     );
@@ -265,11 +268,17 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
       js_parse_ms: frame.jsParseMs,
     });
     const uploadStartedAt = performance.now();
-    this.backdropTexture.image = {
-      data: frame.rgba,
-      width: frame.width,
-      height: frame.height,
-    };
+    const resized = this.backdropBuffer.write(
+      frame.rgba,
+      frame.width,
+      frame.height,
+    );
+    if (resized) {
+      const image = this.backdropTexture.image;
+      image.data = this.backdropBuffer.data;
+      image.width = this.backdropBuffer.width;
+      image.height = this.backdropBuffer.height;
+    }
     this.backdropTexture.needsUpdate = true;
     this.runtimeMetrics.recordTextureUploadCpu(performance.now() - uploadStartedAt);
     this.material.uniforms.uBackdropSize.value.set(frame.width, frame.height);
@@ -414,16 +423,6 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     );
     this.material.uniforms.uAnchor.value.set(anchor.x, anchor.y);
   }
-}
-
-function backdropFrameRate(snapshot: PresenceRenderSnapshot): number {
-  const active =
-    snapshot.speaking ||
-    snapshot.work_state !== "idle" ||
-    (snapshot.interaction !== null &&
-      snapshot.interaction.cursor.band !== "outside" &&
-      !["idle", "suspended"].includes(snapshot.interaction.phase));
-  return Math.min(snapshot.frame_rate_limit, active ? 30 : 15);
 }
 
 function safeBackdropError(error: unknown): string {

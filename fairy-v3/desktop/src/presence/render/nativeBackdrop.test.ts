@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { NativeBackdropStream, parseNativeBackdropFrame } from "./nativeBackdrop";
+import {
+  boundedBackdropFrameRate,
+  NativeBackdropStream,
+  parseNativeBackdropFrame,
+} from "./nativeBackdrop";
 
 function packet(width: number, height: number): Uint8Array {
   const bytes = new Uint8Array(32 + width * height * 4);
@@ -35,6 +39,13 @@ function diagnosticPacket(width: number, height: number): Uint8Array {
 }
 
 describe("native Presence backdrop", () => {
+  it("bounds transitional capture independently of animation fps", () => {
+    expect(boundedBackdropFrameRate(5)).toBe(5);
+    expect(boundedBackdropFrameRate(10)).toBe(10);
+    expect(boundedBackdropFrameRate(60)).toBe(15);
+    expect(boundedBackdropFrameRate(Number.NaN)).toBe(15);
+  });
+
   it("parses a bounded RGBA packet without copying its pixels", () => {
     const bytes = packet(2, 1);
     const frame = parseNativeBackdropFrame(bytes);

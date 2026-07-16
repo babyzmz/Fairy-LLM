@@ -18,6 +18,9 @@ param(
     [string]$ExperimentMode = "normal",
     [ValidateSet(60, 144)]
     [int]$TargetFps = 60,
+    [ValidateSet("standard", "enhanced")]
+    [string]$OpticsMode = "standard",
+    [switch]$KeepPresenceActive,
     [switch]$SkipRendererProbe,
     [string]$OutputPath
 )
@@ -35,6 +38,52 @@ if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path ([System.IO.Path]::GetTempPath()) "fairy-presence-soak.json"
 }
+$outputDirectory = Split-Path -Parent ([System.IO.Path]::GetFullPath($OutputPath))
+New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
+
+if ($KeepPresenceActive -and -not ("FairyPresenceSoakCursor" -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class FairyPresenceSoakCursor {
+    private delegate bool EnumWindowsCallback(IntPtr window, IntPtr parameter);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr parameter);
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextW(IntPtr window, StringBuilder text, int capacity);
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr window, out RECT rectangle);
+    [DllImport("user32.dll")]
+    private static extern bool SetCursorPos(int x, int y);
+
+    public static bool MoveToRenderWindow(int expectedProcessId) {
+        var moved = false;
+        EnumWindows((window, _) => {
+            uint processId;
+            GetWindowThreadProcessId(window, out processId);
+            if (processId != (uint)expectedProcessId) return true;
+            var title = new StringBuilder(256);
+            GetWindowTextW(window, title, title.Capacity);
+            if (title.ToString() != "Fairy Presence Renderer") return true;
+            RECT rectangle;
+            if (!GetWindowRect(window, out rectangle)) return false;
+            moved = SetCursorPos(
+                rectangle.Left + Math.Min(120, Math.Max(1, rectangle.Right - rectangle.Left) / 2),
+                rectangle.Top + Math.Min(130, Math.Max(1, rectangle.Bottom - rectangle.Top) / 2)
+            );
+            return false;
+        }, IntPtr.Zero);
+        return moved;
+    }
+}
+'@
+}
 
 function Get-AvailablePort {
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -46,7 +95,16 @@ function Get-AvailablePort {
 function Stop-ProcessTree([System.Diagnostics.Process]$Target) {
     $Target.Refresh()
     if ($Target.HasExited) { return }
-    & taskkill.exe /PID $Target.Id /T /F 2>$null | Out-Null
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        & taskkill.exe /PID $Target.Id /T /F 2>&1 | Out-Null
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $Target.Refresh()
+    if ($Target.HasExited) { return }
     if (-not $Target.WaitForExit(5000)) {
         $Target.Kill()
         $Target.WaitForExit()
@@ -143,6 +201,50 @@ $fairyData = Join-Path $scratch "FairyData"
 $webViewData = Join-Path $scratch "WebView2"
 $rendererOutput = Join-Path $scratch "renderer.json"
 New-Item -ItemType Directory -Force -Path $localAppData, $appData, $fairyData, $webViewData | Out-Null
+$preferencesDirectory = Join-Path $fairyData "preferences"
+$preferencesPath = Join-Path $preferencesDirectory "desktop.json"
+New-Item -ItemType Directory -Force -Path $preferencesDirectory | Out-Null
+$preferences = [ordered]@{
+    schema_version = 4
+    revision = 0
+    language = "system"
+    launch_at_startup = $false
+    minimize_to_tray = $true
+    theme = "system"
+    reduced_motion = $false
+    compact_density = $false
+    selected_profile_id = $null
+    voice_auto_play_chat = $false
+    voice_auto_play_pet = $true
+    voice_volume_percent = 80
+    voice_rate_percent = 100
+    permission_cloud_profile = "standard"
+    memory_enabled = $true
+    memory_retention_days = 90
+    analytics_enabled = $false
+    pet_enabled = $true
+    pet_always_on_top = $true
+    pet_muted = $false
+    pet_size_percent = 100
+    pet_opacity_percent = 92
+    pet_motion_enabled = $true
+    pet_particles_enabled = $true
+    pet_hover_enabled = $true
+    pet_hover_dwell_ms = 250
+    pet_do_not_disturb = $false
+    pet_remember_position = $true
+    pet_renderer_mode = "auto"
+    pet_optics_mode = $OpticsMode
+    pet_target_fps = $TargetFps
+    pet_anchor = $null
+    developer_mode = $false
+}
+$preferencesJson = $preferences | ConvertTo-Json -Depth 4
+[System.IO.File]::WriteAllText(
+    $preferencesPath,
+    $preferencesJson,
+    [System.Text.UTF8Encoding]::new($false)
+)
 $port = Get-AvailablePort
 $durationSeconds = [int][Math]::Round($DurationMinutes * 60)
 $process = $null
@@ -172,6 +274,18 @@ try {
     $process = [System.Diagnostics.Process]::Start($startInfo)
     if ($null -eq $process) { throw "Fairy process did not start" }
 
+    if ($KeepPresenceActive) {
+        $activeDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        while (-not [FairyPresenceSoakCursor]::MoveToRenderWindow($process.Id)) {
+            $process.Refresh()
+            if ($process.HasExited) { throw "Fairy exited before Presence became active" }
+            if ([DateTime]::UtcNow -ge $activeDeadline) {
+                throw "Timed out waiting to position the cursor over Fairy Presence"
+            }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+
     if (-not $SkipRendererProbe) {
         $probeScript = Join-Path $root "desktop\scripts\probe-presence-webview.mjs"
         $probe = Start-Process node -ArgumentList @(
@@ -189,6 +303,9 @@ try {
     $samples = [System.Collections.Generic.List[object]]::new()
     $warmupStartedAt = [DateTime]::UtcNow
     while (([DateTime]::UtcNow - $warmupStartedAt).TotalSeconds -lt $WarmupSeconds) {
+        if ($KeepPresenceActive) {
+            [FairyPresenceSoakCursor]::MoveToRenderWindow($process.Id) | Out-Null
+        }
         Start-Sleep -Seconds 1
         $process.Refresh()
         if ($process.HasExited) { throw "Fairy exited during the soak warm-up" }
@@ -200,6 +317,9 @@ try {
     $lastPresenceCpuByProcess = $initialTree.presence_cpu_by_process
     $lastSampleAt = $startedAt
     while (([DateTime]::UtcNow - $startedAt).TotalSeconds -lt $durationSeconds) {
+        if ($KeepPresenceActive) {
+            [FairyPresenceSoakCursor]::MoveToRenderWindow($process.Id) | Out-Null
+        }
         Start-Sleep -Seconds $SampleSeconds
         $process.Refresh()
         if ($process.HasExited) { throw "Fairy exited during the soak" }
@@ -261,6 +381,8 @@ try {
         duration_seconds = $durationSeconds
         gpu_preference = $GpuPreference
         experiment_mode = $ExperimentMode
+        optics_mode = $OpticsMode
+        presence_kept_active = [bool]$KeepPresenceActive
         target_fps = $TargetFps
         renderer_probe_attached = -not $SkipRendererProbe
         samples = $samples

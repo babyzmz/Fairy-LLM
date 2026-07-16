@@ -44,6 +44,8 @@ foreach ($fps in $TargetFps) {
                 -MaximumMemoryGrowthMb 100 `
                 -MaximumSingleCoreCpuPercent 100 `
                 -ExperimentMode $mode `
+                -OpticsMode enhanced `
+                -KeepPresenceActive `
                 -TargetFps $fps `
                 -OutputPath $samplePath | Out-Null
         }
@@ -67,6 +69,7 @@ foreach ($fps in $TargetFps) {
             fps_p1 = $sample.renderer.fps_p1
             cpu_single_core_percent = $sample.average_single_core_cpu_percent
             gpu_frame_p95_ms = $sample.renderer.gpu_frame_p95_ms
+            backdrop_fps_avg = $sample.renderer.backdrop_fps_avg
             capture_p95_ms = $sample.renderer.capture_p95_ms
             ipc_p95_ms = $sample.renderer.ipc_p95_ms
             upload_cpu_p95_ms = $sample.renderer.upload_cpu_p95_ms
@@ -90,4 +93,3 @@ $result = [PSCustomObject]@{
 }
 $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $OutputPath -Encoding utf8
 $result | ConvertTo-Json -Depth 8
-

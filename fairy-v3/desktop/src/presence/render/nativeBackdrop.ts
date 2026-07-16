@@ -41,7 +41,7 @@ type NativeBackdropRequest = (input: {
 
 export class NativeBackdropStream {
   private generation = 0;
-  private framesPerSecond = 30;
+  private framesPerSecond = 15;
 
   constructor(
     private readonly request: NativeBackdropRequest = (input) =>
@@ -51,14 +51,14 @@ export class NativeBackdropStream {
 
   start(options: NativeBackdropStreamOptions): void {
     this.stop();
-    this.framesPerSecond = boundedFrameRate(options.framesPerSecond);
+    this.framesPerSecond = boundedBackdropFrameRate(options.framesPerSecond);
     if (!this.nativeAvailable()) return;
     const generation = this.generation;
     void this.pullFrames(generation, options);
   }
 
   setFrameRate(framesPerSecond: number): void {
-    this.framesPerSecond = boundedFrameRate(framesPerSecond);
+    this.framesPerSecond = boundedBackdropFrameRate(framesPerSecond);
   }
 
   stop(): void {
@@ -170,9 +170,9 @@ function microsecondsToMilliseconds(value: bigint): number | null {
   return Number.isSafeInteger(numeric) ? numeric / 1_000 : null;
 }
 
-function boundedFrameRate(value: number): number {
-  if (!Number.isFinite(value)) return 30;
-  return Math.min(60, Math.max(15, Math.round(value)));
+export function boundedBackdropFrameRate(value: number): number {
+  if (!Number.isFinite(value)) return 15;
+  return Math.min(15, Math.max(5, Math.round(value)));
 }
 
 function delay(milliseconds: number): Promise<void> {

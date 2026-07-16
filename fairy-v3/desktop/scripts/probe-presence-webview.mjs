@@ -287,6 +287,8 @@ async function readMetrics(page, mode) {
       fps_avg: numberOrNull(canvas.dataset.fpsAvg),
       fps_p1: numberOrNull(canvas.dataset.fpsP1),
       deadline_miss_count: numberOrNull(canvas.dataset.deadlineMissCount),
+      backdrop_samples: numberOrNull(canvas.dataset.backdropSamples),
+      backdrop_fps_avg: numberOrNull(canvas.dataset.backdropFpsAvg),
       capture_p95_ms: numberOrNull(canvas.dataset.captureP95Ms),
       pack_p95_ms: numberOrNull(canvas.dataset.packP95Ms),
       ipc_p95_ms: numberOrNull(canvas.dataset.ipcP95Ms),

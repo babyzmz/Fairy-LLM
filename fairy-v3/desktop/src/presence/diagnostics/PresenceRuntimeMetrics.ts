@@ -17,6 +17,8 @@ export interface PresenceRuntimeMetricsSnapshot {
   fps_avg: number | null;
   fps_p1: number | null;
   deadline_miss_count: number;
+  backdrop_samples: number;
+  backdrop_fps_avg: number | null;
   capture_p95_ms: number | null;
   pack_p95_ms: number | null;
   ipc_p95_ms: number | null;
@@ -28,6 +30,7 @@ export interface PresenceRuntimeMetricsSnapshot {
 
 export class PresenceRuntimeMetrics {
   private frameIntervals: number[] = [];
+  private backdropIntervals: number[] = [];
   private captureSamples: number[] = [];
   private packSamples: number[] = [];
   private ipcSamples: number[] = [];
@@ -36,11 +39,13 @@ export class PresenceRuntimeMetrics {
   private backdropAgeSamples: number[] = [];
   private lastFrameAt: number | null = null;
   private lastBackdropSequence: number | null = null;
+  private lastBackdropAt: number | null = null;
   private deadlineMisses = 0;
   private droppedFrames = 0;
 
   reset(): void {
     this.frameIntervals = [];
+    this.backdropIntervals = [];
     this.captureSamples = [];
     this.packSamples = [];
     this.ipcSamples = [];
@@ -49,6 +54,7 @@ export class PresenceRuntimeMetrics {
     this.backdropAgeSamples = [];
     this.lastFrameAt = null;
     this.lastBackdropSequence = null;
+    this.lastBackdropAt = null;
     this.deadlineMisses = 0;
     this.droppedFrames = 0;
   }
@@ -69,6 +75,13 @@ export class PresenceRuntimeMetrics {
   }
 
   recordBackdrop(sample: BackdropTimingSample, nowMs = Date.now()): void {
+    if (this.lastBackdropAt !== null) {
+      const interval = nowMs - this.lastBackdropAt;
+      if (interval > 0 && interval < 5_000) {
+        pushBounded(this.backdropIntervals, interval);
+      }
+    }
+    this.lastBackdropAt = nowMs;
     pushOptional(this.captureSamples, sample.capture_total_ms);
     pushOptional(this.packSamples, sample.frame_pack_ms);
     pushBounded(this.ipcSamples, sample.ipc_roundtrip_ms);
@@ -95,12 +108,16 @@ export class PresenceRuntimeMetrics {
 
   snapshot(): PresenceRuntimeMetricsSnapshot {
     const averageInterval = average(this.frameIntervals);
+    const averageBackdropInterval = average(this.backdropIntervals);
     const p99Interval = percentile(this.frameIntervals, 0.99);
     return {
       frame_samples: this.frameIntervals.length,
       fps_avg: averageInterval === null ? null : 1_000 / averageInterval,
       fps_p1: p99Interval === null ? null : 1_000 / p99Interval,
       deadline_miss_count: this.deadlineMisses,
+      backdrop_samples: this.backdropIntervals.length,
+      backdrop_fps_avg:
+        averageBackdropInterval === null ? null : 1_000 / averageBackdropInterval,
       capture_p95_ms: percentile(this.captureSamples, 0.95),
       pack_p95_ms: percentile(this.packSamples, 0.95),
       ipc_p95_ms: percentile(this.ipcSamples, 0.95),
@@ -120,6 +137,8 @@ export function writeRuntimeMetricsDataset(
   element.dataset.fpsAvg = format(snapshot.fps_avg);
   element.dataset.fpsP1 = format(snapshot.fps_p1);
   element.dataset.deadlineMissCount = String(snapshot.deadline_miss_count);
+  element.dataset.backdropSamples = String(snapshot.backdrop_samples);
+  element.dataset.backdropFpsAvg = format(snapshot.backdrop_fps_avg);
   element.dataset.captureP95Ms = format(snapshot.capture_p95_ms);
   element.dataset.packP95Ms = format(snapshot.pack_p95_ms);
   element.dataset.ipcP95Ms = format(snapshot.ipc_p95_ms);

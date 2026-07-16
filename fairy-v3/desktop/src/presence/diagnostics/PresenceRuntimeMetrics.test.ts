@@ -27,7 +27,7 @@ describe("Presence runtime metrics", () => {
       frame_pack_ms: 2,
       ipc_roundtrip_ms: 10,
       js_parse_ms: 1,
-    }, 1_000);
+    }, 1_100);
     metrics.recordTextureUploadCpu(3);
 
     const snapshot = metrics.snapshot();
@@ -35,6 +35,8 @@ describe("Presence runtime metrics", () => {
     expect(snapshot.fps_avg).toBeCloseTo(1_000 / 24);
     expect(snapshot.fps_p1).toBe(25);
     expect(snapshot.deadline_miss_count).toBe(1);
+    expect(snapshot.backdrop_samples).toBe(1);
+    expect(snapshot.backdrop_fps_avg).toBe(10);
     expect(snapshot.capture_p95_ms).toBe(8);
     expect(snapshot.ipc_p95_ms).toBe(10);
     expect(snapshot.dropped_frame_count).toBe(2);
@@ -44,6 +46,7 @@ describe("Presence runtime metrics", () => {
     expect(target.dataset).toMatchObject({
       frameSamples: "3",
       fpsP1: "25.000",
+      backdropFpsAvg: "10.000",
       captureP95Ms: "8.000",
       droppedFrameCount: "2",
     });
@@ -77,6 +80,8 @@ describe("Presence runtime metrics", () => {
     expect(metrics.snapshot()).toMatchObject({
       frame_samples: 1,
       deadline_miss_count: 0,
+      backdrop_samples: 0,
+      backdrop_fps_avg: null,
       capture_p95_ms: 4,
       ipc_p95_ms: 6,
       dropped_frame_count: 0,
