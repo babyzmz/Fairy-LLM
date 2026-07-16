@@ -28,6 +28,7 @@ use presence_renderer_supervisor::{
     PresenceRendererDirective, PresenceRendererHealthReport, PresenceRendererStatus,
     PresenceRendererSupervisor,
 };
+use presence_startup::PresenceStartupGate;
 use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStore};
 use provider_credentials::{CredentialReplacement, ProviderCredentialStore};
 use voice_worker::{
@@ -42,6 +43,7 @@ pub mod presence_coordinator;
 pub mod presence_interaction;
 pub mod presence_renderer_supervisor;
 pub mod presence_runtime;
+pub mod presence_startup;
 pub mod presence_window_policy;
 pub mod provider_configuration;
 pub mod provider_credentials;
@@ -292,7 +294,7 @@ struct DesktopState {
     presence_windows: Mutex<Option<PresenceNativeWindows>>,
     pet_drag: Mutex<Option<PetGroupDragSession>>,
     renderer_supervisor: Mutex<PresenceRendererSupervisor>,
-    presence_start_requested: AtomicBool,
+    presence_startup: PresenceStartupGate,
     pet_placement_reconciled: AtomicBool,
     started_at: Instant,
 }
@@ -2105,56 +2107,54 @@ fn reconcile_pet_window_placement(app: &tauri::AppHandle) -> Result<(), String> 
 
 fn initialize_presence_after_main_load(app: tauri::AppHandle) {
     tauri::async_runtime::spawn_blocking(move || {
-        let native_windows = match create_presence_windows(&app) {
-            Ok(windows) => windows,
-            Err(error) => {
-                eprintln!("failed to create pet windows: {error}");
-                return;
-            }
-        };
+        let result = initialize_presence(&app);
         let Some(state) = app.try_state::<DesktopState>() else {
             return;
         };
-        let mut stored = match state.presence_windows.lock() {
-            Ok(stored) => stored,
-            Err(_) => return,
-        };
-        *stored = Some(native_windows);
-        drop(stored);
-        if let Err(error) = reconcile_pet_window_placement(&app) {
-            eprintln!("failed to place pet windows when ready: {error}");
-            return;
-        }
-        if let Err(error) = exclude_presence_windows_from_capture(native_windows) {
-            eprintln!("failed to exclude pet windows from capture: {error}");
-            return;
-        }
-        let preferences = match DesktopPreferencesStore::new(&state.data_dir).load() {
-            Ok(preferences) => preferences,
+        match result {
+            Ok(()) => state.presence_startup.succeeded(),
             Err(error) => {
-                eprintln!("failed to load pet preferences when ready: {error}");
-                return;
+                eprintln!("failed to initialize Fairy Presence: {error}");
+                if let Some(delay) = state.presence_startup.failed() {
+                    let retry_app = app.clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        std::thread::sleep(delay);
+                        request_presence_initialization(retry_app);
+                    });
+                }
             }
-        };
-        if let Err(error) = apply_pet_window_preferences(&app, &preferences) {
-            eprintln!("failed to apply pet preferences when ready: {error}");
-            return;
-        }
-        if let Err(error) = state.presence.launch(app.clone()) {
-            eprintln!("failed to launch presence coordinator: {error}");
         }
     });
+}
+
+fn initialize_presence(app: &tauri::AppHandle) -> Result<(), String> {
+    let native_windows = create_presence_windows(app).map_err(|error| error.to_string())?;
+    let state = app
+        .try_state::<DesktopState>()
+        .ok_or_else(|| "desktop state is unavailable".to_owned())?;
+    let mut stored = state
+        .presence_windows
+        .lock()
+        .map_err(|_| "presence window state is unavailable".to_owned())?;
+    *stored = Some(native_windows);
+    drop(stored);
+    reconcile_pet_window_placement(app)?;
+    exclude_presence_windows_from_capture(native_windows)?;
+    let preferences = DesktopPreferencesStore::new(&state.data_dir)
+        .load()
+        .map_err(|error| error.to_string())?;
+    apply_pet_window_preferences(app, &preferences)?;
+    state
+        .presence
+        .launch(app.clone())
+        .map_err(|error| error.to_string())
 }
 
 fn request_presence_initialization(app: tauri::AppHandle) {
     let Some(state) = app.try_state::<DesktopState>() else {
         return;
     };
-    if state
-        .presence_start_requested
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok()
-    {
+    if state.presence_startup.try_begin() {
         initialize_presence_after_main_load(app);
     }
 }
@@ -2325,7 +2325,7 @@ pub fn run() {
                 presence_windows: Mutex::new(None),
                 pet_drag: Mutex::new(None),
                 renderer_supervisor: Mutex::new(PresenceRendererSupervisor::default()),
-                presence_start_requested: AtomicBool::new(false),
+                presence_startup: PresenceStartupGate::default(),
                 pet_placement_reconciled: AtomicBool::new(false),
                 started_at: Instant::now(),
             });

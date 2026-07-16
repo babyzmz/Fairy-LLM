@@ -41,6 +41,8 @@ def _content_digest(root: Path, contents: dict[Path, bytes]) -> str:
 
 class SkillPackageLoader:
     def load(self, root: Path) -> SkillPackage:
+        if root.is_symlink() or (hasattr(root, "is_junction") and root.is_junction()):
+            raise SkillPackageError("Skill package root cannot be a link")
         try:
             package_root = root.resolve(strict=True)
         except OSError as error:
