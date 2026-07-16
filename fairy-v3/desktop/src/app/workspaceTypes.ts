@@ -53,8 +53,8 @@ export interface WorkspaceClient extends AssistantTurnClient {
   desktop: Pick<CoreClient["desktop"], "openSettings">;
   health: CoreClient["health"];
   projects: Pick<CoreClient["projects"], "list" | "create" | "import" | "selectFolder">;
-  conversations: Pick<CoreClient["conversations"], "list" | "create" | "update" | "delete" | "moveToProject">;
-  tasks: Pick<CoreClient["tasks"], "list" | "create" | "review" | "updateMetadata" | "archive">;
+  conversations: Pick<CoreClient["conversations"], "list" | "create" | "get" | "update" | "delete" | "moveToProject">;
+  tasks: Pick<CoreClient["tasks"], "list" | "create" | "get" | "review" | "updateMetadata" | "archive">;
   approvals: Pick<CoreClient["approvals"], "list" | "decide">;
   versions: Pick<CoreClient["versions"], "list" | "accept" | "discard">;
   workspaces: Pick<

@@ -128,12 +128,17 @@ describe("WorkspaceShell", () => {
       file.path,
     );
 
-    vi.spyOn(window, "prompt").mockReturnValue("src/bootstrap.ts");
     fireEvent.click(screen.getByRole("button", { name: "Rename file" }));
+    fireEvent.change(screen.getByLabelText("Workspace path"), {
+      target: { value: "src/bootstrap.ts" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
     await waitFor(() => expect(model.renameWorkspaceFile).toHaveBeenCalledWith(file, "src/bootstrap.ts"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: "Delete file" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("next Workspace Version");
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(model.deleteWorkspaceFile).toHaveBeenCalledWith(file));
   });
 
@@ -217,6 +222,34 @@ describe("WorkspaceShell", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Pin" }));
 
     expect(model.setConversationPinned).toHaveBeenCalledWith(chat, true);
+  });
+
+  it("uses an in-app confirmation for destructive chat actions", async () => {
+    const chat: Conversation = {
+      id: "019f566f-f8b4-7000-8000-000000000001",
+      project_id: null,
+      workspace_id: "019f566f-f8b4-7000-8000-000000000001",
+      workspace_type: "chat_scratch",
+      base_version_id: null,
+      active_draft_version_id: null,
+      active_task_id: null,
+      active_preview_id: null,
+      title: "Research notes",
+      pinned_at: null,
+      deleted_at: null,
+      revision: 3,
+      created_at: "2026-07-12T00:00:00Z",
+      updated_at: "2026-07-12T00:00:00Z",
+    };
+    const model = { ...workspaceModel(), chatConversations: [chat] };
+    render(<WorkspaceShell model={model} />);
+
+    fireEvent.contextMenu(screen.getByTitle("Research notes"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("synchronization tombstone");
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(model.deleteConversation).toHaveBeenCalledWith(chat));
   });
 });
 

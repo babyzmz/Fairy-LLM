@@ -82,6 +82,19 @@ describe("SettingsApp", () => {
     });
   });
 
+  it("confirms credential removal inside the settings surface", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+    await userEvent.click(screen.getByRole("button", { name: /Models/ }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove OpenRouter credential" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("encrypted credential");
+    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("provider_openrouter_delete"));
+  });
+
   it("persists the complete Liquid Glass pet settings through the same revision fence", async () => {
     const invoke = settingsInvoke();
     render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
@@ -127,6 +140,7 @@ describe("SettingsApp", () => {
 
 function settingsInvoke() {
   let preferences = defaultPreferences();
+  let openRouterConfigured = true;
   return vi.fn(async (command: string, args?: Record<string, unknown>) => {
     if (command === "desktop_preferences_get") return preferences;
     if (command === "desktop_preferences_update") {
@@ -134,7 +148,14 @@ function settingsInvoke() {
       preferences = { ...input.preferences, revision: input.preferences.revision + 1 };
       return preferences;
     }
-    if (command === "provider_openrouter_status") return { configured: true, account_id: "openrouter-default" };
+    if (command === "provider_openrouter_status") return {
+      configured: openRouterConfigured,
+      account_id: openRouterConfigured ? "openrouter-default" : null,
+    };
+    if (command === "provider_openrouter_delete") {
+      openRouterConfigured = false;
+      return { configured: false, account_id: null };
+    }
     if (command === "settings_rpc") {
       const request = args?.request as { id: number; method: CoreMethodName; params: Record<string, unknown> };
       return { jsonrpc: "2.0", id: request.id, result: resultFor(request.method, request.params) };

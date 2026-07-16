@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -411,6 +411,39 @@ describe("App", () => {
     });
   });
 
+  it("refreshes conversation metadata before a confirmed delete", async () => {
+    window.localStorage.setItem("fairy.workspace.mode", "chat");
+    const latest = { ...scratchConversation, revision: 7, title: "New conversation" };
+    const getConversation = vi.fn(async () => latest);
+    const deleteConversation = vi.fn(async () => ({
+      ...latest,
+      deleted_at: timestamp,
+      revision: 8,
+    }));
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [],
+      { scratch: true, getConversation, deleteConversation },
+    );
+    render(<App client={client} />);
+
+    const history = await screen.findByLabelText("History navigation");
+    fireEvent.contextMenu(await within(history).findByTitle("New conversation"));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(deleteConversation).toHaveBeenCalledWith({
+      conversation_id: ID.scratchConversation,
+      expected_revision: 7,
+      user_confirmed: true,
+    }));
+    expect(getConversation).toHaveBeenCalledWith(ID.scratchConversation);
+  });
+
   it("binds project composer requests to the selected project conversation", async () => {
     const projectTurn = {
       ...completedTurn,
@@ -495,6 +528,8 @@ function createClient(
     permissions?: WorkspaceClient["permissions"];
     capabilities?: WorkspaceClient["capabilities"];
     listMessages?: WorkspaceClient["messages"]["list"];
+    getConversation?: WorkspaceClient["conversations"]["get"];
+    deleteConversation?: WorkspaceClient["conversations"]["delete"];
   } = {},
 ): WorkspaceClient {
   return {
@@ -512,8 +547,10 @@ function createClient(
         next_cursor: null,
       }),
       create: async () => scratchConversation,
+      get: options.getConversation ?? (async (conversationId) =>
+        conversationId === scratchConversation.id ? scratchConversation : conversation),
       update: async () => scratchConversation,
-      delete: async () => scratchConversation,
+      delete: options.deleteConversation ?? (async () => scratchConversation),
       moveToProject: async () => ({
         source_conversation: scratchConversation,
         destination_conversation: conversation,
@@ -522,6 +559,7 @@ function createClient(
     },
     tasks: {
       list: async () => ({ items: [task], next_cursor: null }),
+      get: async () => task,
       create:
         options.createTask ??
         (async () => {

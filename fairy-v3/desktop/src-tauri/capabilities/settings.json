@@ -6,7 +6,6 @@
   "permissions": [
     "core:window:allow-close",
     "core:window:allow-hide",
-    "core:window:allow-set-focus",
-    "dialog:allow-confirm"
+    "core:window:allow-set-focus"
   ]
 }

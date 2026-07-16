@@ -28,6 +28,7 @@ import type {
   Version,
   FileCompareResult,
 } from "../core/client";
+import { ActionDialog } from "../ui/ActionDialog";
 import { assertModelFileSetBudget } from "./viewers/previewLimits";
 
 const PdfViewer = lazy(() => import("./viewers/PdfViewer"));
@@ -47,6 +48,10 @@ interface ModelSource {
 type ViewerSelection =
   | { kind: "text_range"; start: number; end: number }
   | { kind: "scene_node"; nodePath: string; label: string };
+
+type FileAction =
+  | { kind: "rename"; file: WorkspaceFile }
+  | { kind: "delete"; file: WorkspaceFile };
 
 interface WorkspaceFilesPanelProps {
   scopeKey: string;
@@ -114,6 +119,8 @@ export function WorkspaceFilesPanel({
   const [compareVersionId, setCompareVersionId] = useState("");
   const [comparison, setComparison] = useState<FileCompareResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fileAction, setFileAction] = useState<FileAction | null>(null);
+  const [fileActionBusy, setFileActionBusy] = useState(false);
   const visibleFiles = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     return normalized.length === 0 ? files : files.filter((file) => file.path.toLocaleLowerCase().includes(normalized));
@@ -138,6 +145,8 @@ export function WorkspaceFilesPanel({
     setCompareVersionId("");
     setComparison(null);
     setError(null);
+    setFileAction(null);
+    setFileActionBusy(false);
   }, [scopeKey]);
 
   useEffect(() => {
@@ -380,7 +389,7 @@ export function WorkspaceFilesPanel({
                     type="button"
                     aria-label="Rename file"
                     title="Rename file"
-                    onClick={() => void renameFile(content.file, onRename, setError)}
+                    onClick={() => setFileAction({ kind: "rename", file: content.file })}
                   >
                     <Pencil size={15} />
                   </button>
@@ -389,7 +398,7 @@ export function WorkspaceFilesPanel({
                     type="button"
                     aria-label="Delete file"
                     title="Delete file"
-                    onClick={() => void deleteFile(content.file, onDelete, setError)}
+                    onClick={() => setFileAction({ kind: "delete", file: content.file })}
                   >
                     <Trash2 size={15} />
                   </button>
@@ -475,6 +484,47 @@ export function WorkspaceFilesPanel({
           }}
         />
       </div>
+      {fileAction === null ? null : (
+        <ActionDialog
+          open
+          busy={fileActionBusy}
+          destructive={fileAction.kind === "delete"}
+          title={fileAction.kind === "rename" ? "Rename file" : "Delete file"}
+          description={
+            fileAction.kind === "rename"
+              ? "Choose a Workspace-relative path. The mutation creates a new candidate Version."
+              : `Delete ${fileAction.file.path} from the next Workspace Version?`
+          }
+          confirmLabel={fileAction.kind === "rename" ? "Rename" : "Delete"}
+          inputLabel={fileAction.kind === "rename" ? "Workspace path" : undefined}
+          initialValue={fileAction.file.path}
+          onCancel={() => setFileAction(null)}
+          onConfirm={async (value) => {
+            setFileActionBusy(true);
+            setError(null);
+            try {
+              if (fileAction.kind === "rename") {
+                if (value !== null && value !== fileAction.file.path) {
+                  await onRename(fileAction.file, value);
+                }
+              } else {
+                await onDelete(fileAction.file);
+              }
+              setFileAction(null);
+            } catch (actionError) {
+              setError(
+                actionError instanceof Error
+                  ? actionError.message
+                  : fileAction.kind === "rename"
+                    ? "File could not be renamed"
+                    : "File could not be deleted",
+              );
+            } finally {
+              setFileActionBusy(false);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -799,35 +849,6 @@ async function uploadFiles(
     );
   } catch (uploadError) {
     setError(uploadError instanceof Error ? uploadError.message : "Files could not be uploaded");
-  }
-}
-
-async function renameFile(
-  file: WorkspaceFile,
-  onRename: WorkspaceFilesPanelProps["onRename"],
-  setError: (message: string | null) => void,
-): Promise<void> {
-  const destination = window.prompt("New workspace path", file.path)?.trim();
-  if (!destination || destination === file.path) return;
-  setError(null);
-  try {
-    await onRename(file, destination);
-  } catch (renameError) {
-    setError(renameError instanceof Error ? renameError.message : "File could not be renamed");
-  }
-}
-
-async function deleteFile(
-  file: WorkspaceFile,
-  onDelete: WorkspaceFilesPanelProps["onDelete"],
-  setError: (message: string | null) => void,
-): Promise<void> {
-  if (!window.confirm(`Delete ${file.path} from the next Workspace Version?`)) return;
-  setError(null);
-  try {
-    await onDelete(file);
-  } catch (deleteError) {
-    setError(deleteError instanceof Error ? deleteError.message : "File could not be deleted");
   }
 }
 

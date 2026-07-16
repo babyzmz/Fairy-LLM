@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { m } from "motion/react";
 
 import type { Conversation, Project, Task } from "../core/client";
+import { ActionDialog } from "../ui/ActionDialog";
 import type { WorkspaceModel } from "./workspaceModel";
 import "./history-sidebar.css";
 
@@ -28,6 +29,12 @@ interface HistorySidebarProps {
 type MenuTarget =
   | { kind: "conversation"; item: Conversation; x: number; y: number }
   | { kind: "task"; item: Task; x: number; y: number };
+
+type HistoryAction =
+  | { kind: "rename-conversation"; conversation: Conversation }
+  | { kind: "rename-task"; task: Task }
+  | { kind: "delete-conversation"; conversation: Conversation }
+  | { kind: "move-conversation"; conversation: Conversation; project: Project };
 
 const terminalTaskStatuses = new Set([
   "ready",
@@ -45,6 +52,7 @@ export function HistorySidebar({ model, onCreateProject }: HistorySidebarProps) 
   );
   const [menu, setMenu] = useState<MenuTarget | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [action, setAction] = useState<HistoryAction | null>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase();
 
   useEffect(() => {
@@ -102,7 +110,7 @@ export function HistorySidebar({ model, onCreateProject }: HistorySidebarProps) 
           count={model.chatConversations.length}
           onOpen={setChatsOpen}
           actionLabel="New chat"
-          onAction={() => void model.createChatConversation()}
+          onAction={() => void model.createChatConversation().catch(() => undefined)}
         >
           {chats.length === 0 ? (
             <p className="history-empty">No chats</p>
@@ -151,7 +159,7 @@ export function HistorySidebar({ model, onCreateProject }: HistorySidebarProps) 
       </div>
 
       <footer className="history-footer">
-        <button type="button" aria-label="Open settings" title="Settings" onClick={() => void model.openSettings()}>
+        <button type="button" aria-label="Open settings" title="Settings" onClick={() => void model.openSettings().catch(() => undefined)}>
           <Settings size={16} />
           <span>Settings</span>
         </button>
@@ -163,12 +171,40 @@ export function HistorySidebar({ model, onCreateProject }: HistorySidebarProps) 
           model={model}
           moveOpen={moveOpen}
           onMoveOpen={() => setMoveOpen((current) => !current)}
+          onAction={setAction}
           onClose={() => {
             setMenu(null);
             setMoveOpen(false);
           }}
         />
       ) : null}
+      {action === null ? null : (
+        <ActionDialog
+          open
+          busy={model.isActing}
+          destructive={action.kind === "delete-conversation"}
+          title={historyActionTitle(action)}
+          description={historyActionDescription(action)}
+          confirmLabel={historyActionConfirmLabel(action)}
+          inputLabel={action.kind.startsWith("rename-") ? "Title" : undefined}
+          initialValue={
+            action.kind === "rename-conversation"
+              ? action.conversation.title
+              : action.kind === "rename-task"
+                ? action.task.display_title
+                : ""
+          }
+          onCancel={() => setAction(null)}
+          onConfirm={async (value) => {
+            try {
+              await executeHistoryAction(model, action, value);
+              setAction(null);
+            } catch {
+              // WorkspaceModel owns the visible error and refreshes stale state.
+            }
+          }}
+        />
+      )}
     </aside>
   );
 }
@@ -369,12 +405,14 @@ function HistoryMenu({
   model,
   moveOpen,
   onMoveOpen,
+  onAction,
   onClose,
 }: {
   target: MenuTarget;
   model: WorkspaceModel;
   moveOpen: boolean;
   onMoveOpen(): void;
+  onAction(action: HistoryAction): void;
   onClose(): void;
 }) {
   const style = {
@@ -385,18 +423,18 @@ function HistoryMenu({
     const task = target.item;
     return (
       <div className="history-menu" style={style} role="menu" onPointerDown={(event) => event.stopPropagation()}>
-        <MenuButton icon={<Pencil size={14} />} label="Rename" onClick={() => renameTask(model, task, onClose)} />
+        <MenuButton icon={<Pencil size={14} />} label="Rename" onClick={() => { onAction({ kind: "rename-task", task }); onClose(); }} />
         <MenuButton
           icon={task.pinned_at === null ? <Pin size={14} /> : <PinOff size={14} />}
           label={task.pinned_at === null ? "Pin" : "Unpin"}
-          onClick={() => void model.setTaskPinned(task, task.pinned_at === null).finally(onClose)}
+          onClick={() => finishMenuAction(model.setTaskPinned(task, task.pinned_at === null), onClose)}
         />
         <MenuButton icon={<FolderKanban size={14} />} label="Open project" onClick={() => openTask(model, task, onClose)} />
         <MenuButton
           icon={<Archive size={14} />}
           label="Archive"
           disabled={!terminalTaskStatuses.has(task.status)}
-          onClick={() => void model.archiveTask(task).finally(onClose)}
+          onClick={() => finishMenuAction(model.archiveTask(task), onClose)}
         />
       </div>
     );
@@ -405,11 +443,11 @@ function HistoryMenu({
   const scratch = conversation.workspace_type === "chat_scratch";
   return (
     <div className="history-menu" style={style} role="menu" onPointerDown={(event) => event.stopPropagation()}>
-      <MenuButton icon={<Pencil size={14} />} label="Rename" onClick={() => renameConversation(model, conversation, onClose)} />
+      <MenuButton icon={<Pencil size={14} />} label="Rename" onClick={() => { onAction({ kind: "rename-conversation", conversation }); onClose(); }} />
       <MenuButton
         icon={conversation.pinned_at === null ? <Pin size={14} /> : <PinOff size={14} />}
         label={conversation.pinned_at === null ? "Pin" : "Unpin"}
-        onClick={() => void model.setConversationPinned(conversation, conversation.pinned_at === null).finally(onClose)}
+        onClick={() => finishMenuAction(model.setConversationPinned(conversation, conversation.pinned_at === null), onClose)}
       />
       {scratch ? (
         <>
@@ -417,13 +455,13 @@ function HistoryMenu({
           {moveOpen ? (
             <div className="history-menu-projects">
               {model.projects.map((project) => (
-                <button key={project.id} type="button" role="menuitem" onClick={() => moveConversation(model, conversation, project, onClose)}>
+                <button key={project.id} type="button" role="menuitem" onClick={() => { onAction({ kind: "move-conversation", conversation, project }); onClose(); }}>
                   <FolderKanban size={13} /> <span>{project.name}</span>
                 </button>
               ))}
             </div>
           ) : null}
-          <MenuButton className="danger" icon={<Trash2 size={14} />} label="Delete" onClick={() => deleteConversation(model, conversation, onClose)} />
+          <MenuButton className="danger" icon={<Trash2 size={14} />} label="Delete" onClick={() => { onAction({ kind: "delete-conversation", conversation }); onClose(); }} />
         </>
       ) : null}
     </div>
@@ -434,28 +472,55 @@ function MenuButton({ icon, label, className = "", disabled = false, onClick }: 
   return <button className={className} type="button" role="menuitem" disabled={disabled} onClick={onClick}>{icon}<span>{label}</span></button>;
 }
 
-function renameConversation(model: WorkspaceModel, conversation: Conversation, close: () => void) {
-  const title = window.prompt("Rename chat", conversation.title)?.trim();
-  if (title) void model.renameConversation(conversation, title).finally(close);
-  else close();
+function finishMenuAction(action: Promise<unknown>, close: () => void) {
+  void action.catch(() => undefined).finally(close);
 }
 
-function renameTask(model: WorkspaceModel, task: Task, close: () => void) {
-  const title = window.prompt("Rename task", task.display_title)?.trim();
-  if (title) void model.renameTask(task, title).finally(close);
-  else close();
+async function executeHistoryAction(
+  model: WorkspaceModel,
+  action: HistoryAction,
+  value: string | null,
+): Promise<void> {
+  switch (action.kind) {
+    case "rename-conversation":
+      if (value !== null) await model.renameConversation(action.conversation, value);
+      return;
+    case "rename-task":
+      if (value !== null) await model.renameTask(action.task, value);
+      return;
+    case "delete-conversation":
+      await model.deleteConversation(action.conversation);
+      return;
+    case "move-conversation":
+      await model.moveConversationToProject(action.conversation, action.project);
+  }
 }
 
-function deleteConversation(model: WorkspaceModel, conversation: Conversation, close: () => void) {
-  if (window.confirm(`Delete “${conversation.title}”?`)) {
-    void model.deleteConversation(conversation).finally(close);
-  } else close();
+function historyActionTitle(action: HistoryAction): string {
+  switch (action.kind) {
+    case "rename-conversation": return "Rename chat";
+    case "rename-task": return "Rename task";
+    case "delete-conversation": return "Delete chat";
+    case "move-conversation": return "Move chat to project";
+  }
 }
 
-function moveConversation(model: WorkspaceModel, conversation: Conversation, project: Project, close: () => void) {
-  if (window.confirm(`Move “${conversation.title}” to ${project.name}?`)) {
-    void model.moveConversationToProject(conversation, project).finally(close);
-  } else close();
+function historyActionDescription(action: HistoryAction): string {
+  switch (action.kind) {
+    case "rename-conversation": return `Choose a new title for “${action.conversation.title}”.`;
+    case "rename-task": return `Choose a new title for “${action.task.display_title}”.`;
+    case "delete-conversation": return `“${action.conversation.title}” will disappear from chat history. Its synchronization tombstone and audit provenance remain durable.`;
+    case "move-conversation": return `Copy “${action.conversation.title}” and its Workspace into ${action.project.name}, then remove the source chat from history.`;
+  }
+}
+
+function historyActionConfirmLabel(action: HistoryAction): string {
+  switch (action.kind) {
+    case "rename-conversation":
+    case "rename-task": return "Rename";
+    case "delete-conversation": return "Delete";
+    case "move-conversation": return "Move";
+  }
 }
 
 function openTask(model: WorkspaceModel, task: Task, close: () => void) {

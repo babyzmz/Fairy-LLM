@@ -1,0 +1,123 @@
+.action-dialog-overlay {
+  position: fixed;
+  z-index: 10000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(5 8 9 / 58%);
+  backdrop-filter: blur(8px);
+}
+
+.action-dialog-modal {
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  border: 1px solid rgb(210 232 234 / 20%);
+  border-radius: 8px;
+  background: #171b1c;
+  box-shadow: 0 24px 72px rgb(0 0 0 / 54%);
+  color: #f1f6f5;
+}
+
+.action-dialog {
+  outline: none;
+}
+
+.action-dialog form {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.action-dialog h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+
+.action-dialog p {
+  margin: 0;
+  color: #aeb9b8;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.action-dialog-field {
+  display: grid;
+  gap: 7px;
+  color: #bdc8c7;
+  font-size: 12px;
+}
+
+.action-dialog-field input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  border: 1px solid rgb(190 216 218 / 22%);
+  border-radius: 6px;
+  padding: 0 11px;
+  outline: none;
+  background: #101415;
+  color: #f3f8f7;
+  font: inherit;
+}
+
+.action-dialog-field input:focus-visible {
+  border-color: #65c9ca;
+  box-shadow: 0 0 0 2px rgb(101 201 202 / 18%);
+}
+
+.action-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.action-dialog-actions button {
+  min-width: 82px;
+  height: 34px;
+  border: 1px solid rgb(211 231 232 / 16%);
+  border-radius: 6px;
+  padding: 0 13px;
+  background: #222829;
+  color: #e7eeee;
+  font: inherit;
+  cursor: pointer;
+}
+
+.action-dialog-actions button.primary {
+  border-color: rgb(112 214 207 / 36%);
+  background: #397f7b;
+  color: #f5ffff;
+}
+
+.action-dialog-actions button.danger {
+  border-color: rgb(255 135 126 / 34%);
+  background: #7c3835;
+  color: #fff3f1;
+}
+
+.action-dialog-actions button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .action-dialog-overlay[data-entering] {
+    animation: action-dialog-fade 120ms ease-out;
+  }
+
+  .action-dialog-modal[data-entering] {
+    animation: action-dialog-enter 150ms ease-out;
+  }
+}
+
+@keyframes action-dialog-fade {
+  from { opacity: 0; }
+}
+
+@keyframes action-dialog-enter {
+  from { transform: translateY(6px); opacity: 0; }
+}

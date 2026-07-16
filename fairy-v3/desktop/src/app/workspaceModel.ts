@@ -648,31 +648,34 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         chatAssistant.reset();
       },
       async renameConversation(conversation: Conversation, title: string) {
-        await runAction(() =>
-          client.conversations.update({
+        await runAction(async () => {
+          const latest = await client.conversations.get(conversation.id);
+          return client.conversations.update({
             conversation_id: conversation.id,
             title,
-            expected_revision: conversation.revision,
-          }),
-        );
+            expected_revision: latest.revision,
+          });
+        });
       },
       async setConversationPinned(conversation: Conversation, pinned: boolean) {
-        await runAction(() =>
-          client.conversations.update({
+        await runAction(async () => {
+          const latest = await client.conversations.get(conversation.id);
+          return client.conversations.update({
             conversation_id: conversation.id,
             pinned,
-            expected_revision: conversation.revision,
-          }),
-        );
+            expected_revision: latest.revision,
+          });
+        });
       },
       async deleteConversation(conversation: Conversation) {
-        await runAction(() =>
-          client.conversations.delete({
+        await runAction(async () => {
+          const latest = await client.conversations.get(conversation.id);
+          return client.conversations.delete({
             conversation_id: conversation.id,
-            expected_revision: conversation.revision,
+            expected_revision: latest.revision,
             user_confirmed: true,
-          }),
-        );
+          });
+        });
         if (chatConversationSelection === conversation.id) {
           setChatConversationSelection(null);
           setChatTaskId(null);
@@ -680,15 +683,16 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         }
       },
       async moveConversationToProject(conversation: Conversation, project: Project) {
-        const result = await runAction(() =>
-          client.conversations.moveToProject({
+        const result = await runAction(async () => {
+          const latest = await client.conversations.get(conversation.id);
+          return client.conversations.moveToProject({
             conversation_id: conversation.id,
             target_project_id: project.id,
-            expected_revision: conversation.revision,
+            expected_revision: latest.revision,
             user_confirmed: true,
-            idempotency_key: `desktop:conversation-move:${conversation.id}:${project.id}`,
-          }),
-        );
+            idempotency_key: `desktop:conversation-move:${conversation.id}:${project.id}:${latest.revision}`,
+          });
+        });
         setProjectSelection(project.id);
         setConversationSelection(result.destination_conversation.id);
         setTaskSelection(null);
@@ -720,30 +724,33 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         }
       },
       async renameTask(task: Task, title: string) {
-        await runAction(() =>
-          client.tasks.updateMetadata({
+        await runAction(async () => {
+          const latest = await client.tasks.get(task.id);
+          return client.tasks.updateMetadata({
             task_id: task.id,
             display_title: title,
-            expected_revision: task.metadata_revision,
-          }),
-        );
+            expected_revision: latest.metadata_revision,
+          });
+        });
       },
       async setTaskPinned(task: Task, pinned: boolean) {
-        await runAction(() =>
-          client.tasks.updateMetadata({
+        await runAction(async () => {
+          const latest = await client.tasks.get(task.id);
+          return client.tasks.updateMetadata({
             task_id: task.id,
             pinned,
-            expected_revision: task.metadata_revision,
-          }),
-        );
+            expected_revision: latest.metadata_revision,
+          });
+        });
       },
       async archiveTask(task: Task) {
-        await runAction(() =>
-          client.tasks.archive({
+        await runAction(async () => {
+          const latest = await client.tasks.get(task.id);
+          return client.tasks.archive({
             task_id: task.id,
-            expected_revision: task.metadata_revision,
-          }),
-        );
+            expected_revision: latest.metadata_revision,
+          });
+        });
       },
       async decideApproval(approvalId: string, approved: boolean) {
         const result = await runAction(() =>

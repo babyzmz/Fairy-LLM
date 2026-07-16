@@ -34,6 +34,7 @@ import type {
   McpToolPolicyInput,
   Skill,
 } from "../core/client";
+import { ActionDialog } from "../ui/ActionDialog";
 import { startNativeVoiceTest } from "../voice/nativeVoice";
 import {
   applyDesktopPreferences,
@@ -310,6 +311,7 @@ function SettingsCategory(props: {
 function ModelsPanel(props: Parameters<typeof SettingsCategory>[0]) {
   const { data, busy, client, act, reload, updateData } = props;
   const [apiKey, setApiKey] = useState("");
+  const [confirmCredentialDelete, setConfirmCredentialDelete] = useState(false);
   const selectedEntry = data.modelSelection.mode === "manual"
     ? data.modelCatalog.items.find((entry) => entry.model_id === data.modelSelection.model_id)
     : null;
@@ -349,9 +351,25 @@ function ModelsPanel(props: Parameters<typeof SettingsCategory>[0]) {
       <div className="settings-form-heading"><KeyRound size={17} /><div><strong>OpenRouter credential</strong><span>{data.openRouterConfigured ? "Configured" : "Not configured"}</span></div></div>
       <label><span>API key</span><input type="password" autoComplete="off" required value={apiKey} disabled={busy} placeholder={data.openRouterConfigured ? "Enter a new key to replace" : "sk-or-v1-..."} onChange={(event) => setApiKey(event.target.value)} /></label>
       <div className="settings-form-actions"><button className="primary-command" type="submit" disabled={busy || !apiKey.trim()}><KeyRound size={14} />Save and connect</button>
-        {data.openRouterConfigured ? <button className="danger-icon" type="button" aria-label="Remove OpenRouter credential" title="Remove OpenRouter credential" disabled={busy} onClick={() => { if (!window.confirm("Remove the OpenRouter credential from this device?")) return; void act(async () => { await client.providers.deleteOpenRouter(); await reload(); }); }}><Trash2 size={15} /></button> : null}
+        {data.openRouterConfigured ? <button className="danger-icon" type="button" aria-label="Remove OpenRouter credential" title="Remove OpenRouter credential" disabled={busy} onClick={() => setConfirmCredentialDelete(true)}><Trash2 size={15} /></button> : null}
       </div>
     </form>
+    <ActionDialog
+      open={confirmCredentialDelete}
+      busy={busy}
+      destructive
+      title="Remove OpenRouter credential"
+      description="The encrypted credential will be removed from this device. Existing chats and artifacts remain available."
+      confirmLabel="Remove"
+      onCancel={() => setConfirmCredentialDelete(false)}
+      onConfirm={async () => {
+        await act(async () => {
+          await client.providers.deleteOpenRouter();
+          await reload();
+        });
+        setConfirmCredentialDelete(false);
+      }}
+    />
   </Category>;
 }
 
@@ -413,8 +431,9 @@ function ExtensionsPanel(props: Parameters<typeof SettingsCategory>[0]) {
 }
 
 function InstalledSkills({ data, busy, client, act, reload }: Pick<Parameters<typeof SettingsCategory>[0], "data" | "busy" | "client" | "act" | "reload">) {
+  const [pendingRemoval, setPendingRemoval] = useState<Skill | null>(null);
   if (data.skills.length === 0) return <p className="settings-empty">No Skills installed</p>;
-  return <div className="settings-extension-list">{data.skills.map((skill) => <section className="settings-mcp-server" key={`${skill.name}@${skill.version}`}><div className="settings-extension-row"><span className={`settings-health-dot ${skill.available ? "available" : "unavailable"}`} /><div><strong>{skill.name}</strong><small>{skill.description}</small></div><code>{skill.version}</code><label className="compact-switch"><input type="checkbox" aria-label={`Enable ${skill.name}`} checked={skill.enabled} disabled={busy} onChange={(event) => void act(async () => { await client.extensions.setSkillEnabled({ name: skill.name, expected_content_sha256: skill.content_sha256, enabled: event.target.checked, idempotency_key: `settings:skill:${skill.name}:${skill.content_sha256}:enabled:${event.target.checked}` }); await reload(); })} /><span /></label><button className="danger-icon" type="button" aria-label={`Remove ${skill.name}`} disabled={busy} onClick={() => { if (!window.confirm(`Remove Skill “${skill.name}”?`)) return; void act(async () => { await client.extensions.removeSkill({ name: skill.name, expected_content_sha256: skill.content_sha256, idempotency_key: `settings:skill:${skill.name}:${skill.content_sha256}:remove` }); await reload(); }); }}><Trash2 size={14} /></button></div></section>)}</div>;
+  return <><div className="settings-extension-list">{data.skills.map((skill) => <section className="settings-mcp-server" key={`${skill.name}@${skill.version}`}><div className="settings-extension-row"><span className={`settings-health-dot ${skill.available ? "available" : "unavailable"}`} /><div><strong>{skill.name}</strong><small>{skill.description}</small></div><code>{skill.version}</code><label className="compact-switch"><input type="checkbox" aria-label={`Enable ${skill.name}`} checked={skill.enabled} disabled={busy} onChange={(event) => void act(async () => { await client.extensions.setSkillEnabled({ name: skill.name, expected_content_sha256: skill.content_sha256, enabled: event.target.checked, idempotency_key: `settings:skill:${skill.name}:${skill.content_sha256}:enabled:${event.target.checked}` }); await reload(); })} /><span /></label><button className="danger-icon" type="button" aria-label={`Remove ${skill.name}`} disabled={busy} onClick={() => setPendingRemoval(skill)}><Trash2 size={14} /></button></div></section>)}</div><ActionDialog open={pendingRemoval !== null} busy={busy} destructive title="Remove Skill" description={pendingRemoval === null ? "" : `Remove ${pendingRemoval.name} and its model-visible tool from this device?`} confirmLabel="Remove" onCancel={() => setPendingRemoval(null)} onConfirm={async () => { if (pendingRemoval === null) return; const skill = pendingRemoval; await act(async () => { await client.extensions.removeSkill({ name: skill.name, expected_content_sha256: skill.content_sha256, idempotency_key: `settings:skill:${skill.name}:${skill.content_sha256}:remove` }); await reload(); }); setPendingRemoval(null); }} /></>;
 }
 
 function ExtensionStore({ data, busy, client, act, reload }: Pick<Parameters<typeof SettingsCategory>[0], "data" | "busy" | "client" | "act" | "reload">) {
@@ -422,7 +441,8 @@ function ExtensionStore({ data, busy, client, act, reload }: Pick<Parameters<typ
 }
 
 function McpServerList({ data, busy, client, act, reload }: Pick<Parameters<typeof SettingsCategory>[0], "data" | "busy" | "client" | "act" | "reload">) {
-  return <div className="settings-extension-list">{data.servers.map((server) => <section className="settings-mcp-server" key={server.server_id}><div className="settings-extension-row"><span className={`settings-health-dot ${server.enabled ? "available" : "unknown"}`} /><div><strong>{server.display_name}</strong><small>{server.transport}</small></div><button className="secondary-command" type="button" disabled={busy || data.latestTaskId === null} onClick={() => void act(async () => { await client.extensions.discover({ server_id: server.server_id, task_id: data.latestTaskId as string, expected_revision: server.revision, idempotency_key: extensionKey(server, "discover", true) }); await reload(); })}><RefreshCw size={14} />Discover</button><label className="compact-switch"><input type="checkbox" aria-label={`Enable ${server.display_name}`} checked={server.enabled} disabled={busy || server.accepted_schema_digest === null} onChange={(event) => void act(async () => { await client.extensions.setEnabled({ server_id: server.server_id, expected_revision: server.revision, enabled: event.target.checked, idempotency_key: extensionKey(server, "enabled", event.target.checked) }); await reload(); })} /><span /></label><button className="danger-icon" type="button" aria-label={`Delete ${server.display_name}`} disabled={busy} onClick={() => { if (!window.confirm(`Delete MCP server “${server.display_name}”?`)) return; void act(async () => { await client.extensions.delete({ server_id: server.server_id, expected_revision: server.revision, idempotency_key: extensionKey(server, "delete", true) }); await reload(); }); }}><Trash2 size={14} /></button></div>{server.pending_schema_digest !== null && server.pending_schema_digest !== server.accepted_schema_digest ? <PendingMcpReview server={server} busy={busy} onAccept={(tools) => act(async () => { await client.extensions.accept({ server_id: server.server_id, expected_revision: server.revision, schema_digest: server.pending_schema_digest as string, enabled: true, tools, idempotency_key: extensionKey(server, "accept", true) }); await reload(); })} /> : null}</section>)}</div>;
+  const [pendingDelete, setPendingDelete] = useState<McpServer | null>(null);
+  return <><div className="settings-extension-list">{data.servers.map((server) => <section className="settings-mcp-server" key={server.server_id}><div className="settings-extension-row"><span className={`settings-health-dot ${server.enabled ? "available" : "unknown"}`} /><div><strong>{server.display_name}</strong><small>{server.transport}</small></div><button className="secondary-command" type="button" disabled={busy || data.latestTaskId === null} onClick={() => void act(async () => { await client.extensions.discover({ server_id: server.server_id, task_id: data.latestTaskId as string, expected_revision: server.revision, idempotency_key: extensionKey(server, "discover", true) }); await reload(); })}><RefreshCw size={14} />Discover</button><label className="compact-switch"><input type="checkbox" aria-label={`Enable ${server.display_name}`} checked={server.enabled} disabled={busy || server.accepted_schema_digest === null} onChange={(event) => void act(async () => { await client.extensions.setEnabled({ server_id: server.server_id, expected_revision: server.revision, enabled: event.target.checked, idempotency_key: extensionKey(server, "enabled", event.target.checked) }); await reload(); })} /><span /></label><button className="danger-icon" type="button" aria-label={`Delete ${server.display_name}`} disabled={busy} onClick={() => setPendingDelete(server)}><Trash2 size={14} /></button></div>{server.pending_schema_digest !== null && server.pending_schema_digest !== server.accepted_schema_digest ? <PendingMcpReview server={server} busy={busy} onAccept={(tools) => act(async () => { await client.extensions.accept({ server_id: server.server_id, expected_revision: server.revision, schema_digest: server.pending_schema_digest as string, enabled: true, tools, idempotency_key: extensionKey(server, "accept", true) }); await reload(); })} /> : null}</section>)}</div><ActionDialog open={pendingDelete !== null} busy={busy} destructive title="Delete MCP server" description={pendingDelete === null ? "" : `Delete ${pendingDelete.display_name} and revoke all imported MCP tools?`} confirmLabel="Delete" onCancel={() => setPendingDelete(null)} onConfirm={async () => { if (pendingDelete === null) return; const server = pendingDelete; await act(async () => { await client.extensions.delete({ server_id: server.server_id, expected_revision: server.revision, idempotency_key: extensionKey(server, "delete", true) }); await reload(); }); setPendingDelete(null); }} /></>;
 }
 
 function PendingMcpReview({ server, busy, onAccept }: { server: McpServer; busy: boolean; onAccept(tools: McpToolPolicyInput[]): Promise<void> }) {
