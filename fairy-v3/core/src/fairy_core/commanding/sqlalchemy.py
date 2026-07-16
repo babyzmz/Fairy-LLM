@@ -17,6 +17,7 @@ from fairy_core.commanding.models import (
     CommandRun,
     CommandStatus,
     EventEnvelope,
+    EventStreamState,
     EventVisibility,
 )
 from fairy_core.commanding.registry import RiskLevel
@@ -24,6 +25,7 @@ from fairy_core.commanding.schema import (
     command_metadata,
     command_runs,
     domain_events,
+    event_ledgers,
     task_event_sequences,
 )
 from fairy_core.domain.errors import (
@@ -374,27 +376,64 @@ class SqlAlchemyCommandLedger:
         self,
         *,
         cursor: int,
+        limit: int | None = None,
         allowed_visibilities: set[EventVisibility] | None = None,
     ) -> list[EventEnvelope]:
         if cursor < 0:
             raise ValueError("cursor cannot be negative")
+        if limit is not None and not 1 <= limit <= 2_000:
+            raise ValueError("limit must be between 1 and 2000")
+        predicates = self._event_stream_predicates(allowed_visibilities)
+        if predicates is None:
+            return []
         statement = select(domain_events).where(
-            domain_events.c.tenant_id == self._tenant_id,
+            *predicates,
             domain_events.c.cursor > cursor,
-            domain_events.c.run_id.is_not(None),
         )
-        if allowed_visibilities is not None:
-            if not allowed_visibilities:
-                return []
-            statement = statement.where(
-                domain_events.c.visibility.in_(
-                    visibility.value for visibility in allowed_visibilities
-                )
-            )
         statement = statement.order_by(domain_events.c.cursor)
+        if limit is not None:
+            statement = statement.limit(limit)
         with self._session.read() as connection:
             rows = connection.execute(statement).mappings().all()
         return [self._event_from_row(row) for row in rows]
+
+    def stream_state(
+        self,
+        *,
+        allowed_visibilities: set[EventVisibility] | None = None,
+    ) -> EventStreamState:
+        candidate_id = new_id()
+        with self._session.write() as connection:
+            connection.execute(
+                self._insert(event_ledgers)
+                .values(
+                    tenant_id=self._tenant_id,
+                    ledger_id=str(candidate_id),
+                    created_at=_now(),
+                )
+                .on_conflict_do_nothing(index_elements=[event_ledgers.c.tenant_id])
+            )
+            ledger_id = connection.execute(
+                select(event_ledgers.c.ledger_id).where(
+                    event_ledgers.c.tenant_id == self._tenant_id
+                )
+            ).scalar_one()
+            predicates = self._event_stream_predicates(allowed_visibilities)
+            if predicates is None:
+                oldest_cursor = latest_cursor = 0
+            else:
+                bounds = connection.execute(
+                    select(
+                        func.coalesce(func.min(domain_events.c.cursor), 0),
+                        func.coalesce(func.max(domain_events.c.cursor), 0),
+                    ).where(*predicates)
+                ).one()
+                oldest_cursor, latest_cursor = (int(bounds[0]), int(bounds[1]))
+        return EventStreamState(
+            ledger_id=UUID(str(ledger_id)),
+            oldest_cursor=oldest_cursor,
+            latest_cursor=latest_cursor,
+        )
 
     def events_for_run(self, run_id: UUID) -> list[EventEnvelope]:
         with self._session.read() as connection:
@@ -420,6 +459,24 @@ class SqlAlchemyCommandLedger:
                 )
             ).scalar_one()
         return int(value)
+
+    def _event_stream_predicates(
+        self,
+        allowed_visibilities: set[EventVisibility] | None,
+    ) -> list[Any] | None:
+        if allowed_visibilities is not None and not allowed_visibilities:
+            return None
+        predicates = [
+            domain_events.c.tenant_id == self._tenant_id,
+            domain_events.c.run_id.is_not(None),
+        ]
+        if allowed_visibilities is not None:
+            predicates.append(
+                domain_events.c.visibility.in_(
+                    visibility.value for visibility in allowed_visibilities
+                )
+            )
+        return predicates
 
     def claim(
         self,

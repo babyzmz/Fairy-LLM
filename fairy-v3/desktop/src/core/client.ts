@@ -18,6 +18,7 @@ import type {
   DocumentListInput,
   DocumentSearchInput,
   EventEnvelope,
+  EventStreamState,
   EventSubscriptionOptions,
   ExecutionSettingsUpdateInput,
   MemoryClaimPromoteInput,
@@ -97,6 +98,8 @@ export interface OpenRouterConfigurationStatus {
 }
 
 export interface CoreTransport {
+  readonly eventSourceId?: string;
+
   call<M extends CoreMethodName>(
     method: M,
     params: CoreMethodMap[M]["params"],
@@ -396,6 +399,11 @@ export class CoreClient {
   };
 
   readonly events = {
+    sourceId: () => this.transport.eventSourceId ?? "core:default",
+    state: (options: CoreCallOptions = {}): Promise<EventStreamState> =>
+      this.transport.call("events.state", {}, options),
+    list: (cursor = 0, limit = 500, options: CoreCallOptions = {}) =>
+      this.transport.call("events.list", { cursor, limit }, options),
     subscribe: (cursor = 0, options: EventSubscriptionOptions = {}) => this.subscribeToEvents(cursor, options),
   };
 

@@ -8,6 +8,7 @@ from fairy_core.commanding.models import (
     CommandRun,
     CommandStatus,
     EventEnvelope,
+    EventStreamState,
     EventVisibility,
 )
 from fairy_core.commanding.registry import RiskLevel
@@ -72,8 +73,15 @@ class CommandLedger(Protocol):
         self,
         *,
         cursor: int,
+        limit: int | None = None,
         allowed_visibilities: set[EventVisibility] | None = None,
     ) -> list[EventEnvelope]: ...
+
+    def stream_state(
+        self,
+        *,
+        allowed_visibilities: set[EventVisibility] | None = None,
+    ) -> EventStreamState: ...
 
     def events_for_run(self, run_id: UUID) -> list[EventEnvelope]: ...
 

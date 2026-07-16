@@ -575,6 +575,36 @@ describe("CloudCoreTransport", () => {
     expect(requests[1]?.headers.get("Last-Event-ID")).toBe("4");
   });
 
+  it("uses a stable source identity and the bounded event recovery routes", async () => {
+    const requests: Request[] = [];
+    const transport = new CloudCoreTransport({
+      baseUrl: "HTTPS://CLOUD.FAIRY.TEST/root/",
+      accessToken: () => "token",
+      deviceId: "device-1",
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        if (request.url.endsWith("/events/state")) {
+          return Response.json({
+            ledger_id: "0198f4de-0114-7000-8000-000000000099",
+            oldest_cursor: 5,
+            latest_cursor: 8,
+          });
+        }
+        return Response.json({ items: [EVENT], next_cursor: 5 });
+      },
+    });
+
+    expect(transport.eventSourceId).toBe("cloud:https://cloud.fairy.test/root");
+    await transport.call("events.state", {});
+    await transport.call("events.list", { cursor: 4, limit: 20 });
+
+    expect(requests.map(({ url }) => url)).toEqual([
+      "https://cloud.fairy.test/root/v1/events/state",
+      "https://cloud.fairy.test/root/v1/events/history?cursor=4&limit=20",
+    ]);
+  });
+
   it("reconnects a live SSE stream after a transient network failure", async () => {
     const requests: Request[] = [];
     let attempt = 0;

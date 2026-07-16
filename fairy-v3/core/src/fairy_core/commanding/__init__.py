@@ -4,6 +4,7 @@ from fairy_core.commanding.models import (
     CommandRun,
     CommandStatus,
     EventEnvelope,
+    EventStreamState,
     EventVisibility,
 )
 from fairy_core.commanding.ports import CommandLedger
@@ -15,6 +16,7 @@ __all__ = [
     "CommandRun",
     "CommandStatus",
     "EventEnvelope",
+    "EventStreamState",
     "EventVisibility",
     "SqlAlchemyCommandLedger",
     "SqliteCommandLedger",

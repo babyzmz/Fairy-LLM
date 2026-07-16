@@ -4,8 +4,11 @@ import asyncio
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
+from fairy_core.commanding.models import EventStreamState
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
+from fairy_core.domain.ids import new_id
 
 from fairy_cloud.sync.fingerprints import canonical_payload_fingerprint
 from fairy_cloud.sync.models import ProjectRevisionState, SyncedEvent
@@ -19,6 +22,7 @@ class InMemorySyncStore:
         self._projects: dict[tuple[str, str], ProjectRevisionState] = {}
         self._events: list[SyncedEvent] = []
         self._event_cursors: dict[tuple[str, str], int] = {}
+        self._ledger_ids: dict[str, str] = {}
         self._task_sequences: dict[tuple[str, str, int], str] = {}
         self._manifests: dict[tuple[str, str, str], dict[str, Any]] = {}
 
@@ -93,6 +97,23 @@ class InMemorySyncStore:
             and event.cursor > cursor
             and event.visibility in visibilities
         ][:limit]
+
+    async def event_stream_state(self, *, user_id: str) -> EventStreamState:
+        async with self._lock:
+            ledger_id = self._ledger_ids.get(user_id)
+            if ledger_id is None:
+                ledger_id = str(new_id())
+                self._ledger_ids[user_id] = ledger_id
+            cursors = [
+                event.cursor
+                for event in self._events
+                if event.user_id == user_id and event.visibility in {"user", "developer"}
+            ]
+            return EventStreamState(
+                ledger_id=UUID(ledger_id),
+                oldest_cursor=min(cursors, default=0),
+                latest_cursor=max(cursors, default=0),
+            )
 
     async def promote_version(
         self,

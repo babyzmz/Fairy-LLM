@@ -292,6 +292,7 @@ async def _delete_tenants(admin_engine, tenant_ids: tuple[str, ...]) -> None:
         "core_checkpoints",
         "core_approvals",
         "core_changesets",
+        "event_ledgers",
         "domain_events",
         "task_event_sequences",
         "command_runs",

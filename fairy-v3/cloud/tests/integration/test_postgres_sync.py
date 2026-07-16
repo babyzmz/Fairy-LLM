@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
+from fairy_core.commanding.schema import event_ledgers
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -126,6 +127,11 @@ async def _run_scenario(dsn: str) -> None:
         synced_events = await store.events_after(user_id=user_id, cursor=0)
         assert [event.event_id for event in synced_events] == [event_id]
         assert synced_events[0].run_id == run_id
+        event_state = await store.event_stream_state(user_id=user_id)
+        reopened_event_state = await store.event_stream_state(user_id=user_id)
+        assert event_state == reopened_event_state
+        assert event_state.oldest_cursor == cursor
+        assert event_state.latest_cursor == cursor
 
         promoted = await store.promote_version(
             user_id=user_id,
@@ -237,11 +243,17 @@ async def _run_scenario(dsn: str) -> None:
         )
         assert next_lease.fence > lease.fence
         assert not await store.release_worker_lease(lease)
+        final_event_state = await store.event_stream_state(user_id=user_id)
+        assert final_event_state.ledger_id == event_state.ledger_id
+        assert final_event_state.latest_cursor > event_state.latest_cursor
     finally:
         async with engine.begin() as connection:
             await connection.execute(delete(outbox).where(outbox.c.tenant_id == tenant_id))
             await connection.execute(
                 delete(domain_events).where(domain_events.c.tenant_id == tenant_id)
+            )
+            await connection.execute(
+                delete(event_ledgers).where(event_ledgers.c.tenant_id == tenant_id)
             )
             await connection.execute(
                 delete(version_candidates).where(

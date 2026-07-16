@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+from fairy_core.commanding.models import EventStreamState
+
 from fairy_cloud.sync.models import ProjectRevisionState, SyncedEvent
 
 
@@ -42,6 +44,8 @@ class SyncStore(Protocol):
         limit: int = 500,
         visibilities: frozenset[str] = frozenset({"user", "developer"}),
     ) -> list[SyncedEvent]: ...
+
+    async def event_stream_state(self, *, user_id: str) -> EventStreamState: ...
 
     async def promote_version(
         self,

@@ -99,3 +99,10 @@ class EventEnvelope:
     payload: dict[str, Any]
     schema_version: int
     created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class EventStreamState:
+    ledger_id: UUID
+    oldest_cursor: int
+    latest_cursor: int

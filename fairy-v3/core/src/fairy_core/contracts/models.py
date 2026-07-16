@@ -851,6 +851,19 @@ class EventEnvelopeModel(ContractModel):
     created_at: datetime
 
 
+class EventStreamStateModel(ContractModel):
+    ledger_id: UUID
+    oldest_cursor: int = Field(ge=0)
+    latest_cursor: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def require_ordered_bounds(self) -> EventStreamStateModel:
+        empty_bounds_mismatch = (self.oldest_cursor == 0) != (self.latest_cursor == 0)
+        if self.oldest_cursor > self.latest_cursor or empty_bounds_mismatch:
+            raise ValueError("event cursor bounds are invalid")
+        return self
+
+
 class ErrorModel(ContractModel):
     code: ErrorCode
     message: str

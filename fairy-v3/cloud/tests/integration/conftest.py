@@ -121,6 +121,7 @@ def _delete_tenants(context: PostgresTestContext) -> None:
         "core_checkpoints",
         "core_approvals",
         "core_changesets",
+        "event_ledgers",
         "domain_events",
         "task_event_sequences",
         "command_runs",

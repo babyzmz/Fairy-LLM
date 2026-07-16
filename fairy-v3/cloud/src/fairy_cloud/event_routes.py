@@ -4,6 +4,8 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated, Any
 
+from fairy_core.contracts.methods import EventPageModel
+from fairy_core.contracts.models import EventStreamStateModel
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
@@ -23,6 +25,45 @@ def install_event_routes(
     identity_for: IdentityResolver,
     event_poll_seconds: float,
 ) -> None:
+    @router.get(
+        "/events/state",
+        operation_id="events.state",
+        response_model=EventStreamStateModel,
+    )
+    async def event_state(request: Request) -> EventStreamStateModel:
+        if sync_store is None:
+            payload = await invoke_async("events.state", {})
+        else:
+            identity = identity_for(request)
+            payload = await sync_store.event_stream_state(user_id=identity.user_id)
+        return EventStreamStateModel.model_validate(payload)
+
+    @router.get(
+        "/events/history",
+        operation_id="events.list",
+        response_model=EventPageModel,
+    )
+    async def event_history(
+        request: Request,
+        cursor: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=2_000)] = 500,
+    ) -> EventPageModel:
+        if sync_store is None:
+            payload = await invoke_async("events.list", {"cursor": cursor, "limit": limit})
+        else:
+            identity = identity_for(request)
+            events = await sync_store.events_after(
+                user_id=identity.user_id,
+                cursor=cursor,
+                limit=limit,
+            )
+            items = [_synced_event_json(event) for event in events]
+            payload = {
+                "items": items,
+                "next_cursor": int(items[-1]["cursor"]) if items else cursor,
+            }
+        return EventPageModel.model_validate(payload)
+
     @router.get(
         "/events",
         response_class=EventSourceResponse,

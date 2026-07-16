@@ -695,6 +695,13 @@ function createClient(
       execute: async () => ({}) as never,
     },
     events: {
+      sourceId: () => "test:app",
+      state: async () => ({
+        ledger_id: "0198f4de-0114-7000-8000-000000000099",
+        oldest_cursor: 0,
+        latest_cursor: 0,
+      }),
+      list: async (cursor = 0) => ({ items: [], next_cursor: cursor }),
       subscribe: () => visibleEvents(),
     },
   };

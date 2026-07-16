@@ -282,6 +282,8 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "documents.import",
         "documents.list",
         "documents.search",
+        "events.list",
+        "events.state",
         "events.subscribe",
         "extensions.catalog.list",
         "edit_recipes.apply",

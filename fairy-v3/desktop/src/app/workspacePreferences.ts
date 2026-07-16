@@ -1,20 +1,42 @@
 import { useCallback, useEffect, useState } from "react";
+import type { EventCheckpoint } from "../core/eventStream";
 
-export function readEventCursor(): number {
+const eventCheckpointKey = "fairy.events.checkpoint.v2";
+const legacyEventCursorKey = "fairy.events.cursor";
+
+export function readEventCheckpoint(): EventCheckpoint | null {
   try {
-    const cursor = Number.parseInt(window.localStorage.getItem("fairy.events.cursor") ?? "0", 10);
-    return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0;
+    const encoded = window.localStorage.getItem(eventCheckpointKey);
+    if (encoded === null) return null;
+    const value: unknown = JSON.parse(encoded);
+    if (!isEventCheckpoint(value)) return null;
+    return value;
   } catch {
-    return 0;
+    return null;
   }
 }
 
-export function writeEventCursor(cursor: number): void {
+export function writeEventCheckpoint(checkpoint: EventCheckpoint): void {
   try {
-    window.localStorage.setItem("fairy.events.cursor", String(cursor));
+    window.localStorage.setItem(eventCheckpointKey, JSON.stringify(checkpoint));
+    window.localStorage.removeItem(legacyEventCursorKey);
   } catch {
     // Event delivery remains correct in memory when persistence is unavailable.
   }
+}
+
+function isEventCheckpoint(value: unknown): value is EventCheckpoint {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<EventCheckpoint>;
+  return (
+    typeof candidate.source_id === "string" &&
+    candidate.source_id.length > 0 &&
+    typeof candidate.ledger_id === "string" &&
+    candidate.ledger_id.length > 0 &&
+    typeof candidate.cursor === "number" &&
+    Number.isSafeInteger(candidate.cursor) &&
+    candidate.cursor >= 0
+  );
 }
 
 export function usePersistedSelection(

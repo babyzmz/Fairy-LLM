@@ -16,6 +16,7 @@ from fairy_core.commanding.schema import (
     command_metadata,
     command_runs,
     domain_events,
+    event_ledgers,
     task_event_sequences,
 )
 from fairy_core.commanding.sqlite_migrations import (
@@ -248,6 +249,10 @@ def _copy_ledger_rows(
     destination: Connection,
     _tenant_id: str,
 ) -> None:
+    ledger_rows = source.execute(select(event_ledgers)).mappings()
+    for row in ledger_rows:
+        _insert_or_verify(destination, event_ledgers, dict(row))
+
     run_rows = source.execute(select(command_runs)).mappings()
     for row in run_rows:
         _insert_or_verify(destination, command_runs, dict(row))

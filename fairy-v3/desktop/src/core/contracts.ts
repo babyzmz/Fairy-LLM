@@ -43,6 +43,7 @@ export type DocumentSearchPage = Schemas["DocumentSearchPageModel"];
 export type DocumentStatus = Schemas["DocumentStatus"];
 export type DocumentVisibility = Schemas["DocumentVisibility"];
 export type EventEnvelope = Schemas["EventEnvelopeModel"];
+export type EventStreamState = Schemas["EventStreamStateModel"];
 export type ExecutionSettings = Schemas["ExecutionSettingsModel"];
 export type ExecutionSettingsUpdateInput = Schemas["ExecutionSettingsUpdateInput"];
 export type ExecutionPlan = Schemas["ExecutionPlanModel"];
@@ -430,6 +431,11 @@ export interface CoreMethodMap {
     result: WorkspaceExport;
   };
   "events.subscribe": { params: { cursor: number }; result: EventBatch };
+  "events.list": {
+    params: { cursor: number; limit: number };
+    result: EventBatch;
+  };
+  "events.state": { params: EmptyParams; result: EventStreamState };
   "memory.observations.create": {
     params: MemoryObserveInput;
     result: MemoryObservation;

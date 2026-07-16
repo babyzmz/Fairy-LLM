@@ -5,8 +5,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
+from fairy_core.commanding.models import EventStreamState
+from fairy_core.commanding.schema import event_ledgers
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
+from fairy_core.domain.ids import new_id
 from fairy_core.storage.schema import workspaces as core_workspaces
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
@@ -540,6 +544,41 @@ class PostgresSyncStore:
             )
             for row in rows
         ]
+
+    async def event_stream_state(self, *, user_id: str) -> EventStreamState:
+        tenant_id = tenant_id_for_user(user_id)
+        async with self._engine.begin() as connection:
+            await _set_tenant(connection, tenant_id)
+            await connection.execute(
+                postgres_insert(event_ledgers)
+                .values(
+                    tenant_id=tenant_id,
+                    ledger_id=str(new_id()),
+                    created_at=datetime.now(UTC),
+                )
+                .on_conflict_do_nothing(index_elements=[event_ledgers.c.tenant_id])
+            )
+            ledger_id = (
+                await connection.execute(
+                    select(event_ledgers.c.ledger_id).where(event_ledgers.c.tenant_id == tenant_id)
+                )
+            ).scalar_one()
+            bounds = (
+                await connection.execute(
+                    select(
+                        func.coalesce(func.min(domain_events.c.cursor), 0),
+                        func.coalesce(func.max(domain_events.c.cursor), 0),
+                    ).where(
+                        domain_events.c.tenant_id == tenant_id,
+                        domain_events.c.visibility.in_(("user", "developer")),
+                    )
+                )
+            ).one()
+        return EventStreamState(
+            ledger_id=UUID(str(ledger_id)),
+            oldest_cursor=int(bounds[0]),
+            latest_cursor=int(bounds[1]),
+        )
 
     async def promote_version(
         self,

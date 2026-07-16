@@ -367,6 +367,7 @@ async def _run_rls_scenario(dsn: str) -> None:
                 "core_preview_sessions",
                 "core_runtime_sessions",
                 "memory_search_documents",
+                "event_ledgers",
                 "domain_events",
                 "core_project_indexes",
                 "core_task_workspaces",

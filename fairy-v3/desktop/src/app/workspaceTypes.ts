@@ -88,7 +88,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   memory: Pick<CoreClient["memory"], "search" | "forget">;
   voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
   systemActions: Pick<CoreClient["systemActions"], "execute">;
-  events: Pick<CoreClient["events"], "subscribe">;
+  events: Pick<CoreClient["events"], "sourceId" | "state" | "list" | "subscribe">;
 }
 
 export interface WorkspaceModel {

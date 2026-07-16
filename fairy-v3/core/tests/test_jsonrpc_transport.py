@@ -376,6 +376,8 @@ def test_jsonrpc_exposes_complete_local_project_loop_and_resumable_events(tmp_pa
         {},
     )["result"]
     events = _call(dispatcher, 9, "events.subscribe", {"cursor": 0})["result"]
+    history = _call(dispatcher, 10, "events.list", {"cursor": 0, "limit": 2})["result"]
+    event_state = _call(dispatcher, 11, "events.state", {})["result"]
 
     assert base["project_root"] != task_context["target_version"]["project_root"]
     assert applied["approval"]["decision"] == "approved"
@@ -388,6 +390,10 @@ def test_jsonrpc_exposes_complete_local_project_loop_and_resumable_events(tmp_pa
     assert all(event["conversation_id"] for event in events["items"])
     assert all(event["task_id"] for event in events["items"])
     assert all(event["visibility"] != "internal" for event in events["items"])
+    assert len(history["items"]) == 2
+    assert history["next_cursor"] == history["items"][-1]["cursor"]
+    assert event_state["oldest_cursor"] == events["items"][0]["cursor"]
+    assert event_state["latest_cursor"] == events["items"][-1]["cursor"]
 
 
 def test_public_method_manifest_is_stable() -> None:
@@ -421,8 +427,10 @@ def test_public_method_manifest_is_stable() -> None:
             "documents.import",
             "documents.list",
             "documents.search",
-                "events.subscribe",
-                "extensions.catalog.list",
+            "events.list",
+            "events.state",
+            "events.subscribe",
+            "extensions.catalog.list",
             "edit_recipes.apply",
             "edit_recipes.create",
             "edit_recipes.discard",
@@ -449,8 +457,8 @@ def test_public_method_manifest_is_stable() -> None:
             "memory.search",
             "memory.snapshots.get",
             "media.audio.generate",
-                "media.images.generate",
-                "media.jobs.list",
+            "media.images.generate",
+            "media.jobs.list",
             "media.videos.cancel",
             "media.videos.get",
             "media.videos.start",
@@ -484,11 +492,11 @@ def test_public_method_manifest_is_stable() -> None:
             "renderer_packs.update",
             "runtimes.get",
             "runtimes.health",
-                "skills.list",
-                "skills.install",
-                "skills.remove",
-                "skills.set_enabled",
-                "skills.update",
+            "skills.list",
+            "skills.install",
+            "skills.remove",
+            "skills.set_enabled",
+            "skills.update",
             "selections.create",
             "system.actions.execute",
             "tasks.archive",

@@ -48,6 +48,16 @@ command_runs = Table(
     ),
 )
 
+event_ledgers = Table(
+    "event_ledgers",
+    command_metadata,
+    Column("tenant_id", String(TENANT_ID_LENGTH), primary_key=True),
+    Column("ledger_id", String(ID_LENGTH), nullable=False),
+    Column("created_at", UTCDateTime(), nullable=False),
+    PrimaryKeyConstraint("tenant_id", name="pk_event_ledgers"),
+    UniqueConstraint("ledger_id", name="uq_event_ledgers_id"),
+)
+
 task_event_sequences = Table(
     "task_event_sequences",
     command_metadata,

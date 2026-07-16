@@ -669,6 +669,10 @@ async def test_sse_uses_cursor_as_event_id_and_resumes_without_duplicates(app) -
         first_stream = await client.get("/v1/events", params={"cursor": 0, "follow": False})
         first_stream.raise_for_status()
         first_events = _parse_sse(first_stream.text)
+        state = await client.get("/v1/events/state")
+        state.raise_for_status()
+        history = await client.get("/v1/events/history", params={"cursor": 0, "limit": 1})
+        history.raise_for_status()
         resume_cursor = first_events[0]["id"]
         resumed_stream = await client.get(
             "/v1/events",
@@ -679,6 +683,10 @@ async def test_sse_uses_cursor_as_event_id_and_resumes_without_duplicates(app) -
         resumed_events = _parse_sse(resumed_stream.text)
 
     assert first_stream.headers["content-type"].startswith("text/event-stream")
+    assert state.json()["oldest_cursor"] == first_events[0]["data"]["cursor"]
+    assert state.json()["latest_cursor"] == first_events[-1]["data"]["cursor"]
+    assert history.json()["items"] == [first_events[0]["data"]]
+    assert history.json()["next_cursor"] == first_events[0]["data"]["cursor"]
     assert first_events[0]["data"]["cursor"] == int(first_events[0]["id"])
     assert all(int(event["id"]) > int(resume_cursor) for event in resumed_events)
     assert len({event["id"] for event in first_events}) == len(first_events)
@@ -709,10 +717,14 @@ async def test_commands_and_event_stream_fail_closed_without_identity(app) -> No
             json={"name": "Unauthorized", "residency": "synced"},
         )
         events = await client.get("/v1/events", params={"follow": False})
+        event_state = await client.get("/v1/events/state")
+        event_history = await client.get("/v1/events/history")
 
     assert health.status_code == 200
     assert command.status_code == 401
     assert events.status_code == 401
+    assert event_state.status_code == 401
+    assert event_history.status_code == 401
 
 
 @pytest.mark.asyncio

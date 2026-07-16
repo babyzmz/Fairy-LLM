@@ -131,6 +131,11 @@ async def test_memory_sync_store_scopes_same_ids_by_tenant() -> None:
     assert [event.payload for event in await store.events_after(user_id="user-b", cursor=0)] == [
         {"owner": "b"}
     ]
+    state_a = await store.event_stream_state(user_id="user-a")
+    state_b = await store.event_stream_state(user_id="user-b")
+    assert state_a.ledger_id != state_b.ledger_id
+    assert (state_a.oldest_cursor, state_a.latest_cursor) == (cursor_a, cursor_a)
+    assert (state_b.oldest_cursor, state_b.latest_cursor) == (cursor_b, cursor_b)
     with pytest.raises(IdempotencyConflictError, match="task sequence"):
         await store.append_event(
             event_id="different-event",

@@ -41,7 +41,7 @@ from fairy_core.contracts.history import (
     TaskMetadataUpdateInput,
 )
 from fairy_core.contracts.media import MediaJobListInput
-from fairy_core.contracts.methods import CORE_METHODS, EventSubscribeInput
+from fairy_core.contracts.methods import CORE_METHODS, EventListInput, EventSubscribeInput
 from fairy_core.contracts.models import (
     ArtifactIdInput,
     ArtifactListInput,
@@ -386,6 +386,8 @@ class CoreService:
             "documents.list": self._list_documents,
             "documents.search": self._search_documents,
             "events.subscribe": self._subscribe_events,
+            "events.list": self._list_events,
+            "events.state": self._event_stream_state,
             **self._extension_service.handlers,
             **planning_service_handlers(self._execution_planning),
             "health": self._health,
@@ -1077,15 +1079,31 @@ class CoreService:
 
     def _subscribe_events(self, request: BaseModel) -> dict[str, Any]:
         validated = cast(EventSubscribeInput, request)
+        return self._event_page(cursor=validated.cursor, limit=500)
+
+    def _list_events(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(EventListInput, request)
+        return self._event_page(cursor=validated.cursor, limit=validated.limit)
+
+    def _event_page(self, *, cursor: int, limit: int) -> dict[str, Any]:
         with self._unit_of_work_factory() as unit_of_work:
             events = unit_of_work.commands.events_after(
-                cursor=validated.cursor,
+                cursor=cursor,
+                limit=limit,
                 allowed_visibilities={EventVisibility.USER, EventVisibility.DEVELOPER},
             )
         return {
             "items": events,
-            "next_cursor": events[-1].cursor if events else validated.cursor,
+            "next_cursor": events[-1].cursor if events else cursor,
         }
+
+    def _event_stream_state(self, _request: BaseModel) -> Any:
+        with self._unit_of_work_factory() as unit_of_work:
+            state = unit_of_work.commands.stream_state(
+                allowed_visibilities={EventVisibility.USER, EventVisibility.DEVELOPER}
+            )
+            unit_of_work.commit()
+        return state
 
 
 __all__ = ["CoreMethodNotFoundError", "CoreResponseValidationError", "CoreService"]

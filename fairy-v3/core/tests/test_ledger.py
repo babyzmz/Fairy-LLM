@@ -291,6 +291,66 @@ def test_current_cursor_reads_zero_and_latest_tenant_event(tmp_path: Path) -> No
     assert ledger.current_cursor() == latest
 
 
+def test_event_stream_identity_survives_restart_and_changes_for_a_new_database(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "ledger.db"
+    first = SqliteCommandLedger(path)
+    first_state = first.stream_state(
+        allowed_visibilities={EventVisibility.USER, EventVisibility.DEVELOPER}
+    )
+    first.close()
+
+    reopened = SqliteCommandLedger(path)
+    reopened_state = reopened.stream_state(
+        allowed_visibilities={EventVisibility.USER, EventVisibility.DEVELOPER}
+    )
+    reopened.close()
+
+    replacement = SqliteCommandLedger(tmp_path / "replacement.db")
+    replacement_state = replacement.stream_state(
+        allowed_visibilities={EventVisibility.USER, EventVisibility.DEVELOPER}
+    )
+    replacement.close()
+
+    assert reopened_state == first_state
+    assert replacement_state.ledger_id != first_state.ledger_id
+    assert first_state.oldest_cursor == first_state.latest_cursor == 0
+
+
+def test_event_history_pages_are_bounded_and_report_visible_cursor_bounds(tmp_path: Path) -> None:
+    ledger = SqliteCommandLedger(tmp_path / "ledger.db")
+    for index in range(3):
+        ledger.create_run(
+            command_name="project.read",
+            actor="agent",
+            scope=_scope(tmp_path / str(index)),
+            input_payload={},
+            risk_level=RiskLevel.LOW,
+            idempotency_key=f"event-page:{index}",
+        )
+
+    state = ledger.stream_state(
+        allowed_visibilities={EventVisibility.USER, EventVisibility.DEVELOPER}
+    )
+    first = ledger.events_after(
+        cursor=0,
+        limit=2,
+        allowed_visibilities={EventVisibility.USER, EventVisibility.DEVELOPER},
+    )
+    second = ledger.events_after(
+        cursor=first[-1].cursor,
+        limit=2,
+        allowed_visibilities={EventVisibility.USER, EventVisibility.DEVELOPER},
+    )
+    ledger.close()
+
+    assert len(first) == 2
+    assert len(second) == 1
+    assert state.oldest_cursor == first[0].cursor
+    assert state.latest_cursor == second[-1].cursor
+
+
 def test_idempotency_key_returns_existing_run_without_duplicate_event(tmp_path: Path) -> None:
     ledger = SqliteCommandLedger(tmp_path / "ledger.db")
     scope = _scope(tmp_path)

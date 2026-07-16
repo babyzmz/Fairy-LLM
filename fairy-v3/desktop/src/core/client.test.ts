@@ -456,6 +456,20 @@ describe("CoreClient", () => {
     expect(transport.subscriptions).toEqual([{ cursor: 7, signal: controller.signal }]);
   });
 
+  it("exposes event identity and bounded history through the shared client", async () => {
+    const transport = new RecordingTransport();
+    const client = new CoreClient(transport);
+
+    expect(client.events.sourceId()).toBe("core:default");
+    await client.events.state();
+    await client.events.list(11, 25);
+
+    expect(transport.requests).toEqual([
+      { method: "events.state", params: {} },
+      { method: "events.list", params: { cursor: 11, limit: 25 } },
+    ]);
+  });
+
   it("exposes media generation through the shared transport", async () => {
     const transport = new RecordingTransport();
     const client = new CoreClient(transport);

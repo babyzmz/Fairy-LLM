@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAssistantTurn } from "../chat/useAssistantTurn";
 import { useTurnTraces } from "../chat/useTurnTraces";
 import type { Conversation, EventEnvelope, McpToolPolicyInput, Project, Task } from "../core/client";
+import { runEventDelivery } from "../core/eventStream";
 import { CoreRpcError } from "../core/tauriTransport";
 import type { McpServerDraft } from "../settings/extensionTypes";
 import {
@@ -16,11 +17,11 @@ import { useTaskMediaJobs } from "../media/useTaskMediaJobs";
 import type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 export type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 import {
-  readEventCursor,
+  readEventCheckpoint,
   usePersistedBoolean,
   usePersistedEnum,
   usePersistedSelection,
-  writeEventCursor,
+  writeEventCheckpoint,
 } from "./workspacePreferences";
 import { equalOverrides, extensionUpdateKey, permissionUpdateKey, requireMcpServer } from "./workspaceCommandKeys";
 import { createWorkspaceFileActions } from "./workspaceFileActions";
@@ -46,7 +47,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   );
   const [taskSelection, setTaskSelection] = usePersistedSelection("fairy.workspace.task");
   const [allEvents, setAllEvents] = useState<EventEnvelope[]>([]);
-  const eventCursor = useRef(readEventCursor());
+  const eventCheckpoint = useRef(readEventCheckpoint());
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionErrorCode, setActionErrorCode] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
@@ -338,31 +339,42 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     const controller = new AbortController();
     void (async () => {
       try {
-        for await (const event of client.events.subscribe(eventCursor.current, {
-          signal: controller.signal,
-        })) {
-          if (event.cursor <= eventCursor.current) continue;
-          eventCursor.current = event.cursor;
-          writeEventCursor(event.cursor);
-          if (event.visibility !== "internal") {
-            setAllEvents((current) => appendEvent(current, event));
-          }
-          if (terminalAssistantEvents.has(event.event_type) || event.event_type === "message.created") {
-            void queryClient.invalidateQueries({
-              queryKey: workspaceKey,
-              predicate: (query) => ["messages", "project-messages"].includes(String(query.queryKey[1])),
-            });
-            void queryClient.invalidateQueries({ queryKey: [...workspaceKey, "tasks"] });
-          } else if (event.event_type !== "assistant.message.delta") {
-            void queryClient.invalidateQueries({
-              queryKey: workspaceKey,
-              predicate: (query) =>
-                !["health", "messages", "project-messages", "providers", "provider-health"].includes(
-                  String(query.queryKey[1]),
-                ),
-            });
-          }
-        }
+        await runEventDelivery(
+          {
+            sourceId: client.events.sourceId(),
+            state: client.events.state,
+            list: client.events.list,
+            subscribe: client.events.subscribe,
+          },
+          {
+            checkpoint: eventCheckpoint.current,
+            signal: controller.signal,
+            onCheckpoint(checkpoint) {
+              eventCheckpoint.current = checkpoint;
+              writeEventCheckpoint(checkpoint);
+            },
+            onEvent(event) {
+              if (event.visibility !== "internal") {
+                setAllEvents((current) => appendEvent(current, event));
+              }
+              if (terminalAssistantEvents.has(event.event_type) || event.event_type === "message.created") {
+                void queryClient.invalidateQueries({
+                  queryKey: workspaceKey,
+                  predicate: (query) => ["messages", "project-messages"].includes(String(query.queryKey[1])),
+                });
+                void queryClient.invalidateQueries({ queryKey: [...workspaceKey, "tasks"] });
+              } else if (event.event_type !== "assistant.message.delta") {
+                void queryClient.invalidateQueries({
+                  queryKey: workspaceKey,
+                  predicate: (query) =>
+                    !["health", "messages", "project-messages", "providers", "provider-health"].includes(
+                      String(query.queryKey[1]),
+                    ),
+                });
+              }
+            },
+          },
+        );
       } catch (error) {
         if (!controller.signal.aborted) {
           setActionError(errorMessage(error));

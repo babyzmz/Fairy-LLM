@@ -52,6 +52,8 @@ export class CoreRpcError extends Error {
 }
 
 export class TauriCoreTransport implements CoreTransport {
+  readonly eventSourceId = "local:stdio";
+
   private requestId = 0;
 
   constructor(private readonly invoke: InvokeFunction) {}

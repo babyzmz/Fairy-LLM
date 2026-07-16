@@ -3,6 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import { CoreRpcError, TauriCoreTransport } from "./tauriTransport";
 
 describe("TauriCoreTransport", () => {
+  it("identifies the local stdio event source", () => {
+    const transport = new TauriCoreTransport(async () => undefined as never);
+
+    expect(transport.eventSourceId).toBe("local:stdio");
+  });
+
   it("routes every local call through the single core_rpc command", async () => {
     const invoke = vi.fn().mockResolvedValue({
       jsonrpc: "2.0",

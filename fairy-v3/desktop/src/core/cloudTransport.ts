@@ -196,6 +196,12 @@ const routes = {
     ),
   "memory.projection.health": (params) =>
     get(`/v1/memory/projection/health?task_id=${stringParameter(params, "task_id")}`),
+  "events.state": () => get("/v1/events/state"),
+  "events.list": (params) =>
+    get(
+      `/v1/events/history?cursor=${integerParameter(params, "cursor")}` +
+        `&limit=${integerParameter(params, "limit")}`,
+    ),
   "events.subscribe": (params) => get(`/v1/events?cursor=${integerParameter(params, "cursor")}&follow=false`),
 } satisfies Record<CoreMethodName, RouteBuilder>;
 
@@ -240,13 +246,17 @@ export class CloudCoreError extends Error {
 }
 
 export class CloudCoreTransport implements CoreTransport {
+  readonly eventSourceId: string;
+
   private readonly baseUrl: string;
   private readonly accessToken: AccessTokenProvider;
   private readonly deviceId: string;
   private readonly fetcher: typeof fetch;
 
   constructor(options: CloudCoreTransportOptions) {
-    this.baseUrl = `${options.baseUrl.replace(/\/+$/, "")}/`;
+    const normalizedBaseUrl = normalizeBaseUrl(options.baseUrl);
+    this.baseUrl = `${normalizedBaseUrl}/`;
+    this.eventSourceId = `cloud:${normalizedBaseUrl}`;
     this.accessToken = options.accessToken;
     this.deviceId = options.deviceId;
     this.fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
@@ -330,6 +340,14 @@ export class CloudCoreTransport implements CoreTransport {
       signal: options.signal,
     });
   }
+}
+
+function normalizeBaseUrl(value: string): string {
+  const parsed = new URL(value);
+  parsed.hash = "";
+  parsed.search = "";
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  return parsed.toString().replace(/\/+$/, "");
 }
 
 function isRetryableEventStreamError(error: unknown): boolean {

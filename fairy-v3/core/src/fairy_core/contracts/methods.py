@@ -102,6 +102,7 @@ from fairy_core.contracts.models import (
     DocumentSearchInput,
     DocumentSearchPageModel,
     EventEnvelopeModel,
+    EventStreamStateModel,
     ExecutionSettingsModel,
     ExecutionSettingsUpdateInput,
     HealthModel,
@@ -211,6 +212,10 @@ class EmptyInput(ContractModel):
 
 class EventSubscribeInput(ContractModel):
     cursor: int = Field(default=0, ge=0)
+
+
+class EventListInput(EventSubscribeInput):
+    limit: int = Field(default=500, ge=1, le=2_000)
 
 
 class EventPageModel(ContractModel):
@@ -326,6 +331,16 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "events.subscribe",
             EventSubscribeInput,
             EventPageModel,
+        ),
+        "events.list": CoreMethod(
+            "events.list",
+            EventListInput,
+            EventPageModel,
+        ),
+        "events.state": CoreMethod(
+            "events.state",
+            EmptyInput,
+            EventStreamStateModel,
         ),
         "execution_plans.create": CoreMethod(
             "execution_plans.create",
@@ -757,6 +772,7 @@ __all__ = [
     "CORE_METHODS",
     "CoreMethod",
     "EmptyInput",
+    "EventListInput",
     "EventPageModel",
     "EventSubscribeInput",
 ]
