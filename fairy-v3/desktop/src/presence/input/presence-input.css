@@ -23,7 +23,12 @@
   border-radius: 50%;
   background: transparent;
   outline: none;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
+}
+
+.presence-input-window[data-moving="true"] .presence-core-hit-target {
+  cursor: grabbing;
 }
 
 .presence-input-window[data-expansion-direction="left"] .presence-core-hit-target {
@@ -73,11 +78,7 @@
   align-items: center;
   gap: 7px;
   padding: 5px 7px;
-  border: 0;
-  border-radius: 32px;
   background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
 }
 
 .presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-input {
@@ -89,7 +90,7 @@
   order: 3;
 }
 
-.presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-input textarea {
+.presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-input-field {
   order: 2;
 }
 
@@ -97,20 +98,25 @@
   order: 1;
 }
 
-.presence-input-window[data-layout="compact"] .presence-input textarea {
-  min-height: 38px;
-  max-height: 38px;
-  padding: 9px 1px;
+.presence-input-window[data-layout="compact"] .presence-input-field {
+  width: 100%;
+  height: 52px;
+  min-height: 52px;
+  border-radius: 26px;
+}
+
+.presence-input-window[data-layout="compact"] .presence-input-field textarea {
+  min-height: 52px;
+  max-height: 52px;
+  padding: 15px 14px;
   overflow: hidden;
   color: #f3f8f8;
   font-size: 13px;
-  text-shadow:
-    0 1px 2px rgb(0 0 0 / 88%),
-    0 0 7px rgb(0 0 0 / 56%);
+  text-shadow: 0 1px 1px rgb(0 0 0 / 64%);
   white-space: nowrap;
 }
 
-.presence-input-window[data-layout="compact"] .presence-input textarea::placeholder {
+.presence-input-window[data-layout="compact"] .presence-input-field textarea::placeholder {
   color: rgb(239 248 248 / 84%);
   opacity: 1;
 }

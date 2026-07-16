@@ -6,6 +6,8 @@ param(
     [ValidateSet("auto", "power_saving", "high_performance")]
     [string]$GpuPreference = "auto",
     [int]$StartupTimeoutSeconds = 30,
+    [switch]$VerifyRegressions,
+    [switch]$FreshWebViewProfile,
     [switch]$KeepRunning
 )
 
@@ -13,7 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($Executable)) {
-    $Executable = Join-Path $root "desktop\src-tauri\target\release\fairy.exe"
+    $Executable = Join-Path $root "desktop\src-tauri\target\debug\fairy.exe"
 }
 
 if ($env:OS -ne "Windows_NT") {
@@ -32,6 +34,7 @@ using System.Text;
 public sealed class FairyWindowInfo {
     public IntPtr Handle { get; set; }
     public string Title { get; set; }
+    public string ClassName { get; set; }
     public bool Visible { get; set; }
     public int X { get; set; }
     public int Y { get; set; }
@@ -56,6 +59,8 @@ public static class FairyNativeProbe {
     private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetWindowTextW(IntPtr window, StringBuilder text, int capacity);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassNameW(IntPtr window, StringBuilder text, int capacity);
     [DllImport("user32.dll")]
     private static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")]
@@ -73,9 +78,29 @@ public static class FairyNativeProbe {
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(
+        IntPtr window,
+        IntPtr insertAfter,
+        int x,
+        int y,
+        int width,
+        int height,
+        uint flags
+    );
+    [DllImport("user32.dll")]
     public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")]
+    private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+    [DllImport("user32.dll")]
     public static extern bool PostMessageW(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")]
+    private static extern int GetWindowRgn(IntPtr window, IntPtr region);
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+    [DllImport("gdi32.dll")]
+    private static extern bool PtInRegion(IntPtr region, int x, int y);
+    [DllImport("gdi32.dll")]
+    private static extern bool DeleteObject(IntPtr value);
 
     public static List<FairyWindowInfo> WindowsForProcess(int expectedProcessId) {
         var result = new List<FairyWindowInfo>();
@@ -84,12 +109,15 @@ public static class FairyNativeProbe {
             GetWindowThreadProcessId(window, out processId);
             if (processId != (uint)expectedProcessId) return true;
             var text = new StringBuilder(512);
+            var className = new StringBuilder(256);
             GetWindowTextW(window, text, text.Capacity);
+            GetClassNameW(window, className, className.Capacity);
             RECT rectangle;
             GetWindowRect(window, out rectangle);
             result.Add(new FairyWindowInfo {
                 Handle = window,
                 Title = text.ToString(),
+                ClassName = className.ToString(),
                 Visible = IsWindowVisible(window),
                 X = rectangle.Left,
                 Y = rectangle.Top,
@@ -100,6 +128,18 @@ public static class FairyNativeProbe {
             return true;
         }, IntPtr.Zero);
         return result;
+    }
+
+    public static bool WindowRegionContainsCenter(FairyWindowInfo window) {
+        var region = CreateRectRgn(0, 0, Math.Max(1, window.Width), Math.Max(1, window.Height));
+        if (region == IntPtr.Zero) return false;
+        try {
+            if (GetWindowRgn(window.Handle, region) == 0) return false;
+            return PtInRegion(region, window.Width / 2, window.Height / 2);
+        }
+        finally {
+            DeleteObject(region);
+        }
     }
 
     public static bool EnablePerMonitorDpiAwareness() {
@@ -113,6 +153,30 @@ public static class FairyNativeProbe {
     public static bool Focus(IntPtr window) {
         ShowWindow(window, 9);
         return SetForegroundWindow(window);
+    }
+
+    public static bool MoveWithoutActivating(IntPtr window, int x, int y) {
+        return SetWindowPos(window, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010);
+    }
+
+    public static void LeftButtonDown() {
+        mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+    }
+
+    public static void LeftButtonUp() {
+        mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+    }
+
+    public static bool Hide(IntPtr window) {
+        return ShowWindow(window, 0);
+    }
+
+    public static bool ShowWithoutActivating(IntPtr window) {
+        return ShowWindow(window, 4);
+    }
+
+    public static bool Minimize(IntPtr window) {
+        return ShowWindow(window, 6);
     }
 }
 '@
@@ -132,6 +196,13 @@ function Get-Window([int]$ProcessId, [string]$Title) {
         Select-Object -First 1
 }
 
+function Get-LensWindows([int]$ProcessId) {
+    return @(
+        [FairyNativeProbe]::WindowsForProcess($ProcessId) |
+            Where-Object ClassName -eq "FairyLensHost"
+    )
+}
+
 function Wait-Window([int]$ProcessId, [string]$Title, [int]$TimeoutSeconds) {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
@@ -140,7 +211,9 @@ function Wait-Window([int]$ProcessId, [string]$Title, [int]$TimeoutSeconds) {
         Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $deadline)
     $available = [FairyNativeProbe]::WindowsForProcess($ProcessId) |
-        ForEach-Object { "'$($_.Title)' visible=$($_.Visible) hwnd=$($_.Handle)" }
+        ForEach-Object {
+            "'$($_.Title)' class=$($_.ClassName) visible=$($_.Visible) rect=[$($_.X),$($_.Y),$($_.Width),$($_.Height)] hwnd=$($_.Handle)"
+        }
     throw "Timed out waiting for native window: $Title; available: $($available -join '; ')"
 }
 
@@ -161,7 +234,16 @@ function Hold-Cursor([int]$X, [int]$Y, [int]$DurationMilliseconds) {
 function Stop-ProcessTree([System.Diagnostics.Process]$Target) {
     $Target.Refresh()
     if ($Target.HasExited) { return }
-    & taskkill.exe /PID $Target.Id /T /F 2>$null | Out-Null
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        & taskkill.exe /PID $Target.Id /T /F 2>&1 | Out-Null
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $Target.Refresh()
+    if ($Target.HasExited) { return }
     if (-not $Target.WaitForExit(5000)) {
         $Target.Kill()
         $Target.WaitForExit()
@@ -183,18 +265,31 @@ function Remove-VerifiedScratchDirectory([string]$Path, [string]$ExpectedPrefix)
     if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "Refusing to remove a reparse-point Presence scratch directory: $resolved"
     }
-    Remove-Item -LiteralPath $resolved -Recurse -Force
+    for ($attempt = 1; $attempt -le 20; $attempt += 1) {
+        try {
+            Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop
+            return
+        }
+        catch {
+            if ($attempt -eq 20) {
+                Write-Warning "Presence scratch cleanup is deferred because WebView2 still holds a crash dump: $resolved"
+                return
+            }
+            Start-Sleep -Milliseconds 250
+        }
+    }
 }
 
 $scratchPrefix = "fairy-presence-native-"
 $scratch = [System.IO.Path]::GetFullPath(
     (Join-Path ([System.IO.Path]::GetTempPath()) ($scratchPrefix + [guid]::NewGuid().ToString("N")))
 )
-$localAppData = Join-Path $scratch "LocalAppData"
-$appData = Join-Path $scratch "AppData"
 $fairyData = Join-Path $scratch "FairyData"
 $webViewData = Join-Path $scratch "WebView2"
-New-Item -ItemType Directory -Force -Path $localAppData, $appData, $fairyData, $webViewData | Out-Null
+New-Item -ItemType Directory -Force -Path $fairyData | Out-Null
+if ($FreshWebViewProfile) {
+    New-Item -ItemType Directory -Force -Path $webViewData | Out-Null
+}
 $port = Get-AvailablePort
 $process = $null
 $resolvedExecutable = (Resolve-Path -LiteralPath $Executable).Path
@@ -221,10 +316,6 @@ try {
     $startInfo.FileName = $resolvedExecutable
     $startInfo.WorkingDirectory = Split-Path -Parent $startInfo.FileName
     $startInfo.UseShellExecute = $false
-    $startInfo.Environment["LOCALAPPDATA"] = $localAppData
-    $startInfo.Environment["APPDATA"] = $appData
-    $startInfo.Environment["FAIRY_DESKTOP_DATA_DIR"] = $fairyData
-    $startInfo.Environment["WEBVIEW2_USER_DATA_FOLDER"] = $webViewData
     $webViewArguments = "--remote-debugging-port=$port"
     if ($GpuPreference -eq "power_saving") {
         $webViewArguments += " --force_low_power_gpu"
@@ -234,19 +325,74 @@ try {
     if ($ExpectedMode -eq "compatibility") {
         $webViewArguments += " --disable-gpu --disable-software-rasterizer"
     }
-    $startInfo.Environment["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = $webViewArguments
-    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $childEnvironment = @{
+        FAIRY_DESKTOP_DATA_DIR = $fairyData
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $webViewArguments
+    }
+    if ($FreshWebViewProfile) {
+        $childEnvironment.WEBVIEW2_USER_DATA_FOLDER = $webViewData
+    } else {
+        $childEnvironment.WEBVIEW2_USER_DATA_FOLDER = $null
+    }
+    if ([string]::IsNullOrWhiteSpace($env:FAIRY_CORE_ROOT) -and
+        $resolvedExecutable -like "*\target\debug\fairy.exe") {
+        $childEnvironment.FAIRY_CORE_ROOT = (Resolve-Path -LiteralPath (Join-Path $root "core")).Path
+    }
+    $previousChildEnvironment = @{}
+    try {
+        foreach ($entry in $childEnvironment.GetEnumerator()) {
+            $previousChildEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable(
+                $entry.Key,
+                [EnvironmentVariableTarget]::Process
+            )
+            $nextValue = if ($null -eq $entry.Value) { $null } else { [string]$entry.Value }
+            [Environment]::SetEnvironmentVariable(
+                $entry.Key,
+                $nextValue,
+                [EnvironmentVariableTarget]::Process
+            )
+        }
+        $process = [System.Diagnostics.Process]::Start($startInfo)
+    }
+    finally {
+        foreach ($entry in $previousChildEnvironment.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable(
+                $entry.Key,
+                $entry.Value,
+                [EnvironmentVariableTarget]::Process
+            )
+        }
+    }
     if ($null -eq $process) { throw "Fairy process did not start" }
 
     $main = Wait-Window $process.Id "Fairy" $StartupTimeoutSeconds
     $render = Wait-Window $process.Id "Fairy Presence Renderer" $StartupTimeoutSeconds
-    $input = Wait-Window $process.Id "Fairy Presence Input" $StartupTimeoutSeconds
-    Hold-Cursor ($main.X + 80) ($main.Y + 80) 2000
+    $inputWindow = Wait-Window $process.Id "Fairy Presence Input" $StartupTimeoutSeconds
+    $cursorInjectionAvailable = [FairyNativeProbe]::SetCursorPos(($main.X + 80), ($main.Y + 80))
+    if ($cursorInjectionAvailable) {
+        Hold-Cursor ($main.X + 80) ($main.Y + 80) 2000
+    } else {
+        Start-Sleep -Milliseconds 2000
+    }
     $main = Get-Window $process.Id "Fairy"
     $render = Get-Window $process.Id "Fairy Presence Renderer"
-    $input = Get-Window $process.Id "Fairy Presence Input"
-    if (-not $main.Visible -or -not $render.Visible -or $input.Visible) {
-        throw "Unexpected passive Fairy visibility: main=$($main.Visible), render=$($render.Visible), input=$($input.Visible)"
+    $inputWindow = Get-Window $process.Id "Fairy Presence Input"
+    if ($null -eq $main -or $null -eq $render -or $null -eq $inputWindow) {
+        $process.Refresh()
+        throw "A required native window disappeared during startup: main=$($null -ne $main), render=$($null -ne $render), input=$($null -ne $inputWindow), process_exited=$($process.HasExited)"
+    }
+    if (-not $main.Visible -or -not $render.Visible -or -not $inputWindow.Visible) {
+        throw "Unexpected passive Fairy visibility: main=$($main.Visible), render=$($render.Visible), input=$($inputWindow.Visible)"
+    }
+    $initialScale = [Math]::Max(0.5, $render.Width / 640.0)
+    $expectedCoreExtent = [int][Math]::Round(144 * $initialScale)
+    if ([Math]::Abs($inputWindow.Width - $expectedCoreExtent) -gt 2 -or
+        [Math]::Abs($inputWindow.Height - $expectedCoreExtent) -gt 2) {
+        throw "Passive pet-input is not the core interaction proxy: size=[$($inputWindow.Width),$($inputWindow.Height)], expected=$expectedCoreExtent"
+    }
+    $legacyLenses = @(Get-LensWindows $process.Id)
+    if ($legacyLenses.Count -gt 0) {
+        throw "PRESENCE_DOM_REFRACTION_RISK: a legacy Magnifier surface can duplicate input text"
     }
 
     $WS_EX_TOPMOST = 0x00000008L
@@ -256,8 +402,8 @@ try {
             throw ("pet-render is missing extended style 0x{0:X}" -f $mask)
         }
     }
-    if (-not (Test-Style $input.ExtendedStyle $WS_EX_TOPMOST)) {
-        throw ("pet-input did not start passive and topmost: extended_style=0x{0:X}" -f $input.ExtendedStyle)
+    if (-not (Test-Style $inputWindow.ExtendedStyle $WS_EX_TOPMOST)) {
+        throw ("pet-input did not start passive and topmost: extended_style=0x{0:X}" -f $inputWindow.ExtendedStyle)
     }
 
     $probeScript = Join-Path $root "desktop\scripts\probe-presence-webview.mjs"
@@ -287,36 +433,191 @@ try {
         }
     )
     $activeAnchor = $null
-    foreach ($candidate in $candidateAnchors) {
-        Hold-Cursor $candidate.X $candidate.Y 900
-        $input = Get-Window $process.Id "Fairy Presence Input"
-        if ($null -ne $input -and $input.Visible) {
-            $activeAnchor = $candidate
-            break
+    $hoverDidNotFocus = $null
+    if ($cursorInjectionAvailable) {
+        foreach ($candidate in $candidateAnchors) {
+            Hold-Cursor $candidate.X $candidate.Y 900
+            $inputWindow = Get-Window $process.Id "Fairy Presence Input"
+            if ($null -ne $inputWindow -and $inputWindow.Visible -and $inputWindow.Width -gt $expectedCoreExtent) {
+                $activeAnchor = $candidate
+                break
+            }
         }
-    }
-    if ($null -eq $activeAnchor) {
-        $debugOutput = & node $probeScript --port $port --expected-mode $ExpectedMode --duration-seconds 0
-        $debugProbe = if ($LASTEXITCODE -eq 0) { ($debugOutput -join "`n") | ConvertFrom-Json } else { $null }
-        $phase = if ($null -ne $debugProbe) { $debugProbe.final.interaction_phase } else { "unavailable" }
-        $band = if ($null -ne $debugProbe) { $debugProbe.final.cursor_band } else { "unavailable" }
-        $placement = if ($null -ne $debugProbe) { $debugProbe.final.placement | ConvertTo-Json -Compress } else { "unavailable" }
-        $cursor = if ($null -ne $debugProbe) { $debugProbe.final.cursor_point | ConvertTo-Json -Compress } else { "unavailable" }
-        $distance = if ($null -ne $debugProbe) { $debugProbe.final.cursor_distance } else { "unavailable" }
-        throw "Hover did not reveal pet-input: phase=$phase, cursor_band=$band, cursor=$cursor, distance=$distance, placement=$placement, render=[$($render.X),$($render.Y),$($render.Width),$($render.Height)]"
-    }
-    if ([FairyNativeProbe]::GetForegroundWindow() -ne $foregroundBeforeHover) {
-        throw "Hover stole keyboard focus"
+        if ($null -eq $activeAnchor) {
+            $debugOutput = & node $probeScript --port $port --expected-mode $ExpectedMode --duration-seconds 0
+            $debugProbe = if ($LASTEXITCODE -eq 0) { ($debugOutput -join "`n") | ConvertFrom-Json } else { $null }
+            $phase = if ($null -ne $debugProbe) { $debugProbe.final.interaction_phase } else { "unavailable" }
+            $band = if ($null -ne $debugProbe) { $debugProbe.final.cursor_band } else { "unavailable" }
+            $placement = if ($null -ne $debugProbe) { $debugProbe.final.placement | ConvertTo-Json -Compress } else { "unavailable" }
+            $cursor = if ($null -ne $debugProbe) { $debugProbe.final.cursor_point | ConvertTo-Json -Compress } else { "unavailable" }
+            $distance = if ($null -ne $debugProbe) { $debugProbe.final.cursor_distance } else { "unavailable" }
+            throw "Hover did not reveal pet-input: phase=$phase, cursor_band=$band, cursor=$cursor, distance=$distance, placement=$placement, render=[$($render.X),$($render.Y),$($render.Width),$($render.Height)]"
+        }
+        $hoverDidNotFocus = [FairyNativeProbe]::GetForegroundWindow() -eq $foregroundBeforeHover
+        if (-not $hoverDidNotFocus) {
+            throw "Hover stole keyboard focus"
+        }
+    } else {
+        $activeAnchor = $candidateAnchors[0]
+        $inputProbeScript = Join-Path $root "desktop\scripts\probe-presence-input.mjs"
+        $openInputOutput = & node $inputProbeScript --port $port --action open
+        if ($LASTEXITCODE -ne 0) { throw "WebView2 could not open pet-input for native regression checks" }
+        $openInput = ($openInputOutput -join "`n") | ConvertFrom-Json
+        if (-not $openInput.input_open -or $openInput.layout -ne "compact") {
+            throw "WebView2 did not establish the compact pet-input layout"
+        }
+        Start-Sleep -Milliseconds 250
     }
     $rootAtCore = [FairyNativeProbe]::RootWindowAt($activeAnchor.X, $activeAnchor.Y)
     if ($rootAtCore -eq $render.Handle) {
         throw "pet-render intercepted pointer hit testing"
     }
+    $activeLenses = @(Get-LensWindows $process.Id)
+    if ($activeLenses.Count -gt 0) {
+        throw "PRESENCE_DOM_REFRACTION_RISK: compact input created a legacy Magnifier surface"
+    }
 
-    Hold-Cursor ($main.X + 80) ($main.Y + 80) 2000
-    $input = Get-Window $process.Id "Fairy Presence Input"
-    if ($null -eq $input -or $input.Visible) {
-        throw "pet-input did not return to its hidden passive state"
+    $inputProbe = $null
+    $menuProbe = $null
+    $renderDeltaX = $null
+    $renderDeltaY = $null
+    $inputDeltaX = $null
+    $inputDeltaY = $null
+    $renderLifecycleIndependent = $null
+    if ($VerifyRegressions) {
+        $inputProbeScript = Join-Path $root "desktop\scripts\probe-presence-input.mjs"
+        $menuProbeOutput = & node $inputProbeScript --port $port --action menu
+        if ($LASTEXITCODE -ne 0) { throw "WebView2 companion menu regression probe failed" }
+        $menuProbe = ($menuProbeOutput -join "`n") | ConvertFrom-Json
+        $requiredMenuItems = @("New chat", "Open Fairy", "Settings", "Move Fairy", "Reset position", "Exit Fairy")
+        $missingMenuItems = @($requiredMenuItems | Where-Object { $_ -notin $menuProbe.items })
+        if (-not $menuProbe.visible -or $missingMenuItems.Count -gt 0) {
+            throw "PRESENCE_CONTEXT_MENU_UNAVAILABLE: companion context menu is incomplete"
+        }
+        $openInputOutput = & node $inputProbeScript --port $port --action open
+        if ($LASTEXITCODE -ne 0) { throw "WebView2 could not reopen pet-input after menu probe" }
+        $compactDeadline = [DateTime]::UtcNow.AddSeconds(5)
+        do {
+            $compactInput = Get-Window $process.Id "Fairy Presence Input"
+            if ($null -ne $compactInput -and $compactInput.Width -gt ($expectedCoreExtent + 20)) {
+                break
+            }
+            Start-Sleep -Milliseconds 50
+        } while ([DateTime]::UtcNow -lt $compactDeadline)
+        if ($null -eq $compactInput -or $compactInput.Width -le ($expectedCoreExtent + 20)) {
+            throw "pet-input did not reach its compact native layout after the menu closed"
+        }
+        Start-Sleep -Milliseconds 300
+        $renderBefore = Get-Window $process.Id "Fairy Presence Renderer"
+        $inputBefore = Get-Window $process.Id "Fairy Presence Input"
+        if ($null -eq $renderBefore -or $null -eq $inputBefore -or -not $inputBefore.Visible) {
+            throw "Native regression probe requires visible render and input windows"
+        }
+        $inputProbeOutput = & node $inputProbeScript --port $port --action measure
+        if ($LASTEXITCODE -ne 0) { throw "WebView2 input regression probe failed" }
+        $inputProbe = ($inputProbeOutput -join "`n") | ConvertFrom-Json
+        $dpr = [double]$inputProbe.device_pixel_ratio
+        $dragStartX = $inputBefore.X + [int][Math]::Round(($inputProbe.grip.left + ($inputProbe.grip.width / 2)) * $dpr)
+        $dragStartY = $inputBefore.Y + [int][Math]::Round(($inputProbe.grip.top + ($inputProbe.grip.height / 2)) * $dpr)
+        if (-not [FairyNativeProbe]::SetCursorPos($dragStartX, $dragStartY)) {
+            throw "Windows rejected the native drag start position"
+        }
+        [FairyNativeProbe]::LeftButtonDown()
+        try {
+            Start-Sleep -Milliseconds 80
+            foreach ($step in 1..6) {
+                $x = $dragStartX + [int][Math]::Round(-48 * ($step / 6.0))
+                if (-not [FairyNativeProbe]::SetCursorPos($x, $dragStartY)) {
+                    throw "Windows rejected a native drag position"
+                }
+                Start-Sleep -Milliseconds 35
+            }
+        }
+        finally {
+            [FairyNativeProbe]::LeftButtonUp()
+        }
+        Start-Sleep -Milliseconds 250
+        $renderAfter = Get-Window $process.Id "Fairy Presence Renderer"
+        $inputAfter = Get-Window $process.Id "Fairy Presence Input"
+        if ($null -eq $renderAfter -or $null -eq $inputAfter) {
+            throw "A native Presence window disappeared during the regression probe"
+        }
+        $renderDeltaX = $renderAfter.X - $renderBefore.X
+        $renderDeltaY = $renderAfter.Y - $renderBefore.Y
+        $inputDeltaX = $inputAfter.X - $inputBefore.X
+        $inputDeltaY = $inputAfter.Y - $inputBefore.Y
+        if ([Math]::Abs($renderDeltaX - $inputDeltaX) -gt 2 -or
+            [Math]::Abs($renderDeltaY - $inputDeltaY) -gt 2) {
+            throw "PRESENCE_GROUP_DRAG_DESYNCHRONIZED: render_delta=[$renderDeltaX,$renderDeltaY], input_delta=[$inputDeltaX,$inputDeltaY], geometry=$($inputProbe | ConvertTo-Json -Compress -Depth 5)"
+        }
+        if ([Math]::Abs($inputDeltaX) -lt 40 -and [Math]::Abs($inputDeltaY) -lt 40) {
+            throw "PRESENCE_GROUP_DRAG_INERT: Fairy and input did not move; render_delta=[$renderDeltaX,$renderDeltaY], input_delta=[$inputDeltaX,$inputDeltaY]"
+        }
+        $maximumEdgeDelta = @(
+            [double]$inputProbe.edge_delta_physical.left,
+            [double]$inputProbe.edge_delta_physical.top,
+            [double]$inputProbe.edge_delta_physical.right,
+            [double]$inputProbe.edge_delta_physical.bottom
+        ) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
+        if ($maximumEdgeDelta -gt 2) {
+            throw "PRESENCE_INPUT_GEOMETRY_MISMATCH: visible shell and textarea differ by more than 2 physical pixels; geometry=$($inputProbe | ConvertTo-Json -Compress -Depth 5)"
+        }
+        $failedFocusPoints = @($inputProbe.focus_points | Where-Object { -not $_.focused })
+        if ($failedFocusPoints.Count -gt 0) {
+            throw "PRESENCE_INPUT_HIT_TARGET_MISMATCH: textarea did not focus at $($failedFocusPoints.name -join ', ')"
+        }
+
+        $inputBeforeRenderMove = Get-Window $process.Id "Fairy Presence Input"
+        if (-not [FairyNativeProbe]::MoveWithoutActivating(
+            $renderAfter.Handle,
+            ($renderAfter.X - 32),
+            $renderAfter.Y
+        )) {
+            throw "Windows rejected the independent pet-render move"
+        }
+        Start-Sleep -Milliseconds 450
+        $inputAfterRenderMove = Get-Window $process.Id "Fairy Presence Input"
+        if ($null -eq $inputAfterRenderMove -or
+            $inputAfterRenderMove.X -ne $inputBeforeRenderMove.X -or
+            $inputAfterRenderMove.Y -ne $inputBeforeRenderMove.Y) {
+            throw "BRIDGE_OFF_WINDOW_COUPLING: pet-render movement changed pet-input coordinates"
+        }
+        $renderMoved = Get-Window $process.Id "Fairy Presence Renderer"
+        [FairyNativeProbe]::Hide($renderMoved.Handle) | Out-Null
+        Start-Sleep -Milliseconds 250
+        $inputWhileRenderHidden = Get-Window $process.Id "Fairy Presence Input"
+        if ($null -eq $inputWhileRenderHidden -or -not $inputWhileRenderHidden.Visible -or
+            $inputWhileRenderHidden.X -ne $inputAfterRenderMove.X -or
+            $inputWhileRenderHidden.Y -ne $inputAfterRenderMove.Y) {
+            throw "BRIDGE_OFF_WINDOW_LIFECYCLE_COUPLING: hiding pet-render changed pet-input"
+        }
+        [FairyNativeProbe]::ShowWithoutActivating($renderMoved.Handle) | Out-Null
+        Start-Sleep -Milliseconds 250
+        $renderRestored = Get-Window $process.Id "Fairy Presence Renderer"
+        [FairyNativeProbe]::Minimize($renderRestored.Handle) | Out-Null
+        Start-Sleep -Milliseconds 250
+        $inputWhileRenderMinimized = Get-Window $process.Id "Fairy Presence Input"
+        if ($null -eq $inputWhileRenderMinimized -or -not $inputWhileRenderMinimized.Visible -or
+            $inputWhileRenderMinimized.X -ne $inputAfterRenderMove.X -or
+            $inputWhileRenderMinimized.Y -ne $inputAfterRenderMove.Y) {
+            throw "BRIDGE_OFF_WINDOW_LIFECYCLE_COUPLING: minimizing pet-render changed pet-input"
+        }
+        [FairyNativeProbe]::ShowWithoutActivating($renderRestored.Handle) | Out-Null
+        $renderLifecycleIndependent = $true
+    }
+
+    if ($cursorInjectionAvailable) {
+        Hold-Cursor ($main.X + 80) ($main.Y + 80) 2000
+    }
+    $inputProbeScript = Join-Path $root "desktop\scripts\probe-presence-input.mjs"
+    $closeInputOutput = & node $inputProbeScript --port $port --action close
+    if ($LASTEXITCODE -ne 0) { throw "WebView2 could not close pet-input after native regression checks" }
+    Start-Sleep -Milliseconds 500
+    $inputWindow = Get-Window $process.Id "Fairy Presence Input"
+    if ($null -eq $inputWindow -or -not $inputWindow.Visible -or
+        [Math]::Abs($inputWindow.Width - $expectedCoreExtent) -gt 2 -or
+        [Math]::Abs($inputWindow.Height - $expectedCoreExtent) -gt 2) {
+        throw "pet-input did not return to its passive core interaction proxy"
     }
 
     $probeOutput = & node $probeScript --port $port --expected-mode $ExpectedMode --duration-seconds 0
@@ -336,6 +637,25 @@ try {
     if ($null -eq $render -or -not $render.Visible) {
         throw "Pet did not remain available after the main window closed"
     }
+    $inputCloseIndependent = $null
+    if ($VerifyRegressions) {
+        $inputBeforeClose = Get-Window $process.Id "Fairy Presence Input"
+        $renderBeforeInputClose = Get-Window $process.Id "Fairy Presence Renderer"
+        [FairyNativeProbe]::PostMessageW(
+            $inputBeforeClose.Handle,
+            0x0010,
+            [IntPtr]::Zero,
+            [IntPtr]::Zero
+        ) | Out-Null
+        Start-Sleep -Milliseconds 350
+        $renderAfterInputClose = Get-Window $process.Id "Fairy Presence Renderer"
+        if ($null -eq $renderAfterInputClose -or -not $renderAfterInputClose.Visible -or
+            $renderAfterInputClose.X -ne $renderBeforeInputClose.X -or
+            $renderAfterInputClose.Y -ne $renderBeforeInputClose.Y) {
+            throw "BRIDGE_OFF_WINDOW_LIFECYCLE_COUPLING: closing pet-input changed pet-render"
+        }
+        $inputCloseIndependent = $true
+    }
 
     [PSCustomObject]@{
         process_id = $process.Id
@@ -344,10 +664,21 @@ try {
         gpu_preference = $GpuPreference
         gpu = $webViewProbe.gpu
         render_pass_through = $true
-        hover_did_not_focus = $true
-        input_returned_hidden = $true
+        hover_did_not_focus = $hoverDidNotFocus
+        cursor_injection_available = $cursorInjectionAvailable
+        input_returned_to_core_proxy = $true
         topmost_group = $true
         tray_survived_main_close = $true
+        input_core_proxy_visible_at_rest = $true
+        legacy_magnifier_surfaces = 0
+        input_device_pixel_ratio = if ($VerifyRegressions) { $inputProbe.device_pixel_ratio } else { $null }
+        input_edge_delta_physical = if ($VerifyRegressions) { $inputProbe.edge_delta_physical } else { $null }
+        input_focus_points = if ($VerifyRegressions) { $inputProbe.focus_points } else { @() }
+        input_drag_delta = if ($VerifyRegressions) { @($inputDeltaX, $inputDeltaY) } else { $null }
+        render_group_drag_delta = if ($VerifyRegressions) { @($renderDeltaX, $renderDeltaY) } else { $null }
+        render_lifecycle_independent = $renderLifecycleIndependent
+        input_close_independent = $inputCloseIndependent
+        context_menu_items = if ($VerifyRegressions) { $menuProbe.items } else { @() }
         webview2_port = $port
     } | ConvertTo-Json -Depth 4
 }

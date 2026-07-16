@@ -89,7 +89,7 @@ describe("liquid optics uniforms", () => {
     expect(active.rim_strength).toBeGreaterThan(idle.rim_strength);
     expect(active.shadow_strength).toBeGreaterThan(idle.shadow_strength);
     expect(active.lens_strength).toBeLessThanOrEqual(1);
-    expect(active.shadow_strength).toBeLessThanOrEqual(0.18);
+    expect(active.shadow_strength).toBeLessThanOrEqual(0.22);
   });
 
   it("clamps invalid runtime dimensions and DPR to finite values", () => {

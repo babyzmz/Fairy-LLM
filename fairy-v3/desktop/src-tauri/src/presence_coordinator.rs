@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -10,6 +10,9 @@ pub use crate::presence_interaction::{CursorBand, PresenceInteractionPhase};
 use crate::presence_interaction::{PresenceInteractionSignal, PresenceInteractionStateMachine};
 use crate::presence_runtime::{
     sample_presence_runtime_policy, PresenceRuntimePolicy, PRESENCE_RUNTIME_POLICY_EVENT,
+};
+use crate::presence_window_policy::{
+    input_follows_render, relation_for_phase, PresenceWindowRelation,
 };
 use crate::{PET_INPUT_LABEL, PET_RENDER_LABEL};
 
@@ -475,6 +478,17 @@ pub struct PresenceCoordinatorHandle {
     hover_enabled: Arc<AtomicBool>,
     hover_dwell_ms: Arc<AtomicU64>,
     repositioning: Arc<AtomicBool>,
+    window_relation: Arc<AtomicU8>,
+}
+
+struct CoordinatorThreadState {
+    latest_placement: Arc<RwLock<Option<PresenceWindowPlacement>>>,
+    shutdown: Arc<AtomicBool>,
+    reduced_motion: Arc<AtomicBool>,
+    hover_enabled: Arc<AtomicBool>,
+    hover_dwell_ms: Arc<AtomicU64>,
+    repositioning: Arc<AtomicBool>,
+    window_relation: Arc<AtomicU8>,
 }
 
 impl PresenceCoordinatorHandle {
@@ -487,6 +501,7 @@ impl PresenceCoordinatorHandle {
             hover_enabled: Arc::new(AtomicBool::new(config.hover_enabled)),
             hover_dwell_ms: Arc::new(AtomicU64::new(u64::from(config.hover_dwell_ms))),
             repositioning: Arc::new(AtomicBool::new(false)),
+            window_relation: Arc::new(AtomicU8::new(PresenceWindowRelation::Independent as u8)),
         }
     }
 
@@ -498,25 +513,18 @@ impl PresenceCoordinatorHandle {
         {
             return Ok(());
         }
-        let thread_placement = Arc::clone(&self.latest_placement);
-        let thread_shutdown = Arc::clone(&self.shutdown);
-        let thread_reduced_motion = Arc::clone(&self.reduced_motion);
-        let thread_hover_enabled = Arc::clone(&self.hover_enabled);
-        let thread_hover_dwell_ms = Arc::clone(&self.hover_dwell_ms);
-        let thread_repositioning = Arc::clone(&self.repositioning);
+        let thread_state = CoordinatorThreadState {
+            latest_placement: Arc::clone(&self.latest_placement),
+            shutdown: Arc::clone(&self.shutdown),
+            reduced_motion: Arc::clone(&self.reduced_motion),
+            hover_enabled: Arc::clone(&self.hover_enabled),
+            hover_dwell_ms: Arc::clone(&self.hover_dwell_ms),
+            repositioning: Arc::clone(&self.repositioning),
+            window_relation: Arc::clone(&self.window_relation),
+        };
         let spawn = thread::Builder::new()
             .name("fairy-presence-coordinator".to_owned())
-            .spawn(move || {
-                run_coordinator(
-                    app,
-                    thread_placement,
-                    thread_shutdown,
-                    thread_reduced_motion,
-                    thread_hover_enabled,
-                    thread_hover_dwell_ms,
-                    thread_repositioning,
-                )
-            });
+            .spawn(move || run_coordinator(app, thread_state));
         if let Err(error) = spawn {
             self.started.store(false, Ordering::Release);
             return Err(error);
@@ -545,6 +553,10 @@ impl PresenceCoordinatorHandle {
         self.repositioning.store(repositioning, Ordering::Release);
     }
 
+    pub fn window_relation(&self) -> PresenceWindowRelation {
+        PresenceWindowRelation::from_atomic(self.window_relation.load(Ordering::Acquire))
+    }
+
     pub fn set_latest_placement(&self, placement: PresenceWindowPlacement) {
         if let Ok(mut value) = self.latest_placement.write() {
             *value = Some(placement);
@@ -558,15 +570,16 @@ impl Drop for PresenceCoordinatorHandle {
     }
 }
 
-fn run_coordinator(
-    app: tauri::AppHandle,
-    latest_placement: Arc<RwLock<Option<PresenceWindowPlacement>>>,
-    shutdown: Arc<AtomicBool>,
-    reduced_motion: Arc<AtomicBool>,
-    hover_enabled: Arc<AtomicBool>,
-    hover_dwell_ms: Arc<AtomicU64>,
-    repositioning: Arc<AtomicBool>,
-) {
+fn run_coordinator(app: tauri::AppHandle, state: CoordinatorThreadState) {
+    let CoordinatorThreadState {
+        latest_placement,
+        shutdown,
+        reduced_motion,
+        hover_enabled,
+        hover_dwell_ms,
+        repositioning,
+        window_relation,
+    } = state;
     let started = Instant::now();
     let mut tracker = CursorTracker::default();
     let mut interaction = PresenceInteractionStateMachine::new(0);
@@ -585,6 +598,7 @@ fn run_coordinator(
         };
         if !render.is_visible().unwrap_or(false) {
             interaction.suspend(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
+            window_relation.store(PresenceWindowRelation::Independent as u8, Ordering::Release);
             thread::sleep(HIDDEN_POLL_INTERVAL);
             continue;
         }
@@ -596,15 +610,22 @@ fn run_coordinator(
             }
             runtime_policy_refreshed_at = Instant::now();
         }
-        if repositioning.load(Ordering::Acquire) {
+        let is_repositioning = repositioning.load(Ordering::Acquire);
+        if is_repositioning {
             if let Ok(value) = latest_placement.read() {
                 if value.is_some() {
                     placement = *value;
                 }
             }
-        }
-        if placement.is_none() || placement_refreshed_at.elapsed() >= PLACEMENT_REFRESH_INTERVAL {
-            if let Some(next) = refresh_placement(&app, &render, placement) {
+            // Native drag owns both window frames until pointer release. Refreshing through
+            // Tauri here can observe an older frame and visibly pull one surface backwards.
+            placement_refreshed_at = Instant::now();
+        } else if placement.is_none()
+            || placement_refreshed_at.elapsed() >= PLACEMENT_REFRESH_INTERVAL
+        {
+            let relation =
+                PresenceWindowRelation::from_atomic(window_relation.load(Ordering::Acquire));
+            if let Some(next) = refresh_placement(&app, &render, placement, relation) {
                 placement = Some(next);
                 if let Ok(mut value) = latest_placement.write() {
                     *value = Some(next);
@@ -640,7 +661,7 @@ fn run_coordinator(
         let reduced_motion = reduced_motion.load(Ordering::Acquire);
         let hover_enabled = hover_enabled.load(Ordering::Acquire);
         let hover_dwell_ms = hover_dwell_ms.load(Ordering::Acquire);
-        let repositioning = repositioning.load(Ordering::Acquire);
+        let repositioning = is_repositioning;
         let (pointer_over_input, input_focused) = point.map_or_else(
             || (false, input_focus_state(&app)),
             |point| input_pointer_state(&app, point),
@@ -653,6 +674,7 @@ fn run_coordinator(
         let phase = interaction.advance(PresenceInteractionSignal {
             sampled_at_ms,
             cursor_band: effective_cursor_band,
+            active_dwell_ms: cursor.dwell_ms,
             cursor_speed_px_s: cursor.speed_px_s,
             pointer_over_input,
             input_focused,
@@ -660,6 +682,7 @@ fn run_coordinator(
             suspended: false,
             repositioning,
         });
+        window_relation.store(relation_for_phase(phase.phase) as u8, Ordering::Release);
         if emission_gate.should_emit(
             sampled_at_ms,
             phase.phase,
@@ -735,6 +758,7 @@ fn refresh_placement(
     app: &tauri::AppHandle,
     render: &tauri::WebviewWindow,
     previous: Option<PresenceWindowPlacement>,
+    relation: PresenceWindowRelation,
 ) -> Option<PresenceWindowPlacement> {
     let position = render.outer_position().ok()?;
     let size = render.outer_size().ok()?;
@@ -779,7 +803,12 @@ fn refresh_placement(
             if let Ok(input_size) = input.outer_size() {
                 let core_extent = (PET_CORE_EXTENT_LOGICAL * scale).round() as u32;
                 let compact_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale).round() as u32;
-                let frame = if input_size.width == core_extent && input_size.height == core_extent {
+                let input_is_core_proxy =
+                    input_size.width == core_extent && input_size.height == core_extent;
+                if !input_follows_render(relation, input_is_core_proxy) {
+                    return Some(placement);
+                }
+                let frame = if input_is_core_proxy {
                     placement.core_frame(core_extent)
                 } else {
                     placement.input_frame(input_size.width, input_size.height, compact_height)
@@ -847,7 +876,7 @@ fn point_distance(left: PhysicalPoint, right: PhysicalPoint) -> f64 {
 }
 
 #[cfg(target_os = "windows")]
-fn global_cursor_position() -> Option<PhysicalPoint> {
+pub(crate) fn global_cursor_position() -> Option<PhysicalPoint> {
     use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
@@ -860,6 +889,6 @@ fn global_cursor_position() -> Option<PhysicalPoint> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn global_cursor_position() -> Option<PhysicalPoint> {
+pub(crate) fn global_cursor_position() -> Option<PhysicalPoint> {
     None
 }

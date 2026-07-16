@@ -27,6 +27,7 @@ import {
 import { m } from "motion/react";
 
 import type { PresenceReply, PresenceView } from "../domain/projection";
+import { InputLiquidGlassCanvas } from "./InputLiquidGlassCanvas";
 
 export interface PresencePanelActions {
   cancelTurn(): void;
@@ -284,6 +285,7 @@ export function PresencePanel({
           <button
             aria-label="Move Fairy"
             className="presence-move-grip"
+            onLostPointerCapture={actions.movePointerUp}
             onPointerCancel={actions.movePointerUp}
             onPointerDown={actions.movePointerDown}
             onPointerMove={actions.movePointerMove}
@@ -293,34 +295,43 @@ export function PresencePanel({
           >
             <GripVertical size={15} />
           </button>
-          <textarea
-            aria-label="Quick message to Fairy"
-            ref={textarea}
-            maxLength={4_000}
-            onChange={(event) => setDraft(event.target.value)}
-            onCompositionEnd={() => {
-              composing.current = false;
+          <div
+            className="presence-input-field"
+            data-testid="presence-input-field"
+            onPointerDown={() => {
+              actions.requestInputFocus();
+              textarea.current?.focus({ preventScroll: true });
             }}
-            onCompositionStart={() => {
-              composing.current = true;
-            }}
-            onKeyDown={(event) => {
-              const nativeComposing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
-              if (
-                event.key === "Enter" &&
-                !event.shiftKey &&
-                !composing.current &&
-                !nativeComposing
-              ) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
-            }}
-            onPointerDown={actions.requestInputFocus}
-            placeholder="Message Fairy"
-            rows={3}
-            value={draft}
-          />
+          >
+            <InputLiquidGlassCanvas paused={moving} />
+            <textarea
+              aria-label="Quick message to Fairy"
+              ref={textarea}
+              maxLength={4_000}
+              onChange={(event) => setDraft(event.target.value)}
+              onCompositionEnd={() => {
+                composing.current = false;
+              }}
+              onCompositionStart={() => {
+                composing.current = true;
+              }}
+              onKeyDown={(event) => {
+                const nativeComposing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
+                if (
+                  event.key === "Enter" &&
+                  !event.shiftKey &&
+                  !composing.current &&
+                  !nativeComposing
+                ) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              placeholder="Message Fairy"
+              rows={3}
+              value={draft}
+            />
+          </div>
           <button
             aria-label="Send quick message"
             className="presence-send-button"

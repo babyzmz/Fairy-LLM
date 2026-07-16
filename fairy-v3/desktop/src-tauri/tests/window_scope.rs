@@ -8,7 +8,7 @@ use fairy_desktop_v3::{
     fairy_tray_action, resolve_desktop_data_dir, settings_method_allowed, FairyTrayAction,
     PetWindowFrame,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -120,12 +120,29 @@ fn tauri_config_declares_separate_render_and_input_surfaces() {
     );
     assert_eq!(render["focusable"], false);
     assert_eq!(render["alwaysOnTop"], true);
+    assert_eq!(render.get("create").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        (render["x"].as_i64(), render["y"].as_i64()),
+        (Some(-32000), Some(-32000))
+    );
+    assert_eq!(render["visible"], true);
     assert_eq!(
         (input["width"].as_u64(), input["height"].as_u64()),
         (Some(144), Some(144))
     );
-    assert_eq!(input["visible"], false);
+    assert_eq!(
+        (input["x"].as_i64(), input["y"].as_i64()),
+        (Some(-32000), Some(-32000))
+    );
+    assert_eq!(input["visible"], true);
     assert_eq!(input["alwaysOnTop"], true);
+    assert_eq!(input.get("create").and_then(Value::as_bool), Some(true));
+
+    let settings = windows
+        .iter()
+        .find(|window| window["label"] == "settings")
+        .expect("settings window");
+    assert_eq!(settings.get("create").and_then(Value::as_bool), Some(false));
 }
 
 #[test]

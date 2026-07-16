@@ -14,19 +14,19 @@ export interface LiquidOpticsUniformState {
 }
 
 export const LIQUID_OPTICS_LIMITS = Object.freeze({
-  minimum_dispersion_logical_px: 1.25,
-  active_dispersion_logical_px: 2.25,
-  maximum_dispersion_logical_px: 3,
-  idle_refraction_logical_px: 13,
-  active_refraction_logical_px: 22,
-  idle_caustic_strength: 0.22,
-  active_caustic_strength: 0.4,
-  idle_lens_strength: 0.72,
+  minimum_dispersion_logical_px: 1.9,
+  active_dispersion_logical_px: 3.2,
+  maximum_dispersion_logical_px: 4,
+  idle_refraction_logical_px: 18,
+  active_refraction_logical_px: 28,
+  idle_caustic_strength: 0.34,
+  active_caustic_strength: 0.58,
+  idle_lens_strength: 0.82,
   active_lens_strength: 1,
-  idle_rim_strength: 0.78,
+  idle_rim_strength: 0.88,
   active_rim_strength: 1,
-  idle_shadow_strength: 0.1,
-  active_shadow_strength: 0.18,
+  idle_shadow_strength: 0.14,
+  active_shadow_strength: 0.22,
 });
 
 export function liquidOpticsForSnapshot(

@@ -249,7 +249,18 @@ describe("dual presence surfaces", () => {
     expect(screen.getByRole("button", { name: "Open Fairy quick input" })).toBeInTheDocument();
     act(() => host.requestInput());
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("compact"));
-    expect(screen.getByLabelText("Quick message to Fairy")).toBeInTheDocument();
+    const textarea = screen.getByLabelText("Quick message to Fairy");
+    const inputField = screen.getByTestId("presence-input-field");
+    const inputGlass = screen.getByTestId("presence-input-glass");
+    expect(inputField).toContainElement(textarea);
+    expect(inputField).toContainElement(inputGlass);
+    expect(inputGlass.nextElementSibling).toBe(textarea);
+    const focusRequestsBeforePointer = vi.mocked(host.host.requestInputFocus).mock.calls.length;
+    fireEvent.pointerDown(inputField);
+    expect(textarea).toHaveFocus();
+    expect(host.host.requestInputFocus).toHaveBeenCalledTimes(
+      focusRequestsBeforePointer + 1,
+    );
 
     act(() => channel.emit(projection({
       activity: "working",
@@ -284,6 +295,14 @@ describe("dual presence surfaces", () => {
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("expanded"));
     expect(screen.getByRole("menu", { name: "Fairy menu" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Quick message to Fairy")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+    expect(screen.queryByRole("menu", { name: "Fairy menu" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Fairy quick input" }));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact"));
+    expect(screen.getByLabelText("Quick message to Fairy")).toBeInTheDocument();
   });
 
   it("gates hover reveal at 300ms, content at 430ms, and clicks at 520ms", async () => {
@@ -305,6 +324,9 @@ describe("dual presence surfaces", () => {
     act(() => coordinator.emit(interactionAt(20, "input_reveal", 300, 300)));
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact"));
     await waitFor(() => expect(host.host.setInputInteractive).toHaveBeenLastCalledWith(false));
+    const passiveCall = vi.mocked(host.host.setInputInteractive).mock.invocationCallOrder.at(-1);
+    const layoutCall = vi.mocked(host.host.setInputLayout).mock.invocationCallOrder.at(-1);
+    expect(passiveCall).toBeLessThan(layoutCall ?? 0);
     expect(surface).toHaveAttribute("data-content-visible", "false");
     const input = screen.getByLabelText("Quick message to Fairy");
     expect(input).not.toHaveFocus();
@@ -524,9 +546,15 @@ describe("dual presence surfaces", () => {
     expect(legacyStorage.setItem).not.toHaveBeenCalled();
   });
 
-  it("moves the native window group only from the visible grip", async () => {
+  it("moves the native window group from the visible grip", async () => {
     const channel = channelHarness();
     const host = hostHarness();
+    let finishDrag: ((value: DesktopPreferences) => void) | undefined;
+    vi.mocked(host.host.endGroupDrag).mockImplementation(
+      () => new Promise((resolve) => {
+        finishDrag = resolve;
+      }),
+    );
     render(
       <PresenceInputApp
         channel={channel.channel}
@@ -537,13 +565,96 @@ describe("dual presence surfaces", () => {
     );
     act(() => host.requestInput());
     const grip = await screen.findByRole("button", { name: "Move Fairy" });
-    fireEvent.pointerDown(grip, { pointerId: 4, clientX: 10, clientY: 20 });
-    fireEvent.pointerMove(grip, { pointerId: 4, clientX: 48, clientY: 35 });
-    fireEvent.pointerUp(grip, { pointerId: 4, clientX: 48, clientY: 35 });
+    fireEvent.pointerDown(grip, {
+      pointerId: 4,
+      clientX: 10,
+      clientY: 20,
+      screenX: 110,
+      screenY: 220,
+    });
+    expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
+      "data-moving",
+      "true",
+    );
+    expect(screen.getByTestId("presence-input-glass")).toHaveAttribute(
+      "data-paused",
+      "true",
+    );
+    fireEvent.pointerMove(grip, {
+      pointerId: 4,
+      clientX: 12,
+      clientY: 21,
+      screenX: 148,
+      screenY: 235,
+    });
+    fireEvent.pointerUp(grip, {
+      pointerId: 4,
+      clientX: 12,
+      clientY: 21,
+      screenX: 148,
+      screenY: 235,
+    });
 
     await waitFor(() => expect(host.host.beginGroupDrag).toHaveBeenCalledOnce());
     await waitFor(() => expect(host.host.moveGroupDrag).toHaveBeenCalledWith(38, 15));
     await waitFor(() => expect(host.host.endGroupDrag).toHaveBeenCalledWith(0));
+    expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
+      "data-moving",
+      "true",
+    );
+    act(() => finishDrag?.(preferences()));
+    await waitFor(() => expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
+      "data-moving",
+      "false",
+    ));
+    expect(screen.getByTestId("presence-input-glass")).toHaveAttribute(
+      "data-paused",
+      "false",
+    );
+  });
+
+  it("moves the same native group from the Fairy body without opening input", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    const core = await screen.findByRole("button", { name: "Open Fairy quick input" });
+    const surface = screen.getByTestId("presence-input-surface");
+    fireEvent.pointerDown(core, {
+      button: 0,
+      pointerId: 9,
+      clientX: 20,
+      clientY: 20,
+      screenX: 520,
+      screenY: 420,
+    });
+    fireEvent.pointerMove(core, {
+      pointerId: 9,
+      clientX: 22,
+      clientY: 21,
+      screenX: 552,
+      screenY: 431,
+    });
+    fireEvent.pointerUp(core, {
+      pointerId: 9,
+      clientX: 22,
+      clientY: 21,
+      screenX: 552,
+      screenY: 431,
+    });
+    fireEvent.click(core);
+
+    await waitFor(() => expect(host.host.beginGroupDrag).toHaveBeenCalledOnce());
+    await waitFor(() => expect(host.host.moveGroupDrag).toHaveBeenCalledWith(32, 11));
+    await waitFor(() => expect(host.host.endGroupDrag).toHaveBeenCalledWith(0));
+    expect(surface).toHaveAttribute("data-layout", "core");
   });
 });
 

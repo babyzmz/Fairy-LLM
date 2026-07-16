@@ -7,6 +7,7 @@ fn signal(sampled_at_ms: u64) -> PresenceInteractionSignal {
     PresenceInteractionSignal {
         sampled_at_ms,
         cursor_band: CursorBand::Active,
+        active_dwell_ms: 0,
         cursor_speed_px_s: 80.0,
         pointer_over_input: false,
         input_focused: false,
@@ -14,6 +15,30 @@ fn signal(sampled_at_ms: u64) -> PresenceInteractionSignal {
         suspended: false,
         repositioning: false,
     }
+}
+
+#[test]
+fn configured_hover_dwell_counts_toward_the_visual_timeline() {
+    let mut machine = PresenceInteractionStateMachine::new(0);
+    let after_dwell = PresenceInteractionSignal {
+        sampled_at_ms: 250,
+        active_dwell_ms: 250,
+        ..signal(250)
+    };
+    assert_eq!(
+        machine.advance(after_dwell).phase,
+        PresenceInteractionPhase::Stretching
+    );
+    assert_eq!(
+        machine
+            .advance(PresenceInteractionSignal {
+                sampled_at_ms: 300,
+                active_dwell_ms: 300,
+                ..after_dwell
+            })
+            .phase,
+        PresenceInteractionPhase::InputReveal,
+    );
 }
 
 #[test]

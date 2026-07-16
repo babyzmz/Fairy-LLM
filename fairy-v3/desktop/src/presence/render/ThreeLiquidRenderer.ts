@@ -23,13 +23,20 @@ import {
 import { LiquidMotionController } from "./liquidMotion";
 import { liquidOpticsForSnapshot } from "./liquidOptics";
 import { liquidVisualStyleForSnapshot } from "./liquidVisualState";
+import {
+  NativeBackdropStream,
+  type NativeBackdropFrame,
+} from "./nativeBackdrop";
 
 export class ThreeLiquidRenderer implements PresenceRenderer {
+  private readonly canvas: HTMLCanvasElement;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly camera: THREE.OrthographicCamera;
   private readonly scene: THREE.Scene;
   private readonly geometry: THREE.PlaneGeometry;
   private readonly material: THREE.ShaderMaterial;
+  private readonly backdropTexture: THREE.DataTexture;
+  private readonly backdropStream = new NativeBackdropStream();
   private readonly motion: LiquidMotionController;
   private snapshot: PresenceRenderSnapshot;
   private readonly loop: RendererFrameLoop;
@@ -43,6 +50,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     PresenceRenderSnapshot["interaction"]
   >["phase"] | null;
   private disposed = false;
+  private backdropRunning = false;
   private width = 1;
   private height = 1;
   private dpr = 1;
@@ -51,6 +59,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     canvas: HTMLCanvasElement,
     initialSnapshot: PresenceRenderSnapshot,
   ) {
+    this.canvas = canvas;
     this.snapshot = initialSnapshot;
     this.interactionPhase = initialSnapshot.interaction?.phase ?? null;
     this.motion = new LiquidMotionController(
@@ -72,6 +81,20 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.scene = new THREE.Scene();
     this.geometry = new THREE.PlaneGeometry(2, 2);
+    this.backdropTexture = new THREE.DataTexture(
+      new Uint8Array([0, 0, 0, 0]),
+      1,
+      1,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType,
+    );
+    this.backdropTexture.colorSpace = THREE.SRGBColorSpace;
+    this.backdropTexture.generateMipmaps = false;
+    this.backdropTexture.minFilter = THREE.LinearFilter;
+    this.backdropTexture.magFilter = THREE.LinearFilter;
+    this.backdropTexture.wrapS = THREE.ClampToEdgeWrapping;
+    this.backdropTexture.wrapT = THREE.ClampToEdgeWrapping;
+    this.backdropTexture.needsUpdate = true;
     const initialOptics = liquidOpticsForSnapshot(initialSnapshot, 1, 1, 1);
     this.material = new THREE.ShaderMaterial({
       vertexShader: LIQUID_GLASS_VERTEX_SHADER,
@@ -107,6 +130,9 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
         uLensStrength: { value: initialOptics.lens_strength },
         uRimStrength: { value: initialOptics.rim_strength },
         uShadowStrength: { value: initialOptics.shadow_strength },
+        uBackdropTexture: { value: this.backdropTexture },
+        uBackdropSize: { value: new THREE.Vector2(1, 1) },
+        uBackdropReady: { value: 0 },
       },
     });
     this.scene.add(new THREE.Mesh(this.geometry, this.material));
@@ -120,11 +146,13 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
   start(): void {
     if (this.disposed) return;
     this.motion.resetClock();
+    if (this.canCaptureBackdrop()) this.startBackdrop();
     this.loop.start();
   }
 
   stop(): void {
     this.loop.stop();
+    this.stopBackdrop();
   }
 
   suspend(): void {
@@ -148,7 +176,12 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
   }
 
   setSnapshot(snapshot: PresenceRenderSnapshot): void {
+    const couldCaptureBackdrop = this.canCaptureBackdrop();
     this.snapshot = snapshot;
+    this.backdropStream.setFrameRate(backdropFrameRate(snapshot));
+    const canCaptureBackdrop = this.canCaptureBackdrop();
+    if (!canCaptureBackdrop) this.stopBackdrop();
+    else if (!couldCaptureBackdrop && this.loop.running) this.startBackdrop();
     this.updateSnapshotUniforms();
     this.loop.refresh();
   }
@@ -156,11 +189,63 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.stopBackdrop();
     this.loop.dispose();
     this.geometry.dispose();
     this.material.dispose();
+    this.backdropTexture.dispose();
     this.renderer.dispose();
     this.gpuTimer.dispose();
+  }
+
+  private startBackdrop() {
+    if (this.backdropRunning || this.disposed) return;
+    this.backdropRunning = true;
+    this.canvas.dataset.backdropStatus = "starting";
+    this.backdropStream.start({
+      framesPerSecond: backdropFrameRate(this.snapshot),
+      onFrame: (frame) => this.acceptBackdropFrame(frame),
+      onError: (error) => {
+        if (!this.backdropRunning) return;
+        this.canvas.dataset.backdropStatus = "unavailable";
+        this.canvas.dataset.backdropError = safeBackdropError(error);
+        this.material.uniforms.uBackdropReady.value = 0;
+      },
+    });
+  }
+
+  private canCaptureBackdrop(): boolean {
+    return this.snapshot.interaction !== null
+      && this.snapshot.interaction.phase !== "repositioning";
+  }
+
+  private stopBackdrop() {
+    if (!this.backdropRunning) return;
+    this.backdropRunning = false;
+    this.backdropStream.stop();
+    this.material.uniforms.uBackdropReady.value = 0;
+    this.canvas.dataset.backdropStatus = "stopped";
+  }
+
+  private acceptBackdropFrame(frame: NativeBackdropFrame) {
+    if (!this.backdropRunning || this.disposed) return;
+    this.backdropTexture.image = {
+      data: frame.rgba,
+      width: frame.width,
+      height: frame.height,
+    };
+    this.backdropTexture.needsUpdate = true;
+    this.material.uniforms.uBackdropSize.value.set(frame.width, frame.height);
+    this.material.uniforms.uBackdropReady.value = 1;
+    this.canvas.dataset.backdropStatus = "ready";
+    this.canvas.dataset.backdropSequence = String(frame.sequence);
+    this.canvas.dataset.backdropWidth = String(frame.width);
+    this.canvas.dataset.backdropHeight = String(frame.height);
+    this.canvas.dataset.backdropAgeMs = String(
+      Math.max(0, Date.now() - frame.capturedAtMs),
+    );
+    delete this.canvas.dataset.backdropError;
+    this.loop.drawImmediately();
   }
 
   private drawFrame(now: number) {
@@ -280,4 +365,19 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
       this.height * this.dpr - localY * this.dpr,
     );
   }
+}
+
+function backdropFrameRate(snapshot: PresenceRenderSnapshot): number {
+  const active =
+    snapshot.speaking ||
+    snapshot.work_state !== "idle" ||
+    (snapshot.interaction !== null &&
+      snapshot.interaction.cursor.band !== "outside" &&
+      !["idle", "suspended"].includes(snapshot.interaction.phase));
+  return Math.min(snapshot.frame_rate_limit, active ? 30 : 15);
+}
+
+function safeBackdropError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.slice(0, 96);
 }

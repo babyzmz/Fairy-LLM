@@ -72,13 +72,21 @@ interface PresenceSubmissionState {
 
 interface PetDragPointer {
   pointerId: number;
-  startX: number;
-  startY: number;
+  source: "core" | "grip";
+  startScreenX: number;
+  startScreenY: number;
   deltaX: number;
   deltaY: number;
   frame: number | null;
   ready: Promise<void>;
-  queue: Promise<void>;
+  inFlight: Promise<void> | null;
+  pending: boolean;
+}
+
+interface PetDragPresentation {
+  layout: PetInputLayout;
+  contentVisible: boolean;
+  surfaceInteractive: boolean;
 }
 
 export function PresenceInputApp({
@@ -119,11 +127,13 @@ export function PresenceInputApp({
   const [hoverSuppressed, setHoverSuppressed] = useState(false);
   const [focusRequest, setFocusRequest] = useState(0);
   const [moving, setMoving] = useState(false);
+  const [dragPresentation, setDragPresentation] = useState<PetDragPresentation | null>(null);
   const presentationQueue = useRef(Promise.resolve());
   const appliedFocusRequest = useRef(0);
   const previouslyMuted = useRef(false);
   const legacyPositionMigrationAttempted = useRef(false);
   const dragPointer = useRef<PetDragPointer | null>(null);
+  const suppressCoreActivation = useRef(false);
 
   useEffect(() => {
     const stop = channel.onProjection((next) => {
@@ -269,6 +279,21 @@ export function PresenceInputApp({
     return () => window.clearInterval(timer);
   }, [now]);
 
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setManualInputOpen(false);
+      setHoverSuppressed(true);
+      setMenuOpen(false);
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    };
+    window.addEventListener("keydown", handleEscape, true);
+    return () => window.removeEventListener("keydown", handleEscape, true);
+  }, []);
+
   const view = derivePresenceView(projection, {
     now_ms: clock,
     quiet_mode: preferences?.pet_do_not_disturb ?? false,
@@ -280,14 +305,18 @@ export function PresenceInputApp({
   const cardOpen =
     menuOpen || reply !== null || view.notice !== null || submissionCard !== null;
   const inputOpen = manualInputOpen || hoverGate.window_visible;
-  const layout: PetInputLayout = cardOpen
+  const requestedLayout: PetInputLayout = cardOpen
     ? "expanded"
     : inputOpen
       ? "compact"
       : "core";
-  const contentVisible = cardOpen || manualInputOpen || hoverGate.content_visible;
+  const requestedContentVisible = cardOpen || manualInputOpen || hoverGate.content_visible;
+  const requestedSurfaceInteractive =
+    requestedLayout === "core" || cardOpen || manualInputOpen || hoverGate.interactive;
+  const layout = dragPresentation?.layout ?? requestedLayout;
+  const contentVisible = dragPresentation?.contentVisible ?? requestedContentVisible;
   const surfaceInteractive =
-    layout === "core" || cardOpen || manualInputOpen || hoverGate.interactive;
+    dragPresentation?.surfaceInteractive ?? requestedSurfaceInteractive;
 
   useEffect(() => {
     if (reply === null || reply.streaming) return;
@@ -314,8 +343,13 @@ export function PresenceInputApp({
     presentationQueue.current = presentationQueue.current
       .catch(() => undefined)
       .then(async () => {
+        if (!surfaceInteractive) {
+          await host.setInputInteractive(false);
+        }
         await host.setInputLayout(layout);
-        await host.setInputInteractive(surfaceInteractive);
+        if (surfaceInteractive) {
+          await host.setInputInteractive(true);
+        }
         if (
           surfaceInteractive &&
           focusRequest > appliedFocusRequest.current
@@ -415,40 +449,64 @@ export function PresenceInputApp({
     sendMessage(submission.text);
   }
 
-  function movePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (!surfaceInteractive || dragPointer.current !== null) return;
+  function movePointerDown(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    source: PetDragPointer["source"] = "grip",
+  ) {
+    if (event.button !== 0 || !surfaceInteractive || dragPointer.current !== null) return;
     event.preventDefault();
     event.stopPropagation();
+    setMenuOpen(false);
+    setHoverSuppressed(true);
+    setDragPresentation({ layout, contentVisible, surfaceInteractive });
     if (typeof event.currentTarget.setPointerCapture === "function") {
       event.currentTarget.setPointerCapture(event.pointerId);
     }
     const ready = host.beginGroupDrag();
     dragPointer.current = {
       pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
+      source,
+      startScreenX: event.screenX,
+      startScreenY: event.screenY,
       deltaX: 0,
       deltaY: 0,
       frame: null,
       ready,
-      queue: ready,
+      inFlight: null,
+      pending: false,
     };
     setMoving(true);
+  }
+
+  function requestGroupMove(drag: PetDragPointer) {
+    if (drag.inFlight !== null) {
+      drag.pending = true;
+      return;
+    }
+    drag.pending = false;
+    drag.inFlight = drag.ready
+      .then(() => host.moveGroupDrag(drag.deltaX, drag.deltaY))
+      .catch(() => undefined)
+      .finally(() => {
+        drag.inFlight = null;
+        if (drag.pending && dragPointer.current === drag) requestGroupMove(drag);
+      });
   }
 
   function movePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
     const drag = dragPointer.current;
     if (drag === null || drag.pointerId !== event.pointerId) return;
-    drag.deltaX = event.clientX - drag.startX;
-    drag.deltaY = event.clientY - drag.startY;
+    drag.deltaX = event.screenX - drag.startScreenX;
+    drag.deltaY = event.screenY - drag.startScreenY;
+    if (drag.source === "core" && Math.hypot(drag.deltaX, drag.deltaY) >= 4) {
+      suppressCoreActivation.current = true;
+    }
     if (drag.frame !== null) return;
     drag.frame = window.requestAnimationFrame(() => {
       const current = dragPointer.current;
       if (current === null || current.pointerId !== drag.pointerId) return;
       current.frame = null;
-      current.queue = current.queue.then(() =>
-        host.moveGroupDrag(current.deltaX, current.deltaY)
-      ).catch(() => undefined);
+      requestGroupMove(current);
     });
   }
 
@@ -457,26 +515,28 @@ export function PresenceInputApp({
     if (drag === null || drag.pointerId !== event.pointerId) return;
     event.preventDefault();
     event.stopPropagation();
+    if (drag.frame !== null) window.cancelAnimationFrame(drag.frame);
+    dragPointer.current = null;
+    if (drag.source === "core" && Math.hypot(drag.deltaX, drag.deltaY) >= 4) {
+      suppressCoreActivation.current = true;
+      window.setTimeout(() => {
+        suppressCoreActivation.current = false;
+      }, 0);
+    }
     if (
       typeof event.currentTarget.hasPointerCapture === "function" &&
       event.currentTarget.hasPointerCapture(event.pointerId)
     ) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    if (drag.frame !== null) window.cancelAnimationFrame(drag.frame);
-    dragPointer.current = null;
-    setMoving(false);
     const currentPreferences = preferencesRef.current;
     void drag.ready
       .then(async () => {
-        await drag.queue.catch(() => undefined);
-        try {
-          await host.moveGroupDrag(drag.deltaX, drag.deltaY);
-        } finally {
-          return currentPreferences === null
-            ? host.getPreferences()
-            : host.endGroupDrag(currentPreferences.revision);
-        }
+        await drag.inFlight?.catch(() => undefined);
+        await host.moveGroupDrag(drag.deltaX, drag.deltaY).catch(() => undefined);
+        const revision = currentPreferences?.revision
+          ?? (await host.getPreferences()).revision;
+        return host.endGroupDrag(revision);
       })
       .then((saved) => {
         preferencesRef.current = saved;
@@ -488,6 +548,14 @@ export function PresenceInputApp({
           preferencesRef.current = saved;
           setPreferences(saved);
         }
+      })
+      .finally(() => {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            setMoving(false);
+            setDragPresentation(null);
+          });
+        });
       });
   }
 
@@ -515,6 +583,7 @@ export function PresenceInputApp({
         interaction?.placement.expansion_direction ?? "right"
       }
       data-interactive={String(surfaceInteractive)}
+      data-interaction-phase={interaction?.phase ?? "idle"}
       data-interaction-ready={String(interactionReady)}
       data-layout={layout}
       data-menu-open={String(menuOpen)}
@@ -530,15 +599,14 @@ export function PresenceInputApp({
         event.preventDefault();
         openContextMenu();
       }}
-      onKeyDown={(event) => {
-        if (event.key !== "Escape") return;
-        dismissInput();
-      }}
     >
       <button
         aria-label="Open Fairy quick input"
         className="presence-core-hit-target"
-        onClick={openQuickInput}
+        onClick={() => {
+          if (suppressCoreActivation.current) return;
+          openQuickInput();
+        }}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -548,6 +616,11 @@ export function PresenceInputApp({
           channel.requestWorkspaceOpen();
           void host.openMain().catch(() => undefined);
         }}
+        onLostPointerCapture={movePointerUp}
+        onPointerCancel={movePointerUp}
+        onPointerDown={(event) => movePointerDown(event, "core")}
+        onPointerMove={movePointerMove}
+        onPointerUp={movePointerUp}
         title="Fairy"
         type="button"
       />

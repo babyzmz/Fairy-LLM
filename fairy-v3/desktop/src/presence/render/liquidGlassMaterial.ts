@@ -30,12 +30,12 @@ const BRIDGE_SHAPE: LiquidShapeTarget = Object.freeze({
 const INPUT_REVEAL_SHAPE: LiquidShapeTarget = Object.freeze({
   droplet: 1,
   bridge: 1,
-  capsule: 1,
+  capsule: 0,
 });
 const INTERACTIVE_SHAPE: LiquidShapeTarget = Object.freeze({
   droplet: 0,
   bridge: 0,
-  capsule: 1,
+  capsule: 0,
 });
 
 export function liquidShapeTargetForPhase(
@@ -105,6 +105,9 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
   uniform float uLensStrength;
   uniform float uRimStrength;
   uniform float uShadowStrength;
+  uniform sampler2D uBackdropTexture;
+  uniform vec2 uBackdropSize;
+  uniform float uBackdropReady;
   varying vec2 vUv;
 
   float saturate(float value) {
@@ -168,10 +171,6 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     return result;
   }
 
-  float capsuleDistance(vec2 point, vec2 start, vec2 end, float radius) {
-    return segmentDistance(point, start, end) - radius;
-  }
-
   float liquidDistance(vec2 point) {
     vec2 axis = normalize(uDirection);
     vec2 normalAxis = vec2(-axis.y, axis.x);
@@ -200,20 +199,8 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
       uSizeScale
     );
 
-    float capsuleMorph = smoothstep(0.0, 1.0, saturate(uShape.z));
-    float capsuleEnd = 500.0 - (uSizeScale - 1.0) * 64.0;
-    float capsuleStart = 56.0 * uSizeScale;
-    float capsule = capsuleDistance(
-      local,
-      vec2(capsuleStart, 0.0) * uDpr,
-      vec2(mix(capsuleStart, capsuleEnd, capsuleMorph), 0.0) * uDpr,
-      mix(0.0, 32.0 * uSizeScale, capsuleMorph) * uDpr
-    );
-    capsule += (1.0 - capsuleMorph) * 16.0 * uDpr;
-
     float distanceField = smoothMinimum(core, droplet, 11.0 * uDpr);
     distanceField = smoothMinimum(distanceField, bridge, 14.0 * uDpr);
-    distanceField = smoothMinimum(distanceField, capsule, 13.0 * uDpr);
     float ripple = sin(point.x / (31.0 * uDpr) + animatedTime * 0.23)
       * sin(point.y / (27.0 * uDpr) - animatedTime * 0.19);
     return distanceField + ripple * 0.55 * uDpr * uEnergy;
@@ -263,19 +250,44 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
 
   float opticalThickness(float distanceField) {
     float interior = max(-distanceField, 0.0);
-    float depthScale = max(1.0, 30.0 * uDpr * uSizeScale);
+    float depthScale = max(1.0, 24.0 * uDpr * uSizeScale);
     float normalizedDepth = saturate(interior / depthScale);
     return sqrt(max(0.0, normalizedDepth * (2.0 - normalizedDepth)));
   }
 
-  float edgeLensing(float distanceField, float thickness) {
-    float interiorBand = 1.0 - smoothstep(0.0, 30.0 * uDpr, max(-distanceField, 0.0));
-    float exteriorGate = 1.0 - smoothstep(0.0, 1.6 * uDpr, max(distanceField, 0.0));
-    float cleanCenter = pow(1.0 - thickness, 1.35);
-    return saturate(interiorBand * exteriorGate * cleanCenter * uLensStrength);
+  float thickEdgeProfile(float distanceField) {
+    float interiorDepth = max(-distanceField, 0.0);
+    float inside = 1.0 - smoothstep(
+      2.0 * uDpr,
+      18.0 * uDpr * uSizeScale,
+      interiorDepth
+    );
+    float outside = 1.0 - smoothstep(0.0, 2.4 * uDpr, max(distanceField, 0.0));
+    return inside * outside;
   }
 
-  vec3 screenSpaceEnvironment(vec2 screenPixel) {
+  float edgeLensing(float distanceField, float thickness) {
+    float interiorDepth = max(-distanceField, 0.0);
+    float boundaryContinuity = smoothstep(
+      0.0,
+      2.2 * uDpr,
+      interiorDepth
+    );
+    float cleanCenter = pow(1.0 - thickness, 0.72);
+    return saturate(
+      boundaryContinuity
+        * thickEdgeProfile(distanceField)
+        * mix(0.72, 1.0, cleanCenter)
+        * uLensStrength
+    );
+  }
+
+  float schlickFresnel(float cosine, float baseReflectance) {
+    float inverse = 1.0 - saturate(cosine);
+    return baseReflectance + (1.0 - baseReflectance) * pow(inverse, 5.0);
+  }
+
+  vec3 proceduralEnvironment(vec2 screenPixel) {
     vec2 safeMonitorSize = max(uMonitorSize, vec2(1.0));
     vec2 screenUv = (screenPixel - uMonitorOrigin) / safeMonitorSize;
     float aspect = safeMonitorSize.x / safeMonitorSize.y;
@@ -306,6 +318,18 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     return clamp(environment, 0.0, 1.0);
   }
 
+  vec3 screenSpaceEnvironment(vec2 screenPixel) {
+    vec2 safeResolution = max(uResolution, vec2(1.0));
+    vec2 halfTexel = 0.5 / max(uBackdropSize, vec2(1.0));
+    vec2 backdropUv = clamp(
+      (screenPixel - uRenderOrigin) / safeResolution,
+      halfTexel,
+      vec2(1.0) - halfTexel
+    );
+    vec3 captured = texture2D(uBackdropTexture, backdropUv).rgb;
+    return mix(proceduralEnvironment(screenPixel), captured, uBackdropReady);
+  }
+
   vec3 chromaticDispersion(
     vec2 refractedPixel,
     vec2 spectralAxis,
@@ -326,32 +350,30 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
   }
 
   float caustic(float distanceField, vec2 rimNormal) {
-    float innerBand = exp(
-      -abs(distanceField + 5.5 * uDpr) / max(1.0, 3.2 * uDpr)
-    );
-    float directional = pow(
+    float innerBand = exp(-pow(
+      abs(distanceField + 10.5 * uDpr) / max(1.0, 3.8 * uDpr),
+      1.35
+    ));
+    float keyArc = pow(
       max(dot(rimNormal, normalize(vec2(-0.62, 0.78))), 0.0),
-      1.55
+      1.35
     );
-    return innerBand * directional * uCausticStrength;
+    float returnArc = pow(
+      max(dot(rimNormal, normalize(vec2(0.82, -0.58))), 0.0),
+      2.6
+    ) * 0.34;
+    float movingFocus = 0.82 + 0.18 * sin(
+      uTime * 0.32 + dot(rimNormal, vec2(3.1, -2.7))
+    );
+    return innerBand * (keyArc + returnArc) * movingFocus * uCausticStrength;
   }
 
-  float outsideShadow(vec2 point, float distanceField) {
-    vec2 shadowOffset = vec2(2.0, -4.5) * uDpr;
+  float narrowContactShadow(vec2 point, float distanceField) {
+    vec2 shadowOffset = vec2(1.5, -3.0) * uDpr;
     float shiftedDistance = liquidDistance(point - shadowOffset);
-    float softShape = 1.0 - smoothstep(0.0, 9.5 * uDpr, shiftedDistance);
-    float exterior = smoothstep(-0.5 * uDpr, 1.6 * uDpr, distanceField);
+    float softShape = 1.0 - smoothstep(0.0, 5.2 * uDpr, shiftedDistance);
+    float exterior = smoothstep(-0.2 * uDpr, 1.2 * uDpr, distanceField);
     return softShape * exterior * uShadowStrength;
-  }
-
-  float capsuleContentMask(vec2 point) {
-    vec2 axis = normalize(uDirection);
-    vec2 normalAxis = vec2(-axis.y, axis.x);
-    float axial = dot(point, axis) / uDpr;
-    float radial = abs(dot(point, normalAxis)) / uDpr;
-    float axialMask = smoothstep(82.0 * uSizeScale, 116.0 * uSizeScale, axial);
-    float radialMask = 1.0 - smoothstep(20.0 * uSizeScale, 31.0 * uSizeScale, radial);
-    return axialMask * radialMask * smoothstep(0.42, 0.92, saturate(uShape.z));
   }
 
   void main() {
@@ -378,7 +400,7 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     vec2 internalRefraction = surfaceNormal.xy
       * uRefractionPx * (0.04 + lensing * 0.1);
     float particle = particleField(point + internalRefraction);
-    float shadow = outsideShadow(point, distanceField);
+    float shadow = narrowContactShadow(point, distanceField);
     float windowEdgeDistance = min(
       min(pixel.x, uResolution.x - pixel.x),
       min(pixel.y, uResolution.y - pixel.y)
@@ -386,22 +408,36 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     shadow *= smoothstep(0.0, 7.0 * uDpr, windowEdgeDistance);
     if (coverage + particle + shadow <= 0.001) discard;
 
-    float edge = exp(-abs(distanceField) / (4.4 * uDpr));
-    float fresnel = pow(1.0 - max(surfaceNormal.z, 0.0), 2.2);
+    float edge = exp(-abs(distanceField) / (3.4 * uDpr));
+    float thickEdge = thickEdgeProfile(distanceField);
+    float fresnel = schlickFresnel(max(surfaceNormal.z, 0.0), 0.035);
     vec3 lightDirection = normalize(vec3(
       -0.46 + uGaze.x * 0.12,
       0.68 - uGaze.y * 0.1,
       0.6
     ));
     vec3 fillDirection = normalize(vec3(0.54, -0.28, 0.8));
-    float highlight = pow(max(dot(surfaceNormal, lightDirection), 0.0), 22.0);
-    float fillHighlight = pow(max(dot(surfaceNormal, fillDirection), 0.0), 34.0);
+    float keyHighlight = pow(max(dot(surfaceNormal, lightDirection), 0.0), 34.0)
+      * (0.38 + thickEdge * 0.62);
+    float counterHighlight = pow(max(dot(surfaceNormal, fillDirection), 0.0), 24.0)
+      * exp(-abs(distanceField + 7.0 * uDpr) / max(1.0, 4.2 * uDpr));
 
     vec2 screenNormal = normalize(vec2(surfaceNormal.x, -surfaceNormal.y) + vec2(0.0001));
     float incidence = saturate(length(surfaceNormal.xy));
+    float interiorContinuity = smoothstep(
+      0.0,
+      2.2 * uDpr,
+      max(-distanceField, 0.0)
+    );
+    float bulkLensing = interiorContinuity
+      * thickness
+      * (1.0 - thickness)
+      * uLensStrength;
     float refractionDistance = uRefractionPx
-      * lensing
-      * (0.52 + incidence * 0.48);
+      * (
+        lensing * (0.52 + incidence * 0.48)
+        + bulkLensing * 0.22
+      );
     vec2 refractedPixel = absoluteScreenPixel + screenNormal * refractionDistance;
     float spectralDistance = uDispersionPx
       * lensing
@@ -419,21 +455,25 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     float oppositeAttenuation = exp(
       -abs(distanceField + 4.0 * uDpr) / max(1.0, 4.8 * uDpr)
     ) * pow(max(dot(rimNormal, normalize(vec2(0.62, -0.78))), 0.0), 1.35);
-    glassColor += vec3(1.0, 0.985, 0.94) * causticLight * 0.92;
-    glassColor *= 1.0 - oppositeAttenuation * 0.11;
-    glassColor += vec3(1.0, 0.99, 0.96) * highlight * 0.38;
-    glassColor += vec3(0.9, 0.97, 1.0) * fillHighlight * 0.16;
-    glassColor += vec3(0.42, 0.5, 0.56) * fresnel * 0.2;
+    glassColor += vec3(1.0, 0.985, 0.92) * causticLight * 1.18;
+    glassColor *= 1.0 - oppositeAttenuation * 0.14;
+    glassColor += vec3(1.0, 0.995, 0.97) * keyHighlight * 0.56;
+    glassColor += vec3(0.78, 0.94, 1.0) * counterHighlight * 0.31;
+    glassColor += vec3(0.76, 0.84, 0.9) * fresnel * thickEdge * 0.54;
     float rimLighting = 0.5 + 0.5 * dot(rimNormal, normalize(vec2(-0.58, 0.82)));
     vec3 rimColor = mix(vec3(0.30, 0.34, 0.38), vec3(0.99, 1.0, 1.0), rimLighting);
-    glassColor = mix(glassColor, rimColor, edge * 0.34 * uRimStrength);
+    glassColor = mix(
+      glassColor,
+      rimColor,
+      (edge * 0.46 + thickEdge * fresnel * 0.22) * uRimStrength
+    );
     float prismPolarity = dot(rimNormal, normalize(vec2(-0.76, 0.65)));
     vec3 warmPrism = vec3(0.28, 0.035, -0.10);
     vec3 coolPrism = vec3(-0.08, 0.03, 0.28);
     vec3 prismTint = mix(coolPrism, warmPrism, smoothstep(-0.2, 0.2, prismPolarity));
     float prismStrength = edge * incidence * lensing
       * min(uDispersionPx / max(uDpr * 2.25, 0.001), 1.0);
-    glassColor += prismTint * prismStrength * 0.24;
+    glassColor += prismTint * prismStrength * 0.48;
     float spectralScale = min(uDispersionPx / max(uDpr * 2.25, 0.001), 1.0);
     float warmSpectralRim = exp(
       -abs(distanceField + uDispersionPx * 0.55) / max(0.8, uDpr * 0.92)
@@ -452,12 +492,12 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     glassColor = mix(
       glassColor,
       vec3(1.0, 0.58, 0.3),
-      warmSpectralRim * warmDirection * spectralScale * lensing * 0.5
+      warmSpectralRim * warmDirection * spectralScale * lensing * 0.68
     );
     glassColor = mix(
       glassColor,
       vec3(0.39, 0.75, 1.0),
-      coolSpectralRim * coolDirection * spectralScale * lensing * 0.38
+      coolSpectralRim * coolDirection * spectralScale * lensing * 0.56
     );
     float warmDirectionalRim = edge * pow(
       max(dot(rimNormal, vec2(1.0, 0.0)), 0.0),
@@ -518,20 +558,17 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     glassColor += vec3(0.94, 0.99, 1.0) * orbitHighlight * 0.32;
     glassColor = mix(glassColor, vec3(0.98, 1.0, 1.0), innerCore * 0.78);
 
-    float capsuleContent = capsuleContentMask(point);
-    glassColor = mix(glassColor, vec3(0.16, 0.19, 0.21), capsuleContent * 0.24);
-
-    float centerAlpha = mix(0.075, 0.052, thickness);
+    float centerAlpha = mix(0.028, 0.012, thickness);
     float glassAlpha = clamp(
       centerAlpha
-        + edge * 0.23 * uRimStrength
-        + fresnel * 0.09
-        + highlight * 0.045
-        + fillHighlight * 0.018
-        + causticLight * 0.18
-        + capsuleContent * 0.035,
+        + thickEdge * 0.115 * uRimStrength
+        + edge * 0.29 * uRimStrength
+        + fresnel * thickEdge * 0.16
+        + keyHighlight * 0.075
+        + counterHighlight * 0.046
+        + causticLight * 0.24,
       0.0,
-      0.42
+      0.5
     ) * coverage;
     float speechPulse = uSpeechLevel * (0.5 + 0.5 * sin(uTime * 10.0));
     float lightAlpha = (
@@ -548,6 +585,11 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
       0.0,
       0.78
     ) * uOpacity;
+    float sampledGlassAlpha = coverage
+      * uBackdropReady
+      * (0.055 + lensing * 0.68 + bulkLensing * 0.12)
+      * uOpacity;
+    foregroundAlpha = max(foregroundAlpha, sampledGlassAlpha);
     float shadowAlpha = shadow * (1.0 - foregroundAlpha) * uOpacity;
     float alpha = clamp(foregroundAlpha + shadowAlpha, 0.0, 0.82);
     vec3 premultiplied = clamp(glassColor, 0.0, 1.0) * foregroundAlpha;

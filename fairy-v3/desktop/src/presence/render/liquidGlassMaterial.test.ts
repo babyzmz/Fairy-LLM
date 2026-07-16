@@ -71,12 +71,12 @@ describe("Liquid Glass material", () => {
     expect(liquidShapeTargetForPhase("input_reveal")).toEqual({
       droplet: 1,
       bridge: 1,
-      capsule: 1,
+      capsule: 0,
     });
     expect(liquidShapeTargetForPhase("interactive")).toEqual({
       droplet: 0,
       bridge: 0,
-      capsule: 1,
+      capsule: 0,
     });
     expect(liquidShapeTargetForPhase("returning")).toEqual({
       droplet: 0,
@@ -94,21 +94,30 @@ describe("Liquid Glass material", () => {
     expect(Math.hypot(left.x, left.y)).toBeCloseTo(1);
   });
 
-  it("keeps desktop capture out of the shader contract", () => {
+  it("samples the latest desktop texture with boundary-continuous glass optics", () => {
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("bezierBridgeDistance");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("smoothMinimum");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("opticalThickness");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("thickEdgeProfile");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("edgeLensing");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("schlickFresnel");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("screenSpaceEnvironment");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uBackdropTexture");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("boundaryContinuity");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("chromaticDispersion");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("caustic");
-    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("outsideShadow");
-    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("capsuleContentMask");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("keyHighlight");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("counterHighlight");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("narrowContactShadow");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toContain("capsuleDistance");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toContain("capsuleContentMask");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uLensStrength");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uRimStrength");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uShadowStrength");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uSizeScale");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uOpacity");
-    expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toMatch(/sampler2D|texture2D|texture\s*\(/);
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("sampler2D uBackdropTexture");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uBackdropSize");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("texture2D(uBackdropTexture");
   });
 });

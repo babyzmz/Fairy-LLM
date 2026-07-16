@@ -29,6 +29,7 @@ pub enum PresenceInteractionPhase {
 pub struct PresenceInteractionSignal {
     pub sampled_at_ms: u64,
     pub cursor_band: CursorBand,
+    pub active_dwell_ms: u64,
     pub cursor_speed_px_s: f64,
     pub pointer_over_input: bool,
     pub input_focused: bool,
@@ -156,7 +157,7 @@ impl PresenceInteractionStateMachine {
 
         let activation_started = *self
             .activation_started_at_ms
-            .get_or_insert(signal.sampled_at_ms);
+            .get_or_insert_with(|| signal.sampled_at_ms.saturating_sub(signal.active_dwell_ms));
         let elapsed = signal.sampled_at_ms.saturating_sub(activation_started);
         let next = if signal.reduced_motion {
             if elapsed >= 250 {
