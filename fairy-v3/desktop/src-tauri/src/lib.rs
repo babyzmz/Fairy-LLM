@@ -24,6 +24,9 @@ use presence_coordinator::{
     PET_CORE_EXTENT_LOGICAL, PET_INPUT_COMPACT_HEIGHT_LOGICAL, PET_INPUT_COMPACT_WIDTH_LOGICAL,
     PET_INPUT_EXPANDED_HEIGHT_LOGICAL, PET_INPUT_EXPANDED_WIDTH_LOGICAL,
 };
+use presence_native_gpu::{
+    NativeGpuConfig, NativeGpuStartRequest, NativeGpuStatus, NativePresenceGpuManager,
+};
 use presence_renderer_supervisor::{
     PresenceRendererDirective, PresenceRendererHealthReport, PresenceRendererStatus,
     PresenceRendererSupervisor,
@@ -41,6 +44,7 @@ pub mod desktop_preferences;
 pub mod presence_backdrop;
 pub mod presence_coordinator;
 pub mod presence_interaction;
+pub mod presence_native_gpu;
 pub mod presence_renderer_supervisor;
 pub mod presence_runtime;
 pub mod presence_startup;
@@ -291,6 +295,7 @@ struct DesktopState {
     desktop_program: PathBuf,
     resource_dir: PathBuf,
     presence: PresenceCoordinatorHandle,
+    native_gpu: Arc<NativePresenceGpuManager>,
     presence_windows: Mutex<Option<PresenceNativeWindows>>,
     pet_drag: Mutex<Option<PetGroupDragSession>>,
     renderer_supervisor: Mutex<PresenceRendererSupervisor>,
@@ -347,6 +352,26 @@ fn presence_native_windows(state: &DesktopState) -> Result<PresenceNativeWindows
         .lock()
         .map_err(|_| "Pet native window lock is unavailable".to_owned())?
         .ok_or_else(|| "Pet native windows are unavailable".to_owned())
+}
+
+#[cfg(target_os = "windows")]
+fn native_gpu_render_handle(windows: PresenceNativeWindows) -> Result<isize, String> {
+    Ok(windows.render)
+}
+
+#[cfg(target_os = "windows")]
+fn native_gpu_input_handle(windows: PresenceNativeWindows) -> Result<isize, String> {
+    Ok(windows.input)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn native_gpu_input_handle(_windows: PresenceNativeWindows) -> Result<isize, String> {
+    Err("PRESENCE_NATIVE_GPU_UNAVAILABLE".to_owned())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn native_gpu_render_handle(_windows: PresenceNativeWindows) -> Result<isize, String> {
+    Err("PRESENCE_NATIVE_GPU_UNAVAILABLE".to_owned())
 }
 
 fn set_presence_placement(state: &DesktopState, placement: PresenceWindowPlacement) {
@@ -1818,6 +1843,99 @@ async fn open_settings_window(window: WebviewWindow) -> Result<(), String> {
     show_and_focus(&settings_window(window.app_handle())?)
 }
 
+#[tauri::command]
+async fn pet_native_gpu_start(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    request: NativeGpuStartRequest,
+) -> Result<NativeGpuStatus, String> {
+    authorize_pet_render_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let preferences = DesktopPreferencesStore::new(&state.data_dir)
+        .load()
+        .map_err(|_| "PRESENCE_NATIVE_GPU_PREFERENCES_UNAVAILABLE".to_owned())?;
+    if preferences.pet_optics_mode != desktop_preferences::PetOpticsMode::Enhanced {
+        return Err("PRESENCE_NATIVE_GPU_PRIVACY_MODE".to_owned());
+    }
+    let position = window.outer_position().map_err(|error| error.to_string())?;
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    let native_windows = presence_native_windows(&state)?;
+    let render_hwnd = native_gpu_render_handle(native_windows)?;
+    let input_hwnd = native_gpu_input_handle(native_windows)?;
+    let manager = Arc::clone(&state.native_gpu);
+    let starting_manager = Arc::clone(&manager);
+    let status = tauri::async_runtime::spawn_blocking(move || {
+        starting_manager.start(NativeGpuConfig {
+            render_hwnd,
+            input_hwnd,
+            render_frame: PhysicalFrame {
+                x: position.x,
+                y: position.y,
+                width: size.width,
+                height: size.height,
+            },
+            target_frame_rate: request.target_frame_rate,
+            capsule_visible: request.capsule_visible,
+            visual_state: request.visual_state,
+            opacity: request.opacity,
+        })
+    })
+    .await
+    .map_err(|_| "PRESENCE_NATIVE_GPU_WORKER_INTERRUPTED".to_owned())?
+    .map_err(|error| error.to_string())?;
+    if let Err(error) = window.hide() {
+        let _ = tauri::async_runtime::spawn_blocking(move || manager.stop()).await;
+        return Err(error.to_string());
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+async fn pet_native_gpu_status(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<NativeGpuStatus, String> {
+    authorize_pet_render_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    Ok(state.native_gpu.status())
+}
+
+#[tauri::command]
+async fn pet_native_gpu_prepare_visual_test(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<NativeGpuStatus, String> {
+    authorize_pet_render_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    if !cfg!(debug_assertions) {
+        return Err("PRESENCE_NATIVE_GPU_VISUAL_TEST_UNAVAILABLE".to_owned());
+    }
+    let manager = Arc::clone(&state.native_gpu);
+    tauri::async_runtime::spawn_blocking(move || manager.prepare_visual_test())
+        .await
+        .map_err(|_| "PRESENCE_NATIVE_GPU_WORKER_INTERRUPTED".to_owned())?
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn pet_native_gpu_stop(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<NativeGpuStatus, String> {
+    authorize_pet_render_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let manager = Arc::clone(&state.native_gpu);
+    let status = tauri::async_runtime::spawn_blocking(move || manager.stop())
+        .await
+        .map_err(|_| "PRESENCE_NATIVE_GPU_WORKER_INTERRUPTED".to_owned())?
+        .map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window
+        .set_ignore_cursor_events(true)
+        .map_err(|error| error.to_string())?;
+    Ok(status)
+}
+
 fn deserialize_core_result<T: serde::de::DeserializeOwned>(response: Value) -> Result<T, String> {
     if let Some(result) = response.get("result") {
         return serde_json::from_value(result.clone())
@@ -2352,6 +2470,7 @@ pub fn run() {
                 desktop_program,
                 resource_dir,
                 presence,
+                native_gpu: Arc::new(NativePresenceGpuManager::default()),
                 presence_windows: Mutex::new(None),
                 pet_drag: Mutex::new(None),
                 renderer_supervisor: Mutex::new(PresenceRendererSupervisor::default()),
@@ -2399,6 +2518,10 @@ pub fn run() {
             pet_window_group_end_drag,
             pet_window_group_reset_position,
             pet_renderer_report_health,
+            pet_native_gpu_start,
+            pet_native_gpu_status,
+            pet_native_gpu_prepare_visual_test,
+            pet_native_gpu_stop,
             pet_exit,
             open_main_window,
             open_settings_window,
