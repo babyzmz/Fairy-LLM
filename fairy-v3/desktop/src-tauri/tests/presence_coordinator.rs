@@ -301,7 +301,7 @@ fn cursor_metrics(band: CursorBand, point: PhysicalPoint) -> CursorMetrics {
 fn runtime_policy_emits_changes_and_recovery_heartbeats_only() {
     let normal = PresenceRuntimePolicy {
         schema_version: 1,
-        frame_rate_limit: 60,
+        frame_rate_limit: 144,
         power_saver: false,
         foreground_fullscreen: false,
     };

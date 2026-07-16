@@ -72,4 +72,18 @@ describe("RendererFrameLoop", () => {
     harness.flush(16);
     expect(harness.pending()).toBe(1);
   });
+
+  it("paces 144 FPS without collapsing to a divisor of a 299 Hz display", () => {
+    const harness = schedulerHarness();
+    const draw = vi.fn();
+    const loop = new RendererFrameLoop(draw, () => 1_000 / 144, harness.scheduler);
+
+    loop.start();
+    for (let frame = 1; frame <= 299; frame += 1) {
+      harness.flush(frame * (1_000 / 299));
+    }
+
+    expect(draw.mock.calls.length).toBeGreaterThanOrEqual(144);
+    expect(draw.mock.calls.length).toBeLessThanOrEqual(146);
+  });
 });

@@ -72,7 +72,7 @@ function projection(overrides: Partial<PresenceProjectionState> = {}): PresenceP
 
 function preferences(): DesktopPreferences {
   return {
-    schema_version: 2,
+    schema_version: 3,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -101,6 +101,7 @@ function preferences(): DesktopPreferences {
     pet_do_not_disturb: false,
     pet_remember_position: true,
     pet_renderer_mode: "auto",
+    pet_target_fps: 60,
     pet_anchor: null,
     developer_mode: false,
   };

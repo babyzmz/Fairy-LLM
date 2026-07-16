@@ -67,6 +67,7 @@ export interface DesktopPreferences {
   pet_do_not_disturb: boolean;
   pet_remember_position: boolean;
   pet_renderer_mode: PetRendererMode;
+  pet_target_fps: 60 | 144;
   pet_anchor: PetAnchorPreference | null;
   developer_mode: boolean;
 }

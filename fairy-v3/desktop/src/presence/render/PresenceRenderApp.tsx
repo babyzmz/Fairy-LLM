@@ -205,6 +205,7 @@ export function PresenceRenderApp({
       data-reduced-motion={String(reducedMotion)}
       data-speaking={String(projection.speaking)}
       data-work-state={view.work_state}
+      data-target-frame-rate={renderSettings.target_frame_rate}
       data-frame-rate-limit={runtimePolicy.frame_rate_limit}
       data-power-saver={String(runtimePolicy.power_saver)}
       data-foreground-fullscreen={String(runtimePolicy.foreground_fullscreen)}
@@ -231,6 +232,7 @@ export function PresenceRenderApp({
             opacity: renderSettings.opacity,
             particles_enabled: renderSettings.particles_enabled,
             idle_for_ms: idleForMs,
+            target_frame_rate: renderSettings.target_frame_rate,
             frame_rate_limit: runtimePolicy.frame_rate_limit,
           }}
         />

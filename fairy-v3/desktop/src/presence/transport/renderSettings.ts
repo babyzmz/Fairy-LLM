@@ -6,12 +6,13 @@ import type { PresenceRendererMode } from "../render/rendererSupport";
 const CHANNEL_NAME = "fairy.presence.render-settings.v1";
 
 export interface PresenceRenderSettings {
-  schema_version: 1;
+  schema_version: 2;
   mode: PresenceRendererMode;
   size_scale: number;
   opacity: number;
   motion_enabled: boolean;
   particles_enabled: boolean;
+  target_frame_rate: 60 | 144;
 }
 
 export interface PresenceRenderSettingsChannel {
@@ -31,12 +32,13 @@ interface BroadcastPort {
 type BroadcastFactory = (name: string) => BroadcastPort | null;
 
 const settingsSchema = z.object({
-  schema_version: z.literal(1),
+  schema_version: z.literal(2),
   mode: z.enum(["auto", "liquid", "compatibility"]),
   size_scale: z.number().min(0.75).max(1.5),
   opacity: z.number().min(0.4).max(1),
   motion_enabled: z.boolean(),
   particles_enabled: z.boolean(),
+  target_frame_rate: z.union([z.literal(60), z.literal(144)]),
 }).strict();
 
 const messageSchema = z.discriminatedUnion("kind", [
@@ -48,24 +50,26 @@ const messageSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const DEFAULT_PRESENCE_RENDER_SETTINGS: PresenceRenderSettings = Object.freeze({
-  schema_version: 1,
+  schema_version: 2,
   mode: "auto",
   size_scale: 1,
   opacity: 0.92,
   motion_enabled: true,
   particles_enabled: true,
+  target_frame_rate: 60,
 });
 
 export function safeRenderSettingsFromPreferences(
   preferences: DesktopPreferences,
 ): PresenceRenderSettings {
   return settingsSchema.parse({
-    schema_version: 1,
+    schema_version: 2,
     mode: preferences.pet_renderer_mode,
     size_scale: preferences.pet_size_percent / 100,
     opacity: preferences.pet_opacity_percent / 100,
     motion_enabled: preferences.pet_motion_enabled,
     particles_enabled: preferences.pet_particles_enabled,
+    target_frame_rate: preferences.pet_target_fps,
   });
 }
 

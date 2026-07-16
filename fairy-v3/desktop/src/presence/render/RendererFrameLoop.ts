@@ -15,6 +15,8 @@ export class RendererFrameLoop {
   private active = false;
   private disposed = false;
   private lastDrawAt = 0;
+  private nextDrawAt = 0;
+  private scheduledInterval = Number.POSITIVE_INFINITY;
 
   constructor(
     private readonly drawFrame: (now: number) => void,
@@ -40,10 +42,15 @@ export class RendererFrameLoop {
 
   refresh(): void {
     if (!this.running) return;
-    if (!Number.isFinite(this.frameInterval())) {
+    const interval = this.frameInterval();
+    if (!Number.isFinite(interval)) {
       this.cancelScheduledFrame();
       this.drawNow();
       return;
+    }
+    if (interval !== this.scheduledInterval) {
+      this.scheduledInterval = interval;
+      this.nextDrawAt = this.scheduler.now() + interval;
     }
     this.schedule();
   }
@@ -62,9 +69,18 @@ export class RendererFrameLoop {
     this.frame = null;
     if (!this.running) return;
     const interval = this.frameInterval();
-    if (this.lastDrawAt === 0 || now - this.lastDrawAt >= interval) {
+    if (interval !== this.scheduledInterval) {
+      this.scheduledInterval = interval;
+      this.nextDrawAt = Math.min(this.nextDrawAt, this.lastDrawAt + interval);
+    }
+    if (this.lastDrawAt === 0 || now >= this.nextDrawAt - 0.001) {
       this.drawFrame(now);
       this.lastDrawAt = now;
+      if (Number.isFinite(interval)) {
+        const overdue = Math.max(0, now - this.nextDrawAt);
+        const elapsedIntervals = Math.floor(overdue / interval) + 1;
+        this.nextDrawAt += elapsedIntervals * interval;
+      }
     }
     this.schedule();
   };
@@ -73,6 +89,10 @@ export class RendererFrameLoop {
     const now = this.scheduler.now();
     this.drawFrame(now);
     this.lastDrawAt = now;
+    this.scheduledInterval = this.frameInterval();
+    this.nextDrawAt = Number.isFinite(this.scheduledInterval)
+      ? now + this.scheduledInterval
+      : Number.POSITIVE_INFINITY;
   }
 
   private schedule() {

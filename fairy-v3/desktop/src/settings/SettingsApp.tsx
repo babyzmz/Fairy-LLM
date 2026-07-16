@@ -4,6 +4,7 @@ import {
   Check,
   ChevronRight,
   Eye,
+  Gauge,
   KeyRound,
   Languages,
   Mic2,
@@ -292,6 +293,7 @@ function SettingsCategory(props: {
       <SettingToggle label="Always on top" checked={data.preferences.pet_always_on_top} disabled={busy} onChange={(value) => void updatePreferences({ pet_always_on_top: value })} />
       <SettingToggle label="Mute pet" checked={data.preferences.pet_muted} disabled={busy} onChange={(value) => void updatePreferences({ pet_muted: value })} />
       <SettingSelect icon={<PawPrint size={17} />} label="Renderer" value={data.preferences.pet_renderer_mode} disabled={busy} onChange={(value) => void updatePreferences({ pet_renderer_mode: value as DesktopPreferences["pet_renderer_mode"] })} options={[{ value: "auto", label: "Automatic" }, { value: "liquid", label: "Liquid Glass" }, { value: "compatibility", label: "Compatibility" }]} />
+      <SettingSelect icon={<Gauge size={17} />} label="Animation frame rate" value={String(data.preferences.pet_target_fps)} disabled={busy || !data.preferences.pet_motion_enabled} onChange={(value) => void updatePreferences({ pet_target_fps: Number(value) as DesktopPreferences["pet_target_fps"] })} options={[{ value: "60", label: "60 FPS" }, { value: "144", label: "144 FPS" }]} />
       <SettingRange label="Size" value={data.preferences.pet_size_percent} min={75} max={150} step={5} suffix="%" disabled={busy} onCommit={(value) => void updatePreferences({ pet_size_percent: value })} />
       <SettingRange label="Opacity" value={data.preferences.pet_opacity_percent} min={40} max={100} step={2} suffix="%" disabled={busy} onCommit={(value) => void updatePreferences({ pet_opacity_percent: value })} />
       <SettingToggle label="Animate liquid motion" checked={data.preferences.pet_motion_enabled} disabled={busy} onChange={(value) => void updatePreferences({ pet_motion_enabled: value })} />

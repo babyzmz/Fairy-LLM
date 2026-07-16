@@ -10,12 +10,13 @@ describe("presence render settings", () => {
   it("projects only bounded renderer fields from desktop preferences", () => {
     const projected = safeRenderSettingsFromPreferences(preferences());
     expect(projected).toEqual({
-      schema_version: 1,
+      schema_version: 2,
       mode: "liquid",
       size_scale: 1.25,
       opacity: 0.84,
       motion_enabled: false,
       particles_enabled: true,
+      target_frame_rate: 144,
     });
     expect(projected).not.toHaveProperty("selected_profile_id");
     expect(projected).not.toHaveProperty("pet_anchor");
@@ -32,7 +33,7 @@ describe("presence render settings", () => {
     channel.onSettings(listener);
     port.onmessage?.({ data: {
       kind: "render-settings.snapshot",
-      settings: { schema_version: 1, mode: "liquid", size_scale: 99 },
+      settings: { schema_version: 2, mode: "liquid", size_scale: 99 },
     } } as MessageEvent<unknown>);
     expect(listener).not.toHaveBeenCalled();
 
@@ -45,7 +46,7 @@ describe("presence render settings", () => {
 
 function preferences(): DesktopPreferences {
   return {
-    schema_version: 2,
+    schema_version: 3,
     revision: 7,
     language: "system",
     launch_at_startup: false,
@@ -74,6 +75,7 @@ function preferences(): DesktopPreferences {
     pet_do_not_disturb: false,
     pet_remember_position: true,
     pet_renderer_mode: "liquid",
+    pet_target_fps: 144,
     pet_anchor: { monitor_id: "primary", x_ratio: 0.5, y_ratio: 0.5 },
     developer_mode: false,
   };

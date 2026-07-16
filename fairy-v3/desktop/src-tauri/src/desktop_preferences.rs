@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const PREFERENCES_FILE: &str = "preferences/desktop.json";
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -72,6 +72,8 @@ pub struct DesktopPreferences {
     pub pet_remember_position: bool,
     #[serde(default)]
     pub pet_renderer_mode: PetRendererMode,
+    #[serde(default = "default_pet_target_fps")]
+    pub pet_target_fps: u16,
     #[serde(default)]
     pub pet_anchor: Option<PetAnchorPreference>,
     pub developer_mode: bool,
@@ -109,6 +111,7 @@ impl Default for DesktopPreferences {
             pet_do_not_disturb: false,
             pet_remember_position: true,
             pet_renderer_mode: PetRendererMode::Auto,
+            pet_target_fps: default_pet_target_fps(),
             pet_anchor: None,
             developer_mode: false,
         }
@@ -167,7 +170,7 @@ impl DesktopPreferencesStore {
                     .get("schema_version")
                     .and_then(serde_json::Value::as_u64)
             });
-        let legacy = schema_version == Some(1);
+        let legacy = matches!(schema_version, Some(1 | 2));
         let mut preferences = match serde_json::from_slice::<DesktopPreferences>(&bytes) {
             Ok(preferences) => preferences,
             Err(_) if legacy => return Ok(DesktopPreferences::default()),
@@ -296,6 +299,11 @@ fn validate(preferences: &DesktopPreferences) -> Result<(), DesktopPreferencesEr
             "pet hover dwell must be between 100 and 1000 milliseconds".to_owned(),
         ));
     }
+    if ![60, 144].contains(&preferences.pet_target_fps) {
+        return Err(DesktopPreferencesError::Invalid(
+            "pet target fps must be 60 or 144".to_owned(),
+        ));
+    }
     if let Some(anchor) = &preferences.pet_anchor {
         if anchor.monitor_id.is_empty() || anchor.monitor_id.len() > 200 {
             return Err(DesktopPreferencesError::Invalid(
@@ -332,6 +340,10 @@ const fn default_pet_opacity_percent() -> u8 {
 
 const fn default_pet_hover_dwell_ms() -> u16 {
     250
+}
+
+const fn default_pet_target_fps() -> u16 {
+    60
 }
 
 #[cfg(windows)]
@@ -457,6 +469,7 @@ mod tests {
             "pet_do_not_disturb",
             "pet_remember_position",
             "pet_renderer_mode",
+            "pet_target_fps",
             "pet_anchor",
         ] {
             object.remove(field);
@@ -468,12 +481,37 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 2);
+        assert_eq!(migrated.schema_version, 3);
         assert!(!migrated.voice_auto_play_pet);
         assert!(!migrated.pet_always_on_top);
         assert!(migrated.pet_muted);
         assert_eq!(migrated.pet_size_percent, 100);
         assert_eq!(migrated.pet_renderer_mode, super::PetRendererMode::Auto);
+        assert_eq!(migrated.pet_target_fps, 60);
+        assert_eq!(store.load().expect("reload migrated"), migrated);
+    }
+
+    #[test]
+    fn version_two_preferences_add_the_default_target_frame_rate() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        let path = directory.path().join("preferences/desktop.json");
+        std::fs::create_dir_all(path.parent().expect("preferences parent"))
+            .expect("create preferences parent");
+        let mut legacy =
+            serde_json::to_value(DesktopPreferences::default()).expect("serialize defaults");
+        let object = legacy.as_object_mut().expect("preferences object");
+        object.insert("schema_version".to_owned(), serde_json::json!(2));
+        object.remove("pet_target_fps");
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&legacy).expect("legacy bytes"),
+        )
+        .expect("write legacy preferences");
+
+        let migrated = store.load().expect("migrate preferences");
+        assert_eq!(migrated.schema_version, 3);
+        assert_eq!(migrated.pet_target_fps, 60);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
 }

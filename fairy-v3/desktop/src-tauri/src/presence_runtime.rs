@@ -14,7 +14,7 @@ pub fn resolve_frame_rate_limit(power_saver: bool, foreground_fullscreen: bool) 
     if power_saver || foreground_fullscreen {
         15
     } else {
-        60
+        144
     }
 }
 

@@ -37,6 +37,17 @@ describe("presence runtime policy source", () => {
         kind: "presence.runtime-policy",
         policy: {
           schema_version: 1,
+          frame_rate_limit: 144,
+          power_saver: false,
+          foreground_fullscreen: false,
+        },
+      },
+    }));
+    messages[0]?.(new MessageEvent("message", {
+      data: {
+        kind: "presence.runtime-policy",
+        policy: {
+          schema_version: 1,
           frame_rate_limit: 1,
           power_saver: true,
           foreground_fullscreen: false,
@@ -44,8 +55,15 @@ describe("presence runtime policy source", () => {
         },
       },
     }));
-    expect(listener).toHaveBeenCalledOnce();
-    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ frame_rate_limit: 15 }));
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ frame_rate_limit: 15 }),
+    );
+    expect(listener).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ frame_rate_limit: 144 }),
+    );
     stop();
   });
 });

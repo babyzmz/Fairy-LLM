@@ -20,6 +20,7 @@ function snapshot(
     opacity: 0.92,
     particles_enabled: true,
     idle_for_ms: 0,
+    target_frame_rate: 60,
     frame_rate_limit: 60,
     ...overrides,
   };
@@ -48,6 +49,22 @@ describe("presence renderer scheduling", () => {
     expect(rendererFrameInterval(snapshot({ reduced_motion: true }))).toBe(
       Number.POSITIVE_INFINITY,
     );
+  });
+
+  it("uses a selected 144 FPS target while keeping idle and system caps authoritative", () => {
+    expect(rendererFrameInterval(snapshot({
+      target_frame_rate: 144,
+      frame_rate_limit: 144,
+    }))).toBeCloseTo(1_000 / 144);
+    expect(rendererFrameInterval(snapshot({
+      target_frame_rate: 144,
+      frame_rate_limit: 60,
+    }))).toBeCloseTo(1_000 / 60);
+    expect(rendererFrameInterval(snapshot({
+      target_frame_rate: 144,
+      frame_rate_limit: 144,
+      idle_for_ms: 15_000,
+    }))).toBeCloseTo(1_000 / 30);
   });
 });
 

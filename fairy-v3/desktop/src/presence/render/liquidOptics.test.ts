@@ -20,6 +20,7 @@ function snapshot(
     opacity: 0.92,
     particles_enabled: true,
     idle_for_ms: 0,
+    target_frame_rate: 60,
     frame_rate_limit: 60,
   };
 }

@@ -105,6 +105,10 @@ describe("SettingsApp", () => {
     await vi.waitFor(() => {
       expect(screen.getByRole("combobox", { name: "Renderer" })).toHaveValue("compatibility");
     });
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Animation frame rate" }),
+      "144",
+    );
     fireEvent.click(screen.getByRole("checkbox", { name: "Do not disturb" }));
     await vi.waitFor(() => {
       expect(screen.getByRole("checkbox", { name: "Do not disturb" })).toBeChecked();
@@ -119,6 +123,7 @@ describe("SettingsApp", () => {
       .filter(([command]) => command === "desktop_preferences_update")
       .map(([, args]) => (args as { input: { preferences: DesktopPreferences } }).input.preferences);
     expect(updates.some((preferences) => preferences.pet_renderer_mode === "compatibility")).toBe(true);
+    expect(updates.some((preferences) => preferences.pet_target_fps === 144)).toBe(true);
     expect(updates.some((preferences) => preferences.pet_do_not_disturb)).toBe(true);
     expect(updates.at(-1)?.pet_remember_position).toBe(false);
   });
@@ -249,7 +254,7 @@ function rpcRequest(invoke: ReturnType<typeof settingsInvoke>, method: string) {
 
 function defaultPreferences(): DesktopPreferences {
   return {
-    schema_version: 2,
+    schema_version: 3,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -278,6 +283,7 @@ function defaultPreferences(): DesktopPreferences {
     pet_do_not_disturb: false,
     pet_remember_position: true,
     pet_renderer_mode: "auto",
+    pet_target_fps: 60,
     pet_anchor: null,
     developer_mode: false,
   };
