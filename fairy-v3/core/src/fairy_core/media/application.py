@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -12,8 +11,9 @@ from fairy_core.assistant.models import ToolInvocation
 from fairy_core.assistant.provider_attempts import ProviderAttemptRecorder
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
-from fairy_core.domain.execution import Artifact, ArtifactType, ArtifactVisibility
+from fairy_core.domain.execution import Artifact, ArtifactVisibility
 from fairy_core.domain.models import ScopeContract
+from fairy_core.media import invariants as media_invariants
 from fairy_core.media.models import (
     MediaGenerationJob,
     MediaGenerationKind,
@@ -39,15 +39,9 @@ from fairy_core.providers import (
     ModelExecutionRole,
     ProviderAttemptEvent,
     ProviderAttemptStatus,
-    ProviderAuthenticationError,
     ProviderCancelledError,
-    ProviderContentRejectedError,
     ProviderError,
-    ProviderErrorCategory,
-    ProviderNetworkError,
     ProviderProtocolError,
-    ProviderRateLimitError,
-    ProviderTimeoutError,
     ProviderUnavailableError,
 )
 from fairy_core.workspace.index import ProjectIndexer
@@ -109,14 +103,14 @@ class MediaApplication:
         idempotency_key: str,
     ) -> MediaGenerationResult:
         spec = {
-            "prompt": _prompt(prompt),
-            "size": _choice(size, {"1024x1024"}, "image size"),
-            "aspect_ratio": _choice(
+            "prompt": media_invariants.prompt(prompt),
+            "size": media_invariants.choice(size, {"1024x1024"}, "image size"),
+            "aspect_ratio": media_invariants.choice(
                 aspect_ratio,
                 {"1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"},
                 "image aspect ratio",
             ),
-            "seed": _seed(seed),
+            "seed": media_invariants.seed(seed),
         }
         prepared = self._prepare_job(
             task_id=task_id,
@@ -125,7 +119,8 @@ class MediaApplication:
             kind=MediaGenerationKind.IMAGE,
             model_id=IMAGE_MODEL_ID,
             endpoint_kind=ModelEndpointKind.IMAGES,
-            output_path=output_path or _default_output_path("image", idempotency_key, ".png"),
+            output_path=output_path
+            or media_invariants.default_output_path("image", idempotency_key, ".png"),
             request_spec=spec,
             idempotency_key=idempotency_key,
         )
@@ -146,9 +141,9 @@ class MediaApplication:
         idempotency_key: str,
     ) -> MediaGenerationResult:
         spec = {
-            "prompt": _prompt(prompt),
-            "output_format": _choice(output_format, {"wav"}, "music format"),
-            "seed": _seed(seed),
+            "prompt": media_invariants.prompt(prompt),
+            "output_format": media_invariants.choice(output_format, {"wav"}, "music format"),
+            "seed": media_invariants.seed(seed),
         }
         prepared = self._prepare_job(
             task_id=task_id,
@@ -157,7 +152,8 @@ class MediaApplication:
             kind=MediaGenerationKind.MUSIC,
             model_id=MUSIC_MODEL_ID,
             endpoint_kind=ModelEndpointKind.AUDIO,
-            output_path=output_path or _default_output_path("music", idempotency_key, ".wav"),
+            output_path=output_path
+            or media_invariants.default_output_path("music", idempotency_key, ".wav"),
             request_spec=spec,
             idempotency_key=idempotency_key,
         )
@@ -181,16 +177,20 @@ class MediaApplication:
         idempotency_key: str,
     ) -> MediaGenerationResult:
         spec = {
-            "prompt": _prompt(prompt),
-            "duration_seconds": _integer_range(duration_seconds, 1, 20, "video duration"),
-            "resolution": _choice(resolution, {"720p", "1080p"}, "video resolution"),
-            "aspect_ratio": _choice(
+            "prompt": media_invariants.prompt(prompt),
+            "duration_seconds": media_invariants.integer_range(
+                duration_seconds, 1, 20, "video duration"
+            ),
+            "resolution": media_invariants.choice(
+                resolution, {"720p", "1080p"}, "video resolution"
+            ),
+            "aspect_ratio": media_invariants.choice(
                 aspect_ratio,
                 {"1:1", "16:9", "9:16"},
                 "video aspect ratio",
             ),
-            "generate_audio": _boolean(generate_audio, "generate_audio"),
-            "seed": _seed(seed),
+            "generate_audio": media_invariants.boolean(generate_audio, "generate_audio"),
+            "seed": media_invariants.seed(seed),
         }
         prepared = self._prepare_job(
             task_id=task_id,
@@ -199,7 +199,8 @@ class MediaApplication:
             kind=MediaGenerationKind.VIDEO,
             model_id=VIDEO_MODEL_ID,
             endpoint_kind=ModelEndpointKind.VIDEOS,
-            output_path=output_path or _default_output_path("video", idempotency_key, ".mp4"),
+            output_path=output_path
+            or media_invariants.default_output_path("video", idempotency_key, ".mp4"),
             request_spec=spec,
             idempotency_key=idempotency_key,
         )
@@ -319,7 +320,7 @@ class MediaApplication:
                             prompt=str(spec["prompt"]),
                             size=str(spec["size"]),
                             aspect_ratio=str(spec["aspect_ratio"]),
-                            seed=_stored_seed(spec.get("seed")),
+                            seed=media_invariants.stored_seed(spec.get("seed")),
                             idempotency_key=prepared.job.idempotency_key,
                             zero_data_retention=prepared.zero_data_retention,
                         ),
@@ -337,7 +338,7 @@ class MediaApplication:
                             model_id=prepared.job.model_id,
                             prompt=str(spec["prompt"]),
                             output_format=str(spec["output_format"]),
-                            seed=_stored_seed(spec.get("seed")),
+                            seed=media_invariants.stored_seed(spec.get("seed")),
                             idempotency_key=prepared.job.idempotency_key,
                             zero_data_retention=prepared.zero_data_retention,
                         ),
@@ -378,7 +379,7 @@ class MediaApplication:
                         resolution=str(spec["resolution"]),
                         aspect_ratio=str(spec["aspect_ratio"]),
                         generate_audio=bool(spec["generate_audio"]),
-                        seed=_stored_seed(spec.get("seed")),
+                        seed=media_invariants.stored_seed(spec.get("seed")),
                         idempotency_key=prepared.job.idempotency_key,
                         zero_data_retention=False,
                     ),
@@ -450,7 +451,7 @@ class MediaApplication:
         if prepared.job.is_terminal:
             raise VersionConflictError("Completed media jobs cannot be cancelled")
         with self._unit_of_work_factory() as unit_of_work:
-            job = _require_job(unit_of_work, job_id)
+            job = media_invariants.require_job(unit_of_work, job_id)
             expected_status = job.status
             previous_revision = job.revision
             job.cancel()
@@ -459,7 +460,7 @@ class MediaApplication:
                 expected_revision=previous_revision,
                 expected_status=expected_status,
             )
-            run = _require_running(unit_of_work, command_run.id)
+            run = media_invariants.require_running(unit_of_work, command_run.id)
             self._append_event(
                 unit_of_work,
                 run,
@@ -492,7 +493,7 @@ class MediaApplication:
         raise_terminal_error: bool = True,
     ) -> MediaGenerationResult | None:
         with self._unit_of_work_factory() as unit_of_work:
-            job = _require_job(unit_of_work, job_id)
+            job = media_invariants.require_job(unit_of_work, job_id)
         try:
             return self._terminal_result(
                 job,
@@ -505,7 +506,7 @@ class MediaApplication:
 
     def cancel_work(self, job_id: UUID) -> MediaGenerationJob:
         with self._unit_of_work_factory() as unit_of_work:
-            job = _require_job(unit_of_work, job_id)
+            job = media_invariants.require_job(unit_of_work, job_id)
             if job.is_terminal:
                 return job
             previous_revision = job.revision
@@ -533,7 +534,7 @@ class MediaApplication:
 
     def fail_work(self, job_id: UUID, *, error_code: str) -> MediaGenerationJob:
         with self._unit_of_work_factory() as unit_of_work:
-            job = _require_job(unit_of_work, job_id)
+            job = media_invariants.require_job(unit_of_work, job_id)
             if job.is_terminal:
                 return job
             previous_revision = job.revision
@@ -578,8 +579,8 @@ class MediaApplication:
             if task is None:
                 raise KeyError(f"task not found: {task_id}")
             scope = self._scope_resolver(unit_of_work.state, task)
-            run = _require_preparable_run(unit_of_work, command_run.id)
-            _validate_run(run, command_run, command_name=command_name, scope=scope)
+            run = media_invariants.require_preparable_run(unit_of_work, command_run.id)
+            media_invariants.validate_run(run, command_run, command_name=command_name, scope=scope)
             if scope.target_version_id is None:
                 raise ValueError("media generation requires a writable Workspace Version")
             workspace = unit_of_work.state.get_workspace(scope.workspace_id)
@@ -610,7 +611,7 @@ class MediaApplication:
                 **request_spec,
                 "zero_data_retention": selection.zero_data_retention,
             }
-            fingerprint = _request_fingerprint(
+            fingerprint = media_invariants.request_fingerprint(
                 scope=scope,
                 kind=kind,
                 model_id=model_id,
@@ -618,7 +619,7 @@ class MediaApplication:
                 output_path=output_path,
                 request_spec=stored_spec,
             )
-            legacy_fingerprint = _request_fingerprint(
+            legacy_fingerprint = media_invariants.request_fingerprint(
                 scope=scope,
                 kind=kind,
                 model_id=model_id,
@@ -637,7 +638,7 @@ class MediaApplication:
                     scope=scope,
                     run=run,
                     invocation=invocation,
-                    zero_data_retention=_stored_zdr(
+                    zero_data_retention=media_invariants.stored_zdr(
                         existing.request_spec,
                         fallback=selection.zero_data_retention,
                     ),
@@ -674,7 +675,7 @@ class MediaApplication:
 
     def _prepare_worker_job(self, job_id: UUID) -> _PreparedJob:
         with self._unit_of_work_factory() as unit_of_work:
-            job = _require_job(unit_of_work, job_id)
+            job = media_invariants.require_job(unit_of_work, job_id)
             task = unit_of_work.state.get_task(job.task_id)
             if task is None:
                 raise KeyError(f"task not found: {job.task_id}")
@@ -716,7 +717,7 @@ class MediaApplication:
                 scope=scope,
                 run=run,
                 invocation=invocation,
-                zero_data_retention=_stored_zdr(
+                zero_data_retention=media_invariants.stored_zdr(
                     job.request_spec,
                     fallback=selection.zero_data_retention,
                 ),
@@ -731,13 +732,13 @@ class MediaApplication:
         command_name: str,
     ) -> _PreparedJob:
         with self._unit_of_work_factory() as unit_of_work:
-            job = _require_job(unit_of_work, job_id)
+            job = media_invariants.require_job(unit_of_work, job_id)
             task = unit_of_work.state.get_task(job.task_id)
             if task is None:
                 raise KeyError(f"task not found: {job.task_id}")
             scope = self._scope_resolver(unit_of_work.state, task)
-            run = _require_running(unit_of_work, command_run.id)
-            _validate_run(run, command_run, command_name=command_name, scope=scope)
+            run = media_invariants.require_running(unit_of_work, command_run.id)
+            media_invariants.validate_run(run, command_run, command_name=command_name, scope=scope)
             if (
                 job.kind is not MediaGenerationKind.VIDEO
                 or job.scope_digest != scope.scope_digest
@@ -762,7 +763,7 @@ class MediaApplication:
 
     def _begin(self, prepared: _PreparedJob) -> None:
         with self._unit_of_work_factory() as unit_of_work:
-            job = _require_job(unit_of_work, prepared.job.id)
+            job = media_invariants.require_job(unit_of_work, prepared.job.id)
             if job.status is not MediaGenerationStatus.CREATED:
                 raise VersionConflictError("Media job is already executing")
             previous_revision = job.revision
@@ -772,7 +773,7 @@ class MediaApplication:
                 expected_revision=previous_revision,
                 expected_status=MediaGenerationStatus.CREATED,
             )
-            run = _require_event_run(unit_of_work, prepared.run.id)
+            run = media_invariants.require_event_run(unit_of_work, prepared.run.id)
             self._append_event(
                 unit_of_work,
                 run,
@@ -821,7 +822,7 @@ class MediaApplication:
                         model_role=ModelExecutionRole.PRIMARY,
                         attempt_number=attempt_number,
                         status=ProviderAttemptStatus.FAILED,
-                        error_category=_error_category(error),
+                        error_category=media_invariants.error_category(error),
                     )
                 )
             raise
@@ -844,11 +845,11 @@ class MediaApplication:
         prepared: _PreparedJob,
         provider_job: VideoProviderJob,
     ) -> MediaGenerationJob:
-        status = _video_status(provider_job.status)
+        status = media_invariants.video_status(provider_job.status)
         if status not in {MediaGenerationStatus.PENDING, MediaGenerationStatus.IN_PROGRESS}:
             raise ProviderProtocolError("video start did not return an active job")
         with self._unit_of_work_factory() as unit_of_work:
-            job = _require_job(unit_of_work, prepared.job.id)
+            job = media_invariants.require_job(unit_of_work, prepared.job.id)
             previous_revision = job.revision
             previous_status = job.status
             job.usage_cost = provider_job.usage_cost
@@ -858,7 +859,7 @@ class MediaApplication:
                 expected_revision=previous_revision,
                 expected_status=previous_status,
             )
-            run = _require_event_run(unit_of_work, prepared.run.id)
+            run = media_invariants.require_event_run(unit_of_work, prepared.run.id)
             self._append_event(
                 unit_of_work,
                 run,
@@ -875,7 +876,7 @@ class MediaApplication:
         provider_job: VideoProviderJob,
     ) -> MediaGenerationJob:
         with self._unit_of_work_factory() as unit_of_work:
-            job = _require_job(unit_of_work, prepared.job.id)
+            job = media_invariants.require_job(unit_of_work, prepared.job.id)
             previous_revision = job.revision
             previous_status = job.status
             job.usage_cost = provider_job.usage_cost or job.usage_cost
@@ -889,7 +890,7 @@ class MediaApplication:
             elif provider_job.status is MediaProviderVideoStatus.CANCELLED:
                 job.update_video(status=MediaGenerationStatus.CANCELLED, progress=job.progress)
             else:
-                status = _video_status(provider_job.status)
+                status = media_invariants.video_status(provider_job.status)
                 progress = 5 if status is MediaGenerationStatus.PENDING else max(25, job.progress)
                 job.update_video(status=status, progress=progress)
             unit_of_work.state.update_media_job(
@@ -897,7 +898,7 @@ class MediaApplication:
                 expected_revision=previous_revision,
                 expected_status=previous_status,
             )
-            run = _require_event_run(unit_of_work, prepared.run.id)
+            run = media_invariants.require_event_run(unit_of_work, prepared.run.id)
             event_type = (
                 "media.generation.failed"
                 if job.status is MediaGenerationStatus.FAILED
@@ -925,7 +926,7 @@ class MediaApplication:
         prepared: _PreparedJob,
         generated: GeneratedMedia,
     ) -> MediaGenerationResult:
-        _validate_media_output(prepared.job, generated)
+        media_invariants.validate_media_output(prepared.job, generated)
         content_hash = hashlib.sha256(generated.content).hexdigest()
         staged = self._staging.stage(
             job_id=prepared.job.id,
@@ -934,7 +935,7 @@ class MediaApplication:
         )
         try:
             with self._unit_of_work_factory() as unit_of_work:
-                job = _require_job(unit_of_work, prepared.job.id)
+                job = media_invariants.require_job(unit_of_work, prepared.job.id)
                 if job.status is MediaGenerationStatus.COMPLETED:
                     artifact = unit_of_work.state.get_artifact(job.artifact_id)
                     if artifact is None:
@@ -969,7 +970,7 @@ class MediaApplication:
             )
             try:
                 with self._unit_of_work_factory() as unit_of_work:
-                    job = _require_job(unit_of_work, prepared.job.id)
+                    job = media_invariants.require_job(unit_of_work, prepared.job.id)
                     previous_revision = job.revision
                     previous_status = job.status
                     if job.is_terminal:
@@ -984,7 +985,7 @@ class MediaApplication:
                         conversation_id=job.conversation_id,
                         task_id=job.task_id,
                         version_id=job.version_id,
-                        artifact_type=_artifact_type(job.kind),
+                        artifact_type=media_invariants.artifact_type(job.kind),
                         visibility=ArtifactVisibility.CONVERSATION,
                         storage_location=(
                             f"workspace://{job.workspace_id}/{job.version_id}/{job.output_path}"
@@ -1010,7 +1011,7 @@ class MediaApplication:
                         expected_revision=previous_revision,
                         expected_status=previous_status,
                     )
-                    run = _require_event_run(unit_of_work, prepared.run.id)
+                    run = media_invariants.require_event_run(unit_of_work, prepared.run.id)
                     self._append_event(
                         unit_of_work,
                         run,
@@ -1057,7 +1058,7 @@ class MediaApplication:
 
     def _record_failure(self, job_id: UUID, run_id: UUID, error: BaseException) -> None:
         with self._unit_of_work_factory() as unit_of_work:
-            job = _require_job(unit_of_work, job_id)
+            job = media_invariants.require_job(unit_of_work, job_id)
             if job.is_terminal:
                 return
             previous_revision = job.revision
@@ -1067,7 +1068,7 @@ class MediaApplication:
                 event_type = "media.generation.cancelled"
                 message = "Media generation cancelled"
             else:
-                job.fail(_error_code(error), usage_cost=job.usage_cost)
+                job.fail(media_invariants.error_code(error), usage_cost=job.usage_cost)
                 event_type = "media.generation.failed"
                 message = "Media generation failed"
             unit_of_work.state.update_media_job(
@@ -1158,211 +1159,6 @@ class MediaApplication:
             lease_owner=lease_owner,
             lease_fence=lease_fence,
         )
-
-
-def _request_fingerprint(
-    *,
-    scope: ScopeContract,
-    kind: MediaGenerationKind,
-    model_id: str,
-    endpoint_kind: ModelEndpointKind,
-    output_path: str,
-    request_spec: dict[str, object],
-) -> str:
-    payload = {
-        "scope_digest": scope.scope_digest,
-        "kind": kind.value,
-        "model_id": model_id,
-        "endpoint_kind": endpoint_kind.value,
-        "output_path": output_path,
-        "request_spec": request_spec,
-    }
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=True,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("ascii")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _default_output_path(kind: str, idempotency_key: str, suffix: str) -> str:
-    digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()[:20]
-    return f"generated/{kind}-{digest}{suffix}"
-
-
-def _stored_zdr(request_spec, *, fallback: bool) -> bool:
-    value = request_spec.get("zero_data_retention")
-    if value is None:
-        return fallback
-    if not isinstance(value, bool):
-        raise RuntimeError("Media Job has an invalid ZDR snapshot")
-    return value
-
-
-def _stored_seed(value: object) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise RuntimeError("Media Job has an invalid seed")
-    return value
-
-
-def _validate_run(
-    persisted: CommandRun,
-    supplied: CommandRun,
-    *,
-    command_name: str,
-    scope: ScopeContract,
-) -> None:
-    if (
-        persisted != supplied
-        or persisted.status not in {CommandStatus.QUEUED, CommandStatus.RUNNING}
-        or persisted.command_name != command_name
-        or persisted.task_id != scope.task_id
-        or persisted.conversation_id != scope.conversation_id
-        or persisted.project_id != scope.project_id
-        or persisted.scope_digest != scope.scope_digest
-    ):
-        raise RuntimeError("Media CommandRun does not match the current Task Scope")
-
-
-def _require_running(unit_of_work, run_id: UUID) -> CommandRun:
-    run = unit_of_work.commands.get_run(run_id)
-    if run is None or run.status is not CommandStatus.RUNNING:
-        raise RuntimeError("media generation requires an active CommandRun")
-    return run
-
-
-def _require_preparable_run(unit_of_work, run_id: UUID) -> CommandRun:
-    run = unit_of_work.commands.get_run(run_id)
-    if run is None or run.status not in {CommandStatus.QUEUED, CommandStatus.RUNNING}:
-        raise RuntimeError("media generation requires a queued or active CommandRun")
-    return run
-
-
-def _require_event_run(unit_of_work, run_id: UUID) -> CommandRun:
-    run = unit_of_work.commands.get_run(run_id)
-    if run is None or run.status not in {CommandStatus.RUNNING, CommandStatus.SUCCEEDED}:
-        raise RuntimeError("media generation lost its accepted CommandRun")
-    return run
-
-
-def _require_job(unit_of_work, job_id: UUID) -> MediaGenerationJob:
-    job = unit_of_work.state.get_media_job(job_id)
-    if job is None:
-        raise KeyError(f"Media generation job not found: {job_id}")
-    return job
-
-
-def _artifact_type(kind: MediaGenerationKind) -> ArtifactType:
-    return {
-        MediaGenerationKind.IMAGE: ArtifactType.GENERATED_IMAGE,
-        MediaGenerationKind.MUSIC: ArtifactType.GENERATED_AUDIO,
-        MediaGenerationKind.VIDEO: ArtifactType.GENERATED_VIDEO,
-    }[kind]
-
-
-def _video_status(status: MediaProviderVideoStatus) -> MediaGenerationStatus:
-    return {
-        MediaProviderVideoStatus.PENDING: MediaGenerationStatus.PENDING,
-        MediaProviderVideoStatus.IN_PROGRESS: MediaGenerationStatus.IN_PROGRESS,
-        MediaProviderVideoStatus.COMPLETED: MediaGenerationStatus.COMPLETED,
-        MediaProviderVideoStatus.FAILED: MediaGenerationStatus.FAILED,
-        MediaProviderVideoStatus.CANCELLED: MediaGenerationStatus.CANCELLED,
-        MediaProviderVideoStatus.EXPIRED: MediaGenerationStatus.FAILED,
-    }[status]
-
-
-def _validate_media_output(job: MediaGenerationJob, generated: GeneratedMedia) -> None:
-    allowed = {
-        MediaGenerationKind.IMAGE: {
-            "image/png": (".png",),
-            "image/jpeg": (".jpg", ".jpeg"),
-            "image/webp": (".webp",),
-        },
-        MediaGenerationKind.MUSIC: {"audio/wav": (".wav",)},
-        MediaGenerationKind.VIDEO: {
-            "video/mp4": (".mp4",),
-            "video/webm": (".webm",),
-        },
-    }[job.kind]
-    suffixes = allowed.get(generated.media_type)
-    if suffixes is None or not job.output_path.casefold().endswith(suffixes):
-        raise ProviderProtocolError("generated media type does not match the output path")
-
-
-def _error_category(error: ProviderError) -> ProviderErrorCategory:
-    if isinstance(error, ProviderAuthenticationError):
-        return ProviderErrorCategory.AUTHENTICATION
-    if isinstance(error, ProviderRateLimitError):
-        return ProviderErrorCategory.RATE_LIMIT
-    if isinstance(error, ProviderTimeoutError):
-        return ProviderErrorCategory.TIMEOUT
-    if isinstance(error, ProviderProtocolError):
-        return ProviderErrorCategory.PROTOCOL
-    if isinstance(error, ProviderContentRejectedError):
-        return ProviderErrorCategory.CONTENT_REJECTED
-    if isinstance(error, ProviderNetworkError):
-        return ProviderErrorCategory.NETWORK
-    if isinstance(error, ProviderUnavailableError):
-        return ProviderErrorCategory.UNAVAILABLE
-    if isinstance(error, ProviderCancelledError):
-        return ProviderErrorCategory.CANCELLED
-    return ProviderErrorCategory.UNKNOWN
-
-
-def _error_code(error: BaseException) -> str:
-    if isinstance(error, ProviderAuthenticationError):
-        return "PROVIDER_AUTH_REJECTED"
-    if isinstance(error, ProviderRateLimitError):
-        return "PROVIDER_RATE_LIMITED"
-    if isinstance(error, ProviderTimeoutError):
-        return "PROVIDER_TIMEOUT"
-    if isinstance(error, ProviderContentRejectedError):
-        return "PROVIDER_CONTENT_REJECTED"
-    if isinstance(error, ProviderNetworkError):
-        return "PROVIDER_NETWORK_ERROR"
-    if isinstance(error, ProviderUnavailableError):
-        return "PROVIDER_UNAVAILABLE"
-    if isinstance(error, ProviderProtocolError):
-        return "PROVIDER_PROTOCOL_ERROR"
-    code = getattr(error, "error_code", None)
-    if isinstance(code, str) and code and len(code) <= 128:
-        return code
-    return "MEDIA_GENERATION_FAILED"
-
-
-def _prompt(value: str) -> str:
-    normalized = value.strip()
-    if not normalized or len(normalized) > 20_000:
-        raise ValueError("media prompt must contain between 1 and 20,000 characters")
-    return normalized
-
-
-def _choice(value: object, allowed: set[str], name: str) -> str:
-    if not isinstance(value, str) or value not in allowed:
-        raise ValueError(f"unsupported {name}")
-    return value
-
-
-def _seed(value: int | None) -> int | None:
-    if value is None:
-        return None
-    return _integer_range(value, 0, 2_147_483_647, "media seed")
-
-
-def _integer_range(value: object, minimum: int, maximum: int, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
-        raise ValueError(f"{name} is outside its allowed range")
-    return value
-
-
-def _boolean(value: object, name: str) -> bool:
-    if not isinstance(value, bool):
-        raise ValueError(f"{name} must be a boolean")
-    return value
 
 
 __all__ = [
