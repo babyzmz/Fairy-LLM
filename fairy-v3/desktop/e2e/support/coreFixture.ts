@@ -1698,6 +1698,13 @@ async function installCoreFixture(page: Page) {
                                                       approvalDecision = request.params.approved
                                                         ? "approved"
                                                         : "rejected";
+                                                      approvalVisible = false;
+                                                      if (
+                                                        approvalDecision === "approved" &&
+                                                        !messages.some((message) => message.id === resumedMessage.id)
+                                                      ) {
+                                                        messages = [...messages, resumedMessage];
+                                                      }
                                                       const cursor = (events.at(-1)?.cursor ?? 0) + 1;
                                                       events.push({
                                                         ...event,

@@ -251,7 +251,7 @@ test("approved assistant tools resume the durable turn exactly once", async ({ p
     approval_id: "0198f4de-0114-7000-8000-000000000017",
     approved: true,
   });
-  expect(calls.filter((call) => call.method === "assistant.turns.start")).toHaveLength(2);
+  expect(calls.filter((call) => call.method === "assistant.turns.start")).toHaveLength(1);
 });
 
 async function openScratchChat(page: import("@playwright/test").Page) {
