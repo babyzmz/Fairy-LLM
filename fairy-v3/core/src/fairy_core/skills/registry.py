@@ -125,8 +125,7 @@ class SkillRegistry:
                     origin_id=name,
                     required_operations=frozenset(package.manifest.required_capabilities),
                     required_extensions=frozenset(
-                        f"mcp:{server_id}"
-                        for server_id in package.manifest.compatible_mcp_servers
+                        f"mcp:{server_id}" for server_id in package.manifest.compatible_mcp_servers
                     ),
                     input_schema=package.manifest.input_schema,
                 )

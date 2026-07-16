@@ -50,9 +50,7 @@ def test_root_schema_dialect_metadata_is_accepted_but_not_projected() -> None:
             description="Reject nested dialect metadata.",
             input_schema={
                 "type": "object",
-                "properties": {
-                    "query": {"$schema": "https://example.test", "type": "string"}
-                },
+                "properties": {"query": {"$schema": "https://example.test", "type": "string"}},
             },
             output_schema=None,
         )

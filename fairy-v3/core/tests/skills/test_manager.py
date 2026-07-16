@@ -161,8 +161,7 @@ def test_startup_quarantines_linked_package_roots(tmp_path) -> None:
     assert skills.get("design-taste-frontend") is None
     assert external.is_dir()
     assert any(
-        path.name.startswith(".quarantine-design-taste-frontend-")
-        for path in root.iterdir()
+        path.name.startswith(".quarantine-design-taste-frontend-") for path in root.iterdir()
     )
 
 

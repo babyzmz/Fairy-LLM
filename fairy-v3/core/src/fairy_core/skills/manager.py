@@ -243,9 +243,7 @@ class SkillManager:
             name = source.name.removeprefix(prefix)
             if not source.is_dir() or _SKILL_NAME.fullmatch(name) is None:
                 continue
-            if source.is_symlink() or (
-                hasattr(source, "is_junction") and source.is_junction()
-            ):
+            if source.is_symlink() or (hasattr(source, "is_junction") and source.is_junction()):
                 self._quarantine(source, f"recovery-{name}")
                 continue
             destination = self._root / name
@@ -281,8 +279,7 @@ class SkillManager:
         except (OSError, json.JSONDecodeError) as error:
             raise ValueError("Skill installation state is invalid") from error
         if not isinstance(raw, dict) or any(
-            not isinstance(key, str) or not isinstance(value, bool)
-            for key, value in raw.items()
+            not isinstance(key, str) or not isinstance(value, bool) for key, value in raw.items()
         ):
             raise ValueError("Skill installation state is invalid")
         return raw
