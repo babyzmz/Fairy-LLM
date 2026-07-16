@@ -150,10 +150,7 @@ def _check_python(path: Path, root: Path) -> list[Violation]:
         value = node.value.strip()
         if value and _outside_root(source=path, specifier=value, root=root):
             normalized = value.replace("\\", "/").lower()
-            if any(
-                segment in normalized
-                for segment in ("/app/", "/fairy-desktop/")
-            ):
+            if any(segment in normalized for segment in ("/app/", "/fairy-desktop/")):
                 violations.append(
                     Violation(
                         path, getattr(node, "lineno", 1), f"legacy path escape: {value}"
