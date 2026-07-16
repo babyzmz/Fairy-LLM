@@ -12,6 +12,7 @@ import {
   selectionSupportsVision,
 } from "../models/modelSelection";
 import { useModelSelection } from "../models/useModelSelection";
+import { useTaskMediaJobs } from "../media/useTaskMediaJobs";
 import type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 export type { PermissionProfile, WorkspaceClient, WorkspaceMode, WorkspaceModel } from "./workspaceTypes";
 import {
@@ -280,12 +281,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     enabled: workspaceTask?.target_version_id !== null && workspaceTask !== null,
     retry: false,
   });
-  const mediaJobsQuery = useQuery({
-    queryKey: [...workspaceKey, "media-jobs", workspaceTask?.conversation_id, workspaceTask?.id],
-    queryFn: () => client.media.jobs.list(requireId(workspaceTask?.id)),
-    enabled: workspaceTask !== null,
-    retry: false,
-  });
+  const mediaJobsQuery = useTaskMediaJobs(
+    client,
+    workspaceTask === null
+      ? null
+      : { conversationId: workspaceTask.conversation_id, taskId: workspaceTask.id },
+  );
   const capabilitiesQuery = useQuery({
     queryKey: [...capabilityQueryKey, permissionsQuery.data?.revision],
     queryFn: () => client.capabilities.get(),

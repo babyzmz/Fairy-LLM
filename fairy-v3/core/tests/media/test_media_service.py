@@ -178,6 +178,42 @@ def test_image_generation_persists_workspace_artifact_events_and_replays(
     assert provider.closed is True
 
 
+def test_media_jobs_remain_task_scoped_after_core_restart(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    service = build_local_service(data_root, media_provider=RecordingMediaProvider())
+    try:
+        task_a = _scratch_task(service, request="Generate output A")
+        task_b = _scratch_task(service, request="Generate output B")
+        job_a = service.invoke(
+            "media.images.generate",
+            {
+                "task_id": task_a["id"],
+                "prompt": "Output A",
+                "idempotency_key": "media:image:scope-a",
+            },
+        )
+        job_b = service.invoke(
+            "media.images.generate",
+            {
+                "task_id": task_b["id"],
+                "prompt": "Output B",
+                "idempotency_key": "media:image:scope-b",
+            },
+        )
+    finally:
+        service.close()
+
+    reopened = build_local_service(data_root, media_provider=RecordingMediaProvider())
+    try:
+        listed_a = reopened.invoke("media.jobs.list", {"task_id": task_a["id"]})["items"]
+        listed_b = reopened.invoke("media.jobs.list", {"task_id": task_b["id"]})["items"]
+        assert [item["id"] for item in listed_a] == [job_a["id"]]
+        assert [item["id"] for item in listed_b] == [job_b["id"]]
+        assert listed_a[0]["conversation_id"] != listed_b[0]["conversation_id"]
+    finally:
+        reopened.close()
+
+
 def test_music_requires_confirmation_and_remains_separate_from_voice(
     tmp_path: Path,
 ) -> None:
