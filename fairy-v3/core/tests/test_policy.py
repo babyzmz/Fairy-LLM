@@ -60,6 +60,24 @@ def test_tool_definition_rejects_permissive_argument_schemas() -> None:
         )
 
 
+def test_tool_definition_bounds_untrusted_public_descriptions() -> None:
+    tool = ToolDefinition(
+        name="mcp.docs.query",
+        side_effect=SideEffect.READ,
+        risk_level=RiskLevel.LOW,
+        approval_policy=ApprovalPolicy.NEVER,
+        profiles=frozenset({PermissionProfile.OBSERVE}),
+        executor="mcp",
+        description="Context7 documentation. " + ("detail " * 300),
+        source="mcp",
+        origin_id="docs",
+    )
+
+    assert len(tool.description) <= 1_000
+    assert tool.description.endswith("...")
+    assert ToolRegistry((tool,)).frontend_metadata()[0]["description"] == tool.description
+
+
 def test_standard_profile_requires_approval_for_changeset_apply() -> None:
     registry = build_default_registry()
     policy = PolicyEngine(registry)

@@ -83,7 +83,9 @@ class ToolDefinition:
     def __post_init__(self) -> None:
         if _TOOL_NAME.fullmatch(self.name) is None:
             raise ValueError("tool name must be lowercase ASCII and namespace-safe")
-        description = self.description.strip() or self.name.replace(".", " ")
+        description = _bounded_public_description(
+            self.description.strip() or self.name.replace(".", " ")
+        )
         try:
             encoded_schema = json.dumps(
                 dict(self.input_schema),
@@ -145,6 +147,12 @@ class ToolDefinition:
         object.__setattr__(self, "origin_id", self.origin_id.strip() if self.origin_id else None)
         object.__setattr__(self, "input_schema", MappingProxyType(schema))
         object.__setattr__(self, "definition_digest", digest)
+
+
+def _bounded_public_description(description: str) -> str:
+    if len(description) <= 1_000:
+        return description
+    return description[:997].rstrip() + "..."
 
 
 class ToolRegistry:
