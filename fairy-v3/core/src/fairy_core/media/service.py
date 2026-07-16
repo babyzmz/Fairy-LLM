@@ -73,7 +73,7 @@ class MediaService:
             user_confirmed=request.user_confirmed,
         )
         if started.replayed:
-            return _job_model(
+            return media_job_model(
                 self._replayed_job(
                     idempotency_key=f"media-job:{request.idempotency_key}",
                     command_run_id=started.run.id,
@@ -92,7 +92,7 @@ class MediaService:
                 cancellation=CancellationToken(),
             )
             self._complete(started.run.id, result)
-            return _job_model(result.job)
+            return media_job_model(result.job)
         except BaseException as error:
             self._fail(started.run.id, error)
             raise
@@ -111,7 +111,7 @@ class MediaService:
             user_confirmed=request.user_confirmed,
         )
         if started.replayed:
-            return _job_model(
+            return media_job_model(
                 self._replayed_job(
                     idempotency_key=f"media-job:{request.idempotency_key}",
                     command_run_id=started.run.id,
@@ -129,7 +129,7 @@ class MediaService:
                 cancellation=CancellationToken(),
             )
             self._complete(started.run.id, result)
-            return _job_model(result.job)
+            return media_job_model(result.job)
         except BaseException as error:
             self._fail(started.run.id, error)
             raise
@@ -151,7 +151,7 @@ class MediaService:
             user_confirmed=request.user_confirmed,
         )
         if started.replayed:
-            return _job_model(
+            return media_job_model(
                 self._replayed_job(
                     idempotency_key=f"media-job:{request.idempotency_key}",
                     command_run_id=started.run.id,
@@ -172,7 +172,7 @@ class MediaService:
                 cancellation=CancellationToken(),
             )
             self._complete(started.run.id, result)
-            return _job_model(result.job)
+            return media_job_model(result.job)
         except BaseException as error:
             self._fail(started.run.id, error)
             raise
@@ -188,7 +188,7 @@ class MediaService:
             MediaGenerationStatus.CANCELLED,
             MediaGenerationStatus.INTERRUPTED,
         }:
-            return _job_model(job)
+            return media_job_model(job)
         started = self._start_command(
             task_id=job.task_id,
             command_name="media.videos.poll",
@@ -201,7 +201,7 @@ class MediaService:
                 replayed = unit_of_work.state.get_media_job(job.id)
             if replayed is None:
                 raise RuntimeError("Replayed media poll lost its durable Job")
-            return _job_model(replayed)
+            return media_job_model(replayed)
         try:
             result = self._application.poll_video(
                 job_id=job.id,
@@ -209,7 +209,7 @@ class MediaService:
                 cancellation=CancellationToken(),
             )
             self._complete(started.run.id, result)
-            return _job_model(result.job)
+            return media_job_model(result.job)
         except BaseException as error:
             self._fail(started.run.id, error)
             raise
@@ -234,7 +234,7 @@ class MediaService:
                 replayed = unit_of_work.state.get_media_job(job.id)
             if replayed is None:
                 raise RuntimeError("Replayed media cancellation lost its durable Job")
-            return _job_model(replayed)
+            return media_job_model(replayed)
         try:
             result = self._application.cancel_video(
                 job_id=job.id,
@@ -242,7 +242,7 @@ class MediaService:
                 command_run=started.run,
             )
             self._complete(started.run.id, result)
-            return _job_model(result.job)
+            return media_job_model(result.job)
         except BaseException as error:
             self._fail(started.run.id, error)
             raise
@@ -373,7 +373,7 @@ class UnavailableMediaService:
         raise CapabilityUnavailableError("Media generation is not configured")
 
 
-def _job_model(job: MediaGenerationJob) -> dict[str, object]:
+def media_job_model(job: MediaGenerationJob) -> dict[str, object]:
     return {
         "id": job.id,
         "project_id": job.project_id,
@@ -399,4 +399,4 @@ def _job_model(job: MediaGenerationJob) -> dict[str, object]:
     }
 
 
-__all__ = ["MediaService", "UnavailableMediaService"]
+__all__ = ["MediaService", "UnavailableMediaService", "media_job_model"]

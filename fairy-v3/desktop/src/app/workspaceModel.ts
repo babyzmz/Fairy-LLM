@@ -280,6 +280,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     enabled: workspaceTask?.target_version_id !== null && workspaceTask !== null,
     retry: false,
   });
+  const mediaJobsQuery = useQuery({
+    queryKey: [...workspaceKey, "media-jobs", workspaceTask?.conversation_id, workspaceTask?.id],
+    queryFn: () => client.media.jobs.list(requireId(workspaceTask?.id)),
+    enabled: workspaceTask !== null,
+    retry: false,
+  });
   const capabilitiesQuery = useQuery({
     queryKey: [...capabilityQueryKey, permissionsQuery.data?.revision],
     queryFn: () => client.capabilities.get(),
@@ -924,6 +930,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     runtimeHealthQuery.error,
     workspaceFilesQuery.error,
     assetSetsQuery.error,
+    mediaJobsQuery.error,
     permissionsQuery.error,
     capabilitiesQuery.error,
   );
@@ -996,8 +1003,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     preview: previewQuery.data ?? null,
     runtimeHealth: runtimeHealthQuery.data ?? null,
     workspaceFiles: workspaceFilesQuery.data?.items ?? [],
+    workspaceGeneration: workspaceFilesQuery.data?.generation ?? 0,
+    mediaJobs: mediaJobsQuery.data?.items ?? [],
     assetSets: assetSetsQuery.data?.items ?? [],
     workspaceFilesLoading: workspaceFilesQuery.isPending && workspaceFilesQuery.isEnabled,
+    mediaJobsLoading: mediaJobsQuery.isPending && mediaJobsQuery.isEnabled,
     capabilities: capabilitiesQuery.data ?? null,
     chatTurn: chatAssistant.turn,
     turnTraces,
@@ -1085,6 +1095,15 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     renameWorkspaceFile: actions.renameWorkspaceFile,
     deleteWorkspaceFile: actions.deleteWorkspaceFile,
     exportWorkspace: actions.exportWorkspace,
+    cancelMediaJob: (job) =>
+      runAction(() =>
+        client.media.videos.cancel({
+          job_id: job.id,
+          expected_revision: job.revision,
+          idempotency_key: `desktop:media-cancel:${job.id}:${job.revision}`,
+          user_confirmed: true,
+        }),
+      ).then(() => undefined),
     cancelProjectTurn: projectAssistant.cancel,
     decideApproval: actions.decideApproval,
     startPreview: actions.startPreview,

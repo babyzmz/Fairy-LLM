@@ -50,6 +50,7 @@ from fairy_core.contracts.history import (
     TaskArchiveInput,
     TaskMetadataUpdateInput,
 )
+from fairy_core.contracts.media import MediaJobListInput
 from fairy_core.contracts.methods import CORE_METHODS, EventSubscribeInput
 from fairy_core.contracts.models import (
     ArtifactIdInput,
@@ -113,6 +114,7 @@ from fairy_core.mcp.application import McpApplication
 from fairy_core.mcp.tools import McpToolExecutor
 from fairy_core.media.composition import build_media_composition
 from fairy_core.media.ports import MediaProvider
+from fairy_core.media.service import media_job_model
 from fairy_core.media.staging import MediaStagingStore
 from fairy_core.media.tools import MediaToolExecutor
 from fairy_core.memory.application import MemoryApplication
@@ -400,6 +402,7 @@ class CoreService:
             "memory.search": self._search_memory,
             "memory.snapshots.get": self._get_memory_snapshot,
             **self._media_service.handlers,
+            "media.jobs.list": self._list_media_jobs,
             "mcp.servers.accept": self._accept_mcp_server,
             "mcp.servers.configure": self._configure_mcp_server,
             "mcp.servers.delete": self._delete_mcp_server,
@@ -1161,6 +1164,15 @@ class CoreService:
             if task is None:
                 raise KeyError(f"task not found: {validated.task_id}")
             items = unit_of_work.state.artifacts_for_task(task.id)
+        return {"items": items}
+
+    def _list_media_jobs(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(MediaJobListInput, request)
+        with self._unit_of_work_factory() as unit_of_work:
+            task = unit_of_work.state.get_task(validated.task_id)
+            if task is None:
+                raise KeyError(f"task not found: {validated.task_id}")
+            items = [media_job_model(job) for job in unit_of_work.state.list_media_jobs(task.id)]
         return {"items": items}
 
     def _read_artifact(self, request: BaseModel) -> Any:

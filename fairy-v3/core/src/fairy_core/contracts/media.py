@@ -64,6 +64,10 @@ class MediaVideoJobInput(ContractModel):
     job_id: UUID
 
 
+class MediaJobListInput(ContractModel):
+    task_id: UUID
+
+
 class MediaVideoCancelInput(MediaVideoJobInput):
     expected_revision: int = Field(ge=0)
     idempotency_key: str = Field(min_length=1, max_length=512)
@@ -92,6 +96,10 @@ class MediaGenerationJobModel(ContractModel):
     updated_at: datetime
 
 
+class MediaGenerationJobPageModel(ContractModel):
+    items: tuple[MediaGenerationJobModel, ...]
+
+
 def _output_path(value: str | None, *, suffixes: tuple[str, ...]) -> str | None:
     if value is None:
         return None
@@ -111,7 +119,9 @@ def _output_path(value: str | None, *, suffixes: tuple[str, ...]) -> str | None:
 __all__ = [
     "MediaAudioGenerateInput",
     "MediaGenerationJobModel",
+    "MediaGenerationJobPageModel",
     "MediaImageGenerateInput",
+    "MediaJobListInput",
     "MediaVideoCancelInput",
     "MediaVideoJobInput",
     "MediaVideoStartInput",

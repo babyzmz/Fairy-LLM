@@ -453,6 +453,7 @@ describe("CloudCoreTransport", () => {
       idempotency_key: "media:image:1",
       user_confirmed: true,
     });
+    await transport.call("media.jobs.list", { task_id: "task/1" });
     await transport.call("media.audio.generate", {
       task_id: "task-1",
       prompt: "Fairy theme",
@@ -480,6 +481,7 @@ describe("CloudCoreTransport", () => {
 
     expect(requests.map(({ method, url }) => [method, url])).toEqual([
       ["POST", "https://cloud.fairy.test/v1/media/images"],
+      ["GET", "https://cloud.fairy.test/v1/media/jobs?task_id=task%2F1"],
       ["POST", "https://cloud.fairy.test/v1/media/audio"],
       ["POST", "https://cloud.fairy.test/v1/media/videos"],
       ["GET", "https://cloud.fairy.test/v1/media/videos/job%2F1"],
@@ -487,6 +489,7 @@ describe("CloudCoreTransport", () => {
     ]);
     expect(requests.map((request) => request.headers.get("Idempotency-Key"))).toEqual([
       "media:image:1",
+      null,
       "media:music:1",
       "media:video:1",
       null,

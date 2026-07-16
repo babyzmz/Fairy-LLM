@@ -790,6 +790,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/media/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Jobs */
+        get: operations["media.jobs.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/media/videos": {
         parameters: {
             query?: never;
@@ -3798,6 +3815,11 @@ export interface components {
              * Format: uuid
              */
             workspace_id: string;
+        };
+        /** MediaGenerationJobPageModel */
+        MediaGenerationJobPageModel: {
+            /** Items */
+            items: components["schemas"]["MediaGenerationJobModel"][];
         };
         /**
          * MediaGenerationKind
@@ -7957,6 +7979,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MediaGenerationJobModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "media.jobs.list": {
+        parameters: {
+            query: {
+                task_id: string;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaGenerationJobPageModel"];
                 };
             };
             /** @description Validation Error */

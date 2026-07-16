@@ -255,6 +255,9 @@ export class CoreClient {
   };
 
   readonly media = {
+    jobs: {
+      list: (taskId: string) => this.transport.call("media.jobs.list", { task_id: taskId }),
+    },
     images: {
       generate: (input: MediaImageGenerateInput) =>
         this.transport.call("media.images.generate", input),

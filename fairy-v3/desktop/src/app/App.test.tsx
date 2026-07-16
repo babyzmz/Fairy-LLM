@@ -603,6 +603,14 @@ function createClient(
         }),
       },
     },
+    media: {
+      jobs: { list: async () => ({ items: [] }) },
+      videos: {
+        cancel: async () => {
+          throw new Error("not used");
+        },
+      },
+    },
     skills: {
       list: async () => ({ items: [] }),
     },

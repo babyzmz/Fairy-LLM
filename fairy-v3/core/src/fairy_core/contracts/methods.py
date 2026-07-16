@@ -55,7 +55,9 @@ from fairy_core.contracts.history import (
 from fairy_core.contracts.media import (
     MediaAudioGenerateInput,
     MediaGenerationJobModel,
+    MediaGenerationJobPageModel,
     MediaImageGenerateInput,
+    MediaJobListInput,
     MediaVideoCancelInput,
     MediaVideoJobInput,
     MediaVideoStartInput,
@@ -460,6 +462,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "media.images.generate",
             MediaImageGenerateInput,
             MediaGenerationJobModel,
+        ),
+        "media.jobs.list": CoreMethod(
+            "media.jobs.list",
+            MediaJobListInput,
+            MediaGenerationJobPageModel,
         ),
         "media.videos.cancel": CoreMethod(
             "media.videos.cancel",

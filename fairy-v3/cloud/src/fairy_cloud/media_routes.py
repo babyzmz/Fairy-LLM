@@ -7,7 +7,9 @@ from uuid import UUID
 from fairy_core.contracts.media import (
     MediaAudioGenerateInput,
     MediaGenerationJobModel,
+    MediaGenerationJobPageModel,
     MediaImageGenerateInput,
+    MediaJobListInput,
     MediaVideoCancelInput,
     MediaVideoJobInput,
     MediaVideoStartInput,
@@ -26,6 +28,15 @@ def install_media_routes(
     invoke_async: AsyncInvoke,
     guard: IdempotencyGuard,
 ) -> None:
+    @router.get(
+        "/media/jobs",
+        operation_id="media.jobs.list",
+        response_model=MediaGenerationJobPageModel,
+    )
+    def list_jobs(task_id: UUID) -> dict[str, Any]:
+        request = MediaJobListInput(task_id=task_id)
+        return invoke("media.jobs.list", request.model_dump(mode="json"))
+
     @router.post(
         "/media/images",
         operation_id="media.images.generate",

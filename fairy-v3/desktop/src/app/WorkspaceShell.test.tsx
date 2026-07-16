@@ -271,8 +271,11 @@ function workspaceModel(): WorkspaceModel {
     preview: null,
     runtimeHealth: null,
     workspaceFiles: [],
+    workspaceGeneration: 0,
+    mediaJobs: [],
     assetSets: [],
     workspaceFilesLoading: false,
+    mediaJobsLoading: false,
     capabilities: null,
     chatTurn: null,
     turnTraces: {},
@@ -375,6 +378,7 @@ function workspaceModel(): WorkspaceModel {
     exportWorkspace: vi.fn(async () => {
       throw new Error("not used");
     }),
+    cancelMediaJob: vi.fn(async () => undefined),
     cancelProjectTurn: vi.fn(async () => undefined),
     decideApproval: vi.fn(async () => undefined),
     startPreview: vi.fn(async () => undefined),

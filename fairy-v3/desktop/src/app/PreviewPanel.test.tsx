@@ -35,6 +35,17 @@ describe("PreviewPanel", () => {
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the ready preview visible while applying and reloads at a verified Workspace generation", () => {
+    const context = readyContext();
+    const { rerender } = render(panel(context, undefined, undefined, true, 3));
+    const previousFrame = screen.getByTitle("Task preview");
+    expect(screen.getByText("Applying verified update")).toBeVisible();
+
+    rerender(panel(context, undefined, undefined, false, 4));
+    expect(screen.getByTitle("Task preview")).not.toBe(previousFrame);
+    expect(screen.queryByText("Applying verified update")).not.toBeInTheDocument();
+  });
+
   it("blocks a forged local URL and can restart an interrupted preview", async () => {
     const forged = readyContext();
     forged.preview.url = "http://localhost:43125/preview/";
@@ -187,13 +198,16 @@ function panel(
   context: PreviewContext,
   stop = vi.fn(async () => undefined),
   start = vi.fn(async () => undefined),
+  isActing = false,
+  workspaceGeneration = 0,
 ) {
   return (
     <PreviewPanel
       task={context.task}
       context={context}
       runtimeHealth={null}
-      isActing={false}
+      isActing={isActing}
+      workspaceGeneration={workspaceGeneration}
       onStart={start}
       onStop={stop}
       onReview={vi.fn(async () => undefined)}

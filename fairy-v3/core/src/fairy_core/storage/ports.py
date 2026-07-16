@@ -39,6 +39,8 @@ class StateStore(Protocol):
 
     def recoverable_media_jobs(self) -> list[MediaGenerationJob]: ...
 
+    def list_media_jobs(self, task_id: UUID) -> list[MediaGenerationJob]: ...
+
     def save_execution_plan(
         self,
         plan: ExecutionPlan,

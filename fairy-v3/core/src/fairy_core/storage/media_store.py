@@ -149,6 +149,25 @@ class MediaStateStoreMixin:
             )
         return [self._media_job_from_row(row) for row in rows]
 
+    def list_media_jobs(self, task_id: UUID) -> list[MediaGenerationJob]:
+        with self._session.read() as connection:
+            rows = (
+                connection.execute(
+                    select(media_generation_jobs)
+                    .where(
+                        media_generation_jobs.c.tenant_id == self._tenant_id,
+                        media_generation_jobs.c.task_id == str(task_id),
+                    )
+                    .order_by(
+                        media_generation_jobs.c.created_at,
+                        media_generation_jobs.c.id,
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [self._media_job_from_row(row) for row in rows]
+
     @staticmethod
     def _media_job_values(job: MediaGenerationJob) -> dict[str, object]:
         return {

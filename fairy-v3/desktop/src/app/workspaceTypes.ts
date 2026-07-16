@@ -12,6 +12,7 @@ import type {
   ExecutionSettings,
   Message,
   MemorySearchHit,
+  MediaGenerationJob,
   ModelCatalogPage,
   ModelSelectionPreference,
   McpServer,
@@ -74,6 +75,10 @@ export interface WorkspaceClient extends AssistantTurnClient {
     "list" | "health" | "openRouterStatus" | "configureOpenRouter" | "deleteOpenRouter"
   >;
   models: Pick<CoreClient["models"], "catalog" | "selection">;
+  media: {
+    jobs: Pick<CoreClient["media"]["jobs"], "list">;
+    videos: Pick<CoreClient["media"]["videos"], "cancel">;
+  };
   skills: Pick<CoreClient["skills"], "list">;
   mcp: {
     servers: Pick<CoreClient["mcp"]["servers"], "list" | "configure" | "discover" | "accept" | "setEnabled" | "delete">;
@@ -131,8 +136,11 @@ export interface WorkspaceModel {
   preview: PreviewContext | null;
   runtimeHealth: RuntimeHealth | null;
   workspaceFiles: WorkspaceFile[];
+  workspaceGeneration: number;
+  mediaJobs: MediaGenerationJob[];
   assetSets: AssetSet[];
   workspaceFilesLoading: boolean;
+  mediaJobsLoading: boolean;
   capabilities: CapabilityManifest | null;
   chatTurn: AssistantTurn | null;
   turnTraces: Record<string, TurnTrace>;
@@ -212,6 +220,7 @@ export interface WorkspaceModel {
   renameWorkspaceFile(file: WorkspaceFile, destinationPath: string): Promise<void>;
   deleteWorkspaceFile(file: WorkspaceFile): Promise<void>;
   exportWorkspace(): Promise<WorkspaceExport>;
+  cancelMediaJob(job: MediaGenerationJob): Promise<void>;
   cancelProjectTurn(): Promise<void>;
   decideApproval(approvalId: string, approved: boolean): Promise<void>;
   startPreview(): Promise<void>;

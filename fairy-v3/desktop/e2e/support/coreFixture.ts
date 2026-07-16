@@ -782,6 +782,7 @@ async function installCoreFixture(page: Page) {
         "tasks.list": { items: [task], next_cursor: null },
         "versions.list": { items: [version], next_cursor: null },
         "approvals.list": { items: [], next_cursor: null },
+        "media.jobs.list": { items: [] },
         "asset_sets.list": {
           items: [
             {

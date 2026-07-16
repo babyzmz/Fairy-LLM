@@ -90,6 +90,7 @@ export type MessageListInput = NonNullable<operations["messages.list"]["paramete
 export type MessagePage = Schemas["MessagePageModel"];
 export type MediaAudioGenerateInput = Schemas["MediaAudioGenerateInput"];
 export type MediaGenerationJob = Schemas["MediaGenerationJobModel"];
+export type MediaGenerationJobPage = Schemas["MediaGenerationJobPageModel"];
 export type MediaImageGenerateInput = Schemas["MediaImageGenerateInput"];
 export type MediaVideoCancelInput = Schemas["MediaVideoCancelInput"];
 export type MediaVideoStartInput = Schemas["MediaVideoStartInput"];
@@ -275,6 +276,10 @@ export interface CoreMethodMap {
   "media.images.generate": {
     params: MediaImageGenerateInput;
     result: MediaGenerationJob;
+  };
+  "media.jobs.list": {
+    params: { task_id: string };
+    result: MediaGenerationJobPage;
   };
   "media.audio.generate": {
     params: MediaAudioGenerateInput;

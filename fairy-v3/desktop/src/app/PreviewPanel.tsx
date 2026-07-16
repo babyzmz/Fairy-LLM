@@ -19,6 +19,7 @@ interface PreviewPanelProps {
   runtimeHealth: RuntimeHealth | null;
   isActing: boolean;
   developerMode?: boolean;
+  workspaceGeneration?: number;
   showVersionActions?: boolean;
   onStart(): Promise<void>;
   onStop(): Promise<void>;
@@ -33,6 +34,7 @@ export function PreviewPanel({
   runtimeHealth,
   isActing,
   developerMode = false,
+  workspaceGeneration = 0,
   showVersionActions = true,
   onStart,
   onStop,
@@ -101,6 +103,7 @@ export function PreviewPanel({
           safeUrl,
           isActing,
           onStart,
+          workspaceGeneration,
         })}
         {safeUrl !== null && preview?.status === "ready" ? (
           <>
@@ -115,6 +118,11 @@ export function PreviewPanel({
               <ExternalLink size={14} />
             </a>
             <div className="scan-line" aria-hidden="true" />
+            {isActing ? (
+              <div className="preview-update-status" role="status">
+                <LoaderCircle className="spin" size={14} /> Applying verified update
+              </div>
+            ) : null}
           </>
         ) : null}
       </div>
@@ -200,6 +208,7 @@ interface PreviewStateInput {
   safeUrl: string | null;
   isActing: boolean;
   onStart(): Promise<void>;
+  workspaceGeneration: number;
 }
 
 function renderPreviewState({
@@ -209,6 +218,7 @@ function renderPreviewState({
   safeUrl,
   isActing,
   onStart,
+  workspaceGeneration,
 }: PreviewStateInput) {
   const preview = context?.preview ?? null;
   if (task === null) {
@@ -226,6 +236,7 @@ function renderPreviewState({
   if (preview?.status === "ready" && safeUrl !== null) {
     return (
       <iframe
+        key={`${preview.id}:${preview.revision}:${workspaceGeneration}`}
         className="preview-iframe"
         src={safeUrl}
         title="Task preview"

@@ -106,6 +106,7 @@ const routes = {
   "models.selection.get": () => get("/v1/models/selection"),
   "models.selection.update": (params) => putWithIdempotency("/v1/models/selection", params),
   "media.images.generate": (params) => postWithIdempotency("/v1/media/images", params),
+  "media.jobs.list": (params) => getWithQuery("/v1/media/jobs", params, ["task_id"]),
   "media.audio.generate": (params) => postWithIdempotency("/v1/media/audio", params),
   "media.videos.start": (params) => postWithIdempotency("/v1/media/videos", params),
   "media.videos.get": (params) => get(`/v1/media/videos/${pathParameter(params, "job_id")}`),

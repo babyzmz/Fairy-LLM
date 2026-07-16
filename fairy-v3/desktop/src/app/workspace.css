@@ -519,6 +519,23 @@ h2 {
   pointer-events: none;
 }
 
+.preview-update-status {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid rgb(51 67 62 / 40%);
+  color: #dce9e4;
+  background: rgb(23 28 26 / 88%);
+  font: 10px/1 "Cascadia Mono", monospace;
+  pointer-events: none;
+}
+
 .version-decision-bar {
   border-top: 1px solid #383b39;
   border-bottom: 0;

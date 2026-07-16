@@ -145,6 +145,7 @@ def test_image_generation_persists_workspace_artifact_events_and_replays(
             },
         )
         artifacts = service.invoke("artifacts.list", {"task_id": task["id"]})["items"]
+        jobs = service.invoke("media.jobs.list", {"task_id": task["id"]})["items"]
         media_events = [
             event
             for event in service.invoke("events.subscribe", {"cursor": 0})["items"]
@@ -152,6 +153,7 @@ def test_image_generation_persists_workspace_artifact_events_and_replays(
         ]
 
         assert created == replayed
+        assert jobs == [created]
         assert created["status"] == "completed"
         assert created["usage_cost"] == "0.04"
         assert [item["path"] for item in files["items"]] == [created["output_path"]]

@@ -469,6 +469,7 @@ describe("CoreClient", () => {
       idempotency_key: "media:image:1",
       user_confirmed: true,
     });
+    await client.media.jobs.list(id);
     await client.media.audio.generate({
       task_id: id,
       prompt: "A calm ambient theme",
@@ -506,6 +507,7 @@ describe("CoreClient", () => {
           user_confirmed: true,
         },
       },
+      { method: "media.jobs.list", params: { task_id: id } },
       {
         method: "media.audio.generate",
         params: {
