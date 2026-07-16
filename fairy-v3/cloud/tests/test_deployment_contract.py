@@ -21,7 +21,7 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260716_0033"]
+    assert scripts.get_heads() == ["20260716_0034"]
     assert scripts.get_revision("20260712_0016").down_revision == "20260711_0015"
     assert scripts.get_revision("20260711_0015").down_revision == "20260711_0014"
     assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
@@ -63,6 +63,7 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_PREVIEW_SESSIONS",
         "CORE_ARTIFACTS",
         "CORE_ASSISTANT_TURNS",
+        "CORE_ASSISTANT_TURN_WORK",
         "CORE_ASSISTANT_MESSAGE_SEQUENCES",
         "CORE_ASSISTANT_MESSAGES",
         "CORE_ASSISTANT_TOOL_INVOCATIONS",
@@ -179,6 +180,18 @@ def test_event_ledger_migration_has_reversible_tenant_ddl() -> None:
     ddl = " ".join(output.getvalue().upper().split())
     assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_EVENT_LEDGERS"' in ddl
     assert "DROP TABLE EVENT_LEDGERS" in ddl
+
+
+def test_assistant_turn_work_migration_has_reversible_fenced_tenant_ddl() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260716_0034:20260716_0033", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_ASSISTANT_TURN_WORK"' in ddl
+    assert "DROP INDEX IX_CORE_ASSISTANT_TURN_WORK_CLAIM" in ddl
+    assert "DROP TABLE CORE_ASSISTANT_TURN_WORK" in ddl
 
 
 def test_event_outbox_migration_executes_asyncpg_ddl_one_command_at_a_time() -> None:

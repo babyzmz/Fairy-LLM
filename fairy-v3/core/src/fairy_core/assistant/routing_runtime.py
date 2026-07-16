@@ -22,6 +22,7 @@ from fairy_core.assistant.routing import (
 )
 from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus
 from fairy_core.assistant.turn_reader import require_task, require_turn
+from fairy_core.assistant.work_queue import assistant_command_lease_until
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.bus import CommandRequest
 from fairy_core.domain.execution import Approval
@@ -163,7 +164,10 @@ class AssistantRoutingMixin:
             self._bind_routing(turn.id, decision, run=run)
             return decision
         except (ProviderCancelledError, McpCancelledError):
-            self._cancel_model_run(run)
+            if cancellation.is_interrupted:
+                self._abandon_model_run(run)
+            else:
+                self._cancel_model_run(run)
             raise
         except Exception:
             self._fail_model_run(run, error_code="PROVIDER_ROUTING_FAILED")
@@ -366,11 +370,17 @@ class AssistantRoutingMixin:
                 return "rejected"
             bus = self._command_bus(unit_of_work.commands)
             if command.status is CommandStatus.QUEUED:
-                running = bus.start(command.id)
+                running = bus.start(
+                    command.id,
+                    lease_until=assistant_command_lease_until(),
+                )
             elif command.status is CommandStatus.RUNNING:
                 if command.lease_until is None or command.lease_until > datetime.now(UTC):
                     return "waiting"
-                running = bus.start(command.id)
+                running = bus.start(
+                    command.id,
+                    lease_until=assistant_command_lease_until(),
+                )
             elif command.status is CommandStatus.SUCCEEDED:
                 running = None
             else:
@@ -576,6 +586,9 @@ class AssistantRoutingMixin:
                 usage=usage,
             )
         except ProviderCancelledError:
+            if cancellation.is_interrupted:
+                self._abandon_model_run(run)
+                raise
             return self._cancel_turn(turn_id, run)
         except ProviderError as error:
             return self._fail_turn(
@@ -796,6 +809,16 @@ class AssistantRoutingMixin:
                 )
                 unit_of_work.commit()
 
+    def _abandon_model_run(self, run: CommandRun) -> None:
+        with self._unit_of_work_factory() as unit_of_work:
+            abandoned = unit_of_work.commands.abandon(
+                run.id,
+                lease_owner=run.lease_owner or "",
+                lease_fence=run.lease_fence,
+            )
+            if abandoned:
+                unit_of_work.commit()
+
     def _start_model_round(
         self,
         turn_id: UUID,
@@ -809,7 +832,6 @@ class AssistantRoutingMixin:
             task = require_task(unit_of_work, turn.task_id)
             scope = self._scope_resolver(unit_of_work.state, task)
             selected_profile_id = profile_id or turn.profile_id
-            consume_model_budget(unit_of_work, task.id)
             started = turn.status is AssistantTurnStatus.CREATED
             if started:
                 expected_status = turn.status
@@ -857,9 +879,37 @@ class AssistantRoutingMixin:
                 )
             if dispatch.requires_approval:
                 raise RuntimeError("model generation cannot require approval")
-            if dispatch.run.status is not CommandStatus.QUEUED:
+            reclaimed = dispatch.run.status is CommandStatus.RUNNING
+            if dispatch.run.status is CommandStatus.QUEUED:
+                consume_model_budget(unit_of_work, task.id)
+                running = bus.start(
+                    dispatch.run.id,
+                    lease_until=assistant_command_lease_until(),
+                )
+            elif (
+                reclaimed
+                and dispatch.run.lease_until is not None
+                and dispatch.run.lease_until <= datetime.now(UTC)
+            ):
+                running = bus.start(
+                    dispatch.run.id,
+                    lease_until=assistant_command_lease_until(),
+                )
+                unit_of_work.commands.append_event(
+                    run_id=running.id,
+                    event_type="assistant.message.projection_reset",
+                    visibility=EventVisibility.USER,
+                    message="Interrupted assistant response cleared",
+                    payload={
+                        "turn_id": str(turn.id),
+                        "through_chunk_index": 0,
+                        "reason": "worker_recovery",
+                    },
+                    lease_owner=running.lease_owner,
+                    lease_fence=running.lease_fence,
+                )
+            else:
                 raise RuntimeError("model generation command is not queued")
-            running = bus.start(dispatch.run.id)
             if started:
                 user_message = unit_of_work.assistant.message_for_turn(
                     turn.id,
@@ -909,17 +959,22 @@ class AssistantRoutingMixin:
                 route_step=route_step,
             )
             profile = self._providers.profile(selected_profile_id)
-            self._trace.append_step_in_unit(
-                unit_of_work,
-                turn=turn,
-                run=running,
+            existing_model_step = unit_of_work.assistant.find_trace_step_by_command_run_id(
+                running.id,
                 kind=TraceStepKind.MODEL,
-                status=TraceStepStatus.RUNNING,
-                public_summary=self._model_step_summary(model_role),
-                caused_by_step_id=model_cause.id if model_cause is not None else None,
-                model_id=profile.model_id,
-                model_role=model_role,
             )
+            if not reclaimed or existing_model_step is None or existing_model_step.is_terminal:
+                self._trace.append_step_in_unit(
+                    unit_of_work,
+                    turn=turn,
+                    run=running,
+                    kind=TraceStepKind.MODEL,
+                    status=TraceStepStatus.RUNNING,
+                    public_summary=self._model_step_summary(model_role),
+                    caused_by_step_id=model_cause.id if model_cause is not None else None,
+                    model_id=profile.model_id,
+                    model_role=model_role,
+                )
             unit_of_work.commit()
         return turn, running
 

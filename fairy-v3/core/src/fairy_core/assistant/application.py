@@ -34,6 +34,7 @@ from fairy_core.assistant.tools import (
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.assistant.turn_lifecycle import AssistantTurnLifecycleMixin
 from fairy_core.assistant.turn_reader import AssistantTurnReader, require_task, require_turn
+from fairy_core.assistant.work_queue import assistant_command_lease_until
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.bus import CommandRequest
 from fairy_core.commanding.policy import PolicyEngine
@@ -381,6 +382,10 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                 error_code="ASSISTANT_ROUND_LIMIT",
             )
         except (ProviderCancelledError, McpCancelledError):
+            if cancellation.is_interrupted:
+                if current_run is not None:
+                    self._abandon_model_run(current_run)
+                raise
             return self._cancel_turn(turn_id, current_run)
         except ProviderAuthenticationError:
             return self._fail_turn(
@@ -603,7 +608,10 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                     unit_of_work.commit()
                     return True, None
                 else:
-                    running = bus.start(dispatch.run.id)
+                    running = bus.start(
+                        dispatch.run.id,
+                        lease_until=assistant_command_lease_until(),
+                    )
                     invocation.queue(command_run_id=running.id)
                     invocation.start()
                     unit_of_work.assistant.save_tool_invocation(invocation)
@@ -693,7 +701,10 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
             cancellation.raise_if_cancelled()
             self._turns.require_waiting_for_tool(turn_id)
         except (ProviderCancelledError, McpCancelledError):
-            self._cancel_running_tool(invocation, running)
+            if cancellation.is_interrupted:
+                self._abandon_running_tool(running)
+            else:
+                self._cancel_running_tool(invocation, running)
             raise
         except Exception as error:
             error_code = str(
@@ -873,11 +884,17 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                 return False
             bus = self._command_bus(unit_of_work.commands)
             if command.status is CommandStatus.QUEUED:
-                running = bus.start(command.id)
+                running = bus.start(
+                    command.id,
+                    lease_until=assistant_command_lease_until(),
+                )
             elif command.status is CommandStatus.RUNNING:
                 if command.lease_until is None or command.lease_until > datetime.now(UTC):
                     return True
-                running = bus.start(command.id)
+                running = bus.start(
+                    command.id,
+                    lease_until=assistant_command_lease_until(),
+                )
             else:
                 expected_status = invocation.status
                 invocation.reject(
@@ -949,6 +966,16 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
         with self._unit_of_work_factory() as unit_of_work:
             self._cancel_running_tool_in_unit(unit_of_work, invocation, run)
             unit_of_work.commit()
+
+    def _abandon_running_tool(self, run: CommandRun) -> None:
+        with self._unit_of_work_factory() as unit_of_work:
+            abandoned = unit_of_work.commands.abandon(
+                run.id,
+                lease_owner=run.lease_owner or "",
+                lease_fence=run.lease_fence,
+            )
+            if abandoned:
+                unit_of_work.commit()
 
     def _cancel_running_tool_in_unit(
         self,

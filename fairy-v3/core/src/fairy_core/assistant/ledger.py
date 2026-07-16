@@ -15,6 +15,7 @@ from fairy_core.assistant.models import (
 )
 from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus, TurnTrace
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
+from fairy_core.assistant.work_queue import AssistantTurnWorkClaim
 from fairy_core.commanding.models import CommandRun, CommandStatus, EventVisibility
 from fairy_core.domain.errors import (
     IdempotencyConflictError,
@@ -115,6 +116,130 @@ class AssistantLedgerApplication:
         if turn is None:
             raise KeyError(f"Assistant Turn not found: {turn_id}")
         return turn
+
+    def enqueue_turn_work(self, turn_id: UUID, *, force: bool = False) -> int:
+        with self._unit_of_work_factory() as unit_of_work:
+            revision = unit_of_work.assistant.enqueue_turn_work(turn_id, force=force)
+            unit_of_work.commit()
+        return revision
+
+    def claim_turn_work(
+        self,
+        turn_id: UUID,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> AssistantTurnWorkClaim | None:
+        with self._unit_of_work_factory() as unit_of_work:
+            claim = unit_of_work.assistant.claim_turn_work(
+                turn_id,
+                worker_id=worker_id,
+                lease_until=lease_until,
+            )
+            unit_of_work.commit()
+        return claim
+
+    def claim_next_turn_work(
+        self,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> AssistantTurnWorkClaim | None:
+        with self._unit_of_work_factory() as unit_of_work:
+            claim = unit_of_work.assistant.claim_next_turn_work(
+                worker_id=worker_id,
+                lease_until=lease_until,
+            )
+            unit_of_work.commit()
+        return claim
+
+    def renew_turn_work(
+        self,
+        claim: AssistantTurnWorkClaim,
+        *,
+        lease_until: datetime,
+    ) -> bool:
+        with self._unit_of_work_factory() as unit_of_work:
+            renewed = unit_of_work.assistant.renew_turn_work(
+                claim,
+                lease_until=lease_until,
+            )
+            unit_of_work.commit()
+        return renewed
+
+    def renew_turn_command_leases(
+        self,
+        turn_id: UUID,
+        *,
+        lease_until: datetime,
+    ) -> bool:
+        with self._unit_of_work_factory() as unit_of_work:
+            turn = unit_of_work.assistant.get_turn(turn_id)
+            if turn is None:
+                return False
+            run_ids = {
+                step.command_run_id
+                for step in unit_of_work.assistant.list_trace_steps(turn_id)
+                if step.command_run_id is not None
+            }
+            run_ids.update(
+                invocation.command_run_id
+                for invocation in unit_of_work.assistant.list_tool_invocations(turn_id)
+                if invocation.command_run_id is not None
+            )
+            if turn.budget_approval_run_id is not None:
+                run_ids.add(turn.budget_approval_run_id)
+            renewed_any = False
+            for run_id in run_ids:
+                run = unit_of_work.commands.get_run(run_id)
+                if run is None or run.status is not CommandStatus.RUNNING:
+                    continue
+                if run.lease_owner is None:
+                    return False
+                if unit_of_work.commands.renew(
+                    run.id,
+                    lease_owner=run.lease_owner,
+                    lease_fence=run.lease_fence,
+                    lease_until=lease_until,
+                ):
+                    renewed_any = True
+                    continue
+                current = unit_of_work.commands.get_run(run.id)
+                if current is not None and current.status is CommandStatus.RUNNING:
+                    return False
+            if renewed_any:
+                unit_of_work.commit()
+        return True
+
+    def abandon_turn_work(self, claim: AssistantTurnWorkClaim) -> bool:
+        with self._unit_of_work_factory() as unit_of_work:
+            abandoned = unit_of_work.assistant.abandon_turn_work(claim)
+            unit_of_work.commit()
+        return abandoned
+
+    def release_turn_work(
+        self,
+        claim: AssistantTurnWorkClaim,
+        *,
+        error_code: str | None = None,
+    ) -> bool:
+        with self._unit_of_work_factory() as unit_of_work:
+            released = unit_of_work.assistant.release_turn_work(
+                claim,
+                error_code=error_code,
+            )
+            unit_of_work.commit()
+        return released
+
+    def cancel_turn_work(self, turn_id: UUID) -> bool:
+        with self._unit_of_work_factory() as unit_of_work:
+            cancelled = unit_of_work.assistant.cancel_turn_work(turn_id)
+            unit_of_work.commit()
+        return cancelled
+
+    def pending_turn_work_ids(self) -> tuple[UUID, ...]:
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.assistant.pending_turn_work_ids()
 
     def retry_turn(
         self,
@@ -232,7 +357,17 @@ class AssistantLedgerApplication:
     ) -> tuple[AssistantTurn, ...]:
         with self._unit_of_work_factory() as unit_of_work:
             effective_live_turn_ids = (
-                unit_of_work.assistant.live_turn_ids() if live_turn_ids is None else live_turn_ids
+                tuple(
+                    sorted(
+                        {
+                            *unit_of_work.assistant.live_turn_ids(),
+                            *unit_of_work.assistant.pending_turn_work_ids(),
+                        },
+                        key=str,
+                    )
+                )
+                if live_turn_ids is None
+                else live_turn_ids
             )
             interrupted = unit_of_work.assistant.interrupt_orphaned_turns(
                 live_turn_ids=effective_live_turn_ids

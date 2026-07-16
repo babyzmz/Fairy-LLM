@@ -25,6 +25,7 @@ from fairy_core.assistant.trace_models import (
     TraceStepStatus,
     TurnTrace,
 )
+from fairy_core.assistant.work_queue import AssistantTurnWorkClaim
 from fairy_core.commanding.bus import CommandBus, CommandRequest
 from fairy_core.commanding.policy import PermissionProfile, PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
@@ -96,6 +97,97 @@ def _turn(task: Task, scope: ScopeContract, *, key: str) -> AssistantTurn:
         profile_id="local-default",
         idempotency_key=key,
     )
+
+
+def test_turn_work_queue_is_idempotent_fenced_and_preserves_a_newer_request(
+    tmp_path: Path,
+) -> None:
+    engine = create_sqlite_core_engine(tmp_path / "turn-work.sqlite3")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
+    task, scope = _seed_task(factory, label="turn-work")
+    turn = _turn(task, scope, key="turn-work:turn")
+    with factory() as unit_of_work:
+        unit_of_work.assistant.save_turn(turn)
+        unit_of_work.commit()
+
+    ledger = AssistantLedgerApplication(
+        unit_of_work_factory=factory,
+        scope_resolver=lambda _state, _task: scope,
+    )
+    first_revision = ledger.enqueue_turn_work(turn.id)
+    replayed_revision = ledger.enqueue_turn_work(turn.id)
+    first_claim = ledger.claim_turn_work(
+        turn.id,
+        worker_id="worker-a",
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+
+    assert first_revision == replayed_revision == 1
+    assert isinstance(first_claim, AssistantTurnWorkClaim)
+    assert first_claim.request_revision == 1
+    assert (
+        ledger.claim_next_turn_work(
+            worker_id="worker-b",
+            lease_until=datetime.now(UTC) + timedelta(seconds=30),
+        )
+        is None
+    )
+
+    second_revision = ledger.enqueue_turn_work(turn.id, force=True)
+    assert second_revision == 2
+    assert ledger.release_turn_work(first_claim)
+
+    second_claim = ledger.claim_next_turn_work(
+        worker_id="worker-b",
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    assert second_claim is not None
+    assert second_claim.request_revision == 2
+    assert second_claim.lease_fence > first_claim.lease_fence
+    assert not ledger.renew_turn_work(
+        first_claim,
+        lease_until=datetime.now(UTC) + timedelta(seconds=60),
+    )
+    assert ledger.release_turn_work(second_claim)
+    assert ledger.pending_turn_work_ids() == ()
+
+
+def test_abandoning_turn_work_preserves_the_request_and_fences_the_old_worker(
+    tmp_path: Path,
+) -> None:
+    engine = create_sqlite_core_engine(tmp_path / "abandoned-turn-work.sqlite3")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="tenant-a")
+    task, scope = _seed_task(factory, label="abandoned-turn-work")
+    turn = _turn(task, scope, key="abandoned-turn-work:turn")
+    with factory() as unit_of_work:
+        unit_of_work.assistant.save_turn(turn)
+        unit_of_work.commit()
+    ledger = AssistantLedgerApplication(
+        unit_of_work_factory=factory,
+        scope_resolver=lambda _state, _task: scope,
+    )
+    ledger.enqueue_turn_work(turn.id)
+    first_claim = ledger.claim_turn_work(
+        turn.id,
+        worker_id="worker-before-restart",
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    assert first_claim is not None
+
+    assert ledger.abandon_turn_work(first_claim)
+    assert ledger.pending_turn_work_ids() == (turn.id,)
+    assert not ledger.release_turn_work(first_claim)
+
+    recovered_claim = ledger.claim_turn_work(
+        turn.id,
+        worker_id="worker-after-restart",
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    assert recovered_claim is not None
+    assert recovered_claim.request_revision == first_claim.request_revision
+    assert recovered_claim.lease_fence > first_claim.lease_fence
+
+    engine.dispose()
 
 
 def test_repository_persists_turn_messages_and_tool_invocations(tmp_path: Path) -> None:

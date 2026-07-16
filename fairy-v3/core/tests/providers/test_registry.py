@@ -244,6 +244,20 @@ def test_registry_never_falls_back_after_cancellation() -> None:
     assert fallback.calls == 0
 
 
+def test_cancellation_reason_is_first_writer_wins() -> None:
+    user_cancelled = CancellationToken()
+    user_cancelled.cancel()
+    user_cancelled.interrupt()
+    assert user_cancelled.is_cancelled
+    assert not user_cancelled.is_interrupted
+
+    worker_interrupted = CancellationToken()
+    worker_interrupted.interrupt()
+    worker_interrupted.cancel()
+    assert worker_interrupted.is_cancelled
+    assert worker_interrupted.is_interrupted
+
+
 def test_registry_public_profiles_hide_secret_references() -> None:
     provider = FakeProvider(
         _profile("primary"),

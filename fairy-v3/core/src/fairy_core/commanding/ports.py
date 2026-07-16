@@ -97,4 +97,21 @@ class CommandLedger(Protocol):
 
     def claim_next(self, *, worker_id: str, lease_until: datetime) -> CommandRun | None: ...
 
+    def abandon(
+        self,
+        run_id: UUID,
+        *,
+        lease_owner: str,
+        lease_fence: int,
+    ) -> bool: ...
+
+    def renew(
+        self,
+        run_id: UUID,
+        *,
+        lease_owner: str,
+        lease_fence: int,
+        lease_until: datetime,
+    ) -> bool: ...
+
     def close(self) -> None: ...

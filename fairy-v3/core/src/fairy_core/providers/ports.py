@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from threading import Event
+from threading import Event, Lock
 from typing import Protocol
 
 from fairy_core.providers.models import (
@@ -76,21 +76,38 @@ class SecretValue:
 
 
 class CancellationToken:
-    __slots__ = ("_event",)
+    __slots__ = ("_event", "_lock", "_reason")
 
     def __init__(self) -> None:
         self._event = Event()
+        self._lock = Lock()
+        self._reason: str | None = None
 
     @property
     def is_cancelled(self) -> bool:
         return self._event.is_set()
 
+    @property
+    def is_interrupted(self) -> bool:
+        with self._lock:
+            return self._reason == "worker_interrupted"
+
     def cancel(self) -> None:
-        self._event.set()
+        self._set_reason("user_cancelled")
+
+    def interrupt(self) -> None:
+        self._set_reason("worker_interrupted")
 
     def raise_if_cancelled(self) -> None:
         if self.is_cancelled:
             raise ProviderCancelledError("model request was cancelled")
+
+    def _set_reason(self, reason: str) -> None:
+        with self._lock:
+            if self._reason is not None:
+                return
+            self._reason = reason
+            self._event.set()
 
 
 class ModelProvider(Protocol):

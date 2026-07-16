@@ -32,6 +32,7 @@ from fairy_core.assistant.routing import (
     routing_decision_record,
 )
 from fairy_core.assistant.trace_repository import TurnTraceRepositoryMixin
+from fairy_core.assistant.turn_work_repository import TurnWorkRepositoryMixin
 from fairy_core.commanding.models import CommandStatus
 from fairy_core.commanding.schema import command_runs
 from fairy_core.domain.errors import InvalidTransitionError
@@ -64,7 +65,7 @@ _ACTIVE_TURN_STATUSES = (
 )
 
 
-class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin):
+class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepositoryMixin):
     def __init__(self, bind: Engine | Connection, *, tenant_id: str) -> None:
         if bind.dialect.name not in {"postgresql", "sqlite"}:
             raise ValueError(f"unsupported assistant repository dialect: {bind.dialect.name}")

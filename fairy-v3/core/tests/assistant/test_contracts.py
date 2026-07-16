@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -175,7 +176,9 @@ def test_active_turn_cancel_tolerates_concurrent_terminal_write(
         turn_id = UUID(str(created["id"]))
         cancellation = CancellationToken()
         scheduler = service._assistant_scheduler  # type: ignore[attr-defined]
-        scheduler._active[turn_id] = cancellation  # type: ignore[attr-defined]
+        scheduler._active[turn_id] = SimpleNamespace(  # type: ignore[attr-defined]
+            cancellation=cancellation,
+        )
         original_cancel = service._assistant_ledger.cancel_turn  # type: ignore[attr-defined]
 
         def concurrent_cancel(**kwargs):

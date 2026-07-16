@@ -548,6 +548,62 @@ def test_expired_worker_lease_is_reclaimed_with_a_higher_fence(tmp_path: Path) -
     assert second_claim.lease_fence == first_claim.lease_fence + 1
 
 
+def test_abandoned_worker_lease_is_immediately_reclaimable_and_fenced(
+    tmp_path: Path,
+) -> None:
+    ledger = SqliteCommandLedger(tmp_path / "ledger.db")
+    run = ledger.create_run(
+        command_name="review.test",
+        actor="core",
+        scope=_scope(tmp_path),
+        input_payload={},
+        risk_level=RiskLevel.LOW,
+        idempotency_key="abandon-command-lease",
+    )
+    ledger.transition(run.id, CommandStatus.QUEUED)
+    first_claim = ledger.claim_next(
+        worker_id="worker-a",
+        lease_until=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    assert first_claim is not None
+
+    renewed_until = datetime.now(UTC) + timedelta(minutes=6)
+    assert ledger.renew(
+        run.id,
+        lease_owner="worker-a",
+        lease_fence=first_claim.lease_fence,
+        lease_until=renewed_until,
+    )
+    renewed = ledger.get_run(run.id)
+    assert renewed is not None
+    assert renewed.lease_until == renewed_until
+    assert not ledger.renew(
+        run.id,
+        lease_owner="stale-worker",
+        lease_fence=first_claim.lease_fence,
+        lease_until=datetime.now(UTC) + timedelta(minutes=7),
+    )
+
+    assert ledger.abandon(
+        run.id,
+        lease_owner="worker-a",
+        lease_fence=first_claim.lease_fence,
+    )
+    second_claim = ledger.claim_next(
+        worker_id="worker-b",
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+
+    assert second_claim is not None
+    assert second_claim.lease_owner == "worker-b"
+    assert second_claim.lease_fence == first_claim.lease_fence + 1
+    assert not ledger.abandon(
+        run.id,
+        lease_owner="worker-a",
+        lease_fence=first_claim.lease_fence,
+    )
+
+
 def test_stale_worker_cannot_append_an_event_after_reclaim(tmp_path: Path) -> None:
     ledger = SqliteCommandLedger(tmp_path / "ledger.db")
     run = ledger.create_run(

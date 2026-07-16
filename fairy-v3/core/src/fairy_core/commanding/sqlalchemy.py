@@ -629,6 +629,65 @@ class SqlAlchemyCommandLedger:
             )
         return self._run_from_row(updated)
 
+    def abandon(
+        self,
+        run_id: UUID,
+        *,
+        lease_owner: str,
+        lease_fence: int,
+    ) -> bool:
+        now = _now()
+        with self._session.write() as connection:
+            row = self._run_by_id(connection, run_id, for_update=True)
+            if (
+                row is None
+                or CommandStatus(row["status"]) is not CommandStatus.RUNNING
+                or row["lease_owner"] != lease_owner
+                or int(row["lease_fence"]) != lease_fence
+            ):
+                return False
+            result = connection.execute(
+                update(command_runs)
+                .where(
+                    command_runs.c.tenant_id == self._tenant_id,
+                    command_runs.c.id == str(run_id),
+                    command_runs.c.status == CommandStatus.RUNNING.value,
+                    command_runs.c.lease_owner == lease_owner,
+                    command_runs.c.lease_fence == lease_fence,
+                )
+                .values(lease_until=now, updated_at=now)
+            )
+        return result.rowcount == 1
+
+    def renew(
+        self,
+        run_id: UUID,
+        *,
+        lease_owner: str,
+        lease_fence: int,
+        lease_until: datetime,
+    ) -> bool:
+        now = _now()
+        normalized_lease_until = _datetime(lease_until)
+        assert normalized_lease_until is not None
+        if normalized_lease_until <= now:
+            raise ValueError("lease_until must be in the future")
+        with self._session.write() as connection:
+            result = connection.execute(
+                update(command_runs)
+                .where(
+                    command_runs.c.tenant_id == self._tenant_id,
+                    command_runs.c.id == str(run_id),
+                    command_runs.c.status == CommandStatus.RUNNING.value,
+                    command_runs.c.lease_owner == lease_owner,
+                    command_runs.c.lease_fence == lease_fence,
+                    command_runs.c.lease_until.is_not(None),
+                    command_runs.c.lease_until > now,
+                )
+                .values(lease_until=normalized_lease_until, updated_at=now)
+            )
+        return result.rowcount == 1
+
     def _append_event(
         self,
         connection: Connection,

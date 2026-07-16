@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from fairy_core.assistant.models import (
     ToolInvocationStatus,
 )
 from fairy_core.assistant.trace_models import TraceStep, TraceStepKind, TurnTrace
+from fairy_core.assistant.work_queue import AssistantTurnWorkClaim
 from fairy_core.storage.pagination import StatePage
 
 
@@ -118,6 +120,43 @@ class AssistantRepository(Protocol):
     def live_turn_ids(self) -> tuple[UUID, ...]: ...
 
     def resumable_waiting_turn_ids(self) -> tuple[UUID, ...]: ...
+
+    def enqueue_turn_work(self, turn_id: UUID, *, force: bool) -> int: ...
+
+    def claim_turn_work(
+        self,
+        turn_id: UUID,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> AssistantTurnWorkClaim | None: ...
+
+    def claim_next_turn_work(
+        self,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> AssistantTurnWorkClaim | None: ...
+
+    def renew_turn_work(
+        self,
+        claim: AssistantTurnWorkClaim,
+        *,
+        lease_until: datetime,
+    ) -> bool: ...
+
+    def abandon_turn_work(self, claim: AssistantTurnWorkClaim) -> bool: ...
+
+    def release_turn_work(
+        self,
+        claim: AssistantTurnWorkClaim,
+        *,
+        error_code: str | None,
+    ) -> bool: ...
+
+    def cancel_turn_work(self, turn_id: UUID) -> bool: ...
+
+    def pending_turn_work_ids(self) -> tuple[UUID, ...]: ...
 
     def interrupt_orphaned_turns(
         self,
