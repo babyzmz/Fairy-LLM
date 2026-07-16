@@ -19,6 +19,7 @@ import type {
   Task,
   Version,
 } from "../core/client";
+import { CoreRpcError } from "../core/tauriTransport";
 import { App } from "./App";
 import type { WorkspaceClient } from "./workspaceModel";
 
@@ -205,6 +206,30 @@ beforeEach(() => window.localStorage.clear());
 afterEach(cleanup);
 
 describe("App", () => {
+  it("recovers when the first health check races Core startup", async () => {
+    const health = vi
+      .fn<WorkspaceClient["health"]>()
+      .mockRejectedValueOnce(
+        new CoreRpcError({
+          code: -32050,
+          message: "Fairy Core process was interrupted",
+          data: { error_code: "WORKER_INTERRUPTED" },
+        }),
+      )
+      .mockResolvedValue({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      });
+
+    render(<App client={createClient(health, [project])} />);
+
+    expect(screen.getByRole("banner")).toHaveTextContent("Core starting");
+    await waitFor(() => expect(screen.getByLabelText("Workspace status")).toHaveTextContent("Core ready"));
+    expect(health).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("heading", { name: "Core offline" })).not.toBeInTheDocument();
+  });
+
   it("renders durable workspace data without exposing raw Ledger events", async () => {
     const health = vi.fn(async () => ({
       status: "ok",

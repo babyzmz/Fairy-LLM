@@ -2010,6 +2010,19 @@ fn initialize_presence_after_main_load(app: tauri::AppHandle) {
     });
 }
 
+fn request_presence_initialization(app: tauri::AppHandle) {
+    let Some(state) = app.try_state::<DesktopState>() else {
+        return;
+    };
+    if state
+        .presence_start_requested
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        initialize_presence_after_main_load(app);
+    }
+}
+
 fn create_presence_windows(
     app: &tauri::AppHandle,
 ) -> Result<PresenceNativeWindows, Box<dyn std::error::Error>> {
@@ -2143,17 +2156,7 @@ pub fn run() {
             {
                 return;
             }
-            let app = webview.app_handle();
-            let Some(state) = app.try_state::<DesktopState>() else {
-                return;
-            };
-            if state
-                .presence_start_requested
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                initialize_presence_after_main_load(app.clone());
-            }
+            request_presence_initialization(webview.app_handle().clone());
         })
         .setup(|app| {
             let data_dir = configured_desktop_data_dir(app.handle())?;
@@ -2189,6 +2192,7 @@ pub fn run() {
                 pet_placement_reconciled: AtomicBool::new(false),
                 started_at: Instant::now(),
             });
+            request_presence_initialization(app.handle().clone());
             let tray = build_fairy_tray(app, &preferences)?;
             app.manage(tray);
             sync_tray_preferences(app.handle(), &preferences);

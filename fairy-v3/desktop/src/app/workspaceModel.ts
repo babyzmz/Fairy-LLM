@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAssistantTurn } from "../chat/useAssistantTurn";
 import { useTurnTraces } from "../chat/useTurnTraces";
 import type { Conversation, EventEnvelope, McpToolPolicyInput, Project, Task } from "../core/client";
+import { CoreRpcError } from "../core/tauriTransport";
 import type { McpServerDraft } from "../settings/extensionTypes";
 import {
   selectedProfileId as profileIdForSelection,
@@ -26,6 +27,7 @@ import { createWorkspaceFileActions } from "./workspaceFileActions";
 const workspaceKey = ["workspace"] as const;
 const permissionQueryKey = [...workspaceKey, "permissions"] as const;
 const capabilityQueryKey = [...workspaceKey, "capabilities"] as const;
+const coreStartupRetryLimit = 20;
 const terminalAssistantEvents = new Set([
   "assistant.turn.completed",
   "assistant.turn.cancelled",
@@ -55,7 +57,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const healthQuery = useQuery({
     queryKey: [...workspaceKey, "health"],
     queryFn: () => client.health(),
-    retry: false,
+    retry: (failureCount, error) =>
+      failureCount < coreStartupRetryLimit &&
+      error instanceof CoreRpcError &&
+      error.errorCode === "WORKER_INTERRUPTED",
+    retryDelay: (attemptIndex) => Math.min(250 * (attemptIndex + 1), 1_000),
     refetchOnWindowFocus: false,
   });
   const permissionsQuery = useQuery({
