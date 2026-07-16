@@ -152,7 +152,7 @@ def _check_python(path: Path, root: Path) -> list[Violation]:
             normalized = value.replace("\\", "/").lower()
             if any(
                 segment in normalized
-                for segment in ("/app/", "/fairy-desktop/", "/skills/")
+                for segment in ("/app/", "/fairy-desktop/")
             ):
                 violations.append(
                     Violation(

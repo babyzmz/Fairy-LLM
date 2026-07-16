@@ -8,6 +8,7 @@ from weakref import finalize
 from pydantic import BaseModel, ValidationError
 
 from fairy_core.application.core import CoreApplication
+from fairy_core.application.extension_service import ExtensionService
 from fairy_core.application.model_catalog_service import ModelCatalogService
 from fairy_core.application.planning_service import planning_service_handlers
 from fairy_core.application.presentation_service import presentation_service_handlers
@@ -32,17 +33,6 @@ from fairy_core.commanding.settings import (
     SandboxHealthProvider,
 )
 from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
-from fairy_core.contracts.extensions import (
-    McpServerAcceptInput,
-    McpServerConfigureInput,
-    McpServerDeleteInput,
-    McpServerDiscoverInput,
-    McpServerSetEnabledInput,
-    SkillInstallInput,
-    SkillRemoveInput,
-    SkillSetEnabledInput,
-    SkillUpdateInput,
-)
 from fairy_core.contracts.history import (
     ConversationDeleteInput,
     ConversationMoveToProjectInput,
@@ -217,6 +207,15 @@ class CoreService:
         self._runtime_application = runtime_application
         self._default_execution_target = default_execution_target
         self._execution_policy = ExecutionPolicyResolver(sandbox_health_provider)
+        self._extension_service = ExtensionService(
+            unit_of_work_factory=unit_of_work_factory,
+            registry=registry,
+            execution_policy=self._execution_policy,
+            default_execution_target=default_execution_target,
+            skill_registry=self._skill_registry,
+            skill_manager=self._skill_manager,
+            mcp_application=self._mcp_application,
+        )
         if (runtime_reviewer is None) != (runtime_evidence_store is None):
             raise ValueError("Runtime reviewer and evidence store must be configured together")
         self._runtime_review_application = (
@@ -387,7 +386,7 @@ class CoreService:
             "documents.list": self._list_documents,
             "documents.search": self._search_documents,
             "events.subscribe": self._subscribe_events,
-            "extensions.catalog.list": self._list_extension_catalog,
+            **self._extension_service.handlers,
             **planning_service_handlers(self._execution_planning),
             "health": self._health,
             "memory.claims.get": self._get_memory_claim,
@@ -403,12 +402,6 @@ class CoreService:
             "memory.snapshots.get": self._get_memory_snapshot,
             **self._media_service.handlers,
             "media.jobs.list": self._list_media_jobs,
-            "mcp.servers.accept": self._accept_mcp_server,
-            "mcp.servers.configure": self._configure_mcp_server,
-            "mcp.servers.delete": self._delete_mcp_server,
-            "mcp.servers.discover": self._discover_mcp_server,
-            "mcp.servers.list": self._list_mcp_servers,
-            "mcp.servers.set_enabled": self._set_mcp_server_enabled,
             "messages.list": self._list_messages,
             **self._model_catalog_service.handlers,
             "projects.create": self._create_project,
@@ -420,11 +413,6 @@ class CoreService:
             "permissions.update": self._update_permissions,
             "providers.health": self._provider_health,
             "providers.list": self._list_providers,
-            "skills.list": self._list_skills,
-            "skills.install": self._install_skill,
-            "skills.remove": self._remove_skill,
-            "skills.set_enabled": self._set_skill_enabled,
-            "skills.update": self._update_skill,
             "system.actions.execute": self._execute_system_action,
             "tasks.archive": self._archive_task,
             "tasks.create": self._create_task,
@@ -537,164 +525,6 @@ class CoreService:
         validated = cast(ProviderHealthInput, request)
         return {"items": self._provider_registry.health(validated.profile_id)}
 
-    def _list_skills(self, _request: BaseModel) -> dict[str, Any]:
-        self._refresh_extensions()
-        with self._unit_of_work_factory() as unit_of_work:
-            policy = self._execution_policy.resolve(
-                unit_of_work.execution_settings,
-                execution_target=self._default_execution_target,
-            )
-        operations = self._registry.capability_manifest(
-            profile=policy.profile,
-            sandbox_healthy=policy.sandbox_healthy,
-            overrides=dict(policy.capability_overrides),
-        )
-        return {
-            "items": [
-                {
-                    "name": package.manifest.name,
-                    "version": package.manifest.version,
-                    "description": package.manifest.description,
-                    "tool_name": package.manifest.tool_name,
-                    "content_sha256": package.content_sha256,
-                    "required_capabilities": package.manifest.required_capabilities,
-                    "compatible_mcp_servers": package.manifest.compatible_mcp_servers,
-                    "provenance": package.manifest.provenance.model_dump(mode="json"),
-                    "enabled": self._skill_registry.enabled(package.manifest.name),
-                    "available": operations.get(package.manifest.tool_name, False),
-                }
-                for package in self._skill_registry.packages()
-            ]
-        }
-
-    def _list_extension_catalog(self, _request: BaseModel) -> dict[str, Any]:
-        manager = self._skills()
-        installed = {package.manifest.name for package in self._skill_registry.packages()}
-        if self._mcp_application is not None:
-            installed.update(
-                record.connection.server_id for record in self._mcp_application.list_servers()
-            )
-        return {
-            "items": [
-                {
-                    "extension_id": entry.extension_id,
-                    "kind": entry.kind,
-                    "name": entry.name,
-                    "description": entry.description,
-                    "publisher": entry.publisher,
-                    "version": entry.version,
-                    "source": entry.source,
-                    "license": entry.license,
-                    "experimental": entry.experimental,
-                    "installed": entry.extension_id in installed,
-                }
-                for entry in manager.catalog()
-            ]
-        }
-
-    def _install_skill(self, request: BaseModel) -> dict[str, Any]:
-        validated = cast(SkillInstallInput, request)
-        self._skills().install(validated.catalog_id)
-        return self._list_skills(request)
-
-    def _update_skill(self, request: BaseModel) -> dict[str, Any]:
-        validated = cast(SkillUpdateInput, request)
-        self._skills().update(
-            validated.name,
-            expected_content_sha256=validated.expected_content_sha256,
-        )
-        return self._list_skills(request)
-
-    def _set_skill_enabled(self, request: BaseModel) -> dict[str, Any]:
-        validated = cast(SkillSetEnabledInput, request)
-        self._require_skill_digest(validated.name, validated.expected_content_sha256)
-        self._skills().set_enabled(validated.name, enabled=validated.enabled)
-        return self._list_skills(request)
-
-    def _remove_skill(self, request: BaseModel) -> dict[str, Any]:
-        validated = cast(SkillRemoveInput, request)
-        self._require_skill_digest(validated.name, validated.expected_content_sha256)
-        self._skills().remove(validated.name)
-        return {"name": validated.name, "removed": True}
-
-    def _require_skill_digest(self, name: str, digest: str) -> None:
-        package = self._skill_registry.get(name)
-        if package is None:
-            raise KeyError(f"Skill is not installed: {name}")
-        if package.content_sha256 != digest:
-            raise ValueError("Skill content changed since it was displayed")
-
-    def _skills(self) -> SkillManager:
-        if self._skill_manager is None:
-            raise RuntimeError("Skill installation is unavailable")
-        return self._skill_manager
-
-    def _list_mcp_servers(self, _request: BaseModel) -> dict[str, Any]:
-        application = self._mcp()
-        return {
-            "items": [
-                self._mcp_server_payload(application, record)
-                for record in application.list_servers()
-            ]
-        }
-
-    def _configure_mcp_server(self, request: BaseModel) -> dict[str, Any]:
-        application = self._mcp()
-        record = application.configure(cast(McpServerConfigureInput, request))
-        return self._mcp_server_payload(application, record)
-
-    def _discover_mcp_server(self, request: BaseModel) -> dict[str, Any]:
-        application = self._mcp()
-        record = application.discover(cast(McpServerDiscoverInput, request))
-        return self._mcp_server_payload(application, record)
-
-    def _accept_mcp_server(self, request: BaseModel) -> dict[str, Any]:
-        application = self._mcp()
-        record = application.accept(cast(McpServerAcceptInput, request))
-        return self._mcp_server_payload(application, record)
-
-    def _set_mcp_server_enabled(self, request: BaseModel) -> dict[str, Any]:
-        application = self._mcp()
-        record = application.set_enabled(cast(McpServerSetEnabledInput, request))
-        return self._mcp_server_payload(application, record)
-
-    def _delete_mcp_server(self, request: BaseModel) -> dict[str, Any]:
-        server_id = self._mcp().delete(cast(McpServerDeleteInput, request))
-        return {"server_id": server_id, "deleted": True}
-
-    def _mcp(self) -> McpApplication:
-        if self._mcp_application is None:
-            raise RuntimeError("MCP extensions are unavailable")
-        return self._mcp_application
-
-    @staticmethod
-    def _mcp_server_payload(
-        application: McpApplication,
-        record,
-    ) -> dict[str, Any]:
-        connection = record.connection
-        return {
-            "server_id": connection.server_id,
-            "display_name": connection.display_name,
-            "transport": connection.transport,
-            "command": connection.command,
-            "arguments": connection.arguments,
-            "endpoint": connection.endpoint,
-            "credential_configured": application.credential_configured(record),
-            "environment_names": tuple(sorted(connection.environment_refs)),
-            "enabled": record.enabled,
-            "status": record.status,
-            "accepted_schema_digest": record.accepted_schema_digest,
-            "pending_schema_digest": record.pending_schema_digest,
-            "accepted_tools": tuple(tool.as_dict() for tool in record.accepted_tools),
-            "pending_tools": tuple(tool.as_dict() for tool in record.pending_tools),
-            "policies": tuple(policy.as_dict() for policy in record.policies),
-            "revision": record.revision,
-            "last_error_code": record.last_error_code,
-            "created_at": record.created_at.isoformat(),
-            "updated_at": record.updated_at.isoformat(),
-        }
-
     def _transcribe_voice(self, request: BaseModel) -> Any:
         return self._voice_application.transcribe(cast(VoiceTranscribeInput, request))
 
@@ -797,12 +627,12 @@ class CoreService:
                 continue
 
     def _run_assistant_turn(self, request: BaseModel) -> Any:
-        self._refresh_extensions()
+        self._extension_service.refresh_registry()
         turn_id = cast(AssistantTurnRunInput, request).turn_id
         return self._assistant_scheduler.run(turn_id)
 
     def _start_assistant_turn(self, request: BaseModel) -> Any:
-        self._refresh_extensions()
+        self._extension_service.refresh_registry()
         turn_id = cast(AssistantTurnStartInput, request).turn_id
         return self._assistant_scheduler.start(turn_id)
 
@@ -1203,7 +1033,7 @@ class CoreService:
         return self._application.discard_task_version(cast(TaskIdInput, request).task_id)
 
     def _get_capabilities(self, _request: BaseModel) -> dict[str, Any]:
-        self._refresh_extensions()
+        self._extension_service.refresh_registry()
         with self._unit_of_work_factory() as unit_of_work:
             policy = self._execution_policy.resolve(
                 unit_of_work.execution_settings,
@@ -1228,7 +1058,7 @@ class CoreService:
             return unit_of_work.execution_settings.get()
 
     def _update_permissions(self, request: BaseModel) -> Any:
-        self._refresh_extensions()
+        self._extension_service.refresh_registry()
         validated = cast(ExecutionSettingsUpdateInput, request)
         unknown = sorted(
             name for name in validated.capability_overrides if self._registry.get(name) is None
@@ -1244,10 +1074,6 @@ class CoreService:
             )
             unit_of_work.commit()
         return changed
-
-    def _refresh_extensions(self) -> None:
-        if self._mcp_application is not None:
-            self._mcp_application.reload_registry()
 
     def _subscribe_events(self, request: BaseModel) -> dict[str, Any]:
         validated = cast(EventSubscribeInput, request)
