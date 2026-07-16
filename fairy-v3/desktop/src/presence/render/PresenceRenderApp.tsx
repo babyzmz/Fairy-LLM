@@ -243,6 +243,7 @@ export function PresenceRenderApp({
       data-speaking={String(projection.speaking)}
       data-work-state={view.work_state}
       data-target-frame-rate={targetFrameRate}
+      data-optics-mode={renderSettings.optics_mode}
       data-frame-rate-limit={runtimePolicy.frame_rate_limit}
       data-power-saver={String(runtimePolicy.power_saver)}
       data-foreground-fullscreen={String(runtimePolicy.foreground_fullscreen)}
@@ -272,6 +273,7 @@ export function PresenceRenderApp({
             opacity: renderSettings.opacity,
             particles_enabled:
               renderSettings.particles_enabled && experimentMode !== "no-particles",
+            optics_mode: renderSettings.optics_mode,
             idle_for_ms: idleForMs,
             target_frame_rate: targetFrameRate,
             frame_rate_limit: runtimePolicy.frame_rate_limit,

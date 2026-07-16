@@ -6,8 +6,9 @@ import type { PresenceRendererMode } from "../render/rendererSupport";
 const CHANNEL_NAME = "fairy.presence.render-settings.v1";
 
 export interface PresenceRenderSettings {
-  schema_version: 2;
+  schema_version: 3;
   mode: PresenceRendererMode;
+  optics_mode: "standard" | "enhanced";
   size_scale: number;
   opacity: number;
   motion_enabled: boolean;
@@ -32,8 +33,9 @@ interface BroadcastPort {
 type BroadcastFactory = (name: string) => BroadcastPort | null;
 
 const settingsSchema = z.object({
-  schema_version: z.literal(2),
+  schema_version: z.literal(3),
   mode: z.enum(["auto", "liquid", "compatibility"]),
+  optics_mode: z.enum(["standard", "enhanced"]),
   size_scale: z.number().min(0.75).max(1.5),
   opacity: z.number().min(0.4).max(1),
   motion_enabled: z.boolean(),
@@ -50,8 +52,9 @@ const messageSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const DEFAULT_PRESENCE_RENDER_SETTINGS: PresenceRenderSettings = Object.freeze({
-  schema_version: 2,
+  schema_version: 3,
   mode: "auto",
+  optics_mode: "standard",
   size_scale: 1,
   opacity: 0.92,
   motion_enabled: true,
@@ -63,8 +66,9 @@ export function safeRenderSettingsFromPreferences(
   preferences: DesktopPreferences,
 ): PresenceRenderSettings {
   return settingsSchema.parse({
-    schema_version: 2,
+    schema_version: 3,
     mode: preferences.pet_renderer_mode,
+    optics_mode: preferences.pet_optics_mode,
     size_scale: preferences.pet_size_percent / 100,
     opacity: preferences.pet_opacity_percent / 100,
     motion_enabled: preferences.pet_motion_enabled,

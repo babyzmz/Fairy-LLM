@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const PREFERENCES_FILE: &str = "preferences/desktop.json";
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -23,6 +23,14 @@ pub enum PetRendererMode {
     Auto,
     Liquid,
     Compatibility,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PetOpticsMode {
+    #[default]
+    Standard,
+    Enhanced,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -72,6 +80,8 @@ pub struct DesktopPreferences {
     pub pet_remember_position: bool,
     #[serde(default)]
     pub pet_renderer_mode: PetRendererMode,
+    #[serde(default)]
+    pub pet_optics_mode: PetOpticsMode,
     #[serde(default = "default_pet_target_fps")]
     pub pet_target_fps: u16,
     #[serde(default)]
@@ -111,6 +121,7 @@ impl Default for DesktopPreferences {
             pet_do_not_disturb: false,
             pet_remember_position: true,
             pet_renderer_mode: PetRendererMode::Auto,
+            pet_optics_mode: PetOpticsMode::Standard,
             pet_target_fps: default_pet_target_fps(),
             pet_anchor: None,
             developer_mode: false,
@@ -170,7 +181,7 @@ impl DesktopPreferencesStore {
                     .get("schema_version")
                     .and_then(serde_json::Value::as_u64)
             });
-        let legacy = matches!(schema_version, Some(1 | 2));
+        let legacy = matches!(schema_version, Some(1..=3));
         let mut preferences = match serde_json::from_slice::<DesktopPreferences>(&bytes) {
             Ok(preferences) => preferences,
             Err(_) if legacy => return Ok(DesktopPreferences::default()),
@@ -382,7 +393,7 @@ fn replace_file(source: &Path, destination: &Path) -> Result<(), std::io::Error>
 mod tests {
     use super::{
         DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore,
-        DesktopPreferencesUpdate, PetAnchorPreference, PetPreferencesUpdate,
+        DesktopPreferencesUpdate, PetAnchorPreference, PetOpticsMode, PetPreferencesUpdate,
     };
 
     #[test]
@@ -469,6 +480,7 @@ mod tests {
             "pet_do_not_disturb",
             "pet_remember_position",
             "pet_renderer_mode",
+            "pet_optics_mode",
             "pet_target_fps",
             "pet_anchor",
         ] {
@@ -481,7 +493,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 3);
+        assert_eq!(migrated.schema_version, 4);
         assert!(!migrated.voice_auto_play_pet);
         assert!(!migrated.pet_always_on_top);
         assert!(migrated.pet_muted);
@@ -510,8 +522,32 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 3);
+        assert_eq!(migrated.schema_version, 4);
         assert_eq!(migrated.pet_target_fps, 60);
+        assert_eq!(store.load().expect("reload migrated"), migrated);
+    }
+
+    #[test]
+    fn version_three_preferences_default_to_privacy_safe_optics() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        let path = directory.path().join("preferences/desktop.json");
+        std::fs::create_dir_all(path.parent().expect("preferences parent"))
+            .expect("create preferences parent");
+        let mut legacy =
+            serde_json::to_value(DesktopPreferences::default()).expect("serialize defaults");
+        let object = legacy.as_object_mut().expect("preferences object");
+        object.insert("schema_version".to_owned(), serde_json::json!(3));
+        object.remove("pet_optics_mode");
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&legacy).expect("legacy bytes"),
+        )
+        .expect("write legacy preferences");
+
+        let migrated = store.load().expect("migrate preferences");
+        assert_eq!(migrated.schema_version, 4);
+        assert_eq!(migrated.pet_optics_mode, PetOpticsMode::Standard);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
 }

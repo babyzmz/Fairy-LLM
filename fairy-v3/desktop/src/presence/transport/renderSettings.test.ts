@@ -10,8 +10,9 @@ describe("presence render settings", () => {
   it("projects only bounded renderer fields from desktop preferences", () => {
     const projected = safeRenderSettingsFromPreferences(preferences());
     expect(projected).toEqual({
-      schema_version: 2,
+      schema_version: 3,
       mode: "liquid",
+      optics_mode: "standard",
       size_scale: 1.25,
       opacity: 0.84,
       motion_enabled: false,
@@ -75,6 +76,7 @@ function preferences(): DesktopPreferences {
     pet_do_not_disturb: false,
     pet_remember_position: true,
     pet_renderer_mode: "liquid",
+    pet_optics_mode: "standard",
     pet_target_fps: 144,
     pet_anchor: { monitor_id: "primary", x_ratio: 0.5, y_ratio: 0.5 },
     developer_mode: false,

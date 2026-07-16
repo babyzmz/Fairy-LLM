@@ -27,6 +27,7 @@ import {
   liquidShapeTargetForSnapshot,
 } from "./liquidGlassMaterial";
 import { liquidAnchorForSnapshot } from "./liquidGeometry";
+import { shouldCaptureBackdrop } from "./backdropPolicy";
 import { LiquidMotionController } from "./liquidMotion";
 import { liquidOpticsForSnapshot } from "./liquidOptics";
 import { liquidVisualStyleForSnapshot } from "./liquidVisualState";
@@ -242,8 +243,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
   }
 
   private canCaptureBackdrop(): boolean {
-    return this.snapshot.interaction !== null
-      && this.snapshot.interaction.phase !== "repositioning";
+    return shouldCaptureBackdrop(this.snapshot);
   }
 
   private stopBackdrop() {

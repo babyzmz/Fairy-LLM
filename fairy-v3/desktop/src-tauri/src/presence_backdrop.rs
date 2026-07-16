@@ -1,10 +1,12 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::ipc::Response;
-use tauri::WebviewWindow;
+use tauri::{State, WebviewWindow};
 
 use crate::authorize_pet_render_window;
+use crate::desktop_preferences::{DesktopPreferencesStore, PetOpticsMode};
 use crate::presence_coordinator::PhysicalFrame;
+use crate::DesktopState;
 
 const BACKDROP_MAGIC: &[u8; 4] = b"FBG2";
 const BACKDROP_HEADER_BYTES: usize = 64;
@@ -34,8 +36,9 @@ pub enum BackdropExperimentMode {
 }
 
 #[tauri::command]
-pub async fn pet_backdrop_capture(
+pub(crate) async fn pet_backdrop_capture(
     window: WebviewWindow,
+    state: State<'_, DesktopState>,
     sequence: u64,
     experiment_mode: Option<BackdropExperimentMode>,
 ) -> Result<Response, String> {
@@ -48,6 +51,13 @@ pub async fn pet_backdrop_capture(
     if !cfg!(debug_assertions) && experiment_mode != BackdropExperimentMode::Normal {
         return Err("PRESENCE_BACKDROP_EXPERIMENT_UNAVAILABLE".to_owned());
     }
+    let optics_mode = DesktopPreferencesStore::new(&state.data_dir)
+        .load()
+        .map_err(|_| "PRESENCE_BACKDROP_PREFERENCES_UNAVAILABLE".to_owned())?
+        .pet_optics_mode;
+    if !backdrop_capture_allowed(optics_mode, experiment_mode, cfg!(debug_assertions)) {
+        return Err("PRESENCE_BACKDROP_PRIVACY_MODE".to_owned());
+    }
     let captured = tauri::async_runtime::spawn_blocking(move || {
         capture_backdrop(capture_frame, sequence, experiment_mode)
     })
@@ -57,6 +67,15 @@ pub async fn pet_backdrop_capture(
         return Err("PRESENCE_BACKDROP_WINDOW_MOVED".to_owned());
     }
     Ok(Response::new(encode_backdrop(captured)?))
+}
+
+fn backdrop_capture_allowed(
+    optics_mode: PetOpticsMode,
+    experiment_mode: BackdropExperimentMode,
+    development: bool,
+) -> bool {
+    optics_mode == PetOpticsMode::Enhanced
+        || (development && experiment_mode != BackdropExperimentMode::Normal)
 }
 
 fn window_frame(window: &WebviewWindow) -> Result<PhysicalFrame, String> {
@@ -303,5 +322,24 @@ mod tests {
         assert_eq!(first.rgba, second.rgba);
         assert_eq!(first.rgba.len(), 16);
         assert_eq!(first.capture_total_us, 0);
+    }
+
+    #[test]
+    fn standard_privacy_rejects_normal_capture_even_in_development() {
+        assert!(!backdrop_capture_allowed(
+            PetOpticsMode::Standard,
+            BackdropExperimentMode::Normal,
+            true,
+        ));
+        assert!(backdrop_capture_allowed(
+            PetOpticsMode::Enhanced,
+            BackdropExperimentMode::Normal,
+            false,
+        ));
+        assert!(backdrop_capture_allowed(
+            PetOpticsMode::Standard,
+            BackdropExperimentMode::CaptureOnly,
+            true,
+        ));
     }
 }

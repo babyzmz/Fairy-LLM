@@ -29,6 +29,7 @@ import { CoreRpcError, type InvokeFunction } from "../core/tauriTransport";
 
 export type ThemePreference = "system" | "dark" | "light";
 export type PetRendererMode = "auto" | "liquid" | "compatibility";
+export type PetOpticsMode = "standard" | "enhanced";
 export const DESKTOP_PREFERENCES_EVENT = "fairy-desktop-preferences";
 
 export interface PetAnchorPreference {
@@ -67,6 +68,7 @@ export interface DesktopPreferences {
   pet_do_not_disturb: boolean;
   pet_remember_position: boolean;
   pet_renderer_mode: PetRendererMode;
+  pet_optics_mode: PetOpticsMode;
   pet_target_fps: 60 | 144;
   pet_anchor: PetAnchorPreference | null;
   developer_mode: boolean;

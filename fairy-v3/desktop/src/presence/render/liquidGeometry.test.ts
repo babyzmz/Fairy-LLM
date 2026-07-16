@@ -59,6 +59,7 @@ function snapshot(
     size_scale: 1,
     opacity: 0.92,
     particles_enabled: true,
+    optics_mode: "standard",
     idle_for_ms: 0,
     target_frame_rate: 60,
     frame_rate_limit: 60,
