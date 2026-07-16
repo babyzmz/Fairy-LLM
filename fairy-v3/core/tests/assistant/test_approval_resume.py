@@ -84,6 +84,8 @@ def test_standard_profile_approval_resumes_one_tool_effect_once(tmp_path: Path) 
         )
         assert decision["approval"]["decision"] == "approved"
         assert decision["changeset"] is None
+        assert decision["assistant_turn_id"] == turn["id"]
+        assert decision["resume_requested"] is True
 
         completed = wait_for_turn(service, turn["id"])
         replayed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
@@ -137,6 +139,8 @@ def test_rejected_tool_becomes_bounded_result_and_duplicate_decision_is_idempote
         trace = service.invoke("assistant.turns.trace.list", {"turn_id": turn["id"]})
 
         assert first == second
+        assert first["assistant_turn_id"] == turn["id"]
+        assert first["resume_requested"] is True
         assert completed["status"] == "completed"
         assert executor.calls == []
         with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]

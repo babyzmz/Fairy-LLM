@@ -307,6 +307,68 @@ describe("App", () => {
     });
   });
 
+  it("keeps the Composer busy while Core resumes an approved Assistant Turn", async () => {
+    window.localStorage.setItem("fairy.workspace.mode", "chat");
+    const waitingTurn: AssistantTurn = {
+      ...completedTurn,
+      status: "waiting_for_tool",
+      completed_at: null,
+    };
+    const pending: Approval = {
+      id: "0198f4de-0114-7000-8000-000000000020",
+      task_id: ID.scratchTask,
+      command_run_id: "0198f4de-0114-7000-8000-000000000021",
+      requested_by: "agent",
+      reason: "Send a desktop notification",
+      changeset_id: null,
+      tool_invocation_id: "0198f4de-0114-7000-8000-000000000022",
+      decision: "pending",
+      decided_by: null,
+      created_at: timestamp,
+      decided_at: null,
+    };
+    const runTurn = vi.fn(async () => waitingTurn);
+    const decide = vi.fn(async () => ({
+      approval: {
+        ...pending,
+        decision: "approved" as const,
+        decided_by: "user",
+        decided_at: timestamp,
+      },
+      changeset: null,
+      assistant_turn_id: ID.turn,
+      resume_requested: true,
+    }));
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [project],
+      {
+        scratch: true,
+        approvals: [pending],
+        decide,
+        createTask: async () => ({ task: { id: ID.scratchTask } }) as never,
+        createTurn: async () => ({ ...waitingTurn, status: "created" }),
+        runTurn,
+      },
+    );
+    render(<App client={client} />);
+
+    await userEvent.type(await screen.findByLabelText("Message Fairy"), "Notify me");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("button", { name: "Stop response" })).toBeEnabled();
+  });
+
   it("loads durable scratch chat and runs a task-bound assistant turn", async () => {
     window.localStorage.setItem("fairy.workspace.mode", "chat");
     const listMessages = vi.fn(async () => ({ items: [scratchMessage], next_cursor: null }));

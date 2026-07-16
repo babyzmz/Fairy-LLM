@@ -513,6 +513,58 @@ describe("useAssistantTurn", () => {
     await waitFor(() => expect(result.current.turn).toEqual(completed));
     expect(startTurn).toHaveBeenCalledTimes(2);
   });
+
+  it("projects a Core-owned approval resume without starting the turn twice", async () => {
+    const waiting = assistantTurn({ status: "waiting_for_tool" });
+    const completed = assistantTurn({
+      status: "completed",
+      completed_at: "2026-07-11T00:00:04Z",
+    });
+    const startTurn = vi.fn(async () => waiting);
+    const getTurn = vi.fn(async () => completed);
+    const client = assistantClient({
+      createTask: async () => ({ task: { id: taskId } }) as never,
+      createTurn: async () => assistantTurn(),
+      startTurn,
+      getTurn,
+    });
+    const { result, rerender } = renderHook(
+      ({ events }: { events: EventEnvelope[] }) =>
+        useAssistantTurn({
+          client,
+          conversationId,
+          profileId: "openrouter-free",
+          operationMode: "answer",
+          events,
+        }),
+      { initialProps: { events: [] as EventEnvelope[] } },
+    );
+
+    await act(async () => result.current.send("Notify me", []));
+    expect(result.current.turn).toEqual(waiting);
+    expect(result.current.isBusy).toBe(false);
+
+    act(() => result.current.markApprovalResume(turnId));
+
+    expect(result.current.isBusy).toBe(true);
+    expect(startTurn).toHaveBeenCalledTimes(1);
+
+    rerender({
+      events: [{
+        ...deltaEvent("terminal-after-approval", 30, turnId, 1, 0, ""),
+        event_type: "assistant.turn.completed",
+        payload: { turn_id: turnId, message_id: "message-1" },
+      }],
+    });
+    await waitFor(() => expect(result.current.turn).toEqual(completed));
+    expect(result.current.isBusy).toBe(false);
+
+    act(() => result.current.markApprovalResume(turnId));
+    act(() => result.current.markApprovalResume("00000000-0000-4000-8000-000000000099"));
+
+    expect(result.current.isBusy).toBe(false);
+    expect(startTurn).toHaveBeenCalledTimes(1);
+  });
 });
 
 interface ClientOverrides {

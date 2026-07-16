@@ -66,6 +66,7 @@ interface AssistantTurnState {
   ): Promise<void>;
   cancel(): Promise<void>;
   resume(): Promise<void>;
+  markApprovalResume(turnId: string): void;
   retry(): Promise<void>;
   retryPending(): Promise<void>;
   deletePending(): void;
@@ -101,9 +102,15 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
   const [stateConversationId, setStateConversationId] = useState(options.conversationId);
   const operationRef = useRef(0);
   const busyRef = useRef(false);
+  const turnRef = useRef<AssistantTurn | null>(null);
   const conversationRef = useRef(options.conversationId);
   const statusEventCursorRef = useRef(0);
   const pendingDraftRef = useRef<AssistantDraft | null>(null);
+
+  const commitTurn = useCallback((next: AssistantTurn | null) => {
+    turnRef.current = next;
+    setTurn(next);
+  }, []);
 
   const settle = useCallback(async () => {
     await options.onSettled?.();
@@ -117,11 +124,11 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     statusEventCursorRef.current = 0;
     pendingDraftRef.current = null;
     setStateConversationId(options.conversationId);
-    setTurn(null);
+    commitTurn(null);
     setIsBusy(false);
     setError(null);
     setPendingUserMessage(null);
-  }, [options.conversationId]);
+  }, [commitTurn, options.conversationId]);
 
   const executeDraft = useCallback(
     async (draft: AssistantDraft, conversationOverride?: string) => {
@@ -162,7 +169,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
       busyRef.current = true;
       setIsBusy(true);
       setError(null);
-      setTurn(null);
+      commitTurn(null);
       let committed = false;
       try {
         const taskContext = await options.client.tasks.create({
@@ -201,10 +208,10 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
         });
         if (operation !== operationRef.current) return;
         committed = true;
-        setTurn(created);
+        commitTurn(created);
         const started = await options.client.assistant.turns.start(created.id);
         if (operation !== operationRef.current) return;
-        setTurn(started);
+        commitTurn(started);
         if (!isActive(started)) {
           busyRef.current = false;
           setIsBusy(false);
@@ -235,7 +242,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
         throw caught;
       }
     },
-    [options, settle],
+    [commitTurn, options, settle],
   );
 
   const send = useCallback(
@@ -282,7 +289,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
         turn_id: turn.id,
         expected_cancellation_revision: turn.cancellation_revision,
       });
-      setTurn(cancelled);
+      commitTurn(cancelled);
     } catch (caught) {
       setError(errorMessage(caught));
       throw caught;
@@ -290,7 +297,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
       setIsBusy(false);
       await settle();
     }
-  }, [options.client.assistant.turns, settle, turn]);
+  }, [commitTurn, options.client.assistant.turns, settle, turn]);
 
   const resume = useCallback(async () => {
     if (turn === null || turn.status !== "waiting_for_tool" || busyRef.current) return;
@@ -301,7 +308,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     try {
       const started = await options.client.assistant.turns.start(turn.id);
       if (operation === operationRef.current) {
-        setTurn(started);
+        commitTurn(started);
         if (!isActive(started)) {
           busyRef.current = false;
           setIsBusy(false);
@@ -316,7 +323,22 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
       }
       throw caught;
     }
-  }, [options.client.assistant.turns, settle, turn]);
+  }, [commitTurn, options.client.assistant.turns, settle, turn]);
+
+  const markApprovalResume = useCallback((turnId: string) => {
+    const current = turnRef.current;
+    if (
+      current === null ||
+      current.id !== turnId ||
+      current.conversation_id !== conversationRef.current ||
+      isTerminal(current)
+    ) {
+      return;
+    }
+    busyRef.current = true;
+    setIsBusy(true);
+    setError(null);
+  }, []);
 
   useEffect(() => {
     if (turn === null) return;
@@ -333,7 +355,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
       .get(turn.id)
       .then(async (current) => {
         if (operation !== operationRef.current) return;
-        setTurn(current);
+        commitTurn(current);
         const active = isActive(current);
         busyRef.current = active;
         setIsBusy(active);
@@ -342,7 +364,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
       .catch((caught) => {
         if (operation === operationRef.current) setError(errorMessage(caught));
       });
-  }, [options.client.assistant.turns, options.events, settle, turn]);
+  }, [commitTurn, options.client.assistant.turns, options.events, settle, turn]);
 
   const retry = useCallback(async () => {
     if (turn === null || !isTerminal(turn)) {
@@ -359,10 +381,10 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
         idempotency_key: idempotencyKey("assistant-retry"),
       });
       if (operation !== operationRef.current) return;
-      setTurn(created);
+      commitTurn(created);
       const started = await options.client.assistant.turns.start(created.id);
       if (operation === operationRef.current) {
-        setTurn(started);
+        commitTurn(started);
         if (!isActive(started)) {
           busyRef.current = false;
           setIsBusy(false);
@@ -377,7 +399,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
       }
       throw caught;
     }
-  }, [options.client.assistant.turns, settle, turn]);
+  }, [commitTurn, options.client.assistant.turns, settle, turn]);
 
   const retryPending = useCallback(async () => {
     const draft = pendingDraftRef.current;
@@ -402,14 +424,14 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
   const reset = useCallback(() => {
     ++operationRef.current;
     busyRef.current = false;
-    setTurn(null);
+    commitTurn(null);
     setIsBusy(false);
     setError(null);
     pendingDraftRef.current = null;
     setPendingUserMessage(null);
     conversationRef.current = options.conversationId;
     setStateConversationId(options.conversationId);
-  }, [options.conversationId]);
+  }, [commitTurn, options.conversationId]);
 
   const streamedText = useMemo(
     () => (turn !== null && isTerminal(turn) ? "" : assistantDeltaText(options.events, turn?.id ?? null)),
@@ -428,6 +450,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
     sendToConversation,
     cancel,
     resume,
+    markApprovalResume,
     retry,
     retryPending,
     deletePending,

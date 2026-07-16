@@ -2048,7 +2048,11 @@ export interface components {
         /** ApprovalDecisionResultModel */
         ApprovalDecisionResultModel: {
             approval: components["schemas"]["ApprovalModel"];
+            /** Assistant Turn Id */
+            assistant_turn_id: string | null;
             changeset: components["schemas"]["ChangesetModel"] | null;
+            /** Resume Requested */
+            resume_requested: boolean;
         };
         /** ApprovalModel */
         ApprovalModel: {

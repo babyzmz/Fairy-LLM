@@ -961,6 +961,8 @@ class CoreService:
         return {
             "approval": decided,
             "changeset": changeset,
+            "assistant_turn_id": assistant_turn_id,
+            "resume_requested": assistant_turn_id is not None,
         }
 
     def _get_version(self, request: BaseModel) -> Any:

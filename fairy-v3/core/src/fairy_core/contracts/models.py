@@ -678,6 +678,8 @@ class ApprovalModel(ContractModel):
 class ApprovalDecisionResultModel(ContractModel):
     approval: ApprovalModel
     changeset: ChangesetModel | None
+    assistant_turn_id: UUID | None
+    resume_requested: bool
 
 
 class ProjectPageModel(ContractModel):

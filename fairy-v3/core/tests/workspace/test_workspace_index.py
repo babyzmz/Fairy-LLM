@@ -232,10 +232,14 @@ def test_scratch_workspace_applies_and_reads_a_changeset_without_a_project(
                 "idempotency_key": "workspace:scratch-changeset",
             },
         )
-        applied = service.invoke(
+        decision = service.invoke(
             "approvals.decide",
             {"approval_id": pending["approval"]["id"], "approved": True},
-        )["changeset"]
+        )
+        applied = decision["changeset"]
+
+        assert decision["assistant_turn_id"] is None
+        assert decision["resume_requested"] is False
 
         workspace_id = conversation["workspace_id"]
         version_id = context["target_version"]["id"]

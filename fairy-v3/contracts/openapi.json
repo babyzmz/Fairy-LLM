@@ -196,6 +196,18 @@
           "approval": {
             "$ref": "#/components/schemas/ApprovalModel"
           },
+          "assistant_turn_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assistant Turn Id"
+          },
           "changeset": {
             "anyOf": [
               {
@@ -205,11 +217,17 @@
                 "type": "null"
               }
             ]
+          },
+          "resume_requested": {
+            "title": "Resume Requested",
+            "type": "boolean"
           }
         },
         "required": [
           "approval",
-          "changeset"
+          "changeset",
+          "assistant_turn_id",
+          "resume_requested"
         ],
         "title": "ApprovalDecisionResultModel",
         "type": "object"
