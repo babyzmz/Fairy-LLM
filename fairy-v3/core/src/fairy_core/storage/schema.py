@@ -24,6 +24,7 @@ from fairy_core.storage.execution_settings_schema import build_execution_setting
 from fairy_core.storage.history_schema import build_history_tables
 from fairy_core.storage.index_schema import build_state_indexes
 from fairy_core.storage.media_schema import build_media_schema
+from fairy_core.storage.media_work_schema import build_media_work_table
 from fairy_core.storage.model_catalog_schema import build_model_catalog_tables
 from fairy_core.storage.planning_schema import build_planning_schema
 from fairy_core.storage.presentation_schema import build_presentation_schema
@@ -933,6 +934,7 @@ media_generation_jobs = build_media_schema(
     versions=versions,
     assistant_turns=assistant_turns,
 )
+media_generation_work = build_media_work_table(state_metadata, media_generation_jobs)
 
 documents = Table(
     "core_documents",

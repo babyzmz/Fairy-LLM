@@ -21,7 +21,7 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260716_0034"]
+    assert scripts.get_heads() == ["20260716_0035"]
     assert scripts.get_revision("20260712_0016").down_revision == "20260711_0015"
     assert scripts.get_revision("20260711_0015").down_revision == "20260711_0014"
     assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
@@ -192,6 +192,18 @@ def test_assistant_turn_work_migration_has_reversible_fenced_tenant_ddl() -> Non
     assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_ASSISTANT_TURN_WORK"' in ddl
     assert "DROP INDEX IX_CORE_ASSISTANT_TURN_WORK_CLAIM" in ddl
     assert "DROP TABLE CORE_ASSISTANT_TURN_WORK" in ddl
+
+
+def test_media_generation_work_migration_has_reversible_fenced_tenant_ddl() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260716_0035:20260716_0034", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_MEDIA_GENERATION_WORK"' in ddl
+    assert "DROP INDEX IX_CORE_MEDIA_GENERATION_WORK_CLAIM" in ddl
+    assert "DROP TABLE CORE_MEDIA_GENERATION_WORK" in ddl
 
 
 def test_event_outbox_migration_executes_asyncpg_ddl_one_command_at_a_time() -> None:

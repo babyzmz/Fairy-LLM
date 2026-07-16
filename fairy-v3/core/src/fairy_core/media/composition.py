@@ -7,6 +7,7 @@ from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.media.application import MediaApplication
 from fairy_core.media.ports import MediaProvider
+from fairy_core.media.scheduler import MediaScheduler
 from fairy_core.media.service import MediaService, UnavailableMediaService
 from fairy_core.media.staging import MediaStagingStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -17,6 +18,7 @@ from fairy_core.workspace.ports import WorkspaceProvisioner
 class MediaComposition:
     provider: MediaProvider | None
     application: MediaApplication | None
+    scheduler: MediaScheduler | None
     service: MediaService | UnavailableMediaService
 
 
@@ -41,6 +43,7 @@ def build_media_composition(
         return MediaComposition(
             provider=None,
             application=None,
+            scheduler=None,
             service=UnavailableMediaService(),
         )
     application = MediaApplication(
@@ -50,11 +53,18 @@ def build_media_composition(
         workspaces=workspaces,
         staging=staging,
     )
+    scheduler = MediaScheduler(
+        application=application,
+        unit_of_work_factory=unit_of_work_factory,
+        registry=registry,
+    )
     return MediaComposition(
         provider=provider,
         application=application,
+        scheduler=scheduler,
         service=MediaService(
             application=application,
+            scheduler=scheduler,
             unit_of_work_factory=unit_of_work_factory,
             registry=registry,
             execution_policy=execution_policy,

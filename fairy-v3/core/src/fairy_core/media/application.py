@@ -96,7 +96,7 @@ class MediaApplication:
         self._indexer = indexer or ProjectIndexer()
         self._provider_attempts = ProviderAttemptRecorder(unit_of_work_factory)
 
-    def generate_image(
+    def prepare_image(
         self,
         *,
         task_id: UUID,
@@ -107,7 +107,6 @@ class MediaApplication:
         aspect_ratio: str,
         seed: int | None,
         idempotency_key: str,
-        cancellation: CancellationToken,
     ) -> MediaGenerationResult:
         spec = {
             "prompt": _prompt(prompt),
@@ -130,32 +129,12 @@ class MediaApplication:
             request_spec=spec,
             idempotency_key=idempotency_key,
         )
-        replay = self._terminal_result(prepared.job)
-        if replay is not None:
-            return replay
-        self._begin(prepared)
-        try:
-            generated = self._provider_call(
-                prepared,
-                lambda: self._provider.generate_image(
-                    ImageGenerationRequest(
-                        model_id=IMAGE_MODEL_ID,
-                        prompt=spec["prompt"],
-                        size=spec["size"],
-                        aspect_ratio=spec["aspect_ratio"],
-                        seed=spec["seed"],
-                        idempotency_key=idempotency_key,
-                        zero_data_retention=prepared.zero_data_retention,
-                    ),
-                    cancellation,
-                ),
-            )
-            return self._persist_generated(prepared, generated)
-        except BaseException as error:
-            self._record_failure(prepared.job.id, prepared.run.id, error)
-            raise
+        return self._terminal_result(prepared.job) or MediaGenerationResult(
+            job=prepared.job,
+            artifact=None,
+        )
 
-    def generate_music(
+    def prepare_music(
         self,
         *,
         task_id: UUID,
@@ -165,7 +144,6 @@ class MediaApplication:
         output_format: str,
         seed: int | None,
         idempotency_key: str,
-        cancellation: CancellationToken,
     ) -> MediaGenerationResult:
         spec = {
             "prompt": _prompt(prompt),
@@ -183,31 +161,12 @@ class MediaApplication:
             request_spec=spec,
             idempotency_key=idempotency_key,
         )
-        replay = self._terminal_result(prepared.job)
-        if replay is not None:
-            return replay
-        self._begin(prepared)
-        try:
-            generated = self._provider_call(
-                prepared,
-                lambda: self._provider.generate_music(
-                    MusicGenerationRequest(
-                        model_id=MUSIC_MODEL_ID,
-                        prompt=spec["prompt"],
-                        output_format=spec["output_format"],
-                        seed=spec["seed"],
-                        idempotency_key=idempotency_key,
-                        zero_data_retention=prepared.zero_data_retention,
-                    ),
-                    cancellation,
-                ),
-            )
-            return self._persist_generated(prepared, generated)
-        except BaseException as error:
-            self._record_failure(prepared.job.id, prepared.run.id, error)
-            raise
+        return self._terminal_result(prepared.job) or MediaGenerationResult(
+            job=prepared.job,
+            artifact=None,
+        )
 
-    def start_video(
+    def prepare_video(
         self,
         *,
         task_id: UUID,
@@ -220,7 +179,6 @@ class MediaApplication:
         generate_audio: bool,
         seed: int | None,
         idempotency_key: str,
-        cancellation: CancellationToken,
     ) -> MediaGenerationResult:
         spec = {
             "prompt": _prompt(prompt),
@@ -245,37 +203,219 @@ class MediaApplication:
             request_spec=spec,
             idempotency_key=idempotency_key,
         )
-        replay = self._terminal_result(prepared.job, include_active_video=True)
+        return self._terminal_result(
+            prepared.job,
+            include_active_video=True,
+        ) or MediaGenerationResult(job=prepared.job, artifact=None)
+
+    def generate_image(
+        self,
+        *,
+        task_id: UUID,
+        command_run: CommandRun,
+        prompt: str,
+        output_path: str | None,
+        size: str,
+        aspect_ratio: str,
+        seed: int | None,
+        idempotency_key: str,
+        cancellation: CancellationToken,
+    ) -> MediaGenerationResult:
+        prepared = self.prepare_image(
+            task_id=task_id,
+            command_run=command_run,
+            prompt=prompt,
+            output_path=output_path,
+            size=size,
+            aspect_ratio=aspect_ratio,
+            seed=seed,
+            idempotency_key=idempotency_key,
+        )
+        if prepared.artifact is not None:
+            return prepared
+        return self.execute_job(prepared.job.id, cancellation=cancellation)
+
+    def generate_music(
+        self,
+        *,
+        task_id: UUID,
+        command_run: CommandRun,
+        prompt: str,
+        output_path: str | None,
+        output_format: str,
+        seed: int | None,
+        idempotency_key: str,
+        cancellation: CancellationToken,
+    ) -> MediaGenerationResult:
+        prepared = self.prepare_music(
+            task_id=task_id,
+            command_run=command_run,
+            prompt=prompt,
+            output_path=output_path,
+            output_format=output_format,
+            seed=seed,
+            idempotency_key=idempotency_key,
+        )
+        if prepared.artifact is not None:
+            return prepared
+        return self.execute_job(prepared.job.id, cancellation=cancellation)
+
+    def start_video(
+        self,
+        *,
+        task_id: UUID,
+        command_run: CommandRun,
+        prompt: str,
+        output_path: str | None,
+        duration_seconds: int,
+        resolution: str,
+        aspect_ratio: str,
+        generate_audio: bool,
+        seed: int | None,
+        idempotency_key: str,
+        cancellation: CancellationToken,
+    ) -> MediaGenerationResult:
+        prepared = self.prepare_video(
+            task_id=task_id,
+            command_run=command_run,
+            prompt=prompt,
+            output_path=output_path,
+            duration_seconds=duration_seconds,
+            resolution=resolution,
+            aspect_ratio=aspect_ratio,
+            generate_audio=generate_audio,
+            seed=seed,
+            idempotency_key=idempotency_key,
+        )
+        if prepared.job.provider_job_id is not None or prepared.job.is_terminal:
+            return prepared
+        return self.execute_job(prepared.job.id, cancellation=cancellation)
+
+    def execute_job(
+        self,
+        job_id: UUID,
+        *,
+        cancellation: CancellationToken,
+        attempt_number: int = 1,
+    ) -> MediaGenerationResult:
+        prepared = self._prepare_worker_job(job_id)
+        replay = self._terminal_result(
+            prepared.job,
+            include_active_video=False,
+        )
         if replay is not None:
             return replay
-        if prepared.zero_data_retention:
-            error = ProviderUnavailableError("OpenRouter video generation does not support ZDR")
-            self._record_failure(prepared.job.id, prepared.run.id, error)
-            raise error
-        self._begin(prepared)
         try:
+            if prepared.job.status is MediaGenerationStatus.CREATED:
+                self._begin(prepared)
+                prepared = self._prepare_worker_job(job_id)
+            spec = prepared.job.request_spec
+            if prepared.job.kind is MediaGenerationKind.IMAGE:
+                generated = self._provider_call(
+                    prepared,
+                    lambda: self._provider.generate_image(
+                        ImageGenerationRequest(
+                            model_id=prepared.job.model_id,
+                            prompt=str(spec["prompt"]),
+                            size=str(spec["size"]),
+                            aspect_ratio=str(spec["aspect_ratio"]),
+                            seed=_stored_seed(spec.get("seed")),
+                            idempotency_key=prepared.job.idempotency_key,
+                            zero_data_retention=prepared.zero_data_retention,
+                        ),
+                        cancellation,
+                    ),
+                    attempt_number=attempt_number,
+                )
+                cancellation.raise_if_cancelled()
+                return self._persist_generated(prepared, generated)
+            if prepared.job.kind is MediaGenerationKind.MUSIC:
+                generated = self._provider_call(
+                    prepared,
+                    lambda: self._provider.generate_music(
+                        MusicGenerationRequest(
+                            model_id=prepared.job.model_id,
+                            prompt=str(spec["prompt"]),
+                            output_format=str(spec["output_format"]),
+                            seed=_stored_seed(spec.get("seed")),
+                            idempotency_key=prepared.job.idempotency_key,
+                            zero_data_retention=prepared.zero_data_retention,
+                        ),
+                        cancellation,
+                    ),
+                    attempt_number=attempt_number,
+                )
+                cancellation.raise_if_cancelled()
+                return self._persist_generated(prepared, generated)
+            return self._execute_video(
+                prepared,
+                cancellation=cancellation,
+                attempt_number=attempt_number,
+            )
+        except BaseException as error:
+            if not cancellation.is_interrupted:
+                self._record_failure(prepared.job.id, prepared.run.id, error)
+            raise
+
+    def _execute_video(
+        self,
+        prepared: _PreparedJob,
+        *,
+        cancellation: CancellationToken,
+        attempt_number: int,
+    ) -> MediaGenerationResult:
+        spec = prepared.job.request_spec
+        if prepared.job.provider_job_id is None:
+            if prepared.zero_data_retention:
+                raise ProviderUnavailableError("OpenRouter video generation does not support ZDR")
             provider_job = self._provider_call(
                 prepared,
                 lambda: self._provider.start_video(
                     VideoGenerationRequest(
-                        model_id=VIDEO_MODEL_ID,
-                        prompt=spec["prompt"],
-                        duration_seconds=spec["duration_seconds"],
-                        resolution=spec["resolution"],
-                        aspect_ratio=spec["aspect_ratio"],
-                        generate_audio=spec["generate_audio"],
-                        seed=spec["seed"],
-                        idempotency_key=idempotency_key,
+                        model_id=prepared.job.model_id,
+                        prompt=str(spec["prompt"]),
+                        duration_seconds=int(spec["duration_seconds"]),
+                        resolution=str(spec["resolution"]),
+                        aspect_ratio=str(spec["aspect_ratio"]),
+                        generate_audio=bool(spec["generate_audio"]),
+                        seed=_stored_seed(spec.get("seed")),
+                        idempotency_key=prepared.job.idempotency_key,
                         zero_data_retention=False,
                     ),
                     cancellation,
                 ),
+                attempt_number=attempt_number,
             )
             job = self._bind_video(prepared, provider_job)
             return MediaGenerationResult(job=job, artifact=None)
-        except BaseException as error:
-            self._record_failure(prepared.job.id, prepared.run.id, error)
-            raise
+        provider_job = self._provider_call(
+            prepared,
+            lambda: self._provider.get_video(
+                prepared.job.provider_job_id or "",
+                cancellation,
+            ),
+            attempt_number=attempt_number,
+        )
+        if provider_job.status is MediaProviderVideoStatus.COMPLETED:
+            generated = self._provider_call(
+                prepared,
+                lambda: self._provider.download_video(
+                    prepared.job.provider_job_id or "",
+                    cancellation,
+                ),
+                attempt_number=attempt_number,
+            )
+            if generated.usage_cost is None and provider_job.usage_cost is not None:
+                generated = GeneratedMedia(
+                    content=generated.content,
+                    media_type=generated.media_type,
+                    usage_cost=provider_job.usage_cost,
+                    transcript=generated.transcript,
+                )
+            cancellation.raise_if_cancelled()
+            return self._persist_generated(prepared, generated)
+        job = self._update_video(prepared, provider_job)
+        return MediaGenerationResult(job=job, artifact=None)
 
     def poll_video(
         self,
@@ -284,45 +424,12 @@ class MediaApplication:
         command_run: CommandRun,
         cancellation: CancellationToken,
     ) -> MediaGenerationResult:
-        prepared = self._prepare_existing(
+        self._prepare_existing(
             job_id=job_id,
             command_run=command_run,
             command_name="media.videos.poll",
         )
-        replay = self._terminal_result(prepared.job, include_active_video=False)
-        if replay is not None:
-            return replay
-        if prepared.job.provider_job_id is None:
-            raise RuntimeError("video job has no provider identity")
-        try:
-            provider_job = self._provider_call(
-                prepared,
-                lambda: self._provider.get_video(
-                    prepared.job.provider_job_id or "",
-                    cancellation,
-                ),
-            )
-            if provider_job.status is MediaProviderVideoStatus.COMPLETED:
-                generated = self._provider_call(
-                    prepared,
-                    lambda: self._provider.download_video(
-                        prepared.job.provider_job_id or "",
-                        cancellation,
-                    ),
-                )
-                if generated.usage_cost is None and provider_job.usage_cost is not None:
-                    generated = GeneratedMedia(
-                        content=generated.content,
-                        media_type=generated.media_type,
-                        usage_cost=provider_job.usage_cost,
-                        transcript=generated.transcript,
-                    )
-                return self._persist_generated(prepared, generated)
-            job = self._update_video(prepared, provider_job)
-            return MediaGenerationResult(job=job, artifact=None)
-        except BaseException as error:
-            self._record_failure(prepared.job.id, prepared.run.id, error)
-            raise
+        return self.execute_job(job_id, cancellation=cancellation)
 
     def cancel_video(
         self,
@@ -365,30 +472,93 @@ class MediaApplication:
 
     def recover_interrupted(self) -> dict[str, int]:
         self._staging.cleanup_all()
-        interrupted = 0
         resumable_videos = 0
+        scheduled = 0
         with self._unit_of_work_factory() as unit_of_work:
             for job in unit_of_work.state.recoverable_media_jobs():
-                if (
-                    job.kind is MediaGenerationKind.VIDEO
-                    and job.provider_job_id is not None
-                    and job.status
-                    in {MediaGenerationStatus.PENDING, MediaGenerationStatus.IN_PROGRESS}
-                ):
+                unit_of_work.state.enqueue_media_work(job.id)
+                scheduled += 1
+                if job.kind is MediaGenerationKind.VIDEO:
                     resumable_videos += 1
-                    continue
-                expected_status = job.status
-                previous_revision = job.revision
-                job.interrupt()
-                unit_of_work.state.update_media_job(
-                    job,
-                    expected_revision=previous_revision,
-                    expected_status=expected_status,
-                )
-                interrupted += 1
-            if interrupted:
+            if scheduled:
                 unit_of_work.commit()
-        return {"interrupted": interrupted, "resumable_videos": resumable_videos}
+        return {"interrupted": 0, "resumable_videos": resumable_videos}
+
+    def get_result(
+        self,
+        job_id: UUID,
+        *,
+        include_active_video: bool,
+        raise_terminal_error: bool = True,
+    ) -> MediaGenerationResult | None:
+        with self._unit_of_work_factory() as unit_of_work:
+            job = _require_job(unit_of_work, job_id)
+        try:
+            return self._terminal_result(
+                job,
+                include_active_video=include_active_video,
+            )
+        except RuntimeError:
+            if raise_terminal_error:
+                raise
+            return MediaGenerationResult(job=job, artifact=None)
+
+    def cancel_work(self, job_id: UUID) -> MediaGenerationJob:
+        with self._unit_of_work_factory() as unit_of_work:
+            job = _require_job(unit_of_work, job_id)
+            if job.is_terminal:
+                return job
+            previous_revision = job.revision
+            previous_status = job.status
+            job.cancel()
+            unit_of_work.state.update_media_job(
+                job,
+                expected_revision=previous_revision,
+                expected_status=previous_status,
+            )
+            run = unit_of_work.commands.get_run(job.command_run_id)
+            if run is not None and run.status in {
+                CommandStatus.RUNNING,
+                CommandStatus.SUCCEEDED,
+            }:
+                self._append_event(
+                    unit_of_work,
+                    run,
+                    event_type="media.generation.cancelled",
+                    message="Media generation cancelled",
+                    payload={"job_id": str(job.id), "kind": job.kind.value},
+                )
+            unit_of_work.commit()
+        return job
+
+    def fail_work(self, job_id: UUID, *, error_code: str) -> MediaGenerationJob:
+        with self._unit_of_work_factory() as unit_of_work:
+            job = _require_job(unit_of_work, job_id)
+            if job.is_terminal:
+                return job
+            previous_revision = job.revision
+            previous_status = job.status
+            job.fail(error_code, usage_cost=job.usage_cost)
+            unit_of_work.state.update_media_job(
+                job,
+                expected_revision=previous_revision,
+                expected_status=previous_status,
+            )
+            run = unit_of_work.commands.get_run(job.command_run_id)
+            if run is not None:
+                self._append_event(
+                    unit_of_work,
+                    run,
+                    event_type="media.generation.failed",
+                    message="Media generation failed",
+                    payload={
+                        "job_id": str(job.id),
+                        "kind": job.kind.value,
+                        "error_code": job.error_code,
+                    },
+                )
+            unit_of_work.commit()
+        return job
 
     def _prepare_job(
         self,
@@ -408,7 +578,7 @@ class MediaApplication:
             if task is None:
                 raise KeyError(f"task not found: {task_id}")
             scope = self._scope_resolver(unit_of_work.state, task)
-            run = _require_running(unit_of_work, command_run.id)
+            run = _require_preparable_run(unit_of_work, command_run.id)
             _validate_run(run, command_run, command_name=command_name, scope=scope)
             if scope.target_version_id is None:
                 raise ValueError("media generation requires a writable Workspace Version")
@@ -436,7 +606,19 @@ class MediaApplication:
                 else unit_of_work.model_catalog.get_selection()
             )
             self._require_model_available(unit_of_work, model_id)
+            stored_spec = {
+                **request_spec,
+                "zero_data_retention": selection.zero_data_retention,
+            }
             fingerprint = _request_fingerprint(
+                scope=scope,
+                kind=kind,
+                model_id=model_id,
+                endpoint_kind=endpoint_kind,
+                output_path=output_path,
+                request_spec=stored_spec,
+            )
+            legacy_fingerprint = _request_fingerprint(
                 scope=scope,
                 kind=kind,
                 model_id=model_id,
@@ -446,14 +628,19 @@ class MediaApplication:
             )
             existing = unit_of_work.state.find_media_job_by_idempotency_key(idempotency_key)
             if existing is not None:
-                if existing.request_fingerprint != fingerprint:
+                if existing.request_fingerprint not in {fingerprint, legacy_fingerprint}:
                     raise IdempotencyConflictError("Media idempotency key was reused")
+                unit_of_work.state.enqueue_media_work(existing.id)
+                unit_of_work.commit()
                 return _PreparedJob(
                     job=existing,
                     scope=scope,
                     run=run,
                     invocation=invocation,
-                    zero_data_retention=selection.zero_data_retention,
+                    zero_data_retention=_stored_zdr(
+                        existing.request_spec,
+                        fallback=selection.zero_data_retention,
+                    ),
                     max_workspace_bytes=workspace.max_bytes,
                 )
             job = MediaGenerationJob.create(
@@ -469,11 +656,12 @@ class MediaApplication:
                 model_id=model_id,
                 endpoint_kind=endpoint_kind,
                 output_path=output_path,
-                request_spec=request_spec,
+                request_spec=stored_spec,
                 request_fingerprint=fingerprint,
                 idempotency_key=idempotency_key,
             )
             unit_of_work.state.save_media_job(job)
+            unit_of_work.state.enqueue_media_work(job.id)
             unit_of_work.commit()
             return _PreparedJob(
                 job=job,
@@ -481,6 +669,57 @@ class MediaApplication:
                 run=run,
                 invocation=invocation,
                 zero_data_retention=selection.zero_data_retention,
+                max_workspace_bytes=workspace.max_bytes,
+            )
+
+    def _prepare_worker_job(self, job_id: UUID) -> _PreparedJob:
+        with self._unit_of_work_factory() as unit_of_work:
+            job = _require_job(unit_of_work, job_id)
+            task = unit_of_work.state.get_task(job.task_id)
+            if task is None:
+                raise KeyError(f"task not found: {job.task_id}")
+            scope = self._scope_resolver(unit_of_work.state, task)
+            if (
+                job.scope_digest != scope.scope_digest
+                or job.workspace_id != scope.workspace_id
+                or job.version_id != scope.target_version_id
+                or job.conversation_id != scope.conversation_id
+                or job.project_id != scope.project_id
+            ):
+                raise RuntimeError("Media job does not match the current Task Scope")
+            run = unit_of_work.commands.get_run(job.command_run_id)
+            if run is None:
+                raise RuntimeError("Media Job lost its CommandRun")
+            if run.task_id != job.task_id or run.scope_digest != job.scope_digest:
+                raise RuntimeError("Media Job CommandRun Scope changed")
+            if (
+                job.provider_job_id is None
+                and not job.is_terminal
+                and run.status is not CommandStatus.RUNNING
+            ):
+                raise RuntimeError("Media provider submission requires an active CommandRun")
+            if (
+                job.provider_job_id is not None
+                and not job.is_terminal
+                and run.status not in {CommandStatus.RUNNING, CommandStatus.SUCCEEDED}
+            ):
+                raise RuntimeError("Video polling requires an accepted CommandRun")
+            workspace = unit_of_work.state.get_workspace(job.workspace_id)
+            if workspace is None:
+                raise KeyError(f"Workspace not found: {job.workspace_id}")
+            invocation = unit_of_work.assistant.find_tool_invocation_by_command_run_id(
+                job.command_run_id
+            )
+            selection = unit_of_work.model_catalog.get_selection()
+            return _PreparedJob(
+                job=job,
+                scope=scope,
+                run=run,
+                invocation=invocation,
+                zero_data_retention=_stored_zdr(
+                    job.request_spec,
+                    fallback=selection.zero_data_retention,
+                ),
                 max_workspace_bytes=workspace.max_bytes,
             )
 
@@ -533,7 +772,7 @@ class MediaApplication:
                 expected_revision=previous_revision,
                 expected_status=MediaGenerationStatus.CREATED,
             )
-            run = _require_running(unit_of_work, prepared.run.id)
+            run = _require_event_run(unit_of_work, prepared.run.id)
             self._append_event(
                 unit_of_work,
                 run,
@@ -551,6 +790,8 @@ class MediaApplication:
         self,
         prepared: _PreparedJob,
         operation: Callable[[], _T],
+        *,
+        attempt_number: int = 1,
     ) -> _T:
         observer = None
         if prepared.invocation is not None:
@@ -564,7 +805,7 @@ class MediaApplication:
                     model_id=prepared.job.model_id,
                     endpoint_kind=prepared.job.endpoint_kind.value,
                     model_role=ModelExecutionRole.PRIMARY,
-                    attempt_number=1,
+                    attempt_number=attempt_number,
                     status=ProviderAttemptStatus.STARTED,
                 )
             )
@@ -578,7 +819,7 @@ class MediaApplication:
                         model_id=prepared.job.model_id,
                         endpoint_kind=prepared.job.endpoint_kind.value,
                         model_role=ModelExecutionRole.PRIMARY,
-                        attempt_number=1,
+                        attempt_number=attempt_number,
                         status=ProviderAttemptStatus.FAILED,
                         error_category=_error_category(error),
                     )
@@ -591,7 +832,7 @@ class MediaApplication:
                     model_id=prepared.job.model_id,
                     endpoint_kind=prepared.job.endpoint_kind.value,
                     model_role=ModelExecutionRole.PRIMARY,
-                    attempt_number=1,
+                    attempt_number=attempt_number,
                     status=ProviderAttemptStatus.SUCCEEDED,
                     usage_cost=getattr(result, "usage_cost", None),
                 )
@@ -617,7 +858,7 @@ class MediaApplication:
                 expected_revision=previous_revision,
                 expected_status=previous_status,
             )
-            run = _require_running(unit_of_work, prepared.run.id)
+            run = _require_event_run(unit_of_work, prepared.run.id)
             self._append_event(
                 unit_of_work,
                 run,
@@ -656,7 +897,7 @@ class MediaApplication:
                 expected_revision=previous_revision,
                 expected_status=previous_status,
             )
-            run = _require_running(unit_of_work, prepared.run.id)
+            run = _require_event_run(unit_of_work, prepared.run.id)
             event_type = (
                 "media.generation.failed"
                 if job.status is MediaGenerationStatus.FAILED
@@ -699,6 +940,8 @@ class MediaApplication:
                     if artifact is None:
                         raise RuntimeError("Completed media job has no Artifact")
                     return MediaGenerationResult(job=job, artifact=artifact)
+                if job.is_terminal:
+                    raise VersionConflictError("Media job became terminal before import")
                 existing_index = unit_of_work.project_indexes.get(job.version_id)
                 expected_generation = existing_index.generation if existing_index else 0
             workspace_object = self._workspaces.import_asset(
@@ -724,65 +967,93 @@ class MediaApplication:
                 root=root,
                 generation=expected_generation + 1,
             )
-            with self._unit_of_work_factory() as unit_of_work:
-                job = _require_job(unit_of_work, prepared.job.id)
-                previous_revision = job.revision
-                previous_status = job.status
-                if job.is_terminal:
-                    raise VersionConflictError("Media job became terminal during import")
-                unit_of_work.project_indexes.replace_generation(
-                    index,
-                    expected_generation=expected_generation,
+            try:
+                with self._unit_of_work_factory() as unit_of_work:
+                    job = _require_job(unit_of_work, prepared.job.id)
+                    previous_revision = job.revision
+                    previous_status = job.status
+                    if job.is_terminal:
+                        raise VersionConflictError("Media job became terminal during import")
+                    unit_of_work.project_indexes.replace_generation(
+                        index,
+                        expected_generation=expected_generation,
+                    )
+                    artifact = Artifact.restore(
+                        id=job.artifact_id,
+                        project_id=job.project_id,
+                        conversation_id=job.conversation_id,
+                        task_id=job.task_id,
+                        version_id=job.version_id,
+                        artifact_type=_artifact_type(job.kind),
+                        visibility=ArtifactVisibility.CONVERSATION,
+                        storage_location=(
+                            f"workspace://{job.workspace_id}/{job.version_id}/{job.output_path}"
+                        ),
+                        media_type=generated.media_type,
+                        byte_length=workspace_object.byte_length,
+                        content_hash=workspace_object.content_hash,
+                        metadata={
+                            "job_id": str(job.id),
+                            "kind": job.kind.value,
+                            "output_path": job.output_path,
+                            "prompt_digest": hashlib.sha256(
+                                str(job.request_spec["prompt"]).encode("utf-8")
+                            ).hexdigest(),
+                            "transcript": generated.transcript,
+                        },
+                        created_at=datetime.now(UTC),
+                    )
+                    unit_of_work.state.append_artifact(artifact)
+                    job.complete(usage_cost=generated.usage_cost or job.usage_cost)
+                    unit_of_work.state.update_media_job(
+                        job,
+                        expected_revision=previous_revision,
+                        expected_status=previous_status,
+                    )
+                    run = _require_event_run(unit_of_work, prepared.run.id)
+                    self._append_event(
+                        unit_of_work,
+                        run,
+                        event_type="media.generation.completed",
+                        message="Media generation completed",
+                        payload={
+                            "job_id": str(job.id),
+                            "kind": job.kind.value,
+                            "artifact_id": str(artifact.id),
+                            "output_path": job.output_path,
+                        },
+                    )
+                    unit_of_work.commit()
+            except BaseException:
+                self._rollback_materialized_asset(
+                    prepared,
+                    expected_hash=workspace_object.content_hash,
                 )
-                artifact = Artifact.restore(
-                    id=job.artifact_id,
-                    project_id=job.project_id,
-                    conversation_id=job.conversation_id,
-                    task_id=job.task_id,
-                    version_id=job.version_id,
-                    artifact_type=_artifact_type(job.kind),
-                    visibility=ArtifactVisibility.CONVERSATION,
-                    storage_location=(
-                        f"workspace://{job.workspace_id}/{job.version_id}/{job.output_path}"
-                    ),
-                    media_type=generated.media_type,
-                    byte_length=workspace_object.byte_length,
-                    content_hash=workspace_object.content_hash,
-                    metadata={
-                        "job_id": str(job.id),
-                        "kind": job.kind.value,
-                        "output_path": job.output_path,
-                        "prompt_digest": hashlib.sha256(
-                            str(job.request_spec["prompt"]).encode("utf-8")
-                        ).hexdigest(),
-                        "transcript": generated.transcript,
-                    },
-                    created_at=datetime.now(UTC),
-                )
-                unit_of_work.state.append_artifact(artifact)
-                job.complete(usage_cost=generated.usage_cost or job.usage_cost)
-                unit_of_work.state.update_media_job(
-                    job,
-                    expected_revision=previous_revision,
-                    expected_status=previous_status,
-                )
-                run = _require_running(unit_of_work, prepared.run.id)
-                self._append_event(
-                    unit_of_work,
-                    run,
-                    event_type="media.generation.completed",
-                    message="Media generation completed",
-                    payload={
-                        "job_id": str(job.id),
-                        "kind": job.kind.value,
-                        "artifact_id": str(artifact.id),
-                        "output_path": job.output_path,
-                    },
-                )
-                unit_of_work.commit()
+                raise
             return MediaGenerationResult(job=job, artifact=artifact)
         finally:
             self._staging.cleanup(prepared.job.id)
+
+    def _rollback_materialized_asset(
+        self,
+        prepared: _PreparedJob,
+        *,
+        expected_hash: str,
+    ) -> None:
+        root = self._workspaces.version_path(
+            prepared.job.workspace_id,
+            prepared.job.version_id,
+        ).resolve(strict=True)
+        target = (root / prepared.job.output_path).resolve(strict=False)
+        try:
+            target.relative_to(root)
+        except ValueError:
+            raise RuntimeError("Media rollback path escaped its Workspace") from None
+        if not target.is_file():
+            return
+        if hashlib.sha256(target.read_bytes()).hexdigest() != expected_hash:
+            raise RuntimeError("Media rollback target changed after import")
+        target.unlink()
 
     def _record_failure(self, job_id: UUID, run_id: UUID, error: BaseException) -> None:
         with self._unit_of_work_factory() as unit_of_work:
@@ -805,7 +1076,7 @@ class MediaApplication:
                 expected_status=previous_status,
             )
             run = unit_of_work.commands.get_run(run_id)
-            if run is not None and run.status is CommandStatus.RUNNING:
+            if run is not None:
                 self._append_event(
                     unit_of_work,
                     run,
@@ -876,14 +1147,16 @@ class MediaApplication:
         message: str,
         payload: dict[str, object],
     ) -> None:
+        lease_owner = run.lease_owner if run.status is CommandStatus.RUNNING else None
+        lease_fence = run.lease_fence if run.status is CommandStatus.RUNNING else None
         unit_of_work.commands.append_event(
             run_id=run.id,
             event_type=event_type,
             visibility=EventVisibility.USER,
             message=message,
             payload=payload,
-            lease_owner=run.lease_owner,
-            lease_fence=run.lease_fence,
+            lease_owner=lease_owner,
+            lease_fence=lease_fence,
         )
 
 
@@ -919,6 +1192,23 @@ def _default_output_path(kind: str, idempotency_key: str, suffix: str) -> str:
     return f"generated/{kind}-{digest}{suffix}"
 
 
+def _stored_zdr(request_spec, *, fallback: bool) -> bool:
+    value = request_spec.get("zero_data_retention")
+    if value is None:
+        return fallback
+    if not isinstance(value, bool):
+        raise RuntimeError("Media Job has an invalid ZDR snapshot")
+    return value
+
+
+def _stored_seed(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RuntimeError("Media Job has an invalid seed")
+    return value
+
+
 def _validate_run(
     persisted: CommandRun,
     supplied: CommandRun,
@@ -928,7 +1218,7 @@ def _validate_run(
 ) -> None:
     if (
         persisted != supplied
-        or persisted.status is not CommandStatus.RUNNING
+        or persisted.status not in {CommandStatus.QUEUED, CommandStatus.RUNNING}
         or persisted.command_name != command_name
         or persisted.task_id != scope.task_id
         or persisted.conversation_id != scope.conversation_id
@@ -942,6 +1232,20 @@ def _require_running(unit_of_work, run_id: UUID) -> CommandRun:
     run = unit_of_work.commands.get_run(run_id)
     if run is None or run.status is not CommandStatus.RUNNING:
         raise RuntimeError("media generation requires an active CommandRun")
+    return run
+
+
+def _require_preparable_run(unit_of_work, run_id: UUID) -> CommandRun:
+    run = unit_of_work.commands.get_run(run_id)
+    if run is None or run.status not in {CommandStatus.QUEUED, CommandStatus.RUNNING}:
+        raise RuntimeError("media generation requires a queued or active CommandRun")
+    return run
+
+
+def _require_event_run(unit_of_work, run_id: UUID) -> CommandRun:
+    run = unit_of_work.commands.get_run(run_id)
+    if run is None or run.status not in {CommandStatus.RUNNING, CommandStatus.SUCCEEDED}:
+        raise RuntimeError("media generation lost its accepted CommandRun")
     return run
 
 

@@ -5,6 +5,7 @@ from fairy_core.commanding import CommandRun
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.domain.models import ScopeContract
 from fairy_core.media.application import MediaApplication, MediaGenerationResult
+from fairy_core.media.scheduler import MediaScheduler
 from fairy_core.providers import CancellationToken
 
 
@@ -13,9 +14,11 @@ class MediaToolExecutor:
         self,
         *,
         application: MediaApplication,
+        scheduler: MediaScheduler,
         delegate: ToolExecutor | None = None,
     ) -> None:
         self._application = application
+        self._scheduler = scheduler
         self._delegate = delegate or UnavailableToolExecutor()
 
     def close(self) -> None:
@@ -76,7 +79,7 @@ class MediaToolExecutor:
                 )
             return self._delegate.execute(definition, scope, arguments)
         if definition.name == "media.images.generate":
-            result = self._application.generate_image(
+            prepared = self._application.prepare_image(
                 task_id=scope.task_id,
                 command_run=command_run,
                 prompt=_argument_text(arguments, "prompt"),
@@ -85,11 +88,18 @@ class MediaToolExecutor:
                 aspect_ratio=_optional_argument_text(arguments, "aspect_ratio") or "1:1",
                 seed=_optional_argument_int(arguments, "seed"),
                 idempotency_key=f"media-job:{command_run.id}",
-                cancellation=cancellation,
+            )
+            result = (
+                prepared
+                if prepared.artifact is not None
+                else self._scheduler.run(
+                    prepared.job.id,
+                    cancellation=cancellation,
+                )
             )
             return _tool_result(result)
         if definition.name == "media.audio.generate":
-            result = self._application.generate_music(
+            prepared = self._application.prepare_music(
                 task_id=scope.task_id,
                 command_run=command_run,
                 prompt=_argument_text(arguments, "prompt"),
@@ -97,11 +107,18 @@ class MediaToolExecutor:
                 output_format=_optional_argument_text(arguments, "output_format") or "wav",
                 seed=_optional_argument_int(arguments, "seed"),
                 idempotency_key=f"media-job:{command_run.id}",
-                cancellation=cancellation,
+            )
+            result = (
+                prepared
+                if prepared.artifact is not None
+                else self._scheduler.run(
+                    prepared.job.id,
+                    cancellation=cancellation,
+                )
             )
             return _tool_result(result)
         if definition.name == "media.videos.start":
-            result = self._application.start_video(
+            prepared = self._application.prepare_video(
                 task_id=scope.task_id,
                 command_run=command_run,
                 prompt=_argument_text(arguments, "prompt"),
@@ -112,7 +129,15 @@ class MediaToolExecutor:
                 generate_audio=_optional_argument_bool(arguments, "generate_audio", default=True),
                 seed=_optional_argument_int(arguments, "seed"),
                 idempotency_key=f"media-job:{command_run.id}",
-                cancellation=cancellation,
+            )
+            result = (
+                prepared
+                if prepared.job.provider_job_id is not None or prepared.job.is_terminal
+                else self._scheduler.run(
+                    prepared.job.id,
+                    cancellation=cancellation,
+                    return_when_video_active=True,
+                )
             )
             return _tool_result(result)
         raise RuntimeError("non-model media command cannot be executed by the Assistant")

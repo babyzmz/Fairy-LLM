@@ -238,7 +238,12 @@ class SqlAlchemyCommandLedger:
                     command_runs.c.status == current.value,
                     *lease_predicates,
                 )
-                .values(status=status.value, updated_at=now)
+                .values(
+                    status=status.value,
+                    lease_owner=None,
+                    lease_until=None,
+                    updated_at=now,
+                )
             )
             if result.rowcount != 1:
                 if row["lease_owner"] is not None:
@@ -339,7 +344,12 @@ class SqlAlchemyCommandLedger:
                     command_runs.c.status == current.value,
                     *lease_predicates,
                 )
-                .values(status=status.value, updated_at=now)
+                .values(
+                    status=status.value,
+                    lease_owner=None,
+                    lease_until=None,
+                    updated_at=now,
+                )
             )
             if result.rowcount != 1:
                 if row["lease_owner"] is not None:
@@ -775,6 +785,11 @@ class SqlAlchemyCommandLedger:
         lease_fence: int | None,
         now: datetime,
     ) -> list[Any]:
+        current_status = CommandStatus(row["status"])
+        if current_status is not CommandStatus.RUNNING:
+            if lease_owner is not None or lease_fence is not None:
+                raise WorkerFenceError("terminal command cannot use a worker lease")
+            return []
         current_owner = row["lease_owner"]
         if current_owner is None:
             if lease_owner is not None or lease_fence is not None:

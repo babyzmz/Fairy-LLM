@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event, Thread, current_thread
+from time import monotonic, sleep
+from uuid import UUID
 
 import pytest
 
@@ -14,7 +17,13 @@ from fairy_core.media.ports import (
     VideoGenerationRequest,
     VideoProviderJob,
 )
-from fairy_core.providers import CancellationToken, ModelDelta, ProviderCapability, ProviderRegistry
+from fairy_core.providers import (
+    CancellationToken,
+    ModelDelta,
+    ProviderCancelledError,
+    ProviderCapability,
+    ProviderRegistry,
+)
 from fairy_core.transports.stdio import build_local_service
 from tests.assistant.support import ScriptedProvider
 from tests.assistant.test_model_routing import PricedCatalogSource
@@ -26,6 +35,8 @@ class RecordingMediaProvider:
         self.music_requests: list[MusicGenerationRequest] = []
         self.video_requests: list[VideoGenerationRequest] = []
         self.video_statuses: list[MediaProviderVideoStatus] = []
+        self.execution_threads: list[str] = []
+        self.video_poll_calls = 0
         self.closed = False
 
     @property
@@ -45,6 +56,7 @@ class RecordingMediaProvider:
         cancellation: CancellationToken,
     ) -> GeneratedMedia:
         cancellation.raise_if_cancelled()
+        self.execution_threads.append(current_thread().name)
         self.image_requests.append(request)
         return GeneratedMedia(
             content=b"\x89PNG\r\n\x1a\nfairy-image",
@@ -58,6 +70,7 @@ class RecordingMediaProvider:
         cancellation: CancellationToken,
     ) -> GeneratedMedia:
         cancellation.raise_if_cancelled()
+        self.execution_threads.append(current_thread().name)
         self.music_requests.append(request)
         return GeneratedMedia(
             content=b"RIFFfairy-music-WAVE",
@@ -72,6 +85,7 @@ class RecordingMediaProvider:
         cancellation: CancellationToken,
     ) -> VideoProviderJob:
         cancellation.raise_if_cancelled()
+        self.execution_threads.append(current_thread().name)
         self.video_requests.append(request)
         return VideoProviderJob(
             provider_job_id=f"video-{len(self.video_requests)}",
@@ -85,6 +99,8 @@ class RecordingMediaProvider:
         cancellation: CancellationToken,
     ) -> VideoProviderJob:
         cancellation.raise_if_cancelled()
+        self.execution_threads.append(current_thread().name)
+        self.video_poll_calls += 1
         assert provider_job_id.startswith("video-")
         return VideoProviderJob(
             provider_job_id=provider_job_id,
@@ -105,6 +121,56 @@ class RecordingMediaProvider:
         )
 
 
+class BlockingImageMediaProvider(RecordingMediaProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = Event()
+
+    def generate_image(
+        self,
+        request: ImageGenerationRequest,
+        cancellation: CancellationToken,
+    ) -> GeneratedMedia:
+        self.execution_threads.append(current_thread().name)
+        self.image_requests.append(request)
+        self.started.set()
+        while True:
+            cancellation.raise_if_cancelled()
+            sleep(0.01)
+
+
+class LateCompletingVideoProvider(RecordingMediaProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.poll_started = Event()
+        self.poll_release = Event()
+
+    def get_video(
+        self,
+        provider_job_id: str,
+        cancellation: CancellationToken,
+    ) -> VideoProviderJob:
+        self.execution_threads.append(current_thread().name)
+        self.video_poll_calls += 1
+        self.poll_started.set()
+        assert self.poll_release.wait(timeout=3)
+        return VideoProviderJob(
+            provider_job_id=provider_job_id,
+            status=MediaProviderVideoStatus.COMPLETED,
+            usage_cost="0.30",
+        )
+
+    def download_video(
+        self,
+        provider_job_id: str,
+        cancellation: CancellationToken,
+    ) -> GeneratedMedia:
+        return GeneratedMedia(
+            content=b"\x00\x00\x00\x18ftypisomlate-video",
+            media_type="video/mp4",
+        )
+
+
 def _scratch_task(service, request: str = "Generate media") -> dict[str, object]:
     conversation = service.invoke(
         "conversations.create",
@@ -120,6 +186,17 @@ def _scratch_task(service, request: str = "Generate media") -> dict[str, object]
             "idempotency_key": f"task:{conversation['id']}",
         },
     )["task"]
+
+
+def _wait_for_media_job(service, task_id: str, job_id: str, *, timeout: float = 3.0):
+    deadline = monotonic() + timeout
+    while monotonic() < deadline:
+        jobs = service.invoke("media.jobs.list", {"task_id": task_id})["items"]
+        job = next(item for item in jobs if item["id"] == job_id)
+        if job["status"] in {"completed", "failed", "cancelled", "interrupted"}:
+            return job
+        sleep(0.01)
+    raise AssertionError(f"media job {job_id} did not become terminal")
 
 
 def test_image_generation_persists_workspace_artifact_events_and_replays(
@@ -167,6 +244,7 @@ def test_image_generation_persists_workspace_artifact_events_and_replays(
         ]
         assert all("prompt" not in event["payload"] for event in media_events)
         assert len(provider.image_requests) == 1
+        assert provider.execution_threads == ["fairy-media_0"]
 
         with pytest.raises(IdempotencyConflictError):
             service.invoke(
@@ -176,6 +254,35 @@ def test_image_generation_persists_workspace_artifact_events_and_replays(
     finally:
         service.close()
     assert provider.closed is True
+
+
+def test_video_worker_completes_without_client_poll(tmp_path: Path) -> None:
+    provider = RecordingMediaProvider()
+    provider.video_statuses.extend(
+        [MediaProviderVideoStatus.IN_PROGRESS, MediaProviderVideoStatus.COMPLETED]
+    )
+    service = build_local_service(tmp_path / "data", media_provider=provider)
+    try:
+        task = _scratch_task(service, "Generate an autonomous video")
+        started = service.invoke(
+            "media.videos.start",
+            {
+                "task_id": task["id"],
+                "prompt": "A Fairy core forming from glass",
+                "idempotency_key": "media:video:background",
+                "user_confirmed": True,
+            },
+        )
+
+        completed = _wait_for_media_job(service, task["id"], started["id"])
+
+        assert started["status"] in {"pending", "in_progress"}
+        assert completed["status"] == "completed"
+        assert completed["artifact_ids"]
+        assert provider.video_poll_calls == 2
+        assert all(name.startswith("fairy-media") for name in provider.execution_threads)
+    finally:
+        service.close()
 
 
 def test_media_jobs_remain_task_scoped_after_core_restart(tmp_path: Path) -> None:
@@ -214,6 +321,143 @@ def test_media_jobs_remain_task_scoped_after_core_restart(tmp_path: Path) -> Non
         reopened.close()
 
 
+def test_interrupted_image_worker_reclaims_the_same_job_after_core_restart(
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "data"
+    blocking = BlockingImageMediaProvider()
+    first = build_local_service(data_root, media_provider=blocking)
+    task = _scratch_task(first, "Resume one image after restart")
+    errors: list[BaseException] = []
+
+    def invoke_image() -> None:
+        try:
+            first.invoke(
+                "media.images.generate",
+                {
+                    "task_id": task["id"],
+                    "prompt": "A durable glass Fairy",
+                    "idempotency_key": "media:image:restart",
+                },
+            )
+        except BaseException as error:
+            errors.append(error)
+
+    request_thread = Thread(target=invoke_image, name="media-request")
+    request_thread.start()
+    assert blocking.started.wait(timeout=2)
+    first.close()
+    request_thread.join(timeout=2)
+
+    assert not request_thread.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], ProviderCancelledError)
+
+    recovered_provider = RecordingMediaProvider()
+    reopened = build_local_service(data_root, media_provider=recovered_provider)
+    try:
+        with reopened._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            jobs = unit_of_work.state.list_media_jobs(UUID(task["id"]))
+        assert len(jobs) == 1
+
+        completed = _wait_for_media_job(reopened, task["id"], str(jobs[0].id))
+
+        assert completed["status"] == "completed"
+        assert completed["artifact_ids"]
+        assert len(blocking.image_requests) == 1
+        assert len(recovered_provider.image_requests) == 1
+        assert recovered_provider.image_requests[0].idempotency_key == (
+            blocking.image_requests[0].idempotency_key
+        )
+    finally:
+        reopened.close()
+
+
+def test_pending_video_resumes_polling_after_core_restart(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    first_provider = RecordingMediaProvider()
+    first = build_local_service(data_root, media_provider=first_provider)
+    task = _scratch_task(first, "Resume one video after restart")
+    started = first.invoke(
+        "media.videos.start",
+        {
+            "task_id": task["id"],
+            "prompt": "A durable Fairy animation",
+            "idempotency_key": "media:video:restart",
+            "user_confirmed": True,
+        },
+    )
+    first.close()
+
+    recovered_provider = RecordingMediaProvider()
+    recovered_provider.video_statuses.append(MediaProviderVideoStatus.COMPLETED)
+    reopened = build_local_service(data_root, media_provider=recovered_provider)
+    try:
+        completed = _wait_for_media_job(reopened, task["id"], started["id"])
+
+        assert completed["status"] == "completed"
+        assert completed["artifact_ids"]
+        assert recovered_provider.video_requests == []
+        assert recovered_provider.video_poll_calls == 1
+    finally:
+        reopened.close()
+
+
+def test_video_cancel_wins_over_a_late_provider_completion(tmp_path: Path) -> None:
+    provider = LateCompletingVideoProvider()
+    service = build_local_service(tmp_path / "data", media_provider=provider)
+    try:
+        task = _scratch_task(service, "Cancel a late video")
+        started = service.invoke(
+            "media.videos.start",
+            {
+                "task_id": task["id"],
+                "prompt": "A video that finishes after cancellation",
+                "idempotency_key": "media:video:late-cancel",
+                "user_confirmed": True,
+            },
+        )
+        assert provider.poll_started.wait(timeout=3)
+        current = service.invoke("media.videos.get", {"job_id": started["id"]})
+
+        cancelled = service.invoke(
+            "media.videos.cancel",
+            {
+                "job_id": started["id"],
+                "expected_revision": current["revision"],
+                "idempotency_key": "media:video:late-cancel:confirm",
+                "user_confirmed": True,
+            },
+        )
+        provider.poll_release.set()
+        sleep(0.2)
+        projected = service.invoke("media.videos.get", {"job_id": started["id"]})
+        files = service.invoke(
+            "workspaces.files.list",
+            {
+                "workspace_id": task["workspace_id"],
+                "version_id": task["target_version_id"],
+            },
+        )["items"]
+        artifacts = service.invoke("artifacts.list", {"task_id": task["id"]})["items"]
+        physical_output = (
+            service._media_application._workspaces.version_path(  # type: ignore[attr-defined]
+                UUID(task["workspace_id"]),
+                UUID(task["target_version_id"]),
+            )
+            / started["output_path"]
+        )
+
+        assert cancelled["status"] == projected["status"] == "cancelled"
+        assert files == []
+        assert artifacts == []
+        assert not physical_output.exists()
+        assert provider.video_poll_calls == 1
+    finally:
+        provider.poll_release.set()
+        service.close()
+
+
 def test_music_requires_confirmation_and_remains_separate_from_voice(
     tmp_path: Path,
 ) -> None:
@@ -250,7 +494,9 @@ def test_music_requires_confirmation_and_remains_separate_from_voice(
         service.close()
 
 
-def test_video_poll_download_and_local_cancel_are_durable(tmp_path: Path) -> None:
+def test_video_background_download_read_only_get_and_local_cancel_are_durable(
+    tmp_path: Path,
+) -> None:
     provider = RecordingMediaProvider()
     provider.video_statuses.extend(
         [MediaProviderVideoStatus.IN_PROGRESS, MediaProviderVideoStatus.COMPLETED]
@@ -266,13 +512,17 @@ def test_video_poll_download_and_local_cancel_are_durable(tmp_path: Path) -> Non
         }
         started = service.invoke("media.videos.start", request)
         replayed_start = service.invoke("media.videos.start", request)
-        running = service.invoke("media.videos.get", {"job_id": started["id"]})
-        completed = service.invoke("media.videos.get", {"job_id": started["id"]})
+        poll_calls = provider.video_poll_calls
+        projected_a = service.invoke("media.videos.get", {"job_id": started["id"]})
+        projected_b = service.invoke("media.videos.get", {"job_id": started["id"]})
+        completed = _wait_for_media_job(service, task["id"], started["id"])
 
         assert started["status"] == "pending"
         assert started == replayed_start
         assert str(started["output_path"]).startswith("generated/video-")
-        assert running["status"] == "in_progress"
+        assert projected_a == projected_b == started
+        assert poll_calls == 0
+        assert provider.video_poll_calls == 2
         assert completed["status"] == "completed"
         assert completed["usage_cost"] == "0.30"
         assert completed["artifact_ids"]

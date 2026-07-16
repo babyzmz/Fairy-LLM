@@ -280,6 +280,7 @@ class CoreService:
         )
         self._media_provider = media.provider
         self._media_application = media.application
+        self._media_scheduler = media.scheduler
         self._media_service = media.service
         effective_tool_executor = tool_executor
         if research_fetch_port is not None:
@@ -343,6 +344,7 @@ class CoreService:
         if self._media_application is not None:
             effective_tool_executor = MediaToolExecutor(
                 application=self._media_application,
+                scheduler=media.scheduler,
                 delegate=effective_tool_executor,
             )
         self._tool_executor = effective_tool_executor
@@ -452,6 +454,8 @@ class CoreService:
 
     def close(self) -> None:
         self._assistant_scheduler.close()
+        if self._media_scheduler is not None:
+            self._media_scheduler.close()
         close_resources(
             self._image_attachments,
             self._model_catalog_service,

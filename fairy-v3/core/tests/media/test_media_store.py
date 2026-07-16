@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -133,3 +134,56 @@ def test_media_job_idempotency_fingerprint_is_immutable(tmp_path: Path) -> None:
     assert store.save_media_job(replay) == job
     with pytest.raises(IdempotencyConflictError):
         store.save_media_job(_job(scope, fingerprint="c" * 64))
+
+
+def test_media_work_claim_is_fenced_reclaimable_and_persists_restart(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "core.db"
+    store = SqliteStateStore(database)
+    job = _job(_scope(store, tmp_path))
+    store.save_media_job(job)
+    store.enqueue_media_work(job.id)
+
+    first = store.claim_next_media_work(
+        worker_id="media-a",
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    assert first is not None
+    assert (
+        store.claim_next_media_work(
+            worker_id="media-b",
+            lease_until=datetime.now(UTC) + timedelta(seconds=30),
+        )
+        is None
+    )
+    assert (
+        store.renew_media_work(
+            replace(first, lease_fence=first.lease_fence + 1),
+            lease_until=datetime.now(UTC) + timedelta(seconds=30),
+        )
+        is False
+    )
+    assert store.abandon_media_work(first) is True
+
+    second = store.claim_next_media_work(
+        worker_id="media-b",
+        lease_until=datetime.now(UTC) + timedelta(seconds=30),
+    )
+    assert second is not None
+    assert second.lease_fence > first.lease_fence
+    assert second.attempts == 2
+    store.close()
+
+    restarted = SqliteStateStore(database)
+    assert restarted.pending_media_work_ids() == (job.id,)
+    assert (
+        restarted.settle_media_work(
+            second,
+            available_at=None,
+            error_code=None,
+        )
+        is True
+    )
+    assert restarted.pending_media_work_ids() == ()
+    restarted.close()

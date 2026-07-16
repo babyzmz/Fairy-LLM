@@ -21,6 +21,7 @@ from fairy_core.domain.errors import CapabilityUnavailableError
 from fairy_core.domain.models import ScopeContract
 from fairy_core.media.application import MediaApplication, MediaGenerationResult
 from fairy_core.media.models import MediaGenerationJob, MediaGenerationStatus
+from fairy_core.media.scheduler import MediaScheduler
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.providers import CancellationToken
 
@@ -37,12 +38,14 @@ class MediaService:
         self,
         *,
         application: MediaApplication,
+        scheduler: MediaScheduler,
         unit_of_work_factory: CoreUnitOfWorkFactory,
         registry: ToolRegistry,
         execution_policy: ExecutionPolicyResolver,
         scope_resolver,
     ) -> None:
         self._application = application
+        self._scheduler = scheduler
         self._unit_of_work_factory = unit_of_work_factory
         self._registry = registry
         self._execution_policy = execution_policy
@@ -79,8 +82,9 @@ class MediaService:
                     command_run_id=started.run.id,
                 )
             )
+        prepared = None
         try:
-            result = self._application.generate_image(
+            prepared = self._application.prepare_image(
                 task_id=request.task_id,
                 command_run=started.run,
                 prompt=request.prompt,
@@ -89,12 +93,19 @@ class MediaService:
                 aspect_ratio=request.aspect_ratio,
                 seed=request.seed,
                 idempotency_key=f"media-job:{request.idempotency_key}",
-                cancellation=CancellationToken(),
             )
-            self._complete(started.run.id, result)
+            result = (
+                prepared
+                if prepared.artifact is not None
+                else self._scheduler.run(
+                    prepared.job.id,
+                    cancellation=CancellationToken(),
+                )
+            )
             return media_job_model(result.job)
         except BaseException as error:
-            self._fail(started.run.id, error)
+            if prepared is None:
+                self._fail(started.run.id, error)
             raise
 
     def generate_music(self, request: MediaAudioGenerateInput) -> dict[str, object]:
@@ -117,8 +128,9 @@ class MediaService:
                     command_run_id=started.run.id,
                 )
             )
+        prepared = None
         try:
-            result = self._application.generate_music(
+            prepared = self._application.prepare_music(
                 task_id=request.task_id,
                 command_run=started.run,
                 prompt=request.prompt,
@@ -126,12 +138,19 @@ class MediaService:
                 output_format=request.output_format,
                 seed=request.seed,
                 idempotency_key=f"media-job:{request.idempotency_key}",
-                cancellation=CancellationToken(),
             )
-            self._complete(started.run.id, result)
+            result = (
+                prepared
+                if prepared.artifact is not None
+                else self._scheduler.run(
+                    prepared.job.id,
+                    cancellation=CancellationToken(),
+                )
+            )
             return media_job_model(result.job)
         except BaseException as error:
-            self._fail(started.run.id, error)
+            if prepared is None:
+                self._fail(started.run.id, error)
             raise
 
     def start_video(self, request: MediaVideoStartInput) -> dict[str, object]:
@@ -157,8 +176,9 @@ class MediaService:
                     command_run_id=started.run.id,
                 )
             )
+        prepared = None
         try:
-            result = self._application.start_video(
+            prepared = self._application.prepare_video(
                 task_id=request.task_id,
                 command_run=started.run,
                 prompt=request.prompt,
@@ -169,12 +189,20 @@ class MediaService:
                 generate_audio=request.generate_audio,
                 seed=request.seed,
                 idempotency_key=f"media-job:{request.idempotency_key}",
-                cancellation=CancellationToken(),
             )
-            self._complete(started.run.id, result)
+            result = (
+                prepared
+                if prepared.job.provider_job_id is not None or prepared.job.is_terminal
+                else self._scheduler.run(
+                    prepared.job.id,
+                    cancellation=CancellationToken(),
+                    return_when_video_active=True,
+                )
+            )
             return media_job_model(result.job)
         except BaseException as error:
-            self._fail(started.run.id, error)
+            if prepared is None:
+                self._fail(started.run.id, error)
             raise
 
     def get_video(self, request: MediaVideoJobInput) -> dict[str, object]:
@@ -182,37 +210,7 @@ class MediaService:
             job = unit_of_work.state.get_media_job(request.job_id)
         if job is None:
             raise KeyError(f"Media generation job not found: {request.job_id}")
-        if job.status in {
-            MediaGenerationStatus.COMPLETED,
-            MediaGenerationStatus.FAILED,
-            MediaGenerationStatus.CANCELLED,
-            MediaGenerationStatus.INTERRUPTED,
-        }:
-            return media_job_model(job)
-        started = self._start_command(
-            task_id=job.task_id,
-            command_name="media.videos.poll",
-            payload={"job_id": str(job.id), "expected_revision": job.revision},
-            idempotency_key=f"media-video-poll:{job.id}:{job.revision}",
-            user_confirmed=True,
-        )
-        if started.replayed:
-            with self._unit_of_work_factory() as unit_of_work:
-                replayed = unit_of_work.state.get_media_job(job.id)
-            if replayed is None:
-                raise RuntimeError("Replayed media poll lost its durable Job")
-            return media_job_model(replayed)
-        try:
-            result = self._application.poll_video(
-                job_id=job.id,
-                command_run=started.run,
-                cancellation=CancellationToken(),
-            )
-            self._complete(started.run.id, result)
-            return media_job_model(result.job)
-        except BaseException as error:
-            self._fail(started.run.id, error)
-            raise
+        return media_job_model(job)
 
     def cancel_video(self, request: MediaVideoCancelInput) -> dict[str, object]:
         with self._unit_of_work_factory() as unit_of_work:
@@ -235,17 +233,30 @@ class MediaService:
             if replayed is None:
                 raise RuntimeError("Replayed media cancellation lost its durable Job")
             return media_job_model(replayed)
+        if started.run.status is CommandStatus.QUEUED:
+            started = _StartedCommand(
+                run=self._start_inline_command(started.run.id),
+                scope=started.scope,
+                replayed=False,
+            )
         try:
             result = self._application.cancel_video(
                 job_id=job.id,
                 expected_revision=request.expected_revision,
                 command_run=started.run,
             )
+            self._scheduler.cancel(job.id)
             self._complete(started.run.id, result)
             return media_job_model(result.job)
         except BaseException as error:
             self._fail(started.run.id, error)
             raise
+
+    def _start_inline_command(self, run_id: UUID) -> CommandRun:
+        with self._unit_of_work_factory() as unit_of_work:
+            run = self._bus(unit_of_work.commands).start(run_id)
+            unit_of_work.commit()
+        return run
 
     def _start_command(
         self,
@@ -285,12 +296,9 @@ class MediaService:
                 if not user_confirmed:
                     raise ApprovalRequiredError("Media generation requires explicit confirmation")
                 run = bus.decide_approval(run.id, approved=True)
-            if run.status is CommandStatus.QUEUED:
-                run = bus.start(run.id)
-                replayed = False
-            elif run.status is CommandStatus.SUCCEEDED:
+            if run.status is CommandStatus.SUCCEEDED:
                 replayed = True
-            elif run.status is not CommandStatus.RUNNING:
+            elif run.status not in {CommandStatus.QUEUED, CommandStatus.RUNNING}:
                 raise RuntimeError(f"Media command cannot resume from {run.status.value}")
             else:
                 replayed = False
@@ -335,13 +343,18 @@ class MediaService:
     def _fail(self, run_id: UUID, error: BaseException) -> None:
         with self._unit_of_work_factory() as unit_of_work:
             run = unit_of_work.commands.get_run(run_id)
-            if run is None or run.status is not CommandStatus.RUNNING:
+            if run is None:
+                return
+            bus = self._bus(unit_of_work.commands)
+            if run.status is CommandStatus.QUEUED:
+                run = bus.start(run.id)
+            if run.status is not CommandStatus.RUNNING:
                 return
             code = getattr(error, "error_code", None)
             error_code = (
                 code if isinstance(code, str) and code and len(code) <= 128 else "MEDIA_FAILED"
             )
-            self._bus(unit_of_work.commands).fail(
+            bus.fail(
                 run.id,
                 error_code=error_code,
                 lease_owner=run.lease_owner,

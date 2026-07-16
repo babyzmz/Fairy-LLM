@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from fairy_core.commanding import CommandStatus, SqliteCommandLedger
+from fairy_core.commanding import CommandStatus, EventVisibility, SqliteCommandLedger
 from fairy_core.commanding.bus import CommandBus, CommandRequest
 from fairy_core.commanding.policy import PermissionProfile, PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
@@ -156,18 +156,28 @@ def test_bus_records_synchronous_executor_lifecycle(tmp_path: Path) -> None:
 
     assert running.status is CommandStatus.RUNNING
     assert succeeded.status is CommandStatus.SUCCEEDED
+    assert succeeded.lease_owner is None
+    assert succeeded.lease_until is None
+    ledger.append_event(
+        run_id=succeeded.id,
+        event_type="command.follow_up",
+        visibility=EventVisibility.USER,
+        message="Durable follow-up completed",
+        payload={"public_summary": "Background follow-up completed"},
+    )
     events = ledger.events_after(cursor=0)
-    assert [event.event_type for event in events][-2:] == [
+    assert [event.event_type for event in events][-3:] == [
         "command.output",
         "command.succeeded",
+        "command.follow_up",
     ]
-    assert events[-2].payload == {
+    assert events[-3].payload == {
         "command_name": "review.test",
         "passed": 12,
         "public_summary": "12 checks passed",
         "model_content": "private executor details",
     }
-    assert events[-1].payload == {
+    assert events[-2].payload == {
         "command_name": "review.test",
         "status": "succeeded",
         "public_summary": "12 checks passed",

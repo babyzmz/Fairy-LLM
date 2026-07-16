@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -15,11 +16,47 @@ from fairy_core.domain.execution import (
 from fairy_core.domain.models import Conversation, Project, Task, Version, Workspace
 from fairy_core.execution.plans import ExecutionPlan, TaskStep, TaskStepStatus
 from fairy_core.media.models import MediaGenerationJob, MediaGenerationStatus
+from fairy_core.media.work_queue import MediaWorkClaim
 from fairy_core.research.models import ResearchEvidence
 from fairy_core.storage.pagination import StatePage
 
 
 class StateStore(Protocol):
+    def enqueue_media_work(
+        self,
+        job_id: UUID,
+        *,
+        available_at: datetime | None = None,
+    ) -> None: ...
+
+    def claim_next_media_work(
+        self,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> MediaWorkClaim | None: ...
+
+    def renew_media_work(
+        self,
+        claim: MediaWorkClaim,
+        *,
+        lease_until: datetime,
+    ) -> bool: ...
+
+    def settle_media_work(
+        self,
+        claim: MediaWorkClaim,
+        *,
+        available_at: datetime | None,
+        error_code: str | None,
+    ) -> bool: ...
+
+    def abandon_media_work(self, claim: MediaWorkClaim) -> bool: ...
+
+    def cancel_media_work(self, job_id: UUID) -> bool: ...
+
+    def pending_media_work_ids(self) -> tuple[UUID, ...]: ...
+
     def save_media_job(self, job: MediaGenerationJob) -> MediaGenerationJob: ...
 
     def update_media_job(
