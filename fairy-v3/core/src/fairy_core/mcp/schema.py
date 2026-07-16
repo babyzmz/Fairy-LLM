@@ -164,9 +164,14 @@ def _sanitize_schema(
         raise McpSchemaError(f"{path} schema must be an object")
     if depth > _MAX_DEPTH:
         raise McpSchemaError("MCP schema nesting is too deep")
-    unknown = set(schema) - _ALLOWED_KEYS
+    metadata_keys = {"$schema"} if root else set()
+    unknown = set(schema) - _ALLOWED_KEYS - metadata_keys
     if unknown:
         raise McpSchemaError(f"MCP schema uses unsupported keywords: {', '.join(sorted(unknown))}")
+    if "$schema" in schema:
+        dialect = schema["$schema"]
+        if not isinstance(dialect, str) or not 1 <= len(dialect) <= 200:
+            raise McpSchemaError("MCP schema dialect metadata is invalid")
     schema_type = schema.get("type", "object" if root else None)
     if not isinstance(schema_type, str) or schema_type not in {
         "object",

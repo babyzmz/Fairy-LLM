@@ -26,6 +26,38 @@ def test_mcp_tool_names_are_namespaced_and_schemas_are_closed_and_bounded() -> N
     assert len(tool.schema_digest) == 64
 
 
+def test_root_schema_dialect_metadata_is_accepted_but_not_projected() -> None:
+    tool = sanitize_mcp_tool(
+        server_id="docs",
+        name="query",
+        title=None,
+        description="Query current documentation.",
+        input_schema={
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+        output_schema=None,
+    )
+
+    assert "$schema" not in tool.input_schema
+    with pytest.raises(McpSchemaError, match="unsupported"):
+        sanitize_mcp_tool(
+            server_id="docs",
+            name="nested",
+            title=None,
+            description="Reject nested dialect metadata.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"$schema": "https://example.test", "type": "string"}
+                },
+            },
+            output_schema=None,
+        )
+
+
 @pytest.mark.parametrize(
     "schema,match",
     [
