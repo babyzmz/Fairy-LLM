@@ -453,7 +453,7 @@ export function PresenceInputApp({
     event: ReactPointerEvent<HTMLButtonElement>,
     source: PetDragPointer["source"] = "grip",
   ) {
-    if (event.button !== 0 || !surfaceInteractive || dragPointer.current !== null) return;
+    if (event.button !== 0 || dragPointer.current !== null) return;
     event.preventDefault();
     event.stopPropagation();
     setMenuOpen(false);

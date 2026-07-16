@@ -724,25 +724,31 @@ async fn pet_window_group_begin_drag(
 ) -> Result<(), String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
-    let app = window.app_handle();
-    let native_windows = presence_native_windows(&state)?;
-    let placement =
-        current_pet_placement(app, Some(native_windows), state.presence.latest_placement())?;
-    let session = PetGroupDragSession {
-        start_pointer: global_cursor_position()
-            .ok_or_else(|| "Pet cursor position is unavailable".to_owned())?,
-        start_anchor: placement.anchor,
-        current_placement: placement,
-        monitors: presence_monitors_for_app(app)?,
-        native_windows,
-    };
-    let mut drag = state
-        .pet_drag
-        .lock()
-        .map_err(|_| "Pet drag lock is unavailable".to_owned())?;
-    *drag = Some(session);
     state.presence.set_repositioning(true);
-    Ok(())
+    let result = (|| {
+        let app = window.app_handle();
+        let native_windows = presence_native_windows(&state)?;
+        let placement =
+            current_pet_placement(app, Some(native_windows), state.presence.latest_placement())?;
+        let session = PetGroupDragSession {
+            start_pointer: global_cursor_position()
+                .ok_or_else(|| "Pet cursor position is unavailable".to_owned())?,
+            start_anchor: placement.anchor,
+            current_placement: placement,
+            monitors: presence_monitors_for_app(app)?,
+            native_windows,
+        };
+        let mut drag = state
+            .pet_drag
+            .lock()
+            .map_err(|_| "Pet drag lock is unavailable".to_owned())?;
+        *drag = Some(session);
+        Ok(())
+    })();
+    if result.is_err() {
+        state.presence.set_repositioning(false);
+    }
+    result
 }
 
 #[tauri::command]
@@ -762,14 +768,12 @@ async fn pet_window_group_move(
     let session = drag
         .as_mut()
         .ok_or_else(|| "Pet drag has not started".to_owned())?;
-    let (pointer_delta_x, pointer_delta_y) = global_cursor_position()
-        .map(|pointer| {
-            (
-                pointer.x.saturating_sub(session.start_pointer.x),
-                pointer.y.saturating_sub(session.start_pointer.y),
-            )
-        })
-        .unwrap_or((delta_x, delta_y));
+    let (pointer_delta_x, pointer_delta_y) = resolve_pet_drag_delta(
+        session.start_pointer,
+        global_cursor_position(),
+        (delta_x, delta_y),
+        session.current_placement.scale_factor,
+    );
     let desired_anchor = PhysicalPoint {
         x: session.start_anchor.x.saturating_add(pointer_delta_x),
         y: session.start_anchor.y.saturating_add(pointer_delta_y),
@@ -787,6 +791,32 @@ async fn pet_window_group_move(
     session.current_placement = placement;
     set_presence_placement(&state, placement);
     Ok(())
+}
+
+fn resolve_pet_drag_delta(
+    start_pointer: PhysicalPoint,
+    current_pointer: Option<PhysicalPoint>,
+    requested_css_delta: (i32, i32),
+    scale_factor: f64,
+) -> (i32, i32) {
+    let native_delta = current_pointer.map(|pointer| {
+        (
+            pointer.x.saturating_sub(start_pointer.x),
+            pointer.y.saturating_sub(start_pointer.y),
+        )
+    });
+    if native_delta.is_some_and(|delta| delta != (0, 0)) || requested_css_delta == (0, 0) {
+        return native_delta.unwrap_or(requested_css_delta);
+    }
+    let scale = if scale_factor.is_finite() {
+        scale_factor.clamp(0.5, 4.0)
+    } else {
+        1.0
+    };
+    (
+        (f64::from(requested_css_delta.0) * scale).round() as i32,
+        (f64::from(requested_css_delta.1) * scale).round() as i32,
+    )
 }
 
 #[tauri::command]
@@ -2474,6 +2504,25 @@ mod native_window_group_tests {
         assert_eq!(
             render_after.y - render_start.y,
             input_after.y - input_start.y
+        );
+    }
+
+    #[test]
+    fn drag_delta_falls_back_to_scaled_webview_coordinates_when_cursor_is_stale() {
+        let start = PhysicalPoint { x: 500, y: 300 };
+
+        assert_eq!(
+            resolve_pet_drag_delta(start, Some(start), (-48, 12), 1.25),
+            (-60, 15)
+        );
+        assert_eq!(
+            resolve_pet_drag_delta(
+                start,
+                Some(PhysicalPoint { x: 452, y: 312 }),
+                (-48, 12),
+                2.0,
+            ),
+            (-48, 12)
         );
     }
 }
