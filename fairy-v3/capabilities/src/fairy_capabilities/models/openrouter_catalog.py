@@ -100,9 +100,7 @@ class OpenRouterCatalogSource:
         if endpoint_kind is ModelEndpointKind.IMAGES:
             endpoints_path = record.get("endpoints")
             if isinstance(endpoints_path, str) and endpoints_path.startswith("/api/v1/images/"):
-                endpoint_records = self._image_endpoint_records(
-                    self._get_json(endpoints_path)
-                )
+                endpoint_records = self._image_endpoint_records(self._get_json(endpoints_path))
                 return _image_prices(endpoint_records)
         if endpoint_kind is ModelEndpointKind.VIDEOS:
             return _video_prices(record.get("pricing_skus"))
@@ -170,9 +168,7 @@ class OpenRouterCatalogSource:
         return OpenRouterCatalogSource._records(payload, field)
 
     @staticmethod
-    def _records(
-        payload: Mapping[str, Any], field: str
-    ) -> tuple[Mapping[str, Any], ...]:
+    def _records(payload: Mapping[str, Any], field: str) -> tuple[Mapping[str, Any], ...]:
         raw_records = payload.get(field)
         if not isinstance(raw_records, list) or not all(
             isinstance(record, dict) for record in raw_records

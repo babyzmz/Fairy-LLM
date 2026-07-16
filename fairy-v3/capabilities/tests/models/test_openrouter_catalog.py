@@ -74,7 +74,7 @@ def test_catalog_source_merges_dedicated_endpoint_metadata_without_unknown_model
                                 }
                             ]
                         }
-                    ]
+                    ],
                 },
             )
         if path == "/api/v1/models" and query == "output_modalities=audio":
