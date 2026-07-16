@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import ipaddress
 import json
-import socket
 import subprocess
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
@@ -12,7 +10,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 from threading import RLock
 from typing import Any, Protocol
-from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -20,6 +17,11 @@ from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
+from fairy_core.mcp.http_transport import (
+    McpHttpResolver,
+    PinnedMcpHttpTransport,
+    authorize_mcp_http_endpoint,
+)
 from fairy_core.mcp.models import (
     MCP_PROTOCOL_VERSION,
     McpCallContext,
@@ -67,6 +69,7 @@ class OfficialMcpConnector:
         credentials: CredentialResolver | None = None,
         base_environment: Mapping[str, str] | None = None,
         timeout_seconds: float = 30.0,
+        http_resolver: McpHttpResolver | None = None,
     ) -> None:
         if not 1 <= timeout_seconds <= 120:
             raise ValueError("MCP timeout_seconds must be between 1 and 120")
@@ -75,6 +78,7 @@ class OfficialMcpConnector:
             str(name): str(value) for name, value in (base_environment or {}).items() if value
         }
         self._timeout = timeout_seconds
+        self._http_resolver = http_resolver
         self._active: dict[UUID, _ActiveCall] = {}
         self._lock = RLock()
         self._closed = False
@@ -249,7 +253,11 @@ class OfficialMcpConnector:
             return
         headers: dict[str, str] = {}
         assert connection.endpoint is not None
-        await asyncio.to_thread(_validate_http_destination, connection.endpoint)
+        target = await asyncio.to_thread(
+            authorize_mcp_http_endpoint,
+            connection.endpoint,
+            resolver=self._http_resolver,
+        )
         if connection.credential_ref is not None:
             credential = self._credentials.resolve(connection.credential_ref)
             if credential is None:
@@ -265,6 +273,7 @@ class OfficialMcpConnector:
                 timeout=timeout,
                 follow_redirects=False,
                 trust_env=False,
+                transport=PinnedMcpHttpTransport(target),
             ) as client,
             streamable_http_client(
                 connection.endpoint or "",
@@ -293,36 +302,6 @@ def _validate_initialize(result: types.InitializeResult) -> None:
         )
     if result.capabilities.tools is None:
         raise McpError("MCP server does not expose tools", error_code="MCP_CAPABILITY_MISSING")
-
-
-def _validate_http_destination(endpoint: str) -> None:
-    parsed = urlsplit(endpoint)
-    hostname = parsed.hostname
-    if hostname is None:
-        raise McpError("MCP endpoint has no host", error_code="MCP_DESTINATION_BLOCKED")
-    loopback_name = hostname.casefold().rstrip(".") in {"127.0.0.1", "localhost", "::1"}
-    try:
-        addresses = {
-            values[4][0].split("%", 1)[0]
-            for values in socket.getaddrinfo(
-                hostname,
-                parsed.port or 443,
-                type=socket.SOCK_STREAM,
-            )
-        }
-        parsed_addresses = {ipaddress.ip_address(value) for value in addresses}
-    except (OSError, ValueError) as error:
-        raise McpError(
-            "MCP endpoint DNS resolution failed", error_code="MCP_UNAVAILABLE"
-        ) from error
-    if not parsed_addresses or any(
-        not address.is_global and not (loopback_name and address.is_loopback)
-        for address in parsed_addresses
-    ):
-        raise McpError(
-            "MCP endpoint resolves outside the allowed network boundary",
-            error_code="MCP_DESTINATION_BLOCKED",
-        )
 
 
 def _call_result(result: types.CallToolResult) -> McpCallResult:
