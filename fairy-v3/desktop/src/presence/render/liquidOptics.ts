@@ -14,19 +14,20 @@ export interface LiquidOpticsUniformState {
 }
 
 export const LIQUID_OPTICS_LIMITS = Object.freeze({
-  minimum_dispersion_logical_px: 1.9,
-  active_dispersion_logical_px: 3.2,
-  maximum_dispersion_logical_px: 4,
-  idle_refraction_logical_px: 18,
-  active_refraction_logical_px: 28,
-  idle_caustic_strength: 0.34,
-  active_caustic_strength: 0.58,
-  idle_lens_strength: 0.82,
+  minimum_dispersion_physical_px: 0.24,
+  active_dispersion_physical_px: 0.78,
+  maximum_dispersion_physical_px: 1,
+  idle_refraction_logical_px: 5.5,
+  active_refraction_logical_px: 8.5,
+  maximum_refraction_logical_px: 10,
+  idle_caustic_strength: 0.22,
+  active_caustic_strength: 0.4,
+  idle_lens_strength: 0.76,
   active_lens_strength: 1,
-  idle_rim_strength: 0.88,
-  active_rim_strength: 1,
-  idle_shadow_strength: 0.14,
-  active_shadow_strength: 0.22,
+  idle_rim_strength: 0.76,
+  active_rim_strength: 0.94,
+  idle_shadow_strength: 0.1,
+  active_shadow_strength: 0.16,
 });
 
 export function liquidOpticsForSnapshot(
@@ -42,9 +43,9 @@ export function liquidOpticsForSnapshot(
   const monitorWidth = positiveFinite(placement?.monitor_work_area.width, fallbackWidth);
   const monitorHeight = positiveFinite(placement?.monitor_work_area.height, fallbackHeight);
   const activity = opticalActivity(snapshot);
-  const dispersionLogical = mix(
-    LIQUID_OPTICS_LIMITS.minimum_dispersion_logical_px,
-    LIQUID_OPTICS_LIMITS.active_dispersion_logical_px,
+  const dispersionPhysical = mix(
+    LIQUID_OPTICS_LIMITS.minimum_dispersion_physical_px,
+    LIQUID_OPTICS_LIMITS.active_dispersion_physical_px,
     activity,
   );
   const refractionLogical = mix(
@@ -84,11 +85,14 @@ export function liquidOpticsForSnapshot(
     ]) as readonly [number, number],
     monitor_size: Object.freeze([monitorWidth, monitorHeight]) as readonly [number, number],
     device_scale: deviceScale,
-    refraction_px: refractionLogical * deviceScale,
-    dispersion_px: Math.min(
-      dispersionLogical,
-      LIQUID_OPTICS_LIMITS.maximum_dispersion_logical_px,
+    refraction_px: Math.min(
+      refractionLogical,
+      LIQUID_OPTICS_LIMITS.maximum_refraction_logical_px,
     ) * deviceScale,
+    dispersion_px: Math.min(
+      dispersionPhysical,
+      LIQUID_OPTICS_LIMITS.maximum_dispersion_physical_px,
+    ),
     caustic_strength: causticStrength,
     lens_strength: lensStrength,
     rim_strength: rimStrength,

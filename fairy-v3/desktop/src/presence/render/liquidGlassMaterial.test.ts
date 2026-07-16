@@ -48,6 +48,7 @@ function renderSnapshot(
     size_scale: 1,
     opacity: 0.92,
     particles_enabled: true,
+    optics_mode: "standard",
     idle_for_ms: 0,
     target_frame_rate: 60,
     frame_rate_limit: 60,
@@ -123,14 +124,20 @@ describe("Liquid Glass material", () => {
   it("samples the latest desktop texture with boundary-continuous glass optics", () => {
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("bezierBridgeDistance");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("smoothMinimum");
-    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("opticalThickness");
-    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("thickEdgeProfile");
-    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("edgeLensing");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("sceneSdf");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("thicknessField");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("surfaceNormal");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("curvatureApprox");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("bottomLip");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("edgeLensResponse");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("pow(edgeProfile, 2.2)");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("schlickFresnel");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("screenSpaceEnvironment");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uBackdropTexture");
-    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("boundaryContinuity");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("interiorContinuity");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("chromaticDispersion");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("chromaMask");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("BackdropAdaptation");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("caustic");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("keyHighlight");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("counterHighlight");
@@ -145,5 +152,9 @@ describe("Liquid Glass material", () => {
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("sampler2D uBackdropTexture");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uBackdropSize");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("texture2D(uBackdropTexture");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain(
+      "clamp(glassColor, 0.0, 1.0) * foregroundAlpha",
+    );
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toContain("sampledGlassAlpha");
   });
 });

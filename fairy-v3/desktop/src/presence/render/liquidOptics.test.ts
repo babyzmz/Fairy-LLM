@@ -20,6 +20,7 @@ function snapshot(
     size_scale: 1,
     opacity: 0.92,
     particles_enabled: true,
+    optics_mode: "standard",
     idle_for_ms: 0,
     target_frame_rate: 60,
     frame_rate_limit: 60,
@@ -78,20 +79,22 @@ describe("liquid optics uniforms", () => {
     const idle = liquidOpticsForSnapshot(snapshot(interaction()), 640, 260, 2);
     const active = liquidOpticsForSnapshot(snapshot(interaction("active")), 640, 260, 2);
 
-    expect(idle.dispersion_px / idle.device_scale).toBeGreaterThanOrEqual(
-      LIQUID_OPTICS_LIMITS.minimum_dispersion_logical_px,
+    expect(idle.dispersion_px).toBeGreaterThanOrEqual(
+      LIQUID_OPTICS_LIMITS.minimum_dispersion_physical_px,
     );
     expect(active.dispersion_px).toBeGreaterThan(idle.dispersion_px);
-    expect(active.dispersion_px / active.device_scale).toBeLessThanOrEqual(
-      LIQUID_OPTICS_LIMITS.maximum_dispersion_logical_px,
+    expect(active.dispersion_px).toBeLessThanOrEqual(
+      LIQUID_OPTICS_LIMITS.maximum_dispersion_physical_px,
     );
+    expect(idle.dispersion_px).toBeLessThanOrEqual(1);
+    expect(active.refraction_px / active.device_scale).toBeLessThanOrEqual(10);
     expect(active.refraction_px).toBeGreaterThan(idle.refraction_px);
     expect(active.caustic_strength).toBeGreaterThan(idle.caustic_strength);
     expect(active.lens_strength).toBeGreaterThan(idle.lens_strength);
     expect(active.rim_strength).toBeGreaterThan(idle.rim_strength);
     expect(active.shadow_strength).toBeGreaterThan(idle.shadow_strength);
     expect(active.lens_strength).toBeLessThanOrEqual(1);
-    expect(active.shadow_strength).toBeLessThanOrEqual(0.22);
+    expect(active.shadow_strength).toBeLessThanOrEqual(0.16);
   });
 
   it("clamps invalid runtime dimensions and DPR to finite values", () => {
