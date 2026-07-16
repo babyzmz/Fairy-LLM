@@ -11,6 +11,7 @@ function snapshot(
 ): PresenceRenderSnapshot {
   return {
     interaction,
+    input_capsule_visible: interaction?.phase === "interactive",
     work_state: "idle",
     speaking: false,
     voice_level: 0,

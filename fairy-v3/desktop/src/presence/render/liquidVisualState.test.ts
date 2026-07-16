@@ -8,6 +8,7 @@ function snapshot(
 ): PresenceRenderSnapshot {
   return {
     interaction: null,
+    input_capsule_visible: false,
     work_state: "idle",
     speaking: false,
     voice_level: 0,

@@ -72,7 +72,7 @@
   position: absolute;
   top: 40px;
   right: 12px;
-  left: 96px;
+  left: 108px;
   height: 64px;
   grid-template-columns: 30px minmax(0, 1fr) 38px;
   align-items: center;
@@ -82,7 +82,7 @@
 }
 
 .presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-input {
-  right: 96px;
+  right: 108px;
   left: 12px;
 }
 

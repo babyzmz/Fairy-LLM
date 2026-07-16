@@ -24,8 +24,9 @@ import {
   LIQUID_GLASS_FRAGMENT_SHADER,
   LIQUID_GLASS_VERTEX_SHADER,
   liquidDirectionForSnapshot,
-  liquidShapeTargetForPhase,
+  liquidShapeTargetForSnapshot,
 } from "./liquidGlassMaterial";
+import { liquidAnchorForSnapshot } from "./liquidGeometry";
 import { LiquidMotionController } from "./liquidMotion";
 import { liquidOpticsForSnapshot } from "./liquidOptics";
 import { liquidVisualStyleForSnapshot } from "./liquidVisualState";
@@ -76,7 +77,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.snapshot = initialSnapshot;
     this.interactionPhase = initialSnapshot.interaction?.phase ?? null;
     this.motion = new LiquidMotionController(
-      liquidShapeTargetForPhase(initialSnapshot.interaction?.phase ?? null),
+      liquidShapeTargetForSnapshot(initialSnapshot),
       initialSnapshot.speaking ? initialSnapshot.voice_level : 0,
     );
     this.renderer = new THREE.WebGLRenderer({
@@ -290,6 +291,11 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
       this.runtimeMetrics.recordAnimationFrame(now, 1_000 / frameInterval);
     }
     const motion = this.motion.sample(now);
+    if (import.meta.env.DEV) {
+      this.canvas.dataset.shapeDroplet = motion.droplet.toFixed(3);
+      this.canvas.dataset.shapeBridge = motion.bridge.toFixed(3);
+      this.canvas.dataset.shapeCapsule = motion.capsule.toFixed(3);
+    }
     this.material.uniforms.uShape.value.set(
       motion.droplet,
       motion.bridge,
@@ -377,7 +383,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.material.uniforms.uGaze.value.set(gaze.x, -gaze.y);
     const direction = liquidDirectionForSnapshot(this.snapshot);
     this.material.uniforms.uDirection.value.set(direction.x, -direction.y);
-    const shape = liquidShapeTargetForPhase(interaction?.phase ?? null);
+    const shape = liquidShapeTargetForSnapshot(this.snapshot);
     const nextPhase = interaction?.phase ?? null;
     if (nextPhase === "returning" && this.interactionPhase !== "returning") {
       this.motion.beginReturn(performance.now(), this.snapshot.reduced_motion);
@@ -400,21 +406,13 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.material.uniforms.uParticleCount.value = this.snapshot.particles_enabled
       ? style.particle_count
       : 0;
-    const sizeShift = Math.max(0, 72 * this.snapshot.size_scale + 4 - 96);
-    const expansionSign = interaction?.placement.expansion_direction === "left" ? -1 : 1;
-    if (interaction === null) {
-      this.material.uniforms.uAnchor.value.set(
-        (96 + sizeShift) * this.dpr,
-        130 * this.dpr,
-      );
-      return;
-    }
-    const localX = interaction.placement.anchor.x - interaction.placement.render_frame.x;
-    const localY = interaction.placement.anchor.y - interaction.placement.render_frame.y;
-    this.material.uniforms.uAnchor.value.set(
-      (localX + sizeShift * expansionSign) * this.dpr,
-      this.height * this.dpr - localY * this.dpr,
+    const anchor = liquidAnchorForSnapshot(
+      this.snapshot,
+      this.width,
+      this.height,
+      this.dpr,
     );
+    this.material.uniforms.uAnchor.value.set(anchor.x, anchor.y);
   }
 }
 

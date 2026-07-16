@@ -5,6 +5,7 @@ const port = Number(args.port);
 const action = args.action ?? "probe";
 const deltaX = Number(args["delta-x"] ?? -48);
 const deltaY = Number(args["delta-y"] ?? 0);
+const screenshotPrefix = args["screenshot-prefix"] ?? null;
 
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error("--port must be a valid TCP port");
@@ -39,6 +40,18 @@ try {
     });
     process.stdout.write(`${JSON.stringify({ input_open: false, layout: "core" })}\n`);
     } else if (action === "open") {
+    if (screenshotPrefix !== null) {
+      await page.waitForTimeout(350);
+      await page.screenshot({
+        path: `${screenshotPrefix}-input.png`,
+        omitBackground: true,
+      });
+      const renderPage = await findSurfacePage(browser, "pet-render");
+      await renderPage?.screenshot({
+        path: `${screenshotPrefix}-render.png`,
+        omitBackground: true,
+      });
+    }
     const state = await page.evaluate(() => {
       const surface = document.querySelector('[data-testid="presence-input-surface"]');
       return {
@@ -46,9 +59,13 @@ try {
         layout: surface instanceof HTMLElement ? surface.dataset.layout ?? null : null,
         interaction_phase:
           surface instanceof HTMLElement ? surface.dataset.interactionPhase ?? null : null,
+        optical_canvas_count: document.querySelectorAll("canvas").length,
       };
     });
-    process.stdout.write(`${JSON.stringify(state)}\n`);
+    process.stdout.write(`${JSON.stringify({
+      ...state,
+      render: await readRenderSurface(browser),
+    })}\n`);
     } else {
     const result = await measureInput(page);
     const focusPoints = [];
@@ -187,6 +204,45 @@ async function findInputPage(browser, timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error("pet-input WebView was not exposed through CDP");
+}
+
+async function readRenderSurface(browser) {
+  const page = await findSurfacePage(browser, "pet-render");
+  if (page === null) return null;
+  await page.waitForTimeout(350);
+  return page.evaluate(() => {
+    const root = document.querySelector('[data-testid="presence-render-surface"]');
+    const renderer = document.querySelector('[data-testid="presence-renderer"]');
+    const canvas = document.querySelector("canvas.presence-webgl-canvas");
+    return {
+      renderer: renderer instanceof HTMLElement ? renderer.dataset.renderer ?? null : null,
+      health: renderer instanceof HTMLElement
+        ? renderer.dataset.rendererHealth ?? null
+        : null,
+      input_capsule_visible: root instanceof HTMLElement
+        ? root.dataset.inputCapsuleVisible === "true"
+        : false,
+      shape: canvas instanceof HTMLCanvasElement
+        ? {
+            droplet: canvas.dataset.shapeDroplet ?? null,
+            bridge: canvas.dataset.shapeBridge ?? null,
+            capsule: canvas.dataset.shapeCapsule ?? null,
+          }
+        : null,
+    };
+  });
+}
+
+async function findSurfacePage(browser, expectedSurface) {
+  for (const context of browser.contexts()) {
+    for (const page of context.pages()) {
+      const surface = await page
+        .evaluate(() => document.documentElement.dataset.surface ?? null)
+        .catch(() => null);
+      if (surface === expectedSurface) return page;
+    }
+  }
+  return null;
 }
 
 function parseArguments(values) {

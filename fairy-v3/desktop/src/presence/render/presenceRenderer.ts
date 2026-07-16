@@ -5,6 +5,7 @@ import type { PresenceRendererMode } from "./rendererSupport";
 
 export interface PresenceRenderSnapshot {
   interaction: PresenceInteractionSnapshot | null;
+  input_capsule_visible: boolean;
   work_state: PresenceWorkState;
   speaking: boolean;
   voice_level: number;

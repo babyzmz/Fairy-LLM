@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   COMPATIBILITY_GLASS_STYLE,
+  compatibilityCapsuleGeometry,
   visualState,
 } from "./CompatibilityFairyCanvas";
 
@@ -27,6 +28,17 @@ describe("FairyCanvas visual state", () => {
 
   it("shows booting before any work state", () => {
     expect(visualState(base, 1_599)).toBe("booting");
+  });
+
+  it("aligns the fallback capsule with the transparent input field", () => {
+    expect(compatibilityCapsuleGeometry({ x: 96, y: 130 }, 1, 1)).toEqual({
+      x: 176,
+      y: 104,
+      width: 400,
+      height: 52,
+      radius: 26,
+    });
+    expect(compatibilityCapsuleGeometry({ x: 544, y: 130 }, -1, 1).x).toBe(64);
   });
 
   it("prioritizes direct interaction over projected work", () => {

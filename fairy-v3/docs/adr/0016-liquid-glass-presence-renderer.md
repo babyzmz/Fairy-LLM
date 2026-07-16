@@ -2,10 +2,10 @@
 
 ## Decision
 
-Fairy keeps Tauri 2 and adds an isolated WebGL2 Presence renderer. Unity, UE, Godot,
-continuous desktop capture, and runtime avatar images are out of scope. Three.js is
-loaded only by the render surface after the raw WebGL2 gate succeeds. A procedural
-Canvas 2D renderer remains the compatibility path.
+Fairy keeps Tauri 2 and adds an isolated WebGL2 Presence renderer. Unity, UE,
+Godot, and runtime avatar images are out of scope. Three.js is loaded only by the
+render surface after the raw WebGL2 gate succeeds. A procedural Canvas 2D
+renderer remains the compatibility path.
 
 The production design uses one permanent pass-through render window and one
 focusable input window. The render surface owns the complete visual silhouette;
@@ -18,8 +18,9 @@ monitor changes, and focus policy. Neither surface owns a Core client or project
 state.
 
 The droplet and Bezier bridge are transition geometry only. The stable interactive
-shape directly unions the core and capsule, while the DOM form contributes no
-second border, background, blur layer, or glass silhouette.
+shape leaves a narrow optical gap between the core and capsule, while both are
+drawn by the same renderer. The DOM form contributes no second border,
+background, blur layer, glass silhouette, capture request, or WebGL context.
 
 ## Feasibility Gate
 
@@ -54,13 +55,17 @@ SVG silhouette.
   thickness, directional highlights, interaction illumination, and restrained
   use of the material.
 
-The stable shape follows the approved Fairy board: a 144-pixel circular core
-directly unions with one glass input capsule. The droplet and liquid bridge only
-exist during the reveal and return transitions.
+The stable shape follows the approved Fairy board: a 144-pixel circular core and
+one aligned glass input capsule are separated by an 8-logical-pixel gap. The
+droplet and liquid bridge only exist during reveal and return transitions.
 
 ## Privacy And Product Constraints
 
-The renderer never captures, caches, analyzes, or uploads desktop content. Its
-glass appearance is synthetic and must not be described as physical refraction of
-arbitrary applications. Hover may reveal input but may not activate the input
+The current transition renderer has two explicit material sources. Compatibility
+and standard privacy mode use only the procedural environment. Enhanced live
+refraction may capture the bounded `pet-render` rectangle locally; it must never
+persist, analyze, log, or upload those pixels. `pet-input` is not authorized to
+capture and contains no optical renderer. The GDI/full-frame IPC prototype is a
+measured migration path, not the final production backend, and must be replaced
+or disabled before release. Hover may reveal input but may not activate the input
 window or steal keyboard focus.

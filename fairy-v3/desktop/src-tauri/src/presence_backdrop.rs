@@ -3,24 +3,13 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::ipc::Response;
 use tauri::WebviewWindow;
 
+use crate::authorize_pet_render_window;
 use crate::presence_coordinator::PhysicalFrame;
-use crate::{authorize_pet_input_window, authorize_pet_render_window, PET_INPUT_LABEL};
 
 const BACKDROP_MAGIC: &[u8; 4] = b"FBG2";
 const BACKDROP_HEADER_BYTES: usize = 64;
 const MAX_BACKDROP_WIDTH: u32 = 1_024;
 const MAX_BACKDROP_HEIGHT: u32 = 512;
-
-#[derive(Clone, Copy, Debug, serde::Deserialize)]
-pub struct InputBackdropGeometry {
-    visible: bool,
-    left: f64,
-    top: f64,
-    width: f64,
-    height: f64,
-    border_radius: f64,
-    device_pixel_ratio: f64,
-}
 
 #[derive(Debug)]
 struct CapturedBackdrop {
@@ -47,28 +36,13 @@ pub enum BackdropExperimentMode {
 #[tauri::command]
 pub async fn pet_backdrop_capture(
     window: WebviewWindow,
-    geometry: Option<InputBackdropGeometry>,
     sequence: u64,
     experiment_mode: Option<BackdropExperimentMode>,
 ) -> Result<Response, String> {
     let label = window.label().to_owned();
-    if label == PET_INPUT_LABEL {
-        authorize_pet_input_window(&label).map_err(|_| "Window is not authorized".to_owned())?;
-    } else {
-        authorize_pet_render_window(&label).map_err(|_| "Window is not authorized".to_owned())?;
-    }
+    authorize_pet_render_window(&label).map_err(|_| "Window is not authorized".to_owned())?;
     let surface_frame = window_frame(&window)?;
-    let capture_frame = if label == PET_INPUT_LABEL {
-        let geometry = geometry.ok_or_else(|| "PRESENCE_BACKDROP_GEOMETRY_REQUIRED".to_owned())?;
-        let frame = input_surface_frame(surface_frame, geometry)?;
-        validate_input_frame(surface_frame, frame)?;
-        frame
-    } else {
-        if geometry.is_some() {
-            return Err("PRESENCE_BACKDROP_GEOMETRY_UNEXPECTED".to_owned());
-        }
-        surface_frame
-    };
+    let capture_frame = surface_frame;
     validate_capture_frame(capture_frame)?;
     let experiment_mode = experiment_mode.unwrap_or_default();
     if !cfg!(debug_assertions) && experiment_mode != BackdropExperimentMode::Normal {
@@ -85,58 +59,6 @@ pub async fn pet_backdrop_capture(
     Ok(Response::new(encode_backdrop(captured)?))
 }
 
-fn input_surface_frame(
-    input_frame: PhysicalFrame,
-    geometry: InputBackdropGeometry,
-) -> Result<PhysicalFrame, String> {
-    let values = [
-        geometry.left,
-        geometry.top,
-        geometry.width,
-        geometry.height,
-        geometry.border_radius,
-        geometry.device_pixel_ratio,
-    ];
-    if !geometry.visible
-        || values.iter().any(|value| !value.is_finite())
-        || geometry.left < 0.0
-        || geometry.top < 0.0
-        || geometry.width <= 0.0
-        || geometry.height <= 0.0
-        || geometry.border_radius < 0.0
-        || !(0.5..=4.0).contains(&geometry.device_pixel_ratio)
-    {
-        return Err("PRESENCE_BACKDROP_GEOMETRY_INVALID".to_owned());
-    }
-    let scale = geometry.device_pixel_ratio;
-    let x_offset = checked_rounded_i32(geometry.left * scale)?;
-    let y_offset = checked_rounded_i32(geometry.top * scale)?;
-    let width = checked_rounded_u32(geometry.width * scale)?;
-    let height = checked_rounded_u32(geometry.height * scale)?;
-    Ok(PhysicalFrame {
-        x: input_frame.x.saturating_add(x_offset),
-        y: input_frame.y.saturating_add(y_offset),
-        width,
-        height,
-    })
-}
-
-fn checked_rounded_i32(value: f64) -> Result<i32, String> {
-    let rounded = value.round();
-    if rounded < f64::from(i32::MIN) || rounded > f64::from(i32::MAX) {
-        return Err("PRESENCE_BACKDROP_GEOMETRY_INVALID".to_owned());
-    }
-    Ok(rounded as i32)
-}
-
-fn checked_rounded_u32(value: f64) -> Result<u32, String> {
-    let rounded = value.round();
-    if rounded < 1.0 || rounded > f64::from(u32::MAX) {
-        return Err("PRESENCE_BACKDROP_GEOMETRY_INVALID".to_owned());
-    }
-    Ok(rounded as u32)
-}
-
 fn window_frame(window: &WebviewWindow) -> Result<PhysicalFrame, String> {
     let position = window.outer_position().map_err(|error| error.to_string())?;
     let size = window.outer_size().map_err(|error| error.to_string())?;
@@ -146,17 +68,6 @@ fn window_frame(window: &WebviewWindow) -> Result<PhysicalFrame, String> {
         width: size.width,
         height: size.height,
     })
-}
-
-fn validate_input_frame(window: PhysicalFrame, frame: PhysicalFrame) -> Result<(), String> {
-    if i64::from(frame.x) < i64::from(window.x)
-        || i64::from(frame.y) < i64::from(window.y)
-        || frame.right() > window.right()
-        || frame.bottom() > window.bottom()
-    {
-        return Err("PRESENCE_BACKDROP_GEOMETRY_OUT_OF_SCOPE".to_owned());
-    }
-    Ok(())
 }
 
 fn validate_capture_frame(frame: PhysicalFrame) -> Result<(), String> {
@@ -392,57 +303,5 @@ mod tests {
         assert_eq!(first.rgba, second.rgba);
         assert_eq!(first.rgba.len(), 16);
         assert_eq!(first.capture_total_us, 0);
-    }
-
-    #[test]
-    fn input_backdrop_cannot_escape_its_tauri_surface() {
-        let window = PhysicalFrame {
-            x: 10,
-            y: 20,
-            width: 200,
-            height: 100,
-        };
-        assert!(validate_input_frame(window, window).is_ok());
-        assert!(validate_input_frame(
-            window,
-            PhysicalFrame {
-                x: 9,
-                y: 20,
-                width: 200,
-                height: 100,
-            },
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn input_geometry_converts_css_pixels_without_sampling_dom_overlays() {
-        let frame = input_surface_frame(
-            PhysicalFrame {
-                x: -1_400,
-                y: 500,
-                width: 770,
-                height: 180,
-            },
-            InputBackdropGeometry {
-                visible: true,
-                left: 96.0,
-                top: 40.0,
-                width: 472.0,
-                height: 52.0,
-                border_radius: 26.0,
-                device_pixel_ratio: 1.25,
-            },
-        )
-        .expect("valid input geometry");
-        assert_eq!(
-            frame,
-            PhysicalFrame {
-                x: -1_280,
-                y: 550,
-                width: 590,
-                height: 65,
-            }
-        );
     }
 }

@@ -96,6 +96,9 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
         particles: this.snapshot.particles_enabled,
         sizeScale: this.snapshot.size_scale,
         center,
+        capsuleDirection: this.snapshot.input_capsule_visible
+          ? interaction?.placement.expansion_direction === "left" ? -1 : 1
+          : null,
       },
     );
     if (!this.performanceSamplingComplete) {

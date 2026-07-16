@@ -16,6 +16,11 @@ import {
   type PresenceInteractionSource,
 } from "../transport/interactionEvents";
 import {
+  createPresenceInputPresentationChannel,
+  DEFAULT_INPUT_PRESENTATION,
+  type PresenceInputPresentationChannel,
+} from "../transport/inputPresentation";
+import {
   createPresenceChannel,
   type PresenceChannel,
 } from "../transport/presenceChannel";
@@ -49,6 +54,7 @@ import "./presence-render.css";
 interface PresenceRenderAppProps {
   channel?: PresenceChannel;
   interactionSource?: PresenceInteractionSource;
+  inputPresentationChannel?: PresenceInputPresentationChannel;
   renderSettingsChannel?: PresenceRenderSettingsChannel;
   voiceLevelSource?: PresenceVoiceLevelSource;
   runtimePolicySource?: PresenceRuntimePolicySource;
@@ -59,6 +65,7 @@ interface PresenceRenderAppProps {
 export function PresenceRenderApp({
   channel: suppliedChannel,
   interactionSource: suppliedInteractionSource,
+  inputPresentationChannel: suppliedInputPresentationChannel,
   renderSettingsChannel: suppliedRenderSettingsChannel,
   voiceLevelSource: suppliedVoiceLevelSource,
   runtimePolicySource: suppliedRuntimePolicySource,
@@ -68,6 +75,9 @@ export function PresenceRenderApp({
   const [channel] = useState(() => suppliedChannel ?? createPresenceChannel());
   const [interactionSource] = useState(
     () => suppliedInteractionSource ?? createPresenceInteractionSource(),
+  );
+  const [inputPresentationChannel] = useState(
+    () => suppliedInputPresentationChannel ?? createPresenceInputPresentationChannel(),
   );
   const [voiceLevelSource] = useState(
     () => suppliedVoiceLevelSource ?? createPresenceVoiceLevelSource(),
@@ -87,6 +97,9 @@ export function PresenceRenderApp({
   const [clock, setClock] = useState(() => now());
   const [interaction, setInteraction] = useState<PresenceInteractionSnapshot | null>(null);
   const [interactionReady, setInteractionReady] = useState(false);
+  const [inputPresentation, setInputPresentation] = useState(
+    DEFAULT_INPUT_PRESENTATION,
+  );
   const [voiceLevel, setVoiceLevel] = useState(0);
   const [renderSettings, setRenderSettings] = useState<PresenceRenderSettings>(
     DEFAULT_PRESENCE_RENDER_SETTINGS,
@@ -110,6 +123,21 @@ export function PresenceRenderApp({
   }, [channel, now]);
 
   useDeferredChannelClose(channel, suppliedChannel === undefined);
+
+  useEffect(() => {
+    const stop = inputPresentationChannel.onPresentation((next) => {
+      setInputPresentation((current) =>
+        next.sequence > current.sequence ? next : current,
+      );
+    });
+    inputPresentationChannel.request();
+    return stop;
+  }, [inputPresentationChannel]);
+
+  useDeferredChannelClose(
+    inputPresentationChannel,
+    suppliedInputPresentationChannel === undefined,
+  );
 
   useEffect(() => {
     const stop = renderSettingsChannel.onSettings(setRenderSettings);
@@ -210,6 +238,7 @@ export function PresenceRenderApp({
       data-work-area-height={interaction?.placement.monitor_work_area.height ?? ""}
       data-interaction-phase={interaction?.phase ?? "idle"}
       data-interaction-ready={String(interactionReady)}
+      data-input-capsule-visible={String(inputPresentation.capsule_visible)}
       data-reduced-motion={String(reducedMotion)}
       data-speaking={String(projection.speaking)}
       data-work-state={view.work_state}
@@ -233,6 +262,7 @@ export function PresenceRenderApp({
           }}
           snapshot={{
             interaction,
+            input_capsule_visible: inputPresentation.capsule_visible,
             reduced_motion: reducedMotion,
             sleeping: view.density === "quiet",
             speaking: projection.speaking,

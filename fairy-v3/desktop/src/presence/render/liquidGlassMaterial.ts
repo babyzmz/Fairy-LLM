@@ -28,14 +28,14 @@ const BRIDGE_SHAPE: LiquidShapeTarget = Object.freeze({
   capsule: 0,
 });
 const INPUT_REVEAL_SHAPE: LiquidShapeTarget = Object.freeze({
-  droplet: 1,
+  droplet: 0,
   bridge: 1,
-  capsule: 0,
+  capsule: 1,
 });
 const INTERACTIVE_SHAPE: LiquidShapeTarget = Object.freeze({
   droplet: 0,
   bridge: 0,
-  capsule: 0,
+  capsule: 1,
 });
 
 export function liquidShapeTargetForPhase(
@@ -55,11 +55,24 @@ export function liquidShapeTargetForPhase(
   }
 }
 
+export function liquidShapeTargetForSnapshot(
+  snapshot: PresenceRenderSnapshot,
+): LiquidShapeTarget {
+  const target = liquidShapeTargetForPhase(snapshot.interaction?.phase ?? null);
+  if (!snapshot.input_capsule_visible) {
+    return target.capsule > 0 ? HIDDEN_SHAPE : target;
+  }
+  return target.capsule > 0 ? target : INTERACTIVE_SHAPE;
+}
+
 export function liquidDirectionForSnapshot(
   snapshot: PresenceRenderSnapshot,
 ): LiquidDirection {
   const interaction = snapshot.interaction;
   const expansion = interaction?.placement.expansion_direction === "left" ? -1 : 1;
+  if (snapshot.input_capsule_visible) {
+    return { x: expansion, y: 0 };
+  }
   const gaze = interaction?.cursor.direction ?? { x: 0, y: 0 };
   const x = expansion * 0.96 + gaze.x * 0.08;
   const y = gaze.y * 0.18;
@@ -171,6 +184,21 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
     return result;
   }
 
+  float capsuleDistance(vec2 point, float morph) {
+    float shapeProgress = smoothstep(0.0, 1.0, saturate(morph));
+    float center = mix(178.0, 280.0, shapeProgress) * uDpr;
+    float halfWidth = mix(2.0, 200.0, shapeProgress) * uDpr;
+    float radius = mix(2.0, 26.0, shapeProgress) * uDpr;
+    float halfSegment = max(0.0, halfWidth - radius);
+    vec2 segmentCenter = vec2(center, 0.0);
+    float distanceField = segmentDistance(
+      point,
+      segmentCenter - vec2(halfSegment, 0.0),
+      segmentCenter + vec2(halfSegment, 0.0)
+    ) - radius;
+    return mix(100000.0, distanceField, step(0.001, shapeProgress));
+  }
+
   float liquidDistance(vec2 point) {
     vec2 axis = normalize(uDirection);
     vec2 normalAxis = vec2(-axis.y, axis.x);
@@ -198,9 +226,11 @@ export const LIQUID_GLASS_FRAGMENT_SHADER = `
       saturate(uShape.y),
       uSizeScale
     );
+    float capsule = capsuleDistance(local, saturate(uShape.z));
 
     float distanceField = smoothMinimum(core, droplet, 11.0 * uDpr);
     distanceField = smoothMinimum(distanceField, bridge, 14.0 * uDpr);
+    distanceField = min(distanceField, capsule);
     float ripple = sin(point.x / (31.0 * uDpr) + animatedTime * 0.23)
       * sin(point.y / (27.0 * uDpr) - animatedTime * 0.19);
     return distanceField + ripple * 0.55 * uDpr * uEnergy;

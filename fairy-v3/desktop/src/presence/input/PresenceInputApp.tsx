@@ -37,6 +37,12 @@ import {
   type PresenceInteractionSource,
 } from "../transport/interactionEvents";
 import {
+  createPresenceInputPresentationChannel,
+  DEFAULT_INPUT_PRESENTATION,
+  type PresenceInputPresentation,
+  type PresenceInputPresentationChannel,
+} from "../transport/inputPresentation";
+import {
   createPresenceRenderSettingsChannel,
   safeRenderSettingsFromPreferences,
   type PresenceRenderSettingsChannel,
@@ -54,6 +60,7 @@ interface PresenceInputAppProps {
   channel?: PresenceChannel;
   host?: PetHost;
   interactionSource?: PresenceInteractionSource;
+  inputPresentationChannel?: PresenceInputPresentationChannel;
   renderSettingsChannel?: PresenceRenderSettingsChannel;
   now?: () => number;
   storage?: StorageLike;
@@ -93,6 +100,7 @@ export function PresenceInputApp({
   channel: suppliedChannel,
   host: suppliedHost,
   interactionSource: suppliedInteractionSource,
+  inputPresentationChannel: suppliedInputPresentationChannel,
   renderSettingsChannel: suppliedRenderSettingsChannel,
   now = Date.now,
   storage = window.localStorage,
@@ -104,6 +112,13 @@ export function PresenceInputApp({
   );
   const [renderSettingsChannel] = useState(
     () => suppliedRenderSettingsChannel ?? createPresenceRenderSettingsChannel(),
+  );
+  const [inputPresentationChannel] = useState(
+    () => suppliedInputPresentationChannel ?? createPresenceInputPresentationChannel(),
+  );
+  const inputPresentationSequence = useRef(0);
+  const latestInputPresentation = useRef<PresenceInputPresentation>(
+    DEFAULT_INPUT_PRESENTATION,
   );
   const [projection, setProjection] = useState<PresenceProjectionState>(() =>
     PresenceProjection.initial(),
@@ -317,6 +332,31 @@ export function PresenceInputApp({
   const contentVisible = dragPresentation?.contentVisible ?? requestedContentVisible;
   const surfaceInteractive =
     dragPresentation?.surfaceInteractive ?? requestedSurfaceInteractive;
+  const capsuleVisible = layout === "compact" && inputOpen && !cardOpen;
+
+  useEffect(() => {
+    const presentation: PresenceInputPresentation = {
+      schema_version: 1,
+      sequence: inputPresentationSequence.current + 1,
+      layout: layout === "hidden" ? "core" : layout,
+      capsule_visible: capsuleVisible,
+    };
+    inputPresentationSequence.current = presentation.sequence;
+    latestInputPresentation.current = presentation;
+    inputPresentationChannel.publish(presentation);
+  }, [capsuleVisible, inputPresentationChannel, layout]);
+
+  useEffect(
+    () => inputPresentationChannel.onRequest(() => {
+      inputPresentationChannel.publish(latestInputPresentation.current);
+    }),
+    [inputPresentationChannel],
+  );
+
+  useDeferredChannelClose(
+    inputPresentationChannel,
+    suppliedInputPresentationChannel === undefined,
+  );
 
   useEffect(() => {
     if (reply === null || reply.streaming) return;

@@ -147,6 +147,7 @@ export function drawFairyFrame(
     particles?: boolean;
     sizeScale?: number;
     center?: { x: number; y: number };
+    capsuleDirection?: -1 | 1 | null;
   } = {},
 ): void {
   const width = canvas.width;
@@ -163,6 +164,15 @@ export function drawFairyFrame(
   context.clearRect(0, 0, width, height);
   context.save();
   context.globalAlpha = options.opacity ?? 1;
+
+  if (options.capsuleDirection !== null && options.capsuleDirection !== undefined) {
+    drawCompatibilityCapsule(
+      context,
+      requestedCenter,
+      options.capsuleDirection,
+      scale,
+    );
+  }
 
   const aura = context.createRadialGradient(
     centerX,
@@ -188,6 +198,51 @@ export function drawFairyFrame(
   drawCore(context, centerX, centerY, radius, gaze, phase, stateStyle);
   drawOrbitLight(context, centerX, centerY, radius, phase, stateStyle);
   drawStateMark(context, centerX, centerY, radius, phase, state, stateStyle);
+  context.restore();
+}
+
+export function compatibilityCapsuleGeometry(
+  center: { x: number; y: number },
+  direction: -1 | 1,
+  scale: number,
+) {
+  const width = 400 * scale;
+  const height = 52 * scale;
+  const centerX = center.x + direction * 280 * scale;
+  return {
+    x: centerX - width / 2,
+    y: center.y - height / 2,
+    width,
+    height,
+    radius: height / 2,
+  };
+}
+
+function drawCompatibilityCapsule(
+  context: CanvasRenderingContext2D,
+  center: { x: number; y: number },
+  direction: -1 | 1,
+  scale: number,
+) {
+  const geometry = compatibilityCapsuleGeometry(center, direction, scale);
+  const { x, y, width, height, radius } = geometry;
+  context.save();
+  const fill = context.createLinearGradient(x, y, x, y + height);
+  fill.addColorStop(0, "rgba(255, 255, 255, 0.15)");
+  fill.addColorStop(0.44, "rgba(210, 229, 235, 0.055)");
+  fill.addColorStop(1, "rgba(100, 124, 132, 0.11)");
+  context.fillStyle = fill;
+  context.strokeStyle = "rgba(238, 249, 252, 0.28)";
+  context.lineWidth = Math.max(1, scale);
+  context.beginPath();
+  context.moveTo(x + radius, y);
+  context.lineTo(x + width - radius, y);
+  context.arc(x + width - radius, y + radius, radius, -Math.PI / 2, Math.PI / 2);
+  context.lineTo(x + radius, y + height);
+  context.arc(x + radius, y + radius, radius, Math.PI / 2, Math.PI * 1.5);
+  context.closePath();
+  context.fill();
+  context.stroke();
   context.restore();
 }
 

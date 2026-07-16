@@ -252,10 +252,12 @@ describe("dual presence surfaces", () => {
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("compact"));
     const textarea = screen.getByLabelText("Quick message to Fairy");
     const inputField = screen.getByTestId("presence-input-field");
-    const inputGlass = screen.getByTestId("presence-input-glass");
     expect(inputField).toContainElement(textarea);
-    expect(inputField).toContainElement(inputGlass);
-    expect(inputGlass.nextElementSibling).toBe(textarea);
+    expect(inputField).toHaveAttribute(
+      "data-optical-layer",
+      "transparent-overlay",
+    );
+    expect(inputField.querySelector("canvas")).toBeNull();
     const focusRequestsBeforePointer = vi.mocked(host.host.requestInputFocus).mock.calls.length;
     fireEvent.pointerDown(inputField);
     expect(textarea).toHaveFocus();
@@ -577,9 +579,9 @@ describe("dual presence surfaces", () => {
       "data-moving",
       "true",
     );
-    expect(screen.getByTestId("presence-input-glass")).toHaveAttribute(
-      "data-paused",
-      "true",
+    expect(screen.getByTestId("presence-input-field")).toHaveAttribute(
+      "data-optical-layer",
+      "transparent-overlay",
     );
     fireEvent.pointerMove(grip, {
       pointerId: 4,
@@ -608,10 +610,7 @@ describe("dual presence surfaces", () => {
       "data-moving",
       "false",
     ));
-    expect(screen.getByTestId("presence-input-glass")).toHaveAttribute(
-      "data-paused",
-      "false",
-    );
+    expect(screen.getByTestId("presence-input-field").querySelector("canvas")).toBeNull();
   });
 
   it("moves the same native group from the Fairy body without opening input", async () => {

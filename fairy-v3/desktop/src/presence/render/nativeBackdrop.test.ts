@@ -91,7 +91,6 @@ describe("native Presence backdrop", () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(request).toHaveBeenCalledOnce();
     expect(request).toHaveBeenCalledWith({
-      geometry: null,
       sequence: 0,
       experimentMode: "normal",
     });

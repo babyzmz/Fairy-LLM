@@ -10,16 +10,6 @@ const BACKDROP_V1_MAGIC = [0x46, 0x42, 0x47, 0x31] as const;
 const BACKDROP_V2_HEADER_BYTES = 64;
 const BACKDROP_V2_MAGIC = [0x46, 0x42, 0x47, 0x32] as const;
 
-export interface NativeBackdropGeometry {
-  visible: boolean;
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-  border_radius: number;
-  device_pixel_ratio: number;
-}
-
 export interface NativeBackdropFrame {
   width: number;
   height: number;
@@ -39,14 +29,12 @@ export interface NativeBackdropFrame {
 interface NativeBackdropStreamOptions {
   framesPerSecond: number;
   experimentMode?: PresenceExperimentMode;
-  geometry?: NativeBackdropGeometry;
   onFrame(frame: NativeBackdropFrame): void;
   onError?(error: unknown): void;
 }
 
 type NativeBackdropPayload = ArrayBuffer | Uint8Array;
 type NativeBackdropRequest = (input: {
-  geometry: NativeBackdropGeometry | null;
   sequence: number;
   experimentMode: "normal" | "capture-only" | "ipc-upload-only";
 }) => Promise<NativeBackdropPayload>;
@@ -87,7 +75,6 @@ export class NativeBackdropStream {
       const startedAt = performance.now();
       try {
         const payload = await this.request({
-          geometry: options.geometry ?? null,
           sequence,
           experimentMode: backdropCommandMode(options.experimentMode ?? "normal"),
         });

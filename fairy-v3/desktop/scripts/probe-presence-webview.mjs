@@ -256,6 +256,9 @@ async function readMetrics(page, mode) {
       health: renderer.dataset.rendererHealth ?? null,
       error_code: renderer.dataset.errorCode || null,
       interaction_phase: surface instanceof HTMLElement ? surface.dataset.interactionPhase ?? null : null,
+      input_capsule_visible: surface instanceof HTMLElement
+        ? surface.dataset.inputCapsuleVisible === "true"
+        : false,
       cursor_band: surface instanceof HTMLElement ? surface.dataset.cursorBand ?? null : null,
       cursor_distance: surface instanceof HTMLElement ? numberOrNull(surface.dataset.cursorDistance) : null,
       cursor_point: surface instanceof HTMLElement ? {
@@ -292,6 +295,11 @@ async function readMetrics(page, mode) {
       backdrop_age_p95_ms: numberOrNull(canvas.dataset.backdropAgeP95Ms),
       dropped_frame_count: numberOrNull(canvas.dataset.droppedFrameCount),
       experiment_mode: canvas.dataset.experimentMode ?? null,
+      liquid_shape: {
+        droplet: numberOrNull(canvas.dataset.shapeDroplet),
+        bridge: numberOrNull(canvas.dataset.shapeBridge),
+        capsule: numberOrNull(canvas.dataset.shapeCapsule),
+      },
       target_frame_rate: surface instanceof HTMLElement
         ? numberOrNull(surface.dataset.targetFrameRate)
         : null,

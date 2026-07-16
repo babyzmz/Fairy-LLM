@@ -6,6 +6,7 @@ import {
   LIQUID_GLASS_FRAGMENT_SHADER,
   liquidDirectionForSnapshot,
   liquidShapeTargetForPhase,
+  liquidShapeTargetForSnapshot,
 } from "./liquidGlassMaterial";
 
 function renderSnapshot(
@@ -38,6 +39,7 @@ function renderSnapshot(
         expansion_direction,
       },
     } satisfies PresenceInteractionSnapshot,
+    input_capsule_visible: true,
     work_state: "idle",
     speaking: false,
     voice_level: 0,
@@ -70,14 +72,14 @@ describe("Liquid Glass material", () => {
       capsule: 0,
     });
     expect(liquidShapeTargetForPhase("input_reveal")).toEqual({
-      droplet: 1,
+      droplet: 0,
       bridge: 1,
-      capsule: 0,
+      capsule: 1,
     });
     expect(liquidShapeTargetForPhase("interactive")).toEqual({
       droplet: 0,
       bridge: 0,
-      capsule: 0,
+      capsule: 1,
     });
     expect(liquidShapeTargetForPhase("returning")).toEqual({
       droplet: 0,
@@ -95,6 +97,29 @@ describe("Liquid Glass material", () => {
     expect(Math.hypot(left.x, left.y)).toBeCloseTo(1);
   });
 
+  it("hides the stable capsule when the input DOM is not presented", () => {
+    const snapshot = renderSnapshot("right");
+    snapshot.interaction!.phase = "interactive";
+    snapshot.input_capsule_visible = false;
+    expect(liquidShapeTargetForSnapshot(snapshot)).toEqual({
+      droplet: 0,
+      bridge: 0,
+      capsule: 0,
+    });
+  });
+
+  it("shows a stable capsule for manually opened input outside hover phases", () => {
+    const snapshot = renderSnapshot("right");
+    snapshot.interaction!.phase = "idle";
+    snapshot.input_capsule_visible = true;
+    expect(liquidShapeTargetForSnapshot(snapshot)).toEqual({
+      droplet: 0,
+      bridge: 0,
+      capsule: 1,
+    });
+    expect(liquidDirectionForSnapshot(snapshot)).toEqual({ x: 1, y: 0 });
+  });
+
   it("samples the latest desktop texture with boundary-continuous glass optics", () => {
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("bezierBridgeDistance");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("smoothMinimum");
@@ -110,7 +135,7 @@ describe("Liquid Glass material", () => {
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("keyHighlight");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("counterHighlight");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("narrowContactShadow");
-    expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toContain("capsuleDistance");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("capsuleDistance");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toContain("capsuleContentMask");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uLensStrength");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uRimStrength");

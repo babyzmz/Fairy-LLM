@@ -27,7 +27,6 @@ import {
 import { m } from "motion/react";
 
 import type { PresenceReply, PresenceView } from "../domain/projection";
-import { InputLiquidGlassCanvas } from "./InputLiquidGlassCanvas";
 
 export interface PresencePanelActions {
   cancelTurn(): void;
@@ -297,13 +296,13 @@ export function PresencePanel({
           </button>
           <div
             className="presence-input-field"
+            data-optical-layer="transparent-overlay"
             data-testid="presence-input-field"
             onPointerDown={() => {
               actions.requestInputFocus();
               textarea.current?.focus({ preventScroll: true });
             }}
           >
-            <InputLiquidGlassCanvas paused={moving} />
             <textarea
               aria-label="Quick message to Fairy"
               ref={textarea}
