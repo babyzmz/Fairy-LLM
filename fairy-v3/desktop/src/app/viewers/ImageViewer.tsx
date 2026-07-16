@@ -1,6 +1,7 @@
 import { Maximize2, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { assertImagePreviewBudget } from "./previewLimits";
 import "./media-viewer.css";
 
 export default function ImageViewer({ src, title }: { src: string; title: string }) {
@@ -8,13 +9,13 @@ export default function ImageViewer({ src, title }: { src: string; title: string
   const [scale, setScale] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setScale(1);
     setRotation(0);
     setDimensions(null);
-    setError(false);
+    setError(null);
   }, [src]);
 
   return (
@@ -59,8 +60,8 @@ export default function ImageViewer({ src, title }: { src: string; title: string
           setScale((value) => clamp(value * (event.deltaY > 0 ? 0.9 : 1.1)));
         }}
       >
-        {error ? <div role="alert">Image could not be decoded</div> : null}
-        <img
+        {error !== null ? <div role="alert">{error}</div> : null}
+        {error === null ? <img
           src={src}
           alt={title}
           draggable={false}
@@ -68,11 +69,18 @@ export default function ImageViewer({ src, title }: { src: string; title: string
           onLoad={(event) => {
             const image = event.currentTarget;
             const next = { width: image.naturalWidth, height: image.naturalHeight };
+            try {
+              assertImagePreviewBudget(next.width, next.height);
+            } catch (reason) {
+              image.removeAttribute("src");
+              setError(reason instanceof Error ? reason.message : "Image exceeds the preview limit");
+              return;
+            }
             setDimensions(next);
             fitImage(viewportRef.current, next, setScale);
           }}
-          onError={() => setError(true)}
-        />
+          onError={() => setError("Image could not be decoded")}
+        /> : null}
       </div>
     </div>
   );

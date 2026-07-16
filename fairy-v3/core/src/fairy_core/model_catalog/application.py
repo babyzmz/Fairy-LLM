@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
+from fairy_core.domain.errors import VersionConflictError
 from fairy_core.model_catalog.models import (
     ModelCatalogSnapshot,
     ModelSelectionMode,
@@ -50,45 +51,19 @@ class ModelCatalogApplication:
     def refresh_catalog(self) -> ModelCatalogSnapshot:
         with self._unit_of_work_factory() as unit_of_work:
             current = unit_of_work.model_catalog.get_catalog()
-            expected_revision = current.revision if current is not None else 0
+        expected_revision = current.revision if current is not None else 0
+        candidate = self._fetch_candidate(current, expected_revision=expected_revision)
+        with self._unit_of_work_factory() as unit_of_work:
             try:
-                if self._source is None:
-                    raise ModelCatalogSourceError(
-                        "MODEL_CATALOG_SOURCE_UNAVAILABLE",
-                        credential_status=self._credential_status(),
-                    )
-                fetched = self._source.fetch()
-                fetched_at = _aware(fetched.fetched_at)
-                by_id = {entry.model_id: entry for entry in fetched.entries}
-                if len(by_id) != len(fetched.entries):
-                    raise ModelCatalogSourceError("MODEL_CATALOG_RESPONSE_INVALID")
-                candidate = ModelCatalogSnapshot(
-                    account=ProviderAccount(
-                        account_id="openrouter-default",
-                        provider_kind="openrouter",
-                        display_name="OpenRouter",
-                        credential_status=fetched.credential_status,
-                    ),
-                    entries=merge_catalog_entries(by_id),
-                    fetched_at=fetched_at,
-                    expires_at=fetched_at + self._cache_ttl,
-                    revision=expected_revision,
+                saved = unit_of_work.model_catalog.replace_catalog(
+                    candidate,
+                    expected_revision=expected_revision,
                 )
-            except ModelCatalogSourceError as error:
-                candidate = self._failure_snapshot(
-                    current,
-                    error_code=error.error_code,
-                    credential_status=error.credential_status,
-                )
-            except Exception:
-                candidate = self._failure_snapshot(
-                    current,
-                    error_code="MODEL_CATALOG_SOURCE_UNAVAILABLE",
-                )
-            saved = unit_of_work.model_catalog.replace_catalog(
-                candidate,
-                expected_revision=expected_revision,
-            )
+            except VersionConflictError:
+                latest = unit_of_work.model_catalog.get_catalog()
+                if latest is None:
+                    raise
+                return latest
             unit_of_work.commit()
             return saved
 
@@ -121,6 +96,47 @@ class ModelCatalogApplication:
     def close(self) -> None:
         if self._source is not None:
             self._source.close()
+
+    def _fetch_candidate(
+        self,
+        current: ModelCatalogSnapshot | None,
+        *,
+        expected_revision: int,
+    ) -> ModelCatalogSnapshot:
+        try:
+            if self._source is None:
+                raise ModelCatalogSourceError(
+                    "MODEL_CATALOG_SOURCE_UNAVAILABLE",
+                    credential_status=self._credential_status(),
+                )
+            fetched = self._source.fetch()
+            fetched_at = _aware(fetched.fetched_at)
+            by_id = {entry.model_id: entry for entry in fetched.entries}
+            if len(by_id) != len(fetched.entries):
+                raise ModelCatalogSourceError("MODEL_CATALOG_RESPONSE_INVALID")
+            return ModelCatalogSnapshot(
+                account=ProviderAccount(
+                    account_id="openrouter-default",
+                    provider_kind="openrouter",
+                    display_name="OpenRouter",
+                    credential_status=fetched.credential_status,
+                ),
+                entries=merge_catalog_entries(by_id),
+                fetched_at=fetched_at,
+                expires_at=fetched_at + self._cache_ttl,
+                revision=expected_revision,
+            )
+        except ModelCatalogSourceError as error:
+            return self._failure_snapshot(
+                current,
+                error_code=error.error_code,
+                credential_status=error.credential_status,
+            )
+        except Exception:
+            return self._failure_snapshot(
+                current,
+                error_code="MODEL_CATALOG_SOURCE_UNAVAILABLE",
+            )
 
     def _failure_snapshot(
         self,

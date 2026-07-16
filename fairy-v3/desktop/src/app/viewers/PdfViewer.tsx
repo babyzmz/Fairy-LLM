@@ -16,6 +16,7 @@ import {
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { useEffect, useRef, useState } from "react";
 
+import { pdfCanvasScale } from "./previewLimits";
 import "./pdf-viewer.css";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -103,7 +104,11 @@ export default function PdfViewer({ title, url }: PdfViewerProps) {
           throw new Error("PDF canvas is unavailable");
         }
         const viewport = page.getViewport({ scale });
-        const outputScale = Math.min(window.devicePixelRatio || 1, 2);
+        const outputScale = pdfCanvasScale(
+          viewport.width,
+          viewport.height,
+          window.devicePixelRatio || 1,
+        );
         canvas.width = Math.floor(viewport.width * outputScale);
         canvas.height = Math.floor(viewport.height * outputScale);
         canvas.style.width = `${Math.floor(viewport.width)}px`;

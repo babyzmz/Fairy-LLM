@@ -1,9 +1,12 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use thiserror::Error;
 
 const CREDENTIAL_FILE: &str = "credentials/openrouter.dpapi";
+static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
 pub enum CredentialError {
@@ -23,6 +26,12 @@ pub struct ProviderCredentialStore {
     path: PathBuf,
 }
 
+pub struct CredentialReplacement {
+    path: PathBuf,
+    previous: Option<Vec<u8>>,
+    finished: bool,
+}
+
 impl ProviderCredentialStore {
     pub fn new(data_dir: impl AsRef<Path>) -> Self {
         Self {
@@ -39,15 +48,24 @@ impl ProviderCredentialStore {
         if normalized.is_empty() {
             return Err(CredentialError::Empty);
         }
-        let protected = protect(normalized.as_bytes())?;
-        let parent = self.path.parent().ok_or_else(|| {
-            CredentialError::Io(std::io::Error::other("credential path has no parent"))
-        })?;
-        fs::create_dir_all(parent)?;
-        let temporary = self.path.with_extension("tmp");
-        fs::write(&temporary, protected)?;
-        fs::rename(temporary, &self.path)?;
-        Ok(())
+        write_protected(&self.path, &protect(normalized.as_bytes())?)
+    }
+
+    pub fn begin_openrouter_replacement(
+        &self,
+        secret: &str,
+    ) -> Result<CredentialReplacement, CredentialError> {
+        let previous = match fs::read(&self.path) {
+            Ok(value) => Some(value),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        self.save_openrouter(secret)?;
+        Ok(CredentialReplacement {
+            path: self.path.clone(),
+            previous,
+            finished: false,
+        })
     }
 
     pub fn load_openrouter(&self) -> Result<Option<String>, CredentialError> {
@@ -68,6 +86,95 @@ impl ProviderCredentialStore {
             Err(error) => Err(error.into()),
         }
     }
+}
+
+impl CredentialReplacement {
+    pub fn commit(mut self) {
+        self.finished = true;
+    }
+
+    pub fn rollback(mut self) -> Result<(), CredentialError> {
+        restore_snapshot(&self.path, self.previous.as_deref())?;
+        self.finished = true;
+        Ok(())
+    }
+}
+
+impl Drop for CredentialReplacement {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = restore_snapshot(&self.path, self.previous.as_deref());
+        }
+    }
+}
+
+fn restore_snapshot(path: &Path, previous: Option<&[u8]>) -> Result<(), CredentialError> {
+    match previous {
+        Some(protected) => write_protected(path, protected),
+        None => match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        },
+    }
+}
+
+fn write_protected(path: &Path, protected: &[u8]) -> Result<(), CredentialError> {
+    let parent = path.parent().ok_or_else(|| {
+        CredentialError::Io(std::io::Error::other("credential path has no parent"))
+    })?;
+    fs::create_dir_all(parent)?;
+    let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = path.with_extension(format!("tmp-{}-{sequence}", std::process::id()));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        file.write_all(protected)?;
+        file.sync_all()?;
+        replace_file(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result.map_err(CredentialError::from)
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let succeeded = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if succeeded == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn replace_file(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    fs::rename(source, destination)
 }
 
 #[cfg(windows)]
@@ -193,5 +300,60 @@ mod tests {
         store.delete_openrouter().expect("delete credential");
         assert!(!store.configured());
         assert_eq!(store.load_openrouter().expect("deleted credential"), None);
+    }
+
+    #[test]
+    fn candidate_replacement_rolls_back_opaque_previous_credential() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = ProviderCredentialStore::new(directory.path());
+        store
+            .save_openrouter("sk-or-v1-original-secret")
+            .expect("save original");
+
+        let replacement = store
+            .begin_openrouter_replacement("sk-or-v1-invalid-candidate")
+            .expect("stage candidate");
+        assert_eq!(
+            store.load_openrouter().expect("load candidate").as_deref(),
+            Some("sk-or-v1-invalid-candidate")
+        );
+        replacement.rollback().expect("restore original");
+
+        assert_eq!(
+            store.load_openrouter().expect("load restored").as_deref(),
+            Some("sk-or-v1-original-secret")
+        );
+    }
+
+    #[test]
+    fn uncommitted_first_candidate_leaves_no_credential() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = ProviderCredentialStore::new(directory.path());
+
+        let replacement = store
+            .begin_openrouter_replacement("sk-or-v1-first-candidate")
+            .expect("stage first candidate");
+        drop(replacement);
+
+        assert_eq!(
+            store.load_openrouter().expect("rolled back candidate"),
+            None
+        );
+    }
+
+    #[test]
+    fn committed_candidate_survives_replacement_guard() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = ProviderCredentialStore::new(directory.path());
+
+        let replacement = store
+            .begin_openrouter_replacement("sk-or-v1-valid-candidate")
+            .expect("stage candidate");
+        replacement.commit();
+
+        assert_eq!(
+            store.load_openrouter().expect("load committed").as_deref(),
+            Some("sk-or-v1-valid-candidate")
+        );
     }
 }

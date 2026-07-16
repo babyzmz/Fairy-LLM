@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -21,6 +22,9 @@ from fairy_core.model_catalog.ports import (
     ModelCatalogSourceError,
 )
 from fairy_core.providers import SecretValue
+
+MAX_CATALOG_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_CATALOG_RECORDS = 4_096
 
 
 class OpenRouterCatalogSource:
@@ -54,6 +58,7 @@ class OpenRouterCatalogSource:
                 "CREDENTIAL_NOT_CONFIGURED",
                 credential_status=ProviderCredentialStatus.UNAVAILABLE,
             )
+        self._validate_credential(self._get_json("/key"))
         text_models = self._model_map(self._get_json("/models?output_modalities=text"))
         image_models = self._model_map(self._get_json("/images/models"))
         audio_models = self._model_map(self._get_json("/models?output_modalities=audio"))
@@ -78,6 +83,11 @@ class OpenRouterCatalogSource:
             fetched_at=datetime.now(UTC),
         )
 
+    @staticmethod
+    def _validate_credential(payload: Mapping[str, Any]) -> None:
+        if not isinstance(payload.get("data"), dict):
+            raise ModelCatalogSourceError("MODEL_CATALOG_RESPONSE_INVALID")
+
     def close(self) -> None:
         if self._owns_client:
             self._client.close()
@@ -90,7 +100,9 @@ class OpenRouterCatalogSource:
         if endpoint_kind is ModelEndpointKind.IMAGES:
             endpoints_path = record.get("endpoints")
             if isinstance(endpoints_path, str) and endpoints_path.startswith("/api/v1/images/"):
-                endpoint_records = self._data(self._get_json(endpoints_path))
+                endpoint_records = self._image_endpoint_records(
+                    self._get_json(endpoints_path)
+                )
                 return _image_prices(endpoint_records)
         if endpoint_kind is ModelEndpointKind.VIDEOS:
             return _video_prices(record.get("pricing_skus"))
@@ -98,27 +110,41 @@ class OpenRouterCatalogSource:
 
     def _get_json(self, path: str) -> Mapping[str, Any]:
         try:
-            response = self._client.get(
+            with self._client.stream(
+                "GET",
                 self._url(path),
                 headers=self._headers(),
                 timeout=self._timeout_seconds,
-            )
+            ) as response:
+                if response.status_code in {401, 403}:
+                    raise ModelCatalogSourceError(
+                        "CREDENTIAL_INVALID",
+                        credential_status=ProviderCredentialStatus.INVALID,
+                    )
+                if response.status_code == 429:
+                    raise ModelCatalogSourceError("MODEL_CATALOG_RATE_LIMITED")
+                if not 200 <= response.status_code < 300:
+                    raise ModelCatalogSourceError("MODEL_CATALOG_UPSTREAM_ERROR")
+                content_length = response.headers.get("content-length")
+                if content_length is not None:
+                    try:
+                        declared_length = int(content_length)
+                    except ValueError as error:
+                        raise ModelCatalogSourceError("MODEL_CATALOG_RESPONSE_INVALID") from error
+                    if declared_length > MAX_CATALOG_RESPONSE_BYTES:
+                        raise ModelCatalogSourceError("MODEL_CATALOG_RESPONSE_TOO_LARGE")
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_CATALOG_RESPONSE_BYTES:
+                        raise ModelCatalogSourceError("MODEL_CATALOG_RESPONSE_TOO_LARGE")
         except httpx.TimeoutException as error:
             raise ModelCatalogSourceError("MODEL_CATALOG_TIMEOUT") from error
         except httpx.HTTPError as error:
             raise ModelCatalogSourceError("MODEL_CATALOG_NETWORK_ERROR") from error
-        if response.status_code in {401, 403}:
-            raise ModelCatalogSourceError(
-                "CREDENTIAL_INVALID",
-                credential_status=ProviderCredentialStatus.INVALID,
-            )
-        if response.status_code == 429:
-            raise ModelCatalogSourceError("MODEL_CATALOG_RATE_LIMITED")
-        if not 200 <= response.status_code < 300:
-            raise ModelCatalogSourceError("MODEL_CATALOG_UPSTREAM_ERROR")
         try:
-            payload = response.json()
-        except ValueError as error:
+            payload = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise ModelCatalogSourceError("MODEL_CATALOG_RESPONSE_INVALID") from error
         if not isinstance(payload, dict):
             raise ModelCatalogSourceError("MODEL_CATALOG_RESPONSE_INVALID")
@@ -134,12 +160,27 @@ class OpenRouterCatalogSource:
 
     @staticmethod
     def _data(payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
-        raw_data = payload.get("data")
-        if not isinstance(raw_data, list) or not all(
-            isinstance(record, dict) for record in raw_data
+        return OpenRouterCatalogSource._records(payload, "data")
+
+    @staticmethod
+    def _image_endpoint_records(
+        payload: Mapping[str, Any],
+    ) -> tuple[Mapping[str, Any], ...]:
+        field = "data" if "data" in payload else "endpoints"
+        return OpenRouterCatalogSource._records(payload, field)
+
+    @staticmethod
+    def _records(
+        payload: Mapping[str, Any], field: str
+    ) -> tuple[Mapping[str, Any], ...]:
+        raw_records = payload.get(field)
+        if not isinstance(raw_records, list) or not all(
+            isinstance(record, dict) for record in raw_records
         ):
             raise ModelCatalogSourceError("MODEL_CATALOG_RESPONSE_INVALID")
-        return tuple(raw_data)
+        if len(raw_records) > MAX_CATALOG_RECORDS:
+            raise ModelCatalogSourceError("MODEL_CATALOG_RESPONSE_TOO_LARGE")
+        return tuple(raw_records)
 
     def _url(self, path: str) -> str:
         if path.startswith("/api/v1/"):
@@ -291,4 +332,4 @@ def _descriptor_values(value: object) -> tuple[str, ...]:
     return _string_tuple(value.get("values"))
 
 
-__all__ = ["OpenRouterCatalogSource"]
+__all__ = ["MAX_CATALOG_RECORDS", "MAX_CATALOG_RESPONSE_BYTES", "OpenRouterCatalogSource"]

@@ -29,7 +29,7 @@ use presence_renderer_supervisor::{
     PresenceRendererSupervisor,
 };
 use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStore};
-use provider_credentials::ProviderCredentialStore;
+use provider_credentials::{CredentialReplacement, ProviderCredentialStore};
 use voice_worker::{
     bundled_voice_launch, development_voice_launch, prepared_test_session, PreparedVoiceSession,
     VoiceStreamEvent, VoiceStreamInput, VoiceWorkerManager,
@@ -284,6 +284,7 @@ struct DesktopState {
     core: Arc<Mutex<Option<CoreBridge>>>,
     voice: Arc<VoiceWorkerManager>,
     preferences: Mutex<()>,
+    provider_update_in_progress: AtomicBool,
     data_dir: PathBuf,
     desktop_program: PathBuf,
     resource_dir: PathBuf,
@@ -294,6 +295,26 @@ struct DesktopState {
     presence_start_requested: AtomicBool,
     pet_placement_reconciled: AtomicBool,
     started_at: Instant,
+}
+
+struct ProviderUpdateGuard<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl Drop for ProviderUpdateGuard<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
+}
+
+fn begin_provider_update(state: &DesktopState) -> Result<ProviderUpdateGuard<'_>, String> {
+    state
+        .provider_update_in_progress
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .map_err(|_| "Another provider update is already in progress".to_owned())?;
+    Ok(ProviderUpdateGuard {
+        flag: &state.provider_update_in_progress,
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -472,19 +493,127 @@ async fn provider_openrouter_configure(
     input: OpenRouterConfigureInput,
 ) -> Result<OpenRouterStatus, String> {
     authorize_settings_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let _update_guard = begin_provider_update(&state)?;
     let credentials = ProviderCredentialStore::new(&state.data_dir);
     let configurations = ProviderConfigurationStore::new(&state.data_dir);
-    let configuration = configurations
-        .save_openrouter()
+    let previous_configuration = configurations
+        .load_openrouter()
         .map_err(|error| error.to_string())?;
-    credentials
-        .save_openrouter(&input.api_key)
+    let replacement = credentials
+        .begin_openrouter_replacement(&input.api_key)
         .map_err(|error| error.to_string())?;
-    restart_core(&state).map_err(|error| error.to_string())?;
+    let configuration = match configurations.save_openrouter() {
+        Ok(configuration) => configuration,
+        Err(error) => {
+            replacement.rollback().map_err(|_| {
+                "Provider configuration failed and the prior credential could not be restored"
+                    .to_owned()
+            })?;
+            return Err(error.to_string());
+        }
+    };
+    if restart_core(&state).is_err() {
+        restore_openrouter_candidate(
+            &state,
+            replacement,
+            &configurations,
+            previous_configuration.is_some(),
+        )
+        .await?;
+        return Err("OpenRouter credential validation could not start".to_owned());
+    }
+    let response = call_core(&state, model_catalog_refresh_request()).await;
+    if !catalog_refresh_is_configured(&response) {
+        restore_openrouter_candidate(
+            &state,
+            replacement,
+            &configurations,
+            previous_configuration.is_some(),
+        )
+        .await?;
+        return Err("OpenRouter credential validation failed".to_owned());
+    }
+    replacement.commit();
     Ok(OpenRouterStatus {
         configured: true,
         account_id: Some(configuration.account_id),
     })
+}
+
+fn model_catalog_refresh_request() -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": "provider-openrouter-validation",
+        "method": "models.catalog.refresh",
+        "params": {}
+    })
+}
+
+fn catalog_refresh_is_configured(response: &Value) -> bool {
+    response
+        .pointer("/result/account/credential_status")
+        .and_then(Value::as_str)
+        == Some("configured")
+        && response
+            .pointer("/result/last_error_code")
+            .is_some_and(Value::is_null)
+        && response.pointer("/result/stale").and_then(Value::as_bool) == Some(false)
+}
+
+async fn restore_openrouter_candidate(
+    state: &DesktopState,
+    replacement: CredentialReplacement,
+    configurations: &ProviderConfigurationStore,
+    had_previous_configuration: bool,
+) -> Result<(), String> {
+    replacement.rollback().map_err(|_| {
+        "OpenRouter validation failed and the prior credential could not be restored".to_owned()
+    })?;
+    let configuration_restored = if had_previous_configuration {
+        configurations.save_openrouter().map(|_| ())
+    } else {
+        configurations.delete_openrouter()
+    };
+    configuration_restored.map_err(|_| {
+        "OpenRouter validation failed and the prior provider configuration could not be restored"
+            .to_owned()
+    })?;
+    restart_core(state).map_err(|_| {
+        "OpenRouter validation failed and the prior provider could not be restarted".to_owned()
+    })?;
+    let _ = call_core(state, model_catalog_refresh_request()).await;
+    Ok(())
+}
+
+#[cfg(test)]
+mod provider_validation_tests {
+    use super::catalog_refresh_is_configured;
+    use serde_json::json;
+
+    #[test]
+    fn accepts_only_a_fresh_configured_catalog() {
+        assert!(catalog_refresh_is_configured(&json!({
+            "result": {
+                "account": { "credential_status": "configured" },
+                "last_error_code": null,
+                "stale": false
+            }
+        })));
+        assert!(!catalog_refresh_is_configured(&json!({
+            "result": {
+                "account": { "credential_status": "configured" },
+                "last_error_code": "MODEL_CATALOG_TIMEOUT",
+                "stale": true
+            }
+        })));
+        assert!(!catalog_refresh_is_configured(&json!({
+            "result": {
+                "account": { "credential_status": "invalid" },
+                "last_error_code": "CREDENTIAL_INVALID",
+                "stale": true
+            }
+        })));
+    }
 }
 
 #[tauri::command]
@@ -493,6 +622,7 @@ async fn provider_openrouter_delete(
     state: State<'_, DesktopState>,
 ) -> Result<OpenRouterStatus, String> {
     authorize_settings_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let _update_guard = begin_provider_update(&state)?;
     ProviderCredentialStore::new(&state.data_dir)
         .delete_openrouter()
         .map_err(|error| error.to_string())?;
@@ -2187,6 +2317,7 @@ pub fn run() {
                 core: Arc::new(Mutex::new(None)),
                 voice,
                 preferences: Mutex::new(()),
+                provider_update_in_progress: AtomicBool::new(false),
                 data_dir,
                 desktop_program,
                 resource_dir,

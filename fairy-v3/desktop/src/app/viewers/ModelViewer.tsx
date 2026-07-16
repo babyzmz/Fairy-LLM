@@ -24,6 +24,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 import { rewriteGltfResources, sceneNodes, type SceneNodeItem } from "./modelScene";
+import { assertScenePreviewBudget } from "./previewLimits";
 import "./model-viewer.css";
 
 interface ModelViewerProps {
@@ -160,15 +161,25 @@ export default function ModelViewer(props: ModelViewerProps) {
           disposeObject(loaded.scene);
           return;
         }
+        const sceneMetrics = measureScene(loaded.scene);
+        try {
+          assertScenePreviewBudget(sceneMetrics);
+        } catch (reason) {
+          disposeObject(loaded.scene);
+          throw reason;
+        }
         model = loaded.scene;
         scene.add(model);
         nodeItems = sceneNodes(model);
         setNodes(nodeItems);
-        setMetrics(measureScene(model));
+        setMetrics(sceneMetrics);
         fit();
       })
       .catch((reason: unknown) => {
-        if (!disposed) setError(reason instanceof Error ? reason.message : "3D model could not be decoded");
+        if (!disposed) {
+          renderer.setAnimationLoop(null);
+          setError(reason instanceof Error ? reason.message : "3D model could not be decoded");
+        }
       });
 
     return () => {

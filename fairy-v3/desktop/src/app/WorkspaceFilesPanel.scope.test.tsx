@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
   FilePresentationResult,
+  FileReadSession,
   FileSet,
   WorkspaceFile,
   WorkspaceFileContent,
@@ -67,6 +68,40 @@ describe("WorkspaceFilesPanel conversation scope", () => {
     expect(screen.queryByText("Conversation A late artifact")).not.toBeInTheDocument();
     expect(screen.getByText("Select a file")).toBeVisible();
   });
+
+  it("rejects an oversized 3D dependency set before opening any streams", async () => {
+    const file = workspaceFile("models/scene.glb");
+    const onOpenStream = vi.fn(async (): Promise<FileReadSession> => {
+      throw new Error("stream fan-out must not start");
+    });
+    render(panel({
+      versionId: "00000000-0000-4000-8000-0000000000c1",
+      file,
+      content: "",
+      mediaType: "model/gltf-binary",
+      streamRequired: true,
+      onOpenStream,
+      fileSet: {
+        id: "00000000-0000-4000-8000-0000000000f1",
+        workspace_id: "00000000-0000-4000-8000-0000000000f2",
+        version_id: "00000000-0000-4000-8000-0000000000c1",
+        kind: "gltf",
+        primary_path: file.path,
+        parser_version: "test-v1",
+        manifest_hash: "b".repeat(64),
+        members: [
+          { path: file.path, role: "primary", byte_length: 80 * 1024 * 1024, content_hash: "c".repeat(64) },
+          { path: "models/buffer.bin", role: "buffer", byte_length: 50 * 1024 * 1024, content_hash: "d".repeat(64) },
+        ],
+        missing_dependencies: [],
+        blocked_dependencies: [],
+      },
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "scene.glb" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("128 MiB");
+    expect(onOpenStream).not.toHaveBeenCalled();
+  });
 });
 
 function panel({
@@ -74,16 +109,24 @@ function panel({
   file,
   content,
   onRead,
+  mediaType = "text/plain",
+  streamRequired = false,
+  onOpenStream,
+  fileSet,
 }: {
   versionId: string;
   file: WorkspaceFile;
   content: string;
   onRead?: () => Promise<WorkspaceFileContent>;
+  mediaType?: string;
+  streamRequired?: boolean;
+  onOpenStream?: () => Promise<FileReadSession>;
+  fileSet?: FileSet;
 }) {
   const fileContent: WorkspaceFileContent = {
     file,
-    media_type: "text/plain",
-    stream_required: false,
+    media_type: mediaType,
+    stream_required: streamRequired,
     text: content,
   };
   return (
@@ -95,13 +138,13 @@ function panel({
       currentVersionId={versionId}
       loading={false}
       onRead={vi.fn(onRead ?? (async () => fileContent))}
-      onOpenStream={vi.fn(async () => { throw new Error("not streamed"); })}
+      onOpenStream={vi.fn(onOpenStream ?? (async () => { throw new Error("not streamed"); }))}
       onPresent={vi.fn(async () => ({
         job: { status: "ready" },
         presentation: null,
       }) as FilePresentationResult)}
       onCompare={vi.fn(async () => { throw new Error("not compared"); })}
-      onResolveFileSet={vi.fn(async () => ({
+      onResolveFileSet={vi.fn(async () => fileSet ?? ({
         id: "00000000-0000-4000-8000-0000000000f1",
         workspace_id: "00000000-0000-4000-8000-0000000000f2",
         version_id: versionId,

@@ -17,6 +17,8 @@ def test_catalog_source_merges_dedicated_endpoint_metadata_without_unknown_model
         assert request.headers["Authorization"] == "Bearer test-secret"
         path = request.url.path
         query = request.url.query.decode()
+        if path == "/api/v1/key":
+            return httpx.Response(200, json={"data": {"is_free_tier": False}})
         if path == "/api/v1/models" and query == "output_modalities=text":
             return httpx.Response(
                 200,
@@ -61,7 +63,8 @@ def test_catalog_source_merges_dedicated_endpoint_metadata_without_unknown_model
             return httpx.Response(
                 200,
                 json={
-                    "data": [
+                    "id": "google/gemini-3.1-flash-lite-image",
+                    "endpoints": [
                         {
                             "pricing": [
                                 {
@@ -124,7 +127,7 @@ def test_catalog_source_merges_dedicated_endpoint_metadata_without_unknown_model
     assert image.prices[0].cost_usd == "0.05"
     video = next(entry for entry in result.entries if entry.model_id == "bytedance/seedance-2.0")
     assert video.supported_resolutions == ("720p", "1080p")
-    assert len(requests) == 5
+    assert len(requests) == 6
 
 
 def test_catalog_source_classifies_invalid_credentials_without_exposing_response() -> None:
@@ -152,6 +155,21 @@ def test_catalog_source_requires_official_openrouter_origin() -> None:
             base_url="http://localhost:8080/api/v1",
             secret=SecretValue.from_text("test-secret"),
         )
+
+
+def test_catalog_source_rejects_oversized_response_before_json_decode() -> None:
+    oversized = b'{"data":[' + b" " * (4 * 1024 * 1024) + b"]}"
+    source = OpenRouterCatalogSource(
+        base_url="https://openrouter.ai/api/v1",
+        secret=SecretValue.from_text("test-secret"),
+        client=httpx.Client(
+            transport=httpx.MockTransport(lambda _request: httpx.Response(200, content=oversized))
+        ),
+    )
+
+    with pytest.raises(ModelCatalogSourceError) as error:
+        source.fetch()
+    assert error.value.error_code == "MODEL_CATALOG_RESPONSE_TOO_LARGE"
 
 
 def _chat_model(model_id: str) -> dict[str, object]:

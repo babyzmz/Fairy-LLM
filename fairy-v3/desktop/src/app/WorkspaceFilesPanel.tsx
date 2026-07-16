@@ -28,6 +28,7 @@ import type {
   Version,
   FileCompareResult,
 } from "../core/client";
+import { assertModelFileSetBudget } from "./viewers/previewLimits";
 
 const PdfViewer = lazy(() => import("./viewers/PdfViewer"));
 const DocumentViewer = lazy(() => import("./viewers/DocumentViewer"));
@@ -185,7 +186,27 @@ export function WorkspaceFilesPanel({
         if (request !== selectionRequestRef.current) return;
         setAnnotations(nextAnnotations.document);
       }
-      if (nextContent.stream_required) {
+      const isModel = nextContent.media_type === "model/gltf-binary" || nextContent.media_type === "model/gltf+json";
+      if (isModel) {
+        if (nextFileSet.missing_dependencies.length > 0 || nextFileSet.blocked_dependencies.length > 0) {
+          throw new Error("3D model dependencies are missing or outside the Workspace Version");
+        }
+        assertModelFileSetBudget(nextFileSet);
+        const sessions = await Promise.all(
+          nextFileSet.members.map(async (member) => ({
+            path: member.path,
+            session: await onOpenStream(member.path),
+          })),
+        );
+        if (request !== selectionRequestRef.current) return;
+        const primary = sessions.find((item) => item.path === nextFileSet.primary_path);
+        if (primary === undefined) throw new Error("3D model primary stream is unavailable");
+        setModelSource({
+          fileSet: nextFileSet,
+          primaryUrl: primary.session.url,
+          resources: Object.fromEntries(sessions.map((item) => [item.path, item.session.url])),
+        });
+      } else if (nextContent.stream_required) {
         const captionPaths = mediaCaptionPaths(path, files);
         const nextSession = await onOpenStream(path);
         const nextCaptions = await Promise.all(
@@ -208,25 +229,6 @@ export function WorkspaceFilesPanel({
               src: caption.session.url,
             })),
         );
-      }
-      if (nextContent.media_type === "model/gltf-binary" || nextContent.media_type === "model/gltf+json") {
-        if (nextFileSet.missing_dependencies.length > 0 || nextFileSet.blocked_dependencies.length > 0) {
-          throw new Error("3D model dependencies are missing or outside the Workspace Version");
-        }
-        const sessions = await Promise.all(
-          nextFileSet.members.map(async (member) => ({
-            path: member.path,
-            session: await onOpenStream(member.path),
-          })),
-        );
-        if (request !== selectionRequestRef.current) return;
-        const primary = sessions.find((item) => item.path === nextFileSet.primary_path);
-        if (primary === undefined) throw new Error("3D model primary stream is unavailable");
-        setModelSource({
-          fileSet: nextFileSet,
-          primaryUrl: primary.session.url,
-          resources: Object.fromEntries(sessions.map((item) => [item.path, item.session.url])),
-        });
       }
     } catch (readError) {
       if (request !== selectionRequestRef.current) return;
