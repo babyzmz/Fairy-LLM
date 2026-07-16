@@ -277,6 +277,10 @@ class AssistantLedgerApplication:
                 unit_of_work.commit()
         return interrupted
 
+    def resumable_waiting_turn_ids(self) -> tuple[UUID, ...]:
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.assistant.resumable_waiting_turn_ids()
+
     def _interrupt_command(self, unit_of_work, turn_id: UUID, run: CommandRun) -> None:
         if run.status not in {CommandStatus.QUEUED, CommandStatus.RUNNING}:
             return

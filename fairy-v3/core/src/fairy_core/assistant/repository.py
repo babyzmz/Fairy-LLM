@@ -588,6 +588,7 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin):
                                 CommandStatus.QUEUED.value,
                                 CommandStatus.WAITING_APPROVAL.value,
                                 CommandStatus.RUNNING.value,
+                                CommandStatus.REJECTED.value,
                             )
                         ),
                     )
@@ -615,6 +616,39 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin):
                 .mappings()
                 .all()
             )
+            budget_rows = (
+                connection.execute(
+                    select(assistant_turns.c.id)
+                    .join(
+                        command_runs,
+                        and_(
+                            command_runs.c.tenant_id == assistant_turns.c.tenant_id,
+                            command_runs.c.id == assistant_turns.c.budget_approval_run_id,
+                        ),
+                    )
+                    .where(
+                        assistant_turns.c.tenant_id == self._tenant_id,
+                        assistant_turns.c.status == AssistantTurnStatus.WAITING_FOR_TOOL.value,
+                        assistant_turns.c.budget_approval_run_id.is_not(None),
+                        or_(
+                            command_runs.c.status.in_(
+                                (
+                                    CommandStatus.WAITING_APPROVAL.value,
+                                    CommandStatus.QUEUED.value,
+                                    CommandStatus.REJECTED.value,
+                                )
+                            ),
+                            and_(
+                                command_runs.c.status == CommandStatus.RUNNING.value,
+                                command_runs.c.lease_until.is_not(None),
+                                command_runs.c.lease_until > now,
+                            ),
+                        ),
+                    )
+                )
+                .mappings()
+                .all()
+            )
         invocation_turns = {
             str(row["command_run_id"]): UUID(str(row["turn_id"])) for row in invocation_rows
         }
@@ -632,7 +666,68 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin):
                 live.add(UUID(str(turn_id)))
             except (TypeError, ValueError):
                 continue
+        live.update(UUID(str(row["id"])) for row in budget_rows)
         return tuple(sorted(live, key=str))
+
+    def resumable_waiting_turn_ids(self) -> tuple[UUID, ...]:
+        now = datetime.now(UTC)
+        resumable_command = or_(
+            command_runs.c.status.in_((CommandStatus.QUEUED.value, CommandStatus.REJECTED.value)),
+            and_(
+                command_runs.c.status == CommandStatus.RUNNING.value,
+                or_(
+                    command_runs.c.lease_until.is_(None),
+                    command_runs.c.lease_until <= now,
+                ),
+            ),
+        )
+        with self._session.read() as connection:
+            tool_rows = connection.execute(
+                select(assistant_tool_invocations.c.turn_id)
+                .join(
+                    assistant_turns,
+                    and_(
+                        assistant_turns.c.tenant_id == assistant_tool_invocations.c.tenant_id,
+                        assistant_turns.c.id == assistant_tool_invocations.c.turn_id,
+                    ),
+                )
+                .join(
+                    command_runs,
+                    and_(
+                        command_runs.c.tenant_id == assistant_tool_invocations.c.tenant_id,
+                        command_runs.c.id == assistant_tool_invocations.c.command_run_id,
+                    ),
+                )
+                .where(
+                    assistant_tool_invocations.c.tenant_id == self._tenant_id,
+                    assistant_turns.c.status == AssistantTurnStatus.WAITING_FOR_TOOL.value,
+                    assistant_tool_invocations.c.status.in_(
+                        (
+                            ToolInvocationStatus.QUEUED.value,
+                            ToolInvocationStatus.RUNNING.value,
+                        )
+                    ),
+                    resumable_command,
+                )
+            ).all()
+            budget_rows = connection.execute(
+                select(assistant_turns.c.id)
+                .join(
+                    command_runs,
+                    and_(
+                        command_runs.c.tenant_id == assistant_turns.c.tenant_id,
+                        command_runs.c.id == assistant_turns.c.budget_approval_run_id,
+                    ),
+                )
+                .where(
+                    assistant_turns.c.tenant_id == self._tenant_id,
+                    assistant_turns.c.status == AssistantTurnStatus.WAITING_FOR_TOOL.value,
+                    assistant_turns.c.budget_approval_run_id.is_not(None),
+                    resumable_command,
+                )
+            ).all()
+        turn_ids = {UUID(str(row[0])) for row in (*tool_rows, *budget_rows)}
+        return tuple(sorted(turn_ids, key=str))
 
     def interrupt_orphaned_turns(
         self,

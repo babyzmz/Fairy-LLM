@@ -721,17 +721,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         );
       },
       async decideApproval(approvalId: string, approved: boolean) {
-        const result = await runAction(() =>
+        await runAction(() =>
           client.approvals.decide({
             approval_id: approvalId,
             approved,
           }),
         );
-        if (result.approval.task_id === chatAssistant.turn?.task_id) {
-          await chatAssistant.resume();
-        } else if (result.approval.task_id === projectAssistant.turn?.task_id) {
-          await projectAssistant.resume();
-        }
       },
       async startPreview() {
         if (workspaceTask === null) throw new Error("Task is unavailable");

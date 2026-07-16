@@ -174,7 +174,8 @@ def test_active_turn_cancel_tolerates_concurrent_terminal_write(
         )
         turn_id = UUID(str(created["id"]))
         cancellation = CancellationToken()
-        service._turn_cancellations[turn_id] = cancellation  # type: ignore[attr-defined]
+        scheduler = service._assistant_scheduler  # type: ignore[attr-defined]
+        scheduler._active[turn_id] = cancellation  # type: ignore[attr-defined]
         original_cancel = service._assistant_ledger.cancel_turn  # type: ignore[attr-defined]
 
         def concurrent_cancel(**kwargs):

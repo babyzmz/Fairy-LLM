@@ -117,6 +117,8 @@ class AssistantRepository(Protocol):
 
     def live_turn_ids(self) -> tuple[UUID, ...]: ...
 
+    def resumable_waiting_turn_ids(self) -> tuple[UUID, ...]: ...
+
     def interrupt_orphaned_turns(
         self,
         *,

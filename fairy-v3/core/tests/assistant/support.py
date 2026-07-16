@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
+from typing import Any
 
 from fairy_core.assistant.tools import ToolResult
 from fairy_core.commanding.registry import ToolDefinition
@@ -15,6 +17,23 @@ from fairy_core.providers import (
     ProviderKind,
     ProviderProfile,
 )
+
+
+def wait_for_turn(
+    service: Any,
+    turn_id: str,
+    *,
+    status: str = "completed",
+    timeout_seconds: float = 5.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        turn = service.invoke("assistant.turns.get", {"turn_id": turn_id})
+        if turn["status"] == status:
+            return turn
+        time.sleep(0.01)
+    current = service.invoke("assistant.turns.get", {"turn_id": turn_id})
+    raise AssertionError(f"Assistant Turn did not reach {status!r}; current={current['status']!r}")
 
 
 class ScriptedProvider:

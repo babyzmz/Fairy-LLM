@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
+from uuid import UUID
 
 import pytest
 
@@ -12,7 +14,7 @@ from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.models import TaskStatus
 from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.transports.stdio import build_local_service
-from tests.assistant.support import RecordingToolExecutor, ScriptedProvider
+from tests.assistant.support import RecordingToolExecutor, ScriptedProvider, wait_for_turn
 from tests.assistant.test_application import _scratch_task, _turn
 
 
@@ -82,9 +84,8 @@ def test_standard_profile_approval_resumes_one_tool_effect_once(tmp_path: Path) 
         )
         assert decision["approval"]["decision"] == "approved"
         assert decision["changeset"] is None
-        assert executor.calls == []
 
-        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        completed = wait_for_turn(service, turn["id"])
         replayed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
         trace = service.invoke("assistant.turns.trace.list", {"turn_id": turn["id"]})
 
@@ -132,7 +133,7 @@ def test_rejected_tool_becomes_bounded_result_and_duplicate_decision_is_idempote
 
         first = service.invoke("approvals.decide", request)
         second = service.invoke("approvals.decide", request)
-        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        completed = wait_for_turn(service, turn["id"])
         trace = service.invoke("assistant.turns.trace.list", {"turn_id": turn["id"]})
 
         assert first == second
@@ -164,6 +165,53 @@ def test_rejected_tool_becomes_bounded_result_and_duplicate_decision_is_idempote
         service.close()
 
 
+def test_approval_queued_before_prior_background_runner_exits_resumes_once(
+    tmp_path: Path,
+) -> None:
+    provider = _approval_provider()
+    executor = RecordingToolExecutor(summary="Notification sent once")
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((provider,)),
+        tool_executor=executor,
+    )
+    first_finish_reached = Event()
+    release_first_finish = Event()
+    finish_calls = 0
+    scheduler = service._assistant_scheduler  # type: ignore[attr-defined]
+    original_finish = scheduler._finish  # type: ignore[attr-defined]
+
+    def delayed_first_finish(turn_id, cancellation) -> None:
+        nonlocal finish_calls
+        finish_calls += 1
+        if finish_calls == 1:
+            first_finish_reached.set()
+            assert release_first_finish.wait(timeout=5)
+        original_finish(turn_id, cancellation)
+
+    scheduler._finish = delayed_first_finish  # type: ignore[attr-defined,method-assign]
+    try:
+        task = _scratch_task(service, "Approve while the first Runner is exiting")
+        turn = _turn(service, task, "turn:approval:runner-race")
+        service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
+        assert first_finish_reached.wait(timeout=5)
+        approval = service.invoke("approvals.list", {"task_id": task["id"]})["items"][0]
+
+        service.invoke(
+            "approvals.decide",
+            {"approval_id": approval["id"], "approved": True},
+        )
+        release_first_finish.set()
+        completed = wait_for_turn(service, turn["id"])
+
+        assert completed["status"] == "completed"
+        assert len(executor.calls) == 1
+        assert len(provider.requests) == 2
+    finally:
+        release_first_finish.set()
+        service.close()
+
+
 def test_approved_turn_resumes_after_core_restart_and_expired_claim(
     tmp_path: Path,
 ) -> None:
@@ -177,15 +225,13 @@ def test_approved_turn_resumes_after_core_restart_and_expired_claim(
     turn = _turn(first_service, task, "turn:approval:restart")
     first_service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
     approval = first_service.invoke("approvals.list", {"task_id": task["id"]})["items"][0]
-    first_service.invoke(
-        "approvals.decide",
-        {
-            "approval_id": approval["id"],
-            "approved": True,
-        },
+    first_service._application.record_approval_decision(  # type: ignore[attr-defined]
+        approval_id=UUID(approval["id"]),
+        approved=True,
+        decided_by="user",
     )
     with first_service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
-        invocation = unit_of_work.assistant.list_tool_invocations(turn["id"])[0]
+        invocation = unit_of_work.assistant.list_tool_invocations(UUID(turn["id"]))[0]
         assert invocation.command_run_id is not None
         unit_of_work.commands.claim(
             invocation.command_run_id,
@@ -219,7 +265,7 @@ def test_approved_turn_resumes_after_core_restart_and_expired_claim(
         tool_executor=executor,
     )
     try:
-        completed = second_service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        completed = wait_for_turn(second_service, turn["id"])
 
         assert completed["status"] == "completed"
         assert len(executor.calls) == 1

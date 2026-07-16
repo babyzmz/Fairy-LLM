@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
-from threading import RLock
 from typing import Any, cast
 from uuid import UUID
 from weakref import finalize
@@ -25,6 +22,7 @@ from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.assistant.trace_service import TurnTraceService
+from fairy_core.assistant.turn_scheduler import AssistantTurnScheduler
 from fairy_core.assistant.turn_selection import resolve_turn_model_source
 from fairy_core.commanding import EventVisibility
 from fairy_core.commanding.policy import PolicyEngine
@@ -102,6 +100,7 @@ from fairy_core.domain.errors import (
     InvalidTransitionError,
     MemoryScopeViolationError,
 )
+from fairy_core.domain.execution import Approval, ApprovalDecision
 from fairy_core.execution.application import (
     ProjectExecutionApplication,
     ProjectExecutionToolExecutor,
@@ -118,7 +117,7 @@ from fairy_core.model_catalog.ports import ModelCatalogSource
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.presentation.packs import RendererPackInstaller
-from fairy_core.providers import CancellationToken, ProviderRegistry
+from fairy_core.providers import ProviderRegistry
 from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
 from fairy_core.research.ports import FetchPort
 from fairy_core.runtime.models import RuntimeExecutorError
@@ -152,9 +151,6 @@ class CoreResponseValidationError(RuntimeError):
         self.method = method
         self.validation_error = error
         super().__init__(f"Core method returned an invalid response: {method}")
-
-
-logger = logging.getLogger(__name__)
 
 
 class CoreService:
@@ -209,8 +205,6 @@ class CoreService:
             registry=self._voice_registry,
         )
         self._image_attachments = image_attachment_store or ImageAttachmentStore()
-        self._turn_cancellations: dict[UUID, CancellationToken] = {}
-        self._turn_cancellation_lock = RLock()
         self._runtime_application = runtime_application
         self._default_execution_target = default_execution_target
         self._execution_policy = ExecutionPolicyResolver(sandbox_health_provider)
@@ -353,11 +347,10 @@ class CoreService:
             tool_executor=effective_tool_executor,
             execution_policy=self._execution_policy,
         )
-        self._assistant_executor = ThreadPoolExecutor(
-            max_workers=4,
-            thread_name_prefix="fairy-assistant",
+        self._assistant_scheduler = AssistantTurnScheduler(
+            application=self._assistant_application,
+            ledger=self._assistant_ledger,
         )
-        self._assistant_executor_closed = False
         self._finalizer = finalize(self, on_close) if on_close is not None else None
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
             "approvals.decide": self._decide_approval,
@@ -453,13 +446,7 @@ class CoreService:
             raise RuntimeError("Core service handlers do not match the public method catalog")
 
     def close(self) -> None:
-        with self._turn_cancellation_lock:
-            self._assistant_executor_closed = True
-            for cancellation in self._turn_cancellations.values():
-                cancellation.cancel()
-        self._assistant_executor.shutdown(wait=True, cancel_futures=True)
-        with self._turn_cancellation_lock:
-            self._turn_cancellations.clear()
+        self._assistant_scheduler.close()
         close_resources(
             self._image_attachments,
             self._model_catalog_service,
@@ -476,12 +463,15 @@ class CoreService:
         *,
         verify_running_previews: bool = False,
     ) -> dict[str, int]:
-        return recover_interrupted_work(
+        result = recover_interrupted_work(
             assistant=self._assistant_ledger,
             runtime=self._runtime_application,
             media=self._media_application,
             verify_running_previews=verify_running_previews,
         )
+        for turn_id in self._assistant_ledger.resumable_waiting_turn_ids():
+            self._assistant_scheduler.start(turn_id)
+        return result
 
     def invoke(self, method: str, params: Mapping[str, Any]) -> Any:
         definition = CORE_METHODS.get(method)
@@ -691,11 +681,7 @@ class CoreService:
 
     def _cancel_assistant_turn(self, request: BaseModel) -> Any:
         validated = cast(AssistantTurnCancelInput, request)
-        with self._turn_cancellation_lock:
-            cancellation = self._turn_cancellations.get(validated.turn_id)
-            was_running = cancellation is not None
-            if cancellation is not None:
-                cancellation.cancel()
+        was_running = self._assistant_scheduler.cancel(validated.turn_id)
         if was_running:
             self._cancel_running_tool_command(validated.turn_id)
         try:
@@ -735,55 +721,12 @@ class CoreService:
     def _run_assistant_turn(self, request: BaseModel) -> Any:
         self._refresh_extensions()
         turn_id = cast(AssistantTurnRunInput, request).turn_id
-        cancellation = CancellationToken()
-        with self._turn_cancellation_lock:
-            if turn_id in self._turn_cancellations:
-                raise ValueError("Assistant Turn is already running")
-            self._turn_cancellations[turn_id] = cancellation
-        try:
-            return self._assistant_application.run_turn(turn_id, cancellation)
-        finally:
-            with self._turn_cancellation_lock:
-                if self._turn_cancellations.get(turn_id) is cancellation:
-                    self._turn_cancellations.pop(turn_id, None)
+        return self._assistant_scheduler.run(turn_id)
 
     def _start_assistant_turn(self, request: BaseModel) -> Any:
         self._refresh_extensions()
         turn_id = cast(AssistantTurnStartInput, request).turn_id
-        turn = self._assistant_ledger.get_turn(turn_id)
-        if turn.status in {
-            AssistantTurnStatus.COMPLETED,
-            AssistantTurnStatus.CANCELLED,
-            AssistantTurnStatus.FAILED,
-        }:
-            return turn
-        cancellation = CancellationToken()
-        with self._turn_cancellation_lock:
-            if self._assistant_executor_closed:
-                raise RuntimeError("Core service is closing")
-            if turn_id in self._turn_cancellations:
-                return self._assistant_ledger.get_turn(turn_id)
-            self._turn_cancellations[turn_id] = cancellation
-            self._assistant_executor.submit(
-                self._run_assistant_turn_in_background,
-                turn_id,
-                cancellation,
-            )
-        return self._assistant_ledger.get_turn(turn_id)
-
-    def _run_assistant_turn_in_background(
-        self,
-        turn_id: UUID,
-        cancellation: CancellationToken,
-    ) -> None:
-        try:
-            self._assistant_application.run_turn(turn_id, cancellation)
-        except Exception:
-            logger.exception("Assistant Turn %s failed in the background Runner", turn_id)
-        finally:
-            with self._turn_cancellation_lock:
-                if self._turn_cancellations.get(turn_id) is cancellation:
-                    self._turn_cancellations.pop(turn_id, None)
+        return self._assistant_scheduler.start(turn_id)
 
     def _retry_assistant_turn(self, request: BaseModel) -> Any:
         validated = cast(AssistantTurnRetryInput, request)
@@ -1037,9 +980,55 @@ class CoreService:
             "approval": context.approval,
         }
 
+    def _assistant_turn_id_for_approval(self, approval: Approval) -> UUID | None:
+        if approval.changeset_id is not None:
+            return None
+        with self._unit_of_work_factory() as unit_of_work:
+            if approval.tool_invocation_id is not None:
+                invocation = unit_of_work.assistant.get_tool_invocation(approval.tool_invocation_id)
+                if (
+                    invocation is None
+                    or invocation.command_run_id != approval.command_run_id
+                    or invocation.task_id != approval.task_id
+                ):
+                    raise InvalidTransitionError(
+                        "approval does not match its Assistant Tool Invocation"
+                    )
+                turn = unit_of_work.assistant.get_turn(invocation.turn_id)
+                if turn is None or turn.task_id != approval.task_id:
+                    raise InvalidTransitionError(
+                        "approval Tool Invocation does not match its Assistant Turn"
+                    )
+                return turn.id
+
+            command = unit_of_work.commands.get_run(approval.command_run_id)
+            if command is None:
+                raise KeyError(f"command run not found: {approval.command_run_id}")
+            if command.command_name != "model.generate.expensive":
+                return None
+            raw_turn_id = command.input_payload.get("turn_id")
+            try:
+                turn_id = UUID(str(raw_turn_id))
+            except (TypeError, ValueError) as error:
+                raise InvalidTransitionError(
+                    "model budget approval has no valid Assistant Turn"
+                ) from error
+            turn = unit_of_work.assistant.get_turn(turn_id)
+            if (
+                turn is None
+                or turn.task_id != approval.task_id
+                or turn.budget_approval_run_id != command.id
+            ):
+                raise InvalidTransitionError(
+                    "model budget approval does not match its Assistant Turn"
+                )
+            return turn.id
+
     def _decide_approval(self, request: BaseModel) -> Any:
         validated = cast(ApprovalDecisionInput, request)
         approval = self._application.get_approval(validated.approval_id)
+        was_pending = approval.decision is ApprovalDecision.PENDING
+        assistant_turn_id = self._assistant_turn_id_for_approval(approval)
         changeset = None
         if approval.changeset_id is not None:
             changeset = self._application.decide_approval(
@@ -1053,8 +1042,14 @@ class CoreService:
                 approved=validated.approved,
                 decided_by="user",
             )
+        decided = self._application.get_approval(validated.approval_id)
+        if assistant_turn_id is not None:
+            self._assistant_scheduler.start(
+                assistant_turn_id,
+                restart_if_running=was_pending,
+            )
         return {
-            "approval": self._application.get_approval(validated.approval_id),
+            "approval": decided,
             "changeset": changeset,
         }
 

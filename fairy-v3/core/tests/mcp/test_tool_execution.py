@@ -8,7 +8,7 @@ from fairy_core.mcp.models import McpTransport
 from fairy_core.mcp.ports import McpCancelledError, McpTransportInterrupted
 from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.transports.stdio import build_local_service
-from tests.assistant.support import ScriptedProvider
+from tests.assistant.support import ScriptedProvider, wait_for_turn
 from tests.assistant.test_application import _scratch_task, _turn
 from tests.mcp.support import FakeMcpConnector, issue_tools
 
@@ -251,7 +251,7 @@ def test_standard_write_waits_for_generic_approval_before_mcp_call(tmp_path: Pat
             "approvals.decide",
             {"approval_id": approval["id"], "approved": True},
         )
-        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        completed = wait_for_turn(service, turn["id"])
         assert completed["status"] == "completed"
         assert len(connector.calls) == 1
     finally:

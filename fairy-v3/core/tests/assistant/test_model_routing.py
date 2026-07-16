@@ -21,7 +21,7 @@ from fairy_core.providers import (
     ProviderRegistry,
 )
 from fairy_core.transports.stdio import build_local_service
-from tests.assistant.support import ScriptedProvider
+from tests.assistant.support import ScriptedProvider, wait_for_turn
 
 
 class PricedCatalogSource:
@@ -300,7 +300,7 @@ def test_unknown_cost_route_waits_for_and_resumes_budget_approval(tmp_path: Path
             "approvals.decide",
             {"approval_id": approval["id"], "approved": True},
         )
-        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        completed = wait_for_turn(service, turn["id"])
         messages = service.invoke(
             "messages.list",
             {"conversation_id": task["conversation_id"]},
