@@ -1,6 +1,6 @@
 # Apple-Aligned Liquid Glass Fairy Presence Redesign
 
-Status: Approved design, pending implementation plan and implementation.
+Status: Approved design; Windows optical path implemented and verified on 2026-07-19.
 
 Date: 2026-07-19
 
@@ -22,7 +22,7 @@ The work fixes the current visible failures:
 ## 2. Product Principles
 
 1. Fairy is one coherent glass object, not a Shader circle placed over a rectangular WebView.
-2. The center preserves readable background structure. Optical deformation grows toward the edge.
+2. The entire Fairy body is Liquid Glass. Its center uses near-identity screen sampling while optical deformation grows toward the edge.
 3. Glass responds to content, light, pointer velocity, interaction, and size without becoming opaque chrome.
 4. Input text, icons, caret, menus, and reply content are rendered above the optical material and are never refracted.
 5. Shape blending is transitional. A liquid bridge must not remain in the stable expanded state.
@@ -133,13 +133,15 @@ Startup order is strict:
 
 Each frame then:
 
-1. copies the current capture into `clean_backdrop_current` outside contaminated regions;
-2. preserves `clean_backdrop_previous` inside high-confidence Fairy coverage;
-3. uses a short union of recent masks while moving so old and new positions cannot leave trails;
-4. permits conservative live updates in low-alpha interior areas only when reconstruction confidence is high;
-5. swaps the clean textures after presentation.
+1. copies the current monitor capture outside the previous Fairy coverage;
+2. matches the newest presented overlay that predates the WGC timestamp;
+3. removes that known premultiplied overlay with a denominator clamped to `0.06`;
+4. rejects out-of-gamut recovery and bounds the accepted per-frame color delta;
+5. recovers sharp coverage boundaries from a two-pixel lower-alpha neighbor so old rings cannot remain in the cache;
+6. retains the previous clean value only where reconstruction confidence is insufficient; and
+7. swaps the clean textures after presentation.
 
-The inverse alpha division path is removed. Values are clamped to finite linear-light ranges before color conversion. No path may divide by a value approaching zero.
+No path divides by a value approaching zero. The optical shell remains below `0.925` coverage so animated monitor content continues to converge while Fairy is stationary. The cache never accepts the current composite directly inside known Fairy coverage, because doing so would recursively accumulate the identity rings and highlights.
 
 ### 6.3 Capture transitions
 
@@ -163,11 +165,11 @@ Smooth union is used only while shapes are morphing. Stable surfaces are visuall
 
 The normalized inward distance from the SDF boundary drives optics:
 
-- center region, approximately 58 percent of radius: identity sampling with negligible displacement;
-- transition region, approximately 27 percent: smooth onset of surface normal and scattering;
-- outer region, approximately 15 percent: primary refraction, Fresnel response, edge compression, and restrained dispersion.
+- inner region, approximately 30 percent of the radius: near-identity sampling with only the restrained material and identity layers;
+- transition region: one continuous normal-driven refraction grows through the middle of the body instead of appearing only as a narrow border;
+- outer region, approximately 30 percent: strongest refraction, Fresnel response, edge compression, and restrained dispersion.
 
-Interactive edge refraction targets roughly 4 to 8 logical pixels. Idle refraction is lower. Chromatic dispersion targets 0.2 to 0.8 logical pixels and has a hard maximum of 1 logical pixel. The center must not behave as a magnifying lens.
+Interactive edge refraction targets roughly 4 to 10 logical pixels. Idle refraction is lower. Chromatic dispersion targets 0.1 to 0.35 physical pixels and has a hard maximum of 0.45 physical pixels. The center must not behave as a magnifying lens. Once displacement exceeds a subpixel threshold, the refracted sample replaces the underlying desktop nearly opaquely; blending two readable desktop copies is forbidden.
 
 ### 7.3 Surface response
 
@@ -182,7 +184,7 @@ The material combines:
 - restrained RGB separation only at high curvature;
 - adaptive tint, shadow, and highlight range based on sampled backdrop luminance.
 
-The fixed stack of concentric decorative rings is removed. Fairy's identity remains through a subtle breathing center point and a restrained internal blue-white energy response. This identity layer is independent of background refraction and cannot disappear when capture contrast changes.
+The fixed stack of heavy decorative rings is removed. Fairy retains two restrained atmospheric line rings and a subtle breathing center point on a dedicated foreground identity plane. This identity plane is composited above the glass, never changes the lens sampling coordinates, and cannot disappear when capture contrast changes.
 
 ### 7.4 Content plane
 
@@ -304,7 +306,8 @@ If the display cannot present the selected rate, health reporting exposes the ac
 
 ### Visual acceptance
 
-- The central backdrop remains structurally unchanged and readable.
+- The whole circular body reads as glass while the central backdrop remains structurally unchanged and readable.
+- The atmospheric rings and breathing point remain on an undistorted foreground identity plane.
 - Lensing grows toward the outer edge and never becomes a full-center magnifier.
 - Dispersion is visible only as a restrained high-curvature accent.
 - The breathing center identity remains visible in every state.

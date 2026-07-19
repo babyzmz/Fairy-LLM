@@ -1,6 +1,7 @@
 # Fairy V3 Completion Audit
 
-- Audit date: 2026-07-14
+- Baseline audit date: 2026-07-14
+- Liquid Glass amendments: 2026-07-17 and 2026-07-19
 - Product root: `fairy-v3/`
 - Source baseline: the approved Fairy V3 architecture plan and the supplied
   Mojoclaw/Mojocore architecture reference
@@ -13,6 +14,38 @@ but a required external runtime was absent during this audit. A skipped or
 deselected test is never counted as proof. No accepted row is `Missing` or
 `Contradicted`.
 
+## 2026-07-17 Liquid Glass Amendment
+
+This amendment supersedes the Pet-specific statements below where they conflict.
+`standard` optics remain procedural and perform no desktop capture. Explicit
+`enhanced` optics use WGC -> D3D11 -> DirectComposition. WGC acquires the active
+monitor frame, while the production shader hard-clamps sampling to the Pet
+surface plus a 24-logical-pixel optical guard band. Textures remain GPU-local and
+are never persisted, analyzed, uploaded, copied to the CPU, or sent through
+WebView IPC. `pet-input` never captures.
+
+The current WebGL/Canvas, TypeScript, Rust, production HLSL compilation, browser
+visual, and real enhanced WGC gates are proven. The interactive Windows smoke
+completed `CreateForMonitor`, zero-copy D3D11 sampling, DirectComposition
+presentation, screenshot capture, and click-through checks. It measured 59.90
+FPS at the 60 FPS target and 143.48 FPS at the 144 FPS target; both p95 render
+latencies remained below 8 ms. Runtime cadence produced 15.13/29.95/59.61/144.23
+FPS, and the native window-group gate proved WebView/DirectComposition frame
+identity plus input core alignment. The earlier sandbox-only HRESULT
+`0x80070424` is not a production failure. No release or Docker build was
+performed for this development amendment.
+
+The 2026-07-19 amendment also proves that the enhanced source did not regress to
+single-window capture. The runtime item and selected monitor were both
+2560 x 1440, source stage was `monitor_capture_started`, and
+`capture_window_handle` remained null. A stationary-lens red/green composite
+gate measured mean lens-pixel changes of 73.39/73.68/73.74 at 60/144/300 FPS,
+showing that moving screen content updates without dragging Fairy. The same
+runs measured 59.81/142.91/297.68 average FPS; the 300 FPS path reported
+200.12 P1 FPS and 0.218 ms DirectComposition present p95. Bounded overlay
+reconstruction and lower-alpha edge recovery removed recursive white rings
+without CPU readback or pixel IPC. No release or Docker build was performed.
+
 ## Acceptance Summary
 
 Fairy V3 is functionally source-complete against the approved plan. Local,
@@ -22,10 +55,11 @@ also passes its real RTX 5060 Ti performance gate: first-frame p95 is 423.6ms,
 prefetched gap is 0ms, and cancellation response is 15.2ms. The companion is
 now a dual-window Liquid Glass surface with a WebGL2/GLSL production renderer,
 Canvas compatibility fallback, deterministic interaction phases, and a
-Rust-owned placement and cursor coordinator. Its approved privacy-safe optical
+Rust-owned placement and cursor coordinator. Its default privacy-safe optical
 route uses screen-locked procedural illumination, SDF thickness and normals,
-bounded RGB dispersion, and directional caustics. It never captures or samples
-desktop pixels and does not claim true desktop refraction.
+bounded RGB dispersion, and directional caustics. An explicit enhanced route
+performs bounded-sampling GPU-only live refraction without giving the WebView or
+Companion a general capture API.
 
 ## Implementation Changes
 
@@ -78,7 +112,7 @@ desktop pixels and does not claim true desktop refraction.
 | Hermes relational memory | Proven | Observation, Claim, revisions, Tombstones, policy, lexical projection, immutable Snapshot, degraded fallback, property tests, PostgreSQL generated `tsvector`, and RLS pass. |
 | Screen understanding and game perception | Proven | Tauri display/window capture, explicit preview/attach, PNG/hash/scope checks, multimodal context tests, and `perception.spec.ts` using a Game window. |
 | STT and streaming TTS | Proven | Core VoiceSession contracts, native loopback token, PCM Tauri Channel/AudioWorklet, sentence ordering, cancellation, packaged CosyVoice/TensorRT worker, and `voice.spec.ts` pass. Ten enforced real RTX 5060 Ti samples produced a 423.6ms first-frame p95, 0ms prefetched gap, and 15.2ms cancellation response. |
-| Programmatic Fairy Pet | Proven | Tauri `pet-render` and `pet-input` windows, a Rust coordinator, deterministic interaction phases, Three.js/WebGL2 SDF glass, screen-locked procedural optics, bounded RGB dispersion and caustics, Canvas fallback, reply/voice projections, revision-fenced preferences, native placement, quick scratch chat, menus, and Reduced Motion pass unit, browser, native HWND, GPU, and visual tests. The Pet has no CoreClient, project state, approval decision, desktop sampler, capture, or execution API. |
+| Programmatic Fairy Pet | Proven | Dynamically and serially created Tauri `pet-render`/`pet-input` windows, a Rust coordinator, deterministic interaction phases, display-adaptive 15/30/60/144/300 runtime cadence, Three.js/WebGL2 SDF glass, procedural standard optics, real bounded-sampling WGC/D3D11/DirectComposition enhanced optics, Canvas fallback, reply/voice projections, revision-fenced preferences, atomic native placement, quick scratch chat, menus, and Reduced Motion pass unit, browser, HLSL compile, Rust, real native performance, window-alignment, click-through, and screenshot gates. The Pet has no CoreClient, project state, approval decision, general capture API, or execution API. |
 | Slash Commands | Proven | Core-generated metadata and exact parser tests; natural-language keyword routing is statically forbidden. |
 | Typed system actions | Proven | HTTPS URL, managed reveal path, clipboard, notification, fixed Settings, approval/idempotency journal, Rust protocol, and shell-shaped payload rejection tests. |
 | Governed Fairy Skills | Proven | Strict immutable package loader, provenance/hash/schema tests, Registry integration, Scope-bound private Artifact, and permission tests. |
@@ -100,8 +134,9 @@ desktop pixels and does not claim true desktop refraction.
   authorities, privileged Renderer imports, Docker sockets/host namespaces,
   project-worker host binds, unowned source types, empty source directories,
   and oversized source modules.
-- Source modules remain below 1,200 lines and CSS below 1,500 lines; generated
-  contracts are exempt and are checked by deterministic regeneration.
+- Boundary-checked Python and TypeScript/JavaScript modules remain below 1,200
+  lines and CSS below 1,500 lines; generated contracts and Rust platform modules
+  are exempt and are checked by their own compiler and test gates.
 
 ## Environment Evidence
 
@@ -116,14 +151,14 @@ desktop pixels and does not claim true desktop refraction.
   AMD Radeon integrated graphics for power-saving. Disabling GPU/WebGL selected
   the Canvas compatibility renderer without breaking pass-through, focus,
   topmost ordering, or tray lifetime.
-- The final Shader completed separate 30-minute native soaks with 354 samples
+- The 2026-07-14 baseline Shader completed separate 30-minute native soaks with 354 samples
   per GPU. NVIDIA D3D11 reported 0.054ms GPU-frame p95, 0.2ms CPU-frame p95,
   0.056% average single-core CPU, and 4.55MiB process-tree private-memory
   growth. AMD D3D11 reported 2.43ms GPU-frame p95, 0.2ms CPU-frame p95, 0.166%
   average single-core CPU, and 8.27MiB process-tree private-memory growth. Both
   sessions ended with the Liquid renderer healthy and running.
 
-## Fresh Release Evidence
+## Historical Fresh Release Evidence (2026-07-14 Baseline)
 
 The final local gate ran after the cleanup and safety changes:
 
@@ -159,7 +194,7 @@ Docker/PostgreSQL/S3/OCI and the required real WSL attestation, structured
 execution, projectless Workspace Runtime, and static Preview lifecycle all ran
 as part of the command and passed.
 
-## Desktop Bundle Evidence
+## Historical Desktop Bundle Evidence (2026-07-14 Baseline)
 
 The final Windows release rebuild compiled the optimized Tauri application,
 bundled the migration-fixed Core sidecar, pinned MinGit, and the native
@@ -190,7 +225,7 @@ powershell -File scripts\test-presence-soak.ps1 -DurationMinutes 30 -GpuPreferen
 powershell -File scripts\test-presence-install-cycle.ps1 -BaselineInstaller 'C:\path\Fairy_0.1.0_x64_en-US.msi'
 ```
 
-## Git Evidence
+## Historical Git Evidence (2026-07-14 Baseline)
 
 `git diff --check` passes. The twelve Liquid Glass implementation tasks were
 independently verified and committed on `codex/fairy-v3`; the final visual and

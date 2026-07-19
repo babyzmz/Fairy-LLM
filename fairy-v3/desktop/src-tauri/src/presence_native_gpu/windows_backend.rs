@@ -13,7 +13,7 @@ use super::{
     NativeGpuBackend, NativeGpuConfig, NativeGpuError, NativeGpuExpansionDirection,
     NativeGpuLifecycle, NativeGpuPresentation, NativeGpuStatus, NativeGpuVisualState,
 };
-use crate::presence_coordinator::PhysicalFrame;
+use crate::presence_coordinator::{PhysicalFrame, PET_CORE_EXTENT_LOGICAL};
 use windows::core::{w, Interface, PCSTR, PCWSTR};
 use windows::Graphics::Capture::GraphicsCaptureItem;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -42,7 +42,8 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
 };
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    CreateEllipticRgn, DeleteObject, GetMonitorInfoW, GetWindowRgnBox, MonitorFromPoint,
+    SetWindowRgn, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::Com::{CoDecrementMTAUsage, CoIncrementMTAUsage, CO_MTA_USAGE_COOKIE};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -52,14 +53,16 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED};
+use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowRect, IsWindow,
     IsWindowVisible, PeekMessageW, PostMessageW, RegisterClassW, SetWindowPos, ShowWindow,
-    TranslateMessage, HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, MSG, PBT_APMSUSPEND, PM_REMOVE,
-    SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SW_SHOWNOACTIVATE,
-    WM_CLOSE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCHITTEST, WM_POWERBROADCAST, WM_QUIT, WNDCLASSW,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_EX_TRANSPARENT, WS_POPUP,
+    TranslateMessage, HTCLIENT, HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, MA_NOACTIVATE, MSG,
+    PBT_APMSUSPEND, PM_REMOVE, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE, SWP_NOOWNERZORDER,
+    SWP_NOSIZE, SW_SHOWNOACTIVATE, WM_CLOSE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_NCHITTEST, WM_POWERBROADCAST, WM_QUIT,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
 use windows_capture::frame::Frame;
@@ -77,9 +80,11 @@ const OVERLAY_HISTORY_CAPACITY: usize = 16;
 const OVERLAY_CAPTURE_GUARD_100NS: i64 = 10_000;
 const METRIC_WINDOW: usize = 600;
 const NATIVE_SURFACE_CLASS: PCWSTR = w!("FairyNativePresenceRendererClass");
+const NATIVE_HIT_PROXY_CLASS: PCWSTR = w!("FairyNativePresenceHitProxyClass");
 const TIMER_PERIOD_ONE_MILLISECOND: u32 = 1;
 const TIMER_NO_ERROR: u32 = 0;
 static NATIVE_SURFACE_CLASS_REGISTERED: OnceLock<Result<(), String>> = OnceLock::new();
+static NATIVE_HIT_PROXY_CLASS_REGISTERED: OnceLock<Result<(), String>> = OnceLock::new();
 static PERFORMANCE_FREQUENCY: OnceLock<Option<i64>> = OnceLock::new();
 
 #[link(name = "winmm")]
@@ -889,9 +894,11 @@ fn advance_render_deadline(
 
 struct NativeCompositionSurface {
     hwnd: HWND,
+    hit_proxy_hwnd: HWND,
     tracking_hwnd: HWND,
     input_hwnd: HWND,
     frame: PhysicalFrame,
+    hit_proxy_frame: PhysicalFrame,
     shown: bool,
     creator_thread_id: u32,
     published_hwnd: Arc<AtomicIsize>,
@@ -900,6 +907,7 @@ struct NativeCompositionSurface {
 impl NativeCompositionSurface {
     fn new(config: NativeGpuConfig, published_hwnd: Arc<AtomicIsize>) -> Result<Self, String> {
         register_native_surface_class()?;
+        register_native_hit_proxy_class()?;
         let module = unsafe { GetModuleHandleW(PCWSTR::null()) }
             .map_err(|error| windows_stage_error("WINDOW_MODULE", error))?;
         let width = i32::try_from(config.render_frame.width)
@@ -934,18 +942,47 @@ impl NativeCompositionSurface {
             )
         }
         .map_err(|error| windows_stage_error("WINDOW_CREATE", error))?;
+        let hit_proxy_frame = native_hit_proxy_frame(config.render_frame, config.presentation);
+        let hit_proxy_hwnd = unsafe {
+            CreateWindowExW(
+                WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW,
+                NATIVE_HIT_PROXY_CLASS,
+                PCWSTR::null(),
+                WS_POPUP,
+                hit_proxy_frame.x,
+                hit_proxy_frame.y,
+                hit_proxy_frame.width as i32,
+                hit_proxy_frame.height as i32,
+                Some(hwnd),
+                None,
+                Some(HINSTANCE(module.0)),
+                None,
+            )
+        }
+        .map_err(|error| {
+            let _ = unsafe { DestroyWindow(hwnd) };
+            windows_stage_error("HIT_PROXY_CREATE", error)
+        })?;
+        if let Err(error) = apply_native_hit_proxy_region(hit_proxy_hwnd, hit_proxy_frame) {
+            let _ = unsafe { DestroyWindow(hit_proxy_hwnd) };
+            let _ = unsafe { DestroyWindow(hwnd) };
+            return Err(error);
+        }
         if let Err(error) =
             crate::presence_backdrop::set_window_capture_excluded(hwnd.0 as isize, false)
         {
+            let _ = unsafe { DestroyWindow(hit_proxy_hwnd) };
             let _ = unsafe { DestroyWindow(hwnd) };
             return Err(error);
         }
         published_hwnd.store(hwnd.0 as isize, AtomicOrdering::Release);
         Ok(Self {
             hwnd,
+            hit_proxy_hwnd,
             tracking_hwnd: HWND(config.render_hwnd as *mut c_void),
             input_hwnd: HWND(config.input_hwnd as *mut c_void),
             frame: config.render_frame,
+            hit_proxy_frame,
             shown: false,
             creator_thread_id: unsafe { GetCurrentThreadId() },
             published_hwnd,
@@ -958,8 +995,18 @@ impl NativeCompositionSurface {
         }
         unsafe {
             SetWindowPos(
-                self.hwnd,
+                self.hit_proxy_hwnd,
                 Some(self.input_hwnd),
+                self.hit_proxy_frame.x,
+                self.hit_proxy_frame.y,
+                self.hit_proxy_frame.width as i32,
+                self.hit_proxy_frame.height as i32,
+                SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOOWNERZORDER,
+            )
+            .map_err(|error| windows_stage_error("HIT_PROXY_POSITION", error))?;
+            SetWindowPos(
+                self.hwnd,
+                Some(self.hit_proxy_hwnd),
                 self.frame.x,
                 self.frame.y,
                 self.frame.width as i32,
@@ -968,12 +1015,16 @@ impl NativeCompositionSurface {
             )
             .map_err(|error| windows_stage_error("WINDOW_POSITION", error))?;
             let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+            let _ = ShowWindow(self.hit_proxy_hwnd, SW_SHOWNOACTIVATE);
         }
         self.shown = true;
         Ok(())
     }
 
-    fn sync_to_tracking_window(&mut self) -> Result<PhysicalFrame, String> {
+    fn sync_to_tracking_window(
+        &mut self,
+        presentation: NativeGpuPresentation,
+    ) -> Result<PhysicalFrame, String> {
         let mut rectangle = RECT::default();
         unsafe { GetWindowRect(self.tracking_hwnd, &mut rectangle) }
             .map_err(|error| windows_stage_error("TRACKING_WINDOW_RECT", error))?;
@@ -990,11 +1041,24 @@ impl NativeCompositionSurface {
             width,
             height,
         };
-        if next != self.frame {
+        let next_hit_proxy = native_hit_proxy_frame(next, presentation);
+        if next != self.frame || next_hit_proxy != self.hit_proxy_frame {
+            let proxy_size_changed = next_hit_proxy.width != self.hit_proxy_frame.width
+                || next_hit_proxy.height != self.hit_proxy_frame.height;
             unsafe {
                 SetWindowPos(
-                    self.hwnd,
+                    self.hit_proxy_hwnd,
                     Some(self.input_hwnd),
+                    next_hit_proxy.x,
+                    next_hit_proxy.y,
+                    next_hit_proxy.width as i32,
+                    next_hit_proxy.height as i32,
+                    SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOOWNERZORDER,
+                )
+                .map_err(|error| windows_stage_error("HIT_PROXY_FOLLOW", error))?;
+                SetWindowPos(
+                    self.hwnd,
+                    Some(self.hit_proxy_hwnd),
                     next.x,
                     next.y,
                     0,
@@ -1003,7 +1067,11 @@ impl NativeCompositionSurface {
                 )
             }
             .map_err(|error| windows_stage_error("WINDOW_FOLLOW", error))?;
+            if proxy_size_changed {
+                apply_native_hit_proxy_region(self.hit_proxy_hwnd, next_hit_proxy)?;
+            }
             self.frame = next;
+            self.hit_proxy_frame = next_hit_proxy;
         }
         Ok(self.frame)
     }
@@ -1015,21 +1083,36 @@ impl NativeCompositionSurface {
             return None;
         }
         let mut rectangle = RECT::default();
-        unsafe { GetWindowRect(self.input_hwnd, &mut rectangle) }
-            .ok()
-            .and_then(|()| {
-                let width = u32::try_from(rectangle.right.saturating_sub(rectangle.left)).ok()?;
-                let height = u32::try_from(rectangle.bottom.saturating_sub(rectangle.top)).ok()?;
-                (width > 0 && height > 0).then_some(PhysicalFrame {
-                    x: rectangle.left,
-                    y: rectangle.top,
-                    width,
-                    height,
-                })
-            })
+        unsafe { GetWindowRect(self.input_hwnd, &mut rectangle) }.ok()?;
+        let mut region_box = RECT::default();
+        let region_type = unsafe { GetWindowRgnBox(self.input_hwnd, &mut region_box) };
+        let visible = if region_type.0 > 0
+            && region_box.right > region_box.left
+            && region_box.bottom > region_box.top
+        {
+            RECT {
+                left: rectangle.left.saturating_add(region_box.left),
+                top: rectangle.top.saturating_add(region_box.top),
+                right: rectangle.left.saturating_add(region_box.right),
+                bottom: rectangle.top.saturating_add(region_box.bottom),
+            }
+        } else {
+            rectangle
+        };
+        let width = u32::try_from(visible.right.saturating_sub(visible.left)).ok()?;
+        let height = u32::try_from(visible.bottom.saturating_sub(visible.top)).ok()?;
+        (width > 0 && height > 0).then_some(PhysicalFrame {
+            x: visible.left,
+            y: visible.top,
+            width,
+            height,
+        })
     }
 
     fn close_on_owner_thread(&self) {
+        if unsafe { IsWindow(Some(self.hit_proxy_hwnd)) }.as_bool() {
+            let _ = unsafe { DestroyWindow(self.hit_proxy_hwnd) };
+        }
         if unsafe { IsWindow(Some(self.hwnd)) }.as_bool() {
             let _ = unsafe { DestroyWindow(self.hwnd) };
         }
@@ -1081,6 +1164,66 @@ fn register_native_surface_class() -> Result<(), String> {
         .clone()
 }
 
+fn register_native_hit_proxy_class() -> Result<(), String> {
+    NATIVE_HIT_PROXY_CLASS_REGISTERED
+        .get_or_init(|| {
+            let module = unsafe { GetModuleHandleW(PCWSTR::null()) }
+                .map_err(|error| windows_stage_error("HIT_PROXY_CLASS_MODULE", error))?;
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(native_hit_proxy_window_proc),
+                hInstance: HINSTANCE(module.0),
+                lpszClassName: NATIVE_HIT_PROXY_CLASS,
+                ..WNDCLASSW::default()
+            };
+            let atom = unsafe { RegisterClassW(&class) };
+            if atom == 0 {
+                return Err(windows_stage_error(
+                    "HIT_PROXY_CLASS_REGISTER",
+                    windows::core::Error::from_thread(),
+                ));
+            }
+            Ok(())
+        })
+        .clone()
+}
+
+fn native_hit_proxy_frame(
+    render_frame: PhysicalFrame,
+    presentation: NativeGpuPresentation,
+) -> PhysicalFrame {
+    let scale = render_frame.width as f32 / 640.0;
+    let extent = (PET_CORE_EXTENT_LOGICAL as f32 * scale).round().max(1.0) as u32;
+    let center_x = render_frame
+        .x
+        .saturating_add((presentation.core_x * scale).round() as i32);
+    let center_y = render_frame
+        .y
+        .saturating_add((presentation.core_y * scale).round() as i32);
+    let half = i32::try_from(extent / 2).unwrap_or(i32::MAX);
+    PhysicalFrame {
+        x: center_x.saturating_sub(half),
+        y: center_y.saturating_sub(half),
+        width: extent,
+        height: extent,
+    }
+}
+
+fn apply_native_hit_proxy_region(hwnd: HWND, frame: PhysicalFrame) -> Result<(), String> {
+    let width = i32::try_from(frame.width)
+        .map_err(|_| "PRESENCE_NATIVE_HIT_PROXY_SIZE_INVALID".to_owned())?;
+    let height = i32::try_from(frame.height)
+        .map_err(|_| "PRESENCE_NATIVE_HIT_PROXY_SIZE_INVALID".to_owned())?;
+    let region = unsafe { CreateEllipticRgn(0, 0, width, height) };
+    if region.is_invalid() {
+        return Err("PRESENCE_NATIVE_HIT_PROXY_REGION_CREATE_FAILED".to_owned());
+    }
+    if unsafe { SetWindowRgn(hwnd, Some(region), false) } == 0 {
+        let _ = unsafe { DeleteObject(region.into()) };
+        return Err("PRESENCE_NATIVE_HIT_PROXY_REGION_APPLY_FAILED".to_owned());
+    }
+    Ok(())
+}
+
 unsafe extern "system" fn native_surface_window_proc(
     hwnd: HWND,
     message: u32,
@@ -1097,6 +1240,33 @@ unsafe extern "system" fn native_surface_window_proc(
             let _ = unsafe { DestroyWindow(hwnd) };
             LRESULT(1)
         }
+        WM_CLOSE => {
+            let _ = unsafe { DestroyWindow(hwnd) };
+            LRESULT(0)
+        }
+        _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
+    }
+}
+
+unsafe extern "system" fn native_hit_proxy_window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_NCHITTEST => LRESULT(HTCLIENT as isize),
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_LBUTTONDOWN | WM_RBUTTONDOWN => {
+            let _ = unsafe { SetCapture(hwnd) };
+            LRESULT(0)
+        }
+        WM_LBUTTONUP | WM_RBUTTONUP => {
+            let _ = unsafe { ReleaseCapture() };
+            LRESULT(0)
+        }
+        WM_ERASEBKGND => LRESULT(1),
+        WM_DISPLAYCHANGE | WM_DPICHANGED => LRESULT(0),
         WM_CLOSE => {
             let _ = unsafe { DestroyWindow(hwnd) };
             LRESULT(0)
@@ -1127,6 +1297,7 @@ struct NativeCompositionRenderer {
     capture_geometry: NativeCaptureGeometry,
     capture_views: Vec<CaptureView>,
     shape_motion: NativeShapeMotion,
+    drag_motion: NativeDragMotion,
     state_motion: NativeStateMotion,
     hdr_capture: bool,
     hdr_checked_at: Instant,
@@ -1275,9 +1446,13 @@ fn native_visual_style(
     reduced_motion: bool,
 ) -> NativeVisualStyle {
     let energy = match state {
+        NativeGpuVisualState::Suspended | NativeGpuVisualState::Sleeping => 0.035,
+        NativeGpuVisualState::Idle | NativeGpuVisualState::Returning => 0.08,
         NativeGpuVisualState::Forming
         | NativeGpuVisualState::Input
-        | NativeGpuVisualState::Options => 0.14,
+        | NativeGpuVisualState::Options
+        | NativeGpuVisualState::Aware => 0.14,
+        NativeGpuVisualState::Repositioning => 0.16,
         NativeGpuVisualState::Submitting
         | NativeGpuVisualState::Thinking
         | NativeGpuVisualState::Tool
@@ -1285,7 +1460,6 @@ fn native_visual_style(
         | NativeGpuVisualState::Approval
         | NativeGpuVisualState::Error => 0.18,
         NativeGpuVisualState::Responding | NativeGpuVisualState::Speaking => 0.22,
-        _ => 0.10,
     };
     let accent = match state {
         NativeGpuVisualState::Tool | NativeGpuVisualState::Approval => [0.96, 0.67, 0.24],
@@ -1692,6 +1866,134 @@ struct NativeShapeMotion {
     was_returning: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct NativeDragSample {
+    direction: [f32; 2],
+    stretch: f32,
+    release: f32,
+}
+
+struct NativeDragMotion {
+    last_frame: Option<PhysicalFrame>,
+    last_sampled_at: Option<Instant>,
+    filtered_velocity: [f32; 2],
+    direction: [f32; 2],
+    stretch: f32,
+    release_started_at: Option<Instant>,
+    release_amplitude: f32,
+    was_dragging: bool,
+}
+
+impl Default for NativeDragMotion {
+    fn default() -> Self {
+        Self {
+            last_frame: None,
+            last_sampled_at: None,
+            filtered_velocity: [0.0; 2],
+            direction: [1.0, 0.0],
+            stretch: 0.0,
+            release_started_at: None,
+            release_amplitude: 0.0,
+            was_dragging: false,
+        }
+    }
+}
+
+impl NativeDragMotion {
+    fn sample(
+        &mut self,
+        frame: PhysicalFrame,
+        sampled_at: Instant,
+        dragging: bool,
+        reduced_motion: bool,
+    ) -> NativeDragSample {
+        let delta_seconds = self
+            .last_sampled_at
+            .replace(sampled_at)
+            .map_or(0.0, |previous| {
+                sampled_at
+                    .saturating_duration_since(previous)
+                    .as_secs_f32()
+                    .clamp(0.001, 0.05)
+            });
+        let frame_delta = self.last_frame.replace(frame).map_or([0.0; 2], |previous| {
+            [
+                frame.x.saturating_sub(previous.x) as f32,
+                frame.y.saturating_sub(previous.y) as f32,
+            ]
+        });
+        if reduced_motion {
+            self.filtered_velocity = [0.0; 2];
+            self.stretch = 0.0;
+            self.release_started_at = None;
+            self.release_amplitude = 0.0;
+            self.was_dragging = dragging;
+            return NativeDragSample {
+                direction: self.direction,
+                ..NativeDragSample::default()
+            };
+        }
+
+        if dragging {
+            self.release_started_at = None;
+            let inverse_delta = if delta_seconds > 0.0 {
+                1.0 / delta_seconds
+            } else {
+                0.0
+            };
+            let instantaneous = [
+                frame_delta[0] * inverse_delta,
+                frame_delta[1] * inverse_delta,
+            ];
+            let velocity_blend = 1.0 - (-delta_seconds * 18.0).exp();
+            self.filtered_velocity[0] =
+                lerp(self.filtered_velocity[0], instantaneous[0], velocity_blend);
+            self.filtered_velocity[1] =
+                lerp(self.filtered_velocity[1], instantaneous[1], velocity_blend);
+            let speed = self.filtered_velocity[0].hypot(self.filtered_velocity[1]);
+            if speed > 8.0 {
+                self.direction = [
+                    self.filtered_velocity[0] / speed,
+                    self.filtered_velocity[1] / speed,
+                ];
+            }
+            let target = (speed / 1_600.0).clamp(0.0, 1.0);
+            let stretch_blend = 1.0 - (-delta_seconds * 20.0).exp();
+            self.stretch = lerp(self.stretch, target, stretch_blend).clamp(0.0, 1.0);
+        } else {
+            if self.was_dragging {
+                self.release_started_at = Some(sampled_at);
+                self.release_amplitude = self.stretch.clamp(0.0, 1.0);
+            }
+            let decay = (-delta_seconds * 14.0).exp();
+            self.filtered_velocity[0] *= decay;
+            self.filtered_velocity[1] *= decay;
+            self.stretch *= decay;
+        }
+        self.was_dragging = dragging;
+
+        let release = self.release_started_at.map_or(0.0, |started_at| {
+            let elapsed = sampled_at
+                .saturating_duration_since(started_at)
+                .as_secs_f32();
+            if elapsed >= 0.34 {
+                self.release_started_at = None;
+                self.release_amplitude = 0.0;
+                0.0
+            } else {
+                self.release_amplitude
+                    * (-elapsed * 12.0).exp()
+                    * (elapsed * std::f32::consts::TAU * 5.25).sin()
+            }
+        });
+        NativeDragSample {
+            direction: self.direction,
+            stretch: self.stretch.clamp(0.0, 1.0),
+            release: release.clamp(-1.0, 1.0),
+        }
+    }
+}
+
 impl NativeShapeMotion {
     fn sample(&mut self, presentation: NativeGpuPresentation, sampled_at: Instant) -> NativeShape {
         let delta_seconds = self
@@ -1801,6 +2103,9 @@ struct PresenceConstants {
     state_voice_mix: f32,
     state_accent: [f32; 3],
     state_transition_progress: f32,
+    drag_direction: [f32; 2],
+    drag_stretch: f32,
+    drag_release: f32,
     constants_padding: [f32; 3],
 }
 
@@ -1873,6 +2178,7 @@ impl NativeCompositionRenderer {
             capture_geometry,
             capture_views: Vec::with_capacity(3),
             shape_motion: NativeShapeMotion::default(),
+            drag_motion: NativeDragMotion::default(),
             state_motion: NativeStateMotion::new(config.presentation.visual_state, Instant::now()),
             hdr_capture,
             hdr_checked_at: Instant::now(),
@@ -1891,11 +2197,11 @@ impl NativeCompositionRenderer {
         if !unsafe { IsWindow(Some(self.surface.hwnd)) }.as_bool() {
             return Err("PRESENCE_NATIVE_GPU_SURFACE_INVALIDATED".to_owned());
         }
-        let render_frame = self.surface.sync_to_tracking_window()?;
         let presentation = *self
             .presentation
             .read()
             .map_err(|_| "PRESENCE_NATIVE_GPU_PRESENTATION_LOCK_FAILED".to_owned())?;
+        let render_frame = self.surface.sync_to_tracking_window(presentation)?;
         let active_monitor = monitor_handle_for_presentation(render_frame, presentation)
             .map_err(|error| error.to_string())?;
         let active_monitor_frame =
@@ -1918,6 +2224,12 @@ impl NativeCompositionRenderer {
         }
         let sampled_at = Instant::now();
         let shape = self.shape_motion.sample(presentation, sampled_at);
+        let drag = self.drag_motion.sample(
+            render_frame,
+            sampled_at,
+            drag_active,
+            presentation.reduced_motion,
+        );
         let state_sample = self.state_motion.sample(
             presentation.visual_state,
             sampled_at,
@@ -1996,6 +2308,9 @@ impl NativeCompositionRenderer {
             state_voice_mix: state_sample.style.voice_mix,
             state_accent: state_sample.style.accent,
             state_transition_progress: state_sample.transition_progress,
+            drag_direction: drag.direction,
+            drag_stretch: drag.stretch,
+            drag_release: drag.release,
             constants_padding: [0.0; 3],
         };
         let render_target = self.current_render_target()?;
@@ -2049,7 +2364,11 @@ impl NativeCompositionRenderer {
     }
 
     fn rebase_after_drag(&mut self) -> Result<(), String> {
-        let render_frame = self.surface.sync_to_tracking_window()?;
+        let presentation = *self
+            .presentation
+            .read()
+            .map_err(|_| "PRESENCE_NATIVE_GPU_PRESENTATION_LOCK_FAILED".to_owned())?;
+        let render_frame = self.surface.sync_to_tracking_window(presentation)?;
         self.overlay_history.rebase_displayed(render_frame);
         Ok(())
     }
@@ -2961,6 +3280,31 @@ mod tests {
     }
 
     #[test]
+    fn native_hit_proxy_tracks_only_the_presented_core_circle() {
+        let frame = PhysicalFrame {
+            x: -320,
+            y: 140,
+            width: 800,
+            height: 325,
+        };
+        let presentation = NativeGpuPresentation {
+            core_x: 544.0,
+            core_y: 88.0,
+            ..NativeGpuPresentation::default()
+        };
+
+        assert_eq!(
+            native_hit_proxy_frame(frame, presentation),
+            PhysicalFrame {
+                x: 270,
+                y: 160,
+                width: 180,
+                height: 180,
+            }
+        );
+    }
+
+    #[test]
     fn liquid_glass_hlsl_compiles_for_the_production_shader_model() {
         compile_shader(b"vs_main\0", b"vs_5_0\0")
             .unwrap_or_else(|error| panic!("vertex shader failed: {error}"));
@@ -3001,7 +3345,7 @@ mod tests {
     #[test]
     fn constant_buffer_remains_aligned_for_d3d11() {
         assert_eq!(std::mem::size_of::<PresenceConstants>() % 16, 0);
-        assert_eq!(std::mem::size_of::<PresenceConstants>(), 160);
+        assert_eq!(std::mem::size_of::<PresenceConstants>(), 176);
         assert_eq!(std::mem::size_of::<CleanBackdropConstants>(), 64);
     }
 
@@ -3043,6 +3387,23 @@ mod tests {
         );
         assert_eq!(completed.transition_progress, 1.0);
         assert!((completed.style.voice_mix - 0.7).abs() < 0.000_1);
+    }
+
+    #[test]
+    fn semantic_states_keep_one_material_and_only_change_bounded_energy_cues() {
+        let idle = native_visual_style(NativeGpuVisualState::Idle, 0.0, 0.0, 0.0, false);
+        let sleeping = native_visual_style(NativeGpuVisualState::Sleeping, 0.0, 0.0, 0.0, false);
+        let tool = native_visual_style(NativeGpuVisualState::Tool, 0.0, 0.0, 0.0, false);
+        let speaking = native_visual_style(NativeGpuVisualState::Speaking, 0.0, 0.0, 0.8, false);
+
+        assert!(sleeping.energy < idle.energy);
+        assert!(tool.energy > idle.energy);
+        assert_eq!(tool.accent, [0.96, 0.67, 0.24]);
+        assert_eq!(speaking.accent, [0.34, 0.86, 0.72]);
+        assert!((speaking.voice_mix - 0.8).abs() < 0.000_1);
+        for style in [idle, sleeping, tool, speaking] {
+            assert!((0.0..=0.25).contains(&style.energy));
+        }
     }
 
     fn assert_visual_style_close(left: NativeVisualStyle, right: NativeVisualStyle) {
@@ -3132,6 +3493,77 @@ mod tests {
             assert!((-0.04..=1.04).contains(&spring.value));
         }
         assert!((spring.sample() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn native_drag_motion_tracks_velocity_and_settles_with_bounded_gel_response() {
+        let started = Instant::now();
+        let frame = PhysicalFrame {
+            x: 100,
+            y: 100,
+            width: 640,
+            height: 260,
+        };
+        let mut motion = NativeDragMotion::default();
+        assert_eq!(
+            motion.sample(frame, started, false, false),
+            NativeDragSample {
+                direction: [1.0, 0.0],
+                ..NativeDragSample::default()
+            }
+        );
+        let moving = motion.sample(
+            PhysicalFrame { x: 116, ..frame },
+            started + Duration::from_millis(16),
+            true,
+            false,
+        );
+        assert!(moving.direction[0] > 0.99);
+        assert!(moving.direction[1].abs() < 0.01);
+        assert!(moving.stretch > 0.0 && moving.stretch <= 1.0);
+
+        motion.sample(
+            PhysicalFrame { x: 116, ..frame },
+            started + Duration::from_millis(32),
+            false,
+            false,
+        );
+        let settling = motion.sample(
+            PhysicalFrame { x: 116, ..frame },
+            started + Duration::from_millis(80),
+            false,
+            false,
+        );
+        assert!(settling.release.abs() <= 1.0);
+        let settled = motion.sample(
+            PhysicalFrame { x: 116, ..frame },
+            started + Duration::from_millis(390),
+            false,
+            false,
+        );
+        assert_eq!(settled.release, 0.0);
+        assert!(settled.stretch < moving.stretch);
+    }
+
+    #[test]
+    fn reduced_motion_disables_drag_deformation_and_elastic_release() {
+        let started = Instant::now();
+        let mut motion = NativeDragMotion::default();
+        let frame = PhysicalFrame {
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 260,
+        };
+        motion.sample(frame, started, false, false);
+        let sample = motion.sample(
+            PhysicalFrame { x: 20, ..frame },
+            started + Duration::from_millis(16),
+            true,
+            true,
+        );
+        assert_eq!(sample.stretch, 0.0);
+        assert_eq!(sample.release, 0.0);
     }
 
     #[test]
@@ -3291,15 +3723,22 @@ mod tests {
     }
 
     #[test]
-    fn monitor_capture_restores_the_full_edge_lens_without_recursive_compositing() {
+    fn monitor_capture_keeps_an_identity_center_and_bounded_edge_lens() {
         let shader = include_str!("liquid_glass.hlsl");
         for required in [
             "capture_source_valid > 0.5",
-            "EDGE_LENS_DEPTH_PX = 52.0",
-            "EDGE_REFRACTION_PX = 42.0",
-            "EDGE_DISPERSION_PX = 8.5",
-            "float edge_alpha = lerp(0.88, 0.91, material_opacity)",
-            "smoothstep(0.02, 0.16, edge_focus)",
+            "EDGE_LENS_DEPTH_PX = 48.0",
+            "EDGE_REFRACTION_PX = 10.0",
+            "EDGE_DISPERSION_PX = 0.38",
+            "float3 primary_sample = sample_desktop_linear(base_uv + warp_uv)",
+            "float edge_alpha = lerp(0.900, 0.925, material_opacity)",
+            "float displaced_replacement = smoothstep(0.30 * scale, 1.15 * scale, displacement_px)",
+            "float inner_dark_line",
+            "float key_highlight",
+            "float fill_highlight",
+            "float atmosphere_outer",
+            "float atmosphere_inner",
+            "alpha = max(alpha, shape_mask * atmosphere_alpha)",
             "float beacon_alpha = core_orb",
             "alpha = max(alpha, shape_mask * beacon_alpha)",
         ] {
@@ -3308,6 +3747,10 @@ mod tests {
                 "missing optical contract: {required}"
             );
         }
+        assert!(!shader.contains("core_ring_outer"));
+        assert!(!shader.contains("core_ring_inner"));
+        assert!(!shader.contains("edge_blur"));
+        assert!(shader.contains("refracted = lerp(primary_sample, spectral_sample, spectral_mix)"));
     }
 
     #[test]
@@ -3347,17 +3790,30 @@ mod tests {
     }
 
     #[test]
-    fn self_capture_correction_rejects_out_of_gamut_white_bars() {
+    fn self_capture_correction_recovers_live_frames_without_recursive_rings() {
         let shader = include_str!("clean_backdrop.hlsl");
         for required in [
-            "gamut_error",
-            "float confidence",
-            "max(1.0 - overlay.a, 0.64)",
-            "lerp(live_background, previous_clean, preserve)",
+            "recover_composited_backdrop",
+            "float denominator = max(1.0 - alpha, 0.06)",
+            "float2 alpha_gradient_vector = float2(ddx(alpha), ddy(alpha))",
+            "float alpha_confidence = 1.0 - smoothstep(0.88, 0.945, candidate_alpha)",
+            "float2 offset_px = -alpha_gradient_vector",
+            "float lower_coverage = smoothstep(0.008, 0.075, alpha - neighbor_alpha)",
+            "float max_step = lerp(0.34, 0.065",
+            "lerp(previous_clean_linear, limited, confidence)",
         ] {
             assert!(
                 shader.contains(required),
                 "missing shader guard: {required}"
+            );
+        }
+        for forbidden in [
+            "lerp(captured.rgb, previous_clean, preserve)",
+            "float3 live_background = saturate(captured.rgb)",
+        ] {
+            assert!(
+                !shader.contains(forbidden),
+                "recursive/stale backdrop path returned: {forbidden}"
             );
         }
     }
