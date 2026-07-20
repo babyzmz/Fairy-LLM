@@ -185,5 +185,47 @@ def test_confirmed_conversation_image_is_written_only_inside_managed_store(
 
         stored = tmp_path / "perception" / str(task["id"]) / f"{_PNG_HASH}.png"
         assert stored.read_bytes() == _PNG
+        conversation = service.invoke(
+            "conversations.get",
+            {"conversation_id": task["conversation_id"]},
+        )
+        deleted = service.invoke(
+            "conversations.delete",
+            {
+                "conversation_id": conversation["id"],
+                "expected_revision": conversation["revision"],
+                "user_confirmed": True,
+            },
+        )
+        trash_item = next(
+            item
+            for item in service.invoke("trash.items.list", {})["items"]
+            if item["item_id"] == conversation["id"]
+        )
+        assert trash_item["estimated_bytes"] >= len(_PNG)
+        purged = service.invoke(
+            "trash.items.purge",
+            {
+                "item_type": "conversation",
+                "item_id": conversation["id"],
+                "expected_revision": deleted["revision"],
+                "user_confirmed": True,
+            },
+        )
+        assert purged["released_bytes"] >= len(_PNG)
+        assert not stored.parent.exists()
+        assert all(
+            item["content"] == "[Deleted]"
+            for item in service.invoke(
+                "messages.list",
+                {"conversation_id": conversation["id"]},
+            )["items"]
+        )
+        purged_tasks = service.invoke(
+            "tasks.list",
+            {"conversation_id": conversation["id"]},
+        )["items"]
+        assert purged_tasks[0]["user_request"] == "Deleted request"
+        assert purged_tasks[0]["display_title"] == "Deleted task"
     finally:
         service.close()

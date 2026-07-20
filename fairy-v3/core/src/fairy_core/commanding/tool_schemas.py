@@ -18,7 +18,7 @@ def execution_plan_tool_schema() -> dict[str, Any]:
                         "purpose": {"type": "string", "minLength": 1, "maxLength": 500},
                         "batch": {"type": "integer", "minimum": 1, "maximum": 200},
                         "expected_hash": {
-                            "type": "string",
+                            "type": ["string", "null"],
                             "pattern": "^[0-9a-f]{64}$",
                         },
                     },

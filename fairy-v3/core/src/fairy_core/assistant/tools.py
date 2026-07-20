@@ -61,6 +61,7 @@ class ToolResult:
     public_summary: str
     model_content: str
     artifact_ids: tuple[UUID, ...]
+    awaiting_approval: bool = False
 
     @classmethod
     def create(
@@ -69,6 +70,7 @@ class ToolResult:
         public_summary: str,
         model_content: str,
         artifact_ids: tuple[UUID, ...],
+        awaiting_approval: bool = False,
     ) -> ToolResult:
         summary = _bounded_text(
             public_summary,
@@ -84,6 +86,7 @@ class ToolResult:
             public_summary=summary,
             model_content=content,
             artifact_ids=tuple(artifact_ids),
+            awaiting_approval=bool(awaiting_approval),
         )
 
 
@@ -256,6 +259,23 @@ def _validate_schema_value(
         if not any(type(value) is type(candidate) and value == candidate for candidate in enum):
             raise ToolCandidateError(f"{path} is not an allowed value")
     expected = schema.get("type")
+    if isinstance(expected, (list, tuple)):
+        if value is None and "null" in expected:
+            return
+        failures: list[ToolCandidateError] = []
+        for candidate in expected:
+            if candidate == "null":
+                continue
+            branch = dict(schema)
+            branch["type"] = candidate
+            try:
+                _validate_schema_value(value, branch, path=path)
+                return
+            except ToolCandidateError as error:
+                failures.append(error)
+        if failures:
+            raise failures[-1]
+        raise ToolCandidateError(f"{path} has an unsupported schema type")
     if expected == "object":
         if not isinstance(value, dict):
             raise ToolCandidateError(f"{path} must be an object")

@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -16,10 +18,21 @@ _MAX_INSTRUCTION_BYTES = 128 * 1024
 _MAX_PACKAGE_BYTES = 512 * 1024
 _MAX_FILES = 64
 _EXECUTABLE_SUFFIXES = frozenset({".bat", ".cmd", ".com", ".exe", ".ps1", ".sh"})
+_SKILL_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 
 
 class SkillPackageError(ValueError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class SkillPackageInspection:
+    name: str
+    description: str
+    instructions: str
+    manifest: SkillManifest | None
+    file_count: int
+    content_bytes: int
 
 
 def package_content_digest(root: Path) -> str:
@@ -40,13 +53,47 @@ def _content_digest(root: Path, contents: dict[Path, bytes]) -> str:
 
 
 class SkillPackageLoader:
+    def inspect(self, root: Path) -> SkillPackageInspection:
+        if root.is_symlink() or (hasattr(root, "is_junction") and root.is_junction()):
+            raise SkillPackageError("Skill package root cannot be a link")
+        try:
+            package_root = root.resolve(strict=True)
+        except OSError as error:
+            raise SkillPackageError("Skill package could not be accessed") from error
+        if not package_root.is_dir():
+            raise SkillPackageError("Skill package must be a directory")
+        contents = _package_contents(package_root, include_manifest=True)
+        files = tuple(contents)
+        _reject_executables(package_root, files)
+        instructions_path = package_root / "SKILL.md"
+        if instructions_path not in files:
+            raise SkillPackageError("Skill package requires SKILL.md")
+        instructions = _decode_instructions(contents[instructions_path])
+        frontmatter = _agent_skill_frontmatter(instructions)
+        name = frontmatter.get("name")
+        description = frontmatter.get("description")
+        if not isinstance(name, str) or _SKILL_NAME.fullmatch(name) is None or "--" in name:
+            raise SkillPackageError("SKILL.md name is invalid")
+        if not isinstance(description, str) or not description.strip() or len(description) > 1_024:
+            raise SkillPackageError("SKILL.md description is invalid")
+        manifest_path = package_root / _MANIFEST
+        manifest = self.load(package_root).manifest if manifest_path in files else None
+        return SkillPackageInspection(
+            name=name,
+            description=description,
+            instructions=instructions,
+            manifest=manifest,
+            file_count=len(files),
+            content_bytes=sum(len(content) for content in contents.values()),
+        )
+
     def load(self, root: Path) -> SkillPackage:
         if root.is_symlink() or (hasattr(root, "is_junction") and root.is_junction()):
             raise SkillPackageError("Skill package root cannot be a link")
         try:
             package_root = root.resolve(strict=True)
         except OSError as error:
-            raise SkillPackageError("Skill package does not exist") from error
+            raise SkillPackageError("Skill package could not be accessed") from error
         if not package_root.is_dir():
             raise SkillPackageError("Skill package must be a directory")
         contents = _package_contents(package_root, include_manifest=True)
@@ -59,12 +106,7 @@ class SkillPackageLoader:
         instruction_bytes = contents[instructions_path]
         if len(instruction_bytes) > _MAX_INSTRUCTION_BYTES:
             raise SkillPackageError("Skill instructions are too large")
-        try:
-            instructions = (
-                instruction_bytes.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
-            )
-        except UnicodeDecodeError as error:
-            raise SkillPackageError("Skill instructions must be UTF-8") from error
+        instructions = _decode_instructions(instruction_bytes)
         try:
             raw_manifest = json.loads(contents[manifest_path].decode("utf-8"))
             manifest = SkillManifest.model_validate(raw_manifest)
@@ -151,6 +193,23 @@ def _reject_executables(root: Path, files: tuple[Path, ...]) -> None:
 
 
 def _validate_agent_skill_frontmatter(instructions: str, manifest: SkillManifest) -> None:
+    frontmatter = _agent_skill_frontmatter(instructions)
+    if frontmatter.get("name") != manifest.name:
+        raise SkillPackageError("SKILL.md name does not match the manifest")
+    if frontmatter.get("description") != manifest.description:
+        raise SkillPackageError("SKILL.md description does not match the manifest")
+
+
+def _decode_instructions(instruction_bytes: bytes) -> str:
+    if len(instruction_bytes) > _MAX_INSTRUCTION_BYTES:
+        raise SkillPackageError("Skill instructions are too large")
+    try:
+        return instruction_bytes.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except UnicodeDecodeError as error:
+        raise SkillPackageError("Skill instructions must be UTF-8") from error
+
+
+def _agent_skill_frontmatter(instructions: str) -> dict[str, object]:
     lines = instructions.splitlines()
     if len(lines) < 4 or lines[0].strip() != "---":
         raise SkillPackageError("SKILL.md requires YAML frontmatter")
@@ -166,10 +225,12 @@ def _validate_agent_skill_frontmatter(instructions: str, manifest: SkillManifest
         raise SkillPackageError("SKILL.md frontmatter is invalid") from error
     if not isinstance(frontmatter, dict):
         raise SkillPackageError("SKILL.md frontmatter must be an object")
-    if frontmatter.get("name") != manifest.name:
-        raise SkillPackageError("SKILL.md name does not match the manifest")
-    if frontmatter.get("description") != manifest.description:
-        raise SkillPackageError("SKILL.md description does not match the manifest")
+    return frontmatter
 
 
-__all__ = ["SkillPackageError", "SkillPackageLoader", "package_content_digest"]
+__all__ = [
+    "SkillPackageError",
+    "SkillPackageInspection",
+    "SkillPackageLoader",
+    "package_content_digest",
+]

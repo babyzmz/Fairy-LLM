@@ -77,6 +77,32 @@ class ToolTraceCoordinator:
             public_summary="Running approved tool",
         )
 
+    def wait_for_external_approval_in_unit(
+        self,
+        unit_of_work,
+        *,
+        turn: AssistantTurn,
+        run: CommandRun,
+        public_summary: str,
+    ) -> None:
+        tool = self._runtime.transition_command_step_in_unit(
+            unit_of_work,
+            run=run,
+            kind=TraceStepKind.TOOL,
+            status=TraceStepStatus.WAITING,
+            public_summary=public_summary,
+        )
+        self._runtime.append_step_in_unit(
+            unit_of_work,
+            turn=turn,
+            run=run,
+            kind=TraceStepKind.APPROVAL,
+            status=TraceStepStatus.WAITING,
+            public_summary="Waiting for file approval",
+            parent_step_id=tool.id if tool is not None else None,
+            caused_by_step_id=tool.id if tool is not None else None,
+        )
+
     def reject_in_unit(self, unit_of_work, *, run: CommandRun) -> None:
         self._runtime.transition_command_step_in_unit(
             unit_of_work,
@@ -145,7 +171,6 @@ class ToolTraceCoordinator:
             run=run,
             kind=TraceStepKind.TOOL,
             status=TraceStepStatus.SUCCEEDED,
-            public_summary=public_summary,
             artifact_refs=artifact_refs,
         )
         observation = self._runtime.append_step_in_unit(

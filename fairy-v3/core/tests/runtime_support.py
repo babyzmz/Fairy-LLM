@@ -125,6 +125,7 @@ class FakeRuntimeExecutor:
         self.stop_calls: list[str] = []
         self.probes: dict[str, RuntimeProbeResult | RuntimeExecutorError] = {}
         self.start_failure: RuntimeExecutorError | None = None
+        self.stop_failure: RuntimeExecutorError | None = None
         self.crash_after_start = False
         self.crash_after_stop = False
 
@@ -176,6 +177,8 @@ class FakeRuntimeExecutor:
 
     def stop(self, executor_handle: str) -> RuntimeStopResult:
         self.stop_calls.append(executor_handle)
+        if self.stop_failure is not None:
+            raise self.stop_failure
         current = self.probes.get(executor_handle)
         if isinstance(current, RuntimeProbeResult):
             self.probes[executor_handle] = RuntimeProbeResult(

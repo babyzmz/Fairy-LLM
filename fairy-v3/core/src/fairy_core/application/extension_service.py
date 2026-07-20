@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 from typing import Any, cast
 
 from pydantic import BaseModel
@@ -7,11 +9,15 @@ from pydantic import BaseModel
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.contracts.extensions import (
+    McpPresetInstallInput,
     McpServerAcceptInput,
     McpServerConfigureInput,
     McpServerDeleteInput,
     McpServerDiscoverInput,
     McpServerSetEnabledInput,
+    SkillCreateInput,
+    SkillImportInspectInput,
+    SkillImportInstallInput,
     SkillInstallInput,
     SkillRemoveInput,
     SkillSetEnabledInput,
@@ -53,6 +59,10 @@ class ExtensionService:
             "mcp.servers.discover": self.discover_mcp_server,
             "mcp.servers.list": self.list_mcp_servers,
             "mcp.servers.set_enabled": self.set_mcp_server_enabled,
+            "mcp.presets.install": self.install_mcp_preset,
+            "skills.create": self.create_skill,
+            "skills.import.inspect": self.inspect_skill_import,
+            "skills.import.install": self.install_skill_import,
             "skills.install": self.install_skill,
             "skills.list": self.list_skills,
             "skills.remove": self.remove_skill,
@@ -113,6 +123,10 @@ class ExtensionService:
                     "license": entry.license,
                     "experimental": entry.experimental,
                     "installed": entry.extension_id in installed,
+                    "source_kind": entry.source_kind,
+                    "trust": entry.trust,
+                    "tags": entry.tags,
+                    "requirements": entry.requirements,
                 }
                 for entry in self._skills().catalog()
             ]
@@ -121,6 +135,55 @@ class ExtensionService:
     def install_skill(self, request: BaseModel) -> dict[str, Any]:
         validated = cast(SkillInstallInput, request)
         self._skills().install(validated.catalog_id)
+        return self.list_skills(request)
+
+    def inspect_skill_import(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(SkillImportInspectInput, request)
+        if self._default_execution_target == "cloud" and validated.source_kind != "github":
+            raise ValueError("Cloud Skill imports require a GitHub source")
+        pending = self._skills().inspect_import(validated.source_kind, validated.source)
+        manifest = pending.inspection.manifest
+        return {
+            "inspection_token": pending.token,
+            "name": pending.inspection.name,
+            "description": pending.inspection.description,
+            "version": manifest.version if manifest is not None else None,
+            "publisher": manifest.provenance.publisher if manifest is not None else None,
+            "license": manifest.provenance.license if manifest is not None else None,
+            "source": pending.source,
+            "has_manifest": manifest is not None,
+            "file_count": pending.inspection.file_count,
+            "content_bytes": pending.inspection.content_bytes,
+        }
+
+    def install_skill_import(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(SkillImportInstallInput, request)
+        self._skills().install_import(
+            validated.inspection_token,
+            name=validated.name,
+            version=validated.version,
+            description=validated.description,
+            publisher=validated.publisher,
+            license_name=validated.license,
+            input_schema=validated.input_schema,
+            required_capabilities=validated.required_capabilities,
+            compatible_mcp_servers=validated.compatible_mcp_servers,
+        )
+        return self.list_skills(request)
+
+    def create_skill(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(SkillCreateInput, request)
+        self._skills().create(
+            name=validated.name,
+            version=validated.version,
+            description=validated.description,
+            instructions=validated.instructions,
+            publisher=validated.publisher,
+            license_name=validated.license,
+            input_schema=validated.input_schema,
+            required_capabilities=validated.required_capabilities,
+            compatible_mcp_servers=validated.compatible_mcp_servers,
+        )
         return self.list_skills(request)
 
     def update_skill(self, request: BaseModel) -> dict[str, Any]:
@@ -155,6 +218,32 @@ class ExtensionService:
     def configure_mcp_server(self, request: BaseModel) -> dict[str, Any]:
         application = self._mcp()
         record = application.configure(cast(McpServerConfigureInput, request))
+        return self._mcp_server_payload(application, record)
+
+    def install_mcp_preset(self, request: BaseModel) -> dict[str, Any]:
+        validated = cast(McpPresetInstallInput, request)
+        preset = self._skills().mcp_preset(validated.catalog_id)
+        if preset.credential_required and validated.credential_ref is None:
+            raise ValueError("MCP preset requires a credential reference")
+        command = preset.command
+        if command == "npx":
+            command = shutil.which("npx.cmd" if os.name == "nt" else "npx") or shutil.which("npx")
+            if command is None:
+                raise RuntimeError("Playwright MCP requires Node.js and npx")
+        configured = McpServerConfigureInput(
+            server_id=preset.entry.extension_id,
+            display_name=preset.entry.name,
+            transport=preset.transport,
+            command=command,
+            arguments=preset.arguments,
+            endpoint=preset.endpoint,
+            credential_ref=validated.credential_ref,
+            environment_refs={},
+            expected_revision=validated.expected_revision,
+            idempotency_key=validated.idempotency_key,
+        )
+        application = self._mcp()
+        record = application.configure(configured)
         return self._mcp_server_payload(application, record)
 
     def discover_mcp_server(self, request: BaseModel) -> dict[str, Any]:

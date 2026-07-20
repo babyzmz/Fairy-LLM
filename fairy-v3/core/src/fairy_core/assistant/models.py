@@ -536,6 +536,29 @@ class ToolInvocation:
         self.model_content = content
         self.artifact_ids = tuple(artifact_ids)
 
+    def revise_completed_result(
+        self,
+        *,
+        public_summary: str,
+        model_content: str,
+    ) -> None:
+        """Replace a provisional result after its external approval is decided."""
+        if self.status is not ToolInvocationStatus.COMPLETED:
+            raise InvalidTransitionError(
+                "only a completed Tool Invocation can revise its result"
+            )
+        self.public_summary = _required_text(
+            public_summary,
+            "public_summary",
+            maximum=_MAX_SUMMARY_LENGTH,
+        )
+        self.model_content = _required_text(
+            model_content,
+            "model_content",
+            maximum=_MAX_TOOL_CONTENT_LENGTH,
+        )
+        self.updated_at = _now()
+
     def fail(self, *, error_code: str) -> None:
         normalized = _required_text(error_code, "error_code", maximum=128)
         self._transition_to(ToolInvocationStatus.FAILED)

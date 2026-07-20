@@ -101,6 +101,7 @@ def test_task_workspace_and_project_index_are_bound_once_and_deterministic(
         assert workspace.root == Path(version["project_root"]).resolve()
         assert index.generation == 1
         assert [item.path for item in index.files] == sorted(item.path for item in index.files)
+        assert ".git" not in {item.path for item in index.files}
         assert ".env" not in {item.path for item in index.files}
         assert index.file("asset.bin").kind == "binary"
         assert index.file("large.txt").kind == "oversized"

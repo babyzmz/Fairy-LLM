@@ -45,6 +45,7 @@ class RoutingDecisionModel(ContractModel):
     )
     cost_estimate_known: bool
     approval_required: bool
+    requires_workspace_changes: bool
     public_summary: str = Field(min_length=1, max_length=240)
 
 

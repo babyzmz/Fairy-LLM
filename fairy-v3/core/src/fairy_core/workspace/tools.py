@@ -10,7 +10,7 @@ from fairy_core.application.core import CoreApplication
 from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.contracts.models import ChangesetProposal, FileMutation
-from fairy_core.contracts.planning import ExecutionPlanCreateInput
+from fairy_core.contracts.planning import ExecutionPlanCreateInput, PlannedFileInput
 from fairy_core.domain.errors import ScopeViolationError
 from fairy_core.domain.execution import Artifact, ArtifactVisibility, ChangesetStatus
 from fairy_core.domain.models import ScopeContract
@@ -30,6 +30,7 @@ _PROJECT_TOOLS = frozenset(
 )
 _MAX_TOOL_TEXT = 24_000
 _MAX_ARTIFACTS = 50
+_ABSENT_FILE_HASH = "0" * 64
 
 
 class ProjectToolExecutor:
@@ -75,6 +76,49 @@ class ProjectToolExecutor:
         arguments: dict[str, object],
     ) -> ToolResult:
         request = ExecutionPlanCreateInput.model_validate({"task_id": scope.task_id, **arguments})
+        workspace, index = self._project_context(scope)
+        indexed_files = {item.path: item for item in index.files}
+        normalized_files: list[PlannedFileInput] = []
+        for planned in request.files:
+            normalized = _relative_path(planned.path)
+            if not _matches_patterns(workspace.editable_files, normalized):
+                raise ScopeViolationError(
+                    f"planned path is outside editable Task files: {normalized}",
+                    code="SCOPE_MISMATCH",
+                )
+            indexed = indexed_files.get(normalized)
+            if indexed is None and planned.expected_hash is not None:
+                raise ScopeViolationError(
+                    f"planned hash does not match absent file: {normalized}",
+                    code="SCOPE_MISMATCH",
+                    model_detail=(
+                        "The planned file does not exist. Omit expected_hash for a new file."
+                    ),
+                )
+            if (
+                indexed is not None
+                and planned.expected_hash is not None
+                and planned.expected_hash != indexed.content_hash
+            ):
+                raise ScopeViolationError(
+                    f"planned hash is stale for existing file: {normalized}",
+                    code="SCOPE_MISMATCH",
+                    model_detail=(
+                        "Read the current file with project.read and create a new Task from the "
+                        "latest Workspace Version."
+                    ),
+                )
+            normalized_files.append(
+                planned.model_copy(
+                    update={
+                        "path": normalized,
+                        "expected_hash": (
+                            indexed.content_hash if indexed is not None else None
+                        ),
+                    }
+                )
+            )
+        request = request.model_copy(update={"files": tuple(normalized_files)})
         context = self._application.execution_planning.create(
             request,
             initial_model_calls=1,
@@ -232,6 +276,7 @@ class ProjectToolExecutor:
                 scope.task_id,
                 include_terminal=True,
             )
+            plan = unit_of_work.state.execution_plan_for_task(scope.task_id)
         runtime = runtimes[-1] if runtimes else None
         payload = {
             "runtime": (
@@ -254,9 +299,16 @@ class ProjectToolExecutor:
                 if preview is not None
                 else None
             ),
+            "next_action": (
+                "execution.plan" if plan is None and preview is None else None
+            ),
         }
         return ToolResult.create(
-            public_summary="Read Preview status",
+            public_summary=(
+                "Preview is not available before planning"
+                if plan is None and preview is None
+                else "Read Preview status"
+            ),
             model_content=json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
             artifact_ids=(),
         )
@@ -274,6 +326,10 @@ class ProjectToolExecutor:
             raise ScopeViolationError(
                 "Create an Execution Plan before proposing file changes",
                 code="SCOPE_MISMATCH",
+                model_detail=(
+                    "Create execution.plan before edit.propose_changeset. The plan must include "
+                    "every intended file; use expected_hash=null for a new file."
+                ),
             )
         workspace, index = self._project_context(scope)
         raw_files = arguments.get("files")
@@ -294,21 +350,35 @@ class ProjectToolExecutor:
         unplanned = sorted(file.path for file in files if file.path not in planned_paths)
         if unplanned:
             raise ScopeViolationError(
-                f"Changeset contains unplanned files: {', '.join(unplanned[:5])}"
+                f"Changeset contains unplanned files: {', '.join(unplanned[:5])}",
+                code="SCOPE_MISMATCH",
+                model_detail=(
+                    "Only submit files declared by execution.plan. Start a new Task if the "
+                    "immutable plan must change."
+                ),
             )
+        _require_complete_planned_batch(plan.manifest["files"], files)
         indexed_files = {item.path: item for item in index.files}
         for file in files:
-            expected_hash = planned_files[file.path].get("expected_hash")
+            expected_hash = _expected_planned_hash(planned_files[file.path])
             indexed = indexed_files.get(file.path)
             if indexed is None and expected_hash is not None:
                 raise ScopeViolationError(
                     f"planned hash does not match absent file: {file.path}",
                     code="SCOPE_MISMATCH",
+                    model_detail=(
+                        "The planned file does not exist. Use expected_hash=null for new files "
+                        "when creating execution.plan."
+                    ),
                 )
             if indexed is not None and expected_hash != indexed.content_hash:
                 raise ScopeViolationError(
                     f"planned hash is stale or missing for existing file: {file.path}",
                     code="SCOPE_MISMATCH",
+                    model_detail=(
+                        "An existing planned file must use the content_hash from the current "
+                        "Project Index. Start a new Task to rebuild a stale immutable plan."
+                    ),
                 )
         for file in files:
             normalized = _relative_path(file.path)
@@ -317,6 +387,13 @@ class ProjectToolExecutor:
                     f"Changeset path is outside editable Task files: {normalized}"
                 )
         reason = _required_string(arguments, "reason")
+        with self._unit_of_work_factory() as unit_of_work:
+            aggregate = unit_of_work.state.get_workspace(workspace.workspace_id)
+        if aggregate is None:
+            raise ScopeViolationError(
+                "Workspace aggregate is unavailable",
+                code="SCOPE_MISMATCH",
+            )
         fingerprint = hashlib.sha256(
             json.dumps(
                 {
@@ -339,6 +416,7 @@ class ProjectToolExecutor:
                     files=files,
                     reason=reason,
                     idempotency_key=f"assistant:changeset:{fingerprint}",
+                    expected_workspace_revision=aggregate.revision,
                 )
             )
         except Exception as error:
@@ -350,8 +428,13 @@ class ProjectToolExecutor:
             raise
         if pending.changeset.status is ChangesetStatus.APPLIED:
             self._application.execution_planning.complete_file_batch(scope.task_id, paths)
+        applied = pending.changeset.status is ChangesetStatus.APPLIED
         return ToolResult.create(
-            public_summary=f"Changeset awaiting approval for {len(files)} file(s)",
+            public_summary=(
+                f"Applied {len(files)} Workspace file(s)"
+                if applied
+                else f"Changeset awaiting approval for {len(files)} file(s)"
+            ),
             model_content=json.dumps(
                 {
                     "changeset_id": str(pending.changeset.id),
@@ -363,6 +446,7 @@ class ProjectToolExecutor:
                 separators=(",", ":"),
             ),
             artifact_ids=(),
+            awaiting_approval=not applied,
         )
 
     def _project_context(self, scope: ScopeContract) -> tuple[TaskWorkspace, ProjectIndex]:
@@ -441,6 +525,61 @@ def _matches_workspace(workspace: TaskWorkspace, path: str) -> bool:
 def _matches_patterns(patterns: tuple[str, ...], path: str) -> bool:
     candidate = PurePosixPath(path)
     return any(pattern == "*" or candidate.match(pattern) for pattern in patterns)
+
+
+def _expected_planned_hash(planned_file: object) -> str | None:
+    if not isinstance(planned_file, dict):
+        raise ScopeViolationError(
+            "Execution Plan file metadata is invalid",
+            code="SCOPE_MISMATCH",
+        )
+    value = planned_file.get("expected_hash")
+    return None if value in {None, _ABSENT_FILE_HASH} else str(value)
+
+
+def _require_complete_planned_batch(
+    planned_files: object,
+    files: tuple[FileMutation, ...],
+) -> None:
+    if not isinstance(planned_files, list):
+        raise ScopeViolationError(
+            "Execution Plan file manifest is invalid",
+            code="SCOPE_MISMATCH",
+        )
+    planned = {
+        str(item["path"]): int(item["batch"])
+        for item in planned_files
+        if isinstance(item, dict) and "path" in item and "batch" in item
+    }
+    try:
+        batches = {planned[file.path] for file in files}
+    except KeyError as error:
+        raise ScopeViolationError(
+            f"Changeset contains an unplanned file: {error.args[0]}",
+            code="SCOPE_MISMATCH",
+        ) from error
+    if len(batches) != 1:
+        raise ScopeViolationError(
+            "Changeset cannot span multiple planned batches",
+            code="SCOPE_MISMATCH",
+            model_detail="Submit exactly one complete execution.plan batch per Changeset.",
+        )
+    batch = batches.pop()
+    expected = {path for path, planned_batch in planned.items() if planned_batch == batch}
+    supplied = {file.path for file in files}
+    if supplied != expected:
+        missing = ", ".join(sorted(expected - supplied)[:10])
+        extra = ", ".join(sorted(supplied - expected)[:10])
+        detail = f"Submit every file in planned batch {batch} in one edit.propose_changeset call."
+        if missing:
+            detail += f" Missing: {missing}."
+        if extra:
+            detail += f" Unexpected: {extra}."
+        raise ScopeViolationError(
+            "Changeset does not contain the complete planned file batch",
+            code="SCOPE_MISMATCH",
+            model_detail=detail,
+        )
 
 
 def _file_identity(metadata: os.stat_result) -> tuple[int, int]:

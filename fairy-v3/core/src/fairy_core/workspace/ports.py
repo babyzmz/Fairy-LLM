@@ -12,6 +12,10 @@ WorkspaceId = UUID | str
 
 
 class WorkspaceProvisioner(Protocol):
+    def workspace_size(self, workspace_id: WorkspaceId) -> int: ...
+
+    def purge_workspace(self, workspace_id: WorkspaceId) -> int: ...
+
     def version_path(self, project_id: WorkspaceId, version_id: WorkspaceId) -> Path: ...
 
     def create_initial_version(

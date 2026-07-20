@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from fairy_core.contracts.common import ContractModel
 from fairy_core.execution.plans import (
@@ -21,6 +21,13 @@ class PlannedFileInput(ContractModel):
     purpose: str = Field(min_length=1, max_length=500)
     batch: int = Field(ge=1, le=200)
     expected_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("expected_hash")
+    @classmethod
+    def normalize_absent_file_hash(cls, value: str | None) -> str | None:
+        # Some tool-capable models use a zero digest as the conventional create-file
+        # sentinel. Canonicalize it at the contract boundary so plans remain stable.
+        return None if value == "0" * 64 else value
 
 
 class ExecutionPlanCreateInput(ContractModel):

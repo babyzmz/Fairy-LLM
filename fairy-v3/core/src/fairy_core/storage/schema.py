@@ -21,13 +21,18 @@ from fairy_core.persistence.tenant import TENANT_ID_LENGTH
 from fairy_core.storage.assistant_attempt_schema import build_assistant_attempt_tables
 from fairy_core.storage.assistant_work_schema import build_assistant_work_table
 from fairy_core.storage.execution_settings_schema import build_execution_settings_tables
-from fairy_core.storage.history_schema import build_history_tables
+from fairy_core.storage.history_schema import (
+    build_history_indexes,
+    build_history_tables,
+    build_project_table,
+)
 from fairy_core.storage.index_schema import build_state_indexes
 from fairy_core.storage.media_schema import build_media_schema
 from fairy_core.storage.media_work_schema import build_media_work_table
 from fairy_core.storage.model_catalog_schema import build_model_catalog_tables
 from fairy_core.storage.planning_schema import build_planning_schema
 from fairy_core.storage.presentation_schema import build_presentation_schema
+from fairy_core.storage.realtime_schema import build_realtime_tables
 from fairy_core.storage.runtime_index_schema import build_runtime_scope_indexes
 from fairy_core.storage.turn_trace_schema import build_turn_trace_tables
 from fairy_core.storage.types import UTCDateTime
@@ -64,25 +69,13 @@ workspaces = Table(
 )
 
 
-projects = Table(
-    "core_projects",
-    state_metadata,
-    _tenant_id(),
-    _id(),
-    Column("name", String(255), nullable=False),
-    Column("residency", String(32), nullable=False),
-    Column("workspace_id", String(ID_LENGTH), nullable=False),
-    Column("active_version_id", String(ID_LENGTH)),
-    Column("active_preview_id", String(ID_LENGTH)),
-    Column("revision", BigInteger, nullable=False),
-    Column("created_at", UTCDateTime(), nullable=False),
-    Column("updated_at", UTCDateTime(), nullable=False),
-    PrimaryKeyConstraint("tenant_id", "id", name="pk_core_projects"),
-    ForeignKeyConstraint(
-        ["tenant_id", "workspace_id"],
-        [workspaces.c.tenant_id, workspaces.c.id],
-        name="fk_core_projects_workspace",
-    ),
+projects = build_project_table(
+    metadata=state_metadata,
+    tenant_id_column=_tenant_id,
+    id_column=_id,
+    workspaces=workspaces,
+    utc_datetime=UTCDateTime,
+    id_length=ID_LENGTH,
 )
 
 execution_settings, execution_setting_updates = build_execution_settings_tables(state_metadata)
@@ -169,6 +162,8 @@ conversations = Table(
     Column("title", String(200), nullable=False, server_default="New conversation"),
     Column("pinned_at", UTCDateTime()),
     Column("deleted_at", UTCDateTime()),
+    Column("deleted_by_project_at", UTCDateTime()),
+    Column("purged_at", UTCDateTime()),
     Column("revision", BigInteger, nullable=False, server_default="0"),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
@@ -185,6 +180,10 @@ conversations = Table(
         name="fk_core_conversations_workspace",
     ),
 )
+
+realtime_sessions, game_memory_observations = build_realtime_tables(state_metadata)
+
+build_history_indexes(projects=projects, conversations=conversations)
 
 versions = Table(
     "core_versions",

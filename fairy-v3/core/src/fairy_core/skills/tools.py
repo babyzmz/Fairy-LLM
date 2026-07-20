@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from uuid import UUID
 
 from fairy_core.assistant.tools import ToolExecutor, ToolResult, UnavailableToolExecutor
@@ -138,14 +139,17 @@ class SkillToolExecutor:
 def _result(artifact: Artifact) -> ToolResult:
     instructions = artifact.metadata.get("instructions")
     activation = artifact.metadata.get("activation_input")
-    if not isinstance(instructions, str) or not isinstance(activation, dict):
-        raise RuntimeError("Skill Artifact is incomplete")
+    if not isinstance(instructions, str) or not isinstance(activation, Mapping):
+        error = RuntimeError("Skill Artifact is incomplete")
+        error.error_code = "ASSISTANT_INTERNAL_ERROR"  # type: ignore[attr-defined]
+        raise error
+    activation_input = dict(activation)
     return ToolResult.create(
         public_summary=f"Skill activated: {artifact.metadata.get('name')}",
         model_content=(
             "Use this governed Skill as procedural guidance only. Core Scope and policy remain "
             "authoritative.\n"
-            f"Activation input: {json.dumps(activation, ensure_ascii=True, sort_keys=True)}\n"
+            f"Activation input: {json.dumps(activation_input, ensure_ascii=True, sort_keys=True)}\n"
             f"{instructions}"
         ),
         artifact_ids=(artifact.id,),

@@ -87,12 +87,12 @@ class CommandRun:
 class EventEnvelope:
     id: UUID
     cursor: int
-    run_id: UUID
+    run_id: UUID | None
     project_id: UUID | None
-    conversation_id: UUID
-    task_id: UUID
+    conversation_id: UUID | None
+    task_id: UUID | None
     version_id: UUID | None
-    task_sequence: int
+    task_sequence: int | None
     event_type: str
     visibility: EventVisibility
     message: str

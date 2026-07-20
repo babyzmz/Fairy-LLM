@@ -10,6 +10,7 @@ from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListIn
 from fairy_core.contracts.capabilities import CapabilityManifestModel
 from fairy_core.contracts.extensions import (
     ExtensionCatalogPageModel,
+    McpPresetInstallInput,
     McpServerAcceptInput,
     McpServerConfigureInput,
     McpServerDeleteInput,
@@ -18,6 +19,10 @@ from fairy_core.contracts.extensions import (
     McpServerModel,
     McpServerPageModel,
     McpServerSetEnabledInput,
+    SkillCreateInput,
+    SkillImportInspectInput,
+    SkillImportInspectionModel,
+    SkillImportInstallInput,
     SkillInstallInput,
     SkillPageModel,
     SkillRemoveInput,
@@ -49,8 +54,19 @@ from fairy_core.contracts.history import (
     ConversationMoveResultModel,
     ConversationMoveToProjectInput,
     ConversationUpdateInput,
+    ProjectArchivedListInput,
+    ProjectArchivedPageModel,
+    ProjectArchiveInput,
+    ProjectDeleteInput,
+    ProjectMetadataUpdateInput,
     TaskArchiveInput,
     TaskMetadataUpdateInput,
+    TrashItemActionInput,
+    TrashItemPageModel,
+    TrashListInput,
+    TrashMutationResultModel,
+    TrashPurgeAllInput,
+    TrashPurgeResultModel,
 )
 from fairy_core.contracts.media import (
     MediaAudioGenerateInput,
@@ -181,6 +197,21 @@ from fairy_core.contracts.presentation import (
     EditRecipeUpdateInput,
     SelectionCreateInput,
     SelectionReferenceModel,
+)
+from fairy_core.contracts.realtime import (
+    GameMemoryDeleteResult,
+    GameMemoryDigestModel,
+    GameMemoryIdInput,
+    GameMemoryListInput,
+    GameMemoryPageModel,
+    GameMemorySaveInput,
+    RealtimeSessionIdInput,
+    RealtimeSessionListInput,
+    RealtimeSessionModel,
+    RealtimeSessionPageModel,
+    RealtimeSessionReportInput,
+    RealtimeSessionStartInput,
+    RealtimeSessionStopInput,
 )
 from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.contracts.turn_trace import TurnTraceModel
@@ -523,6 +554,31 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             ProjectCreate,
             ProjectContextModel,
         ),
+        "projects.archive": CoreMethod(
+            "projects.archive",
+            ProjectArchiveInput,
+            ProjectModel,
+        ),
+        "projects.archived.delete": CoreMethod(
+            "projects.archived.delete",
+            ProjectDeleteInput,
+            ProjectModel,
+        ),
+        "projects.archived.list": CoreMethod(
+            "projects.archived.list",
+            ProjectArchivedListInput,
+            ProjectArchivedPageModel,
+        ),
+        "projects.archived.restore": CoreMethod(
+            "projects.archived.restore",
+            ProjectArchiveInput,
+            ProjectModel,
+        ),
+        "projects.delete": CoreMethod(
+            "projects.delete",
+            ProjectDeleteInput,
+            ProjectModel,
+        ),
         "projects.get": CoreMethod("projects.get", ProjectIdInput, ProjectModel),
         "projects.import": CoreMethod(
             "projects.import",
@@ -533,6 +589,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "projects.list",
             ProjectListInput,
             ProjectPageModel,
+        ),
+        "projects.update_metadata": CoreMethod(
+            "projects.update_metadata",
+            ProjectMetadataUpdateInput,
+            ProjectModel,
         ),
         "previews.get": CoreMethod(
             "previews.get",
@@ -553,6 +614,26 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "previews.stop",
             PreviewStopInput,
             PreviewModel,
+        ),
+        "trash.items.list": CoreMethod(
+            "trash.items.list",
+            TrashListInput,
+            TrashItemPageModel,
+        ),
+        "trash.items.purge": CoreMethod(
+            "trash.items.purge",
+            TrashItemActionInput,
+            TrashMutationResultModel,
+        ),
+        "trash.items.purge_all": CoreMethod(
+            "trash.items.purge_all",
+            TrashPurgeAllInput,
+            TrashPurgeResultModel,
+        ),
+        "trash.items.restore": CoreMethod(
+            "trash.items.restore",
+            TrashItemActionInput,
+            TrashMutationResultModel,
         ),
         "permissions.get": CoreMethod(
             "permissions.get",
@@ -599,6 +680,21 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             SkillInstallInput,
             SkillPageModel,
         ),
+        "skills.import.inspect": CoreMethod(
+            "skills.import.inspect",
+            SkillImportInspectInput,
+            SkillImportInspectionModel,
+        ),
+        "skills.import.install": CoreMethod(
+            "skills.import.install",
+            SkillImportInstallInput,
+            SkillPageModel,
+        ),
+        "skills.create": CoreMethod(
+            "skills.create",
+            SkillCreateInput,
+            SkillPageModel,
+        ),
         "skills.list": CoreMethod(
             "skills.list",
             EmptyInput,
@@ -618,6 +714,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "skills.update",
             SkillUpdateInput,
             SkillPageModel,
+        ),
+        "mcp.presets.install": CoreMethod(
+            "mcp.presets.install",
+            McpPresetInstallInput,
+            McpServerModel,
         ),
         "tasks.archive": CoreMethod("tasks.archive", TaskArchiveInput, TaskModel),
         "tasks.create": CoreMethod("tasks.create", TaskCreate, TaskContextModel),
@@ -699,6 +800,30 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
         ),
         "renderer_packs.install": CoreMethod(
             "renderer_packs.install", RendererPackInstallInput, RendererPackModel
+        ),
+        "realtime.memories.delete": CoreMethod(
+            "realtime.memories.delete", GameMemoryIdInput, GameMemoryDeleteResult
+        ),
+        "realtime.memories.list": CoreMethod(
+            "realtime.memories.list", GameMemoryListInput, GameMemoryPageModel
+        ),
+        "realtime.memories.save": CoreMethod(
+            "realtime.memories.save", GameMemorySaveInput, GameMemoryDigestModel
+        ),
+        "realtime.sessions.get": CoreMethod(
+            "realtime.sessions.get", RealtimeSessionIdInput, RealtimeSessionModel
+        ),
+        "realtime.sessions.list": CoreMethod(
+            "realtime.sessions.list", RealtimeSessionListInput, RealtimeSessionPageModel
+        ),
+        "realtime.sessions.report": CoreMethod(
+            "realtime.sessions.report", RealtimeSessionReportInput, RealtimeSessionModel
+        ),
+        "realtime.sessions.start": CoreMethod(
+            "realtime.sessions.start", RealtimeSessionStartInput, RealtimeSessionModel
+        ),
+        "realtime.sessions.stop": CoreMethod(
+            "realtime.sessions.stop", RealtimeSessionStopInput, RealtimeSessionModel
         ),
         "renderer_packs.update": CoreMethod(
             "renderer_packs.update", RendererPackInstallInput, RendererPackModel

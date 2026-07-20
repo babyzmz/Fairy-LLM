@@ -26,9 +26,17 @@ from fairy_core.contracts.models import (
 from fairy_core.domain.errors import (
     IdempotencyConflictError,
     InvalidTransitionError,
+    ProjectBusyError,
     VersionConflictError,
 )
-from fairy_core.domain.execution import ApprovalDecision, ChangesetStatus
+from fairy_core.domain.execution import (
+    ApprovalDecision,
+    ChangesetStatus,
+    PreviewSession,
+    PreviewVisibility,
+    RuntimeKind,
+    RuntimeSession,
+)
 from fairy_core.domain.models import (
     OperationMode,
     ProjectResidency,
@@ -209,6 +217,135 @@ def test_scratch_conversation_moves_to_project_as_immutable_transcript(
             title="Stale title",
             pinned=None,
             expected_revision=99,
+        )
+
+
+def test_project_lifecycle_cascades_only_project_deleted_conversations(
+    tmp_path: Path,
+) -> None:
+    app, _ledger, factory = _build_application(
+        tmp_path,
+        FileSystemWorkspaceProvisioner(tmp_path / "managed"),
+    )
+    context = app.create_project(name="Atlas", residency=ProjectResidency.LOCAL_ONLY)
+    project = context.project
+    with factory() as unit_of_work:
+        setup_conversation = unit_of_work.state.list_conversations(
+            project_id=project.id,
+            limit=100,
+            cursor=None,
+        ).items[0]
+    individually_deleted = app.create_conversation(
+        project_id=project.id,
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+    )
+    individually_deleted = app.history.delete_conversation(
+        conversation_id=individually_deleted.id,
+        expected_revision=individually_deleted.revision,
+        user_confirmed=True,
+    )
+
+    archived = app.history.archive_project(
+        project_id=project.id,
+        expected_revision=project.metadata_revision,
+    )
+    deleted = app.history.delete_project(
+        project_id=project.id,
+        expected_revision=archived.metadata_revision,
+        user_confirmed=True,
+    )
+    restored = app.history.restore_deleted_project(
+        project_id=project.id,
+        expected_revision=deleted.metadata_revision,
+    )
+
+    assert restored.archived_at is not None
+    assert restored.deleted_at is None
+    with factory() as unit_of_work:
+        restored_setup = unit_of_work.state.get_conversation(setup_conversation.id)
+        still_deleted = unit_of_work.state.get_conversation(individually_deleted.id)
+    assert restored_setup is not None
+    assert restored_setup.deleted_at is None
+    assert still_deleted is not None
+    assert still_deleted.deleted_at is not None
+    assert still_deleted.deleted_by_project_at is None
+
+
+def test_project_archive_rejects_active_task(tmp_path: Path) -> None:
+    app = _application(tmp_path)
+    context = app.create_project(name="Busy", residency=ProjectResidency.LOCAL_ONLY)
+    conversation = app.create_conversation(
+        project_id=context.project.id,
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+    )
+    app.create_task(
+        TaskCreate(
+            conversation_id=conversation.id,
+            user_request="Keep working",
+            operation_mode=OperationMode.CONTINUE_CURRENT_DRAFT,
+            execution_target=ExecutionTarget.LOCAL,
+            idempotency_key="busy-project-task",
+        )
+    )
+
+    with pytest.raises(ProjectBusyError) as error:
+        app.history.archive_project(
+            project_id=context.project.id,
+            expected_revision=context.project.metadata_revision,
+        )
+    assert error.value.code == "PROJECT_BUSY"
+
+
+def test_project_archive_rejects_ready_task_with_live_preview(tmp_path: Path) -> None:
+    app, _ledger, factory = _build_application(
+        tmp_path,
+        FileSystemWorkspaceProvisioner(tmp_path / "managed"),
+    )
+    context = app.create_project(name="Preview busy", residency=ProjectResidency.LOCAL_ONLY)
+    conversation = app.create_conversation(
+        project_id=context.project.id,
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+    )
+    task_context = app.create_task(
+        TaskCreate(
+            conversation_id=conversation.id,
+            user_request="Keep the Preview running",
+            operation_mode=OperationMode.CONTINUE_CURRENT_DRAFT,
+            execution_target=ExecutionTarget.LOCAL,
+            idempotency_key="busy-project-preview",
+        )
+    )
+    task = task_context.task
+    task.transition_to(TaskStatus.EXECUTING)
+    task.transition_to(TaskStatus.PREVIEWING)
+    task.transition_to(TaskStatus.REVIEWING)
+    task.transition_to(TaskStatus.READY)
+    runtime = RuntimeSession.create(
+        scope=task_context.scope,
+        kind=RuntimeKind.STATIC_SITE,
+        executor="test",
+        idempotency_key="busy-project-preview:runtime",
+    )
+    runtime.begin_start()
+    runtime.mark_running(executor_handle="preview-handle", port=43125)
+    preview = PreviewSession.create(
+        scope=task_context.scope,
+        runtime_id=runtime.id,
+        visibility=PreviewVisibility.PROJECT_ACTIVE,
+        idempotency_key="busy-project-preview:preview",
+    )
+    preview.begin_start()
+    preview.mark_ready("http://127.0.0.1:43125/")
+    with factory() as unit_of_work:
+        unit_of_work.state.save_task(task)
+        unit_of_work.state.append_runtime(runtime)
+        unit_of_work.state.append_preview(preview)
+        unit_of_work.commit()
+
+    with pytest.raises(ProjectBusyError, match="Preview"):
+        app.history.archive_project(
+            project_id=context.project.id,
+            expected_revision=context.project.metadata_revision,
         )
 
 

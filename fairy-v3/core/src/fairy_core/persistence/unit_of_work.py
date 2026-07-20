@@ -33,6 +33,8 @@ from fairy_core.model_catalog.repository import SqlAlchemyModelCatalogRepository
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.presentation.ports import PresentationRepository
 from fairy_core.presentation.repository import SqlAlchemyPresentationRepository
+from fairy_core.realtime.ports import RealtimeRepository
+from fairy_core.realtime.repository import SqlAlchemyRealtimeRepository
 from fairy_core.storage.ports import StateStore
 from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
 from fairy_core.workspace.ports import ProjectIndexRepository, WorkspaceRepository
@@ -58,6 +60,7 @@ class CoreUnitOfWork(Protocol):
     project_indexes: ProjectIndexRepository
     presentations: PresentationRepository
     model_catalog: ModelCatalogRepository
+    realtime: RealtimeRepository
 
     def __enter__(self) -> Self: ...
 
@@ -144,6 +147,10 @@ class SqlAlchemyUnitOfWork:
                 tenant_id=self._tenant_id,
             )
             self.model_catalog = SqlAlchemyModelCatalogRepository(
+                connection,
+                tenant_id=self._tenant_id,
+            )
+            self.realtime = SqlAlchemyRealtimeRepository(
                 connection,
                 tenant_id=self._tenant_id,
             )

@@ -19,6 +19,7 @@ from fairy_core.providers.models import (
 from fairy_core.providers.ports import (
     CancellationToken,
     ProviderCancelledError,
+    ProviderNetworkError,
     ProviderProtocolError,
     ProviderUnavailableError,
 )
@@ -130,6 +131,119 @@ def test_registry_falls_back_only_before_the_first_delta() -> None:
     deltas = tuple(registry.stream(_request("primary"), CancellationToken()))
 
     assert [(delta.profile_id, delta.text) for delta in deltas] == [("fallback", "Recovered")]
+    assert primary.calls == 2
+    assert fallback.calls == 1
+
+
+def test_registry_can_retry_after_usage_without_a_substantive_response() -> None:
+    primary = FakeProvider(
+        _profile("primary", fallback="fallback"),
+        [
+            ModelDelta.usage_delta(
+                profile_id="primary",
+                sequence=1,
+                usage={"total_tokens": 7},
+            ),
+            ProviderProtocolError("empty completion"),
+        ],
+    )
+    fallback = FakeProvider(
+        _profile("fallback"),
+        [_text("fallback", 1, "Recovered")],
+    )
+
+    deltas = tuple(
+        ProviderRegistry((primary, fallback)).stream(
+            _request("primary"),
+            CancellationToken(),
+        )
+    )
+
+    assert [delta.text for delta in deltas if delta.kind is ModelDeltaKind.TEXT] == [
+        "Recovered"
+    ]
+    assert primary.calls == 2
+    assert fallback.calls == 1
+
+
+def test_registry_can_validate_a_buffered_attempt_before_emitting_deltas() -> None:
+    primary = FakeProvider(
+        _profile("primary"),
+        [_text("primary", 1, "Buffered")],
+    )
+    validations = 0
+    events = []
+
+    def validate(deltas: tuple[ModelDelta, ...]) -> None:
+        nonlocal validations
+        validations += 1
+        assert [delta.text for delta in deltas] == ["Buffered"]
+        if validations == 1:
+            raise ProviderProtocolError("invalid buffered response")
+
+    result = tuple(
+        ProviderRegistry((primary,)).stream(
+            _request("primary"),
+            CancellationToken(),
+            on_attempt=events.append,
+            attempt_validator=validate,
+        )
+    )
+
+    assert [delta.text for delta in result] == ["Buffered"]
+    assert primary.calls == 2
+    assert validations == 2
+    assert [event.status.value for event in events] == [
+        "started",
+        "failed",
+        "started",
+        "succeeded",
+    ]
+    assert events[1].error_category.value == "protocol"
+
+
+def test_registry_retries_without_leaking_partial_tool_arguments() -> None:
+    primary = FakeProvider(
+        _profile("primary", fallback="fallback"),
+        [
+            ModelDelta.tool_call(
+                profile_id="primary",
+                sequence=1,
+                tool_call_id="partial-call",
+                tool_name="execution.plan",
+                arguments_fragment='{"files":',
+            ),
+            ProviderNetworkError("stream interrupted"),
+        ],
+    )
+    fallback = FakeProvider(
+        _profile("fallback"),
+        [
+            ModelDelta.tool_call(
+                profile_id="fallback",
+                sequence=1,
+                tool_call_id="recovered-call",
+                tool_name="execution.plan",
+                arguments_fragment='{"files":[]}',
+            ),
+            ModelDelta.done(
+                profile_id="fallback",
+                sequence=2,
+                finish_reason="tool_calls",
+            ),
+        ],
+    )
+
+    deltas = tuple(
+        ProviderRegistry((primary, fallback)).stream(
+            _request("primary"),
+            CancellationToken(),
+        )
+    )
+
+    tool_deltas = [delta for delta in deltas if delta.kind is ModelDeltaKind.TOOL_CALL]
+    assert [delta.profile_id for delta in tool_deltas] == ["fallback"]
+    assert [delta.tool_arguments_fragment for delta in tool_deltas] == ['{"files":[]}']
     assert primary.calls == 2
     assert fallback.calls == 1
 

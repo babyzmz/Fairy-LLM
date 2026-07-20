@@ -12,6 +12,8 @@ class RecordingTransport:
 
     def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
         self.calls.append((method, params))
+        if method in {"workspace.size", "workspace.purge"}:
+            return {"bytes": 17}
         if method == "workspace.create_scratch":
             root = (
                 self.managed_root
@@ -107,3 +109,15 @@ def test_adapter_supports_empty_projects_and_scratch(tmp_path: Path) -> None:
     assert scratch.name == "task-1"
     assert transport.calls[0][0] == "workspace.create_empty"
     assert transport.calls[1][0] == "workspace.create_scratch"
+
+
+def test_adapter_delegates_workspace_lifecycle_to_worker(tmp_path: Path) -> None:
+    transport = RecordingTransport(tmp_path / "managed")
+    adapter = RustWorkspaceProvisioner(transport, tmp_path / "managed")
+
+    assert adapter.workspace_size("workspace-1") == 17
+    assert adapter.purge_workspace("workspace-1") == 17
+    assert transport.calls == [
+        ("workspace.size", {"workspace_id": "workspace-1"}),
+        ("workspace.purge", {"workspace_id": "workspace-1"}),
+    ]

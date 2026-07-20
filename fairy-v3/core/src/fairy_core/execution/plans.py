@@ -203,6 +203,28 @@ class ExecutionPlan:
         self.status = ExecutionPlanStatus.PAUSED
         self._touch()
 
+    def complete(self) -> None:
+        self._finish(ExecutionPlanStatus.COMPLETED)
+
+    def fail(self) -> None:
+        self._finish(ExecutionPlanStatus.FAILED)
+
+    def cancel(self) -> None:
+        self._finish(ExecutionPlanStatus.CANCELLED)
+
+    def _finish(self, status: ExecutionPlanStatus) -> None:
+        target = ExecutionPlanStatus(status)
+        if target not in {
+            ExecutionPlanStatus.COMPLETED,
+            ExecutionPlanStatus.FAILED,
+            ExecutionPlanStatus.CANCELLED,
+        }:
+            raise ValueError("Execution Plan finish status must be terminal")
+        if self.status not in {ExecutionPlanStatus.ACTIVE, ExecutionPlanStatus.PAUSED}:
+            raise InvalidTransitionError("Execution Plan is already terminal")
+        self.status = target
+        self._touch()
+
     def _require_active(self) -> None:
         if self.status is not ExecutionPlanStatus.ACTIVE:
             raise InvalidTransitionError("Execution Plan is not active")

@@ -169,6 +169,31 @@ class ExecutionPlanningApplication:
     def complete_step(self, task_id: UUID, kind: TaskStepKind) -> TaskStep | None:
         return self._finish_step(task_id, kind, error_code=None)
 
+    def skip_step(self, task_id: UUID, kind: TaskStepKind) -> TaskStep | None:
+        with self._unit_of_work_factory() as unit_of_work:
+            plan = unit_of_work.state.execution_plan_for_task(task_id)
+            if plan is None:
+                return None
+            step = next(
+                item
+                for item in unit_of_work.state.task_steps_for_plan(plan.id)
+                if item.kind is kind
+            )
+            if step.status in {TaskStepStatus.COMPLETED, TaskStepStatus.SKIPPED}:
+                return step
+            if step.status is not TaskStepStatus.PENDING:
+                raise ValueError(f"Execution Plan {kind.value} step cannot be skipped")
+            expected_status = step.status
+            expected_attempts = step.attempts
+            step.transition_to(TaskStepStatus.SKIPPED)
+            unit_of_work.state.save_task_step(
+                step,
+                expected_status=expected_status,
+                expected_attempts=expected_attempts,
+            )
+            unit_of_work.commit()
+            return step
+
     def fail_step(
         self,
         task_id: UUID,

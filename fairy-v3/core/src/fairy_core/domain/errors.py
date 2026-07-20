@@ -22,6 +22,10 @@ class CapabilityUnavailableError(DomainError):
     code = "CAPABILITY_NOT_AVAILABLE"
 
 
+class ProjectBusyError(DomainError):
+    code = "PROJECT_BUSY"
+
+
 class CommandRejectedError(DomainError):
     def __init__(self, message: str, *, code: str) -> None:
         super().__init__(message)
@@ -29,9 +33,20 @@ class CommandRejectedError(DomainError):
 
 
 class ScopeViolationError(DomainError):
-    def __init__(self, message: str, *, code: str = "PATH_OUT_OF_SCOPE") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "PATH_OUT_OF_SCOPE",
+        model_detail: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        if model_detail is not None and (
+            not model_detail.strip() or len(model_detail) > 2_000
+        ):
+            raise ValueError("model recovery detail is invalid")
+        self.model_detail = model_detail
 
 
 class PreviewScopeViolationError(DomainError):

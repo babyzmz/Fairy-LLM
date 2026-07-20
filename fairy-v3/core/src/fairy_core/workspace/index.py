@@ -31,6 +31,7 @@ _IGNORED_DIRECTORIES = frozenset(
         "venv",
     }
 )
+_IGNORED_FILES = frozenset({".git"})
 _SECRET_NAMES = frozenset(
     {
         "credentials",
@@ -182,6 +183,7 @@ class ProjectIndexer:
         name = parts[-1]
         return (
             any(part in _IGNORED_DIRECTORIES for part in parts[:-1])
+            or name in _IGNORED_FILES
             or name == ".env"
             or name.startswith(".env.")
             or name in _SECRET_NAMES

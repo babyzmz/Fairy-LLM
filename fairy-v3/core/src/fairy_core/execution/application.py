@@ -87,14 +87,14 @@ class ProjectExecutionApplication:
             if tool_name == _DEPENDENCY_TOOL:
                 self._planning.complete_step(scope.task_id, TaskStepKind.INSTALL)
             return self._tool_result(existing)
-        if tool_name == _DEPENDENCY_TOOL:
-            self._planning.start_step(scope.task_id, TaskStepKind.INSTALL)
-        self._begin_phase(scope.task_id, tool_name)
         template = (
             dependency_template(scope.project_root)
             if tool_name == _DEPENDENCY_TOOL
             else review_template(scope.project_root, _REVIEW_TOOLS[tool_name])
         )
+        if tool_name == _DEPENDENCY_TOOL:
+            self._planning.start_step(scope.task_id, TaskStepKind.INSTALL)
+        self._begin_phase(scope.task_id, tool_name)
         archive = self._archive_builder.build(scope)
         dependency_key = dependency_layer_key(scope.project_root, template.manager)
         request = SandboxRequest.create(
@@ -492,7 +492,6 @@ class ProjectExecutionApplication:
             or command_run.task_id != scope.task_id
             or command_run.scope_digest != scope.scope_digest
             or command_run.lease_fence < 1
-            or scope.project_id is None
             or scope.target_version_id is None
         ):
             raise ScopeViolationError(

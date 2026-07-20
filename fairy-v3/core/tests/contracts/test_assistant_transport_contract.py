@@ -49,7 +49,15 @@ def test_jsonrpc_exposes_start_run_and_retry_over_the_shared_catalog(tmp_path: P
                     sequence=2,
                     finish_reason="stop",
                 ),
-            )
+            ),
+            (
+                ModelDelta.text(profile_id="scripted", sequence=1, text="retried"),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
         ]
     )
     dispatcher = build_local_dispatcher(
@@ -110,10 +118,18 @@ def test_jsonrpc_exposes_start_run_and_retry_over_the_shared_catalog(tmp_path: P
                 },
             }
         )["result"]
-        messages = dispatcher.dispatch(
+        retried_completed = dispatcher.dispatch(
             {
                 "jsonrpc": "2.0",
                 "id": 6,
+                "method": "assistant.turns.run",
+                "params": {"turn_id": retried["id"]},
+            }
+        )["result"]
+        messages = dispatcher.dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
                 "method": "messages.list",
                 "params": {"conversation_id": conversation["id"]},
             }
@@ -123,6 +139,12 @@ def test_jsonrpc_exposes_start_run_and_retry_over_the_shared_catalog(tmp_path: P
         assert retried["status"] == "created"
         assert retried["task_id"] == turn["task_id"]
         assert retried["id"] != turn["id"]
-        assert [message["role"] for message in messages] == ["user", "assistant"]
+        assert retried_completed["status"] == "completed"
+        assert [message["role"] for message in messages] == [
+            "user",
+            "assistant",
+            "assistant",
+        ]
+        assert provider.requests[-1].messages[-1].content == "Hello"
     finally:
         dispatcher.close()

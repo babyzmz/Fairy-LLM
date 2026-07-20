@@ -17,6 +17,20 @@ class RustWorkspaceProvisioner:
         self._transport = transport
         self._managed_root = managed_root.resolve(strict=False)
 
+    def workspace_size(self, workspace_id: WorkspaceId) -> int:
+        result = self._transport.call(
+            "workspace.size",
+            {"workspace_id": str(workspace_id)},
+        )
+        return self._result_bytes(result)
+
+    def purge_workspace(self, workspace_id: WorkspaceId) -> int:
+        result = self._transport.call(
+            "workspace.purge",
+            {"workspace_id": str(workspace_id)},
+        )
+        return self._result_bytes(result)
+
     def version_path(self, project_id: WorkspaceId, version_id: WorkspaceId) -> Path:
         return self._managed_root / "projects" / str(project_id) / "versions" / str(version_id)
 
@@ -239,3 +253,10 @@ class RustWorkspaceProvisioner:
         if not isinstance(value, str) or not value:
             raise RuntimeError(f"worker result is missing {key}")
         return Path(value).resolve(strict=False)
+
+    @staticmethod
+    def _result_bytes(result: dict[str, object]) -> int:
+        value = result.get("bytes")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise RuntimeError("worker result is missing byte count")
+        return value

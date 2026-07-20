@@ -159,6 +159,11 @@ class Project:
     active_version_id: UUID | None = None
     active_preview_id: UUID | None = None
     revision: int = 0
+    pinned_at: datetime | None = None
+    archived_at: datetime | None = None
+    deleted_at: datetime | None = None
+    purged_at: datetime | None = None
+    metadata_revision: int = 0
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
 
@@ -167,6 +172,8 @@ class Project:
         normalized = name.strip()
         if not normalized:
             raise ValueError("project name is required")
+        if len(normalized) > 255:
+            raise ValueError("project name must contain at most 255 characters")
         project_id = new_id()
         return cls(
             id=project_id,
@@ -174,6 +181,81 @@ class Project:
             residency=residency,
             workspace_id=project_id,
         )
+
+    def update_metadata(
+        self,
+        *,
+        name: str | None,
+        pinned: bool | None,
+        expected_revision: int,
+    ) -> None:
+        self._require_metadata_revision(expected_revision)
+        self._require_recoverable()
+        if name is not None:
+            normalized = name.strip()
+            if not normalized or len(normalized) > 255:
+                raise ValueError("project name must contain 1 to 255 characters")
+            self.name = normalized
+        if pinned is not None:
+            self.pinned_at = _now() if pinned else None
+        self._touch_metadata()
+
+    def archive(self, *, expected_revision: int) -> None:
+        self._require_metadata_revision(expected_revision)
+        self._require_recoverable()
+        if self.archived_at is not None:
+            raise InvalidTransitionError("Project is already archived")
+        self.archived_at = _now()
+        self.pinned_at = None
+        self._touch_metadata()
+
+    def restore_archive(self, *, expected_revision: int) -> None:
+        self._require_metadata_revision(expected_revision)
+        self._require_recoverable()
+        if self.archived_at is None:
+            raise InvalidTransitionError("Project is not archived")
+        self.archived_at = None
+        self._touch_metadata()
+
+    def delete(self, *, expected_revision: int) -> None:
+        self._require_metadata_revision(expected_revision)
+        self._require_recoverable()
+        self.deleted_at = _now()
+        self.pinned_at = None
+        self._touch_metadata(at=self.deleted_at)
+
+    def restore_deleted(self, *, expected_revision: int) -> None:
+        self._require_metadata_revision(expected_revision)
+        if self.purged_at is not None:
+            raise InvalidTransitionError("Purged Project cannot be restored")
+        if self.deleted_at is None:
+            raise InvalidTransitionError("Project is not deleted")
+        self.deleted_at = None
+        self._touch_metadata()
+
+    def mark_purged(self, *, expected_revision: int) -> None:
+        self._require_metadata_revision(expected_revision)
+        if self.deleted_at is None:
+            raise InvalidTransitionError("Project must be deleted before it is purged")
+        if self.purged_at is not None:
+            raise InvalidTransitionError("Project is already purged")
+        self.purged_at = _now()
+        self.name = "Deleted project"
+        self._touch_metadata(at=self.purged_at)
+
+    def _require_metadata_revision(self, expected_revision: int) -> None:
+        if expected_revision != self.metadata_revision:
+            raise VersionConflictError("Project metadata changed concurrently")
+
+    def _require_recoverable(self) -> None:
+        if self.purged_at is not None:
+            raise InvalidTransitionError("Purged Project cannot be updated")
+        if self.deleted_at is not None:
+            raise InvalidTransitionError("Deleted Project cannot be updated")
+
+    def _touch_metadata(self, *, at: datetime | None = None) -> None:
+        self.metadata_revision += 1
+        self.updated_at = at or _now()
 
     def accept_version(self, version_id: UUID, *, expected_revision: int) -> None:
         if expected_revision != self.revision:
@@ -199,6 +281,8 @@ class Conversation:
     title: str = "New conversation"
     pinned_at: datetime | None = None
     deleted_at: datetime | None = None
+    deleted_by_project_at: datetime | None = None
+    purged_at: datetime | None = None
     revision: int = 0
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
@@ -242,6 +326,8 @@ class Conversation:
     ) -> None:
         if expected_revision != self.revision:
             raise VersionConflictError("Conversation metadata changed concurrently")
+        if self.purged_at is not None:
+            raise InvalidTransitionError("purged Conversation cannot be updated")
         if self.deleted_at is not None:
             raise InvalidTransitionError("deleted Conversation cannot be updated")
         if title is not None:
@@ -254,15 +340,42 @@ class Conversation:
         self.revision += 1
         self.updated_at = _now()
 
-    def delete(self, *, expected_revision: int) -> None:
+    def delete(self, *, expected_revision: int, by_project: bool = False) -> None:
         if expected_revision != self.revision:
             raise VersionConflictError("Conversation metadata changed concurrently")
         if self.deleted_at is not None:
             raise InvalidTransitionError("Conversation is already deleted")
+        if self.purged_at is not None:
+            raise InvalidTransitionError("Purged Conversation cannot be deleted")
         self.deleted_at = _now()
+        self.deleted_by_project_at = self.deleted_at if by_project else None
         self.pinned_at = None
         self.revision += 1
         self.updated_at = self.deleted_at
+
+    def restore_deleted(self, *, expected_revision: int) -> None:
+        if expected_revision != self.revision:
+            raise VersionConflictError("Conversation metadata changed concurrently")
+        if self.purged_at is not None:
+            raise InvalidTransitionError("Purged Conversation cannot be restored")
+        if self.deleted_at is None:
+            raise InvalidTransitionError("Conversation is not deleted")
+        self.deleted_at = None
+        self.deleted_by_project_at = None
+        self.revision += 1
+        self.updated_at = _now()
+
+    def mark_purged(self, *, expected_revision: int) -> None:
+        if expected_revision != self.revision:
+            raise VersionConflictError("Conversation metadata changed concurrently")
+        if self.deleted_at is None:
+            raise InvalidTransitionError("Conversation must be deleted before it is purged")
+        if self.purged_at is not None:
+            raise InvalidTransitionError("Conversation is already purged")
+        self.purged_at = _now()
+        self.title = "Deleted chat"
+        self.revision += 1
+        self.updated_at = self.purged_at
 
 
 @dataclass(slots=True)

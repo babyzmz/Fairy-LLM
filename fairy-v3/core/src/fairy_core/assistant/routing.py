@@ -36,6 +36,7 @@ NEMOTRON_FREE_MODEL_ID = "nvidia/nemotron-3-ultra-550b-a55b:free"
 QWEN_FREE_MODEL_ID = "qwen/qwen3-coder:free"
 
 ROUTER_MAX_OUTPUT_TOKENS = 384
+CODE_MAX_OUTPUT_TOKENS = 16_384
 TURN_AUTO_APPROVAL_USD = Decimal("0.25")
 TURN_AUTOMATIC_TARGET_USD = Decimal("0.10")
 
@@ -61,6 +62,7 @@ class _RoutingPayload(BaseModel):
     task_kind: RoutingTaskKind
     complexity: RoutingComplexity
     needs_review: bool
+    requires_workspace_changes: bool
     estimated_output_tokens: int = Field(ge=256, le=16_384)
     public_summary: str = Field(min_length=1, max_length=240)
 
@@ -76,6 +78,7 @@ class RoutingDecision:
     estimated_cost_usd: str | None
     cost_estimate_known: bool
     approval_required: bool
+    requires_workspace_changes: bool
     public_summary: str
 
     def __post_init__(self) -> None:
@@ -146,8 +149,13 @@ def build_router_request(
                 content=(
                     "Classify the user's requested outcome for Fairy. Return only the strict "
                     "RoutingDecision JSON. Do not expose hidden reasoning. public_summary must be "
-                    "a short user-safe explanation of the route. Select image, music, or video "
-                    "only when generation of that medium is the requested deliverable."
+                    "a short user-safe explanation of the classification, without a first-person "
+                    "promise, proposed answer, or repetition of the request. Select image, music, "
+                    "or video only when generation of that medium is the requested deliverable. "
+                    "Set requires_workspace_changes=true only when the requested outcome must "
+                    "create, modify, delete, rename, test, or run durable Workspace files. Code "
+                    "questions, explanations, and reviews that do not request edits must be false; "
+                    "specialized image, music, and video generation must also be false."
                 ),
             ),
             ModelMessage.create(
@@ -237,10 +245,19 @@ def auto_routing_decision(
         if _catalog_model_usable(catalog, preferred_reviewer):
             reviewer_model_id = preferred_reviewer
 
+    estimated_output_tokens = max(
+        routed.estimated_output_tokens,
+        {
+            RoutingTaskKind.CODE: CODE_MAX_OUTPUT_TOKENS,
+            RoutingTaskKind.IMAGE: 1_024,
+            RoutingTaskKind.MUSIC: 1_024,
+            RoutingTaskKind.VIDEO: 1_024,
+        }.get(task_kind, 256),
+    )
     route_calls = (
         (DEEPSEEK_MODEL_ID, ROUTER_MAX_OUTPUT_TOKENS),
-        (primary_model_id, routed.estimated_output_tokens),
-        *(((reviewer_model_id, routed.estimated_output_tokens),) if reviewer_model_id else ()),
+        (primary_model_id, estimated_output_tokens),
+        *(((reviewer_model_id, estimated_output_tokens),) if reviewer_model_id else ()),
     )
     estimate = estimate_text_cost(
         catalog,
@@ -283,10 +300,11 @@ def auto_routing_decision(
         primary_model_id=primary_model_id,
         reviewer_model_id=reviewer_model_id,
         media_model_id=media_model_id,
-        estimated_output_tokens=routed.estimated_output_tokens,
+        estimated_output_tokens=estimated_output_tokens,
         estimated_cost_usd=_decimal_text(estimate) if estimate is not None else None,
         cost_estimate_known=estimate is not None,
         approval_required=approval_required,
+        requires_workspace_changes=routed.requires_workspace_changes,
         public_summary=public_summary,
     )
 
@@ -333,6 +351,7 @@ def manual_routing_decision(
             estimated_cost_usd=_decimal_text(estimate) if estimate is not None else None,
             cost_estimate_known=estimate is not None,
             approval_required=approval_required,
+            requires_workspace_changes=False,
             public_summary=(f"DeepSeek will prepare the specification for {allowed.display_name}."),
         )
     task_kind = (
@@ -340,9 +359,12 @@ def manual_routing_decision(
         if allowed.category in {ModelCategory.CODE, ModelCategory.FREE_CODE}
         else RoutingTaskKind.GENERAL
     )
+    output_tokens = (
+        CODE_MAX_OUTPUT_TOKENS if task_kind is RoutingTaskKind.CODE else 4_096
+    )
     estimate = estimate_text_cost(
         catalog,
-        calls=((selection.model_id, 4_096),),
+        calls=((selection.model_id, output_tokens),),
         prompt_characters=max(1, len(user_request)),
     )
     return RoutingDecision(
@@ -351,11 +373,12 @@ def manual_routing_decision(
         primary_model_id=selection.model_id,
         reviewer_model_id=None,
         media_model_id=None,
-        estimated_output_tokens=4_096,
+        estimated_output_tokens=output_tokens,
         estimated_cost_usd=_decimal_text(estimate) if estimate is not None else None,
         cost_estimate_known=estimate is not None,
         approval_required=(allowed.paid and estimate is None)
         or (estimate is not None and estimate > TURN_AUTO_APPROVAL_USD),
+        requires_workspace_changes=False,
         public_summary=f"Using {allowed.display_name} for this turn.",
     )
 
@@ -424,6 +447,7 @@ def routing_decision_record(decision: RoutingDecision) -> dict[str, Any]:
         "estimated_cost_usd": decision.estimated_cost_usd,
         "cost_estimate_known": decision.cost_estimate_known,
         "approval_required": decision.approval_required,
+        "requires_workspace_changes": decision.requires_workspace_changes,
         "public_summary": decision.public_summary,
     }
 
@@ -453,6 +477,7 @@ def routing_decision_from_record(record: object) -> RoutingDecision | None:
         ),
         cost_estimate_known=bool(record["cost_estimate_known"]),
         approval_required=bool(record["approval_required"]),
+        requires_workspace_changes=bool(record.get("requires_workspace_changes", False)),
         public_summary=str(record["public_summary"]),
     )
 

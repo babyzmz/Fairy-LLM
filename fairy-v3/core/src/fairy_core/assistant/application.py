@@ -1,26 +1,24 @@
 from __future__ import annotations
 
-import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fairy_core.assistant import limits
 from fairy_core.assistant.candidates import ToolCandidate, arguments_for_definition
 from fairy_core.assistant.context import AssistantContextBuilder
-from fairy_core.assistant.durable_context import durable_tool_context
 from fairy_core.assistant.media_routing import constrain_context_for_media
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
     Message,
-    MessageRole,
-    MessageVisibility,
     ToolInvocation,
     ToolInvocationStatus,
 )
 from fairy_core.assistant.plan_budget import consume_tool_budget
 from fairy_core.assistant.provider_attempts import ProviderAttemptRecorder
 from fairy_core.assistant.routing_runtime import AssistantRoutingMixin
+from fairy_core.assistant.tool_context_runtime import AssistantToolContextMixin
 from fairy_core.assistant.tool_trace import ToolTraceCoordinator
 from fairy_core.assistant.tools import (
     DIRECT_ANSWER_TOOL_NAME,
@@ -29,7 +27,6 @@ from fairy_core.assistant.tools import (
     UnavailableToolExecutor,
     direct_answer,
     sanitize_public_intent,
-    tool_message_content,
 )
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.assistant.turn_lifecycle import AssistantTurnLifecycleMixin
@@ -55,7 +52,6 @@ from fairy_core.providers import (
     ModelMessage,
     ModelRequest,
     ModelRole,
-    ModelToolCall,
     ProviderAuthenticationError,
     ProviderCancelledError,
     ProviderContentRejectedError,
@@ -70,7 +66,11 @@ from fairy_core.providers import (
 )
 
 
-class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
+class AssistantApplication(
+    AssistantToolContextMixin,
+    AssistantRoutingMixin,
+    AssistantTurnLifecycleMixin,
+):
     def __init__(
         self,
         *,
@@ -81,6 +81,7 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
         image_attachments: ImageAttachmentStore,
         tool_executor: ToolExecutor | None = None,
         execution_policy: ExecutionPolicyResolver | None = None,
+        execution_completion_hook: Callable[[UUID], str | None] | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._scope_resolver = scope_resolver
@@ -90,6 +91,7 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
         self._image_attachments = image_attachments
         self._tool_executor = tool_executor or UnavailableToolExecutor()
         self._execution_policy = execution_policy or ExecutionPolicyResolver()
+        self._execution_completion_hook = execution_completion_hook
         self._trace = TurnTraceRuntime(unit_of_work_factory)
         self._tool_trace = ToolTraceCoordinator(self._trace)
         self._provider_attempts = ProviderAttemptRecorder(
@@ -121,6 +123,8 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
         chunk_index = 0
         model_round_start = 1
         ephemeral_context: list[ModelMessage] = []
+        invalid_tool_retry_used = False
+        incomplete_execution_issues: set[str] = set()
         try:
             if turn.status is AssistantTurnStatus.WAITING_FOR_TOOL:
                 if turn.budget_approval_run_id is not None:
@@ -136,6 +140,11 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                 else:
                     if self._resume_pending_tool(turn_id, cancellation):
                         return self._turns.get(turn_id)
+                    approval_state = self._changeset_approval_state(turn_id)
+                    if approval_state == "waiting":
+                        return self._turns.get(turn_id)
+                    if approval_state == "rejected":
+                        return self._cancel_turn(turn_id, None)
                     self._resume_after_tools(turn_id)
                     ephemeral_context.extend(self._durable_tool_context(turn_id))
                     model_round_start = self._next_model_round(turn_id)
@@ -258,8 +267,50 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                     for candidate in candidates.values()
                     if candidate.name != DIRECT_ANSWER_TOOL_NAME
                 ]
+                if (direct_candidates or external_candidates) and round_text:
+                    projected_round_text = decision is None or decision.reviewer_model_id is None
+                    if projected_round_text:
+                        self._reset_message_projection(
+                            turn_id=turn_id,
+                            run=current_run,
+                            through_chunk_index=chunk_index,
+                            reason="tool_call_preamble",
+                        )
+                        del all_text[-len(round_text) :]
                 if len(direct_candidates) == 1 and not external_candidates:
                     answer = direct_answer(direct_candidates[0].arguments())
+                    completion_issue = self._execution_completion_issue(
+                        turn_id,
+                        candidate_content=answer,
+                    )
+                    if completion_issue is not None:
+                        if (
+                            completion_issue in incomplete_execution_issues
+                            or len(incomplete_execution_issues) >= 3
+                            or model_round >= final_model_round
+                        ):
+                            return self._fail_turn(
+                                turn_id,
+                                current_run,
+                                error_code="WORKER_INTERRUPTED",
+                            )
+                        incomplete_execution_issues.add(completion_issue)
+                        self._reject_model_round_for_retry(
+                            current_run,
+                            error_code="WORKER_INTERRUPTED",
+                            public_summary="Finalizing durable result",
+                            public_detail=(
+                                "Fairy is reconciling the response with durable Workspace state."
+                            ),
+                        )
+                        ephemeral_context.append(
+                            ModelMessage.create(
+                                role=ModelRole.SYSTEM,
+                                content=completion_issue,
+                            )
+                        )
+                        current_run = None
+                        continue
                     if decision is not None and decision.reviewer_model_id is not None:
                         self._complete_model_round(
                             current_run,
@@ -291,19 +342,45 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                         usage=usage,
                     )
                 if direct_candidates:
-                    external_candidates = list(candidates.values())
+                    return self._fail_turn(
+                        turn_id,
+                        current_run,
+                        error_code="PROVIDER_PROTOCOL_ERROR",
+                    )
                 if external_candidates:
-                    if turn.model_selection is not None and round_text:
-                        self._reset_message_projection(
-                            turn_id=turn_id,
-                            run=current_run,
-                            through_chunk_index=chunk_index,
+                    try:
+                        model_tool_calls = tuple(
+                            self._model_tool_call(candidate) for candidate in external_candidates
                         )
-                        return self._fail_turn(
-                            turn_id,
+                    except ToolCandidateError:
+                        if invalid_tool_retry_used or model_round >= final_model_round:
+                            return self._fail_turn(
+                                turn_id,
+                                current_run,
+                                error_code="PROVIDER_PROTOCOL_ERROR",
+                            )
+                        invalid_tool_retry_used = True
+                        self._reject_model_round_for_retry(
                             current_run,
                             error_code="PROVIDER_PROTOCOL_ERROR",
+                            public_detail=(
+                                "The model returned an invalid tool request; Fairy is retrying "
+                                "once."
+                            ),
                         )
+                        ephemeral_context.append(
+                            ModelMessage.create(
+                                role=ModelRole.SYSTEM,
+                                content=(
+                                    "The previous tool request was malformed or truncated. Retry "
+                                    "once using exactly one offered tool. Keep the payload within "
+                                    "the current file batch and do not emit prose before the tool "
+                                    "call."
+                                ),
+                            )
+                        )
+                        current_run = None
+                        continue
                     if tool_count + len(external_candidates) > limits.MAX_TOOL_INVOCATIONS:
                         return self._fail_turn(
                             turn_id,
@@ -318,11 +395,11 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                     ephemeral_context.append(
                         ModelMessage.create(
                             role=ModelRole.ASSISTANT,
-                            content="".join(round_text),
-                            tool_calls=tuple(
-                                self._model_tool_call(candidate)
-                                for candidate in external_candidates
-                            ),
+                            # Some providers emit a prose preamble before otherwise valid tool
+                            # calls. It is never durable model context; validated calls remain
+                            # authoritative.
+                            content="",
+                            tool_calls=model_tool_calls,
                         )
                     )
                     for candidate in external_candidates:
@@ -350,6 +427,49 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                     current_run = None
                     continue
                 if round_text:
+                    completion_issue = self._execution_completion_issue(
+                        turn_id,
+                        candidate_content="".join(round_text),
+                    )
+                    if completion_issue is not None:
+                        projected_round_text = (
+                            decision is None or decision.reviewer_model_id is None
+                        )
+                        if projected_round_text:
+                            self._reset_message_projection(
+                                turn_id=turn_id,
+                                run=current_run,
+                                through_chunk_index=chunk_index,
+                                reason="execution_incomplete",
+                            )
+                            del all_text[-len(round_text) :]
+                        if (
+                            completion_issue in incomplete_execution_issues
+                            or len(incomplete_execution_issues) >= 3
+                            or model_round >= final_model_round
+                        ):
+                            return self._fail_turn(
+                                turn_id,
+                                current_run,
+                                error_code="WORKER_INTERRUPTED",
+                            )
+                        incomplete_execution_issues.add(completion_issue)
+                        self._reject_model_round_for_retry(
+                            current_run,
+                            error_code="WORKER_INTERRUPTED",
+                            public_summary="Finalizing durable result",
+                            public_detail=(
+                                "Fairy is reconciling the response with durable Workspace state."
+                            ),
+                        )
+                        ephemeral_context.append(
+                            ModelMessage.create(
+                                role=ModelRole.SYSTEM,
+                                content=completion_issue,
+                            )
+                        )
+                        current_run = None
+                        continue
                     if decision is not None and decision.reviewer_model_id is not None:
                         self._complete_model_round(
                             current_run,
@@ -642,7 +762,7 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
             )
             return False, message
 
-        return False, self._execute_running_tool(
+        message, awaiting_approval = self._execute_running_tool(
             turn_id=turn_id,
             invocation=invocation,
             running=running,
@@ -651,6 +771,7 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
             arguments=arguments,
             cancellation=cancellation,
         )
+        return awaiting_approval, message
 
     def _execute_running_tool(
         self,
@@ -662,10 +783,16 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
         scope,
         arguments: dict[str, object],
         cancellation: CancellationToken,
-    ) -> Message:
+    ) -> tuple[Message, bool]:
         try:
             cancellation.raise_if_cancelled()
             self._turns.require_waiting_for_tool(turn_id)
+            if definition.name == "preview.status" and self._execution_completion_hook is not None:
+                # Preview is Core-owned. Prepare and verify the durable target version before the
+                # model reads status so it cannot spin on a transient null projection.
+                self._execution_completion_hook(turn_id)
+                cancellation.raise_if_cancelled()
+                self._turns.require_waiting_for_tool(turn_id)
             current_definition = self._registry.get(definition.name)
             if (
                 current_definition is None
@@ -714,6 +841,10 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                     getattr(error, "code", "CAPABILITY_NOT_AVAILABLE"),
                 )
             )
+            model_detail = getattr(error, "model_detail", None)
+            failure_content = f"Tool execution failed ({error_code})."
+            if isinstance(model_detail, str) and model_detail:
+                failure_content = f"{failure_content} Recovery: {model_detail}"
             with self._unit_of_work_factory() as unit_of_work:
                 expected_status = invocation.status
                 invocation.fail(error_code=error_code)
@@ -737,11 +868,11 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                     turn_id=turn_id,
                     tool_name=definition.name,
                     tool_call_id=invocation.provider_call_id,
-                    content=f"Tool execution failed ({error_code}).",
+                    content=failure_content,
                     rejected=True,
                 )
                 unit_of_work.commit()
-            return message
+            return message, False
 
         with self._unit_of_work_factory() as unit_of_work:
             persisted_turn = require_turn(unit_of_work, turn_id)
@@ -762,13 +893,21 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                 invocation,
                 expected_status=expected_status,
             )
-            self._tool_trace.complete_in_unit(
-                unit_of_work,
-                turn=persisted_turn,
-                run=running,
-                public_summary=result.public_summary,
-                artifact_refs=result.artifact_ids,
-            )
+            if result.awaiting_approval:
+                self._tool_trace.wait_for_external_approval_in_unit(
+                    unit_of_work,
+                    turn=persisted_turn,
+                    run=running,
+                    public_summary=result.public_summary,
+                )
+            else:
+                self._tool_trace.complete_in_unit(
+                    unit_of_work,
+                    turn=persisted_turn,
+                    run=running,
+                    public_summary=result.public_summary,
+                    artifact_refs=result.artifact_ids,
+                )
             self._command_bus(unit_of_work.commands).complete(
                 running.id,
                 output={
@@ -788,7 +927,49 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                 rejected=False,
             )
             unit_of_work.commit()
-        return message
+        return message, result.awaiting_approval
+
+    def resolve_external_tool_approval(
+        self,
+        *,
+        turn_id: UUID,
+        invocation_id: UUID,
+        approved: bool,
+        public_summary: str,
+        model_content: str,
+    ) -> None:
+        """Make a deferred Changeset decision visible to the original model/tool chain."""
+        with self._unit_of_work_factory() as unit_of_work:
+            turn = require_turn(unit_of_work, turn_id)
+            invocation = unit_of_work.assistant.get_tool_invocation(invocation_id)
+            if invocation is None or invocation.turn_id != turn.id:
+                raise ValueError("Tool Invocation does not belong to the Assistant Turn")
+            if invocation.command_run_id is None:
+                raise ValueError("Tool Invocation has no CommandRun")
+            run = unit_of_work.commands.get_run(invocation.command_run_id)
+            if run is None:
+                raise ValueError("Tool Invocation CommandRun is unavailable")
+            expected_status = invocation.status
+            invocation.revise_completed_result(
+                public_summary=public_summary,
+                model_content=model_content,
+            )
+            unit_of_work.assistant.update_tool_invocation(
+                invocation,
+                expected_status=expected_status,
+            )
+            if approved:
+                self._tool_trace.approve_in_unit(unit_of_work, run=run)
+                self._tool_trace.complete_in_unit(
+                    unit_of_work,
+                    turn=turn,
+                    run=run,
+                    public_summary=public_summary,
+                    artifact_refs=(),
+                )
+            else:
+                self._tool_trace.reject_in_unit(unit_of_work, run=run)
+            unit_of_work.commit()
 
     def _resume_pending_tool(
         self,
@@ -948,16 +1129,6 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
         )
         return False
 
-    def _durable_tool_context(self, turn_id: UUID) -> tuple[ModelMessage, ...]:
-        with self._unit_of_work_factory() as unit_of_work:
-            invocations = unit_of_work.assistant.list_tool_invocations(turn_id)
-        return durable_tool_context(invocations)
-
-    def _next_model_round(self, turn_id: UUID) -> int:
-        with self._unit_of_work_factory() as unit_of_work:
-            invocations = unit_of_work.assistant.list_tool_invocations(turn_id)
-        return max((invocation.model_round for invocation in invocations), default=0) + 1
-
     def _cancel_running_tool(
         self,
         invocation: ToolInvocation,
@@ -1007,73 +1178,6 @@ class AssistantApplication(AssistantRoutingMixin, AssistantTurnLifecycleMixin):
                 lease_owner=run.lease_owner,
                 lease_fence=run.lease_fence,
             )
-
-    @staticmethod
-    def _model_tool_call(candidate: ToolCandidate) -> ModelToolCall:
-        try:
-            arguments = candidate.arguments()
-        except ToolCandidateError:
-            arguments = {}
-        return ModelToolCall.create(
-            tool_call_id=candidate.call_id,
-            name=candidate.name or "unknown",
-            arguments=json.dumps(
-                arguments,
-                ensure_ascii=True,
-                allow_nan=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
-        )
-
-    def _append_tool_message(
-        self,
-        *,
-        turn_id: UUID,
-        tool_name: str,
-        tool_call_id: str,
-        content: str,
-        rejected: bool,
-    ) -> Message:
-        with self._unit_of_work_factory() as unit_of_work:
-            message = self._append_tool_message_in_unit(
-                unit_of_work,
-                turn_id=turn_id,
-                tool_name=tool_name,
-                tool_call_id=tool_call_id,
-                content=content,
-                rejected=rejected,
-            )
-            unit_of_work.commit()
-        return message
-
-    @staticmethod
-    def _append_tool_message_in_unit(
-        unit_of_work,
-        *,
-        turn_id: UUID,
-        tool_name: str,
-        tool_call_id: str,
-        content: str,
-        rejected: bool,
-    ) -> Message:
-        turn = require_turn(unit_of_work, turn_id)
-        message = Message.create(
-            conversation_id=turn.conversation_id,
-            task_id=turn.task_id,
-            turn_id=turn.id,
-            sequence=unit_of_work.assistant.next_message_sequence(turn.conversation_id),
-            role=MessageRole.TOOL,
-            visibility=MessageVisibility.DEVELOPER,
-            content=tool_message_content(
-                tool_name=tool_name,
-                tool_call_id=tool_call_id,
-                content=content,
-                rejected=rejected,
-            ),
-        )
-        unit_of_work.assistant.append_message(message)
-        return message
 
     def _resume_after_tools(self, turn_id: UUID) -> None:
         with self._unit_of_work_factory() as unit_of_work:

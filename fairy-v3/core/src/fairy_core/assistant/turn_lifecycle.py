@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from uuid import UUID
 
 from fairy_core.assistant.events import append_message_created
@@ -14,11 +15,95 @@ from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus
 from fairy_core.assistant.turn_reader import require_task, require_turn
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.bus import CommandBus
-from fairy_core.domain.models import TaskStatus
+from fairy_core.domain.execution import ChangesetStatus, PreviewStatus
+from fairy_core.domain.models import TaskStatus, VersionVisibility, WorkspaceType
+from fairy_core.execution.plans import ExecutionPlanStatus, TaskStepKind, TaskStepStatus
 from fairy_core.providers import ModelExecutionRole
 
 
 class AssistantTurnLifecycleMixin:
+    def _execution_completion_issue(
+        self,
+        turn_id: UUID,
+        *,
+        candidate_content: str | None = None,
+    ) -> str | None:
+        if self._execution_completion_hook is not None:
+            finalization_issue = self._execution_completion_hook(turn_id)
+            if finalization_issue is not None:
+                return finalization_issue
+        with self._unit_of_work_factory() as unit_of_work:
+            turn = require_turn(unit_of_work, turn_id)
+            plan = unit_of_work.state.execution_plan_for_task(turn.task_id)
+            invocations = unit_of_work.assistant.list_tool_invocations(turn.id)
+            if plan is None:
+                if (
+                    turn.routing_decision is not None
+                    and turn.routing_decision.requires_workspace_changes
+                ):
+                    return (
+                        "This Turn requires durable Workspace changes but has no Execution Plan. "
+                        "Call execution.plan now, then apply every planned batch with "
+                        "edit.propose_changeset before returning a final response. Do not treat "
+                        "artifact.list or preview.status as completion."
+                    )
+                if any(
+                    invocation.tool_name == "edit.propose_changeset"
+                    for invocation in invocations
+                ):
+                    return (
+                        "A file Changeset was attempted without an Execution Plan. Create "
+                        "execution.plan first, then submit exactly one complete planned batch "
+                        "with edit.propose_changeset before returning a final response."
+                    )
+                return None
+            steps = unit_of_work.state.task_steps_for_plan(plan.id)
+            changesets = unit_of_work.state.changesets_for_task(turn.task_id)
+
+        response_issue = _response_contract_issue(candidate_content, plan.manifest)
+        if response_issue is not None:
+            return response_issue
+
+        implementation = [step for step in steps if step.kind is TaskStepKind.IMPLEMENT]
+        if all(
+            step.status in {TaskStepStatus.COMPLETED, TaskStepStatus.SKIPPED}
+            for step in implementation
+        ):
+            return None
+        if any(
+            changeset.status
+            in {
+                ChangesetStatus.PROPOSED,
+                ChangesetStatus.AWAITING_APPROVAL,
+                ChangesetStatus.APPLYING,
+            }
+            for changeset in changesets
+        ):
+            return None
+        first_incomplete = next(
+            (
+                index
+                for index, step in enumerate(implementation, start=1)
+                if step.status not in {TaskStepStatus.COMPLETED, TaskStepStatus.SKIPPED}
+            ),
+            1,
+        )
+        batch_files = [
+            str(item["path"])
+            for item in plan.manifest.get("files", [])
+            if isinstance(item, dict) and item.get("batch") == first_incomplete
+        ]
+        visible_files = ", ".join(batch_files[:10])
+        detail = (
+            f"Execution Plan batch {first_incomplete} has no durable pending or applied "
+            "Changeset. Call edit.propose_changeset with every file in that batch before "
+            "returning a final response."
+        )
+        if visible_files:
+            detail += f" Required files: {visible_files}."
+        return detail
+
+
     def _complete_turn(
         self,
         *,
@@ -56,10 +141,26 @@ class AssistantTurnLifecycleMixin:
                 expected_status=expected_status,
                 expected_cancellation_revision=expected_revision,
             )
-            if task.project_id is None and task.status is TaskStatus.EXECUTING:
-                task.transition_to(TaskStatus.REVIEWING)
+            self._promote_completed_scratch_version(
+                unit_of_work,
+                turn=turn,
+                task=task,
+                run=run,
+            )
+            if task.project_id is None and task.status in {
+                TaskStatus.EXECUTING,
+                TaskStatus.PREVIEWING,
+                TaskStatus.REVIEWING,
+            }:
+                if task.status is not TaskStatus.REVIEWING:
+                    task.transition_to(TaskStatus.REVIEWING)
                 task.transition_to(TaskStatus.READY)
                 unit_of_work.state.save_task(task)
+            self._finish_execution_plan(
+                unit_of_work,
+                task_id=turn.task_id,
+                status=ExecutionPlanStatus.COMPLETED,
+            )
             model_step = self._trace.transition_command_step_in_unit(
                 unit_of_work,
                 run=run,
@@ -171,6 +272,12 @@ class AssistantTurnLifecycleMixin:
             if task.status in _ACTIVE_TASK_STATUSES:
                 task.transition_to(TaskStatus.FAILED)
                 unit_of_work.state.save_task(task)
+            self._release_failed_scratch_draft(unit_of_work, task)
+            self._finish_execution_plan(
+                unit_of_work,
+                task_id=turn.task_id,
+                status=ExecutionPlanStatus.CANCELLED,
+            )
             unit_of_work.commit()
         return turn
 
@@ -201,7 +308,7 @@ class AssistantTurnLifecycleMixin:
                 turn_id=turn.id,
                 run=run,
                 status=TraceStepStatus.FAILED,
-                public_detail=f"Turn failed ({error_code}).",
+                public_detail=_public_failure_detail(error_code),
             )
             self._trace.complete_trace_in_unit(unit_of_work, turn_id=turn.id)
             if run is not None:
@@ -226,8 +333,121 @@ class AssistantTurnLifecycleMixin:
             if task.status in _ACTIVE_TASK_STATUSES:
                 task.transition_to(TaskStatus.FAILED)
                 unit_of_work.state.save_task(task)
+            self._release_failed_scratch_draft(unit_of_work, task)
+            self._finish_execution_plan(
+                unit_of_work,
+                task_id=turn.task_id,
+                status=ExecutionPlanStatus.FAILED,
+            )
             unit_of_work.commit()
         return turn
+
+    @staticmethod
+    def _finish_execution_plan(unit_of_work, *, task_id: UUID, status: ExecutionPlanStatus) -> None:
+        plan = unit_of_work.state.execution_plan_for_task(task_id)
+        if plan is None or plan.status not in {
+            ExecutionPlanStatus.ACTIVE,
+            ExecutionPlanStatus.PAUSED,
+        }:
+            return
+        expected_revision = plan.revision
+        if status is ExecutionPlanStatus.COMPLETED:
+            steps = unit_of_work.state.task_steps_for_plan(plan.id)
+            if not steps or any(
+                step.status not in {TaskStepStatus.COMPLETED, TaskStepStatus.SKIPPED}
+                for step in steps
+            ):
+                # Project Turns finish their user-visible response before explicit Review.
+                # The pending checkpoint step is completed atomically by review_task.
+                return
+            plan.complete()
+        elif status is ExecutionPlanStatus.CANCELLED:
+            plan.cancel()
+        else:
+            plan.fail()
+        unit_of_work.state.update_execution_plan(
+            plan,
+            expected_revision=expected_revision,
+        )
+
+    @staticmethod
+    def _promote_completed_scratch_version(unit_of_work, *, turn, task, run) -> None:
+        plan = unit_of_work.state.execution_plan_for_task(task.id)
+        if task.project_id is not None or plan is None:
+            return
+        if task.workspace_id is None or task.target_version_id is None:
+            raise ValueError("completed scratch delivery has no Workspace Version")
+        steps = unit_of_work.state.task_steps_for_plan(plan.id)
+        if not steps or any(
+            step.status not in {TaskStepStatus.COMPLETED, TaskStepStatus.SKIPPED}
+            for step in steps
+        ):
+            raise ValueError("completed scratch delivery has unfinished execution steps")
+        conversation = unit_of_work.state.get_conversation(task.conversation_id)
+        workspace = unit_of_work.state.get_workspace(task.workspace_id)
+        version = unit_of_work.state.get_version(task.target_version_id)
+        if (
+            conversation is None
+            or conversation.workspace_type is not WorkspaceType.CHAT_SCRATCH
+            or workspace is None
+            or version is None
+            or conversation.active_draft_version_id != task.target_version_id
+        ):
+            raise ValueError("scratch candidate no longer matches the active Turn Scope")
+        preview = unit_of_work.state.preview_for_task(task.id, include_terminal=True)
+        if preview is not None:
+            if (
+                preview.version_id != task.target_version_id
+                or preview.status is not PreviewStatus.READY
+            ):
+                raise ValueError("scratch candidate Preview is not ready for promotion")
+            workspace.active_preview_id = preview.id
+            conversation.active_preview_id = preview.id
+        workspace.accept_version(
+            task.target_version_id,
+            expected_revision=workspace.revision,
+        )
+        version.visibility = VersionVisibility.PROJECT_ACTIVE
+        conversation.base_version_id = task.target_version_id
+        conversation.active_draft_version_id = None
+        conversation.active_task_id = None
+        unit_of_work.state.save_workspace(workspace)
+        unit_of_work.state.save_version(version)
+        unit_of_work.state.save_conversation(conversation)
+        unit_of_work.commands.append_event(
+            run_id=run.id,
+            event_type="workspace.version.auto_promoted",
+            visibility=EventVisibility.USER,
+            message="Workspace saved",
+            payload={
+                "workspace_id": str(task.workspace_id),
+                "version_id": str(task.target_version_id),
+                "turn_id": str(turn.id),
+            },
+            lease_owner=run.lease_owner,
+            lease_fence=run.lease_fence,
+        )
+
+    @staticmethod
+    def _release_failed_scratch_draft(unit_of_work, task) -> None:
+        if task.project_id is not None:
+            return
+        conversation = unit_of_work.state.get_conversation(task.conversation_id)
+        if conversation is None or conversation.workspace_type is not WorkspaceType.CHAT_SCRATCH:
+            return
+        changed = False
+        if conversation.active_draft_version_id == task.target_version_id:
+            conversation.active_draft_version_id = None
+            changed = True
+        if conversation.active_task_id == task.id:
+            conversation.active_task_id = None
+            changed = True
+        preview = unit_of_work.state.preview_for_task(task.id, include_terminal=True)
+        if preview is not None and conversation.active_preview_id == preview.id:
+            conversation.active_preview_id = None
+            changed = True
+        if changed:
+            unit_of_work.state.save_conversation(conversation)
 
     def _command_bus(self, ledger) -> CommandBus:
         return CommandBus(
@@ -235,6 +455,63 @@ class AssistantTurnLifecycleMixin:
             policy=self._policy,
             ledger=ledger,
         )
+
+
+_LOOPBACK_URL = re.compile(
+    r"https?://(?:localhost|127(?:\.[0-9]{1,3}){3})(?::[0-9]{1,5})?\S*",
+    re.IGNORECASE,
+)
+_FENCED_CODE = re.compile(r"```[^\n]*\n(?P<body>.*?)```", re.DOTALL)
+
+
+def _response_contract_issue(
+    candidate_content: str | None,
+    manifest: dict[str, object],
+) -> str | None:
+    if candidate_content is None:
+        return None
+    content = candidate_content.strip()
+    if _LOOPBACK_URL.search(content):
+        return (
+            "The candidate final response contains an untrusted loopback URL or port. Return a "
+            "concise completion summary without localhost, 127.0.0.1, port numbers, or claimed "
+            "runtime commands. State only that the verified Preview is available in the Workspace."
+        )
+    fenced_characters = sum(len(match.group("body")) for match in _FENCED_CODE.finditer(content))
+    if len(content) <= 2_400 and fenced_characters <= 600:
+        return None
+    planned_files = [
+        str(item.get("path"))
+        for item in manifest.get("files", [])
+        if isinstance(item, dict) and item.get("path")
+    ]
+    visible_files = ", ".join(planned_files[:10])
+    instruction = (
+        "The candidate final response repeats generated source or is too long for a completion "
+        "summary. Return at most 1,200 characters: summarize what changed, name the durable files, "
+        "state the validation/Preview result, and mention any real limitation. Do not include full "
+        "file contents or large code fences."
+    )
+    if visible_files:
+        instruction += f" Durable files: {visible_files}."
+    return instruction
+
+
+def _public_failure_detail(error_code: str) -> str:
+    return {
+        "PROVIDER_PROTOCOL_ERROR": (
+            "The selected model returned an unusable response. No pending tool action was applied."
+        ),
+        "PROVIDER_TIMEOUT": "The selected model did not respond in time.",
+        "PROVIDER_RATE_LIMITED": "The selected model is temporarily busy.",
+        "PROVIDER_AUTHENTICATION_FAILED": "The configured model account could not be authorized.",
+        "PROVIDER_CONTEXT_LENGTH_EXCEEDED": (
+            "The request exceeded the selected model's context limit."
+        ),
+        "PROVIDER_CONTENT_REJECTED": "The selected model could not process this request.",
+        "PROVIDER_NETWORK_ERROR": "The model connection was interrupted.",
+        "WORKER_INTERRUPTED": "Fairy was interrupted before this step completed.",
+    }.get(error_code, "Fairy could not complete this step.")
 
 
 _ACTIVE_TASK_STATUSES = frozenset(

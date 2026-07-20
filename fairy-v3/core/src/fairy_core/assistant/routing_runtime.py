@@ -5,7 +5,12 @@ from uuid import UUID
 
 from fairy_core.assistant import limits
 from fairy_core.assistant.events import append_message_created
-from fairy_core.assistant.models import AssistantTurn, AssistantTurnStatus, MessageRole
+from fairy_core.assistant.models import (
+    AssistantTurn,
+    AssistantTurnStatus,
+    MessageRole,
+    MessageVisibility,
+)
 from fairy_core.assistant.plan_budget import consume_model_budget
 from fairy_core.assistant.routing import (
     DEEPSEEK_MODEL_ID,
@@ -39,6 +44,7 @@ from fairy_core.model_catalog.models import (
 )
 from fairy_core.providers import (
     CancellationToken,
+    ModelDelta,
     ModelDeltaKind,
     ModelExecutionRole,
     ModelMessage,
@@ -56,6 +62,39 @@ from fairy_core.providers import (
     ProviderTimeoutError,
     ProviderUnavailableError,
 )
+
+
+def _route_step_summary(decision: RoutingDecision) -> str:
+    task_label = {
+        RoutingTaskKind.GENERAL: "General",
+        RoutingTaskKind.REASONING: "Reasoning",
+        RoutingTaskKind.CODE: "Code",
+        RoutingTaskKind.IMAGE: "Image",
+        RoutingTaskKind.MUSIC: "Music",
+        RoutingTaskKind.VIDEO: "Video",
+    }[decision.task_kind]
+    primary = MODEL_ALLOWLIST_BY_ID[decision.primary_model_id].display_name
+    if decision.reviewer_model_id is None:
+        return f"{task_label} task routed to {primary}"
+    reviewer = MODEL_ALLOWLIST_BY_ID[decision.reviewer_model_id].display_name
+    return f"{task_label} task routed to {primary}, reviewed by {reviewer}"
+
+
+def _validate_router_attempt(deltas: tuple[ModelDelta, ...]) -> None:
+    chunks: list[str] = []
+    for delta in deltas:
+        if delta.kind is ModelDeltaKind.TEXT:
+            if delta.text is None:
+                raise ProviderProtocolError("router returned an empty text delta")
+            chunks.append(delta.text)
+            if sum(map(len, chunks)) > 16_384:
+                raise ProviderProtocolError("router response is too large")
+        elif delta.kind is ModelDeltaKind.TOOL_CALL:
+            raise ProviderProtocolError("router cannot call tools")
+    try:
+        parse_router_output("".join(chunks))
+    except ValueError as error:
+        raise ProviderProtocolError("router returned invalid structured output") from error
 
 
 class AssistantRoutingMixin:
@@ -141,6 +180,7 @@ class AssistantRoutingMixin:
                 request,
                 cancellation,
                 on_attempt=self._provider_attempts.observer(turn.id, 1, run=run),
+                attempt_validator=_validate_router_attempt,
             ):
                 cancellation.raise_if_cancelled()
                 self._turns.require_active(turn.id)
@@ -292,7 +332,10 @@ class AssistantRoutingMixin:
                     turn.id,
                     MessageRole.USER,
                 )
-                if user_message is not None:
+                if (
+                    user_message is not None
+                    and user_message.visibility is MessageVisibility.USER
+                ):
                     append_message_created(
                         unit_of_work.commands,
                         run=run,
@@ -485,6 +528,36 @@ class AssistantRoutingMixin:
             )
             unit_of_work.commit()
 
+    def _reject_model_round_for_retry(
+        self,
+        run: CommandRun,
+        *,
+        error_code: str,
+        public_summary: str = "Tool request could not be validated",
+        public_detail: str,
+    ) -> None:
+        with self._unit_of_work_factory() as unit_of_work:
+            persisted = unit_of_work.commands.get_run(run.id)
+            if persisted is None:
+                raise RuntimeError("model CommandRun is missing")
+            if persisted.status is not CommandStatus.RUNNING:
+                raise RuntimeError("model CommandRun is not running")
+            self._trace.transition_command_step_in_unit(
+                unit_of_work,
+                run=persisted,
+                kind=TraceStepKind.MODEL,
+                status=TraceStepStatus.FAILED,
+                public_summary=public_summary,
+                public_detail=public_detail,
+            )
+            self._command_bus(unit_of_work.commands).fail(
+                run.id,
+                error_code=error_code,
+                lease_owner=run.lease_owner,
+                lease_fence=run.lease_fence,
+            )
+            unit_of_work.commit()
+
     def _review_and_complete(
         self,
         *,
@@ -515,7 +588,9 @@ class AssistantRoutingMixin:
                     content=(
                         "Review the proposed response for correctness, completeness, and safety. "
                         "Return only the polished final answer. Do not describe the review, expose "
-                        "hidden reasoning, or call tools."
+                        "hidden reasoning, or call tools. For generated Workspace files, return a "
+                        "concise summary and never repeat full file contents or invent a localhost "
+                        "URL or port."
                     ),
                 ),
                 *self._review_source_messages(source_messages),
@@ -694,6 +769,7 @@ class AssistantRoutingMixin:
         turn_id: UUID,
         run: CommandRun,
         through_chunk_index: int,
+        reason: str = "provider_protocol_error",
     ) -> None:
         with self._unit_of_work_factory() as unit_of_work:
             unit_of_work.commands.append_event(
@@ -704,7 +780,7 @@ class AssistantRoutingMixin:
                 payload={
                     "turn_id": str(turn_id),
                     "through_chunk_index": through_chunk_index,
-                    "reason": "provider_protocol_error",
+                    "reason": reason,
                 },
                 lease_owner=run.lease_owner,
                 lease_fence=run.lease_fence,
@@ -766,7 +842,7 @@ class AssistantRoutingMixin:
                 "complexity": decision.complexity.value,
                 "primary_model": primary,
                 "reviewer_model": reviewer,
-                "public_summary": decision.public_summary,
+                "public_summary": _route_step_summary(decision),
             },
             lease_owner=(run.lease_owner if run.status is CommandStatus.RUNNING else None),
             lease_fence=(run.lease_fence if run.status is CommandStatus.RUNNING else None),
@@ -915,7 +991,10 @@ class AssistantRoutingMixin:
                     turn.id,
                     MessageRole.USER,
                 )
-                if user_message is not None:
+                if (
+                    user_message is not None
+                    and user_message.visibility is MessageVisibility.USER
+                ):
                     append_message_created(
                         unit_of_work.commands,
                         run=running,
@@ -1064,7 +1143,7 @@ class AssistantRoutingMixin:
             run=run,
             kind=TraceStepKind.ROUTE,
             status=TraceStepStatus.SUCCEEDED,
-            public_summary=decision.public_summary,
+            public_summary=_route_step_summary(decision),
             caused_by_step_id=caused_by_step_id,
         )
 
@@ -1072,7 +1151,7 @@ class AssistantRoutingMixin:
     def _model_step_summary(model_role: ModelExecutionRole) -> str:
         return {
             ModelExecutionRole.COORDINATOR: "Analyzing the request",
-            ModelExecutionRole.PRIMARY: "Generating the response",
+            ModelExecutionRole.PRIMARY: "Working on the request",
             ModelExecutionRole.REVIEWER: "Reviewing the response",
         }[model_role]
 

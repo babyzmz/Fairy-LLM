@@ -250,6 +250,60 @@ def test_local_core_engine_adds_snapshot_columns_to_existing_tasks(tmp_path: Pat
     assert {"memory_snapshot_id", "memory_snapshot_hash"} <= columns
 
 
+def test_local_core_engine_adds_project_and_conversation_lifecycle_metadata(
+    tmp_path: Path,
+) -> None:
+    from fairy_core.persistence.sqlite import create_sqlite_core_engine
+
+    database_path = tmp_path / "existing-history.db"
+    engine = create_sqlite_core_engine(database_path)
+    engine.dispose()
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("DROP INDEX ix_core_projects_tenant_lifecycle_updated")
+        connection.execute("DROP INDEX ix_core_conversations_tenant_deleted_updated")
+        connection.execute(
+            "DELETE FROM core_local_migrations WHERE revision = ?",
+            ("20260717_project_lifecycle",),
+        )
+        connection.execute("ALTER TABLE core_projects DROP COLUMN metadata_revision")
+        connection.execute("ALTER TABLE core_projects DROP COLUMN purged_at")
+        connection.execute("ALTER TABLE core_projects DROP COLUMN deleted_at")
+        connection.execute("ALTER TABLE core_projects DROP COLUMN archived_at")
+        connection.execute("ALTER TABLE core_projects DROP COLUMN pinned_at")
+        connection.execute("ALTER TABLE core_conversations DROP COLUMN purged_at")
+        connection.execute("ALTER TABLE core_conversations DROP COLUMN deleted_by_project_at")
+
+    engine = create_sqlite_core_engine(database_path)
+    try:
+        with sqlite3.connect(database_path) as connection:
+            project_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(core_projects)")
+            }
+            conversation_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(core_conversations)")
+            }
+            indexes = {
+                row[1]
+                for table in ("core_projects", "core_conversations")
+                for row in connection.execute(f"PRAGMA index_list({table})")
+            }
+    finally:
+        engine.dispose()
+
+    assert {
+        "pinned_at",
+        "archived_at",
+        "deleted_at",
+        "purged_at",
+        "metadata_revision",
+    } <= project_columns
+    assert {"deleted_by_project_at", "purged_at"} <= conversation_columns
+    assert {
+        "ix_core_projects_tenant_lifecycle_updated",
+        "ix_core_conversations_tenant_deleted_updated",
+    } <= indexes
+
+
 def test_local_core_engine_migrates_early_mcp_request_results(tmp_path: Path) -> None:
     from fairy_core.persistence.sqlite import create_sqlite_core_engine
 

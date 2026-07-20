@@ -112,10 +112,93 @@ def test_tool_candidates_receive_core_scope_and_repeated_arguments_are_rejected(
         assert first_model["provider_attempt_id"] is not None
         assert final_model["provider_attempt_id"] is not None
         assert reasoning["public_summary"] == "Check current sources before answering"
+        assert tool["public_summary"] == "Search public web or news sources."
+        assert observation["public_summary"] == "bounded evidence"
         assert tool["parent_step_id"] == reasoning["id"]
         assert observation["parent_step_id"] == tool["id"]
         assert response["caused_by_step_id"] == final_model["id"]
         assert all(step["status"] == "succeeded" for step in trace["steps"])
+    finally:
+        service.close()
+
+
+def test_malformed_tool_request_retries_once_before_dispatch(tmp_path: Path) -> None:
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-truncated",
+                    tool_name="web.search",
+                    arguments_fragment='{"query":"truncated"',
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-retry",
+                    tool_name="web.search",
+                    arguments_fragment=(
+                        '{"query":"Fairy","public_intent":"Retry the bounded search"}'
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.text(
+                    profile_id="scripted",
+                    sequence=1,
+                    text="Recovered after the malformed tool request.",
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+        ]
+    )
+    executor = RecordingToolExecutor(summary="bounded evidence")
+    service = build_local_service(
+        tmp_path,
+        provider_registry=ProviderRegistry((provider,)),
+        tool_executor=executor,
+    )
+    try:
+        task = _scratch_task(service, "Recover one malformed tool request")
+        turn = _turn(service, task, "turn:malformed-tool-retry")
+
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        trace = service.invoke("assistant.turns.trace.list", {"turn_id": turn["id"]})
+
+        assert completed["status"] == "completed"
+        assert len(provider.requests) == 3
+        assert len(executor.calls) == 1
+        assert executor.calls[0][2] == {"query": "Fairy"}
+        failed_model_steps = [
+            step
+            for step in trace["steps"]
+            if step["kind"] == "model" and step["status"] == "failed"
+        ]
+        assert [step["public_summary"] for step in failed_model_steps] == [
+            "Tool request could not be validated"
+        ]
+        assert any(
+            message.role.value == "system"
+            and "malformed or truncated" in message.content
+            for message in provider.requests[1].messages
+        )
     finally:
         service.close()
 
@@ -360,10 +443,16 @@ def test_oversized_tool_arguments_fail_before_dispatch(tmp_path: Path) -> None:
         turn = _turn(service, task, "turn:oversized-tool")
 
         failed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        trace = service.invoke("assistant.turns.trace.list", {"turn_id": turn["id"]})
 
         assert failed["status"] == "failed"
         assert failed["error_code"] == "PROVIDER_PROTOCOL_ERROR"
         assert executor.calls == []
+        failed_steps = [step for step in trace["steps"] if step["status"] == "failed"]
+        assert failed_steps[-1]["public_detail"] == (
+            "The selected model returned an unusable response. No pending tool action was applied."
+        )
+        assert "PROVIDER_PROTOCOL_ERROR" not in failed_steps[-1]["public_detail"]
     finally:
         service.close()
 

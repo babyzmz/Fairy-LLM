@@ -29,6 +29,7 @@ _GENERIC_APPROVAL_REVISION = "20260711_generic_approval"
 _CHECKPOINT_EVIDENCE_REVISION = "20260712_checkpoint_evidence"
 _MCP_REQUEST_RESULTS_REVISION = "20260712_mcp_request_results"
 _HISTORY_METADATA_REVISION = "20260712_history_metadata"
+_PROJECT_LIFECYCLE_REVISION = "20260717_project_lifecycle"
 _WORKSPACE_IDENTITY_REVISION = "20260713_workspace_identity"
 _RUNTIME_WORKSPACE_BINDING_REVISION = "20260713_runtime_workspace_binding"
 _RUNTIME_GRAPH_REVISION = "20260713_runtime_graph"
@@ -567,6 +568,66 @@ def migrate_history_metadata(engine: Engine) -> None:
             ),
             {
                 "revision": _HISTORY_METADATA_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_project_lifecycle(engine: Engine) -> None:
+    """Add recoverable Project and Conversation lifecycle metadata."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _PROJECT_LIFECYCLE_REVISION},
+        ).first():
+            return
+        inspector = inspect(connection)
+        tables = set(inspector.get_table_names())
+        if "core_projects" in tables:
+            columns = {column["name"] for column in inspector.get_columns("core_projects")}
+            additions = {
+                "pinned_at": "DATETIME",
+                "archived_at": "DATETIME",
+                "deleted_at": "DATETIME",
+                "purged_at": "DATETIME",
+                "metadata_revision": "BIGINT NOT NULL DEFAULT 0",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE core_projects ADD COLUMN {name} {definition}"
+                    )
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_core_projects_tenant_lifecycle_updated "
+                "ON core_projects (tenant_id, deleted_at, archived_at, updated_at)"
+            )
+        if "core_conversations" in tables:
+            columns = {column["name"] for column in inspector.get_columns("core_conversations")}
+            additions = {
+                "deleted_by_project_at": "DATETIME",
+                "purged_at": "DATETIME",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE core_conversations ADD COLUMN {name} {definition}"
+                    )
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_core_conversations_tenant_deleted_updated "
+                "ON core_conversations (tenant_id, deleted_at, updated_at)"
+            )
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {
+                "revision": _PROJECT_LIFECYCLE_REVISION,
                 "applied_at": datetime.now(UTC).isoformat(),
             },
         )

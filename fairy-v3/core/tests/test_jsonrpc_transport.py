@@ -120,6 +120,46 @@ def test_jsonrpc_project_conversation_task_vertical_slice(tmp_path: Path) -> Non
     assert task_context["scope"]["scope_digest"]
 
 
+def test_jsonrpc_project_busy_uses_stable_error_code(tmp_path: Path) -> None:
+    dispatcher = _dispatcher(tmp_path)
+    project = _call(
+        dispatcher,
+        20,
+        "projects.create",
+        {"name": "Busy", "residency": "local_only"},
+    )["result"]["project"]
+    conversation = _call(
+        dispatcher,
+        21,
+        "conversations.create",
+        {"project_id": project["id"], "workspace_type": "project_chat"},
+    )["result"]
+    _call(
+        dispatcher,
+        22,
+        "tasks.create",
+        {
+            "conversation_id": conversation["id"],
+            "user_request": "Keep working",
+            "operation_mode": "continue_current_chat_draft",
+            "execution_target": "local",
+            "idempotency_key": "rpc:busy-project",
+        },
+    )
+
+    response = _call(
+        dispatcher,
+        23,
+        "projects.archive",
+        {
+            "project_id": project["id"],
+            "expected_revision": project["metadata_revision"],
+        },
+    )
+
+    assert response["error"]["data"]["error_code"] == "PROJECT_BUSY"
+
+
 def test_jsonrpc_runtime_preview_and_artifact_contracts(tmp_path: Path) -> None:
     stack = build_runtime_stack(tmp_path)
     artifact = Artifact.create(
@@ -461,8 +501,9 @@ def test_public_method_manifest_is_stable() -> None:
             "media.jobs.list",
             "media.videos.cancel",
             "media.videos.get",
-            "media.videos.start",
-            "mcp.servers.accept",
+                "media.videos.start",
+                "mcp.presets.install",
+                "mcp.servers.accept",
             "mcp.servers.configure",
             "mcp.servers.delete",
             "mcp.servers.discover",
@@ -474,9 +515,15 @@ def test_public_method_manifest_is_stable() -> None:
             "models.selection.get",
             "models.selection.update",
             "projects.create",
+            "projects.archive",
+            "projects.archived.delete",
+            "projects.archived.list",
+            "projects.archived.restore",
+            "projects.delete",
             "projects.get",
             "projects.import",
             "projects.list",
+            "projects.update_metadata",
             "previews.get",
             "previews.resolve",
             "previews.start",
@@ -485,6 +532,14 @@ def test_public_method_manifest_is_stable() -> None:
             "permissions.update",
             "providers.health",
             "providers.list",
+            "realtime.memories.delete",
+            "realtime.memories.list",
+            "realtime.memories.save",
+            "realtime.sessions.get",
+            "realtime.sessions.list",
+            "realtime.sessions.report",
+            "realtime.sessions.start",
+            "realtime.sessions.stop",
             "renderer_packs.health",
             "renderer_packs.install",
             "renderer_packs.list",
@@ -492,8 +547,11 @@ def test_public_method_manifest_is_stable() -> None:
             "renderer_packs.update",
             "runtimes.get",
             "runtimes.health",
-            "skills.list",
-            "skills.install",
+                "skills.list",
+                "skills.create",
+                "skills.import.inspect",
+                "skills.import.install",
+                "skills.install",
             "skills.remove",
             "skills.set_enabled",
             "skills.update",
@@ -505,6 +563,10 @@ def test_public_method_manifest_is_stable() -> None:
             "tasks.list",
             "tasks.review",
             "tasks.update_metadata",
+            "trash.items.list",
+            "trash.items.purge",
+            "trash.items.purge_all",
+            "trash.items.restore",
             "versions.accept",
             "versions.discard",
             "versions.get",

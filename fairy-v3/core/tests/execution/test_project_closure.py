@@ -210,6 +210,101 @@ def test_failed_review_repairs_on_a_new_workspace_generation_without_replay(
         service.close()
 
 
+def test_scratch_workspace_can_run_core_owned_review_tools(tmp_path: Path) -> None:
+    sandbox = ScriptedSandboxExecutor()
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="scratch-review",
+                    tool_name="review.test",
+                    arguments_fragment="{}",
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.text(profile_id="scripted", sequence=1, text="Tests passed."),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+        ]
+    )
+    service = build_local_service(
+        tmp_path / "data",
+        provider_registry=ProviderRegistry((provider,)),
+        sandbox_executor=sandbox,
+    )
+    try:
+        conversation = service.invoke(
+            "conversations.create",
+            {"project_id": None, "workspace_type": "chat_scratch"},
+        )
+        context = service.invoke(
+            "tasks.create",
+            {
+                "conversation_id": conversation["id"],
+                "user_request": "Create and validate a package",
+                "operation_mode": "answer",
+                "execution_target": "local",
+                "idempotency_key": "closure:scratch-review-task",
+            },
+        )
+        pending = service.invoke(
+            "changesets.propose",
+            {
+                "task_id": context["task"]["id"],
+                "files": [
+                    {
+                        "path": "package.json",
+                        "content": json.dumps(
+                            {"name": "scratch-review", "scripts": {"test": "vitest run"}}
+                        ),
+                    },
+                    {
+                        "path": "package-lock.json",
+                        "content": json.dumps({"lockfileVersion": 3, "packages": {}}),
+                    },
+                ],
+                "reason": "Create a reviewable scratch package",
+                "idempotency_key": "closure:scratch-review-files",
+            },
+        )
+        service.invoke(
+            "approvals.decide",
+            {"approval_id": pending["approval"]["id"], "approved": True},
+        )
+        turn = service.invoke(
+            "assistant.turns.create",
+            {
+                "task_id": context["task"]["id"],
+                "profile_id": "scripted",
+                "idempotency_key": "closure:scratch-review-turn",
+            },
+        )
+
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+
+        assert completed["status"] == "completed"
+        assert len(sandbox.requests) == 1
+        assert sandbox.requests[0].project_id is None
+        assert sandbox.requests[0].argv == ("npm", "test", "--if-present")
+        with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            invocations = unit_of_work.assistant.list_tool_invocations(turn["id"])
+        assert invocations[0].status.value == "completed"
+        assert invocations[0].error_code is None
+    finally:
+        service.close()
+
+
 def _project_task(service, source: Path, *, profile_id: str) -> str:
     source.mkdir()
     (source / "index.html").write_text("<h1>Closure</h1>\n", encoding="utf-8")

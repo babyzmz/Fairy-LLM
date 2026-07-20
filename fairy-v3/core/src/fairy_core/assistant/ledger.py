@@ -261,6 +261,10 @@ class AssistantLedgerApplication:
             task = unit_of_work.state.get_task(original.task_id)
             if task is None:
                 raise KeyError(f"task not found: {original.task_id}")
+            original_user_message = unit_of_work.assistant.message_for_turn(
+                original.id,
+                MessageRole.USER,
+            )
             scope = self._scope_resolver(unit_of_work.state, task)
             existing = unit_of_work.assistant.find_turn_by_idempotency_key(normalized_key)
             if existing is not None:
@@ -294,6 +298,20 @@ class AssistantLedgerApplication:
                     unit_of_work.commit()
                 return persisted
             self._ensure_trace(unit_of_work, retry, legacy=False)
+            retry_message = Message.create(
+                conversation_id=task.conversation_id,
+                task_id=task.id,
+                turn_id=retry.id,
+                sequence=unit_of_work.assistant.next_message_sequence(task.conversation_id),
+                role=MessageRole.USER,
+                visibility=MessageVisibility.INTERNAL,
+                content=(
+                    original_user_message.content
+                    if original_user_message is not None
+                    else task.user_request
+                ),
+            )
+            unit_of_work.assistant.append_message(retry_message)
             unit_of_work.commit()
         return retry
 

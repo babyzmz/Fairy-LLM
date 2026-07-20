@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from uuid import UUID
 
@@ -81,7 +82,10 @@ def test_stream_normalizes_text_tools_usage_and_done() -> None:
         payload = json.loads(request.content)
         assert payload["stream"] is True
         assert payload["model"] == "fixture-model"
-        assert payload["tools"][0]["function"]["name"] == "weather.get"
+        assert payload["tool_choice"] == "required"
+        provider_tool_name = payload["tools"][0]["function"]["name"]
+        assert provider_tool_name != "weather.get"
+        assert re.fullmatch(r"[A-Za-z0-9_-]{1,64}", provider_tool_name)
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
@@ -97,7 +101,7 @@ def test_stream_normalizes_text_tools_usage_and_done() -> None:
                                         "index": 0,
                                         "id": "call-1",
                                         "function": {
-                                            "name": "weather.get",
+                                            "name": provider_tool_name,
                                             "arguments": '{"city":',
                                         },
                                     }
@@ -143,6 +147,7 @@ def test_stream_normalizes_text_tools_usage_and_done() -> None:
     assert "".join(delta.text or "" for delta in deltas) == "Hello"
     tool_deltas = [delta for delta in deltas if delta.kind is ModelDeltaKind.TOOL_CALL]
     assert [delta.tool_call_id for delta in tool_deltas] == ["call-1", "call-1"]
+    assert [delta.tool_name for delta in tool_deltas] == ["weather.get", "weather.get"]
     assert (
         "".join(delta.tool_arguments_fragment or "" for delta in tool_deltas) == '{"city":"Paris"}'
     )
@@ -248,6 +253,7 @@ def test_stream_emits_one_done_when_upstream_repeats_finish_reason() -> None:
                     200,
                     headers={"content-type": "text/event-stream"},
                     content=_sse(
+                        {"choices": [{"delta": {"content": "done"}}]},
                         {"choices": [{"delta": {}, "finish_reason": "stop"}]},
                         {
                             "choices": [{"delta": {}, "finish_reason": "stop"}],
@@ -266,9 +272,35 @@ def test_stream_emits_one_done_when_upstream_repeats_finish_reason() -> None:
     assert [delta.kind for delta in deltas].count(ModelDeltaKind.USAGE) == 1
 
 
+def test_stream_rejects_usage_only_completion_as_unusable() -> None:
+    provider = OpenAICompatibleProvider(
+        profile=_profile(credential_ref=None),
+        secret=None,
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    content=_sse(
+                        {
+                            "choices": [{"delta": {}, "finish_reason": "stop"}],
+                            "usage": {"total_tokens": 7},
+                        },
+                        "[DONE]",
+                    ),
+                )
+            )
+        ),
+    )
+
+    with pytest.raises(ProviderProtocolError, match="usable response"):
+        tuple(provider.stream(_request(), CancellationToken()))
+
+
 def test_stream_serializes_structured_tool_protocol_for_follow_up_round() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
+        provider_tool_name = payload["tools"][0]["function"]["name"]
         assistant = payload["messages"][1]
         tool = payload["messages"][2]
         assert assistant == {
@@ -279,7 +311,7 @@ def test_stream_serializes_structured_tool_protocol_for_follow_up_round() -> Non
                     "id": "call-1",
                     "type": "function",
                     "function": {
-                        "name": "weather.get",
+                        "name": provider_tool_name,
                         "arguments": '{"city":"Paris"}',
                     },
                 }
@@ -288,7 +320,7 @@ def test_stream_serializes_structured_tool_protocol_for_follow_up_round() -> Non
         assert tool == {
             "role": "tool",
             "content": "18 C",
-            "name": "weather.get",
+            "name": provider_tool_name,
             "tool_call_id": "call-1",
         }
         return httpx.Response(
@@ -337,6 +369,88 @@ def test_stream_serializes_structured_tool_protocol_for_follow_up_round() -> Non
 
     assert "".join(delta.text or "" for delta in deltas) == "It is 18 C"
     assert deltas[-1].kind is ModelDeltaKind.DONE
+
+
+def test_stream_round_trips_namespaced_tools_through_safe_unique_aliases() -> None:
+    canonical_names = (
+        "skill.design-taste-frontend",
+        "execution.plan",
+        "mcp.playwright.browser_navigate",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        provider_names = [item["function"]["name"] for item in payload["tools"]]
+        assert len(set(provider_names)) == len(canonical_names)
+        assert all(re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name) for name in provider_names)
+        assert not set(provider_names).intersection(canonical_names)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=_sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "functions.skill.design-taste-frontend:0",
+                                        "function": {
+                                            "name": provider_names[0],
+                                            "arguments": '{"public_intent":"Use design guidance"}',
+                                        },
+                                    },
+                                    {
+                                        "index": 1,
+                                        "id": "functions.execution.plan:1",
+                                        "function": {
+                                            "name": provider_names[1],
+                                            "arguments": '{"files":[]}',
+                                        },
+                                    },
+                                    {
+                                        "index": 2,
+                                        "id": "functions.mcp.playwright.browser_navigate:2",
+                                        "function": {
+                                            "name": provider_names[2],
+                                            "arguments": '{"url":"https://example.com"}',
+                                        },
+                                    },
+                                ]
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ]
+                },
+                "[DONE]",
+            ),
+        )
+
+    request = ModelRequest.create(
+        profile_id="fixture",
+        messages=(ModelMessage.create(role=ModelRole.USER, content="Create a web page"),),
+        tools=tuple(
+            ModelTool.create(
+                name=name,
+                description=f"Use {name}",
+                input_schema={"type": "object", "properties": {}},
+            )
+            for name in canonical_names
+        ),
+        required_capabilities=frozenset({ProviderCapability.TEXT, ProviderCapability.TOOLS}),
+        max_output_tokens=128,
+    )
+    provider = OpenAICompatibleProvider(
+        profile=_profile(credential_ref=None),
+        secret=None,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    deltas = tuple(provider.stream(request, CancellationToken()))
+    tool_deltas = [delta for delta in deltas if delta.kind is ModelDeltaKind.TOOL_CALL]
+
+    assert [delta.tool_name for delta in tool_deltas] == list(canonical_names)
 
 
 def test_stream_serializes_task_bound_png_as_an_inline_multimodal_part() -> None:
@@ -492,6 +606,27 @@ class _TrackingStream(httpx.SyncByteStream):
 
     def close(self) -> None:
         self.closed = True
+
+
+def test_stream_reads_streaming_error_before_safe_classification() -> None:
+    body = _TrackingStream(
+        (b'{"error":{"message":"upstream-secret-detail"}}',)
+    )
+    provider = OpenAICompatibleProvider(
+        profile=_profile(),
+        secret=SecretValue.from_text("fixture-secret"),
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(429, stream=body)
+            )
+        ),
+    )
+
+    with pytest.raises(ProviderRateLimitError, match="rate limit") as captured:
+        tuple(provider.stream(_request(), CancellationToken()))
+
+    assert "upstream-secret-detail" not in str(captured.value)
+    assert body.closed is True
 
 
 def test_mid_stream_cancellation_closes_response_without_more_deltas() -> None:

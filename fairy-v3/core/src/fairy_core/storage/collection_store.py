@@ -15,12 +15,33 @@ from fairy_core.storage.schema import approvals, conversations, projects, tasks,
 
 
 class CollectionStateStoreMixin:
-    def list_projects(self, *, limit: int, cursor: str | None) -> StatePage[Project]:
+    def list_projects(
+        self,
+        *,
+        limit: int,
+        cursor: str | None,
+        lifecycle: str = "active",
+    ) -> StatePage[Project]:
+        lifecycle_filters = {
+            "active": (projects.c.archived_at.is_(None), projects.c.deleted_at.is_(None)),
+            "archived": (
+                projects.c.archived_at.is_not(None),
+                projects.c.deleted_at.is_(None),
+            ),
+            "deleted": (
+                projects.c.deleted_at.is_not(None),
+                projects.c.purged_at.is_(None),
+            ),
+        }
+        try:
+            filters = lifecycle_filters[lifecycle]
+        except KeyError as error:
+            raise ValueError("unsupported Project lifecycle filter") from error
         rows, next_cursor = self._page_rows(
             projects,
             collection="projects",
-            scope={},
-            filters=(),
+            scope={"lifecycle": lifecycle},
+            filters=filters,
             limit=limit,
             cursor=cursor,
         )
@@ -35,15 +56,27 @@ class CollectionStateStoreMixin:
         project_id: UUID | None,
         limit: int,
         cursor: str | None,
+        lifecycle: str = "active",
     ) -> StatePage[Conversation]:
-        filters = (
-            *((conversations.c.project_id == str(project_id),) if project_id is not None else ()),
-            conversations.c.deleted_at.is_(None),
-        )
+        lifecycle_filters = {
+            "active": (conversations.c.deleted_at.is_(None),),
+            "deleted": (
+                conversations.c.deleted_at.is_not(None),
+                conversations.c.purged_at.is_(None),
+            ),
+            "all": (conversations.c.purged_at.is_(None),),
+        }
+        try:
+            project_filter = (
+                (conversations.c.project_id == str(project_id),) if project_id is not None else ()
+            )
+            filters = (*project_filter, *lifecycle_filters[lifecycle])
+        except KeyError as error:
+            raise ValueError("unsupported Conversation lifecycle filter") from error
         rows, next_cursor = self._page_rows(
             conversations,
             collection="conversations",
-            scope={"project_id": _scope_id(project_id)},
+            scope={"project_id": _scope_id(project_id), "lifecycle": lifecycle},
             filters=filters,
             limit=limit,
             cursor=cursor,

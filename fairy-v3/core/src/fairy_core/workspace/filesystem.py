@@ -30,7 +30,63 @@ class FileSystemWorkspaceProvisioner:
         self.managed_root.mkdir(parents=True, exist_ok=True)
         self._locks_guard = threading.Lock()
         self._version_locks: dict[tuple[str, str], threading.RLock] = {}
+        self._lifecycle_lock = threading.RLock()
         self._read_server = LoopbackFileReadServer()
+
+    def workspace_size(self, workspace_id: UUID | str) -> int:
+        segment = _workspace_segment(workspace_id)
+        with self._lifecycle_lock:
+            staging = self.managed_root / ".purge-staging" / segment
+            if staging.exists() or staging.is_symlink():
+                return _tree_bytes(staging)
+            return sum(_tree_bytes(root) for root in self._workspace_roots(segment))
+
+    def purge_workspace(self, workspace_id: UUID | str) -> int:
+        segment = _workspace_segment(workspace_id)
+        with self._lifecycle_lock:
+            staging = self.managed_root / ".purge-staging" / segment
+            if staging.exists() or staging.is_symlink():
+                released = _tree_bytes(staging)
+                shutil.rmtree(staging)
+                return released
+
+            sources = tuple(
+                (label, root)
+                for label, root in zip(
+                    ("project", "scratch"),
+                    self._workspace_roots(segment),
+                    strict=True,
+                )
+                if root.exists() or root.is_symlink()
+            )
+            released = sum(_tree_bytes(root) for _label, root in sources)
+            if not sources:
+                return 0
+
+            staging.mkdir(parents=True, exist_ok=False)
+            moved: list[tuple[Path, Path]] = []
+            try:
+                for label, source in sources:
+                    destination = staging / label
+                    source.replace(destination)
+                    moved.append((source, destination))
+            except BaseException:
+                for source, destination in reversed(moved):
+                    if destination.exists() and not source.exists():
+                        source.parent.mkdir(parents=True, exist_ok=True)
+                        destination.replace(source)
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
+
+            # A failed removal intentionally leaves the stable staging path for retry.
+            shutil.rmtree(staging)
+            return released
+
+    def _workspace_roots(self, segment: str) -> tuple[Path, Path]:
+        return (
+            self.managed_root / "projects" / segment,
+            self.managed_root / "scratch" / segment,
+        )
 
     def project_versions_root(self, project_id: UUID | str) -> Path:
         return self.managed_root / "projects" / str(project_id) / "versions"
@@ -321,3 +377,34 @@ class FileSystemWorkspaceProvisioner:
 
     def close(self) -> None:
         self._read_server.close()
+
+
+def _workspace_segment(workspace_id: UUID | str) -> str:
+    value = str(workspace_id)
+    valid = all(
+        character.isascii() and (character.isalnum() or character in "-_") for character in value
+    )
+    if not value or not valid:
+        raise ValueError("workspace_id contains invalid path characters")
+    return value
+
+
+def _tree_bytes(root: Path) -> int:
+    if root.is_symlink():
+        raise ValueError(f"workspace contains a symbolic link: {root}")
+    if not root.exists():
+        return 0
+    if not root.is_dir():
+        raise ValueError(f"workspace root is not a directory: {root}")
+    total = 0
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        for entry in directory.iterdir():
+            if entry.is_symlink():
+                raise ValueError(f"workspace contains a symbolic link: {entry}")
+            if entry.is_dir():
+                pending.append(entry)
+            elif entry.is_file():
+                total += entry.stat().st_size
+    return total

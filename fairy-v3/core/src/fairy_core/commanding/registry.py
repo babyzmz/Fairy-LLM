@@ -9,17 +9,7 @@ from enum import StrEnum
 from threading import RLock
 from types import MappingProxyType
 
-from fairy_core.commanding import tool_schemas
-from fairy_core.commanding.registry_projection import (
-    available_agent_definitions as project_available_agent_definitions,
-)
-from fairy_core.commanding.registry_projection import (
-    capability_manifest as project_capability_manifest,
-)
-from fairy_core.commanding.registry_projection import frontend_metadata as project_frontend_metadata
-from fairy_core.commanding.registry_projection import (
-    slash_command_metadata as project_slash_metadata,
-)
+from fairy_core.commanding import registry_projection, tool_schemas
 from fairy_core.commanding.types import PermissionProfile
 
 
@@ -83,7 +73,7 @@ class ToolDefinition:
     def __post_init__(self) -> None:
         if _TOOL_NAME.fullmatch(self.name) is None:
             raise ValueError("tool name must be lowercase ASCII and namespace-safe")
-        description = _bounded_public_description(
+        description = registry_projection.bounded_public_description(
             self.description.strip() or self.name.replace(".", " ")
         )
         try:
@@ -147,12 +137,6 @@ class ToolDefinition:
         object.__setattr__(self, "origin_id", self.origin_id.strip() if self.origin_id else None)
         object.__setattr__(self, "input_schema", MappingProxyType(schema))
         object.__setattr__(self, "definition_digest", digest)
-
-
-def _bounded_public_description(description: str) -> str:
-    if len(description) <= 1_000:
-        return description
-    return description[:997].rstrip() + "..."
 
 
 class ToolRegistry:
@@ -258,7 +242,7 @@ class ToolRegistry:
         with self._lock:
             definitions = dict(self._definitions)
             ready_extensions = frozenset(self._ready_extensions)
-        return project_available_agent_definitions(
+        return registry_projection.available_agent_definitions(
             definitions,
             ready_extensions=ready_extensions,
             profile=profile,
@@ -267,7 +251,7 @@ class ToolRegistry:
         )
 
     def frontend_metadata(self) -> tuple[dict[str, object], ...]:
-        return project_frontend_metadata(self.definitions())
+        return registry_projection.frontend_metadata(self.definitions())
 
     def slash_command_metadata(
         self,
@@ -275,7 +259,7 @@ class ToolRegistry:
     ) -> tuple[dict[str, object], ...]:
         with self._lock:
             commands = tuple(self._slash_commands.values())
-        return project_slash_metadata(commands, operations)
+        return registry_projection.slash_command_metadata(commands, operations)
 
     def capability_manifest(
         self,
@@ -287,7 +271,7 @@ class ToolRegistry:
         with self._lock:
             definitions = dict(self._definitions)
             ready_extensions = frozenset(self._ready_extensions)
-        return project_capability_manifest(
+        return registry_projection.capability_manifest(
             definitions,
             ready_extensions=ready_extensions,
             profile=profile,
@@ -644,7 +628,10 @@ def _project_definitions(
             all_profiles,
             "project_tools",
             idempotent=True,
-            description="Read the latest durable Runtime and Preview status for this Task.",
+            description=(
+                "Read the latest durable Runtime and Preview status after planned Workspace "
+                "changes have been applied. This does not create files or replace execution.plan."
+            ),
             input_schema={"type": "object", "additionalProperties": False},
         ),
         _tool(
@@ -1144,7 +1131,10 @@ def build_default_registry() -> ToolRegistry:
             autonomous,
             "sandbox_worker",
             sandbox=True,
-            description=("Run structured argv inside the attested Task-bound Sandbox Workspace."),
+            description=(
+                "Run a terminating validation or build argv inside the attested Task-bound "
+                "Sandbox Workspace. Never start servers, watchers, or Preview runtimes."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {

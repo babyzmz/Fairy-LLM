@@ -10,13 +10,31 @@ from fairy_core.commanding.settings import SandboxHealthProvider
 from fairy_core.domain.errors import ScopeViolationError
 from fairy_core.domain.models import ScopeContract
 from fairy_core.sandbox.archive import WorkspaceArchiveBuilder
-from fairy_core.sandbox.models import SandboxNetworkPolicy, SandboxRequest, SandboxResult
+from fairy_core.sandbox.models import (
+    SandboxNetworkPolicy,
+    SandboxRequest,
+    SandboxResult,
+    SandboxResultStatus,
+)
 from fairy_core.sandbox.ports import SandboxExecutor
 from fairy_core.sandbox.wsl import SandboxUnavailableError
 
 _TOOL_NAME = "run.sandboxed"
 _EXECUTOR = "wsl_fairy_sandbox"
 _EXECUTOR_VERSION = "1.0.0"
+
+
+class SandboxCommandFailedError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str,
+        model_detail: str,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.model_detail = model_detail
 
 
 class ExecutorSandboxHealthProvider(SandboxHealthProvider):
@@ -98,6 +116,18 @@ class SandboxToolExecutor:
             raise SandboxUnavailableError(
                 "SANDBOX_UNAVAILABLE: Sandbox executor does not match execution target"
             )
+        argv = _arguments(arguments)
+        if _starts_runtime_server(argv):
+            raise SandboxCommandFailedError(
+                "Long-running servers must be started by the Core Preview runtime",
+                error_code="CAPABILITY_NOT_AVAILABLE",
+                model_detail=(
+                    "run.sandboxed only accepts commands that terminate. Do not start a server, "
+                    "watcher, or development runtime and do not claim a host, port, or URL. "
+                    "After the complete Changeset is applied, return the final response so Core "
+                    "can start and verify the bound Preview."
+                ),
+            )
         archive = self._archive_builder.build(scope)
         request = SandboxRequest.create(
             job_id=command_run.id,
@@ -108,7 +138,7 @@ class SandboxToolExecutor:
             scope_digest=scope.scope_digest,
             workspace_generation=archive.generation,
             lease_fence=command_run.lease_fence,
-            argv=_arguments(arguments),
+            argv=argv,
             cwd=_optional_string(arguments, "cwd", default="."),
             environment=_environment(arguments),
             timeout_seconds=_optional_integer(
@@ -126,6 +156,19 @@ class SandboxToolExecutor:
         )
         result = self._executor.execute(request)
         self._validate_result_binding(result, request)
+        if result.status in {
+            SandboxResultStatus.FAILED,
+            SandboxResultStatus.TIMED_OUT,
+        }:
+            raise SandboxCommandFailedError(
+                f"Sandbox command {result.status.value}",
+                error_code=(
+                    "WORKER_INTERRUPTED"
+                    if result.status is SandboxResultStatus.TIMED_OUT
+                    else "COMMAND_FAILED"
+                ),
+                model_detail=_failure_model_detail(result),
+            )
         return _tool_result(result)
 
     def cancel_command(self, command_run: CommandRun) -> None:
@@ -179,6 +222,52 @@ def _arguments(values: Mapping[str, object]) -> tuple[str, ...]:
     if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
         raise ValueError("argv must be an array of strings")
     return tuple(raw)
+
+
+def _starts_runtime_server(argv: tuple[str, ...]) -> bool:
+    lowered = tuple(value.casefold() for value in argv)
+    executable = lowered[0].replace("\\", "/").rsplit("/", maxsplit=1)[-1]
+    executable = executable.removesuffix(".exe").removesuffix(".cmd")
+    if any(value in {"--watch", "--watch-all", "watch"} for value in lowered[1:]):
+        return True
+    if executable in {"vite", "uvicorn", "gunicorn", "flask", "http-server", "serve"}:
+        return True
+    if executable in {"python", "python3", "py"}:
+        modules = {
+            lowered[index + 1]
+            for index, value in enumerate(lowered[:-1])
+            if value == "-m"
+        }
+        if modules & {"http.server", "uvicorn", "gunicorn", "flask"}:
+            return True
+    if executable in {"npm", "pnpm", "yarn", "bun"}:
+        commands = {"dev", "serve", "start", "preview", "watch"}
+        if any(value in commands for value in lowered[1:3]):
+            return True
+    if executable in {"npx", "pnpx", "bunx"} and len(lowered) > 1:
+        return lowered[1] in {
+            "vite",
+            "next",
+            "nuxt",
+            "astro",
+            "http-server",
+            "serve",
+            "uvicorn",
+        }
+    return False
+
+
+def _failure_model_detail(result: SandboxResult) -> str:
+    output = result.stderr or result.stdout
+    detail = output.decode("utf-8", errors="replace").strip()
+    if detail:
+        return f"The terminating command failed: {detail[:1_500]}"
+    if result.status is SandboxResultStatus.TIMED_OUT:
+        return (
+            "The command exceeded its timeout. Do not retry it as a server or watcher; use a "
+            "bounded validation command and let Core own Preview startup."
+        )
+    return "The terminating command failed without diagnostic output."
 
 
 def _environment(values: Mapping[str, object]) -> dict[str, str]:

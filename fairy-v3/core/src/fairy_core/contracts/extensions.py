@@ -45,6 +45,10 @@ class ExtensionCatalogEntryModel(ContractModel):
     license: str = Field(min_length=1, max_length=200)
     experimental: bool
     installed: bool
+    source_kind: str = Field(pattern=r"^(curated|git|archive|local|created)$")
+    trust: str = Field(pattern=r"^(verified_publisher|curated|external|local)$")
+    tags: tuple[str, ...] = Field(default=(), max_length=16)
+    requirements: tuple[str, ...] = Field(default=(), max_length=16)
 
 
 class ExtensionCatalogPageModel(ContractModel):
@@ -53,6 +57,57 @@ class ExtensionCatalogPageModel(ContractModel):
 
 class SkillInstallInput(ContractModel):
     catalog_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class SkillImportInspectInput(ContractModel):
+    source_kind: str = Field(pattern=r"^(folder|zip|github)$")
+    source: str = Field(min_length=1, max_length=4_096)
+
+    @field_validator("source")
+    @classmethod
+    def _safe_source(cls, value: str) -> str:
+        if "\x00" in value or "\r" in value or "\n" in value:
+            raise ValueError("Skill import source is invalid")
+        return value
+
+
+class SkillImportInspectionModel(ContractModel):
+    inspection_token: str = Field(pattern=r"^[A-Za-z0-9_-]{24,128}$")
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    description: str = Field(min_length=1, max_length=1_024)
+    version: str | None = Field(default=None, min_length=5, max_length=128)
+    publisher: str | None = Field(default=None, min_length=1, max_length=200)
+    license: str | None = Field(default=None, min_length=1, max_length=200)
+    source: str = Field(min_length=1, max_length=500)
+    has_manifest: bool
+    file_count: int = Field(ge=1, le=64)
+    content_bytes: int = Field(ge=1, le=524_288)
+
+
+class SkillImportInstallInput(ContractModel):
+    inspection_token: str = Field(pattern=r"^[A-Za-z0-9_-]{24,128}$")
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    version: str = Field(min_length=5, max_length=128)
+    description: str = Field(min_length=1, max_length=1_024)
+    publisher: str = Field(min_length=1, max_length=200)
+    license: str = Field(min_length=1, max_length=200)
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+    required_capabilities: tuple[str, ...] = Field(default=(), max_length=32)
+    compatible_mcp_servers: tuple[str, ...] = Field(default=(), max_length=32)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class SkillCreateInput(ContractModel):
+    name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    version: str = Field(min_length=5, max_length=128)
+    description: str = Field(min_length=1, max_length=1_024)
+    instructions: str = Field(min_length=1, max_length=131_072)
+    publisher: str = Field(min_length=1, max_length=200)
+    license: str = Field(min_length=1, max_length=200)
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+    required_capabilities: tuple[str, ...] = Field(default=(), max_length=32)
+    compatible_mcp_servers: tuple[str, ...] = Field(default=(), max_length=32)
     idempotency_key: str = Field(min_length=1, max_length=512)
 
 
@@ -194,9 +249,17 @@ class McpServerDeleteResult(ContractModel):
     deleted: bool
 
 
+class McpPresetInstallInput(ContractModel):
+    catalog_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    credential_ref: str | None = Field(default=None, min_length=3, max_length=288)
+    expected_revision: int = Field(default=0, ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
 __all__ = [
     "ExtensionCatalogEntryModel",
     "ExtensionCatalogPageModel",
+    "McpPresetInstallInput",
     "McpServerAcceptInput",
     "McpServerConfigureInput",
     "McpServerDeleteInput",
@@ -207,6 +270,10 @@ __all__ = [
     "McpServerSetEnabledInput",
     "McpToolDescriptorModel",
     "McpToolPolicyInput",
+    "SkillCreateInput",
+    "SkillImportInspectInput",
+    "SkillImportInspectionModel",
+    "SkillImportInstallInput",
     "SkillInstallInput",
     "SkillModel",
     "SkillPageModel",

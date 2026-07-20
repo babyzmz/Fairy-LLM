@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import re
 from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlsplit
@@ -104,14 +107,16 @@ class OpenAICompatibleProvider:
             raise ProviderUnavailableError("provider credential is not configured")
         sequence = 0
         done_emitted = False
+        substantive_emitted = False
         tool_ids: dict[int, str] = {}
-        tool_names: dict[int, str] = {}
+        streamed_tool_names: dict[int, str] = {}
+        tool_name_codec = _tool_name_codec(request)
         try:
             with self._client.stream(
                 "POST",
                 f"{self.profile.base_url}/chat/completions",
                 headers=self._headers(),
-                json=self._request_payload(request),
+                json=self._request_payload(request, tool_name_codec=tool_name_codec),
                 timeout=self.profile.timeout_seconds,
             ) as response:
                 if not 200 <= response.status_code < 300:
@@ -126,6 +131,10 @@ class OpenAICompatibleProvider:
                     data = stripped[5:].strip()
                     if data == "[DONE]":
                         if not done_emitted:
+                            if not substantive_emitted:
+                                raise ProviderProtocolError(
+                                    "provider completed without a usable response"
+                                )
                             sequence += 1
                             yield ModelDelta.done(
                                 profile_id=self.profile.id,
@@ -151,6 +160,7 @@ class OpenAICompatibleProvider:
                             if not isinstance(content, str):
                                 raise ProviderProtocolError("provider text delta must be a string")
                             if content:
+                                substantive_emitted = True
                                 sequence += 1
                                 yield ModelDelta.text(
                                     profile_id=self.profile.id,
@@ -158,11 +168,17 @@ class OpenAICompatibleProvider:
                                     text=content,
                                 )
                                 cancellation.raise_if_cancelled()
-                        for tool_delta in _tool_deltas(
-                            delta,
-                            tool_ids=tool_ids,
-                            tool_names=tool_names,
-                        ):
+                        tool_deltas = tuple(
+                            _tool_deltas(
+                                delta,
+                                tool_ids=tool_ids,
+                                tool_names=streamed_tool_names,
+                                tool_name_codec=tool_name_codec,
+                            )
+                        )
+                        if tool_deltas:
+                            substantive_emitted = True
+                        for tool_delta in tool_deltas:
                             sequence += 1
                             yield ModelDelta.tool_call(
                                 profile_id=self.profile.id,
@@ -190,6 +206,10 @@ class OpenAICompatibleProvider:
                         )
                         cancellation.raise_if_cancelled()
                     if finish_reason is not None and not done_emitted:
+                        _validate_finish_reason(
+                            finish_reason,
+                            substantive_emitted=substantive_emitted,
+                        )
                         sequence += 1
                         yield ModelDelta.done(
                             profile_id=self.profile.id,
@@ -217,7 +237,12 @@ class OpenAICompatibleProvider:
             headers["Authorization"] = f"Bearer {self._secret.reveal()}"
         return headers
 
-    def _request_payload(self, request: ModelRequest) -> dict[str, Any]:
+    def _request_payload(
+        self,
+        request: ModelRequest,
+        *,
+        tool_name_codec: _ToolNameCodec,
+    ) -> dict[str, Any]:
         messages: list[dict[str, Any]] = []
         for message in request.messages:
             content: str | list[dict[str, Any]] = message.content
@@ -238,7 +263,11 @@ class OpenAICompatibleProvider:
                 )
             value = {"role": _openai_role(message.role), "content": content}
             if message.name is not None:
-                value["name"] = message.name
+                value["name"] = (
+                    tool_name_codec.to_provider(message.name)
+                    if message.role is ModelRole.TOOL
+                    else message.name
+                )
             if message.tool_call_id is not None:
                 value["tool_call_id"] = message.tool_call_id
             if message.tool_calls:
@@ -247,7 +276,7 @@ class OpenAICompatibleProvider:
                         "id": tool_call.id,
                         "type": "function",
                         "function": {
-                            "name": tool_call.name,
+                            "name": tool_name_codec.to_provider(tool_call.name),
                             "arguments": tool_call.arguments,
                         },
                     }
@@ -284,13 +313,14 @@ class OpenAICompatibleProvider:
                 {
                     "type": "function",
                     "function": {
-                        "name": tool.name,
+                        "name": tool_name_codec.to_provider(tool.name),
                         "description": tool.description,
                         "parameters": dict(tool.input_schema),
                     },
                 }
                 for tool in request.tools
             ]
+            payload["tool_choice"] = "required"
         return payload
 
     def _health(
@@ -316,11 +346,26 @@ def _parse_frame(value: str) -> dict[str, Any]:
     return payload
 
 
+def _validate_finish_reason(
+    finish_reason: str,
+    *,
+    substantive_emitted: bool,
+) -> None:
+    normalized = finish_reason.strip().lower()
+    if normalized == "content_filter":
+        raise ProviderContentRejectedError("provider rejected the requested content")
+    if normalized in {"error", "length"}:
+        raise ProviderProtocolError("provider stopped before producing a complete response")
+    if not substantive_emitted:
+        raise ProviderProtocolError("provider completed without a usable response")
+
+
 def _tool_deltas(
     delta: Mapping[str, Any],
     *,
     tool_ids: dict[int, str],
     tool_names: dict[int, str],
+    tool_name_codec: _ToolNameCodec,
 ) -> Iterator[dict[str, Any]]:
     raw_calls = delta.get("tool_calls")
     if raw_calls is None:
@@ -348,7 +393,7 @@ def _tool_deltas(
         if raw_name is not None:
             if not isinstance(raw_name, str) or not raw_name:
                 raise ProviderProtocolError("provider tool name is invalid")
-            tool_names[raw_index] = raw_name
+            tool_names[raw_index] = tool_name_codec.to_core(raw_name)
         arguments = function.get("arguments", "")
         if not isinstance(arguments, str):
             raise ProviderProtocolError("provider tool arguments must be text")
@@ -357,6 +402,69 @@ def _tool_deltas(
             "tool_name": tool_names.get(raw_index),
             "arguments_fragment": arguments,
         }
+
+
+_PROVIDER_TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolNameCodec:
+    provider_by_core: Mapping[str, str]
+    core_by_provider: Mapping[str, str]
+
+    def to_provider(self, name: str) -> str:
+        try:
+            return self.provider_by_core[name]
+        except KeyError as error:
+            raise ProviderProtocolError("tool name is absent from the request codec") from error
+
+    def to_core(self, name: str) -> str:
+        return self.core_by_provider.get(name, name)
+
+
+def _tool_name_codec(request: ModelRequest) -> _ToolNameCodec:
+    names: dict[str, None] = {}
+    for tool in request.tools:
+        names.setdefault(tool.name, None)
+    for message in request.messages:
+        for tool_call in message.tool_calls:
+            names.setdefault(tool_call.name, None)
+        if message.role is ModelRole.TOOL and message.name is not None:
+            names.setdefault(message.name, None)
+
+    provider_by_core: dict[str, str] = {}
+    core_by_provider: dict[str, str] = {}
+    for name in names:
+        if _PROVIDER_TOOL_NAME_PATTERN.fullmatch(name):
+            provider_by_core[name] = name
+            core_by_provider[name] = name
+
+    for name in names:
+        if name in provider_by_core:
+            continue
+        alias = _unique_provider_tool_name(name, occupied=core_by_provider)
+        provider_by_core[name] = alias
+        core_by_provider[alias] = name
+
+    return _ToolNameCodec(
+        provider_by_core=provider_by_core,
+        core_by_provider=core_by_provider,
+    )
+
+
+def _unique_provider_tool_name(
+    name: str,
+    *,
+    occupied: Mapping[str, str],
+) -> str:
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "tool"
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()
+    for collision_index in range(len(occupied) + 2):
+        suffix = digest[:10] if collision_index == 0 else f"{digest[:8]}_{collision_index}"
+        alias = f"{stem[: 64 - len(suffix) - 1]}_{suffix}"
+        if alias not in occupied:
+            return alias
+    raise ProviderProtocolError("could not allocate a unique provider tool name")
 
 
 def _integer_usage(usage: Mapping[str, Any]) -> dict[str, int]:
@@ -428,8 +536,10 @@ def _stream_error(payload: Mapping[str, Any]) -> Exception:
 
 def _safe_error_code(response: httpx.Response) -> str:
     try:
+        if not response.is_stream_consumed:
+            response.read()
         payload = response.json()
-    except (ValueError, json.JSONDecodeError):
+    except (httpx.HTTPError, ValueError, json.JSONDecodeError):
         return ""
     raw = payload.get("error") if isinstance(payload, dict) else None
     code = raw.get("code") if isinstance(raw, dict) else None

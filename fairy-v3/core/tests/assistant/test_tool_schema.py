@@ -64,6 +64,25 @@ def test_information_schemas_enforce_units_and_numeric_bounds() -> None:
         validate_tool_arguments(fx, {"base": "USD", "quote": "EUR", "amount": -1})
 
 
+def test_execution_plan_schema_accepts_null_for_a_new_file_hash() -> None:
+    definition = build_default_registry().get("execution.plan")
+    assert definition is not None
+
+    validate_tool_arguments(
+        definition,
+        {
+            "files": [
+                {
+                    "path": "index.html",
+                    "purpose": "Create the entrypoint",
+                    "batch": 1,
+                    "expected_hash": None,
+                }
+            ]
+        },
+    )
+
+
 @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
 def test_model_argument_sanitizer_rejects_non_finite_numbers(value: float) -> None:
     with pytest.raises(ToolCandidateError, match="finite"):

@@ -15,6 +15,11 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Connection, Engine, RowMapping
 
+from fairy_core.assistant.content_purge_repository import (
+    purge_conversation_content,
+    purge_project_content,
+    purge_workspace_content,
+)
 from fairy_core.assistant.models import (
     AssistantTurn,
     AssistantTurnStatus,
@@ -144,6 +149,34 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             )
         )
         return self._turn_from_row(row) if row is not None else None
+
+    def nonterminal_turns_for_tasks(
+        self,
+        task_ids: tuple[UUID, ...],
+    ) -> tuple[AssistantTurn, ...]:
+        if not task_ids:
+            return ()
+        with self._session.read() as connection:
+            rows = (
+                connection.execute(
+                    select(assistant_turns)
+                    .where(
+                        assistant_turns.c.tenant_id == self._tenant_id,
+                        assistant_turns.c.task_id.in_(tuple(map(str, task_ids))),
+                        assistant_turns.c.status.in_(
+                            (
+                                AssistantTurnStatus.CREATED.value,
+                                AssistantTurnStatus.RUNNING.value,
+                                AssistantTurnStatus.WAITING_FOR_TOOL.value,
+                            )
+                        ),
+                    )
+                    .order_by(assistant_turns.c.created_at.asc(), assistant_turns.c.id.asc())
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(self._turn_from_row(row) for row in rows)
 
     def save_provider_attempt(self, attempt: ProviderAttempt) -> None:
         with self._session.write() as connection:
@@ -327,6 +360,15 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             items=tuple(self._message_from_row(row) for row in page_rows),
             next_cursor=next_cursor,
         )
+
+    def purge_conversation_content(self, conversation_id: UUID) -> None:
+        purge_conversation_content(self._session, self._tenant_id, conversation_id)
+
+    def purge_project_content(self, project_id: UUID) -> None:
+        purge_project_content(self._session, self._tenant_id, project_id)
+
+    def purge_workspace_content(self, workspace_id: UUID) -> None:
+        purge_workspace_content(self._session, self._tenant_id, workspace_id)
 
     def list_transcript(
         self,

@@ -9,6 +9,12 @@ if TYPE_CHECKING:
     from fairy_core.commanding.registry import SlashCommandDefinition, ToolDefinition
 
 
+def bounded_public_description(description: str) -> str:
+    if len(description) <= 1_000:
+        return description
+    return description[:997].rstrip() + "..."
+
+
 def frontend_metadata(
     definitions: Iterable[ToolDefinition],
 ) -> tuple[dict[str, object], ...]:
@@ -112,6 +118,7 @@ def slash_command_metadata(
 
 __all__ = [
     "available_agent_definitions",
+    "bounded_public_description",
     "capability_manifest",
     "frontend_metadata",
     "slash_command_metadata",

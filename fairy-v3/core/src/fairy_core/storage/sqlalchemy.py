@@ -162,10 +162,42 @@ class SqlAlchemyStateStore(
                     str(project.active_preview_id) if project.active_preview_id else None
                 ),
                 "revision": project.revision,
+                "pinned_at": project.pinned_at,
+                "archived_at": project.archived_at,
+                "deleted_at": project.deleted_at,
+                "purged_at": project.purged_at,
+                "metadata_revision": project.metadata_revision,
                 "created_at": project.created_at,
                 "updated_at": project.updated_at,
             },
         )
+
+    def update_project_metadata(
+        self,
+        project: Project,
+        *,
+        expected_revision: int,
+    ) -> None:
+        with self._session.write() as connection:
+            result = connection.execute(
+                update(projects)
+                .where(
+                    projects.c.tenant_id == self._tenant_id,
+                    projects.c.id == str(project.id),
+                    projects.c.metadata_revision == expected_revision,
+                )
+                .values(
+                    name=project.name,
+                    pinned_at=project.pinned_at,
+                    archived_at=project.archived_at,
+                    deleted_at=project.deleted_at,
+                    purged_at=project.purged_at,
+                    metadata_revision=project.metadata_revision,
+                    updated_at=project.updated_at,
+                )
+            )
+        if result.rowcount != 1:
+            raise VersionConflictError("Project metadata changed concurrently")
 
     def get_project(self, project_id: UUID) -> Project | None:
         row = self._get_by_id(projects, project_id)
@@ -198,6 +230,8 @@ class SqlAlchemyStateStore(
                 "title": conversation.title,
                 "pinned_at": conversation.pinned_at,
                 "deleted_at": conversation.deleted_at,
+                "deleted_by_project_at": conversation.deleted_by_project_at,
+                "purged_at": conversation.purged_at,
                 "revision": conversation.revision,
                 "created_at": conversation.created_at,
                 "updated_at": conversation.updated_at,
@@ -222,6 +256,8 @@ class SqlAlchemyStateStore(
                     title=conversation.title,
                     pinned_at=conversation.pinned_at,
                     deleted_at=conversation.deleted_at,
+                    deleted_by_project_at=conversation.deleted_by_project_at,
+                    purged_at=conversation.purged_at,
                     revision=conversation.revision,
                     updated_at=conversation.updated_at,
                 )
@@ -653,6 +689,11 @@ class SqlAlchemyStateStore(
             active_version_id=_uuid(row["active_version_id"]),
             active_preview_id=_uuid(row["active_preview_id"]),
             revision=int(row["revision"]),
+            pinned_at=_optional_datetime(row["pinned_at"]),
+            archived_at=_optional_datetime(row["archived_at"]),
+            deleted_at=_optional_datetime(row["deleted_at"]),
+            purged_at=_optional_datetime(row["purged_at"]),
+            metadata_revision=int(row["metadata_revision"]),
             created_at=_datetime(row["created_at"]),
             updated_at=_datetime(row["updated_at"]),
         )
@@ -671,6 +712,8 @@ class SqlAlchemyStateStore(
             title=row["title"],
             pinned_at=_optional_datetime(row["pinned_at"]),
             deleted_at=_optional_datetime(row["deleted_at"]),
+            deleted_by_project_at=_optional_datetime(row["deleted_by_project_at"]),
+            purged_at=_optional_datetime(row["purged_at"]),
             revision=int(row["revision"]),
             created_at=_datetime(row["created_at"]),
             updated_at=_datetime(row["updated_at"]),

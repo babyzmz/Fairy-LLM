@@ -61,6 +61,14 @@ def test_dependency_aware_requests_require_a_lock_bound_layer(purpose: SandboxPu
     with pytest.raises(ValueError, match="dependency layer"):
         _request(purpose=purpose)
 
+    scratch_request = _request(
+        project_id=None,
+        purpose=purpose,
+        dependency_key="c" * 64,
+        dependency_manager="npm",
+    )
+    assert scratch_request.project_id is None
+
 
 def test_raw_request_cannot_smuggle_a_dependency_layer() -> None:
     with pytest.raises(ValueError, match="dependency layer"):

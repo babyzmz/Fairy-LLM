@@ -135,7 +135,10 @@ def test_capability_manifest_uses_persisted_policy_and_core_health(tmp_path: Pat
             "requires_sandbox": True,
             "idempotent": False,
             "model_visible": True,
-            "description": "Run structured argv inside the attested Task-bound Sandbox Workspace.",
+            "description": (
+                "Run a terminating validation or build argv inside the attested Task-bound "
+                "Sandbox Workspace. Never start servers, watchers, or Preview runtimes."
+            ),
             "source": "builtin",
             "origin_id": None,
             "required_operations": [],

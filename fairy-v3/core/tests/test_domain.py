@@ -110,6 +110,60 @@ def test_conversation_metadata_is_revision_fenced_and_deleted_state_is_terminal(
         conversation.update_metadata(title="Too late", pinned=None, expected_revision=2)
 
 
+def test_project_metadata_archive_delete_restore_and_purge_are_revision_fenced() -> None:
+    project = Project.create(name="Atlas", residency=ProjectResidency.LOCAL_ONLY)
+
+    project.update_metadata(name="Atlas Studio", pinned=True, expected_revision=0)
+    assert project.name == "Atlas Studio"
+    assert project.pinned_at is not None
+    assert project.metadata_revision == 1
+
+    with pytest.raises(VersionConflictError):
+        project.archive(expected_revision=0)
+
+    project.archive(expected_revision=1)
+    assert project.archived_at is not None
+    assert project.pinned_at is None
+    project.restore_archive(expected_revision=2)
+    assert project.archived_at is None
+
+    project.delete(expected_revision=3)
+    assert project.deleted_at is not None
+    with pytest.raises(InvalidTransitionError, match="Deleted"):
+        project.update_metadata(name="Too late", pinned=None, expected_revision=4)
+
+    project.restore_deleted(expected_revision=4)
+    assert project.deleted_at is None
+    project.delete(expected_revision=5)
+    project.mark_purged(expected_revision=6)
+    assert project.purged_at is not None
+    assert project.name == "Deleted project"
+    with pytest.raises(InvalidTransitionError, match="Purged"):
+        project.restore_deleted(expected_revision=7)
+
+
+def test_conversation_project_cascade_marker_only_restores_cascade_deletions() -> None:
+    conversation = Conversation.create(
+        project_id=new_id(),
+        workspace_type=WorkspaceType.PROJECT_CHAT,
+        base_version_id=None,
+    )
+
+    conversation.delete(expected_revision=0, by_project=True)
+    assert conversation.deleted_at is not None
+    assert conversation.deleted_by_project_at == conversation.deleted_at
+
+    conversation.restore_deleted(expected_revision=1)
+    assert conversation.deleted_at is None
+    assert conversation.deleted_by_project_at is None
+    conversation.delete(expected_revision=2)
+    assert conversation.deleted_by_project_at is None
+    conversation.mark_purged(expected_revision=3)
+    assert conversation.title == "Deleted chat"
+    with pytest.raises(InvalidTransitionError, match="Purged"):
+        conversation.restore_deleted(expected_revision=4)
+
+
 def test_task_metadata_is_revision_fenced_and_only_terminal_tasks_archive() -> None:
     task = Task.create(
         project_id=new_id(),

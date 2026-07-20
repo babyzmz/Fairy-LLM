@@ -29,6 +29,7 @@ from fairy_core.providers.ports import (
 )
 
 AttemptObserver = Callable[[ProviderAttemptEvent], None]
+AttemptValidator = Callable[[tuple[ModelDelta, ...]], None]
 
 
 class ProviderRegistry:
@@ -79,6 +80,7 @@ class ProviderRegistry:
         cancellation: CancellationToken,
         *,
         on_attempt: AttemptObserver | None = None,
+        attempt_validator: AttemptValidator | None = None,
     ) -> Iterator[ModelDelta]:
         cancellation.raise_if_cancelled()
         primary = self._require_provider(request.profile_id)
@@ -107,18 +109,36 @@ class ProviderRegistry:
                     status=ProviderAttemptStatus.STARTED,
                 ),
             )
-            emitted = False
+            substantive_emitted = False
+            buffered_deltas: list[ModelDelta] | None = [] if attempt_validator is not None else None
+            buffered_tool_deltas: list[ModelDelta] = []
+            buffered_done_deltas: list[ModelDelta] = []
             usage: dict[str, int] = {}
             usage_cost: str | None = None
             try:
                 for delta in self._validated_stream(provider, attempt_request, cancellation):
-                    emitted = True
+                    if delta.kind is ModelDeltaKind.TEXT:
+                        substantive_emitted = True
                     if delta.kind is ModelDeltaKind.USAGE:
                         for key, value in delta.usage.items():
                             usage[key] = usage.get(key, 0) + value
                         if delta.usage_cost is not None:
                             usage_cost = delta.usage_cost
-                    yield delta
+                    if buffered_deltas is None:
+                        if delta.kind is ModelDeltaKind.TOOL_CALL:
+                            # Tool calls are streamed as argument fragments. Do not expose a
+                            # candidate until the provider has completed the attempt; otherwise a
+                            # transport failure would make retry concatenate two different calls.
+                            buffered_tool_deltas.append(delta)
+                        elif delta.kind is ModelDeltaKind.DONE:
+                            buffered_done_deltas.append(delta)
+                        else:
+                            yield delta
+                    else:
+                        buffered_deltas.append(delta)
+                if attempt_validator is not None:
+                    assert buffered_deltas is not None
+                    attempt_validator(tuple(buffered_deltas))
                 _notify_attempt(
                     on_attempt,
                     ProviderAttemptEvent(
@@ -132,6 +152,11 @@ class ProviderRegistry:
                         usage_cost=usage_cost,
                     ),
                 )
+                if buffered_deltas is not None:
+                    yield from buffered_deltas
+                else:
+                    yield from buffered_tool_deltas
+                    yield from buffered_done_deltas
                 return
             except ProviderCancelledError:
                 _notify_attempt(
@@ -166,7 +191,10 @@ class ProviderRegistry:
                         usage_cost=usage_cost,
                     ),
                 )
-                if emitted or not _retryable(category):
+                if (
+                    (substantive_emitted and attempt_validator is None)
+                    or not _retryable(category)
+                ):
                     raise
         assert last_error is not None
         raise last_error

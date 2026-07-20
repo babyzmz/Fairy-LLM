@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -8,10 +9,16 @@ from pydantic import ValidationError
 from fairy_core.application.service import CoreMethodNotFoundError, CoreService
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.contracts.methods import CORE_METHODS
+from fairy_core.domain.errors import (
+    InvalidTransitionError,
+    ProjectBusyError,
+    VersionConflictError,
+)
 from fairy_core.domain.execution import Artifact, ArtifactType, ArtifactVisibility
 from fairy_core.domain.ids import new_id
+from fairy_core.runtime.models import RuntimeExecutorError
 from fairy_core.transports.stdio import build_local_service
-from tests.runtime_support import build_runtime_stack
+from tests.runtime_support import RuntimeStack, build_runtime_stack
 
 
 def test_core_service_owns_validation_handlers_and_response_serialization(tmp_path: Path) -> None:
@@ -133,6 +140,575 @@ def test_core_service_exposes_typed_workspace_collection_pages(tmp_path: Path) -
             service.invoke("projects.list", {"limit": 0})
     finally:
         service.close()
+
+
+def test_core_service_exposes_project_lifecycle_and_unified_trash(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        project = service.invoke(
+            "projects.create",
+            {"name": "History", "residency": "local_only"},
+        )["project"]
+        updated = service.invoke(
+            "projects.update_metadata",
+            {
+                "project_id": project["id"],
+                "name": "History workspace",
+                "pinned": True,
+                "expected_revision": project["metadata_revision"],
+            },
+        )
+        archived = service.invoke(
+            "projects.archive",
+            {
+                "project_id": updated["id"],
+                "expected_revision": updated["metadata_revision"],
+            },
+        )
+
+        assert archived["archived_at"] is not None
+        assert archived["pinned_at"] is None
+        assert archived["id"] not in {
+            item["id"] for item in service.invoke("projects.list", {})["items"]
+        }
+        archived_items = service.invoke("projects.archived.list", {})["items"]
+        assert archived_items[0]["project"]["id"] == archived["id"]
+        assert archived_items[0]["thread_count"] == 1
+
+        deleted = service.invoke(
+            "projects.archived.delete",
+            {
+                "project_id": archived["id"],
+                "expected_revision": archived["metadata_revision"],
+                "user_confirmed": True,
+            },
+        )
+        trash = service.invoke("trash.items.list", {})["items"]
+        project_item = next(item for item in trash if item["item_id"] == deleted["id"])
+        assert project_item["item_type"] == "project"
+        assert project_item["thread_count"] == 1
+
+        restore_project_request = {
+            "item_type": "project",
+            "item_id": deleted["id"],
+            "expected_revision": deleted["metadata_revision"],
+        }
+        restored = service.invoke("trash.items.restore", restore_project_request)
+        assert restored["status"] == "restored"
+        assert service.invoke("trash.items.restore", restore_project_request) == restored
+        restored_archived = service.invoke("projects.archived.list", {})["items"]
+        assert restored_archived[0]["project"]["id"] == deleted["id"]
+
+        restore_archive_request = {
+            "project_id": deleted["id"],
+            "expected_revision": deleted["metadata_revision"] + 1,
+        }
+        restored_project = service.invoke("projects.archived.restore", restore_archive_request)
+        assert service.invoke("projects.archived.restore", restore_archive_request) == (
+            restored_project
+        )
+        conversation = service.invoke(
+            "conversations.create",
+            {
+                "project_id": restored_project["id"],
+                "workspace_type": "project_chat",
+            },
+        )
+        deleted_conversation = service.invoke(
+            "conversations.delete",
+            {
+                "conversation_id": conversation["id"],
+                "expected_revision": conversation["revision"],
+                "user_confirmed": True,
+            },
+        )
+        conversation_item = next(
+            item
+            for item in service.invoke("trash.items.list", {})["items"]
+            if item["item_id"] == deleted_conversation["id"]
+        )
+        assert conversation_item["item_type"] == "project_conversation"
+        assert conversation_item["source_project_title"] == "History workspace"
+        restore_conversation_request = {
+            "item_type": "project_conversation",
+            "item_id": deleted_conversation["id"],
+            "expected_revision": deleted_conversation["revision"],
+        }
+        restored_conversation = service.invoke(
+            "trash.items.restore",
+            restore_conversation_request,
+        )
+        assert service.invoke("trash.items.restore", restore_conversation_request) == (
+            restored_conversation
+        )
+    finally:
+        service.close()
+
+
+def test_history_destructive_mutations_replay_without_duplicate_events(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        project = service.invoke(
+            "projects.create",
+            {"name": "Replay history", "residency": "local_only"},
+        )["project"]
+        update_request = {
+            "project_id": project["id"],
+            "name": "Replay history updated",
+            "expected_revision": project["metadata_revision"],
+        }
+        updated = service.invoke("projects.update_metadata", update_request)
+        assert service.invoke("projects.update_metadata", update_request) == updated
+
+        archive_request = {
+            "project_id": project["id"],
+            "expected_revision": updated["metadata_revision"],
+        }
+        archived = service.invoke("projects.archive", archive_request)
+        assert service.invoke("projects.archive", archive_request) == archived
+
+        delete_request = {
+            "project_id": project["id"],
+            "expected_revision": archived["metadata_revision"],
+            "cancel_active": False,
+            "user_confirmed": True,
+        }
+        deleted = service.invoke("projects.archived.delete", delete_request)
+        assert service.invoke("projects.archived.delete", delete_request) == deleted
+
+        purge_request = {
+            "item_type": "project",
+            "item_id": project["id"],
+            "expected_revision": deleted["metadata_revision"],
+            "user_confirmed": True,
+        }
+        purged = service.invoke("trash.items.purge", purge_request)
+        replayed_purge = service.invoke("trash.items.purge", purge_request)
+        assert purged["status"] == replayed_purge["status"] == "purged"
+        assert replayed_purge["released_bytes"] == 0
+
+        event_types = [
+            event["event_type"]
+            for event in service.invoke("events.list", {"cursor": 0, "limit": 100})["items"]
+        ]
+        assert event_types.count("project.updated") == 1
+        assert event_types.count("project.archived") == 1
+        assert event_types.count("project.deleted") == 1
+        assert event_types.count("project.purged") == 1
+    finally:
+        service.close()
+
+
+def test_permanent_trash_cleanup_releases_only_exclusive_workspaces(
+    tmp_path: Path,
+) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        scratch = service.invoke(
+            "conversations.create",
+            {"project_id": None, "workspace_type": "chat_scratch"},
+        )
+        scratch_root = tmp_path / "workspaces" / "projects" / scratch["workspace_id"]
+        scratch_file = scratch_root / "versions" / scratch["base_version_id"] / "note.txt"
+        scratch_file.write_text("scratch content", encoding="utf-8")
+        deleted_scratch = service.invoke(
+            "conversations.delete",
+            {
+                "conversation_id": scratch["id"],
+                "expected_revision": scratch["revision"],
+                "user_confirmed": True,
+            },
+        )
+        scratch_item = next(
+            item
+            for item in service.invoke("trash.items.list", {})["items"]
+            if item["item_id"] == scratch["id"]
+        )
+        assert scratch_item["estimated_bytes"] >= len("scratch content")
+        scratch_purge = service.invoke(
+            "trash.items.purge",
+            {
+                "item_type": "conversation",
+                "item_id": scratch["id"],
+                "expected_revision": deleted_scratch["revision"],
+                "user_confirmed": True,
+            },
+        )
+        assert scratch_purge["released_bytes"] >= len("scratch content")
+        assert not scratch_root.exists()
+        assert (
+            service.invoke(
+                "conversations.get",
+                {"conversation_id": scratch["id"]},
+            )["title"]
+            == "Deleted chat"
+        )
+
+        created = service.invoke(
+            "projects.create",
+            {"name": "Shared files", "residency": "local_only"},
+        )
+        project = created["project"]
+        project_root = tmp_path / "workspaces" / "projects" / project["workspace_id"]
+        project_file = project_root / "versions" / created["initial_version"]["id"] / "shared.txt"
+        project_file.write_text("shared content", encoding="utf-8")
+        thread = service.invoke(
+            "conversations.create",
+            {"project_id": project["id"], "workspace_type": "project_chat"},
+        )
+        deleted_thread = service.invoke(
+            "conversations.delete",
+            {
+                "conversation_id": thread["id"],
+                "expected_revision": thread["revision"],
+                "user_confirmed": True,
+            },
+        )
+        thread_purge = service.invoke(
+            "trash.items.purge",
+            {
+                "item_type": "project_conversation",
+                "item_id": thread["id"],
+                "expected_revision": deleted_thread["revision"],
+                "user_confirmed": True,
+            },
+        )
+        assert thread_purge["released_bytes"] == 0
+        assert project_file.is_file()
+
+        deleted_project = service.invoke(
+            "projects.delete",
+            {
+                "project_id": project["id"],
+                "expected_revision": project["metadata_revision"],
+                "user_confirmed": True,
+                "cancel_active": False,
+            },
+        )
+        project_purge = service.invoke(
+            "trash.items.purge",
+            {
+                "item_type": "project",
+                "item_id": project["id"],
+                "expected_revision": deleted_project["metadata_revision"],
+                "user_confirmed": True,
+            },
+        )
+        assert project_purge["released_bytes"] >= len("shared content")
+        assert not project_root.exists()
+        assert service.invoke("projects.get", {"project_id": project["id"]})["name"] == (
+            "Deleted project"
+        )
+
+        event_types = {
+            event["event_type"]
+            for event in service.invoke("events.list", {"cursor": 0, "limit": 100})["items"]
+        }
+        assert {
+            "conversation.deleted",
+            "conversation.purged",
+            "project.deleted",
+            "project.purged",
+        } <= event_types
+    finally:
+        service.close()
+
+
+def test_trash_purge_all_respects_deleted_before_cutoff(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        conversation = service.invoke(
+            "conversations.create",
+            {"project_id": None, "workspace_type": "chat_scratch"},
+        )
+        service.invoke(
+            "conversations.delete",
+            {
+                "conversation_id": conversation["id"],
+                "expected_revision": conversation["revision"],
+                "user_confirmed": True,
+            },
+        )
+
+        too_old = service.invoke(
+            "trash.items.purge_all",
+            {
+                "user_confirmed": True,
+                "deleted_before": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+            },
+        )
+        assert too_old["purged_count"] == 0
+        assert service.invoke("trash.items.list", {})["items"]
+
+        eligible = service.invoke(
+            "trash.items.purge_all",
+            {
+                "user_confirmed": True,
+                "deleted_before": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            },
+        )
+        assert eligible["purged_count"] == 1
+        assert service.invoke("trash.items.list", {})["items"] == []
+    finally:
+        service.close()
+
+
+def test_trash_purge_rejects_active_conversation_before_removing_workspace(
+    tmp_path: Path,
+) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        conversation = service.invoke(
+            "conversations.create",
+            {"project_id": None, "workspace_type": "chat_scratch"},
+        )
+        workspace_root = tmp_path / "workspaces" / "scratch" / conversation["workspace_id"]
+        workspace_root.mkdir(parents=True)
+        content = workspace_root / "notes.txt"
+        content.write_text("keep me", encoding="utf-8")
+
+        with pytest.raises(InvalidTransitionError, match="must be deleted"):
+            service.invoke(
+                "trash.items.purge",
+                {
+                    "item_type": "conversation",
+                    "item_id": conversation["id"],
+                    "expected_revision": conversation["revision"],
+                    "user_confirmed": True,
+                },
+            )
+
+        assert content.read_text(encoding="utf-8") == "keep me"
+    finally:
+        service.close()
+
+
+def test_trash_purge_rejects_stale_revision_before_removing_content(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        conversation = service.invoke(
+            "conversations.create",
+            {"project_id": None, "workspace_type": "chat_scratch"},
+        )
+        workspace_root = tmp_path / "workspaces" / "projects" / conversation["workspace_id"]
+        content = workspace_root / "versions" / conversation["base_version_id"] / "notes.txt"
+        content.write_text("keep stale content", encoding="utf-8")
+        deleted = service.invoke(
+            "conversations.delete",
+            {
+                "conversation_id": conversation["id"],
+                "expected_revision": conversation["revision"],
+                "user_confirmed": True,
+            },
+        )
+
+        with pytest.raises(VersionConflictError):
+            service.invoke(
+                "trash.items.purge",
+                {
+                    "item_type": "conversation",
+                    "item_id": conversation["id"],
+                    "expected_revision": deleted["revision"] - 1,
+                    "user_confirmed": True,
+                },
+            )
+
+        assert content.read_text(encoding="utf-8") == "keep stale content"
+        assert (
+            service.invoke(
+                "conversations.get",
+                {"conversation_id": conversation["id"]},
+            )["purged_at"]
+            is None
+        )
+    finally:
+        service.close()
+
+
+def test_project_purge_rejects_stale_revision_before_removing_workspace(
+    tmp_path: Path,
+) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        created = service.invoke(
+            "projects.create",
+            {"name": "Stale purge", "residency": "local_only"},
+        )
+        project = created["project"]
+        workspace_root = tmp_path / "workspaces" / "projects" / project["workspace_id"]
+        content = workspace_root / "versions" / created["initial_version"]["id"] / "notes.txt"
+        content.write_text("keep project content", encoding="utf-8")
+        deleted = service.invoke(
+            "projects.delete",
+            {
+                "project_id": project["id"],
+                "expected_revision": project["metadata_revision"],
+                "user_confirmed": True,
+                "cancel_active": False,
+            },
+        )
+
+        with pytest.raises(VersionConflictError):
+            service.invoke(
+                "trash.items.purge",
+                {
+                    "item_type": "project",
+                    "item_id": project["id"],
+                    "expected_revision": deleted["metadata_revision"] - 1,
+                    "user_confirmed": True,
+                },
+            )
+
+        assert content.read_text(encoding="utf-8") == "keep project content"
+        assert service.invoke("projects.get", {"project_id": project["id"]})["purged_at"] is None
+    finally:
+        service.close()
+
+
+def test_automatic_trash_maintenance_skips_synced_projects(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        deleted = []
+        for name, residency in (("Local", "local_only"), ("Synced", "synced")):
+            project = service.invoke(
+                "projects.create",
+                {"name": name, "residency": residency},
+            )["project"]
+            deleted.append(
+                service.invoke(
+                    "projects.delete",
+                    {
+                        "project_id": project["id"],
+                        "expected_revision": project["metadata_revision"],
+                        "user_confirmed": True,
+                        "cancel_active": False,
+                    },
+                )
+            )
+
+        result = service.invoke(
+            "trash.items.purge_all",
+            {
+                "user_confirmed": True,
+                "deleted_before": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+                "maintenance": True,
+            },
+        )
+
+        assert result["purged_count"] == 1
+        remaining = service.invoke("trash.items.list", {})["items"]
+        assert [item["item_id"] for item in remaining] == [deleted[1]["id"]]
+    finally:
+        service.close()
+
+
+def test_project_delete_requires_cancel_active_for_live_work(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    service = CoreService(
+        stack.core,
+        unit_of_work_factory=stack.factory,
+        registry=build_default_registry(),
+        runtime_application=stack.runtime,
+    )
+    try:
+        project_id = str(stack.task.task.project_id)
+        project = service.invoke("projects.get", {"project_id": project_id})
+        with pytest.raises(ProjectBusyError):
+            service.invoke(
+                "projects.delete",
+                {
+                    "project_id": project_id,
+                    "expected_revision": project["metadata_revision"],
+                    "user_confirmed": True,
+                    "cancel_active": False,
+                },
+            )
+        assert service.invoke("projects.get", {"project_id": project_id})["deleted_at"] is None
+    finally:
+        service.close()
+
+
+def test_project_delete_stops_preview_before_tombstone(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    service = CoreService(
+        stack.core,
+        unit_of_work_factory=stack.factory,
+        registry=build_default_registry(),
+        runtime_application=stack.runtime,
+    )
+    try:
+        started = _start_runtime_preview(service, stack)
+        project_id = str(stack.task.task.project_id)
+        project = service.invoke("projects.get", {"project_id": project_id})
+        deleted = service.invoke(
+            "projects.delete",
+            {
+                "project_id": project_id,
+                "expected_revision": project["metadata_revision"],
+                "user_confirmed": True,
+                "cancel_active": True,
+            },
+        )
+
+        assert deleted["deleted_at"] is not None
+        assert (
+            service.invoke(
+                "runtimes.get",
+                {"runtime_id": started["runtime"]["id"]},
+            )["status"]
+            == "stopped"
+        )
+    finally:
+        service.close()
+
+
+def test_project_delete_stop_failure_keeps_project_active(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    service = CoreService(
+        stack.core,
+        unit_of_work_factory=stack.factory,
+        registry=build_default_registry(),
+        runtime_application=stack.runtime,
+    )
+    try:
+        _start_runtime_preview(service, stack)
+        stack.executor.stop_failure = RuntimeExecutorError(
+            "stop failed",
+            error_code="WORKER_INTERRUPTED",
+        )
+        project_id = str(stack.task.task.project_id)
+        project = service.invoke("projects.get", {"project_id": project_id})
+        with pytest.raises(RuntimeExecutorError, match="stop failed"):
+            service.invoke(
+                "projects.delete",
+                {
+                    "project_id": project_id,
+                    "expected_revision": project["metadata_revision"],
+                    "user_confirmed": True,
+                    "cancel_active": True,
+                },
+            )
+
+        assert service.invoke("projects.get", {"project_id": project_id})["deleted_at"] is None
+    finally:
+        service.close()
+
+
+def _start_runtime_preview(service: CoreService, stack: RuntimeStack) -> dict[str, object]:
+    task = stack.task.task
+    with stack.factory() as unit_of_work:
+        workspace = unit_of_work.state.get_workspace(task.workspace_id)
+    assert workspace is not None
+    return service.invoke(
+        "previews.start",
+        {
+            "task_id": str(task.id),
+            "workspace_id": str(task.workspace_id),
+            "version_id": str(task.target_version_id),
+            "expected_workspace_revision": workspace.revision,
+            "idempotency_key": "project-delete:preview:start",
+        },
+    )
 
 
 def test_core_service_exposes_runtime_preview_and_artifact_contracts(tmp_path: Path) -> None:
@@ -323,15 +899,22 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "mcp.servers.discover",
         "mcp.servers.list",
         "mcp.servers.set_enabled",
+        "mcp.presets.install",
         "messages.list",
         "models.catalog.list",
         "models.catalog.refresh",
         "models.selection.get",
         "models.selection.update",
         "projects.create",
+        "projects.archive",
+        "projects.archived.delete",
+        "projects.archived.list",
+        "projects.archived.restore",
+        "projects.delete",
         "projects.get",
         "projects.import",
         "projects.list",
+        "projects.update_metadata",
         "previews.get",
         "previews.resolve",
         "previews.start",
@@ -340,6 +923,14 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "permissions.update",
         "providers.health",
         "providers.list",
+        "realtime.memories.delete",
+        "realtime.memories.list",
+        "realtime.memories.save",
+        "realtime.sessions.get",
+        "realtime.sessions.list",
+        "realtime.sessions.report",
+        "realtime.sessions.start",
+        "realtime.sessions.stop",
         "renderer_packs.health",
         "renderer_packs.install",
         "renderer_packs.list",
@@ -349,6 +940,9 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "runtimes.health",
         "skills.list",
         "skills.install",
+        "skills.create",
+        "skills.import.inspect",
+        "skills.import.install",
         "skills.remove",
         "skills.set_enabled",
         "skills.update",
@@ -360,6 +954,10 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "tasks.list",
         "tasks.review",
         "tasks.update_metadata",
+        "trash.items.list",
+        "trash.items.purge",
+        "trash.items.purge_all",
+        "trash.items.restore",
         "versions.accept",
         "versions.discard",
         "versions.get",

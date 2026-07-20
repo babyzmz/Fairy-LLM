@@ -15,6 +15,29 @@ class _FailBeforeWriteWorkspace(FileSystemWorkspaceProvisioner):
         raise OSError("stop after journal recovery")
 
 
+def test_workspace_size_and_purge_cover_current_and_legacy_roots(tmp_path: Path) -> None:
+    managed_root = tmp_path / "managed"
+    workspace = FileSystemWorkspaceProvisioner(managed_root)
+    current = workspace.create_initial_version("workspace-1", "version-1")
+    legacy = workspace.create_scratch("workspace-1", "task-1")
+    (current / "current.bin").write_bytes(b"current")
+    (legacy / "legacy.bin").write_bytes(b"legacy")
+
+    assert workspace.workspace_size("workspace-1") == 13
+    assert workspace.purge_workspace("workspace-1") == 13
+    assert workspace.workspace_size("workspace-1") == 0
+    assert not (managed_root / "projects" / "workspace-1").exists()
+    assert not (managed_root / "scratch" / "workspace-1").exists()
+    assert workspace.purge_workspace("workspace-1") == 0
+
+
+def test_workspace_lifecycle_rejects_path_shaped_identifiers(tmp_path: Path) -> None:
+    workspace = FileSystemWorkspaceProvisioner(tmp_path / "managed")
+
+    with pytest.raises(ValueError, match="invalid path characters"):
+        workspace.purge_workspace("../outside")
+
+
 def test_changeset_recovers_a_prepared_journal_after_process_exit(tmp_path: Path) -> None:
     managed_root = tmp_path / "managed"
     source = tmp_path / "source"

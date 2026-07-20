@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+import json
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 from uuid import UUID
 from weakref import finalize
@@ -9,102 +10,69 @@ from pydantic import BaseModel, ValidationError
 
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.extension_service import ExtensionService
+from fairy_core.application.history_service import history_service_handlers
 from fairy_core.application.model_catalog_service import ModelCatalogService
 from fairy_core.application.planning_service import planning_service_handlers
 from fairy_core.application.presentation_service import presentation_service_handlers
+from fairy_core.application.realtime_service import RealtimeService
 from fairy_core.application.recovery import close_resources, recover_interrupted_work
 from fairy_core.application.runtime import RuntimeApplication
+from fairy_core.application.runtime_contracts import PreviewStartRequest, PreviewStopRequest
 from fairy_core.application.runtime_review import RuntimeReviewApplication
 from fairy_core.application.runtime_service import runtime_service_handlers
+from fairy_core.application.service_endpoints import CoreServiceEndpointsMixin
 from fairy_core.application.workspace_service import WorkspaceService
 from fairy_core.assistant.application import AssistantApplication
 from fairy_core.assistant.image_inputs import build_image_attachments
 from fairy_core.assistant.ledger import AssistantLedgerApplication
 from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
 from fairy_core.assistant.tools import ToolExecutor
+from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus
+from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.assistant.trace_service import TurnTraceService
 from fairy_core.assistant.turn_scheduler import AssistantTurnScheduler
 from fairy_core.assistant.turn_selection import resolve_turn_model_source
-from fairy_core.commanding import EventVisibility
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import (
     ExecutionPolicyResolver,
     SandboxHealthProvider,
 )
-from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
-from fairy_core.contracts.history import (
-    ConversationDeleteInput,
-    ConversationMoveToProjectInput,
-    ConversationUpdateInput,
-    TaskArchiveInput,
-    TaskMetadataUpdateInput,
-)
-from fairy_core.contracts.media import MediaJobListInput
-from fairy_core.contracts.methods import CORE_METHODS, EventListInput, EventSubscribeInput
+from fairy_core.contracts.approvals import ApprovalDecisionInput
+from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.contracts.models import (
-    ArtifactIdInput,
-    ArtifactListInput,
     AssistantTurnCancelInput,
     AssistantTurnCreateInput,
     AssistantTurnIdInput,
-    AssistantTurnRetryInput,
-    AssistantTurnRunInput,
-    AssistantTurnStartInput,
-    ChangesetProposal,
-    ConversationCreate,
-    ConversationIdInput,
-    ConversationListInput,
-    DocumentDeleteInput,
-    DocumentIdInput,
-    DocumentImportInput,
-    DocumentListInput,
-    DocumentSearchInput,
-    ExecutionSettingsUpdateInput,
-    MemoryClaimGetInput,
-    MemoryClaimPromoteInput,
-    MemoryClaimQuery,
-    MemoryClaimResolveInput,
-    MemoryClaimSupersedeInput,
-    MemoryForgetInput,
-    MemoryObservationQuery,
-    MemoryObserveInput,
-    MemoryProjectionHealthInput,
-    MemorySearchInput,
-    MemorySnapshotGetInput,
-    MessageListInput,
-    ProjectCreate,
-    ProjectIdInput,
-    ProjectImport,
-    ProjectListInput,
     ProviderHealthInput,
-    TaskCreate,
-    TaskIdInput,
-    TaskListInput,
-    VersionAcceptInput,
-    VersionIdInput,
-    VersionListInput,
     VoiceSynthesizeInput,
     VoiceTranscribeInput,
 )
 from fairy_core.contracts.voice_sessions import VoiceSessionIdInput, VoiceSessionStartInput
-from fairy_core.contracts.workspaces import WorkspaceFileMutateInput
 from fairy_core.documents.application import DocumentApplication, DocumentToolExecutor
 from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
 from fairy_core.domain.errors import (
     InvalidTransitionError,
-    MemoryScopeViolationError,
+    ProjectBusyError,
 )
-from fairy_core.domain.execution import Approval, ApprovalDecision
+from fairy_core.domain.execution import (
+    Approval,
+    ApprovalDecision,
+    ArtifactType,
+    ChangesetStatus,
+    PreviewStatus,
+    RuntimeStatus,
+)
+from fairy_core.domain.models import TaskStatus
 from fairy_core.execution.application import (
     ProjectExecutionApplication,
     ProjectExecutionToolExecutor,
 )
+from fairy_core.execution.plans import TaskStep, TaskStepKind, TaskStepStatus
 from fairy_core.mcp.application import McpApplication
 from fairy_core.mcp.tools import McpToolExecutor
 from fairy_core.media.composition import build_media_composition
 from fairy_core.media.ports import MediaProvider
-from fairy_core.media.service import media_job_model
 from fairy_core.media.staging import MediaStagingStore
 from fairy_core.media.tools import MediaToolExecutor
 from fairy_core.memory.application import MemoryApplication
@@ -116,8 +84,12 @@ from fairy_core.presentation.packs import RendererPackInstaller
 from fairy_core.providers import ProviderRegistry
 from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
 from fairy_core.research.ports import FetchPort
-from fairy_core.runtime.models import RuntimeExecutorError
 from fairy_core.runtime.review import RuntimeEvidenceStore, RuntimeReviewer
+from fairy_core.runtime.templates import (
+    RuntimeAdapter,
+    RuntimeTemplateError,
+    select_runtime_template,
+)
 from fairy_core.sandbox.archive import WorkspaceArchiveBuilder
 from fairy_core.sandbox.ports import SandboxExecutor
 from fairy_core.sandbox.tools import SandboxToolExecutor
@@ -136,6 +108,30 @@ from fairy_core.voice.registry import VoiceRegistry
 from fairy_core.workspace.ports import WorkspaceProvisioner
 from fairy_core.workspace.tools import ProjectToolExecutor
 
+_TERMINAL_TASK_STATUSES = frozenset(
+    {
+        TaskStatus.READY,
+        TaskStatus.ACCEPTED,
+        TaskStatus.REJECTED,
+        TaskStatus.ARCHIVED,
+        TaskStatus.FAILED,
+    }
+)
+
+_STOPPABLE_PREVIEW_STATUSES = frozenset(
+    {PreviewStatus.READY, PreviewStatus.STOPPING, PreviewStatus.INTERRUPTED}
+)
+
+_ACTIVE_RUNTIME_STATUSES = frozenset(
+    {
+        RuntimeStatus.CREATED,
+        RuntimeStatus.STARTING,
+        RuntimeStatus.RUNNING,
+        RuntimeStatus.STOPPING,
+        RuntimeStatus.INTERRUPTED,
+    }
+)
+
 
 class CoreMethodNotFoundError(LookupError):
     def __init__(self, method: str) -> None:
@@ -150,7 +146,7 @@ class CoreResponseValidationError(RuntimeError):
         super().__init__(f"Core method returned an invalid response: {method}")
 
 
-class CoreService:
+class CoreService(CoreServiceEndpointsMixin):
     """Transport-independent validation and application facade."""
 
     def __init__(
@@ -204,6 +200,7 @@ class CoreService:
             registry=self._voice_registry,
         )
         self._image_attachments = image_attachment_store or ImageAttachmentStore()
+        self._application.history.configure_attachment_store(self._image_attachments)
         self._runtime_application = runtime_application
         self._default_execution_target = default_execution_target
         self._execution_policy = ExecutionPolicyResolver(sandbox_health_provider)
@@ -268,6 +265,8 @@ class CoreService:
             scope_resolver=application.scope_for_task,
         )
         self._turn_trace_service = TurnTraceService(unit_of_work_factory)
+        self._turn_trace_runtime = TurnTraceRuntime(unit_of_work_factory)
+        self._realtime_service = RealtimeService(unit_of_work_factory)
         self._execution_planning = application.execution_planning
         media = build_media_composition(
             unit_of_work_factory=unit_of_work_factory,
@@ -356,6 +355,7 @@ class CoreService:
             image_attachments=self._image_attachments,
             tool_executor=effective_tool_executor,
             execution_policy=self._execution_policy,
+            execution_completion_hook=self._finalize_assistant_execution,
         )
         self._assistant_scheduler = AssistantTurnScheduler(
             application=self._assistant_application,
@@ -376,12 +376,11 @@ class CoreService:
             **self._turn_trace_service.handlers,
             "capabilities.get": self._get_capabilities,
             "changesets.propose": self._propose_changeset,
-            "conversations.create": self._create_conversation,
-            "conversations.delete": self._delete_conversation,
-            "conversations.get": self._get_conversation,
-            "conversations.list": self._list_conversations,
-            "conversations.move_to_project": self._move_conversation_to_project,
-            "conversations.update": self._update_conversation,
+            **history_service_handlers(
+                application=application,
+                unit_of_work_factory=unit_of_work_factory,
+                cancel_project_activity=self._cancel_project_activity,
+            ),
             "documents.delete": self._delete_document,
             "documents.get": self._get_document,
             "documents.import": self._import_document,
@@ -408,22 +407,16 @@ class CoreService:
             "media.jobs.list": self._list_media_jobs,
             "messages.list": self._list_messages,
             **self._model_catalog_service.handlers,
-            "projects.create": self._create_project,
-            "projects.get": self._get_project,
-            "projects.import": self._import_project,
-            "projects.list": self._list_projects,
             **runtime_service_handlers(self._runtime, self._unit_of_work_factory),
             "permissions.get": self._get_permissions,
             "permissions.update": self._update_permissions,
             "providers.health": self._provider_health,
             "providers.list": self._list_providers,
+            **self._realtime_service.handlers,
             "system.actions.execute": self._execute_system_action,
-            "tasks.archive": self._archive_task,
             "tasks.create": self._create_task,
             "tasks.get": self._get_task,
-            "tasks.list": self._list_tasks,
             "tasks.review": self._review_task,
-            "tasks.update_metadata": self._update_task_metadata,
             "versions.accept": self._accept_version,
             "versions.discard": self._discard_version,
             "versions.get": self._get_version,
@@ -551,13 +544,6 @@ class CoreService:
             raise SystemActionUnavailableError("Typed system actions are unavailable")
         return self._system_action_application.execute(cast(SystemActionRequest, request))
 
-    def _create_project(self, request: BaseModel) -> Any:
-        validated = cast(ProjectCreate, request)
-        return self._application.create_project(
-            name=validated.name,
-            residency=validated.residency,
-        )
-
     def _create_assistant_turn(self, request: BaseModel) -> Any:
         validated = cast(AssistantTurnCreateInput, request)
         attachments = build_image_attachments(
@@ -595,29 +581,41 @@ class CoreService:
 
     def _cancel_assistant_turn(self, request: BaseModel) -> Any:
         validated = cast(AssistantTurnCancelInput, request)
-        was_running = self._assistant_scheduler.cancel(validated.turn_id)
-        if was_running:
-            self._cancel_running_tool_command(validated.turn_id)
+        return self._cancel_assistant_turn_by_id(
+            validated.turn_id,
+            expected_cancellation_revision=validated.expected_cancellation_revision,
+        )
+
+    def _cancel_assistant_turn_by_id(
+        self,
+        turn_id: UUID,
+        *,
+        expected_cancellation_revision: int,
+        strict_tool_cancellation: bool = False,
+    ) -> Any:
+        was_running = self._assistant_scheduler.cancel(turn_id)
+        if was_running or strict_tool_cancellation:
+            self._cancel_running_tool_command(
+                turn_id,
+                strict=strict_tool_cancellation,
+            )
         try:
             cancelled = self._assistant_ledger.cancel_turn(
-                turn_id=validated.turn_id,
-                expected_cancellation_revision=validated.expected_cancellation_revision,
+                turn_id=turn_id,
+                expected_cancellation_revision=expected_cancellation_revision,
             )
-            self._image_attachments.release(validated.turn_id)
+            self._image_attachments.release(turn_id)
             return cancelled
         except InvalidTransitionError:
             if not was_running:
                 raise
-            persisted = self._assistant_ledger.get_turn(validated.turn_id)
+            persisted = self._assistant_ledger.get_turn(turn_id)
             if persisted.status is not AssistantTurnStatus.CANCELLED:
                 raise
-            self._image_attachments.release(validated.turn_id)
+            self._image_attachments.release(turn_id)
             return persisted
 
-    def _cancel_running_tool_command(self, turn_id: UUID) -> None:
-        cancel_command = getattr(self._tool_executor, "cancel_command", None)
-        if not callable(cancel_command):
-            return
+    def _cancel_running_tool_command(self, turn_id: UUID, *, strict: bool = False) -> None:
         with self._unit_of_work_factory() as unit_of_work:
             runs = tuple(
                 run
@@ -626,277 +624,326 @@ class CoreService:
                 and invocation.command_run_id is not None
                 if (run := unit_of_work.commands.get_run(invocation.command_run_id)) is not None
             )
+        if not runs:
+            return
+        cancel_command = getattr(self._tool_executor, "cancel_command", None)
+        if not callable(cancel_command):
+            if strict:
+                raise ProjectBusyError("A running tool cannot be stopped safely")
+            return
         for run in runs:
             try:
                 cancel_command(run)
-            except Exception:
+            except Exception as error:
+                if strict:
+                    raise ProjectBusyError("A running tool could not be stopped") from error
                 continue
 
-    def _run_assistant_turn(self, request: BaseModel) -> Any:
-        self._extension_service.refresh_registry()
-        turn_id = cast(AssistantTurnRunInput, request).turn_id
-        return self._assistant_scheduler.run(turn_id)
-
-    def _start_assistant_turn(self, request: BaseModel) -> Any:
-        self._extension_service.refresh_registry()
-        turn_id = cast(AssistantTurnStartInput, request).turn_id
-        return self._assistant_scheduler.start(turn_id)
-
-    def _retry_assistant_turn(self, request: BaseModel) -> Any:
-        validated = cast(AssistantTurnRetryInput, request)
-        return self._assistant_ledger.retry_turn(
-            turn_id=validated.turn_id,
-            idempotency_key=validated.idempotency_key,
-        )
-
-    def _list_messages(self, request: BaseModel) -> Any:
-        validated = cast(MessageListInput, request)
-        return self._assistant_ledger.list_messages(
-            conversation_id=validated.conversation_id,
-            limit=validated.limit,
-            cursor=validated.cursor,
-        )
-
-    def _import_document(self, request: BaseModel) -> Any:
-        return self._documents().import_document(cast(DocumentImportInput, request))
-
-    def _get_document(self, request: BaseModel) -> Any:
-        return self._documents().get_document(cast(DocumentIdInput, request))
-
-    def _list_documents(self, request: BaseModel) -> Any:
-        return self._documents().list_documents(cast(DocumentListInput, request))
-
-    def _search_documents(self, request: BaseModel) -> Any:
-        return self._documents().search_documents(cast(DocumentSearchInput, request))
-
-    def _delete_document(self, request: BaseModel) -> Any:
-        return self._documents().delete_document(cast(DocumentDeleteInput, request))
-
-    def _documents(self) -> DocumentApplication:
-        if self._document_application is None:
-            raise RuntimeError("Managed document capability is unavailable")
-        return self._document_application
-
-    def _observe_memory(self, request: BaseModel) -> Any:
-        return self._memory_application.observe(cast(MemoryObserveInput, request))
-
-    def _list_memory_observations(self, request: BaseModel) -> dict[str, Any]:
-        return {
-            "items": self._memory_application.list_observations(
-                cast(MemoryObservationQuery, request)
-            )
-        }
-
-    def _promote_memory_claim(self, request: BaseModel) -> Any:
-        return self._memory_application.promote_claim(cast(MemoryClaimPromoteInput, request))
-
-    def _get_memory_claim(self, request: BaseModel) -> Any:
-        return self._memory_application.get_claim(cast(MemoryClaimGetInput, request))
-
-    def _list_memory_claims(self, request: BaseModel) -> dict[str, Any]:
-        return {"items": self._memory_application.list_claims(cast(MemoryClaimQuery, request))}
-
-    def _supersede_memory_claim(self, request: BaseModel) -> Any:
-        return self._memory_application.supersede_claim(cast(MemoryClaimSupersedeInput, request))
-
-    def _resolve_memory_conflict(self, request: BaseModel) -> Any:
-        return self._memory_application.resolve_conflict(cast(MemoryClaimResolveInput, request))
-
-    def _forget_memory(self, request: BaseModel) -> Any:
-        return self._memory_application.forget(cast(MemoryForgetInput, request))
-
-    def _search_memory(self, request: BaseModel) -> dict[str, Any]:
-        validated = cast(MemorySearchInput, request)
+    def _cancel_project_activity(self, project_id: UUID) -> None:
         with self._unit_of_work_factory() as unit_of_work:
-            task = unit_of_work.state.get_task(validated.task_id)
-            if task is None:
-                raise KeyError(f"task not found: {validated.task_id}")
-            scope = self._application.scope_for_task(unit_of_work.state, task)
-            hits = unit_of_work.memory_search.search(
-                scope=scope,
-                query=validated.query,
-                generation=1,
-                limit=validated.limit,
-            )
-        return {"items": hits}
-
-    def _get_memory_snapshot(self, request: BaseModel) -> Any:
-        validated = cast(MemorySnapshotGetInput, request)
-        with self._unit_of_work_factory() as unit_of_work:
-            task = unit_of_work.state.get_task(validated.task_id)
-            if task is None:
-                raise KeyError(f"task not found: {validated.task_id}")
-            if task.memory_snapshot_id != validated.snapshot_id:
-                raise MemoryScopeViolationError("Snapshot is not bound to the requested Task")
-            snapshot = unit_of_work.snapshots.get(
-                validated.snapshot_id,
-                task_id=validated.task_id,
-            )
-            if snapshot is None:
-                raise MemoryScopeViolationError("Task-bound Snapshot is unavailable")
-            return snapshot
-
-    def _memory_projection_health(self, request: BaseModel) -> dict[str, Any]:
-        validated = cast(MemoryProjectionHealthInput, request)
-        with self._unit_of_work_factory() as unit_of_work:
-            task = unit_of_work.state.get_task(validated.task_id)
-            if task is None:
-                raise KeyError(f"task not found: {validated.task_id}")
-            self._application.scope_for_task(unit_of_work.state, task)
-            source_watermark_cursor = unit_of_work.commands.current_cursor()
-            health = unit_of_work.memory_search.health(
-                generation=1,
-                source_watermark_cursor=source_watermark_cursor,
-            )
-        return {
-            "generation": health.generation,
-            "state": health.state,
-            "source_watermark_cursor": health.source_watermark_cursor,
-            "projected_watermark_cursor": health.projected_watermark_cursor,
-            "lag": max(
-                0,
-                health.source_watermark_cursor - health.projected_watermark_cursor,
-            ),
-            "last_error_code": health.last_error_code,
-            "updated_at": health.updated_at,
-        }
-
-    def _import_project(self, request: BaseModel) -> Any:
-        validated = cast(ProjectImport, request)
-        return self._application.create_project(
-            name=validated.name,
-            residency=validated.residency,
-            source=validated.source_path,
-        )
-
-    def _get_project(self, request: BaseModel) -> Any:
-        validated = cast(ProjectIdInput, request)
-        return self._application.get_project(validated.project_id)
-
-    def _list_projects(self, request: BaseModel) -> Any:
-        validated = cast(ProjectListInput, request)
-        with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.state.list_projects(
-                limit=validated.limit,
-                cursor=validated.cursor,
-            )
-
-    def _create_conversation(self, request: BaseModel) -> Any:
-        validated = cast(ConversationCreate, request)
-        return self._application.create_conversation(
-            project_id=validated.project_id,
-            workspace_type=validated.workspace_type,
-        )
-
-    def _get_conversation(self, request: BaseModel) -> Any:
-        validated = cast(ConversationIdInput, request)
-        with self._unit_of_work_factory() as unit_of_work:
-            conversation = unit_of_work.state.get_conversation(validated.conversation_id)
-        if conversation is None:
-            raise KeyError(f"conversation not found: {validated.conversation_id}")
-        return conversation
-
-    def _update_conversation(self, request: BaseModel) -> Any:
-        validated = cast(ConversationUpdateInput, request)
-        return self._application.history.update_conversation(
-            conversation_id=validated.conversation_id,
-            title=validated.title,
-            pinned=validated.pinned,
-            expected_revision=validated.expected_revision,
-        )
-
-    def _delete_conversation(self, request: BaseModel) -> Any:
-        validated = cast(ConversationDeleteInput, request)
-        return self._application.history.delete_conversation(
-            conversation_id=validated.conversation_id,
-            expected_revision=validated.expected_revision,
-            user_confirmed=validated.user_confirmed,
-        )
-
-    def _list_conversations(self, request: BaseModel) -> Any:
-        validated = cast(ConversationListInput, request)
-        with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.state.list_conversations(
-                project_id=validated.project_id,
-                limit=validated.limit,
-                cursor=validated.cursor,
-            )
-
-    def _move_conversation_to_project(self, request: BaseModel) -> Any:
-        validated = cast(ConversationMoveToProjectInput, request)
-        return self._application.history.move_to_project(
-            conversation_id=validated.conversation_id,
-            target_project_id=validated.target_project_id,
-            expected_revision=validated.expected_revision,
-            user_confirmed=validated.user_confirmed,
-            idempotency_key=validated.idempotency_key,
-        )
-
-    def _create_task(self, request: BaseModel) -> Any:
-        return self._application.create_task(cast(TaskCreate, request))
-
-    def _archive_task(self, request: BaseModel) -> Any:
-        validated = cast(TaskArchiveInput, request)
-        return self._application.history.archive_task(
-            task_id=validated.task_id,
-            expected_revision=validated.expected_revision,
-        )
-
-    def _get_task(self, request: BaseModel) -> Any:
-        return self._application.get_task(cast(TaskIdInput, request).task_id)
-
-    def _list_tasks(self, request: BaseModel) -> Any:
-        validated = cast(TaskListInput, request)
-        with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.state.list_tasks(
-                project_id=validated.project_id,
-                conversation_id=validated.conversation_id,
-                limit=validated.limit,
-                cursor=validated.cursor,
-            )
-
-    def _update_task_metadata(self, request: BaseModel) -> Any:
-        validated = cast(TaskMetadataUpdateInput, request)
-        return self._application.history.update_task(
-            task_id=validated.task_id,
-            display_title=validated.display_title,
-            pinned=validated.pinned,
-            expected_revision=validated.expected_revision,
-        )
-
-    def _review_task(self, request: BaseModel) -> Any:
-        task_id = cast(TaskIdInput, request).task_id
-        if self._project_execution_application is not None:
-            self._project_execution_application.run_review_suite(task_id)
-        if self._runtime_review_application is not None:
-            with self._unit_of_work_factory() as unit_of_work:
-                preview = unit_of_work.state.preview_for_task(
-                    task_id,
-                    include_terminal=True,
+            tasks = []
+            cursor: str | None = None
+            while True:
+                page = unit_of_work.state.list_tasks(
+                    project_id=project_id,
+                    conversation_id=None,
+                    limit=100,
+                    cursor=cursor,
                 )
-            if preview is not None and preview.status.value == "ready":
-                self._runtime_review_application.review_task(task_id)
-        return self._application.review_task(task_id)
+                tasks.extend(page.items)
+                if page.next_cursor is None:
+                    break
+                cursor = page.next_cursor
+            active_tasks = tuple(
+                task for task in tasks if task.status not in _TERMINAL_TASK_STATUSES
+            )
+            previews = tuple(
+                preview
+                for task in tasks
+                if (
+                    preview := unit_of_work.state.preview_for_task(
+                        task.id,
+                        include_terminal=True,
+                    )
+                )
+                is not None
+                and preview.status in _STOPPABLE_PREVIEW_STATUSES
+            )
+            turns = unit_of_work.assistant.nonterminal_turns_for_tasks(
+                tuple(task.id for task in tasks)
+            )
 
-    def _propose_changeset(self, request: BaseModel) -> Any:
-        return self._application.propose_changeset(cast(ChangesetProposal, request))
+        for preview in previews:
+            self._runtime().stop_preview(
+                PreviewStopRequest(
+                    preview_id=preview.id,
+                    task_id=preview.task_id,
+                    idempotency_key=f"project-delete:{project_id}:preview:{preview.id}",
+                )
+            )
+        for turn in turns:
+            self._cancel_assistant_turn_by_id(
+                turn.id,
+                expected_cancellation_revision=turn.cancellation_revision,
+                strict_tool_cancellation=True,
+            )
 
-    def _mutate_workspace_files(self, request: BaseModel) -> Any:
-        context = self._application.workspace_mutations.mutate(
-            cast(WorkspaceFileMutateInput, request)
+        with self._unit_of_work_factory() as unit_of_work:
+            changed = False
+            for original in active_tasks:
+                task = unit_of_work.state.get_task(original.id)
+                if task is None or task.status in _TERMINAL_TASK_STATUSES:
+                    continue
+                if task.status is TaskStatus.CREATED:
+                    task.transition_to(TaskStatus.RESOLVING_SCOPE)
+                task.transition_to(TaskStatus.FAILED)
+                unit_of_work.state.save_task(task)
+                changed = True
+            if changed:
+                unit_of_work.commit()
+
+        with self._unit_of_work_factory() as unit_of_work:
+            for task in tasks:
+                if any(
+                    runtime.status in _ACTIVE_RUNTIME_STATUSES
+                    for runtime in unit_of_work.state.runtimes_for_task(task.id)
+                ):
+                    raise ProjectBusyError("Project Runtime did not stop")
+
+    def _finalize_assistant_execution(self, turn_id: UUID) -> str | None:
+        """Advance durable file work through validation and Preview before final prose."""
+        with self._unit_of_work_factory() as unit_of_work:
+            turn = unit_of_work.assistant.get_turn(turn_id)
+            if turn is None:
+                return "The Assistant Turn is unavailable for execution finalization."
+            plan = unit_of_work.state.execution_plan_for_task(turn.task_id)
+            if plan is None:
+                return None
+            task = unit_of_work.state.get_task(turn.task_id)
+            if task is None or task.target_version_id is None or task.workspace_id is None:
+                return "The planned Task no longer has a writable Workspace Version."
+            steps = unit_of_work.state.task_steps_for_plan(plan.id)
+            implementation = [step for step in steps if step.kind is TaskStepKind.IMPLEMENT]
+            if any(
+                step.status not in {TaskStepStatus.COMPLETED, TaskStepStatus.SKIPPED}
+                for step in implementation
+            ):
+                return None
+            scope = self._application.scope_for_task(unit_of_work.state, task)
+            workspace = unit_of_work.state.get_workspace(task.workspace_id)
+            if workspace is None:
+                return "The planned Task Workspace is unavailable."
+            preview = unit_of_work.state.preview_for_task(task.id, include_terminal=True)
+            manifest = dict(plan.manifest)
+
+        try:
+            template = select_runtime_template(
+                scope.project_root,
+                execution_target=scope.execution_target,
+            )
+        except RuntimeTemplateError as error:
+            if _execution_plan_requests_preview(manifest):
+                return (
+                    "The generated files do not form a runnable Preview "
+                    f"({error.error_code}). Create the complete planned entrypoint before "
+                    "returning a final response."
+                )
+            for kind in (TaskStepKind.INSTALL, TaskStepKind.TEST):
+                step = next(item for item in steps if item.kind is kind)
+                if step.status is TaskStepStatus.PENDING:
+                    self._application.execution_planning.skip_step(task.id, kind)
+            self._application.execution_planning.skip_step(
+                task.id,
+                TaskStepKind.PREVIEW,
+            )
+            return self._finish_successful_execution_steps(task.id, checkpoint=False)
+
+        prerequisite_issue = self._prepare_preview_prerequisites(
+            task.id,
+            steps=steps,
+            adapter=template.adapter,
+            validation_commands=manifest.get("validation_commands"),
         )
-        return {
-            "workspace": context.workspace,
-            "conversation": context.conversation,
-            "task": context.task,
-            "target_version": context.target_version,
-            "changeset": context.changeset,
-            "approval": context.approval,
-        }
+        if prerequisite_issue is not None:
+            return prerequisite_issue
+
+        if preview is not None and preview.status is PreviewStatus.READY:
+            if preview.version_id != task.target_version_id:
+                return "The ready Preview is bound to a stale Workspace Version."
+            self._complete_execution_step(task.id, TaskStepKind.PREVIEW)
+            completion_issue = self._finish_successful_execution_steps(
+                task.id,
+                checkpoint=task.project_id is None,
+            )
+            if completion_issue is not None:
+                return completion_issue
+            self._append_preview_verification(turn_id, preview.id)
+            return None
+
+        if self._runtime_application is None:
+            return "Preview runtime is unavailable (SANDBOX_UNAVAILABLE)."
+
+        self._application.execution_planning.start_step(task.id, TaskStepKind.PREVIEW)
+        try:
+            context = self._runtime_application.start_preview(
+                PreviewStartRequest(
+                    task_id=task.id,
+                    workspace_id=task.workspace_id,
+                    version_id=task.target_version_id,
+                    expected_workspace_revision=workspace.revision,
+                    idempotency_key=(f"assistant:preview:{task.id}:{task.target_version_id}"),
+                )
+            )
+        except Exception as error:
+            error_code = str(
+                getattr(
+                    error,
+                    "error_code",
+                    getattr(error, "code", "WORKER_INTERRUPTED"),
+                )
+            )
+            self._application.execution_planning.fail_step(
+                task.id,
+                TaskStepKind.PREVIEW,
+                error_code=error_code,
+            )
+            return (
+                f"Preview validation failed ({error_code}). Do not claim the generated "
+                "Workspace is complete."
+            )
+        if context.preview.status is not PreviewStatus.READY:
+            self._application.execution_planning.fail_step(
+                task.id,
+                TaskStepKind.PREVIEW,
+                error_code="WORKER_INTERRUPTED",
+            )
+            return "Preview did not reach a durable ready state (WORKER_INTERRUPTED)."
+
+        self._application.execution_planning.complete_step(task.id, TaskStepKind.PREVIEW)
+        completion_issue = self._finish_successful_execution_steps(
+            task.id,
+            checkpoint=task.project_id is None,
+        )
+        if completion_issue is not None:
+            return completion_issue
+        self._append_preview_verification(turn_id, context.preview.id)
+        return None
+
+    def _prepare_preview_prerequisites(
+        self,
+        task_id: UUID,
+        *,
+        steps: Sequence[TaskStep],
+        adapter: RuntimeAdapter,
+        validation_commands: object,
+    ) -> str | None:
+        by_kind = {step.kind: step for step in steps}
+        install = by_kind[TaskStepKind.INSTALL]
+        test = by_kind[TaskStepKind.TEST]
+        if adapter is RuntimeAdapter.STATIC:
+            for kind, step in (
+                (TaskStepKind.INSTALL, install),
+                (TaskStepKind.TEST, test),
+            ):
+                if step.status is TaskStepStatus.PENDING:
+                    self._application.execution_planning.skip_step(task_id, kind)
+                elif step.status not in {
+                    TaskStepStatus.COMPLETED,
+                    TaskStepStatus.SKIPPED,
+                }:
+                    return f"The {kind.value} step has not reached a terminal success state."
+            return None
+
+        if install.status is not TaskStepStatus.COMPLETED:
+            return (
+                "Install the locked project dependencies with deps.install before returning "
+                "a final response."
+            )
+        commands = validation_commands if isinstance(validation_commands, list) else []
+        if commands and test.status is not TaskStepStatus.COMPLETED:
+            return "Run the planned validation suite before starting Preview."
+        if not commands and test.status is TaskStepStatus.PENDING:
+            self._application.execution_planning.skip_step(task_id, TaskStepKind.TEST)
+        return None
+
+    def _finish_successful_execution_steps(
+        self,
+        task_id: UUID,
+        *,
+        checkpoint: bool,
+    ) -> str | None:
+        self._application.execution_planning.skip_step(task_id, TaskStepKind.REPAIR)
+        self._complete_execution_step(task_id, TaskStepKind.SUMMARY)
+        if checkpoint:
+            try:
+                self._application.checkpoint_scratch_task(task_id)
+            except Exception as error:
+                error_code = str(
+                    getattr(
+                        error,
+                        "error_code",
+                        getattr(error, "code", "WORKER_INTERRUPTED"),
+                    )
+                )
+                return (
+                    f"Workspace checkpoint failed ({error_code}). Do not claim the candidate "
+                    "Version is saved or complete."
+                )
+            self._complete_execution_step(task_id, TaskStepKind.CHECKPOINT)
+        return None
+
+    def _complete_execution_step(self, task_id: UUID, kind: TaskStepKind) -> None:
+        step = self._application.execution_planning.start_step(task_id, kind)
+        if step is not None and step.status is not TaskStepStatus.COMPLETED:
+            self._application.execution_planning.complete_step(task_id, kind)
+
+    def _append_preview_verification(self, turn_id: UUID, preview_id: UUID) -> None:
+        with self._unit_of_work_factory() as unit_of_work:
+            turn = unit_of_work.assistant.get_turn(turn_id)
+            if turn is None:
+                return
+            manifest = next(
+                (
+                    artifact
+                    for artifact in reversed(unit_of_work.state.artifacts_for_task(turn.task_id))
+                    if artifact.artifact_type is ArtifactType.PREVIEW_MANIFEST
+                    and artifact.metadata.get("preview_id") == str(preview_id)
+                ),
+                None,
+            )
+            if manifest is None:
+                return
+            raw_run_id = manifest.metadata.get("command_run_id")
+            try:
+                run_id = UUID(str(raw_run_id))
+            except (TypeError, ValueError):
+                return
+            run = unit_of_work.commands.get_run(run_id)
+            existing = (
+                unit_of_work.assistant.find_trace_step_by_command_run_id(
+                    run_id,
+                    kind=TraceStepKind.VERIFICATION,
+                )
+                if run is not None
+                else None
+            )
+        if run is None or existing is not None:
+            return
+        self._turn_trace_runtime.append_step(
+            turn_id=turn_id,
+            run=run,
+            kind=TraceStepKind.VERIFICATION,
+            status=TraceStepStatus.SUCCEEDED,
+            public_summary="Preview ready",
+            public_detail="Generated files were verified in the bound Workspace Version.",
+            artifact_refs=(manifest.id,),
+        )
 
     def _assistant_turn_id_for_approval(self, approval: Approval) -> UUID | None:
         if approval.changeset_id is not None:
-            return None
+            with self._unit_of_work_factory() as unit_of_work:
+                invocation = self._changeset_tool_invocation(unit_of_work, approval)
+            return invocation.turn_id if invocation is not None else None
         with self._unit_of_work_factory() as unit_of_work:
             if approval.tool_invocation_id is not None:
                 invocation = unit_of_work.assistant.get_tool_invocation(approval.tool_invocation_id)
@@ -957,6 +1004,35 @@ class CoreService:
                 decided_by="user",
             )
         decided = self._application.get_approval(validated.approval_id)
+        if was_pending and assistant_turn_id is not None and changeset is not None:
+            with self._unit_of_work_factory() as unit_of_work:
+                invocation = self._changeset_tool_invocation(unit_of_work, decided)
+            if invocation is None:
+                raise InvalidTransitionError(
+                    "Changeset approval lost its Assistant Tool Invocation"
+                )
+            applied = changeset.status is ChangesetStatus.APPLIED
+            public_summary = (
+                f"Applied {len(changeset.files)} Workspace file(s)"
+                if applied
+                else "Changeset was rejected"
+            )
+            self._assistant_application.resolve_external_tool_approval(
+                turn_id=assistant_turn_id,
+                invocation_id=invocation.id,
+                approved=applied,
+                public_summary=public_summary,
+                model_content=json.dumps(
+                    {
+                        "changeset_id": str(changeset.id),
+                        "approval_id": str(decided.id),
+                        "status": changeset.status.value,
+                        "files": list(changeset.files),
+                    },
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                ),
+            )
         if assistant_turn_id is not None:
             self._assistant_scheduler.start(
                 assistant_turn_id,
@@ -969,147 +1045,63 @@ class CoreService:
             "resume_requested": assistant_turn_id is not None,
         }
 
-    def _get_version(self, request: BaseModel) -> Any:
-        return self._application.get_version(cast(VersionIdInput, request).version_id)
-
-    def _list_versions(self, request: BaseModel) -> Any:
-        validated = cast(VersionListInput, request)
-        with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.state.list_versions(
-                workspace_id=validated.workspace_id,
-                project_id=validated.project_id,
-                conversation_id=validated.conversation_id,
-                task_id=validated.task_id,
-                limit=validated.limit,
-                cursor=validated.cursor,
+    @staticmethod
+    def _changeset_tool_invocation(unit_of_work, approval: Approval):
+        if approval.changeset_id is None:
+            return None
+        matches = []
+        for turn in unit_of_work.assistant.nonterminal_turns_for_tasks((approval.task_id,)):
+            for invocation in unit_of_work.assistant.list_tool_invocations(turn.id):
+                if (
+                    invocation.tool_name == "edit.propose_changeset"
+                    and invocation.status is ToolInvocationStatus.COMPLETED
+                    and _tool_result_changeset_id(invocation.model_content) == approval.changeset_id
+                ):
+                    matches.append(invocation)
+        if len(matches) > 1:
+            raise InvalidTransitionError(
+                "Changeset approval matches multiple Assistant Tool Invocations"
             )
+        return matches[0] if matches else None
 
-    def _list_approvals(self, request: BaseModel) -> Any:
-        validated = cast(ApprovalListInput, request)
-        with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.state.list_approvals(
-                project_id=validated.project_id,
-                conversation_id=validated.conversation_id,
-                task_id=validated.task_id,
-                limit=validated.limit,
-                cursor=validated.cursor,
-            )
 
-    def _list_artifacts(self, request: BaseModel) -> dict[str, Any]:
-        validated = cast(ArtifactListInput, request)
-        with self._unit_of_work_factory() as unit_of_work:
-            task = unit_of_work.state.get_task(validated.task_id)
-            if task is None:
-                raise KeyError(f"task not found: {validated.task_id}")
-            items = unit_of_work.state.artifacts_for_task(task.id)
-        return {"items": items}
+def _execution_plan_requests_preview(manifest: Mapping[str, Any]) -> bool:
+    entrypoints = manifest.get("entrypoints")
+    if isinstance(entrypoints, list) and any(
+        isinstance(value, str) and value.strip() for value in entrypoints
+    ):
+        return True
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        return False
+    preview_markers = {
+        "index.html",
+        "package.json",
+        "pyproject.toml",
+        "requirements.txt",
+        "fairy.runtime.json",
+    }
+    return any(
+        isinstance(item, dict)
+        and isinstance(item.get("path"), str)
+        and str(item["path"]).replace("\\", "/").rsplit("/", 1)[-1] in preview_markers
+        for item in files
+    )
 
-    def _list_media_jobs(self, request: BaseModel) -> dict[str, Any]:
-        validated = cast(MediaJobListInput, request)
-        with self._unit_of_work_factory() as unit_of_work:
-            task = unit_of_work.state.get_task(validated.task_id)
-            if task is None:
-                raise KeyError(f"task not found: {validated.task_id}")
-            items = [media_job_model(job) for job in unit_of_work.state.list_media_jobs(task.id)]
-        return {"items": items}
 
-    def _read_artifact(self, request: BaseModel) -> Any:
-        validated = cast(ArtifactIdInput, request)
-        with self._unit_of_work_factory() as unit_of_work:
-            artifact = unit_of_work.state.get_artifact(validated.artifact_id)
-        if artifact is None:
-            raise KeyError(f"Artifact not found: {validated.artifact_id}")
-        return artifact
-
-    def _runtime(self) -> RuntimeApplication:
-        if self._runtime_application is None:
-            raise RuntimeExecutorError(
-                "Runtime execution is unavailable",
-                error_code="SANDBOX_UNAVAILABLE",
-            )
-        return self._runtime_application
-
-    def _accept_version(self, request: BaseModel) -> Any:
-        validated = cast(VersionAcceptInput, request)
-        return self._application.accept_task_version(
-            task_id=validated.task_id,
-            expected_project_revision=validated.expected_project_revision,
-            user_confirmed=validated.user_confirmed,
-        )
-
-    def _discard_version(self, request: BaseModel) -> Any:
-        return self._application.discard_task_version(cast(TaskIdInput, request).task_id)
-
-    def _get_capabilities(self, _request: BaseModel) -> dict[str, Any]:
-        self._extension_service.refresh_registry()
-        with self._unit_of_work_factory() as unit_of_work:
-            policy = self._execution_policy.resolve(
-                unit_of_work.execution_settings,
-                execution_target=self._default_execution_target,
-            )
-        operations = self._registry.capability_manifest(
-            profile=policy.profile,
-            sandbox_healthy=policy.sandbox_healthy,
-            overrides=dict(policy.capability_overrides),
-        )
-        return {
-            "profile": policy.profile,
-            "operations": operations,
-            "sandbox_healthy": policy.sandbox_healthy,
-            "command_metadata": self._registry.frontend_metadata(),
-            "slash_commands": self._registry.slash_command_metadata(operations),
-            "schema_version": 3,
-        }
-
-    def _get_permissions(self, _request: BaseModel) -> Any:
-        with self._unit_of_work_factory() as unit_of_work:
-            return unit_of_work.execution_settings.get()
-
-    def _update_permissions(self, request: BaseModel) -> Any:
-        self._extension_service.refresh_registry()
-        validated = cast(ExecutionSettingsUpdateInput, request)
-        unknown = sorted(
-            name for name in validated.capability_overrides if self._registry.get(name) is None
-        )
-        if unknown:
-            raise ValueError(f"unknown capability override: {', '.join(unknown)}")
-        with self._unit_of_work_factory() as unit_of_work:
-            changed = unit_of_work.execution_settings.update(
-                profile=validated.profile,
-                capability_overrides=validated.capability_overrides,
-                expected_revision=validated.expected_revision,
-                idempotency_key=validated.idempotency_key,
-            )
-            unit_of_work.commit()
-        return changed
-
-    def _subscribe_events(self, request: BaseModel) -> dict[str, Any]:
-        validated = cast(EventSubscribeInput, request)
-        return self._event_page(cursor=validated.cursor, limit=500)
-
-    def _list_events(self, request: BaseModel) -> dict[str, Any]:
-        validated = cast(EventListInput, request)
-        return self._event_page(cursor=validated.cursor, limit=validated.limit)
-
-    def _event_page(self, *, cursor: int, limit: int) -> dict[str, Any]:
-        with self._unit_of_work_factory() as unit_of_work:
-            events = unit_of_work.commands.events_after(
-                cursor=cursor,
-                limit=limit,
-                allowed_visibilities={EventVisibility.USER, EventVisibility.DEVELOPER},
-            )
-        return {
-            "items": events,
-            "next_cursor": events[-1].cursor if events else cursor,
-        }
-
-    def _event_stream_state(self, _request: BaseModel) -> Any:
-        with self._unit_of_work_factory() as unit_of_work:
-            state = unit_of_work.commands.stream_state(
-                allowed_visibilities={EventVisibility.USER, EventVisibility.DEVELOPER}
-            )
-            unit_of_work.commit()
-        return state
+def _tool_result_changeset_id(content: str | None) -> UUID | None:
+    if not content:
+        return None
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return UUID(str(payload.get("changeset_id")))
+    except (TypeError, ValueError):
+        return None
 
 
 __all__ = ["CoreMethodNotFoundError", "CoreResponseValidationError", "CoreService"]

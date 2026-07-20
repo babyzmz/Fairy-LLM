@@ -84,7 +84,7 @@ def test_static_preview_start_replay_stop_and_visible_events(tmp_path: Path) -> 
     assert len(stack.executor.stop_calls) == 1
 
 
-def test_scratch_chat_uses_versioned_workspace_and_auto_promotes_preview(
+def test_scratch_preview_stays_candidate_until_the_assistant_turn_completes(
     tmp_path: Path,
 ) -> None:
     stack = build_scratch_runtime_stack(tmp_path)
@@ -114,12 +114,15 @@ def test_scratch_chat_uses_versioned_workspace_and_auto_promotes_preview(
             cursor=0,
             allowed_visibilities={EventVisibility.USER},
         )
-    assert workspace is not None and workspace.active_version_id == task.target_version_id
-    assert workspace.active_preview_id == context.preview.id
-    assert version is not None and version.visibility.value == "project_active"
-    assert conversation is not None and conversation.base_version_id == task.target_version_id
+    assert workspace is not None and workspace.active_version_id == task.base_version_id
+    assert workspace.active_version_id != task.target_version_id
+    assert workspace.active_preview_id is None
+    assert version is not None and version.visibility.value == "chat_draft"
+    assert conversation is not None and conversation.base_version_id == task.base_version_id
+    assert conversation.active_draft_version_id == task.target_version_id
+    assert conversation.active_preview_id == context.preview.id
     assert index is not None and any(item.path == "index.html" for item in index.files)
-    assert "workspace.version.auto_promoted" in {event.event_type for event in events}
+    assert "workspace.version.auto_promoted" not in {event.event_type for event in events}
 
 
 def test_preview_start_uses_persisted_execution_policy(tmp_path: Path) -> None:
@@ -255,6 +258,28 @@ def test_interrupted_project_active_preview_can_restart_without_reopening_task(
     assert restarted.preview.status is PreviewStatus.READY
     assert restarted.preview.visibility is PreviewVisibility.PROJECT_ACTIVE
     assert restarted.task.status is TaskStatus.ACCEPTED
+    assert len(stack.executor.start_calls) == 2
+
+
+def test_interrupted_ready_chat_draft_preview_can_restart_without_reopening_task(
+    tmp_path: Path,
+) -> None:
+    stack = build_runtime_stack(tmp_path)
+    request = PreviewStartRequest(
+        task_id=stack.task.task.id,
+        idempotency_key="assistant:preview:ready-restart",
+    )
+    context = stack.runtime.start_preview(request)
+    stack.core.review_task(stack.task.task.id)
+    stack.executor.probes.clear()
+
+    stack.runtime.recover_interrupted(verify_running=True)
+    restarted = stack.runtime.start_preview(request)
+
+    assert restarted.preview.id == context.preview.id
+    assert restarted.preview.status is PreviewStatus.READY
+    assert restarted.preview.visibility is PreviewVisibility.CHAT_DRAFT
+    assert restarted.task.status is TaskStatus.READY
     assert len(stack.executor.start_calls) == 2
 
 

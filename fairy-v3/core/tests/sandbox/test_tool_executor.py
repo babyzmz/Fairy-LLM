@@ -82,6 +82,24 @@ class BlockingSandboxExecutor(RecordingSandboxExecutor):
         self.released.set()
 
 
+class FailedSandboxExecutor(RecordingSandboxExecutor):
+    def execute(self, request: SandboxRequest) -> SandboxResult:
+        self.requests.append(request)
+        now = datetime.now(UTC)
+        return SandboxResult.create(
+            request=request,
+            executor="wsl_fairy_sandbox",
+            executor_version="1.0.0",
+            status=SandboxResultStatus.FAILED,
+            exit_code=1,
+            stdout=b"",
+            stderr=b"validation failed\n",
+            output_truncated=False,
+            started_at=now,
+            finished_at=now,
+        )
+
+
 class ClosingToolExecutor:
     def __init__(self) -> None:
         self.closed = False
@@ -326,6 +344,97 @@ def test_empty_project_uses_a_valid_nonempty_workspace_archive(tmp_path: Path) -
         with zipfile.ZipFile(io.BytesIO(executor.requests[0].workspace_archive)) as archive:
             assert archive.namelist() == [".fairy-project-empty"]
             assert archive.read(".fairy-project-empty") == b""
+    finally:
+        service.close()
+
+
+def test_sandbox_rejects_runtime_servers_before_starting_a_worker(tmp_path: Path) -> None:
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-server",
+                    tool_name="run.sandboxed",
+                    arguments_fragment=(
+                        '{"argv":["python3","-m","http.server","8080"],"cwd":"."}'
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.text(
+                    profile_id="scripted",
+                    sequence=1,
+                    text="Core will open the verified Preview.",
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+        ]
+    )
+    executor = RecordingSandboxExecutor()
+    service = build_local_service(
+        tmp_path / "data",
+        provider_registry=ProviderRegistry((provider,)),
+        sandbox_executor=executor,
+    )
+    try:
+        _enable_autonomous(service)
+        source = tmp_path / "source"
+        source.mkdir()
+        _context, turn = _project_turn(service, source)
+
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+
+        assert completed["status"] == "completed"
+        assert executor.requests == []
+        assert "Core owns Preview startup" in provider.requests[0].messages[0].content
+        assert "Do not start a server" in provider.requests[1].messages[-1].content
+        with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            invocations = unit_of_work.assistant.list_tool_invocations(turn["id"])
+            command = unit_of_work.commands.get_run(invocations[0].command_run_id)
+        assert invocations[0].status.value == "failed"
+        assert invocations[0].error_code == "CAPABILITY_NOT_AVAILABLE"
+        assert command is not None and command.status.value == "failed"
+    finally:
+        service.close()
+
+
+def test_failed_sandbox_result_is_not_recorded_as_a_successful_tool(tmp_path: Path) -> None:
+    provider = _provider()
+    executor = FailedSandboxExecutor()
+    service = build_local_service(
+        tmp_path / "data",
+        provider_registry=ProviderRegistry((provider,)),
+        sandbox_executor=executor,
+    )
+    try:
+        _enable_autonomous(service)
+        source = tmp_path / "source"
+        source.mkdir()
+        _context, turn = _project_turn(service, source)
+
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+
+        assert completed["status"] == "completed"
+        assert len(executor.requests) == 1
+        assert "COMMAND_FAILED" in provider.requests[1].messages[-1].content
+        assert "validation failed" in provider.requests[1].messages[-1].content
+        with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            invocations = unit_of_work.assistant.list_tool_invocations(turn["id"])
+            command = unit_of_work.commands.get_run(invocations[0].command_run_id)
+        assert invocations[0].status.value == "failed"
+        assert invocations[0].error_code == "COMMAND_FAILED"
+        assert command is not None and command.status.value == "failed"
     finally:
         service.close()
 

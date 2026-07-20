@@ -56,6 +56,28 @@ class CommandLedger(Protocol):
         lease_fence: int | None = None,
     ) -> EventEnvelope: ...
 
+    def append_domain_event(
+        self,
+        *,
+        event_type: str,
+        visibility: EventVisibility,
+        message: str,
+        payload: dict[str, Any],
+        actor: str,
+        project_id: UUID | None = None,
+        conversation_id: UUID | None = None,
+        version_id: UUID | None = None,
+    ) -> EventEnvelope: ...
+
+    def has_domain_event(
+        self,
+        *,
+        event_type: str,
+        project_id: UUID | None,
+        conversation_id: UUID | None,
+        payload: dict[str, Any],
+    ) -> bool: ...
+
     def finish(
         self,
         run_id: UUID,

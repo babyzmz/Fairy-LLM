@@ -28,8 +28,6 @@ from fairy_core.domain.execution import (
 from fairy_core.domain.models import (
     ScopeContract,
     TaskStatus,
-    VersionVisibility,
-    WorkspaceType,
 )
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork
 from fairy_core.runtime.artifacts import ensure_preview_manifest
@@ -452,6 +450,11 @@ class RuntimeApplication(RuntimeApplicationSupport):
                     and existing.visibility is PreviewVisibility.PROJECT_ACTIVE
                 ):
                     pass
+                elif task.status is TaskStatus.READY:
+                    # A completed Task remains immutable when its ephemeral local Runtime is
+                    # recreated after Core or desktop restart. The Preview binding above already
+                    # fenced Task, Workspace, and Version identity.
+                    pass
                 elif task.status is not TaskStatus.EXECUTING:
                     raise InvalidTransitionError("Task must be executing before Preview start")
                 scope = self._scope_resolver(state, task)
@@ -578,24 +581,6 @@ class RuntimeApplication(RuntimeApplicationSupport):
                 task.transition_to(TaskStatus.PREVIEWING)
             conversation = self._require_conversation(state, preview.conversation_id)
             conversation.active_preview_id = preview.id
-            if conversation.workspace_type is WorkspaceType.CHAT_SCRATCH:
-                workspace = state.get_workspace(preview.workspace_id)
-                version = state.get_version(preview.version_id)
-                if workspace is None or version is None:
-                    raise RuntimeExecutorError(
-                        "Scratch Preview Workspace Version is unavailable",
-                        error_code="SCOPE_MISMATCH",
-                    )
-                workspace.accept_version(
-                    preview.version_id,
-                    expected_revision=workspace.revision,
-                )
-                workspace.active_preview_id = preview.id
-                version.visibility = VersionVisibility.PROJECT_ACTIVE
-                conversation.base_version_id = preview.version_id
-                conversation.active_draft_version_id = None
-                state.save_workspace(workspace)
-                state.save_version(version)
             state.save_runtime(runtime, expected_revision=runtime_revision)
             state.save_preview(preview, expected_revision=preview_revision)
             state.save_task(task)
@@ -625,19 +610,6 @@ class RuntimeApplication(RuntimeApplicationSupport):
                 lease_owner=intent.command.lease_owner,
                 lease_fence=intent.command.lease_fence,
             )
-            if conversation.workspace_type is WorkspaceType.CHAT_SCRATCH:
-                unit_of_work.commands.append_event(
-                    run_id=intent.command.id,
-                    event_type="workspace.version.auto_promoted",
-                    visibility=EventVisibility.USER,
-                    message="Workspace saved",
-                    payload={
-                        "workspace_id": str(preview.workspace_id),
-                        "version_id": str(preview.version_id),
-                    },
-                    lease_owner=intent.command.lease_owner,
-                    lease_fence=intent.command.lease_fence,
-                )
             commands.complete(
                 intent.command.id,
                 output={"preview_id": str(preview.id), "url": result.url},

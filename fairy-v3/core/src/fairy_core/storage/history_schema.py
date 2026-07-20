@@ -8,11 +8,64 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     ForeignKeyConstraint,
+    Index,
     PrimaryKeyConstraint,
     String,
     Table,
     UniqueConstraint,
 )
+
+
+def build_history_indexes(*, projects: Table, conversations: Table) -> None:
+    Index(
+        "ix_core_projects_tenant_lifecycle_updated",
+        projects.c.tenant_id,
+        projects.c.deleted_at,
+        projects.c.archived_at,
+        projects.c.updated_at,
+    )
+    Index(
+        "ix_core_conversations_tenant_deleted_updated",
+        conversations.c.tenant_id,
+        conversations.c.deleted_at,
+        conversations.c.updated_at,
+    )
+
+
+def build_project_table(
+    *,
+    metadata,
+    tenant_id_column: Callable[[], Column[str]],
+    id_column: Callable[[], Column[str]],
+    workspaces: Table,
+    utc_datetime: Any,
+    id_length: int,
+) -> Table:
+    return Table(
+        "core_projects",
+        metadata,
+        tenant_id_column(),
+        id_column(),
+        Column("name", String(255), nullable=False),
+        Column("residency", String(32), nullable=False),
+        Column("workspace_id", String(id_length), nullable=False),
+        Column("active_version_id", String(id_length)),
+        Column("active_preview_id", String(id_length)),
+        Column("revision", BigInteger, nullable=False),
+        Column("pinned_at", utc_datetime()),
+        Column("archived_at", utc_datetime()),
+        Column("deleted_at", utc_datetime()),
+        Column("purged_at", utc_datetime()),
+        Column("metadata_revision", BigInteger, nullable=False, server_default="0"),
+        Column("created_at", utc_datetime(), nullable=False),
+        Column("updated_at", utc_datetime(), nullable=False),
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_core_projects"),
+        ForeignKeyConstraint(
+            ["tenant_id", "workspace_id"],
+            [workspaces.c.tenant_id, workspaces.c.id],
+            name="fk_core_projects_workspace",
+        ),
+    )
 
 
 def build_history_tables(
@@ -107,4 +160,4 @@ def build_history_tables(
     return imported, moves
 
 
-__all__ = ["build_history_tables"]
+__all__ = ["build_history_indexes", "build_history_tables", "build_project_table"]

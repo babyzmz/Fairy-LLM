@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -10,7 +11,8 @@ import pytest
 from fairy_core.domain.execution import Artifact, ArtifactType, ArtifactVisibility
 from fairy_core.providers import ModelDelta, ProviderRegistry
 from fairy_core.transports.stdio import build_local_service
-from tests.assistant.support import ScriptedProvider
+from tests.assistant.support import ScriptedProvider, wait_for_turn
+from tests.runtime_support import FakeRuntimeExecutor
 
 
 def _provider(tool_name: str, arguments: str, final_text: str) -> ScriptedProvider:
@@ -58,6 +60,32 @@ def _project_turn(
         {
             "conversation_id": conversation["id"],
             "user_request": "Use a governed project tool",
+            "operation_mode": "continue_current_chat_draft",
+            "execution_target": "local",
+            "idempotency_key": f"task:{key}",
+        },
+    )
+    turn = service.invoke(
+        "assistant.turns.create",
+        {
+            "task_id": context["task"]["id"],
+            "profile_id": "scripted",
+            "idempotency_key": f"turn:{key}",
+        },
+    )
+    return context, turn
+
+
+def _scratch_turn(service, *, key: str) -> tuple[dict[str, object], dict[str, object]]:
+    conversation = service.invoke(
+        "conversations.create",
+        {"project_id": None, "workspace_type": "chat_scratch"},
+    )
+    context = service.invoke(
+        "tasks.create",
+        {
+            "conversation_id": conversation["id"],
+            "user_request": "Create a small multi-file webpage",
             "operation_mode": "continue_current_chat_draft",
             "execution_target": "local",
             "idempotency_key": f"task:{key}",
@@ -186,7 +214,7 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
                     tool_name="execution.plan",
                     arguments_fragment=(
                         '{"files":[{"path":"README.md","purpose":"Update copy",'
-                        f'"batch":1,"expected_hash":"{base_hash}"}}],'
+                        '"batch":1}],'
                         '"validation_commands":[]}'
                     ),
                 ),
@@ -232,13 +260,13 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
     )
     try:
         context, turn = _project_turn(service, source, key="changeset")
-        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        waiting = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
         approvals = service.invoke(
             "approvals.list",
             {"task_id": context["task"]["id"]},
         )["items"]
 
-        assert completed["status"] == "completed"
+        assert waiting["status"] == "waiting_for_tool"
         assert len(approvals) == 1
         assert approvals[0]["changeset_id"] is not None
         assert approvals[0]["tool_invocation_id"] is None
@@ -246,8 +274,9 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
             "execution_plans.get",
             {"task_id": context["task"]["id"]},
         )
-        assert running_plan["plan"]["model_calls_used"] == 3
+        assert running_plan["plan"]["model_calls_used"] == 2
         assert running_plan["plan"]["tool_calls_used"] == 2
+        assert running_plan["plan"]["manifest"]["files"][0]["expected_hash"] == base_hash
         assert [
             step["status"] for step in running_plan["steps"] if step["kind"] == "implement"
         ] == ["running"]
@@ -257,11 +286,15 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
             before = unit_of_work.project_indexes.get(context["target_version"]["id"])
         assert before is not None and before.generation == 1
 
-        service.invoke(
+        decision = service.invoke(
             "approvals.decide",
             {"approval_id": approvals[0]["id"], "approved": True},
         )
+        completed = wait_for_turn(service, turn["id"])
 
+        assert decision["assistant_turn_id"] == turn["id"]
+        assert decision["resume_requested"] is True
+        assert completed["status"] == "completed"
         assert managed_file.read_text(encoding="utf-8") == "draft"
         with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
             after = unit_of_work.project_indexes.get(context["target_version"]["id"])
@@ -271,9 +304,595 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
             "execution_plans.get",
             {"task_id": context["task"]["id"]},
         )
+        assert completed_plan["plan"]["model_calls_used"] == 3
+        assert completed_plan["plan"]["status"] == "active"
         assert [
             step["status"] for step in completed_plan["steps"] if step["kind"] == "implement"
         ] == ["completed"]
+        assert next(
+            step["status"]
+            for step in completed_plan["steps"]
+            if step["kind"] == "checkpoint"
+        ) == "pending"
+
+        service.invoke("tasks.review", {"task_id": context["task"]["id"]})
+        reviewed_plan = service.invoke(
+            "execution_plans.get",
+            {"task_id": context["task"]["id"]},
+        )
+        assert reviewed_plan["plan"]["status"] == "completed"
+        assert all(
+            step["status"] in {"completed", "skipped"}
+            for step in reviewed_plan["steps"]
+        )
+    finally:
+        service.close()
+
+
+def test_scratch_edit_accepts_zero_hash_for_new_files_and_applies_complete_batch(
+    tmp_path: Path,
+) -> None:
+    zero_hash = "0" * 64
+    planned_files = [
+        {
+            "path": "index.html",
+            "purpose": "Page structure",
+            "batch": 1,
+            "expected_hash": zero_hash,
+        },
+        {
+            "path": "styles.css",
+            "purpose": "Visual design",
+            "batch": 1,
+            "expected_hash": zero_hash,
+        },
+        {
+            "path": "main.js",
+            "purpose": "Animation behavior",
+            "batch": 1,
+            "expected_hash": zero_hash,
+        },
+    ]
+    generated_files = [
+        {"path": "index.html", "content": "<main>Fairy</main>"},
+        {"path": "styles.css", "content": "main { color: teal; }"},
+        {"path": "main.js", "content": "document.body.dataset.ready = 'true';"},
+    ]
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-plan",
+                    tool_name="execution.plan",
+                    arguments_fragment=json.dumps(
+                        {"files": planned_files, "entrypoints": ["index.html"]}
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-edit",
+                    tool_name="edit.propose_changeset",
+                    arguments_fragment=json.dumps(
+                        {"files": generated_files, "reason": "Create the requested webpage"}
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.text(
+                    profile_id="scripted",
+                    sequence=1,
+                    text="The webpage files are ready.",
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+        ]
+    )
+    service = build_local_service(
+        tmp_path / "data",
+        runtime_executor=FakeRuntimeExecutor(),
+        provider_registry=ProviderRegistry((provider,)),
+    )
+    try:
+        service.invoke(
+            "permissions.update",
+            {
+                "profile": "autonomous",
+                "capability_overrides": {},
+                "expected_revision": 0,
+                "idempotency_key": "permissions:zero-hash",
+            },
+        )
+        context, turn = _scratch_turn(service, key="zero-hash")
+
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        plan = service.invoke(
+            "execution_plans.get",
+            {"task_id": context["task"]["id"]},
+        )
+        preview = service.invoke(
+            "previews.resolve",
+            {
+                "task_id": context["task"]["id"],
+                "workspace_id": context["task"]["workspace_id"],
+                "version_id": context["target_version"]["id"],
+            },
+        )
+        files = service.invoke(
+            "workspaces.files.list",
+            {
+                "workspace_id": context["task"]["workspace_id"],
+                "version_id": context["target_version"]["id"],
+            },
+        )
+        workspace = service.invoke(
+            "workspaces.get",
+            {"workspace_id": context["task"]["workspace_id"]},
+        )
+        completed_task = service.invoke("tasks.get", {"task_id": context["task"]["id"]})
+        trace = service.invoke("assistant.turns.trace.list", {"turn_id": turn["id"]})
+        with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            events = unit_of_work.commands.events_after(
+                cursor=0,
+                allowed_visibilities=None,
+            )
+        root = Path(context["target_version"]["project_root"])
+
+        assert completed["status"] == "completed"
+        assert [item["expected_hash"] for item in plan["plan"]["manifest"]["files"]] == [
+            None,
+            None,
+            None,
+        ]
+        assert (root / "index.html").read_text(encoding="utf-8") == "<main>Fairy</main>"
+        assert (root / "styles.css").read_text(encoding="utf-8") == (
+            "main { color: teal; }"
+        )
+        assert (root / "main.js").read_text(encoding="utf-8") == (
+            "document.body.dataset.ready = 'true';"
+        )
+        assert {item["path"] for item in files["items"]} == {
+            "index.html",
+            "main.js",
+            "styles.css",
+        }
+        assert preview["preview"]["status"] == "ready"
+        assert preview["preview"]["version_id"] == context["target_version"]["id"]
+        assert workspace["active_version_id"] == context["target_version"]["id"]
+        assert completed_task["status"] == "ready"
+        checkpoint_cursor = next(
+            event.cursor
+            for event in events
+            if event.event_type == "command.succeeded"
+            and event.payload.get("command_name") == "workspace.checkpoint"
+        )
+        promotion_cursor = next(
+            event.cursor
+            for event in events
+            if event.event_type == "workspace.version.auto_promoted"
+        )
+        assert checkpoint_cursor < promotion_cursor
+        assert any(
+            step["kind"] == "verification"
+            and step["status"] == "succeeded"
+            and step["public_summary"] == "Preview ready"
+            and len(step["artifact_refs"]) == 1
+            for step in trace["steps"]
+        )
+        step_statuses = {item["kind"]: item["status"] for item in plan["steps"]}
+        assert step_statuses == {
+            "analyze": "completed",
+            "file_plan": "completed",
+            "implement": "completed",
+            "install": "skipped",
+            "test": "skipped",
+            "preview": "completed",
+            "repair": "skipped",
+            "summary": "completed",
+            "checkpoint": "completed",
+        }
+    finally:
+        service.close()
+
+
+def test_final_response_retries_when_plan_has_no_changeset(tmp_path: Path) -> None:
+    plan_arguments = json.dumps(
+        {
+            "files": [
+                {
+                    "path": "index.html",
+                    "purpose": "Page structure",
+                    "batch": 1,
+                    "expected_hash": None,
+                }
+            ],
+            "entrypoints": ["index.html"],
+        }
+    )
+    edit_arguments = json.dumps(
+        {
+            "files": [{"path": "index.html", "content": "<h1>Recovered</h1>"}],
+            "reason": "Finish the planned batch",
+        }
+    )
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-plan",
+                    tool_name="execution.plan",
+                    arguments_fragment=plan_arguments,
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.text(
+                    profile_id="scripted",
+                    sequence=1,
+                    text="The file is ready even though I did not create it.",
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-edit",
+                    tool_name="edit.propose_changeset",
+                    arguments_fragment=edit_arguments,
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.text(
+                    profile_id="scripted",
+                    sequence=1,
+                    text="The durable webpage file is now ready.",
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+        ]
+    )
+    service = build_local_service(
+        tmp_path / "data",
+        runtime_executor=FakeRuntimeExecutor(),
+        provider_registry=ProviderRegistry((provider,)),
+    )
+    try:
+        service.invoke(
+            "permissions.update",
+            {
+                "profile": "autonomous",
+                "capability_overrides": {},
+                "expected_revision": 0,
+                "idempotency_key": "permissions:completion-retry",
+            },
+        )
+        context, turn = _scratch_turn(service, key="completion-retry")
+
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        messages = service.invoke(
+            "messages.list",
+            {"conversation_id": context["task"]["conversation_id"]},
+        )["items"]
+        events = service.invoke("events.subscribe", {"cursor": 0})["items"]
+        trace = service.invoke("assistant.turns.trace.list", {"turn_id": turn["id"]})
+
+        assert completed["status"] == "completed"
+        assert len(provider.requests) == 4
+        assert any(
+            message.role.value == "system"
+            and "has no durable pending or applied Changeset" in message.content
+            for message in provider.requests[2].messages
+        )
+        assert [item["content"] for item in messages if item["role"] == "assistant"] == [
+            "The durable webpage file is now ready."
+        ]
+        assert any(
+            event["event_type"] == "assistant.message.projection_reset"
+            and event["payload"]["reason"] == "execution_incomplete"
+            for event in events
+        )
+        assert any(
+            step["kind"] == "model"
+            and step["status"] == "failed"
+            and step["public_summary"] == "Finalizing durable result"
+            for step in trace["steps"]
+        )
+        root = Path(context["target_version"]["project_root"])
+        assert (root / "index.html").read_text(encoding="utf-8") == (
+            "<h1>Recovered</h1>"
+        )
+    finally:
+        service.close()
+
+
+def test_generated_workspace_retries_a_code_dump_as_a_concise_summary(
+    tmp_path: Path,
+) -> None:
+    plan_arguments = json.dumps(
+        {
+            "files": [
+                {
+                    "path": "index.html",
+                    "purpose": "Page structure",
+                    "batch": 1,
+                    "expected_hash": None,
+                }
+            ],
+            "entrypoints": ["index.html"],
+        }
+    )
+    edit_arguments = json.dumps(
+        {
+            "files": [{"path": "index.html", "content": "<h1>Concise</h1>"}],
+            "reason": "Create the planned webpage",
+        }
+    )
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-plan",
+                    tool_name="execution.plan",
+                    arguments_fragment=plan_arguments,
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-edit",
+                    tool_name="edit.propose_changeset",
+                    arguments_fragment=edit_arguments,
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.text(
+                    profile_id="scripted",
+                    sequence=1,
+                    text=f"```html\n{'x' * 3_000}\n```",
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+            (
+                ModelDelta.text(
+                    profile_id="scripted",
+                    sequence=1,
+                    text=(
+                        "Created index.html and verified it in the Workspace Preview. "
+                        "The page is ready for review."
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+        ]
+    )
+    service = build_local_service(
+        tmp_path / "data",
+        runtime_executor=FakeRuntimeExecutor(),
+        provider_registry=ProviderRegistry((provider,)),
+    )
+    try:
+        service.invoke(
+            "permissions.update",
+            {
+                "profile": "autonomous",
+                "capability_overrides": {},
+                "expected_revision": 0,
+                "idempotency_key": "permissions:concise-summary",
+            },
+        )
+        context, turn = _scratch_turn(service, key="concise-summary")
+
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        messages = service.invoke(
+            "messages.list",
+            {"conversation_id": context["task"]["conversation_id"]},
+        )["items"]
+        preview = service.invoke(
+            "previews.resolve",
+            {
+                "task_id": context["task"]["id"],
+                "workspace_id": context["task"]["workspace_id"],
+                "version_id": context["target_version"]["id"],
+            },
+        )
+
+        assert completed["status"] == "completed"
+        assert len(provider.requests) == 4
+        assert any(
+            message.role.value == "system"
+            and "candidate final response repeats generated source" in message.content
+            for message in provider.requests[3].messages
+        )
+        assert [item["content"] for item in messages if item["role"] == "assistant"] == [
+            "Created index.html and verified it in the Workspace Preview. "
+            "The page is ready for review."
+        ]
+        assert preview["preview"]["status"] == "ready"
+    finally:
+        service.close()
+
+
+def test_preview_status_prepares_the_completed_static_workspace(tmp_path: Path) -> None:
+    plan_arguments = json.dumps(
+        {
+            "files": [
+                {
+                    "path": "index.html",
+                    "purpose": "Static page",
+                    "batch": 1,
+                    "expected_hash": None,
+                }
+            ],
+            "entrypoints": ["index.html"],
+        }
+    )
+    edit_arguments = json.dumps(
+        {
+            "files": [{"path": "index.html", "content": "<h1>Ready</h1>"}],
+            "reason": "Create the planned static page",
+        }
+    )
+    provider = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-plan",
+                    tool_name="execution.plan",
+                    arguments_fragment=plan_arguments,
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-edit",
+                    tool_name="edit.propose_changeset",
+                    arguments_fragment=edit_arguments,
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.tool_call(
+                    profile_id="scripted",
+                    sequence=1,
+                    tool_call_id="call-preview-status",
+                    tool_name="preview.status",
+                    arguments_fragment="{}",
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.text(
+                    profile_id="scripted",
+                    sequence=1,
+                    text="Created index.html; the Workspace Preview is ready.",
+                ),
+                ModelDelta.done(
+                    profile_id="scripted",
+                    sequence=2,
+                    finish_reason="stop",
+                ),
+            ),
+        ]
+    )
+    service = build_local_service(
+        tmp_path / "data",
+        runtime_executor=FakeRuntimeExecutor(),
+        provider_registry=ProviderRegistry((provider,)),
+    )
+    try:
+        service.invoke(
+            "permissions.update",
+            {
+                "profile": "autonomous",
+                "capability_overrides": {},
+                "expected_revision": 0,
+                "idempotency_key": "permissions:preview-status-prepares",
+            },
+        )
+        context, turn = _scratch_turn(service, key="preview-status-prepares")
+
+        completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        preview_result = next(
+            message.content
+            for message in provider.requests[3].messages
+            if message.tool_call_id == "call-preview-status"
+        )
+        preview = service.invoke(
+            "previews.resolve",
+            {
+                "task_id": context["task"]["id"],
+                "workspace_id": context["task"]["workspace_id"],
+                "version_id": context["target_version"]["id"],
+            },
+        )
+        execution_plan = service.invoke(
+            "execution_plans.get",
+            {"task_id": context["task"]["id"]},
+        )
+
+        assert completed["status"] == "completed"
+        assert '"status":"ready"' in preview_result
+        assert preview["preview"]["status"] == "ready"
+        assert execution_plan["plan"]["status"] == "completed"
+        assert "execution.plan" not in {
+            tool.name for tool in provider.requests[1].tools
+        }
+        assert [tool.name for tool in provider.requests[3].tools] == ["direct_answer"]
     finally:
         service.close()
 

@@ -30,6 +30,7 @@ from fairy_core.contracts.common import (
 from fairy_core.contracts.common import (
     PermissionProfileModel as PermissionProfileModel,
 )
+from fairy_core.contracts.history_models import ConversationModel, ProjectModel
 from fairy_core.contracts.model_routing import (
     ModelSelectionSnapshotInput,
     ModelSelectionSnapshotModel,
@@ -376,35 +377,6 @@ class VoiceAudioModel(ContractModel):
     channels: int = Field(ge=1, le=2)
     frames: int = Field(ge=1)
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-
-
-class ProjectModel(ContractModel):
-    id: UUID
-    name: str
-    residency: ProjectResidency
-    workspace_id: UUID
-    active_version_id: UUID | None
-    active_preview_id: UUID | None
-    revision: int = Field(ge=0)
-    created_at: datetime
-    updated_at: datetime
-
-
-class ConversationModel(ContractModel):
-    id: UUID
-    project_id: UUID | None
-    workspace_id: UUID
-    workspace_type: WorkspaceType
-    base_version_id: UUID | None
-    active_draft_version_id: UUID | None
-    active_task_id: UUID | None
-    active_preview_id: UUID | None
-    title: str
-    pinned_at: datetime | None
-    deleted_at: datetime | None
-    revision: int = Field(ge=0)
-    created_at: datetime
-    updated_at: datetime
 
 
 class TaskModel(ContractModel):
@@ -841,10 +813,10 @@ class EventEnvelopeModel(ContractModel):
     cursor: int = Field(ge=1)
     run_id: UUID | None
     project_id: UUID | None
-    conversation_id: UUID
-    task_id: UUID
+    conversation_id: UUID | None
+    task_id: UUID | None
     version_id: UUID | None
-    task_sequence: int = Field(ge=1)
+    task_sequence: int | None = Field(ge=1)
     event_type: str = Field(min_length=1)
     visibility: EventVisibilityModel
     message: str

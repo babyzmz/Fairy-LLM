@@ -132,13 +132,14 @@ class SandboxRequest:
         valid_manager = dependency_manager in {"npm", "pnpm", "yarn", "uv", "pip", "cargo"}
         if dependency_aware:
             if (
-                project_id is None
-                or version_id is None
+                version_id is None
                 or not isinstance(dependency_key, str)
                 or _DIGEST.fullmatch(dependency_key) is None
                 or not valid_manager
             ):
-                raise ValueError("dependency layer requires a Project, key, and supported manager")
+                raise ValueError(
+                    "dependency layer requires a Workspace Version, key, and supported manager"
+                )
         elif dependency_key is not None or dependency_manager is not None:
             raise ValueError("raw Sandbox requests cannot bind a dependency layer")
         archive = bytes(workspace_archive)

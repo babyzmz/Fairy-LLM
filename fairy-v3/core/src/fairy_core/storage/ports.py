@@ -111,9 +111,22 @@ class StateStore(Protocol):
 
     def save_project(self, project: Project) -> None: ...
 
+    def update_project_metadata(
+        self,
+        project: Project,
+        *,
+        expected_revision: int,
+    ) -> None: ...
+
     def get_project(self, project_id: UUID) -> Project | None: ...
 
-    def list_projects(self, *, limit: int, cursor: str | None) -> StatePage[Project]: ...
+    def list_projects(
+        self,
+        *,
+        limit: int,
+        cursor: str | None,
+        lifecycle: str = "active",
+    ) -> StatePage[Project]: ...
 
     def save_conversation(self, conversation: Conversation) -> None: ...
 
@@ -132,6 +145,7 @@ class StateStore(Protocol):
         project_id: UUID | None,
         limit: int,
         cursor: str | None,
+        lifecycle: str = "active",
     ) -> StatePage[Conversation]: ...
 
     def save_version(self, version: Version) -> None: ...

@@ -306,6 +306,93 @@ class SqlAlchemyCommandLedger:
                 payload=payload,
             )
 
+    def append_domain_event(
+        self,
+        *,
+        event_type: str,
+        visibility: EventVisibility,
+        message: str,
+        payload: dict[str, Any],
+        actor: str,
+        project_id: UUID | None = None,
+        conversation_id: UUID | None = None,
+        version_id: UUID | None = None,
+    ) -> EventEnvelope:
+        event_id = new_id()
+        created_at = _now()
+        with self._session.write() as connection:
+            cursor = connection.execute(
+                self._insert(domain_events)
+                .values(
+                    tenant_id=self._tenant_id,
+                    event_id=str(event_id),
+                    run_id=None,
+                    user_id=actor,
+                    device_id="core",
+                    project_id=str(project_id) if project_id is not None else None,
+                    conversation_id=(str(conversation_id) if conversation_id is not None else None),
+                    task_id=None,
+                    version_id=str(version_id) if version_id is not None else None,
+                    task_sequence=None,
+                    schema_version=1,
+                    event_type=event_type,
+                    visibility=visibility.value,
+                    message=message,
+                    payload=payload,
+                    created_at=created_at,
+                )
+                .returning(domain_events.c.cursor)
+            ).scalar_one()
+        return EventEnvelope(
+            id=event_id,
+            cursor=int(cursor),
+            run_id=None,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            task_id=None,
+            version_id=version_id,
+            task_sequence=None,
+            event_type=event_type,
+            visibility=visibility,
+            message=message,
+            payload=payload,
+            schema_version=1,
+            created_at=created_at,
+        )
+
+    def has_domain_event(
+        self,
+        *,
+        event_type: str,
+        project_id: UUID | None,
+        conversation_id: UUID | None,
+        payload: dict[str, Any],
+    ) -> bool:
+        project_scope = (
+            domain_events.c.project_id.is_(None)
+            if project_id is None
+            else domain_events.c.project_id == str(project_id)
+        )
+        conversation_scope = (
+            domain_events.c.conversation_id.is_(None)
+            if conversation_id is None
+            else domain_events.c.conversation_id == str(conversation_id)
+        )
+        with self._session.read() as connection:
+            rows = connection.execute(
+                select(domain_events.c.payload).where(
+                    domain_events.c.tenant_id == self._tenant_id,
+                    domain_events.c.event_type == event_type,
+                    project_scope,
+                    conversation_scope,
+                )
+            ).scalars()
+            return any(
+                isinstance(candidate, Mapping)
+                and all(candidate.get(key) == value for key, value in payload.items())
+                for candidate in rows
+            )
+
     def finish(
         self,
         run_id: UUID,
@@ -478,7 +565,6 @@ class SqlAlchemyCommandLedger:
             return None
         predicates = [
             domain_events.c.tenant_id == self._tenant_id,
-            domain_events.c.run_id.is_not(None),
         ]
         if allowed_visibilities is not None:
             predicates.append(
@@ -888,12 +974,12 @@ class SqlAlchemyCommandLedger:
         return EventEnvelope(
             id=UUID(row["event_id"]),
             cursor=int(row["cursor"]),
-            run_id=UUID(row["run_id"]),
+            run_id=UUID(row["run_id"]) if row["run_id"] else None,
             project_id=UUID(row["project_id"]) if row["project_id"] else None,
-            conversation_id=UUID(row["conversation_id"]),
-            task_id=UUID(row["task_id"]),
+            conversation_id=(UUID(row["conversation_id"]) if row["conversation_id"] else None),
+            task_id=UUID(row["task_id"]) if row["task_id"] else None,
             version_id=UUID(row["version_id"]) if row["version_id"] else None,
-            task_sequence=int(row["task_sequence"]),
+            task_sequence=(int(row["task_sequence"]) if row["task_sequence"] is not None else None),
             event_type=row["event_type"],
             visibility=EventVisibility(row["visibility"]),
             message=row["message"],
