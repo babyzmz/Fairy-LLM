@@ -18,7 +18,7 @@ fn signal(sampled_at_ms: u64) -> PresenceInteractionSignal {
 }
 
 #[test]
-fn configured_hover_dwell_counts_toward_the_visual_timeline() {
+fn configured_hover_dwell_starts_but_does_not_skip_the_visual_timeline() {
     let mut machine = PresenceInteractionStateMachine::new(0);
     let after_dwell = PresenceInteractionSignal {
         sampled_at_ms: 250,
@@ -27,7 +27,7 @@ fn configured_hover_dwell_counts_toward_the_visual_timeline() {
     };
     assert_eq!(
         machine.advance(after_dwell).phase,
-        PresenceInteractionPhase::Stretching
+        PresenceInteractionPhase::Aware
     );
     assert_eq!(
         machine
@@ -37,7 +37,17 @@ fn configured_hover_dwell_counts_toward_the_visual_timeline() {
                 ..after_dwell
             })
             .phase,
-        PresenceInteractionPhase::InputReveal,
+        PresenceInteractionPhase::Aware,
+    );
+    assert_eq!(
+        machine
+            .advance(PresenceInteractionSignal {
+                sampled_at_ms: 350,
+                active_dwell_ms: 350,
+                ..after_dwell
+            })
+            .phase,
+        PresenceInteractionPhase::Droplet,
     );
 }
 
@@ -183,22 +193,14 @@ fn reduced_motion_skips_liquid_shape_phases_and_uses_a_short_fade() {
     };
     assert_eq!(
         machine.advance(reduced(0)).phase,
-        PresenceInteractionPhase::Aware
-    );
-    assert_eq!(
-        machine.advance(reduced(249)).phase,
-        PresenceInteractionPhase::Aware
-    );
-    assert_eq!(
-        machine.advance(reduced(250)).phase,
         PresenceInteractionPhase::InputReveal
     );
     assert_eq!(
-        machine.advance(reduced(409)).phase,
+        machine.advance(reduced(199)).phase,
         PresenceInteractionPhase::InputReveal
     );
     assert_eq!(
-        machine.advance(reduced(410)).phase,
+        machine.advance(reduced(200)).phase,
         PresenceInteractionPhase::Interactive
     );
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_FAIRY_MOTION_SNAPSHOT } from "../domain/motionState";
 import type { PresenceRenderSnapshot } from "./presenceRenderer";
 import { BACKDROP_CAPTURE_RATES, backdropFrameRate } from "./backdropCadence";
 
@@ -9,6 +10,7 @@ function snapshot(
   overrides: Partial<PresenceRenderSnapshot> = {},
 ): PresenceRenderSnapshot {
   return {
+    motion: DEFAULT_FAIRY_MOTION_SNAPSHOT,
     interaction: {
       schema_version: 1,
       sequence: 1,
@@ -35,6 +37,7 @@ function snapshot(
       },
     },
     input_capsule_visible: false,
+    input_capsule_width: 280,
     work_state: "idle",
     speaking: false,
     voice_level: 0,

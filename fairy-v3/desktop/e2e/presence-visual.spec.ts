@@ -7,43 +7,47 @@ import type { PresenceInteractionSnapshot } from "../src/presence/domain/interac
 const WIDTH = 640;
 const HEIGHT = 260;
 
-test("unified liquid body stays continuous and returns without a one-frame jump", async ({
+test("stable liquid surfaces stay aligned and return without a one-frame jump", async ({
   browser,
 }, testInfo) => {
   const context = await browser.newContext({ viewport: { width: WIDTH, height: HEIGHT } });
   const page = await context.newPage();
   await page.goto("/?surface=pet-render");
   await waitForInteractionSource(page);
+  await publishInputPresentation(page, true);
   await publishInteraction(page, interactionSnapshot("interactive", 1, 520));
   await page.waitForTimeout(800);
 
   const interactive = PNG.sync.read(await page.screenshot({ omitBackground: true }));
   await writeFile(testInfo.outputPath("liquid-interactive.png"), PNG.sync.write(interactive));
-  expect(axisCoverage(interactive, 96, 596, 130, 34)).toBeGreaterThan(0.98);
+  const coreCoverage = axisCoverage(interactive, 24, 168, 88, 72);
+  const capsuleCoverage = axisCoverage(interactive, 31, 297, 220, 26);
+  expect(coreCoverage).toBeGreaterThan(0.96);
+  expect(capsuleCoverage).toBeGreaterThan(0.96);
+  expect(axisCoverage(interactive, 172, 220, 176, 5)).toBeLessThan(0.1);
   expect(visiblePixelRatio(interactive)).toBeLessThan(0.34);
   expect(alphaAt(interactive, 0, 0)).toBe(0);
   expect(alphaAt(interactive, WIDTH - 1, HEIGHT - 1)).toBe(0);
   expect(maximumAlpha(interactive)).toBeLessThan(230);
 
+  await startReturnMotionRecording(page);
   await publishInteraction(page, interactionSnapshot("returning", 2, 1_000));
-  const returnFrames = [0, 110, 220, 310, 400] as const;
-  let elapsed = 0;
-  const coverage: number[] = [];
-  for (const frameAt of returnFrames) {
-    await page.waitForTimeout(frameAt - elapsed);
-    elapsed = frameAt;
-    const frame = PNG.sync.read(await page.screenshot({ omitBackground: true }));
-    coverage.push(axisCoverage(frame, 96, 596, 130, 34));
-    await writeFile(
-      testInfo.outputPath(`liquid-return-${frameAt}ms.png`),
-      PNG.sync.write(frame),
-    );
-    expect(alphaAt(frame, 0, 0)).toBe(0);
+  await waitForReturnMotionComplete(page);
+  const returnSamples = await readReturnMotionSamples(page);
+  expect(returnSamples[0]?.capsule).toBeGreaterThan(0.75);
+  expect(returnSamples.some((sample) => sample.capsule > 0.15 && sample.capsule < 0.85))
+    .toBe(true);
+  expect(Math.max(...returnSamples.map((sample) => sample.bridge))).toBeGreaterThan(0.25);
+  for (let index = 1; index < returnSamples.length; index += 1) {
+    expect(returnSamples[index].capsule - returnSamples[index - 1].capsule)
+      .toBeLessThanOrEqual(0.01);
   }
-  expect(coverage[1]).toBeLessThan(coverage[0]);
-  expect(coverage[2]).toBeLessThan(0.42);
-  expect(coverage[3]).toBeLessThan(0.42);
-  expect(coverage[4]).toBeLessThan(0.42);
+
+  const returned = PNG.sync.read(await page.screenshot({ omitBackground: true }));
+  await writeFile(testInfo.outputPath("liquid-return-complete.png"), PNG.sync.write(returned));
+  expect(axisCoverage(returned, 31, 297, 220, 26)).toBeLessThan(0.42);
+  expect(alphaAt(returned, 0, 0)).toBe(0);
+  expect(alphaAt(returned, WIDTH - 1, HEIGHT - 1)).toBe(0);
   await context.close();
 });
 
@@ -54,6 +58,7 @@ test("liquid glass remains legible across desktop background classes", async ({
   const page = await context.newPage();
   await page.goto("/?surface=pet-render");
   await waitForInteractionSource(page);
+  await publishInputPresentation(page, true);
   await publishInteraction(page, interactionSnapshot("interactive", 1, 520));
   await page.waitForTimeout(800);
   const foreground = PNG.sync.read(await page.screenshot({ omitBackground: true }));
@@ -86,23 +91,28 @@ test("liquid optics expose bounded thickness, paired dispersion, and screen lock
   const page = await context.newPage();
   await page.goto("/?surface=pet-render");
   await waitForInteractionSource(page);
+  await publishInputPresentation(page, true);
   await publishInteraction(page, interactionSnapshot("interactive", 1, 520));
   await page.waitForTimeout(800);
 
   const origin = PNG.sync.read(await page.screenshot({ omitBackground: true }));
-  const centerAlpha = alphaAt(origin, 400, 130);
-  const rimAlpha = Math.max(alphaAt(origin, 400, 99), alphaAt(origin, 400, 160));
+  await writeFile(testInfo.outputPath("liquid-optics-origin.png"), PNG.sync.write(origin));
+  const centerAlpha = alphaAt(origin, 164, 220);
+  const rimAlpha = Math.max(
+    maximumAlphaAtX(origin, 164, 188, 202),
+    maximumAlphaAtX(origin, 164, 238, 252),
+  );
   expect(centerAlpha).toBeGreaterThanOrEqual(8);
   expect(centerAlpha).toBeLessThanOrEqual(29);
-  expect(rimAlpha).toBeGreaterThanOrEqual(45);
-  expect(rimAlpha).toBeLessThanOrEqual(82);
-  expect(rimAlpha - centerAlpha).toBeGreaterThanOrEqual(28);
+  expect(rimAlpha).toBeGreaterThanOrEqual(64);
+  expect(rimAlpha).toBeLessThanOrEqual(120);
+  expect(rimAlpha - centerAlpha).toBeGreaterThanOrEqual(48);
 
   const dispersion = spectralExtremes(origin, {
-    left: 250,
-    top: 90,
-    right: 610,
-    bottom: 170,
+    left: 8,
+    top: 8,
+    right: 304,
+    bottom: 258,
   });
   expect(dispersion.warm).toBeGreaterThanOrEqual(32);
   expect(dispersion.cool).toBeGreaterThanOrEqual(32);
@@ -110,14 +120,14 @@ test("liquid optics expose bounded thickness, paired dispersion, and screen lock
   await publishInteraction(page, interactionSnapshot("interactive", 2, 1_000, 320));
   await page.waitForTimeout(120);
   const moved = PNG.sync.read(await page.screenshot({ omitBackground: true }));
-  await writeFile(testInfo.outputPath("liquid-optics-origin.png"), PNG.sync.write(origin));
   await writeFile(testInfo.outputPath("liquid-optics-moved.png"), PNG.sync.write(moved));
-  expect(axisCoverage(moved, 96, 596, 130, 34)).toBeGreaterThan(0.98);
+  const movedCoverage = axisCoverage(moved, 31, 297, 220, 26);
+  expect(movedCoverage).toBe(1);
   expect(changedPixelCountInBounds(origin, moved, 5, {
-    left: 250,
-    top: 100,
-    right: 610,
-    bottom: 160,
+    left: 8,
+    top: 8,
+    right: 304,
+    bottom: 258,
   })).toBeGreaterThan(2_000);
   await context.close();
 });
@@ -142,15 +152,15 @@ test("compatibility glass stays anchored with restrained spectral rims", async (
   const centroid = alphaCentroid(frame, 8);
   expect(centroid.x).toBeGreaterThan(72);
   expect(centroid.x).toBeLessThan(126);
-  expect(centroid.y).toBeGreaterThan(110);
-  expect(centroid.y).toBeLessThan(150);
+  expect(centroid.y).toBeGreaterThan(70);
+  expect(centroid.y).toBeLessThan(110);
   expect(alphaAt(frame, 0, 0)).toBe(0);
   expect(alphaAt(frame, WIDTH - 1, HEIGHT - 1)).toBe(0);
   const dispersion = spectralExtremes(frame, {
     left: 8,
-    top: 36,
+    top: 8,
     right: 186,
-    bottom: 224,
+    bottom: 180,
   });
   expect(dispersion.warm).toBeGreaterThanOrEqual(12);
   expect(dispersion.cool).toBeGreaterThanOrEqual(12);
@@ -160,9 +170,82 @@ test("compatibility glass stays anchored with restrained spectral rims", async (
 async function publishInteraction(page: Page, snapshot: PresenceInteractionSnapshot) {
   await page.evaluate((value) => {
     const channel = new BroadcastChannel("fairy.presence.interaction.v1");
-    channel.postMessage({ kind: "presence.interaction", snapshot: value });
-    window.setTimeout(() => channel.close(), 100);
+    const publish = () => channel.postMessage({
+      kind: "presence.interaction",
+      snapshot: value,
+    });
+    publish();
+    window.setTimeout(publish, 30);
+    window.setTimeout(publish, 80);
+    window.setTimeout(() => channel.close(), 120);
   }, snapshot);
+}
+
+interface ReturnMotionSample {
+  bridge: number;
+  capsule: number;
+}
+
+async function startReturnMotionRecording(page: Page) {
+  await page.evaluate(() => {
+    type MotionWindow = typeof window & {
+      __fairyReturnMotionSamples?: Array<{ bridge: number; capsule: number }>;
+      __fairyReturnMotionFrame?: number;
+    };
+    const motionWindow = window as MotionWindow;
+    motionWindow.__fairyReturnMotionSamples = [];
+    if (motionWindow.__fairyReturnMotionFrame !== undefined) {
+      cancelAnimationFrame(motionWindow.__fairyReturnMotionFrame);
+    }
+    const record = () => {
+      const surface = document.querySelector<HTMLElement>(
+        '[data-testid="presence-render-surface"]',
+      );
+      const canvas = document.querySelector<HTMLCanvasElement>(".presence-webgl-canvas");
+      if (surface?.dataset.interactionPhase === "returning" && canvas !== null) {
+        const bridge = Number(canvas.dataset.shapeBridge);
+        const capsule = Number(canvas.dataset.shapeCapsule);
+        if (Number.isFinite(bridge) && Number.isFinite(capsule)) {
+          motionWindow.__fairyReturnMotionSamples?.push({ bridge, capsule });
+        }
+      }
+      const complete = motionWindow.__fairyReturnMotionSamples?.some(
+        (sample) => sample.bridge === 0 && sample.capsule === 0,
+      );
+      if (!complete) {
+        motionWindow.__fairyReturnMotionFrame = requestAnimationFrame(record);
+      }
+    };
+    motionWindow.__fairyReturnMotionFrame = requestAnimationFrame(record);
+  });
+}
+
+async function readReturnMotionSamples(page: Page): Promise<ReturnMotionSample[]> {
+  return page.evaluate(() => {
+    const motionWindow = window as typeof window & {
+      __fairyReturnMotionSamples?: ReturnMotionSample[];
+    };
+    return motionWindow.__fairyReturnMotionSamples ?? [];
+  });
+}
+
+async function waitForReturnMotionComplete(page: Page) {
+  try {
+    await page.waitForFunction(() => {
+      const motionWindow = window as typeof window & {
+        __fairyReturnMotionSamples?: ReturnMotionSample[];
+      };
+      const samples = motionWindow.__fairyReturnMotionSamples ?? [];
+      const last = samples.at(-1);
+      return samples.length >= 5 && last?.capsule === 0 && last.bridge === 0;
+    }, undefined, { timeout: 2_000 });
+  } catch (error) {
+    const samples = await readReturnMotionSamples(page);
+    throw new Error(
+      `Return motion did not settle: ${JSON.stringify(samples.slice(-12))}`,
+      { cause: error },
+    );
+  }
 }
 
 async function waitForInteractionSource(page: Page) {
@@ -187,16 +270,54 @@ async function publishRenderSettings(
     channel.postMessage({
       kind: "render-settings.snapshot",
       settings: {
-        schema_version: 1,
+        schema_version: 3,
         mode: rendererMode,
+        optics_mode: "standard",
         size_scale: 1,
         opacity: 0.92,
         motion_enabled: true,
         particles_enabled: true,
+        target_frame_rate: 60,
       },
     });
     window.setTimeout(() => channel.close(), 100);
   }, mode);
+}
+
+async function publishInputPresentation(page: Page, capsuleVisible: boolean) {
+  await page.evaluate((visible) => {
+    const channel = new BroadcastChannel("fairy.presence.input-presentation.v3");
+    const message = {
+      kind: "input-presentation.snapshot",
+      presentation: {
+        schema_version: 3,
+        sequence: 1,
+        layout: visible ? "compact" : "core",
+        capsule_visible: visible,
+        capsule_width: 280,
+        motion: {
+          schema_version: 1,
+          revision: 1,
+          state: visible ? "input" : "idle",
+          surface: visible ? "input" : "core",
+          activity: "none",
+          state_started_at_ms: 0,
+          state_duration_ms: null,
+          phase_progress: 1,
+          content_visible: visible,
+          surface_interactive: true,
+          capsule_visible: visible,
+          reduced_motion: false,
+          do_not_disturb: false,
+        },
+      },
+    };
+    const publish = () => channel.postMessage(message);
+    publish();
+    window.setTimeout(publish, 30);
+    window.setTimeout(publish, 80);
+    window.setTimeout(() => channel.close(), 120);
+  }, capsuleVisible);
 }
 
 function interactionSnapshot(
@@ -214,7 +335,7 @@ function interactionSnapshot(
     phase_started_at_ms: sampledAt,
     reduced_motion: false,
     cursor: {
-      point: { x: active ? 136 : 500, y: 130 },
+      point: { x: active ? 136 : 500, y: 88 },
       direction: { x: active ? 1 : 0, y: 0 },
       distance_px: active ? 40 : 404,
       speed_px_s: 0,
@@ -222,10 +343,10 @@ function interactionSnapshot(
       band: active ? "active" : "outside",
     },
     placement: {
-      anchor: { x: renderX + 96, y: 130 },
+      anchor: { x: renderX + 96, y: 88 },
       render_frame: { x: renderX, y: 0, width: WIDTH, height: HEIGHT },
-      input_compact_frame: { x: renderX + 24, y: 58, width: 616, height: 144 },
-      input_expanded_frame: { x: renderX + 24, y: -158, width: 616, height: 360 },
+      input_compact_frame: { x: renderX + 24, y: 0, width: 280, height: 260 },
+      input_expanded_frame: { x: renderX + 24, y: -100, width: 616, height: 360 },
       monitor_work_area: { x: 0, y: 0, width: 1920, height: 1040 },
       scale_factor: 1,
       expansion_direction: "right",
@@ -331,6 +452,19 @@ function maximumAlpha(image: PNG): number {
   let maximum = 0;
   for (let index = 3; index < image.data.length; index += 4) {
     maximum = Math.max(maximum, image.data[index]);
+  }
+  return maximum;
+}
+
+function maximumAlphaAtX(
+  image: PNG,
+  x: number,
+  startY: number,
+  endY: number,
+): number {
+  let maximum = 0;
+  for (let y = startY; y <= endY; y += 1) {
+    maximum = Math.max(maximum, alphaAt(image, x, y));
   }
   return maximum;
 }

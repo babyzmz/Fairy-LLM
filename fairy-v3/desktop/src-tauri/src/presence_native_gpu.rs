@@ -23,7 +23,7 @@ pub enum NativeGpuLifecycle {
 pub enum NativeGpuBackend {
     #[default]
     Unavailable,
-    WindowsGraphicsCaptureD3d11DirectComposition,
+    WindowsHostBackdropD3d11Composition,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -277,7 +277,7 @@ impl NativeGpuStatus {
     #[cfg(target_os = "windows")]
     fn starting(config: NativeGpuConfig) -> Self {
         Self {
-            backend: NativeGpuBackend::WindowsGraphicsCaptureD3d11DirectComposition,
+            backend: NativeGpuBackend::WindowsHostBackdropD3d11Composition,
             lifecycle: NativeGpuLifecycle::Starting,
             zero_copy_capture: true,
             pixel_ipc: false,
@@ -691,45 +691,50 @@ mod tests {
     #[test]
     fn native_shader_contract_forbids_cpu_readback_and_pixel_ipc() {
         let source = include_str!("presence_native_gpu/liquid_glass.hlsl");
-        let clean_source = include_str!("presence_native_gpu/clean_backdrop.hlsl");
         let backend = include_str!("presence_native_gpu/windows_backend.rs");
+        let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         for forbidden in [
             "D3D11_USAGE_STAGING",
             "D3D11_MAP_READ",
             "frame.buffer(",
             "ReadPixels",
             "postMessage",
-            "core_warp",
-            "capsule_warp",
         ] {
             assert!(!source.contains(forbidden));
-            assert!(!clean_source.contains(forbidden));
-            assert!(!backend.contains(forbidden));
+            assert!(!production.contains(forbidden));
+        }
+        for forbidden in [
+            "core_warp",
+            "capsule_warp",
+            "captured - overlay.rgb",
+            "/ denominator",
+            "desktop_texture",
+            "sample_desktop_linear",
+            "previous_overlay",
+            "CleanBackdropCache",
+            "DwmFlush()",
+        ] {
+            assert!(!source.contains(forbidden));
+            assert!(!production.contains(forbidden));
         }
         for required in [
-            "Texture2D<float4> desktop_texture",
             "scene_sdf",
             "thickness_field",
-            "fresnel",
-            "dispersion_uv",
+            "rim_fresnel",
             "outer_caustic",
-            "highlight_primary",
-            "highlight_secondary",
+            "key_highlight",
+            "fill_highlight",
             "shape_bridge",
             "return min(result, capsule)",
-            "sample_desktop_linear",
-            "optical_guard_px = 52.0",
-            "uv = clamp(uv, minimum_uv, maximum_uv)",
             "EDGE_LENS_DEPTH_PX",
             "edge_refraction_profile",
-            "EDGE_REFRACTION_PX",
-            "EDGE_DISPERSION_PX",
+            "drag_center_shift",
+            "state_flow",
             "center_alpha",
             "edge_material",
-            "core_background_adaptation",
-            "core_headroom",
             "linear_to_srgb",
-            "color * alpha, alpha",
+            "identity_premultiplied",
+            "foreground_premultiplied",
             "SV_Target",
         ] {
             assert!(
@@ -738,35 +743,19 @@ mod tests {
             );
         }
         for required in [
-            "captured_texture",
-            "previous_clean_texture",
-            "previous_overlay_texture",
-            "bounded_low_alpha_recovery",
-            "denominator = max(1.0 - overlay.a, 0.64)",
-            "input_surface_valid",
-            "preserve_start",
+            "DWMWA_USE_HOSTBACKDROPBRUSH",
+            "CreateHostBackdropBrush()",
+            "CreateCompositionSurfaceForSwapChain(swap_chain)",
+            "HOST_BACKDROP_LENS_BANDS",
+            ".update_lens(presentation, drag, render_frame)",
+            "capture_source_valid: 0.0",
         ] {
             assert!(
-                clean_source.contains(required),
-                "missing clean-backdrop contract token: {required}"
+                production.contains(required),
+                "missing Host Backdrop contract token: {required}"
             );
         }
         assert!(!source.contains("remove_previous_overlay"));
         assert!(!source.contains("previous_overlay_texture"));
-        for required in [
-            "create_overlay_history",
-            "CleanBackdropCache",
-            "create_clean_backdrop_surface",
-            "create_clean_backdrop_shaders",
-            "OVERLAY_HISTORY_CAPACITY",
-            "sample_for_capture(captured_at_100ns)",
-            "self.overlay_history.record_presented",
-            "frame.source_timestamp_100ns",
-        ] {
-            assert!(
-                backend.contains(required),
-                "missing native GPU feedback-suppression contract: {required}"
-            );
-        }
     }
 }

@@ -1,8 +1,9 @@
 # Privacy-Safe Liquid Glass Optics Design
 
-**Status:** Approved on 2026-07-14
+**Status:** Superseded on 2026-07-17 by the dual-mode contract in ADR 0016
 
-**Decision:** Route A - procedural optics without desktop capture
+**Decision:** Route A remains the default `standard` mode; an explicit
+`enhanced` mode adds bounded-sampling GPU-only Windows live refraction
 
 **Scope:** Fairy V3 `pet-render` and its Canvas compatibility renderer
 
@@ -22,10 +23,13 @@ dispersion as one coherent material response. A transparent WebView cannot
 read or displace arbitrary pixels belonging to windows behind it without a
 desktop-capture or native-backdrop path.
 
-Fairy therefore adopts those optical principles without copying their sampling
-mechanism. The renderer must create a clearly visible glass lens while
-preserving the approved rule that it never captures, caches, analyzes, or
-uploads desktop pixels.
+Fairy adopts those optical principles without copying their implementations.
+Standard mode creates a clearly visible procedural lens without capture.
+Enhanced mode uses WGC to acquire the active monitor frame. The production
+shader may sample only the bounded `pet-render` rectangle plus a
+32-logical-pixel optical guard band; the texture remains GPU-local and is never
+cached, analyzed, logged, uploaded, read back to the CPU, or sent through
+WebView IPC.
 
 References:
 
@@ -45,15 +49,16 @@ rule that chromatic separation must leave the center clean.
 
 ## Decision
 
-The production renderer will use a screen-locked procedural environment field,
-an SDF-derived thickness profile, surface normals, bounded spectral offsets,
+The standard renderer uses a screen-locked procedural environment field, an
+SDF-derived thickness profile, surface normals, bounded spectral offsets,
 directional caustics, Fresnel reflection, and premultiplied-alpha composition.
-It will not add a texture sampler, screen capture, wallpaper readback, or hidden
-native backdrop dependency.
+The enhanced renderer uses the same shape and optical limits while sampling a
+WGC texture directly in D3D11 and presenting it through DirectComposition.
 
-This is an optical simulation. It may suggest magnification and refraction by
-making internal light and environment detail move relative to the pet, but it
-must not be described as physically refracting arbitrary desktop applications.
+Standard mode is an optical simulation and must not be described as physically
+refracting arbitrary desktop applications. Enhanced mode performs real screen
+sampling with a bounded shader address region, but it is not Apple's private
+material implementation or physical ray tracing.
 
 ## Rendering Architecture
 
@@ -145,13 +150,16 @@ WebGL2.
 ## Data Flow and Boundaries
 
 `PresenceInteractionSnapshot` remains the authoritative source for placement.
-No new Core RPC, database entity, or per-frame IPC is introduced. Renderer
-uniforms are derived locally from the latest placement and visual snapshot.
+No new Core RPC or database entity is introduced. Renderer uniforms are derived
+locally from the latest placement and visual snapshot. Enhanced mode sends only
+bounded presentation state and lifecycle commands; the acquired monitor texture
+stays inside the native GPU pipeline and frame pixels never cross the
+Rust/WebView boundary.
 
 The render surface remains unable to call Core, Voice, settings mutation, file
-operations, execution, or approvals. No optical data enters the Ledger. The
-only new runtime state is GPU-local uniform data derived from already approved
-window placement.
+operations, execution, or approvals. No optical data enters the Ledger. Optical
+runtime state is limited to GPU-local capture textures, shader resources, and
+uniform data derived from approved window placement.
 
 ## Failure Handling
 
@@ -161,9 +169,9 @@ unit work area and report degraded renderer health instead of producing NaN
 coordinates. Monitor changes update the uniforms on the next placement snapshot
 without rebuilding the material.
 
-No failure path may enable capture, add a sampler, exit Fairy, or interfere with
-the main workspace. The existing crash budget and compatibility fallback remain
-authoritative.
+No failure path may silently enable enhanced capture, expand its region, expose
+pixels to the CPU, exit Fairy, or interfere with the main workspace. Native,
+WebGL, and compatibility failure budgets remain independent.
 
 ## Verification
 
@@ -176,8 +184,9 @@ authoritative.
 - Compile the shader in the WebGL2 probe.
 - Assert the material contains thickness, spectral, caustic, and screen-space
   environment stages.
-- Assert the production shader contains no `sampler2D`, texture read, capture,
-  or backdrop contract.
+- Assert standard mode starts with no capture and enhanced mode contains no CPU
+  readback, encoded frame, pixel IPC, or persistence contract.
+- Compile both the WebGL2 shader and the production HLSL shader model.
 
 ### Pixel and visual evidence
 
@@ -209,17 +218,20 @@ authoritative.
 2. The material reads as transparent volume on light, dark, and complex
    backgrounds while remaining restrained at idle.
 3. Environment detail remains screen locked when the pet moves.
-4. No desktop pixel capture or texture-sampling path exists.
+4. Standard mode performs no capture; enhanced mode requires an explicit saved
+   preference, keeps the acquired monitor texture GPU-only, and hard-clamps
+   shader sampling to the Pet surface and optical guard band.
 5. Reduced Motion, renderer fallback, pass-through, focus safety, placement,
    performance, installer, and full Fairy V3 gates continue to pass.
 
 ## Non-Goals
 
-- Reading or displacing pixels from applications behind Fairy.
-- Capturing the desktop, wallpaper, windows, video, HDR surfaces, or protected
-  content.
-- Adding Unity, a native DirectComposition renderer, WebGPU, Win2D displacement,
-  or `HostBackdropBrush` in this milestone.
+- Sampling outside the bounded enhanced Pet surface and optical guard band, or
+  retaining, analyzing, or uploading any acquired pixels.
+- Capturing from `pet-input`, bypassing protected-content behavior, or adding a
+  background capture path that runs without explicit enhanced-mode consent.
+- Adding Unity, WebGPU, Win2D displacement, or `HostBackdropBrush` in this
+  milestone.
 - Recreating Apple's private material implementation or claiming pixel-identical
   Apple Liquid Glass behavior.
 - Adding user-facing optical tuning controls before the fixed material is

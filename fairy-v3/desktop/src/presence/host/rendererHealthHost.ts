@@ -5,7 +5,7 @@ import type { PresenceRendererHealth } from "../render/presenceRenderer";
 
 const healthReportSchema = z.object({
   schema_version: z.literal(1),
-  mode: z.enum(["liquid", "compatibility"]),
+  mode: z.enum(["native", "liquid", "compatibility"]),
   status: z.enum([
     "initializing",
     "running",
@@ -22,6 +22,11 @@ const healthReportSchema = z.object({
     "WEBGL_CONTEXT_LOST",
     "SHADER_INITIALIZATION_FAILED",
     "CANVAS2D_UNAVAILABLE",
+    "NATIVE_GPU_UNAVAILABLE",
+    "NATIVE_GPU_START_FAILED",
+    "NATIVE_GPU_UPDATE_FAILED",
+    "NATIVE_GPU_RUNTIME_FAILED",
+    "NATIVE_GPU_STOP_FAILED",
   ]).nullable(),
 }).strict();
 

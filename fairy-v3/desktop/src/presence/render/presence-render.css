@@ -19,6 +19,10 @@
   visibility: hidden;
 }
 
+.presence-renderer-stack[data-standby-hidden="true"] {
+  visibility: hidden;
+}
+
 .presence-render-window[data-reduced-motion="true"] * {
   animation: none !important;
   transition: none !important;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_FAIRY_MOTION_SNAPSHOT } from "../domain/motionState";
 import type { PresenceRenderSnapshot } from "./presenceRenderer";
 import {
   LIQUID_OPTICS_LIMITS,
@@ -8,10 +9,13 @@ import {
 
 function snapshot(
   interaction: PresenceRenderSnapshot["interaction"],
+  overrides: Partial<PresenceRenderSnapshot> = {},
 ): PresenceRenderSnapshot {
   return {
+    motion: DEFAULT_FAIRY_MOTION_SNAPSHOT,
     interaction,
     input_capsule_visible: interaction?.phase === "interactive",
+    input_capsule_width: 280,
     work_state: "idle",
     speaking: false,
     voice_level: 0,
@@ -24,6 +28,7 @@ function snapshot(
     idle_for_ms: 0,
     target_frame_rate: 60,
     frame_rate_limit: 60,
+    ...overrides,
   };
 }
 
@@ -103,5 +108,32 @@ describe("liquid optics uniforms", () => {
     expect(optics.monitor_size).toEqual([4, 4]);
     expect(optics.device_scale).toBe(4);
     expect(Object.values(optics).flat().every(Number.isFinite)).toBe(true);
+  });
+
+  it("reduces refraction and disables dispersion for accessibility modes", () => {
+    const baseline = liquidOpticsForSnapshot(
+      snapshot(interaction("active")),
+      640,
+      260,
+      1,
+    );
+    const reducedTransparency = liquidOpticsForSnapshot(
+      snapshot(interaction("active"), { reduced_transparency: true }),
+      640,
+      260,
+      1,
+    );
+    const increasedContrast = liquidOpticsForSnapshot(
+      snapshot(interaction("active"), { increased_contrast: true }),
+      640,
+      260,
+      1,
+    );
+
+    expect(reducedTransparency.refraction_px).toBeLessThan(baseline.refraction_px / 2);
+    expect(reducedTransparency.dispersion_px).toBe(0);
+    expect(reducedTransparency.lens_strength).toBeLessThan(baseline.lens_strength);
+    expect(increasedContrast.dispersion_px).toBe(0);
+    expect(increasedContrast.rim_strength).toBeGreaterThanOrEqual(0.96);
   });
 });

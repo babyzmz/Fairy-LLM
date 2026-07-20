@@ -1,3 +1,4 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { z } from "zod";
 
 import type { DesktopPreferences } from "../../settings/client";
@@ -13,7 +14,7 @@ export interface PresenceRenderSettings {
   opacity: number;
   motion_enabled: boolean;
   particles_enabled: boolean;
-  target_frame_rate: 60 | 144;
+  target_frame_rate: 60 | 144 | 300;
 }
 
 export interface PresenceRenderSettingsChannel {
@@ -31,6 +32,7 @@ interface BroadcastPort {
 }
 
 type BroadcastFactory = (name: string) => BroadcastPort | null;
+type SettingsInvoke = (command: string) => Promise<unknown>;
 
 const settingsSchema = z.object({
   schema_version: z.literal(3),
@@ -40,7 +42,7 @@ const settingsSchema = z.object({
   opacity: z.number().min(0.4).max(1),
   motion_enabled: z.boolean(),
   particles_enabled: z.boolean(),
-  target_frame_rate: z.union([z.literal(60), z.literal(144)]),
+  target_frame_rate: z.union([z.literal(60), z.literal(144), z.literal(300)]),
 }).strict();
 
 const messageSchema = z.discriminatedUnion("kind", [
@@ -75,6 +77,19 @@ export function safeRenderSettingsFromPreferences(
     particles_enabled: preferences.pet_particles_enabled,
     target_frame_rate: preferences.pet_target_fps,
   });
+}
+
+export async function loadNativePresenceRenderSettings(
+  invokeCommand: SettingsInvoke | null = isTauri()
+    ? (command) => invoke(command)
+    : null,
+): Promise<PresenceRenderSettings | null> {
+  if (invokeCommand === null) return null;
+  try {
+    return settingsSchema.parse(await invokeCommand("pet_render_settings_get"));
+  } catch {
+    return null;
+  }
 }
 
 export function createPresenceRenderSettingsChannel(

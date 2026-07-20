@@ -10,6 +10,7 @@ import {
   rendererFrameInterval,
   type PresenceRenderer,
   type PresenceRenderSnapshot,
+  visualStateForSnapshot,
 } from "./presenceRenderer";
 import { RendererFrameLoop } from "./RendererFrameLoop";
 import {
@@ -26,13 +27,19 @@ import {
   liquidDirectionForSnapshot,
   liquidShapeTargetForSnapshot,
 } from "./liquidGlassMaterial";
-import { liquidAnchorForSnapshot } from "./liquidGeometry";
+import {
+  liquidAnchorForSnapshot,
+  liquidCapsuleGeometryForSnapshot,
+} from "./liquidGeometry";
 import { backdropFrameRate } from "./backdropCadence";
 import { shouldCaptureBackdrop } from "./backdropPolicy";
 import { ReusableBackdropTextureBuffer } from "./backdropTextureBuffer";
 import { LiquidMotionController } from "./liquidMotion";
 import { liquidOpticsForSnapshot } from "./liquidOptics";
-import { liquidVisualStyleForSnapshot } from "./liquidVisualState";
+import {
+  LiquidVisualTransition,
+  liquidVisualStyleForSnapshot,
+} from "./liquidVisualState";
 import {
   NativeBackdropStream,
   type NativeBackdropFrame,
@@ -49,6 +56,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
   private readonly backdropTexture: THREE.DataTexture;
   private readonly backdropStream = new NativeBackdropStream();
   private readonly motion: LiquidMotionController;
+  private readonly visualMotion: LiquidVisualTransition;
   private snapshot: PresenceRenderSnapshot;
   private readonly loop: RendererFrameLoop;
   private readonly performanceSampler = new RendererPerformanceSampler();
@@ -83,6 +91,12 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.motion = new LiquidMotionController(
       liquidShapeTargetForSnapshot(initialSnapshot),
       initialSnapshot.speaking ? initialSnapshot.voice_level : 0,
+    );
+    const initialStyle = liquidVisualStyleForSnapshot(initialSnapshot);
+    this.visualMotion = new LiquidVisualTransition(
+      visualStateForSnapshot(initialSnapshot),
+      initialStyle,
+      performance.now(),
     );
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -124,20 +138,21 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
       premultipliedAlpha: true,
       uniforms: {
         uResolution: { value: new THREE.Vector2(1, 1) },
-        uAnchor: { value: new THREE.Vector2(96, 130) },
+        uAnchor: { value: new THREE.Vector2(96, 172) },
         uDirection: { value: new THREE.Vector2(1, 0) },
+        uCapsuleOffset: { value: new THREE.Vector2(68, -132) },
         uGaze: { value: new THREE.Vector2(0, 0) },
         uRenderOrigin: { value: new THREE.Vector2(...initialOptics.render_origin) },
         uMonitorOrigin: { value: new THREE.Vector2(...initialOptics.monitor_origin) },
         uMonitorSize: { value: new THREE.Vector2(...initialOptics.monitor_size) },
         uShape: { value: new THREE.Vector3(0, 0, 0) },
-        uAccent: { value: new THREE.Vector3(0.38, 0.75, 0.9) },
+        uAccent: { value: new THREE.Vector3(...initialStyle.accent) },
         uTime: { value: 0 },
-        uEnergy: { value: 0.35 },
+        uEnergy: { value: initialStyle.energy },
         uDpr: { value: 1 },
-        uParticleCount: { value: 10 },
-        uParticleSeed: { value: 23 },
-        uPulseSpeed: { value: 0.42 },
+        uParticleCount: { value: initialStyle.particle_count },
+        uParticleSeed: { value: initialStyle.particle_seed },
+        uPulseSpeed: { value: initialStyle.pulse_speed },
         uSpeechLevel: { value: 0 },
         uSizeScale: { value: initialSnapshot.size_scale },
         uOpacity: { value: initialSnapshot.opacity },
@@ -148,9 +163,16 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
         uLensStrength: { value: initialOptics.lens_strength },
         uRimStrength: { value: initialOptics.rim_strength },
         uShadowStrength: { value: initialOptics.shadow_strength },
+        uReducedTransparency: {
+          value: initialSnapshot.reduced_transparency === true ? 1 : 0,
+        },
+        uIncreasedContrast: {
+          value: initialSnapshot.increased_contrast === true ? 1 : 0,
+        },
         uBackdropTexture: { value: this.backdropTexture },
         uBackdropSize: { value: new THREE.Vector2(1, 1) },
         uBackdropReady: { value: 0 },
+        uCapsuleHalfWidth: { value: 132 },
       },
     });
     this.scene.add(new THREE.Mesh(this.geometry, this.material));
@@ -300,6 +322,7 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
       this.runtimeMetrics.recordAnimationFrame(now, 1_000 / frameInterval);
     }
     const motion = this.motion.sample(now);
+    const visual = this.visualMotion.sample(now);
     if (import.meta.env.DEV) {
       this.canvas.dataset.shapeDroplet = motion.droplet.toFixed(3);
       this.canvas.dataset.shapeBridge = motion.bridge.toFixed(3);
@@ -312,6 +335,13 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     );
     this.material.uniforms.uSpeechLevel.value = motion.speech_level;
     this.material.uniforms.uReturnBounce.value = motion.return_bounce;
+    this.material.uniforms.uAccent.value.set(...visual.accent);
+    this.material.uniforms.uEnergy.value = visual.energy;
+    this.material.uniforms.uParticleSeed.value = visual.particle_seed;
+    this.material.uniforms.uPulseSpeed.value = visual.pulse_speed;
+    this.material.uniforms.uParticleCount.value = this.snapshot.particles_enabled
+      ? visual.particle_count
+      : 0;
     this.material.uniforms.uTime.value = this.snapshot.reduced_motion ? 0 : now / 1_000;
     if (!this.performanceSamplingComplete && this.gpuTimer.hasPendingResults()) {
       this.recordCompletedGpuFrames();
@@ -382,6 +412,10 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
     this.material.uniforms.uLensStrength.value = optics.lens_strength;
     this.material.uniforms.uRimStrength.value = optics.rim_strength;
     this.material.uniforms.uShadowStrength.value = optics.shadow_strength;
+    this.material.uniforms.uReducedTransparency.value =
+      this.snapshot.reduced_transparency === true ? 1 : 0;
+    this.material.uniforms.uIncreasedContrast.value =
+      this.snapshot.increased_contrast === true ? 1 : 0;
     if (this.experimentMode === "no-refraction") {
       this.material.uniforms.uRefractionPx.value = 0;
       this.material.uniforms.uDispersionPx.value = 0;
@@ -406,15 +440,14 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
       this.snapshot.reduced_motion,
     );
     const style = liquidVisualStyleForSnapshot(this.snapshot);
-    this.material.uniforms.uAccent.value.set(...style.accent);
-    this.material.uniforms.uEnergy.value = style.energy;
-    this.material.uniforms.uParticleSeed.value = style.particle_seed;
-    this.material.uniforms.uPulseSpeed.value = style.pulse_speed;
+    this.visualMotion.setTarget(
+      visualStateForSnapshot(this.snapshot),
+      style,
+      performance.now(),
+      this.snapshot.reduced_motion,
+    );
     this.material.uniforms.uSizeScale.value = this.snapshot.size_scale;
     this.material.uniforms.uOpacity.value = this.snapshot.opacity;
-    this.material.uniforms.uParticleCount.value = this.snapshot.particles_enabled
-      ? style.particle_count
-      : 0;
     const anchor = liquidAnchorForSnapshot(
       this.snapshot,
       this.width,
@@ -422,6 +455,17 @@ export class ThreeLiquidRenderer implements PresenceRenderer {
       this.dpr,
     );
     this.material.uniforms.uAnchor.value.set(anchor.x, anchor.y);
+    const capsule = liquidCapsuleGeometryForSnapshot(
+      this.snapshot,
+      this.width,
+      this.height,
+      this.dpr,
+    );
+    this.material.uniforms.uCapsuleOffset.value.set(
+      capsule.center_x - anchor.x,
+      capsule.center_y - anchor.y,
+    );
+    this.material.uniforms.uCapsuleHalfWidth.value = capsule.half_width;
   }
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { PresenceInteractionSnapshot } from "../domain/interaction";
+import { DEFAULT_FAIRY_MOTION_SNAPSHOT } from "../domain/motionState";
 import type { PresenceRenderSnapshot } from "./presenceRenderer";
 import {
   LIQUID_GLASS_FRAGMENT_SHADER,
@@ -14,6 +15,12 @@ function renderSnapshot(
   cursor = { x: 0, y: 0 },
 ): PresenceRenderSnapshot {
   return {
+    motion: {
+      ...DEFAULT_FAIRY_MOTION_SNAPSHOT,
+      state: "forming",
+      surface: "input",
+      capsule_visible: true,
+    },
     interaction: {
       schema_version: 1,
       sequence: 1,
@@ -40,6 +47,7 @@ function renderSnapshot(
       },
     } satisfies PresenceInteractionSnapshot,
     input_capsule_visible: true,
+    input_capsule_width: 280,
     work_state: "idle",
     speaking: false,
     voice_level: 0,
@@ -92,8 +100,10 @@ describe("Liquid Glass material", () => {
   it("keeps the material axis aligned with the selected monitor edge", () => {
     const right = liquidDirectionForSnapshot(renderSnapshot("right", { x: -1, y: 1 }));
     const left = liquidDirectionForSnapshot(renderSnapshot("left", { x: 1, y: -1 }));
-    expect(right.x).toBeGreaterThan(0.9);
-    expect(left.x).toBeLessThan(-0.9);
+    expect(right.x).toBeGreaterThan(0.4);
+    expect(right.y).toBeGreaterThan(0.8);
+    expect(left.x).toBeLessThan(-0.4);
+    expect(left.y).toBeGreaterThan(0.8);
     expect(Math.hypot(right.x, right.y)).toBeCloseTo(1);
     expect(Math.hypot(left.x, left.y)).toBeCloseTo(1);
   });
@@ -118,42 +128,75 @@ describe("Liquid Glass material", () => {
       bridge: 0,
       capsule: 1,
     });
-    expect(liquidDirectionForSnapshot(snapshot)).toEqual({ x: 1, y: 0 });
+    expect(liquidDirectionForSnapshot(snapshot)).toEqual({
+      x: expect.any(Number),
+      y: expect.any(Number),
+    });
+    expect(liquidDirectionForSnapshot(snapshot).y).toBeGreaterThan(0.8);
   });
 
   it("samples the latest desktop texture with boundary-continuous glass optics", () => {
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("bezierBridgeDistance");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("smoothMinimum");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("if (dropletMorph >= 0.001)");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("if (bridgeMorph >= 0.001)");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("sceneSdf");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("thicknessField");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("surfaceNormal");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("curvatureApprox");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("bottomLip");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("edgeLensResponse");
-    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("pow(edgeProfile, 2.2)");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("pow(edgeProfile, 1.55)");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("schlickFresnel");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("screenSpaceEnvironment");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uBackdropTexture");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("interiorContinuity");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("chromaticDispersion");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("chromaMask");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("primaryTransmission");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("replacementMaterial");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("BackdropAdaptation");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("caustic");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("keyHighlight");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("counterHighlight");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("narrowContactShadow");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("identityPoint");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("identityBreath");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("identityAtmosphereOuter");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("identityAtmosphereInner");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toContain("coreRing");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toContain("outerCoreRing");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("capsuleDistance");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toContain("capsuleContentMask");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uLensStrength");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uRimStrength");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uShadowStrength");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uReducedTransparency");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uIncreasedContrast");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uSizeScale");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uOpacity");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("sampler2D uBackdropTexture");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("uBackdropSize");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("texture2D(uBackdropTexture");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain(
-      "clamp(glassColor, 0.0, 1.0) * foregroundAlpha",
+      "clamp(glassColor, 0.0, 1.0) * materialAlpha",
+    );
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain(
+      "vec2 identityOffset = point - uGaze * 3.5 * uDpr",
+    );
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain(
+      "vec3 foregroundPremultiplied = identityPremultiplied",
+    );
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("float atmosphereLayerAlpha");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("float pointLayerAlpha");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toContain(
+      "identityColor * identityAlpha",
+    );
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain(
+      "materialPremultiplied * (1.0 - identityAlpha)",
+    );
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toContain(
+      "coreOffset = point + internalRefraction",
     );
     expect(LIQUID_GLASS_FRAGMENT_SHADER).not.toContain("sampledGlassAlpha");
   });

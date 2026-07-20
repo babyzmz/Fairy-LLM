@@ -14,9 +14,9 @@ export interface LiquidOpticsUniformState {
 }
 
 export const LIQUID_OPTICS_LIMITS = Object.freeze({
-  minimum_dispersion_physical_px: 0.24,
-  active_dispersion_physical_px: 0.78,
-  maximum_dispersion_physical_px: 1,
+  minimum_dispersion_physical_px: 0.12,
+  active_dispersion_physical_px: 0.35,
+  maximum_dispersion_physical_px: 0.45,
   idle_refraction_logical_px: 5.5,
   active_refraction_logical_px: 8.5,
   maximum_refraction_logical_px: 10,
@@ -73,6 +73,8 @@ export function liquidOpticsForSnapshot(
     LIQUID_OPTICS_LIMITS.active_shadow_strength,
     activity,
   );
+  const reducedTransparency = snapshot.reduced_transparency === true;
+  const increasedContrast = snapshot.increased_contrast === true;
 
   return Object.freeze({
     render_origin: Object.freeze([
@@ -88,15 +90,19 @@ export function liquidOpticsForSnapshot(
     refraction_px: Math.min(
       refractionLogical,
       LIQUID_OPTICS_LIMITS.maximum_refraction_logical_px,
-    ) * deviceScale,
-    dispersion_px: Math.min(
-      dispersionPhysical,
-      LIQUID_OPTICS_LIMITS.maximum_dispersion_physical_px,
-    ),
-    caustic_strength: causticStrength,
-    lens_strength: lensStrength,
-    rim_strength: rimStrength,
-    shadow_strength: shadowStrength,
+    ) * deviceScale * (reducedTransparency ? 0.35 : 1),
+    dispersion_px: reducedTransparency || increasedContrast
+      ? 0
+      : Math.min(
+          dispersionPhysical,
+          LIQUID_OPTICS_LIMITS.maximum_dispersion_physical_px,
+        ),
+    caustic_strength: causticStrength * (reducedTransparency ? 0.45 : 1),
+    lens_strength: lensStrength * (reducedTransparency ? 0.42 : 1),
+    rim_strength: increasedContrast ? Math.max(0.96, rimStrength) : rimStrength,
+    shadow_strength: increasedContrast
+      ? Math.max(0.18, shadowStrength)
+      : shadowStrength,
   });
 }
 

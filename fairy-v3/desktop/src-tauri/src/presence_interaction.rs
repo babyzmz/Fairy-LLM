@@ -2,6 +2,11 @@ use serde::Serialize;
 
 pub const FAST_PASS_THRESHOLD_PX_S: f64 = 900.0;
 pub const POINTER_LEAVE_GRACE_MS: u64 = 350;
+const AWARE_DURATION_MS: u64 = 100;
+const DROPLET_DURATION_END_MS: u64 = 180;
+const STRETCHING_DURATION_END_MS: u64 = 300;
+const INTERACTIVE_AT_MS: u64 = 520;
+const REDUCED_MOTION_INTERACTIVE_AT_MS: u64 = 200;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -98,7 +103,7 @@ impl PresenceInteractionStateMachine {
                 self.reset_candidate();
                 self.transition(PresenceInteractionPhase::Aware, signal.sampled_at_ms);
             } else {
-                let duration = if signal.reduced_motion { 160 } else { 400 };
+                let duration = if signal.reduced_motion { 200 } else { 400 };
                 if signal
                     .sampled_at_ms
                     .saturating_sub(self.phase_started_at_ms)
@@ -133,7 +138,11 @@ impl PresenceInteractionStateMachine {
                     .activation_started_at_ms
                     .map(|started| signal.sampled_at_ms.saturating_sub(started))
                     .unwrap_or_default();
-                let interactive_at = if signal.reduced_motion { 410 } else { 520 };
+                let interactive_at = if signal.reduced_motion {
+                    REDUCED_MOTION_INTERACTIVE_AT_MS
+                } else {
+                    INTERACTIVE_AT_MS
+                };
                 if activation_elapsed >= interactive_at {
                     self.transition(PresenceInteractionPhase::Interactive, signal.sampled_at_ms);
                 }
@@ -157,21 +166,21 @@ impl PresenceInteractionStateMachine {
 
         let activation_started = *self
             .activation_started_at_ms
-            .get_or_insert_with(|| signal.sampled_at_ms.saturating_sub(signal.active_dwell_ms));
+            .get_or_insert(signal.sampled_at_ms);
         let elapsed = signal.sampled_at_ms.saturating_sub(activation_started);
         let next = if signal.reduced_motion {
-            if elapsed >= 250 {
-                PresenceInteractionPhase::InputReveal
+            if elapsed >= REDUCED_MOTION_INTERACTIVE_AT_MS {
+                PresenceInteractionPhase::Interactive
             } else {
-                PresenceInteractionPhase::Aware
+                PresenceInteractionPhase::InputReveal
             }
-        } else if elapsed >= 520 {
+        } else if elapsed >= INTERACTIVE_AT_MS {
             PresenceInteractionPhase::Interactive
-        } else if elapsed >= 300 {
+        } else if elapsed >= STRETCHING_DURATION_END_MS {
             PresenceInteractionPhase::InputReveal
-        } else if elapsed >= 180 {
+        } else if elapsed >= DROPLET_DURATION_END_MS {
             PresenceInteractionPhase::Stretching
-        } else if elapsed >= 100 {
+        } else if elapsed >= AWARE_DURATION_MS {
             PresenceInteractionPhase::Droplet
         } else {
             PresenceInteractionPhase::Aware

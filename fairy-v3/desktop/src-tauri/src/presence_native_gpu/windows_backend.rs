@@ -13,9 +13,10 @@ use super::{
     NativeGpuBackend, NativeGpuConfig, NativeGpuError, NativeGpuExpansionDirection,
     NativeGpuLifecycle, NativeGpuPresentation, NativeGpuStatus, NativeGpuVisualState,
 };
-use crate::presence_coordinator::{PhysicalFrame, PET_CORE_EXTENT_LOGICAL};
+use crate::presence_coordinator::PhysicalFrame;
 use windows::core::{w, Interface, PCSTR, PCWSTR};
 use windows::Graphics::Capture::GraphicsCaptureItem;
+use windows::System::DispatcherQueueController;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
 use windows::Win32::Graphics::Direct3D::{
@@ -23,18 +24,13 @@ use windows::Win32::Graphics::Direct3D::{
 };
 use windows::Win32::Graphics::Direct3D11::{
     ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView,
-    ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D, ID3D11VertexShader,
-    D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE,
-    D3D11_BUFFER_DESC, D3D11_COMPARISON_NEVER, D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_SAMPLER_DESC,
-    D3D11_TEXTURE2D_DESC, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
+    ID3D11Texture2D, ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER, D3D11_BUFFER_DESC,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
 };
-use windows::Win32::Graphics::DirectComposition::{
-    DCompositionCreateDevice, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
-};
+use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_HOSTBACKDROPBRUSH};
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709,
-    DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, DXGI_FORMAT_B8G8R8A8_UNORM,
-    DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_SAMPLE_DESC,
+    DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, IDXGIDevice, IDXGIFactory1, IDXGIFactory2, IDXGIOutput6, IDXGISwapChain1,
@@ -42,8 +38,7 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
 };
 use windows::Win32::Graphics::Gdi::{
-    CreateEllipticRgn, DeleteObject, GetMonitorInfoW, GetWindowRgnBox, MonitorFromPoint,
-    SetWindowRgn, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    GetMonitorInfoW, MonitorFromPoint, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::Com::{CoDecrementMTAUsage, CoIncrementMTAUsage, CO_MTA_USAGE_COOKIE};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -51,18 +46,25 @@ use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerforma
 use windows::Win32::System::Threading::{
     GetCurrentThread, GetCurrentThreadId, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL,
 };
+use windows::Win32::System::WinRT::Composition::{ICompositorDesktopInterop, ICompositorInterop};
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
-use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED};
-use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
+use windows::Win32::System::WinRT::{
+    CreateDispatcherQueueController, DispatcherQueueOptions, RoInitialize, RoUninitialize,
+    DQTAT_COM_NONE, DQTYPE_THREAD_CURRENT, RO_INIT_MULTITHREADED,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindowRect, IsWindow,
-    IsWindowVisible, PeekMessageW, PostMessageW, RegisterClassW, SetWindowPos, ShowWindow,
-    TranslateMessage, HTCLIENT, HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, MA_NOACTIVATE, MSG,
-    PBT_APMSUSPEND, PM_REMOVE, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE, SWP_NOOWNERZORDER,
-    SWP_NOSIZE, SW_SHOWNOACTIVATE, WM_CLOSE, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_ERASEBKGND,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_NCHITTEST, WM_POWERBROADCAST, WM_QUIT,
-    WM_RBUTTONDOWN, WM_RBUTTONUP, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    PeekMessageW, PostMessageW, RegisterClassW, SetWindowPos, ShowWindow, TranslateMessage,
+    HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, MSG, PBT_APMSUSPEND, PM_REMOVE, SWP_NOACTIVATE,
+    SWP_NOCOPYBITS, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SW_SHOWNOACTIVATE, WM_CLOSE,
+    WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCHITTEST, WM_POWERBROADCAST, WM_QUIT, WNDCLASSW,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP,
+};
+use windows::UI::Composition::Desktop::DesktopWindowTarget;
+use windows::UI::Composition::{
+    CompositionBackdropBrush, CompositionEllipseGeometry, CompositionGeometricClip,
+    CompositionStretch, CompositionSurfaceBrush, Compositor, ContainerVisual, SpriteVisual,
 };
 use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
 use windows_capture::frame::Frame;
@@ -72,19 +74,23 @@ use windows_capture::settings::{
     ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
     GraphicsCaptureItemType, MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
 };
+use windows_numerics::{Vector2, Vector3};
 
 const SHADER_SOURCE: &str = include_str!("liquid_glass.hlsl");
-const CLEAN_BACKDROP_SHADER_SOURCE: &str = include_str!("clean_backdrop.hlsl");
 const SWAP_CHAIN_BUFFER_COUNT: u32 = 2;
-const OVERLAY_HISTORY_CAPACITY: usize = 16;
-const OVERLAY_CAPTURE_GUARD_100NS: i64 = 10_000;
+const HOST_BACKDROP_LENS_BANDS: &[(f32, f32)] = &[
+    (1.00, 1.075),
+    (0.88, 1.058),
+    (0.76, 1.042),
+    (0.64, 1.027),
+    (0.52, 1.014),
+    (0.40, 1.000),
+];
 const METRIC_WINDOW: usize = 600;
 const NATIVE_SURFACE_CLASS: PCWSTR = w!("FairyNativePresenceRendererClass");
-const NATIVE_HIT_PROXY_CLASS: PCWSTR = w!("FairyNativePresenceHitProxyClass");
 const TIMER_PERIOD_ONE_MILLISECOND: u32 = 1;
 const TIMER_NO_ERROR: u32 = 0;
 static NATIVE_SURFACE_CLASS_REGISTERED: OnceLock<Result<(), String>> = OnceLock::new();
-static NATIVE_HIT_PROXY_CLASS_REGISTERED: OnceLock<Result<(), String>> = OnceLock::new();
 static PERFORMANCE_FREQUENCY: OnceLock<Option<i64>> = OnceLock::new();
 
 #[link(name = "winmm")]
@@ -154,7 +160,6 @@ impl WindowsNativeGpuSession {
         let flags = NativeCaptureFlags {
             config,
             monitor_frame,
-            capture_geometry,
             display_refresh_rate_hz,
             hdr_capture,
             status: Arc::clone(&status),
@@ -173,11 +178,10 @@ impl WindowsNativeGpuSession {
             capture_geometry.secondary_window_settings(),
             MinimumUpdateIntervalSettings::Custom(minimum_interval),
             DirtyRegionSettings::Default,
-            if hdr_capture {
-                ColorFormat::Rgba16F
-            } else {
-                ColorFormat::Bgra8
-            },
+            // HostBackdropBrush owns desktop sampling. WGC is retained only for monitor health and
+            // render cadence, so an 8-bit frame avoids the former fp16 bandwidth cost without ever
+            // entering Fairy's shader or visible output.
+            ColorFormat::Bgra8,
             flags,
         );
         let control = NativeCaptureHandler::start_free_threaded(settings).map_err(|error| {
@@ -309,7 +313,6 @@ impl WindowsNativeGpuSession {
 struct NativeCaptureFlags {
     config: NativeGpuConfig,
     monitor_frame: PhysicalFrame,
-    capture_geometry: NativeCaptureGeometry,
     display_refresh_rate_hz: u16,
     hdr_capture: bool,
     status: Arc<Mutex<NativeGpuStatus>>,
@@ -438,7 +441,6 @@ impl NativeRenderLoop {
         context: ID3D11DeviceContext,
         config: NativeGpuConfig,
         monitor_frame: PhysicalFrame,
-        capture_geometry: NativeCaptureGeometry,
         display_refresh_rate_hz: u16,
         surface_hwnd: Arc<AtomicIsize>,
         presentation: Arc<RwLock<NativeGpuPresentation>>,
@@ -459,12 +461,24 @@ impl NativeRenderLoop {
             .spawn(move || {
                 let _ =
                     unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL) };
+                let _winrt = match CaptureWinRtMta::acquire(&thread_status) {
+                    Ok(guard) => guard,
+                    Err(error) => {
+                        let error =
+                            format!("PRESENCE_NATIVE_GPU_COMPOSITION_WINRT_FAILED: {error}");
+                        let _ = startup_tx.send(Err(error.clone()));
+                        update_status(&thread_status, |status| {
+                            status.lifecycle = NativeGpuLifecycle::Failed;
+                            status.error_code = Some(error);
+                        });
+                        return;
+                    }
+                };
                 let renderer = NativeCompositionRenderer::new(
                     device,
                     context,
                     config,
                     monitor_frame,
-                    capture_geometry,
                     display_refresh_rate_hz,
                     surface_hwnd,
                     presentation,
@@ -482,7 +496,7 @@ impl NativeRenderLoop {
                     }
                 };
                 update_status(&thread_status, |status| {
-                    status.backend = NativeGpuBackend::WindowsGraphicsCaptureD3d11DirectComposition;
+                    status.backend = NativeGpuBackend::WindowsHostBackdropD3d11Composition;
                     status.lifecycle = NativeGpuLifecycle::Running;
                     status.zero_copy_capture = true;
                     status.pixel_ipc = false;
@@ -576,7 +590,6 @@ impl GraphicsCaptureApiHandler for NativeCaptureHandler {
             context.device_context,
             context.flags.config,
             context.flags.monitor_frame,
-            context.flags.capture_geometry,
             context.flags.display_refresh_rate_hz,
             Arc::clone(&context.flags.surface_hwnd),
             Arc::clone(&context.flags.presentation),
@@ -894,11 +907,9 @@ fn advance_render_deadline(
 
 struct NativeCompositionSurface {
     hwnd: HWND,
-    hit_proxy_hwnd: HWND,
     tracking_hwnd: HWND,
     input_hwnd: HWND,
     frame: PhysicalFrame,
-    hit_proxy_frame: PhysicalFrame,
     shown: bool,
     creator_thread_id: u32,
     published_hwnd: Arc<AtomicIsize>,
@@ -907,7 +918,6 @@ struct NativeCompositionSurface {
 impl NativeCompositionSurface {
     fn new(config: NativeGpuConfig, published_hwnd: Arc<AtomicIsize>) -> Result<Self, String> {
         register_native_surface_class()?;
-        register_native_hit_proxy_class()?;
         let module = unsafe { GetModuleHandleW(PCWSTR::null()) }
             .map_err(|error| windows_stage_error("WINDOW_MODULE", error))?;
         let width = i32::try_from(config.render_frame.width)
@@ -942,47 +952,18 @@ impl NativeCompositionSurface {
             )
         }
         .map_err(|error| windows_stage_error("WINDOW_CREATE", error))?;
-        let hit_proxy_frame = native_hit_proxy_frame(config.render_frame, config.presentation);
-        let hit_proxy_hwnd = unsafe {
-            CreateWindowExW(
-                WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW,
-                NATIVE_HIT_PROXY_CLASS,
-                PCWSTR::null(),
-                WS_POPUP,
-                hit_proxy_frame.x,
-                hit_proxy_frame.y,
-                hit_proxy_frame.width as i32,
-                hit_proxy_frame.height as i32,
-                Some(hwnd),
-                None,
-                Some(HINSTANCE(module.0)),
-                None,
-            )
-        }
-        .map_err(|error| {
-            let _ = unsafe { DestroyWindow(hwnd) };
-            windows_stage_error("HIT_PROXY_CREATE", error)
-        })?;
-        if let Err(error) = apply_native_hit_proxy_region(hit_proxy_hwnd, hit_proxy_frame) {
-            let _ = unsafe { DestroyWindow(hit_proxy_hwnd) };
-            let _ = unsafe { DestroyWindow(hwnd) };
-            return Err(error);
-        }
         if let Err(error) =
             crate::presence_backdrop::set_window_capture_excluded(hwnd.0 as isize, false)
         {
-            let _ = unsafe { DestroyWindow(hit_proxy_hwnd) };
             let _ = unsafe { DestroyWindow(hwnd) };
             return Err(error);
         }
         published_hwnd.store(hwnd.0 as isize, AtomicOrdering::Release);
         Ok(Self {
             hwnd,
-            hit_proxy_hwnd,
             tracking_hwnd: HWND(config.render_hwnd as *mut c_void),
             input_hwnd: HWND(config.input_hwnd as *mut c_void),
             frame: config.render_frame,
-            hit_proxy_frame,
             shown: false,
             creator_thread_id: unsafe { GetCurrentThreadId() },
             published_hwnd,
@@ -995,18 +976,8 @@ impl NativeCompositionSurface {
         }
         unsafe {
             SetWindowPos(
-                self.hit_proxy_hwnd,
-                Some(self.input_hwnd),
-                self.hit_proxy_frame.x,
-                self.hit_proxy_frame.y,
-                self.hit_proxy_frame.width as i32,
-                self.hit_proxy_frame.height as i32,
-                SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOOWNERZORDER,
-            )
-            .map_err(|error| windows_stage_error("HIT_PROXY_POSITION", error))?;
-            SetWindowPos(
                 self.hwnd,
-                Some(self.hit_proxy_hwnd),
+                Some(self.input_hwnd),
                 self.frame.x,
                 self.frame.y,
                 self.frame.width as i32,
@@ -1015,16 +986,12 @@ impl NativeCompositionSurface {
             )
             .map_err(|error| windows_stage_error("WINDOW_POSITION", error))?;
             let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
-            let _ = ShowWindow(self.hit_proxy_hwnd, SW_SHOWNOACTIVATE);
         }
         self.shown = true;
         Ok(())
     }
 
-    fn sync_to_tracking_window(
-        &mut self,
-        presentation: NativeGpuPresentation,
-    ) -> Result<PhysicalFrame, String> {
+    fn sync_to_tracking_window(&mut self) -> Result<PhysicalFrame, String> {
         let mut rectangle = RECT::default();
         unsafe { GetWindowRect(self.tracking_hwnd, &mut rectangle) }
             .map_err(|error| windows_stage_error("TRACKING_WINDOW_RECT", error))?;
@@ -1041,24 +1008,11 @@ impl NativeCompositionSurface {
             width,
             height,
         };
-        let next_hit_proxy = native_hit_proxy_frame(next, presentation);
-        if next != self.frame || next_hit_proxy != self.hit_proxy_frame {
-            let proxy_size_changed = next_hit_proxy.width != self.hit_proxy_frame.width
-                || next_hit_proxy.height != self.hit_proxy_frame.height;
+        if next != self.frame {
             unsafe {
                 SetWindowPos(
-                    self.hit_proxy_hwnd,
-                    Some(self.input_hwnd),
-                    next_hit_proxy.x,
-                    next_hit_proxy.y,
-                    next_hit_proxy.width as i32,
-                    next_hit_proxy.height as i32,
-                    SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOOWNERZORDER,
-                )
-                .map_err(|error| windows_stage_error("HIT_PROXY_FOLLOW", error))?;
-                SetWindowPos(
                     self.hwnd,
-                    Some(self.hit_proxy_hwnd),
+                    Some(self.input_hwnd),
                     next.x,
                     next.y,
                     0,
@@ -1067,52 +1021,12 @@ impl NativeCompositionSurface {
                 )
             }
             .map_err(|error| windows_stage_error("WINDOW_FOLLOW", error))?;
-            if proxy_size_changed {
-                apply_native_hit_proxy_region(self.hit_proxy_hwnd, next_hit_proxy)?;
-            }
             self.frame = next;
-            self.hit_proxy_frame = next_hit_proxy;
         }
         Ok(self.frame)
     }
 
-    fn visible_input_frame(&self) -> Option<PhysicalFrame> {
-        if !unsafe { IsWindow(Some(self.input_hwnd)) }.as_bool()
-            || !unsafe { IsWindowVisible(self.input_hwnd) }.as_bool()
-        {
-            return None;
-        }
-        let mut rectangle = RECT::default();
-        unsafe { GetWindowRect(self.input_hwnd, &mut rectangle) }.ok()?;
-        let mut region_box = RECT::default();
-        let region_type = unsafe { GetWindowRgnBox(self.input_hwnd, &mut region_box) };
-        let visible = if region_type.0 > 0
-            && region_box.right > region_box.left
-            && region_box.bottom > region_box.top
-        {
-            RECT {
-                left: rectangle.left.saturating_add(region_box.left),
-                top: rectangle.top.saturating_add(region_box.top),
-                right: rectangle.left.saturating_add(region_box.right),
-                bottom: rectangle.top.saturating_add(region_box.bottom),
-            }
-        } else {
-            rectangle
-        };
-        let width = u32::try_from(visible.right.saturating_sub(visible.left)).ok()?;
-        let height = u32::try_from(visible.bottom.saturating_sub(visible.top)).ok()?;
-        (width > 0 && height > 0).then_some(PhysicalFrame {
-            x: visible.left,
-            y: visible.top,
-            width,
-            height,
-        })
-    }
-
     fn close_on_owner_thread(&self) {
-        if unsafe { IsWindow(Some(self.hit_proxy_hwnd)) }.as_bool() {
-            let _ = unsafe { DestroyWindow(self.hit_proxy_hwnd) };
-        }
         if unsafe { IsWindow(Some(self.hwnd)) }.as_bool() {
             let _ = unsafe { DestroyWindow(self.hwnd) };
         }
@@ -1164,66 +1078,6 @@ fn register_native_surface_class() -> Result<(), String> {
         .clone()
 }
 
-fn register_native_hit_proxy_class() -> Result<(), String> {
-    NATIVE_HIT_PROXY_CLASS_REGISTERED
-        .get_or_init(|| {
-            let module = unsafe { GetModuleHandleW(PCWSTR::null()) }
-                .map_err(|error| windows_stage_error("HIT_PROXY_CLASS_MODULE", error))?;
-            let class = WNDCLASSW {
-                lpfnWndProc: Some(native_hit_proxy_window_proc),
-                hInstance: HINSTANCE(module.0),
-                lpszClassName: NATIVE_HIT_PROXY_CLASS,
-                ..WNDCLASSW::default()
-            };
-            let atom = unsafe { RegisterClassW(&class) };
-            if atom == 0 {
-                return Err(windows_stage_error(
-                    "HIT_PROXY_CLASS_REGISTER",
-                    windows::core::Error::from_thread(),
-                ));
-            }
-            Ok(())
-        })
-        .clone()
-}
-
-fn native_hit_proxy_frame(
-    render_frame: PhysicalFrame,
-    presentation: NativeGpuPresentation,
-) -> PhysicalFrame {
-    let scale = render_frame.width as f32 / 640.0;
-    let extent = (PET_CORE_EXTENT_LOGICAL as f32 * scale).round().max(1.0) as u32;
-    let center_x = render_frame
-        .x
-        .saturating_add((presentation.core_x * scale).round() as i32);
-    let center_y = render_frame
-        .y
-        .saturating_add((presentation.core_y * scale).round() as i32);
-    let half = i32::try_from(extent / 2).unwrap_or(i32::MAX);
-    PhysicalFrame {
-        x: center_x.saturating_sub(half),
-        y: center_y.saturating_sub(half),
-        width: extent,
-        height: extent,
-    }
-}
-
-fn apply_native_hit_proxy_region(hwnd: HWND, frame: PhysicalFrame) -> Result<(), String> {
-    let width = i32::try_from(frame.width)
-        .map_err(|_| "PRESENCE_NATIVE_HIT_PROXY_SIZE_INVALID".to_owned())?;
-    let height = i32::try_from(frame.height)
-        .map_err(|_| "PRESENCE_NATIVE_HIT_PROXY_SIZE_INVALID".to_owned())?;
-    let region = unsafe { CreateEllipticRgn(0, 0, width, height) };
-    if region.is_invalid() {
-        return Err("PRESENCE_NATIVE_HIT_PROXY_REGION_CREATE_FAILED".to_owned());
-    }
-    if unsafe { SetWindowRgn(hwnd, Some(region), false) } == 0 {
-        let _ = unsafe { DeleteObject(region.into()) };
-        return Err("PRESENCE_NATIVE_HIT_PROXY_REGION_APPLY_FAILED".to_owned());
-    }
-    Ok(())
-}
-
 unsafe extern "system" fn native_surface_window_proc(
     hwnd: HWND,
     message: u32,
@@ -1248,30 +1102,215 @@ unsafe extern "system" fn native_surface_window_proc(
     }
 }
 
-unsafe extern "system" fn native_hit_proxy_window_proc(
-    hwnd: HWND,
-    message: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    match message {
-        WM_NCHITTEST => LRESULT(HTCLIENT as isize),
-        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
-        WM_LBUTTONDOWN | WM_RBUTTONDOWN => {
-            let _ = unsafe { SetCapture(hwnd) };
-            LRESULT(0)
+struct HostBackdropLensBand {
+    _container: ContainerVisual,
+    source: SpriteVisual,
+    geometry: CompositionEllipseGeometry,
+    clip: CompositionGeometricClip,
+    _brush: CompositionBackdropBrush,
+    radius_fraction: f32,
+    optical_scale: f32,
+}
+
+struct HostBackdropComposition {
+    _dispatcher_queue: DispatcherQueueController,
+    _compositor: Compositor,
+    _target: DesktopWindowTarget,
+    _root: ContainerVisual,
+    lens_bands: Vec<HostBackdropLensBand>,
+    _foreground_brush: CompositionSurfaceBrush,
+    _foreground: SpriteVisual,
+}
+
+impl HostBackdropComposition {
+    fn new(
+        hwnd: HWND,
+        swap_chain: &IDXGISwapChain1,
+        frame: PhysicalFrame,
+        presentation: NativeGpuPresentation,
+    ) -> Result<Self, String> {
+        let host_backdrop_enabled = 1_i32;
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_USE_HOSTBACKDROPBRUSH,
+                (&host_backdrop_enabled as *const i32).cast(),
+                std::mem::size_of::<i32>() as u32,
+            )
         }
-        WM_LBUTTONUP | WM_RBUTTONUP => {
-            let _ = unsafe { ReleaseCapture() };
-            LRESULT(0)
+        .map_err(|error| windows_stage_error("HOST_BACKDROP_WINDOW_ATTRIBUTE", error))?;
+
+        let dispatcher_queue = unsafe {
+            CreateDispatcherQueueController(DispatcherQueueOptions {
+                dwSize: std::mem::size_of::<DispatcherQueueOptions>() as u32,
+                threadType: DQTYPE_THREAD_CURRENT,
+                apartmentType: DQTAT_COM_NONE,
+            })
         }
-        WM_ERASEBKGND => LRESULT(1),
-        WM_DISPLAYCHANGE | WM_DPICHANGED => LRESULT(0),
-        WM_CLOSE => {
-            let _ = unsafe { DestroyWindow(hwnd) };
-            LRESULT(0)
+        .map_err(|error| windows_stage_error("HOST_BACKDROP_DISPATCHER_QUEUE", error))?;
+        let compositor = Compositor::new()
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_COMPOSITOR", error))?;
+        let desktop_interop: ICompositorDesktopInterop = compositor
+            .cast()
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_DESKTOP_INTEROP", error))?;
+        let target = unsafe { desktop_interop.CreateDesktopWindowTarget(hwnd, true) }
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_TARGET", error))?;
+        let root = compositor
+            .CreateContainerVisual()
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_ROOT", error))?;
+        let output_size = Vector2 {
+            X: frame.width as f32,
+            Y: frame.height as f32,
+        };
+        root.SetSize(output_size)
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_ROOT_SIZE", error))?;
+        target
+            .SetRoot(&root)
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_SET_ROOT", error))?;
+        let root_children = root
+            .Children()
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_ROOT_CHILDREN", error))?;
+
+        let mut lens_bands = Vec::with_capacity(HOST_BACKDROP_LENS_BANDS.len());
+        for &(radius_fraction, optical_scale) in HOST_BACKDROP_LENS_BANDS {
+            let container = compositor
+                .CreateContainerVisual()
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_LENS_CONTAINER", error))?;
+            container
+                .SetSize(output_size)
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_LENS_SIZE", error))?;
+            let geometry = compositor
+                .CreateEllipseGeometry()
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_LENS_GEOMETRY", error))?;
+            let clip = compositor
+                .CreateGeometricClipWithGeometry(&geometry)
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_LENS_CLIP", error))?;
+            container
+                .SetClip(&clip)
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_SET_CLIP", error))?;
+            let source = compositor
+                .CreateSpriteVisual()
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_LENS_VISUAL", error))?;
+            source
+                .SetSize(output_size)
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_LENS_VISUAL_SIZE", error))?;
+            let brush = compositor
+                .CreateHostBackdropBrush()
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_BRUSH", error))?;
+            source
+                .SetBrush(&brush)
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_SET_BRUSH", error))?;
+            container
+                .Children()
+                .and_then(|children| children.InsertAtTop(&source))
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_INSERT_SOURCE", error))?;
+            root_children
+                .InsertAtTop(&container)
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_INSERT_BAND", error))?;
+            lens_bands.push(HostBackdropLensBand {
+                _container: container,
+                source,
+                geometry,
+                clip,
+                _brush: brush,
+                radius_fraction,
+                optical_scale,
+            });
         }
-        _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
+
+        let compositor_interop: ICompositorInterop = compositor
+            .cast()
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_SWAPCHAIN_INTEROP", error))?;
+        let composition_surface =
+            unsafe { compositor_interop.CreateCompositionSurfaceForSwapChain(swap_chain) }
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_SWAPCHAIN_SURFACE", error))?;
+        let foreground_brush = compositor
+            .CreateSurfaceBrushWithSurface(&composition_surface)
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_FOREGROUND_BRUSH", error))?;
+        foreground_brush
+            .SetStretch(CompositionStretch::Fill)
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_FOREGROUND_STRETCH", error))?;
+        let foreground = compositor
+            .CreateSpriteVisual()
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_FOREGROUND", error))?;
+        foreground
+            .SetSize(output_size)
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_FOREGROUND_SIZE", error))?;
+        foreground
+            .SetBrush(&foreground_brush)
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_SET_FOREGROUND", error))?;
+        root_children
+            .InsertAtTop(&foreground)
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_INSERT_FOREGROUND", error))?;
+
+        let mut composition = Self {
+            _dispatcher_queue: dispatcher_queue,
+            _compositor: compositor,
+            _target: target,
+            _root: root,
+            lens_bands,
+            _foreground_brush: foreground_brush,
+            _foreground: foreground,
+        };
+        composition.update_lens(presentation, NativeDragSample::default(), frame)?;
+        Ok(composition)
+    }
+
+    fn update_lens(
+        &mut self,
+        presentation: NativeGpuPresentation,
+        drag: NativeDragSample,
+        frame: PhysicalFrame,
+    ) -> Result<(), String> {
+        let surface_scale = frame.width as f32 / 640.0;
+        let center = Vector2 {
+            X: presentation.core_x * surface_scale,
+            Y: presentation.core_y * surface_scale,
+        };
+        let direction_length =
+            (drag.direction[0] * drag.direction[0] + drag.direction[1] * drag.direction[1]).sqrt();
+        let direction = if direction_length > 0.01 {
+            [
+                drag.direction[0] / direction_length,
+                drag.direction[1] / direction_length,
+            ]
+        } else {
+            [1.0, 0.0]
+        };
+        let deformation = drag.stretch * 0.055 + drag.release * 0.026;
+        let rotation = direction[1].atan2(direction[0]);
+
+        for band in &self.lens_bands {
+            let radius = 72.0 * surface_scale * band.radius_fraction;
+            band.geometry
+                .SetCenter(center)
+                .and_then(|()| {
+                    band.geometry.SetRadius(Vector2 {
+                        X: radius * (1.0 + deformation),
+                        Y: radius * (1.0 - deformation * 0.45),
+                    })
+                })
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_UPDATE_GEOMETRY", error))?;
+            band.clip
+                .SetCenterPoint(center)
+                .and_then(|()| band.clip.SetRotationAngle(rotation))
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_UPDATE_CLIP", error))?;
+            band.source
+                .SetCenterPoint(Vector3 {
+                    X: center.X,
+                    Y: center.Y,
+                    Z: 0.0,
+                })
+                .and_then(|()| {
+                    band.source.SetScale(Vector3 {
+                        X: band.optical_scale,
+                        Y: band.optical_scale,
+                        Z: 1.0,
+                    })
+                })
+                .map_err(|error| windows_stage_error("HOST_BACKDROP_UPDATE_SCALE", error))?;
+        }
+        Ok(())
     }
 }
 
@@ -1280,22 +1319,15 @@ struct NativeCompositionRenderer {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     swap_chain: IDXGISwapChain3,
-    _composition_device: IDCompositionDevice,
-    _composition_target: IDCompositionTarget,
-    _composition_visual: IDCompositionVisual,
+    composition: HostBackdropComposition,
     render_targets: Vec<Option<SwapChainRenderTarget>>,
-    clean_backdrop: CleanBackdropCache,
-    overlay_history: PreviousOverlayHistory,
     vertex_shader: ID3D11VertexShader,
     pixel_shader: ID3D11PixelShader,
-    sampler: ID3D11SamplerState,
     constants: ID3D11Buffer,
     presentation: Arc<RwLock<NativeGpuPresentation>>,
     target_frame_rate: u16,
     display_refresh_rate_hz: u16,
     monitor_frame: PhysicalFrame,
-    capture_geometry: NativeCaptureGeometry,
-    capture_views: Vec<CaptureView>,
     shape_motion: NativeShapeMotion,
     drag_motion: NativeDragMotion,
     state_motion: NativeStateMotion,
@@ -1505,273 +1537,9 @@ fn lerp(start: f32, end: f32, progress: f32) -> f32 {
     start + (end - start) * progress.clamp(0.0, 1.0)
 }
 
-struct CaptureView {
-    texture_identity: usize,
-    view: ID3D11ShaderResourceView,
-}
-
 #[derive(Clone)]
 struct SwapChainRenderTarget {
-    texture: ID3D11Texture2D,
     view: ID3D11RenderTargetView,
-}
-
-struct CleanBackdropSurface {
-    texture: ID3D11Texture2D,
-    render_target: ID3D11RenderTargetView,
-    shader_view: ID3D11ShaderResourceView,
-}
-
-struct CleanBackdropCache {
-    surfaces: Option<[CleanBackdropSurface; 2]>,
-    current_index: usize,
-    seeded: bool,
-    last_generation: Option<u64>,
-    width: u32,
-    height: u32,
-    format: i32,
-    vertex_shader: ID3D11VertexShader,
-    pixel_shader: ID3D11PixelShader,
-    constants: ID3D11Buffer,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct CleanBackdropConstants {
-    capture_size: [f32; 2],
-    overlay_origin_px: [f32; 2],
-    overlay_size_px: [f32; 2],
-    input_origin_px: [f32; 2],
-    input_size_px: [f32; 2],
-    previous_clean_valid: f32,
-    previous_overlay_valid: f32,
-    capture_linear: f32,
-    input_surface_valid: f32,
-    drag_active: f32,
-    constants_padding: f32,
-}
-
-impl CleanBackdropCache {
-    fn new(device: &ID3D11Device) -> Result<Self, String> {
-        let (vertex_shader, pixel_shader) = create_clean_backdrop_shaders(device)?;
-        Ok(Self {
-            surfaces: None,
-            current_index: 0,
-            seeded: false,
-            last_generation: None,
-            width: 0,
-            height: 0,
-            format: 0,
-            vertex_shader,
-            pixel_shader,
-            constants: create_clean_backdrop_constant_buffer(device)?,
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn update(
-        &mut self,
-        device: &ID3D11Device,
-        context: &ID3D11DeviceContext,
-        sampler: &ID3D11SamplerState,
-        captured_texture: &ID3D11Texture2D,
-        captured_view: &ID3D11ShaderResourceView,
-        capture_frame: PhysicalFrame,
-        capture_generation: u64,
-        previous_overlay_view: &ID3D11ShaderResourceView,
-        previous_overlay_frame: Option<PhysicalFrame>,
-        input_frame: Option<PhysicalFrame>,
-        drag_active: bool,
-    ) -> Result<ID3D11ShaderResourceView, String> {
-        let mut description = D3D11_TEXTURE2D_DESC::default();
-        unsafe { captured_texture.GetDesc(&mut description) };
-        if description.Width == 0 || description.Height == 0 {
-            return Err("PRESENCE_NATIVE_GPU_CLEAN_BACKDROP_SIZE_INVALID".to_owned());
-        }
-        if self.surfaces.is_none()
-            || self.width != description.Width
-            || self.height != description.Height
-            || self.format != description.Format.0
-        {
-            self.surfaces = Some([
-                create_clean_backdrop_surface(device, description)?,
-                create_clean_backdrop_surface(device, description)?,
-            ]);
-            self.current_index = 0;
-            self.seeded = false;
-            self.last_generation = None;
-            self.width = description.Width;
-            self.height = description.Height;
-            self.format = description.Format.0;
-        }
-
-        let surfaces = self
-            .surfaces
-            .as_ref()
-            .ok_or_else(|| "PRESENCE_NATIVE_GPU_CLEAN_BACKDROP_UNAVAILABLE".to_owned())?;
-        if !self.seeded {
-            unsafe {
-                context.CopyResource(&surfaces[0].texture, captured_texture);
-                context.CopyResource(&surfaces[1].texture, captured_texture);
-            }
-            self.seeded = true;
-            self.last_generation = Some(capture_generation);
-            return Ok(surfaces[self.current_index].shader_view.clone());
-        }
-        if self.last_generation == Some(capture_generation) {
-            return Ok(surfaces[self.current_index].shader_view.clone());
-        }
-
-        let next_index = 1 - self.current_index;
-        let previous = &surfaces[self.current_index];
-        let next = &surfaces[next_index];
-        let relative_frame = |frame: PhysicalFrame| -> ([f32; 2], [f32; 2]) {
-            (
-                [
-                    frame.x.saturating_sub(capture_frame.x) as f32,
-                    frame.y.saturating_sub(capture_frame.y) as f32,
-                ],
-                [frame.width as f32, frame.height as f32],
-            )
-        };
-        let (overlay_origin_px, overlay_size_px) = previous_overlay_frame
-            .map(relative_frame)
-            .unwrap_or(([0.0; 2], [0.0; 2]));
-        let (input_origin_px, input_size_px) = input_frame
-            .map(relative_frame)
-            .unwrap_or(([0.0; 2], [0.0; 2]));
-        let constants = CleanBackdropConstants {
-            capture_size: [description.Width as f32, description.Height as f32],
-            overlay_origin_px,
-            overlay_size_px,
-            input_origin_px,
-            input_size_px,
-            previous_clean_valid: 1.0,
-            previous_overlay_valid: f32::from(previous_overlay_frame.is_some()),
-            capture_linear: f32::from(description.Format == DXGI_FORMAT_R16G16B16A16_FLOAT),
-            input_surface_valid: f32::from(input_frame.is_some()),
-            drag_active: f32::from(drag_active),
-            constants_padding: 0.0,
-        };
-        unsafe {
-            context.UpdateSubresource(
-                &self.constants,
-                0,
-                None,
-                (&constants as *const CleanBackdropConstants).cast(),
-                0,
-                0,
-            );
-            context.OMSetRenderTargets(Some(&[Some(next.render_target.clone())]), None);
-            context.RSSetViewports(Some(&[D3D11_VIEWPORT {
-                TopLeftX: 0.0,
-                TopLeftY: 0.0,
-                Width: description.Width as f32,
-                Height: description.Height as f32,
-                MinDepth: 0.0,
-                MaxDepth: 1.0,
-            }]));
-            context.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            context.VSSetShader(&self.vertex_shader, None);
-            context.PSSetShader(&self.pixel_shader, None);
-            context.VSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
-            context.PSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
-            context.PSSetShaderResources(
-                0,
-                Some(&[
-                    Some(captured_view.clone()),
-                    Some(previous.shader_view.clone()),
-                    Some(previous_overlay_view.clone()),
-                ]),
-            );
-            context.PSSetSamplers(0, Some(&[Some(sampler.clone())]));
-            context.Draw(3, 0);
-            context.PSSetShaderResources(0, Some(&[None, None, None]));
-            context.OMSetRenderTargets(None, None);
-        }
-        self.current_index = next_index;
-        self.last_generation = Some(capture_generation);
-        Ok(next.shader_view.clone())
-    }
-}
-
-struct PreviousOverlaySample {
-    texture: ID3D11Texture2D,
-    view: ID3D11ShaderResourceView,
-    frame: Option<PhysicalFrame>,
-    presented_at_100ns: Option<i64>,
-}
-
-struct PreviousOverlayHistory {
-    samples: Vec<PreviousOverlaySample>,
-    next_write: usize,
-    displayed_index: Option<usize>,
-}
-
-impl PreviousOverlayHistory {
-    fn sample_for_capture(
-        &self,
-        captured_at_100ns: Option<i64>,
-    ) -> Option<(usize, &PreviousOverlaySample)> {
-        let index = select_overlay_history_index(
-            self.samples
-                .iter()
-                .enumerate()
-                .map(|(index, sample)| (index, sample.presented_at_100ns, sample.frame.is_some())),
-            captured_at_100ns,
-        )?;
-        Some((index, &self.samples[index]))
-    }
-
-    fn fallback_view(&self) -> ID3D11ShaderResourceView {
-        self.samples[0].view.clone()
-    }
-
-    fn record_presented(
-        &mut self,
-        context: &ID3D11DeviceContext,
-        render_texture: &ID3D11Texture2D,
-        frame: PhysicalFrame,
-        presented_at_100ns: i64,
-    ) {
-        let index = self.next_write;
-        unsafe {
-            context.CopyResource(&self.samples[index].texture, render_texture);
-        }
-        self.samples[index].frame = Some(frame);
-        self.samples[index].presented_at_100ns = Some(presented_at_100ns);
-        self.displayed_index = Some(index);
-        self.next_write = (index + 1) % self.samples.len();
-    }
-
-    fn rebase_displayed(&mut self, frame: PhysicalFrame) {
-        let displayed = self.displayed_index;
-        for (index, sample) in self.samples.iter_mut().enumerate() {
-            if Some(index) == displayed {
-                sample.frame = Some(frame);
-                continue;
-            }
-            sample.frame = None;
-            sample.presented_at_100ns = None;
-        }
-        if let Some(index) = displayed {
-            self.samples[index].presented_at_100ns = system_relative_time_100ns();
-        }
-    }
-}
-
-fn select_overlay_history_index(
-    entries: impl Iterator<Item = (usize, Option<i64>, bool)>,
-    captured_at_100ns: Option<i64>,
-) -> Option<usize> {
-    let cutoff = captured_at_100ns?.saturating_sub(OVERLAY_CAPTURE_GUARD_100NS);
-    entries
-        .filter_map(|(index, presented_at, valid)| {
-            let presented_at = presented_at?;
-            (valid && presented_at <= cutoff).then_some((index, presented_at))
-        })
-        .max_by_key(|(_, presented_at)| *presented_at)
-        .map(|(index, _)| index)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -2115,7 +1883,6 @@ impl NativeCompositionRenderer {
         context: ID3D11DeviceContext,
         config: NativeGpuConfig,
         monitor_frame: PhysicalFrame,
-        capture_geometry: NativeCaptureGeometry,
         display_refresh_rate_hz: u16,
         surface_hwnd: Arc<AtomicIsize>,
         presentation: Arc<RwLock<NativeGpuPresentation>>,
@@ -2123,60 +1890,32 @@ impl NativeCompositionRenderer {
     ) -> Result<Self, String> {
         let surface = NativeCompositionSurface::new(config, surface_hwnd)?;
         let swap_chain = create_swap_chain(&device, config.render_frame)?;
-        let initial_render_texture = current_swap_chain_texture(&swap_chain)?;
-        let overlay_history =
-            create_overlay_history(&device, &initial_render_texture, OVERLAY_HISTORY_CAPACITY)?;
-        let clean_backdrop = CleanBackdropCache::new(&device)?;
         let render_targets = vec![None; SWAP_CHAIN_BUFFER_COUNT as usize];
         let (vertex_shader, pixel_shader) = create_shaders(&device)?;
-        let sampler = create_sampler(&device)?;
         let constants = create_constant_buffer(&device)?;
-        let dxgi_device: IDXGIDevice = device
-            .cast()
-            .map_err(|error| windows_stage_error("DCOMP_DXGI_DEVICE", error))?;
-        let composition_device: IDCompositionDevice =
-            unsafe { DCompositionCreateDevice(&dxgi_device) }
-                .map_err(|error| windows_stage_error("DCOMP_CREATE_DEVICE", error))?;
-        let composition_target =
-            unsafe { composition_device.CreateTargetForHwnd(surface.hwnd, true) }
-                .map_err(|error| windows_stage_error("DCOMP_CREATE_TARGET", error))?;
-        let composition_visual = unsafe { composition_device.CreateVisual() }
-            .map_err(|error| windows_stage_error("DCOMP_CREATE_VISUAL", error))?;
         let swap_chain_base: IDXGISwapChain1 = swap_chain
             .cast()
-            .map_err(|error| windows_stage_error("DCOMP_SWAP_CHAIN_CAST", error))?;
-        unsafe {
-            composition_visual
-                .SetContent(&swap_chain_base)
-                .map_err(|error| windows_stage_error("DCOMP_SET_CONTENT", error))?;
-            composition_target
-                .SetRoot(&composition_visual)
-                .map_err(|error| windows_stage_error("DCOMP_SET_ROOT", error))?;
-            composition_device
-                .Commit()
-                .map_err(|error| windows_stage_error("DCOMP_COMMIT", error))?;
-        }
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_SWAPCHAIN_CAST", error))?;
+        let composition = HostBackdropComposition::new(
+            surface.hwnd,
+            &swap_chain_base,
+            config.render_frame,
+            config.presentation,
+        )?;
         Ok(Self {
             surface,
             device,
             context,
             swap_chain,
-            _composition_device: composition_device,
-            _composition_target: composition_target,
-            _composition_visual: composition_visual,
+            composition,
             render_targets,
-            clean_backdrop,
-            overlay_history,
             vertex_shader,
             pixel_shader,
-            sampler,
             constants,
             presentation,
             target_frame_rate: config.target_frame_rate,
             display_refresh_rate_hz,
             monitor_frame,
-            capture_geometry,
-            capture_views: Vec::with_capacity(3),
             shape_motion: NativeShapeMotion::default(),
             drag_motion: NativeDragMotion::default(),
             state_motion: NativeStateMotion::new(config.presentation.visual_state, Instant::now()),
@@ -2188,11 +1927,11 @@ impl NativeCompositionRenderer {
     fn present(
         &mut self,
         texture: &ID3D11Texture2D,
-        captured_at_100ns: Option<i64>,
-        capture_generation: u64,
+        _captured_at_100ns: Option<i64>,
+        _capture_generation: u64,
         elapsed: Duration,
         drag_active: bool,
-        capture_source_valid: bool,
+        _capture_source_valid: bool,
     ) -> Result<(), String> {
         if !unsafe { IsWindow(Some(self.surface.hwnd)) }.as_bool() {
             return Err("PRESENCE_NATIVE_GPU_SURFACE_INVALIDATED".to_owned());
@@ -2201,7 +1940,7 @@ impl NativeCompositionRenderer {
             .presentation
             .read()
             .map_err(|_| "PRESENCE_NATIVE_GPU_PRESENTATION_LOCK_FAILED".to_owned())?;
-        let render_frame = self.surface.sync_to_tracking_window(presentation)?;
+        let render_frame = self.surface.sync_to_tracking_window()?;
         let active_monitor = monitor_handle_for_presentation(render_frame, presentation)
             .map_err(|error| error.to_string())?;
         let active_monitor_frame =
@@ -2237,44 +1976,12 @@ impl NativeCompositionRenderer {
             presentation.voice_level,
             presentation.reduced_motion,
         );
-        let capture_linear = texture_desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
-        let capture_frame = self
-            .capture_geometry
-            .frame_for_texture(texture_desc.Width, texture_desc.Height);
-        let capture_includes_surface = self.capture_geometry.includes_surface();
-        let captured_view = self.capture_view(texture)?;
-        let overlay_sample = if !capture_includes_surface {
-            None
-        } else {
-            self.overlay_history
-                .sample_for_capture(captured_at_100ns)
-                .map(|(_, sample)| (sample.view.clone(), sample.frame))
-        };
-        let previous_overlay_view = overlay_sample.as_ref().map_or_else(
-            || self.overlay_history.fallback_view(),
-            |sample| sample.0.clone(),
-        );
-        let previous_surface_frame = overlay_sample.and_then(|sample| sample.1);
-        let clean_backdrop_view = self.clean_backdrop.update(
-            &self.device,
-            &self.context,
-            &self.sampler,
-            texture,
-            &captured_view,
-            capture_frame,
-            capture_generation,
-            &previous_overlay_view,
-            previous_surface_frame,
-            self.surface.visible_input_frame(),
-            drag_active,
-        )?;
+        self.composition
+            .update_lens(presentation, drag, render_frame)?;
         let constants = PresenceConstants {
             output_size: [render_frame.width as f32, render_frame.height as f32],
-            capture_size: [texture_desc.Width as f32, texture_desc.Height as f32],
-            source_origin_px: [
-                render_frame.x.saturating_sub(capture_frame.x) as f32,
-                render_frame.y.saturating_sub(capture_frame.y) as f32,
-            ],
+            capture_size: [render_frame.width as f32, render_frame.height as f32],
+            source_origin_px: [0.0, 0.0],
             core_center_px: [
                 presentation.core_x * (render_frame.width as f32 / 640.0),
                 presentation.core_y * (render_frame.width as f32 / 640.0),
@@ -2297,11 +2004,13 @@ impl NativeCompositionRenderer {
             increased_contrast: f32::from(presentation.increased_contrast),
             particles_enabled: f32::from(presentation.particles_enabled),
             diagnostic_solid: diagnostic_solid_output(),
-            capture_linear: f32::from(capture_linear),
+            capture_linear: 0.0,
             capsule_half_width: presentation.capsule_half_width,
             state_elapsed_seconds: state_sample.state_elapsed_seconds,
             drag_active: f32::from(drag_active),
-            capture_source_valid: f32::from(capture_source_valid),
+            // HostBackdropBrush samples below this HWND before Fairy is composed. The WGC frame is
+            // retained only as a cadence/source-health signal and must never be sampled here.
+            capture_source_valid: 0.0,
             state_energy: state_sample.style.energy,
             state_pulse: state_sample.style.pulse,
             state_notify_wave: state_sample.style.notify_wave,
@@ -2343,20 +2052,11 @@ impl NativeCompositionRenderer {
                 .VSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
             self.context
                 .PSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
-            self.context
-                .PSSetShaderResources(0, Some(&[Some(clean_backdrop_view)]));
-            self.context
-                .PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
+            self.context.PSSetShaderResources(0, Some(&[None]));
             self.context.Draw(3, 0);
             self.context.PSSetShaderResources(0, Some(&[None]));
             self.context.OMSetRenderTargets(None, None);
         }
-        self.overlay_history.record_presented(
-            &self.context,
-            &render_target.texture,
-            render_frame,
-            system_relative_time_100ns().unwrap_or(0),
-        );
         let result = unsafe { self.swap_chain.Present(0, DXGI_PRESENT(0)) };
         result.ok().map_err(windows_error)?;
         self.surface.show()?;
@@ -2364,12 +2064,7 @@ impl NativeCompositionRenderer {
     }
 
     fn rebase_after_drag(&mut self) -> Result<(), String> {
-        let presentation = *self
-            .presentation
-            .read()
-            .map_err(|_| "PRESENCE_NATIVE_GPU_PRESENTATION_LOCK_FAILED".to_owned())?;
-        let render_frame = self.surface.sync_to_tracking_window(presentation)?;
-        self.overlay_history.rebase_displayed(render_frame);
+        self.surface.sync_to_tracking_window()?;
         Ok(())
     }
 
@@ -2382,35 +2077,6 @@ impl NativeCompositionRenderer {
             self.target_frame_rate.min(presentation.frame_rate_limit),
             self.display_refresh_rate_hz,
         ))
-    }
-
-    fn capture_view(
-        &mut self,
-        texture: &ID3D11Texture2D,
-    ) -> Result<ID3D11ShaderResourceView, String> {
-        let identity = texture.as_raw() as usize;
-        if let Some(cached) = self
-            .capture_views
-            .iter()
-            .find(|entry| entry.texture_identity == identity)
-        {
-            return Ok(cached.view.clone());
-        }
-        let mut view = None;
-        unsafe {
-            self.device
-                .CreateShaderResourceView(texture, None, Some(&mut view))
-                .map_err(windows_error)?;
-        }
-        let view = view.ok_or_else(|| "PRESENCE_NATIVE_GPU_CAPTURE_VIEW_UNAVAILABLE".to_owned())?;
-        if self.capture_views.len() >= 4 {
-            self.capture_views.remove(0);
-        }
-        self.capture_views.push(CaptureView {
-            texture_identity: identity,
-            view: view.clone(),
-        });
-        Ok(view)
     }
 
     fn current_render_target(&mut self) -> Result<SwapChainRenderTarget, String> {
@@ -2505,103 +2171,7 @@ fn create_render_target(
             })?;
     }
     Ok(SwapChainRenderTarget {
-        texture,
         view: target.ok_or_else(|| "PRESENCE_NATIVE_GPU_RENDER_TARGET_UNAVAILABLE".to_owned())?,
-    })
-}
-
-fn create_clean_backdrop_surface(
-    device: &ID3D11Device,
-    mut description: D3D11_TEXTURE2D_DESC,
-) -> Result<CleanBackdropSurface, String> {
-    description.BindFlags = (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32;
-    description.CPUAccessFlags = 0;
-    description.MiscFlags = 0;
-    description.Usage = D3D11_USAGE_DEFAULT;
-    description.MipLevels = 1;
-    description.ArraySize = 1;
-    description.SampleDesc = DXGI_SAMPLE_DESC {
-        Count: 1,
-        Quality: 0,
-    };
-    let mut texture = None;
-    unsafe {
-        device
-            .CreateTexture2D(&description, None, Some(&mut texture))
-            .map_err(|error| windows_stage_error("CLEAN_BACKDROP_TEXTURE", error))?;
-    }
-    let texture = texture
-        .ok_or_else(|| "PRESENCE_NATIVE_GPU_CLEAN_BACKDROP_TEXTURE_UNAVAILABLE".to_owned())?;
-    let mut render_target = None;
-    let mut shader_view = None;
-    unsafe {
-        device
-            .CreateRenderTargetView(&texture, None, Some(&mut render_target))
-            .map_err(|error| windows_stage_error("CLEAN_BACKDROP_RENDER_TARGET", error))?;
-        device
-            .CreateShaderResourceView(&texture, None, Some(&mut shader_view))
-            .map_err(|error| windows_stage_error("CLEAN_BACKDROP_SHADER_VIEW", error))?;
-    }
-    Ok(CleanBackdropSurface {
-        texture,
-        render_target: render_target.ok_or_else(|| {
-            "PRESENCE_NATIVE_GPU_CLEAN_BACKDROP_RENDER_TARGET_UNAVAILABLE".to_owned()
-        })?,
-        shader_view: shader_view.ok_or_else(|| {
-            "PRESENCE_NATIVE_GPU_CLEAN_BACKDROP_SHADER_VIEW_UNAVAILABLE".to_owned()
-        })?,
-    })
-}
-
-fn create_overlay_history(
-    device: &ID3D11Device,
-    render_texture: &ID3D11Texture2D,
-    capacity: usize,
-) -> Result<PreviousOverlayHistory, String> {
-    if capacity == 0 {
-        return Err("PRESENCE_NATIVE_GPU_OVERLAY_HISTORY_EMPTY".to_owned());
-    }
-    let mut samples = Vec::with_capacity(capacity);
-    for _ in 0..capacity {
-        samples.push(create_overlay_sample(device, render_texture)?);
-    }
-    Ok(PreviousOverlayHistory {
-        samples,
-        next_write: 0,
-        displayed_index: None,
-    })
-}
-
-fn create_overlay_sample(
-    device: &ID3D11Device,
-    render_texture: &ID3D11Texture2D,
-) -> Result<PreviousOverlaySample, String> {
-    let mut description = D3D11_TEXTURE2D_DESC::default();
-    unsafe { render_texture.GetDesc(&mut description) };
-    description.BindFlags = D3D11_BIND_SHADER_RESOURCE.0 as u32;
-    description.CPUAccessFlags = 0;
-    description.MiscFlags = 0;
-    description.Usage = D3D11_USAGE_DEFAULT;
-    let mut texture = None;
-    unsafe {
-        device
-            .CreateTexture2D(&description, None, Some(&mut texture))
-            .map_err(|error| windows_stage_error("PREVIOUS_OVERLAY_TEXTURE", error))?;
-    }
-    let texture = texture
-        .ok_or_else(|| "PRESENCE_NATIVE_GPU_PREVIOUS_OVERLAY_TEXTURE_UNAVAILABLE".to_owned())?;
-    let mut view = None;
-    unsafe {
-        device
-            .CreateShaderResourceView(&texture, None, Some(&mut view))
-            .map_err(|error| windows_stage_error("PREVIOUS_OVERLAY_VIEW", error))?;
-    }
-    Ok(PreviousOverlaySample {
-        texture,
-        view: view
-            .ok_or_else(|| "PRESENCE_NATIVE_GPU_PREVIOUS_OVERLAY_VIEW_UNAVAILABLE".to_owned())?,
-        frame: None,
-        presented_at_100ns: None,
     })
 }
 
@@ -2646,41 +2216,6 @@ fn create_shaders(
     Ok((
         vertex_shader.ok_or_else(|| "PRESENCE_NATIVE_GPU_VERTEX_SHADER_UNAVAILABLE".to_owned())?,
         pixel_shader.ok_or_else(|| "PRESENCE_NATIVE_GPU_PIXEL_SHADER_UNAVAILABLE".to_owned())?,
-    ))
-}
-
-fn create_clean_backdrop_shaders(
-    device: &ID3D11Device,
-) -> Result<(ID3D11VertexShader, ID3D11PixelShader), String> {
-    let vertex_blob = compile_shader_source(
-        CLEAN_BACKDROP_SHADER_SOURCE,
-        b"clean_vs_main\0",
-        b"vs_5_0\0",
-        "CLEAN_BACKDROP_VERTEX",
-    )?;
-    let pixel_blob = compile_shader_source(
-        CLEAN_BACKDROP_SHADER_SOURCE,
-        b"clean_ps_main\0",
-        b"ps_5_0\0",
-        "CLEAN_BACKDROP_PIXEL",
-    )?;
-    let mut vertex_shader = None;
-    let mut pixel_shader = None;
-    unsafe {
-        device
-            .CreateVertexShader(blob_bytes(&vertex_blob), None, Some(&mut vertex_shader))
-            .map_err(|error| windows_stage_error("CLEAN_BACKDROP_VERTEX_SHADER", error))?;
-        device
-            .CreatePixelShader(blob_bytes(&pixel_blob), None, Some(&mut pixel_shader))
-            .map_err(|error| windows_stage_error("CLEAN_BACKDROP_PIXEL_SHADER", error))?;
-    }
-    Ok((
-        vertex_shader.ok_or_else(|| {
-            "PRESENCE_NATIVE_GPU_CLEAN_BACKDROP_VERTEX_SHADER_UNAVAILABLE".to_owned()
-        })?,
-        pixel_shader.ok_or_else(|| {
-            "PRESENCE_NATIVE_GPU_CLEAN_BACKDROP_PIXEL_SHADER_UNAVAILABLE".to_owned()
-        })?,
     ))
 }
 
@@ -2730,40 +2265,11 @@ fn blob_bytes(blob: &ID3DBlob) -> &[u8] {
     }
 }
 
-fn create_sampler(device: &ID3D11Device) -> Result<ID3D11SamplerState, String> {
-    let description = D3D11_SAMPLER_DESC {
-        Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-        AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
-        AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
-        AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
-        MaxAnisotropy: 1,
-        ComparisonFunc: D3D11_COMPARISON_NEVER,
-        MinLOD: 0.0,
-        MaxLOD: f32::MAX,
-        ..D3D11_SAMPLER_DESC::default()
-    };
-    let mut sampler = None;
-    unsafe {
-        device
-            .CreateSamplerState(&description, Some(&mut sampler))
-            .map_err(|error| windows_stage_error("SAMPLER_CREATE", error))?;
-    }
-    sampler.ok_or_else(|| "PRESENCE_NATIVE_GPU_SAMPLER_UNAVAILABLE".to_owned())
-}
-
 fn create_constant_buffer(device: &ID3D11Device) -> Result<ID3D11Buffer, String> {
     create_constant_buffer_with_size(
         device,
         std::mem::size_of::<PresenceConstants>(),
         "CONSTANT_BUFFER_CREATE",
-    )
-}
-
-fn create_clean_backdrop_constant_buffer(device: &ID3D11Device) -> Result<ID3D11Buffer, String> {
-    create_constant_buffer_with_size(
-        device,
-        std::mem::size_of::<CleanBackdropConstants>(),
-        "CLEAN_BACKDROP_CONSTANT_BUFFER_CREATE",
     )
 }
 
@@ -2797,7 +2303,7 @@ fn create_constant_buffer_with_size(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeCaptureGeometry {
-    Monitor { frame: PhysicalFrame },
+    Monitor,
 }
 
 impl NativeCaptureGeometry {
@@ -2807,20 +2313,6 @@ impl NativeCaptureGeometry {
 
     fn secondary_window_settings(self) -> SecondaryWindowSettings {
         SecondaryWindowSettings::Include
-    }
-
-    fn includes_surface(self) -> bool {
-        true
-    }
-
-    fn frame_for_texture(self, width: u32, height: u32) -> PhysicalFrame {
-        match self {
-            Self::Monitor { frame } => PhysicalFrame {
-                width,
-                height,
-                ..frame
-            },
-        }
     }
 }
 
@@ -2992,9 +2484,7 @@ fn capture_desktop_source_on_mta(
     Ok(NativeDesktopCaptureSource {
         item: SendableCaptureItem(GraphicsCaptureItemType::Monitor((item, monitor))),
         monitor_frame,
-        geometry: NativeCaptureGeometry::Monitor {
-            frame: monitor_frame,
-        },
+        geometry: NativeCaptureGeometry::Monitor,
         display_refresh_rate_hz,
         hdr_capture,
     })
@@ -3280,50 +2770,11 @@ mod tests {
     }
 
     #[test]
-    fn native_hit_proxy_tracks_only_the_presented_core_circle() {
-        let frame = PhysicalFrame {
-            x: -320,
-            y: 140,
-            width: 800,
-            height: 325,
-        };
-        let presentation = NativeGpuPresentation {
-            core_x: 544.0,
-            core_y: 88.0,
-            ..NativeGpuPresentation::default()
-        };
-
-        assert_eq!(
-            native_hit_proxy_frame(frame, presentation),
-            PhysicalFrame {
-                x: 270,
-                y: 160,
-                width: 180,
-                height: 180,
-            }
-        );
-    }
-
-    #[test]
     fn liquid_glass_hlsl_compiles_for_the_production_shader_model() {
         compile_shader(b"vs_main\0", b"vs_5_0\0")
             .unwrap_or_else(|error| panic!("vertex shader failed: {error}"));
         compile_shader(b"ps_main\0", b"ps_5_0\0")
             .unwrap_or_else(|error| panic!("pixel shader failed: {error}"));
-        compile_shader_source(
-            CLEAN_BACKDROP_SHADER_SOURCE,
-            b"clean_vs_main\0",
-            b"vs_5_0\0",
-            "TEST_CLEAN_BACKDROP_VERTEX",
-        )
-        .unwrap_or_else(|error| panic!("clean-backdrop vertex shader failed: {error}"));
-        compile_shader_source(
-            CLEAN_BACKDROP_SHADER_SOURCE,
-            b"clean_ps_main\0",
-            b"ps_5_0\0",
-            "TEST_CLEAN_BACKDROP_PIXEL",
-        )
-        .unwrap_or_else(|error| panic!("clean-backdrop pixel shader failed: {error}"));
     }
 
     #[test]
@@ -3346,7 +2797,6 @@ mod tests {
     fn constant_buffer_remains_aligned_for_d3d11() {
         assert_eq!(std::mem::size_of::<PresenceConstants>() % 16, 0);
         assert_eq!(std::mem::size_of::<PresenceConstants>(), 176);
-        assert_eq!(std::mem::size_of::<CleanBackdropConstants>(), 64);
     }
 
     #[test]
@@ -3617,25 +3067,12 @@ mod tests {
     }
 
     #[test]
-    fn monitor_capture_geometry_maps_the_full_composited_display() {
-        let geometry = NativeCaptureGeometry::Monitor {
-            frame: PhysicalFrame {
-                x: -1_920,
-                y: 0,
-                width: 1_920,
-                height: 1_080,
-            },
-        };
-        assert!(geometry.includes_surface());
+    fn monitor_capture_geometry_uses_the_full_composited_display() {
+        let geometry = NativeCaptureGeometry::Monitor;
         assert_eq!(geometry.started_stage(), "monitor_capture_started");
         assert_eq!(
-            geometry.frame_for_texture(1_920, 1_080),
-            PhysicalFrame {
-                x: -1_920,
-                y: 0,
-                width: 1_920,
-                height: 1_080,
-            }
+            geometry.secondary_window_settings(),
+            SecondaryWindowSettings::Include
         );
     }
 
@@ -3669,21 +3106,33 @@ mod tests {
     }
 
     #[test]
-    fn overlay_history_uses_the_newest_frame_that_predates_the_capture() {
-        let entries = [
-            (0, Some(40_000), true),
-            (1, Some(80_000), true),
-            (2, Some(85_000), false),
-            (3, Some(95_000), true),
-        ];
-        assert_eq!(
-            select_overlay_history_index(entries.into_iter(), Some(100_000)),
-            Some(1)
-        );
-        assert_eq!(
-            select_overlay_history_index(entries.into_iter(), None),
-            None
-        );
+    fn host_backdrop_owns_desktop_sampling_without_recursive_capture() {
+        let backend = include_str!("windows_backend.rs");
+        let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
+        for required in [
+            "DWMWA_USE_HOSTBACKDROPBRUSH",
+            "CreateHostBackdropBrush()",
+            "CreateCompositionSurfaceForSwapChain(swap_chain)",
+            "capture_source_valid: 0.0",
+            "ColorFormat::Bgra8",
+        ] {
+            assert!(
+                production.contains(required),
+                "missing Host Backdrop contract: {required}"
+            );
+        }
+        for forbidden in [
+            "self.clean_backdrop.update(",
+            "self.overlay_history",
+            "sample_for_capture",
+            "DwmFlush()",
+            "ColorFormat::Rgba16F",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "recursive capture path returned: {forbidden}"
+            );
+        }
     }
 
     #[test]
@@ -3695,19 +3144,16 @@ mod tests {
     }
 
     #[test]
-    fn native_drag_keeps_presenting_with_clean_backdrop_then_rebases() {
+    fn native_drag_updates_the_live_host_backdrop_lens_without_capture_rebase() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         let host = include_str!("../lib.rs");
-        let shader = include_str!("liquid_glass.hlsl");
         for required in [
             "control.acknowledge_drag_mode()",
             "let drag_active = control.is_drag_active()",
-            "if !capture_includes_surface",
-            "self.clean_backdrop.update(",
+            ".update_lens(presentation, drag, render_frame)",
             "renderer.rebase_after_drag()",
             "frame.source_timestamp_100ns",
-            "OVERLAY_HISTORY_CAPACITY: usize = 16",
         ] {
             assert!(
                 production.contains(required),
@@ -3717,30 +3163,30 @@ mod tests {
         assert!(!production.contains("if control.drag_paused"));
         assert!(!production.contains("capture_source_staleness"));
         assert!(!production.contains("window_source_stale"));
-        assert!(shader.contains("if (capture_source_valid < 0.5)"));
+        assert!(!production.contains("previous_overlay"));
         assert!(host.contains("state.native_gpu.set_drag_active(true)"));
         assert!(host.contains("set_drag_active(false)"));
     }
 
     #[test]
-    fn monitor_capture_keeps_an_identity_center_and_bounded_edge_lens() {
+    fn material_shader_keeps_identity_above_a_host_backdrop_lens() {
         let shader = include_str!("liquid_glass.hlsl");
         for required in [
-            "capture_source_valid > 0.5",
             "EDGE_LENS_DEPTH_PX = 48.0",
-            "EDGE_REFRACTION_PX = 10.0",
-            "EDGE_DISPERSION_PX = 0.38",
-            "float3 primary_sample = sample_desktop_linear(base_uv + warp_uv)",
-            "float edge_alpha = lerp(0.900, 0.925, material_opacity)",
-            "float displaced_replacement = smoothstep(0.30 * scale, 1.15 * scale, displacement_px)",
+            "HostBackdropBrush owns the desktop pixels",
+            "float edge_alpha = lerp(0.16, 0.24, material_opacity)",
             "float inner_dark_line",
             "float key_highlight",
             "float fill_highlight",
             "float atmosphere_outer",
             "float atmosphere_inner",
-            "alpha = max(alpha, shape_mask * atmosphere_alpha)",
-            "float beacon_alpha = core_orb",
-            "alpha = max(alpha, shape_mask * beacon_alpha)",
+            "float3 identity_color",
+            "float atmosphere_layer_alpha",
+            "float beacon_layer_alpha",
+            "float identity_alpha = 1.0",
+            "float3 identity_premultiplied",
+            "float3 foreground_premultiplied = identity_premultiplied",
+            "material_premultiplied * (1.0 - identity_alpha)",
         ] {
             assert!(
                 shader.contains(required),
@@ -3750,18 +3196,21 @@ mod tests {
         assert!(!shader.contains("core_ring_outer"));
         assert!(!shader.contains("core_ring_inner"));
         assert!(!shader.contains("edge_blur"));
-        assert!(shader.contains("refracted = lerp(primary_sample, spectral_sample, spectral_mix)"));
+        assert!(!shader.contains("desktop_texture"));
+        assert!(!shader.contains("sample_desktop_linear"));
+        assert!(!shader.contains("identity_color)) * identity_alpha"));
+        assert!(!shader.contains("color += max(0.0.xxx, float3(0.86, 0.96, 1.0) - color)"));
     }
 
     #[test]
-    fn monitor_capture_samples_one_composited_display_without_window_handoffs() {
+    fn monitor_capture_is_health_and_cadence_only() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         for required in [
             "GraphicsCaptureItemType::Monitor((item, monitor))",
             "NativeCaptureGeometry::Monitor",
-            "capture_includes_surface",
-            ".sample_for_capture(captured_at_100ns)",
+            "capture_source_valid: 0.0",
+            "WGC is retained only for monitor health",
         ] {
             assert!(
                 production.contains(required),
@@ -3770,6 +3219,7 @@ mod tests {
         }
         assert!(!production.contains("CreateForWindow"));
         assert!(!production.contains("GetTopWindow"));
+        assert!(!production.contains("CreateShaderResourceView(texture"));
     }
 
     #[test]
@@ -3787,35 +3237,6 @@ mod tests {
         assert!(wait < replace);
         assert!(replace < cleanup);
         assert!(manager.contains("candidate.set_drag_active(true)"));
-    }
-
-    #[test]
-    fn self_capture_correction_recovers_live_frames_without_recursive_rings() {
-        let shader = include_str!("clean_backdrop.hlsl");
-        for required in [
-            "recover_composited_backdrop",
-            "float denominator = max(1.0 - alpha, 0.06)",
-            "float2 alpha_gradient_vector = float2(ddx(alpha), ddy(alpha))",
-            "float alpha_confidence = 1.0 - smoothstep(0.88, 0.945, candidate_alpha)",
-            "float2 offset_px = -alpha_gradient_vector",
-            "float lower_coverage = smoothstep(0.008, 0.075, alpha - neighbor_alpha)",
-            "float max_step = lerp(0.34, 0.065",
-            "lerp(previous_clean_linear, limited, confidence)",
-        ] {
-            assert!(
-                shader.contains(required),
-                "missing shader guard: {required}"
-            );
-        }
-        for forbidden in [
-            "lerp(captured.rgb, previous_clean, preserve)",
-            "float3 live_background = saturate(captured.rgb)",
-        ] {
-            assert!(
-                !shader.contains(forbidden),
-                "recursive/stale backdrop path returned: {forbidden}"
-            );
-        }
     }
 
     #[test]

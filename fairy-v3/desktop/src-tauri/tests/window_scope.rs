@@ -5,8 +5,8 @@ use fairy_desktop_v3::{
     authorize_core_rpc_window, authorize_pet_input_window, authorize_pet_render_window,
     authorize_preferences_reader, authorize_settings_window, authorize_voice_health_window,
     authorize_voice_settings_window, auxiliary_window_policy, bridge_failure_response,
-    fairy_tray_action, resolve_desktop_data_dir, settings_method_allowed, FairyTrayAction,
-    PetWindowFrame,
+    fairy_tray_action, presence_window_creation_specs, resolve_desktop_data_dir,
+    settings_method_allowed, FairyTrayAction, PetWindowFrame,
 };
 use serde_json::{json, Value};
 use std::ffi::OsString;
@@ -38,8 +38,17 @@ fn settings_window_has_a_narrow_method_allow_list() {
     assert!(authorize_settings_window("main").is_err());
     assert!(settings_method_allowed("permissions.update"));
     assert!(settings_method_allowed("mcp.servers.configure"));
+    assert!(settings_method_allowed("projects.archived.list"));
+    assert!(settings_method_allowed("projects.archived.restore"));
+    assert!(settings_method_allowed("projects.archived.delete"));
+    assert!(settings_method_allowed("trash.items.list"));
+    assert!(settings_method_allowed("trash.items.restore"));
+    assert!(settings_method_allowed("trash.items.purge"));
+    assert!(settings_method_allowed("trash.items.purge_all"));
     assert!(!settings_method_allowed("assistant.turns.start"));
     assert!(!settings_method_allowed("projects.list"));
+    assert!(!settings_method_allowed("projects.delete"));
+    assert!(!settings_method_allowed("conversations.delete"));
     assert!(!settings_method_allowed("system.actions.execute"));
     assert!(authorize_preferences_reader("main").is_ok());
     assert!(authorize_preferences_reader("pet-input").is_ok());
@@ -101,42 +110,24 @@ fn capability_files_keep_pet_local() {
 }
 
 #[test]
-fn tauri_config_declares_separate_render_and_input_surfaces() {
+fn presence_windows_are_created_serially_after_main_load() {
     let config: serde_json::Value =
         serde_json::from_str(include_str!("../tauri.conf.json")).expect("Tauri config");
     let windows = config["app"]["windows"].as_array().expect("window list");
-    let render = windows
+    assert!(!windows
         .iter()
-        .find(|window| window["label"] == "pet-render")
-        .expect("render window");
-    let input = windows
-        .iter()
-        .find(|window| window["label"] == "pet-input")
-        .expect("input window");
+        .any(|window| { matches!(window["label"].as_str(), Some("pet-render" | "pet-input")) }));
 
-    assert_eq!(
-        (render["width"].as_u64(), render["height"].as_u64()),
-        (Some(640), Some(260))
-    );
-    assert_eq!(render["focusable"], false);
-    assert_eq!(render["alwaysOnTop"], true);
-    assert_eq!(render.get("create").and_then(Value::as_bool), Some(true));
-    assert_eq!(
-        (render["x"].as_i64(), render["y"].as_i64()),
-        (Some(-32000), Some(-32000))
-    );
-    assert_eq!(render["visible"], true);
-    assert_eq!(
-        (input["width"].as_u64(), input["height"].as_u64()),
-        (Some(144), Some(144))
-    );
-    assert_eq!(
-        (input["x"].as_i64(), input["y"].as_i64()),
-        (Some(-32000), Some(-32000))
-    );
-    assert_eq!(input["visible"], true);
-    assert_eq!(input["alwaysOnTop"], true);
-    assert_eq!(input.get("create").and_then(Value::as_bool), Some(true));
+    let [render, input] = presence_window_creation_specs();
+    assert_eq!(render.label, "pet-render");
+    assert_eq!((render.width, render.height), (640, 260));
+    assert_eq!((render.min_width, render.max_width), (640, 640));
+    assert!(!render.focusable);
+    assert_eq!(input.label, "pet-input");
+    assert_eq!((input.width, input.height), (616, 360));
+    assert_eq!((input.min_width, input.min_height), (616, 360));
+    assert_eq!((input.max_width, input.max_height), (616, 360));
+    assert!(input.focusable);
 
     let settings = windows
         .iter()
@@ -146,7 +137,7 @@ fn tauri_config_declares_separate_render_and_input_surfaces() {
 }
 
 #[test]
-fn pet_input_overlays_the_unified_liquid_surface_without_a_material_gap() {
+fn pet_input_sits_below_the_core_inside_the_unified_liquid_surface() {
     let render = PetWindowFrame {
         x: -1280,
         y: 240,
@@ -158,36 +149,40 @@ fn pet_input_overlays_the_unified_liquid_surface_without_a_material_gap() {
         core,
         PetWindowFrame {
             x: -1256,
-            y: 298,
+            y: 256,
             width: 144,
             height: 144,
         }
     );
 
-    let compact = anchored_pet_input_frame(render, 616, 144, 144);
+    let compact = anchored_pet_input_frame(render, 300, 260, 260);
     assert_eq!(
         compact,
         PetWindowFrame {
             x: -1256,
-            y: 298,
-            width: 616,
-            height: 144,
+            y: 240,
+            width: 300,
+            height: 260,
         }
     );
 
-    let expanded = anchored_pet_input_frame(render, 616, 360, 144);
+    let expanded = anchored_pet_input_frame(render, 616, 360, 260);
     assert_eq!(
         expanded,
         PetWindowFrame {
             x: -1256,
-            y: 82,
+            y: 140,
             width: 616,
             height: 360,
         }
     );
     assert_eq!(
         compact.y + compact.height as i32,
-        expanded.y + expanded.height as i32
+        render.y + render.height as i32
+    );
+    assert_eq!(
+        expanded.y + expanded.height as i32,
+        render.y + render.height as i32
     );
 }
 

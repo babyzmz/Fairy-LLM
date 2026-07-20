@@ -922,6 +922,35 @@ function Get-AvailablePort {
     finally { $listener.Stop() }
 }
 
+function Measure-RadialLuminance(
+    $Image,
+    [int]$CenterX,
+    [int]$CenterY,
+    [double]$Radius,
+    [double]$Tolerance = 1.0
+) {
+    $maximumRadius = [int][Math]::Ceiling($Radius + $Tolerance)
+    $sum = 0.0
+    $samples = 0
+    for ($y = [Math]::Max(0, $CenterY - $maximumRadius);
+        $y -le [Math]::Min($Image.Height - 1, $CenterY + $maximumRadius);
+        $y++) {
+        for ($x = [Math]::Max(0, $CenterX - $maximumRadius);
+            $x -le [Math]::Min($Image.Width - 1, $CenterX + $maximumRadius);
+            $x++) {
+            $distance = [Math]::Sqrt(
+                [Math]::Pow($x - $CenterX, 2) + [Math]::Pow($y - $CenterY, 2)
+            )
+            if ([Math]::Abs($distance - $Radius) -gt $Tolerance) { continue }
+            $pixel = $Image.GetPixel($x, $y)
+            $sum += ($pixel.R + $pixel.G + $pixel.B) / 3.0
+            $samples++
+        }
+    }
+    if ($samples -lt 1) { throw "Identity radial sample area is empty" }
+    return $sum / $samples
+}
+
 function Format-FairyProcessWindows([System.Diagnostics.Process]$Process) {
     return @(
         [FairyNativeGpuProbe]::WindowsForProcess($Process.Id) |
@@ -1094,7 +1123,10 @@ try {
     $readyRaw = & node $probe --port $port --action status --target-fps $TargetFps --duration-seconds 0
     if ($LASTEXITCODE -ne 0) { throw "Presence WebViews did not become ready" }
     $render = Wait-FairyPresenceWebView $process "pet-render" 640 260
-    $input = Wait-FairyPresenceWebView $process "pet-input" 144 144
+    # The input WebView owns the complete expandable interaction surface. Its native
+    # hit region is reconciled separately, so identify the HWND from the maximum
+    # logical surface instead of the obsolete 144px compact-window geometry.
+    $input = Wait-FairyPresenceWebView $process "pet-input" 616 360
     # HWND registration precedes placement reconciliation by a few scheduler turns.
     Start-Sleep -Milliseconds 300
     $raw = & node $probe --port $port --action run --target-fps $TargetFps --duration-seconds $DurationSeconds
@@ -1201,9 +1233,37 @@ try {
                 if ($meanDifference -lt 18.0) {
                     throw "Stationary lens did not refresh the live monitor background: mean difference=$meanDifference"
                 }
+                $meanRadialLuminance = {
+                    param([double]$Radius, [double]$Tolerance = 1.0)
+                    $red = Measure-RadialLuminance $redImage $centerX $centerY $Radius $Tolerance
+                    $green = Measure-RadialLuminance $greenImage $centerX $centerY $Radius $Tolerance
+                    return ($red + $green) / 2.0
+                }
+                $centerLuminance = & $meanRadialLuminance 0.0 (3.0 * $scale)
+                $innerBaseline = (
+                    (& $meanRadialLuminance (16.0 * $scale)) +
+                    (& $meanRadialLuminance (30.0 * $scale))
+                ) / 2.0
+                $innerRingLuminance = & $meanRadialLuminance (24.0 * $scale)
+                $outerBaseline = (
+                    (& $meanRadialLuminance (30.0 * $scale)) +
+                    (& $meanRadialLuminance (44.0 * $scale))
+                ) / 2.0
+                $outerRingLuminance = & $meanRadialLuminance (36.0 * $scale)
+                $centerContrast = $centerLuminance - $innerBaseline
+                $innerRingContrast = $innerRingLuminance - $innerBaseline
+                $outerRingContrast = $outerRingLuminance - $outerBaseline
+                if ($centerContrast -lt 20.0 -or
+                    $innerRingContrast -lt 2.0 -or
+                    $outerRingContrast -lt 3.0) {
+                    throw "Foreground identity layer is missing or optically attenuated: center=$centerContrast inner=$innerRingContrast outer=$outerRingContrast"
+                }
                 $liveBackdropResult = [ordered]@{
                     mean_rgb_difference = $meanDifference
                     samples = $samples
+                    identity_center_contrast = $centerContrast
+                    identity_inner_ring_contrast = $innerRingContrast
+                    identity_outer_ring_contrast = $outerRingContrast
                     first_capture = [System.IO.Path]::GetFullPath($liveRed)
                     second_capture = [System.IO.Path]::GetFullPath($liveGreen)
                 }
@@ -1265,7 +1325,7 @@ try {
     if (-not [string]::IsNullOrEmpty($render.Title)) {
         throw "Native render surface unexpectedly exposes a window title: $($render.Title)"
     }
-    $input = Wait-FairyPresenceWebView $process "pet-input" 144 144
+    $input = Wait-FairyPresenceWebView $process "pet-input" 616 360
     $surfaceAligned =
         $render.X -eq $webViewRender.X -and
         $render.Y -eq $webViewRender.Y -and
@@ -1275,13 +1335,17 @@ try {
         throw "Native render surface is not aligned with the WebView render window"
     }
     $windowScale = [double]$webViewRender.Width / 640.0
-    $expectedInputSize = [int][Math]::Round(144.0 * $windowScale)
-    $inputCoreY = $webViewRender.Y + [int][Math]::Round(16.0 * $windowScale)
-    $inputCoreRightX = $webViewRender.X + [int][Math]::Round(24.0 * $windowScale)
-    $inputCoreLeftX = $webViewRender.X + $webViewRender.Width - [int][Math]::Round(24.0 * $windowScale) - $expectedInputSize
+    $expectedInputWidth = [int][Math]::Round(616.0 * $windowScale)
+    $expectedInputHeight = [int][Math]::Round(360.0 * $windowScale)
+    $coreInsetX = [int][Math]::Round(24.0 * $windowScale)
+    $coreInsetY = [int][Math]::Round(16.0 * $windowScale)
+    $inputCoreTop = [int][Math]::Round(116.0 * $windowScale)
+    $inputCoreY = $webViewRender.Y + $coreInsetY - $inputCoreTop
+    $inputCoreRightX = $webViewRender.X + $coreInsetX
+    $inputCoreLeftX = $webViewRender.X + $webViewRender.Width - $coreInsetX - $expectedInputWidth
     $inputAligned =
-        $input.Width -eq $expectedInputSize -and
-        $input.Height -eq $expectedInputSize -and
+        $input.Width -eq $expectedInputWidth -and
+        $input.Height -eq $expectedInputHeight -and
         $input.Y -eq $inputCoreY -and
         ($input.X -eq $inputCoreRightX -or $input.X -eq $inputCoreLeftX)
     if (-not $inputAligned) {
@@ -1322,6 +1386,8 @@ try {
     }
     $report = [ordered]@{
         generated_at = [DateTime]::UtcNow.ToString("o")
+        process_id = $process.Id
+        webview2_port = $port
         target_fps = $TargetFps
         duration_seconds = $DurationSeconds
         status = $status

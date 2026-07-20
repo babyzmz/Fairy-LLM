@@ -7,6 +7,7 @@ export const presenceRuntimePolicySchema = z.object({
     z.literal(30),
     z.literal(60),
     z.literal(144),
+    z.literal(300),
   ]),
   power_saver: z.boolean(),
   foreground_fullscreen: z.boolean(),
@@ -16,7 +17,7 @@ export type PresenceRuntimePolicy = z.infer<typeof presenceRuntimePolicySchema>;
 
 export const DEFAULT_PRESENCE_RUNTIME_POLICY: PresenceRuntimePolicy = Object.freeze({
   schema_version: 1,
-  frame_rate_limit: 144,
+  frame_rate_limit: 300,
   power_saver: false,
   foreground_fullscreen: false,
 });

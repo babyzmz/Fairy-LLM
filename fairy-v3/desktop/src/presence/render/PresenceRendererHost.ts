@@ -133,11 +133,11 @@ export class PresenceRendererHost implements PresenceRenderer {
       );
       next.resize(this.width, this.height, this.dpr);
       next.setSnapshot(this.snapshot);
-      if (this.running && !this.suspended) next.start();
       this.active?.dispose();
       this.active = next;
       this.activeMode = "compatibility";
       this.showCanvas("compatibility");
+      if (this.running && !this.suspended) next.start();
       this.report(
         "compatibility",
         errorCode === null ? "running" : "fallback",

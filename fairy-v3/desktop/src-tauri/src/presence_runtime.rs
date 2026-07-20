@@ -5,16 +5,16 @@ pub const PRESENCE_RUNTIME_POLICY_EVENT: &str = "presence-runtime-policy";
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct PresenceRuntimePolicy {
     pub schema_version: u16,
-    pub frame_rate_limit: u8,
+    pub frame_rate_limit: u16,
     pub power_saver: bool,
     pub foreground_fullscreen: bool,
 }
 
-pub fn resolve_frame_rate_limit(power_saver: bool, foreground_fullscreen: bool) -> u8 {
-    if power_saver || foreground_fullscreen {
+pub fn resolve_frame_rate_limit(power_saver: bool, _foreground_fullscreen: bool) -> u16 {
+    if power_saver {
         15
     } else {
-        144
+        300
     }
 }
 
@@ -91,4 +91,16 @@ fn rect_covers_monitor(
 #[cfg(not(target_os = "windows"))]
 fn foreground_window_is_fullscreen() -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_frame_rate_limit;
+
+    #[test]
+    fn fullscreen_content_keeps_live_optics_at_the_selected_refresh_rate() {
+        assert_eq!(resolve_frame_rate_limit(false, false), 300);
+        assert_eq!(resolve_frame_rate_limit(true, false), 15);
+        assert_eq!(resolve_frame_rate_limit(false, true), 300);
+    }
 }

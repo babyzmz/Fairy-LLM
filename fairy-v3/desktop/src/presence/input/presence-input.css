@@ -14,7 +14,7 @@
 .presence-core-hit-target {
   position: absolute;
   z-index: 5;
-  bottom: 0;
+  top: 116px;
   left: 0;
   width: 144px;
   height: 144px;
@@ -22,8 +22,14 @@
   border: 0;
   border-radius: 50%;
   background: transparent;
+  box-shadow: none;
+  opacity: 0;
   outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
   cursor: grab;
+  filter: none;
   touch-action: none;
 }
 
@@ -31,13 +37,19 @@
   cursor: grabbing;
 }
 
+.presence-input-window[data-moving="true"] .presence-panel {
+  opacity: 0;
+  transition: none;
+  pointer-events: none;
+}
+
+.presence-input-window[data-moving="true"] .presence-panel > * {
+  pointer-events: none;
+}
+
 .presence-input-window[data-expansion-direction="left"] .presence-core-hit-target {
   right: 0;
   left: auto;
-}
-
-.presence-core-hit-target:focus-visible {
-  box-shadow: inset 0 0 0 2px rgb(218 246 255 / 72%);
 }
 
 .presence-input-window[data-interactive="false"] .presence-core-hit-target {
@@ -51,12 +63,26 @@
   max-height: 100%;
   padding: 8px;
   align-content: end;
+  opacity: 0;
   transform: translateY(5px) scale(0.99);
   transform-origin: bottom center;
-  transition: opacity 90ms ease, transform 120ms ease;
+  transition:
+    opacity 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
 }
 
-.presence-input-window[data-interactive="false"] .presence-panel {
+.presence-input-window .presence-panel[data-visible="true"] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.presence-input-window .presence-panel > * {
+  pointer-events: auto;
+}
+
+.presence-input-window[data-interactive="false"] .presence-panel,
+.presence-input-window[data-interactive="false"] .presence-panel > * {
   pointer-events: none;
 }
 
@@ -70,11 +96,12 @@
 
 .presence-input-window[data-layout="compact"] .presence-input {
   position: absolute;
-  top: 40px;
-  right: 12px;
-  left: 108px;
+  top: 288px;
+  right: auto;
+  left: 8px;
+  width: calc(var(--presence-compact-width, 280px) - 16px);
   height: 64px;
-  grid-template-columns: 30px minmax(0, 1fr) 38px;
+  grid-template-columns: minmax(0, 1fr) 38px;
   align-items: center;
   gap: 7px;
   padding: 5px 7px;
@@ -82,20 +109,8 @@
 }
 
 .presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-input {
-  right: 108px;
-  left: 12px;
-}
-
-.presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-move-grip {
-  order: 3;
-}
-
-.presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-input-field {
-  order: 2;
-}
-
-.presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-send-button {
-  order: 1;
+  right: 8px;
+  left: auto;
 }
 
 .presence-input-window[data-layout="compact"] .presence-input-field {
@@ -139,19 +154,6 @@
   background: rgb(225 246 255 / 24%);
 }
 
-.presence-input-window .presence-move-grip {
-  cursor: grab;
-  color: rgb(239 250 249 / 86%);
-  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 72%));
-  touch-action: none;
-}
-
-.presence-input-window .presence-input[data-moving="true"] .presence-move-grip {
-  cursor: grabbing;
-  color: #d9fff5;
-  background: rgb(35 55 53 / 68%);
-}
-
 .presence-input-window[data-layout="expanded"] .presence-panel {
   padding: 8px 8px 8px 156px;
 }
@@ -176,4 +178,38 @@
 .presence-input-window[data-reduced-motion="true"] * {
   animation: none !important;
   transition: none !important;
+}
+
+.presence-input-window[data-reduced-transparency="true"] .presence-card,
+.presence-input-window[data-reduced-transparency="true"] .presence-menu {
+  background: rgb(18 23 24 / 99%);
+  backdrop-filter: blur(24px);
+}
+
+.presence-input-window[data-reduced-transparency="true"] .presence-input-field textarea {
+  text-shadow: 0 1px 2px rgb(0 0 0 / 82%);
+}
+
+.presence-input-window[data-increased-contrast="true"] .presence-card,
+.presence-input-window[data-increased-contrast="true"] .presence-menu {
+  border-color: rgb(255 255 255 / 82%);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 88%);
+}
+
+.presence-input-window[data-increased-contrast="true"] .presence-card strong,
+.presence-input-window[data-increased-contrast="true"] .presence-card span,
+.presence-input-window[data-increased-contrast="true"] .presence-menu > button,
+.presence-input-window[data-increased-contrast="true"] textarea {
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+}
+
+@media (forced-colors: active) {
+  .presence-input-window .presence-card,
+  .presence-input-window .presence-menu {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: auto;
+  }
 }

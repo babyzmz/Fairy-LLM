@@ -1,9 +1,9 @@
 import {
   Check,
   CircleAlert,
+  Gamepad2,
   LoaderCircle,
   LogOut,
-  GripVertical,
   MessageSquarePlus,
   MonitorUp,
   Pin,
@@ -18,13 +18,13 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
-import { m } from "motion/react";
+import { AnimatePresence, m } from "motion/react";
 
 import type { PresenceReply, PresenceView } from "../domain/projection";
 
@@ -34,11 +34,9 @@ export interface PresencePanelActions {
   closeSubmission(): void;
   dismissNotice(): void;
   exit(): void;
-  movePointerDown(event: ReactPointerEvent<HTMLButtonElement>): void;
-  movePointerMove(event: ReactPointerEvent<HTMLButtonElement>): void;
-  movePointerUp(event: ReactPointerEvent<HTMLButtonElement>): void;
   newChat(): void;
   openMain(): void;
+  openCompanion(): void;
   openReview(): void;
   openSettings(): void;
   requestInputFocus(): void;
@@ -47,7 +45,6 @@ export interface PresencePanelActions {
   send(text: string): void;
   setInputOpen(open: boolean): void;
   setMenuOpen(open: boolean): void;
-  showMoveGrip(): void;
   toggleAlwaysOnTop(): void;
   toggleAutoPlay(): void;
   toggleMuted(): void;
@@ -71,13 +68,17 @@ interface PresencePanelProps {
   inputOpen: boolean;
   interactive?: boolean;
   menuOpen: boolean;
-  moving?: boolean;
   muted: boolean;
   reply: PresenceReply | null;
   submission: PresenceSubmissionCard | null;
   view: PresenceView;
   visible: boolean;
+  onCompactWidthChange?(width: number): void;
 }
+
+export const PRESENCE_COMPACT_INPUT_MIN_WIDTH = 280;
+export const PRESENCE_COMPACT_INPUT_MAX_WIDTH = 420;
+const PRESENCE_COMPACT_INPUT_CHROME_WIDTH = 104;
 
 export function PresencePanel({
   actions,
@@ -87,12 +88,12 @@ export function PresencePanel({
   inputOpen,
   interactive = true,
   menuOpen,
-  moving = false,
   muted,
   reply,
   submission,
   view,
   visible,
+  onCompactWidthChange,
 }: PresencePanelProps) {
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -111,6 +112,14 @@ export function PresencePanel({
   useEffect(() => {
     if (focusRequest > 0 && inputOpen && interactive) textarea.current?.focus();
   }, [focusRequest, inputOpen, interactive]);
+
+  useLayoutEffect(() => {
+    if (!inputOpen || onCompactWidthChange === undefined) return;
+    const field = textarea.current;
+    const content = longestLine(draft || field?.placeholder || "Message Fairy");
+    const measured = measureInputText(content, field);
+    onCompactWidthChange(compactInputWidthForText(measured));
+  }, [draft, inputOpen, onCompactWidthChange]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -140,12 +149,16 @@ export function PresencePanel({
       data-visible={String(visible)}
       inert={!interactive}
     >
+      <AnimatePresence initial={false} mode="sync">
       {!menuOpen && view.notice !== null ? (
         <m.aside
           animate={{ opacity: 1, y: 0, scale: 1 }}
           className={`presence-card notice ${view.notice.tone}`}
+          exit={{ opacity: 0, y: -4, scale: 0.985 }}
           initial={{ opacity: 0, y: 6, scale: 0.98 }}
+          key={`notice:${view.notice.id}`}
           role="alert"
+          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
         >
           <div>
             <strong>{view.status_text}</strong>
@@ -171,12 +184,15 @@ export function PresencePanel({
         </m.aside>
       ) : null}
 
-      {!menuOpen && reply !== null ? (
+      {!menuOpen && view.notice === null && reply !== null ? (
         <m.aside
           animate={{ opacity: 1, y: 0, scale: 1 }}
           className="presence-card reply"
+          exit={{ opacity: 0, y: -4, scale: 0.985 }}
           initial={{ opacity: 0, y: 6, scale: 0.98 }}
+          key={`reply:${reply.id}`}
           role="status"
+          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
         >
           <div className="presence-card-copy">
             <strong>{reply.streaming ? "Fairy is replying" : "Fairy"}</strong>
@@ -228,8 +244,11 @@ export function PresencePanel({
           animate={{ opacity: 1, y: 0, scale: 1 }}
           className={`presence-card submission ${submission.phase}`}
           data-submission-id={submission.id}
+          exit={{ opacity: 0, y: -4, scale: 0.985 }}
           initial={{ opacity: 0, y: 6, scale: 0.98 }}
+          key={`submission:${submission.id}`}
           role="status"
+          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
         >
           <div className="presence-card-copy">
             <strong>
@@ -280,20 +299,15 @@ export function PresencePanel({
       ) : null}
 
       {inputOpen ? (
-        <form className="presence-input" data-moving={String(moving)} onSubmit={submit}>
-          <button
-            aria-label="Move Fairy"
-            className="presence-move-grip"
-            onLostPointerCapture={actions.movePointerUp}
-            onPointerCancel={actions.movePointerUp}
-            onPointerDown={actions.movePointerDown}
-            onPointerMove={actions.movePointerMove}
-            onPointerUp={actions.movePointerUp}
-            title="Move Fairy"
-            type="button"
-          >
-            <GripVertical size={15} />
-          </button>
+        <m.form
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          className="presence-input"
+          exit={{ opacity: 0, y: 4, scale: 0.985 }}
+          initial={false}
+          key="input"
+          onSubmit={submit}
+          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+        >
           <div
             className="presence-input-field"
             data-optical-layer="transparent-overlay"
@@ -340,7 +354,7 @@ export function PresencePanel({
           >
             <Send size={15} />
           </button>
-        </form>
+        </m.form>
       ) : null}
 
       {menuOpen ? (
@@ -348,8 +362,11 @@ export function PresencePanel({
           animate={{ opacity: 1, y: 0 }}
           aria-label="Fairy menu"
           className="presence-menu"
+          exit={{ opacity: 0, y: -4 }}
           initial={{ opacity: 0, y: 5 }}
+          key="menu"
           role="menu"
+          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
         >
           <MenuButton
             icon={<MessageSquarePlus size={15} />}
@@ -359,6 +376,11 @@ export function PresencePanel({
               actions.setMenuOpen(false);
               actions.setInputOpen(true);
             }}
+          />
+          <MenuButton
+            icon={<Gamepad2 size={15} />}
+            label="Game companion"
+            onClick={actions.openCompanion}
           />
           <MenuToggle
             checked={autoPlay}
@@ -389,11 +411,6 @@ export function PresencePanel({
             onClick={actions.openSettings}
           />
           <MenuButton
-            icon={<GripVertical size={15} />}
-            label="Move Fairy"
-            onClick={actions.showMoveGrip}
-          />
-          <MenuButton
             icon={<RotateCcw size={15} />}
             label="Reset position"
             onClick={actions.resetPosition}
@@ -406,7 +423,39 @@ export function PresencePanel({
           />
         </m.div>
       ) : null}
+      </AnimatePresence>
     </section>
+  );
+}
+
+export function compactInputWidthForText(measuredTextWidth: number): number {
+  const raw = Math.ceil((Math.max(0, measuredTextWidth) + PRESENCE_COMPACT_INPUT_CHROME_WIDTH) / 4) * 4;
+  return Math.min(
+    PRESENCE_COMPACT_INPUT_MAX_WIDTH,
+    Math.max(PRESENCE_COMPACT_INPUT_MIN_WIDTH, raw),
+  );
+}
+
+function longestLine(value: string): string {
+  return value.split(/\r?\n/u).reduce(
+    (longest, line) => line.length > longest.length ? line : longest,
+    "",
+  );
+}
+
+function measureInputText(value: string, field: HTMLTextAreaElement | null): number {
+  const userAgent = field?.ownerDocument.defaultView?.navigator.userAgent ?? "";
+  if (field !== null && !userAgent.toLowerCase().includes("jsdom")) {
+    const context = document.createElement("canvas").getContext("2d");
+    if (context !== null) {
+      const style = window.getComputedStyle(field);
+      context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      return context.measureText(value).width;
+    }
+  }
+  return Array.from(value).reduce(
+    (width, character) => width + (/^[\u0000-\u00ff]$/u.test(character) ? 7 : 13),
+    0,
   );
 }
 

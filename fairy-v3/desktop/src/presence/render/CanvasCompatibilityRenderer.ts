@@ -11,6 +11,11 @@ import {
   RendererPerformanceSampler,
   writePerformanceDataset,
 } from "./RendererPerformanceSampler";
+import { liquidCapsuleGeometryForSnapshot } from "./liquidGeometry";
+import {
+  LiquidVisualTransition,
+  liquidVisualStyleForSnapshot,
+} from "./liquidVisualState";
 
 export class CanvasCompatibilityRenderer implements PresenceRenderer {
   private readonly context: CanvasRenderingContext2D;
@@ -21,6 +26,7 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
   private height = 1;
   private dpr = 1;
   private readonly performanceSampler = new RendererPerformanceSampler();
+  private readonly visualMotion: LiquidVisualTransition;
   private renderedFrames = 0;
   private hasRendered = false;
   private performanceSamplingComplete = false;
@@ -33,6 +39,11 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
     if (context === null) throw new Error("CANVAS2D_UNAVAILABLE");
     this.context = context;
     this.snapshot = initialSnapshot;
+    this.visualMotion = new LiquidVisualTransition(
+      visualStateForSnapshot(initialSnapshot),
+      liquidVisualStyleForSnapshot(initialSnapshot),
+      performance.now(),
+    );
     this.loop = new RendererFrameLoop(
       (now) => this.drawFrame(now),
       () => rendererFrameInterval(this.snapshot),
@@ -65,6 +76,12 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
 
   setSnapshot(snapshot: PresenceRenderSnapshot): void {
     this.snapshot = snapshot;
+    this.visualMotion.setTarget(
+      visualStateForSnapshot(snapshot),
+      liquidVisualStyleForSnapshot(snapshot),
+      performance.now(),
+      snapshot.reduced_motion,
+    );
     this.loop.refresh();
   }
 
@@ -77,10 +94,11 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
 
   private drawFrame(now: number) {
     const startedAt = performance.now();
+    const visualStyle = this.visualMotion.sample(now);
     const interaction = this.snapshot.interaction;
     const gaze = interaction?.cursor.direction ?? { x: 0, y: 0 };
     const center = interaction === null
-      ? { x: 96 * this.dpr, y: 130 * this.dpr }
+      ? { x: 96 * this.dpr, y: 88 * this.dpr }
       : {
           x: interaction.placement.anchor.x - interaction.placement.render_frame.x,
           y: interaction.placement.anchor.y - interaction.placement.render_frame.y,
@@ -93,11 +111,34 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
       this.snapshot.reduced_motion ? 0 : now / 1_000,
       {
         opacity: this.snapshot.opacity,
+        reducedTransparency: this.snapshot.reduced_transparency === true,
+        increasedContrast: this.snapshot.increased_contrast === true,
         particles: this.snapshot.particles_enabled,
         sizeScale: this.snapshot.size_scale,
+        stateStyle: {
+          accent: hexStyle(visualStyle.accent),
+          secondary: hexStyle(lighten(visualStyle.accent, 0.82)),
+          speed: visualStyle.pulse_speed,
+          energy: visualStyle.energy,
+          particles: Math.round(visualStyle.particle_count),
+        },
         center,
-        capsuleDirection: this.snapshot.input_capsule_visible
-          ? interaction?.placement.expansion_direction === "left" ? -1 : 1
+        capsuleGeometry: this.snapshot.input_capsule_visible
+          ? (() => {
+              const capsule = liquidCapsuleGeometryForSnapshot(
+                this.snapshot,
+                this.width,
+                this.height,
+                this.dpr,
+              );
+              return {
+                center: {
+                  x: capsule.center_x,
+                  y: this.canvas.height - capsule.center_y,
+                },
+                width: capsule.half_width * 2,
+              };
+            })()
           : null,
       },
     );
@@ -116,4 +157,21 @@ export class CanvasCompatibilityRenderer implements PresenceRenderer {
       this.canvas.dataset.rendered = "true";
     }
   }
+}
+
+function lighten(
+  color: readonly [number, number, number],
+  amount: number,
+): [number, number, number] {
+  return [
+    color[0] + (1 - color[0]) * amount,
+    color[1] + (1 - color[1]) * amount,
+    color[2] + (1 - color[2]) * amount,
+  ];
+}
+
+function hexStyle(color: readonly [number, number, number]): string {
+  return `#${color
+    .map((value) => Math.round(value * 255).toString(16).padStart(2, "0"))
+    .join("")}`;
 }

@@ -19,14 +19,23 @@ export interface PetHost {
   updatePreferences(input: PetPreferencePatch): Promise<DesktopPreferences>;
   onPreferences(listener: (preferences: DesktopPreferences) => void): Promise<() => void>;
   onInputRequested(listener: () => void): Promise<() => void>;
+  onMenuRequested(listener: () => void): Promise<() => void>;
   onNewChatRequested(listener: () => void): Promise<() => void>;
   setExpanded(expanded: boolean): Promise<void>;
-  setInputLayout(layout: PetInputLayout): Promise<void>;
+  setInputLayout(layout: PetInputLayout, compactWidth?: number): Promise<void>;
   setInputInteractive(interactive: boolean): Promise<void>;
   requestInputFocus(): Promise<void>;
-  beginGroupDrag(): Promise<void>;
-  moveGroupDrag(deltaX: number, deltaY: number): Promise<void>;
-  endGroupDrag(expectedRevision: number): Promise<DesktopPreferences>;
+  beginInputPresentationSession(): Promise<PetInputPresentationCommit>;
+  applyInputPresentation(
+    input: PetInputPresentationApply,
+  ): Promise<PetInputPresentationCommit>;
+  beginGroupDrag(
+    sessionId: string,
+    initialDeltaX: number,
+    initialDeltaY: number,
+  ): Promise<void>;
+  moveGroupDrag(sessionId: string, deltaX: number, deltaY: number): Promise<boolean>;
+  endGroupDrag(sessionId: string, expectedRevision: number): Promise<DesktopPreferences>;
   resetPosition(expectedRevision: number): Promise<DesktopPreferences>;
   openMain(): Promise<void>;
   openSettings(): Promise<void>;
@@ -34,6 +43,20 @@ export interface PetHost {
 }
 
 export type PetInputLayout = "hidden" | "core" | "compact" | "expanded";
+
+export interface PetInputPresentationApply {
+  session_id: number;
+  revision: number;
+  layout: PetInputLayout;
+  compact_width?: number;
+  interactive: boolean;
+  request_focus: boolean;
+}
+
+export interface PetInputPresentationCommit {
+  session_id: number;
+  revision: number;
+}
 
 export function createDefaultPetHost(): PetHost {
   if (!isTauri()) return createBrowserPetHost();
@@ -48,23 +71,37 @@ export function createDefaultPetHost(): PetHost {
     async onInputRequested(listener) {
       return listen("presence-input-requested", listener);
     },
+    async onMenuRequested(listener) {
+      return listen("presence-menu-requested", listener);
+    },
     async onNewChatRequested(listener) {
       return listen("presence-new-chat-requested", listener);
     },
     setExpanded: (expanded) =>
       invoke("pet_input_set_layout", { layout: expanded ? "expanded" : "hidden" }),
-    setInputLayout: (layout) => invoke("pet_input_set_layout", { layout }),
+    setInputLayout: (layout, compactWidth) =>
+      invoke("pet_input_set_layout", { layout, compactWidth }),
     setInputInteractive: (interactive) =>
       invoke("pet_input_set_interactive", { interactive }),
     requestInputFocus: () => invoke("pet_input_request_focus"),
-    beginGroupDrag: () => invoke("pet_window_group_begin_drag"),
-    moveGroupDrag: (deltaX, deltaY) =>
+    beginInputPresentationSession: () =>
+      invoke<PetInputPresentationCommit>("pet_input_presentation_begin"),
+    applyInputPresentation: (input) =>
+      invoke<PetInputPresentationCommit>("pet_input_presentation_apply", { input }),
+    beginGroupDrag: (sessionId, initialDeltaX, initialDeltaY) =>
+      invoke("pet_window_group_begin_drag", {
+        sessionId,
+        initialDeltaX: Math.round(initialDeltaX),
+        initialDeltaY: Math.round(initialDeltaY),
+      }),
+    moveGroupDrag: (sessionId, deltaX, deltaY) =>
       invoke("pet_window_group_move", {
+        sessionId,
         deltaX: Math.round(deltaX),
         deltaY: Math.round(deltaY),
       }),
-    endGroupDrag: (expectedRevision) =>
-      invoke("pet_window_group_end_drag", { expectedRevision }),
+    endGroupDrag: (sessionId, expectedRevision) =>
+      invoke("pet_window_group_end_drag", { sessionId, expectedRevision }),
     resetPosition: (expectedRevision) =>
       invoke("pet_window_group_reset_position", { expectedRevision }),
     openMain: () => invoke("open_main_window"),
@@ -75,6 +112,8 @@ export function createDefaultPetHost(): PetHost {
 
 function createBrowserPetHost(): PetHost {
   let preferences = browserPreferences();
+  let presentationSession = 0;
+  let presentationRevision = 0;
   const listeners = new Set<(value: DesktopPreferences) => void>();
   return {
     async getPreferences() {
@@ -103,6 +142,9 @@ function createBrowserPetHost(): PetHost {
     async onInputRequested() {
       return () => undefined;
     },
+    async onMenuRequested() {
+      return () => undefined;
+    },
     async onNewChatRequested() {
       return () => undefined;
     },
@@ -110,8 +152,22 @@ function createBrowserPetHost(): PetHost {
     async setInputLayout() {},
     async setInputInteractive() {},
     async requestInputFocus() {},
+    async beginInputPresentationSession() {
+      presentationSession += 1;
+      presentationRevision = 0;
+      return { session_id: presentationSession, revision: presentationRevision };
+    },
+    async applyInputPresentation(input) {
+      if (input.session_id !== presentationSession || input.revision <= presentationRevision) {
+        throw new Error("PET_INPUT_PRESENTATION_STALE_REVISION");
+      }
+      presentationRevision = input.revision;
+      return { session_id: presentationSession, revision: presentationRevision };
+    },
     async beginGroupDrag() {},
-    async moveGroupDrag() {},
+    async moveGroupDrag() {
+      return true;
+    },
     async endGroupDrag() {
       preferences = { ...preferences, revision: preferences.revision + 1 };
       return preferences;
@@ -149,6 +205,12 @@ function browserPreferences(): DesktopPreferences {
     memory_enabled: true,
     memory_retention_days: 90,
     analytics_enabled: false,
+    realtime_provider: "auto",
+    realtime_voice_mode: "native",
+    realtime_game_audio_default: false,
+    realtime_memory_enabled: true,
+    realtime_max_session_minutes: 30,
+    trash_auto_purge_30_days: false,
     pet_enabled: true,
     pet_always_on_top: true,
     pet_muted: false,

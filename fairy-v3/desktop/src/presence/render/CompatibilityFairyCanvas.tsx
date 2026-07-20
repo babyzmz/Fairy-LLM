@@ -28,7 +28,7 @@ interface FairyCanvasProps {
   gaze: { x: number; y: number };
 }
 
-interface StateStyle {
+export interface StateStyle {
   accent: string;
   secondary: string;
   speed: number;
@@ -144,10 +144,14 @@ export function drawFairyFrame(
   time: number,
   options: {
     opacity?: number;
+    reducedTransparency?: boolean;
+    increasedContrast?: boolean;
     particles?: boolean;
     sizeScale?: number;
     center?: { x: number; y: number };
     capsuleDirection?: -1 | 1 | null;
+    capsuleGeometry?: { center: { x: number; y: number }; width: number } | null;
+    stateStyle?: StateStyle;
   } = {},
 ): void {
   const width = canvas.width;
@@ -159,19 +163,41 @@ export function drawFairyFrame(
     + Math.sin(time * 1.2) * 1.2 * scale;
   const radius = Math.min(Math.min(width, height) * 0.32, 72 * scale)
     * (options.sizeScale ?? 1);
-  const stateStyle = STYLES[state];
+  const stateStyle = options.stateStyle ?? STYLES[state];
   const phase = time * stateStyle.speed;
   context.clearRect(0, 0, width, height);
   context.save();
   context.globalAlpha = options.opacity ?? 1;
 
-  if (options.capsuleDirection !== null && options.capsuleDirection !== undefined) {
+  if (options.capsuleGeometry !== null && options.capsuleGeometry !== undefined) {
+    drawCompatibilityCapsuleGeometry(
+      context,
+      options.capsuleGeometry,
+      scale,
+      options.reducedTransparency === true,
+      options.increasedContrast === true,
+    );
+  } else if (options.capsuleDirection !== null && options.capsuleDirection !== undefined) {
     drawCompatibilityCapsule(
       context,
       requestedCenter,
       options.capsuleDirection,
       scale,
     );
+  }
+
+  if (options.reducedTransparency === true) {
+    context.fillStyle = "rgba(18, 23, 24, 0.22)";
+    context.beginPath();
+    context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    context.fill();
+  }
+  if (options.increasedContrast === true) {
+    context.strokeStyle = "rgba(255, 255, 255, 0.86)";
+    context.lineWidth = Math.max(1, scale);
+    context.beginPath();
+    context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    context.stroke();
   }
 
   const aura = context.createRadialGradient(
@@ -201,6 +227,22 @@ export function drawFairyFrame(
   context.restore();
 }
 
+function drawCompatibilityCapsuleGeometry(
+  context: CanvasRenderingContext2D,
+  geometry: { center: { x: number; y: number }; width: number },
+  scale: number,
+  reducedTransparency = false,
+  increasedContrast = false,
+) {
+  drawCompatibilityCapsulePath(context, {
+    x: geometry.center.x - geometry.width / 2,
+    y: geometry.center.y - 26 * scale,
+    width: geometry.width,
+    height: 52 * scale,
+    radius: 26 * scale,
+  }, reducedTransparency, increasedContrast);
+}
+
 export function compatibilityCapsuleGeometry(
   center: { x: number; y: number },
   direction: -1 | 1,
@@ -225,15 +267,32 @@ function drawCompatibilityCapsule(
   scale: number,
 ) {
   const geometry = compatibilityCapsuleGeometry(center, direction, scale);
+  drawCompatibilityCapsulePath(context, geometry);
+}
+
+function drawCompatibilityCapsulePath(
+  context: CanvasRenderingContext2D,
+  geometry: { x: number; y: number; width: number; height: number; radius: number },
+  reducedTransparency = false,
+  increasedContrast = false,
+) {
   const { x, y, width, height, radius } = geometry;
   context.save();
   const fill = context.createLinearGradient(x, y, x, y + height);
-  fill.addColorStop(0, "rgba(255, 255, 255, 0.15)");
-  fill.addColorStop(0.44, "rgba(210, 229, 235, 0.055)");
-  fill.addColorStop(1, "rgba(100, 124, 132, 0.11)");
+  fill.addColorStop(0, reducedTransparency
+    ? "rgba(255, 255, 255, 0.24)"
+    : "rgba(255, 255, 255, 0.15)");
+  fill.addColorStop(0.44, reducedTransparency
+    ? "rgba(24, 31, 33, 0.22)"
+    : "rgba(210, 229, 235, 0.055)");
+  fill.addColorStop(1, reducedTransparency
+    ? "rgba(18, 23, 24, 0.32)"
+    : "rgba(100, 124, 132, 0.11)");
   context.fillStyle = fill;
-  context.strokeStyle = "rgba(238, 249, 252, 0.28)";
-  context.lineWidth = Math.max(1, scale);
+  context.strokeStyle = increasedContrast
+    ? "rgba(255, 255, 255, 0.86)"
+    : "rgba(238, 249, 252, 0.28)";
+  context.lineWidth = Math.max(1, height / 52);
   context.beginPath();
   context.moveTo(x + radius, y);
   context.lineTo(x + width - radius, y);
@@ -315,19 +374,25 @@ function drawRings(
   phase: number,
   stateStyle: StateStyle,
 ) {
+  const breath = 0.5 + 0.5 * Math.sin(phase * 1.18);
   context.save();
   context.translate(x, y);
-  context.rotate(phase * 0.16);
-  context.strokeStyle = colorWithAlpha(stateStyle.secondary, 0.74);
-  context.lineWidth = radius * 0.085;
-  context.lineCap = "round";
+  context.globalCompositeOperation = "screen";
+  context.strokeStyle = colorWithAlpha(
+    stateStyle.secondary,
+    0.12 + stateStyle.energy * 0.08 + breath * 0.035,
+  );
+  context.lineWidth = Math.max(0.8, radius * 0.014);
   context.beginPath();
-  context.arc(0, 0, radius * 0.52, -0.25, Math.PI * 1.55);
+  context.arc(0, 0, radius * (0.5 + breath * 0.006), 0, Math.PI * 2);
   context.stroke();
-  context.strokeStyle = colorWithAlpha(stateStyle.accent, 0.64);
-  context.lineWidth = radius * 0.035;
+  context.strokeStyle = colorWithAlpha(
+    stateStyle.accent,
+    0.09 + stateStyle.energy * 0.07 + (1 - breath) * 0.025,
+  );
+  context.lineWidth = Math.max(0.7, radius * 0.011);
   context.beginPath();
-  context.arc(0, 0, radius * 0.34, Math.PI * 0.15, Math.PI * 1.85);
+  context.arc(0, 0, radius * (0.34 - breath * 0.004), 0, Math.PI * 2);
   context.stroke();
   context.restore();
 }

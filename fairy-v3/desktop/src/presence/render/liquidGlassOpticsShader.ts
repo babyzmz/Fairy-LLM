@@ -27,10 +27,10 @@ export const LIQUID_GLASS_OPTICS_GLSL = `
     vec2 normalAxis = vec2(-axis.y, axis.x);
     vec2 local = vec2(dot(point, axis), dot(point, normalAxis));
     float interiorDepth = max(-distanceField, 0.0);
-    float edgeWidth = max(1.0, 22.0 * uDpr * uSizeScale);
+    float edgeWidth = max(1.0, 48.0 * uDpr * uSizeScale);
     float edgeProfile = 1.0 - smoothstep(0.0, edgeWidth, interiorDepth);
     float centerThinness = 0.065;
-    float edgeBulge = pow(edgeProfile, 2.2) * 0.84;
+    float edgeBulge = pow(edgeProfile, 1.65) * 0.84;
 
     float verticalRadius = max(18.0, 72.0 * uDpr * uSizeScale);
     float bottomCoordinate = saturate((-local.y / verticalRadius + 1.0) * 0.5);
@@ -106,7 +106,7 @@ export const LIQUID_GLASS_OPTICS_GLSL = `
       max(-distanceField, 0.0)
     );
     float edgeProfile = saturate((thickness - 0.065) / 1.08);
-    float edgeLens = pow(edgeProfile, 2.2);
+    float edgeLens = pow(edgeProfile, 1.55);
     return edgeLens
       * interiorContinuity
       * mix(0.72, 1.0, curvature)

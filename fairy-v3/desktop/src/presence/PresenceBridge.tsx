@@ -13,15 +13,18 @@ import {
   type PresenceReply,
   type PresenceProjectionState,
 } from "./domain/projection";
+import type { RealtimePresenceState } from "../realtime/RealtimeCompanion";
 
 interface PresenceBridgeProps {
   events: readonly EventEnvelope[];
   reply?: PresenceReply | null;
   speaking?: boolean;
+  realtimePresence?: RealtimePresenceState;
   onNewChat?(): void | Promise<void>;
   onSend?(text: string): void | Promise<void>;
   onCancel?(): void | Promise<void>;
   onStopVoice?(): void;
+  onOpenRealtime?(): void;
   channelFactory?: () => PresenceChannel;
 }
 
@@ -29,18 +32,20 @@ export function PresenceBridge({
   events,
   reply = null,
   speaking = false,
+  realtimePresence = "idle",
   onNewChat,
   onSend,
   onCancel,
   onStopVoice,
+  onOpenRealtime,
   channelFactory = createPresenceChannel,
 }: PresenceBridgeProps) {
   const projection = useMemo(() => {
     const durable = [...events]
         .sort((left, right) => left.cursor - right.cursor)
         .reduce(PresenceProjection.reduce, PresenceProjection.initial());
-    return withEphemeralPresence(durable, reply, speaking);
-  }, [events, reply, speaking]);
+    return withEphemeralPresence(durable, reply, speaking, realtimePresence);
+  }, [events, reply, speaking, realtimePresence]);
   const projectionRef = useRef(projection);
   const channelRef = useRef<PresenceChannel | null>(null);
   projectionRef.current = projection;
@@ -62,6 +67,7 @@ export function PresenceBridge({
         onSend,
         onCancel,
         onStopVoice,
+        onOpenRealtime,
       );
     });
     channel.publishProjection(projectionRef.current);
@@ -70,7 +76,7 @@ export function PresenceBridge({
       channel.close();
       channelRef.current = null;
     };
-  }, [channelFactory, onCancel, onNewChat, onSend, onStopVoice]);
+  }, [channelFactory, onCancel, onNewChat, onOpenRealtime, onSend, onStopVoice]);
 
   useEffect(() => {
     channelRef.current?.publishProjection(projection);
@@ -83,12 +89,39 @@ function withEphemeralPresence(
   projection: PresenceProjectionState,
   reply: PresenceReply | null,
   speaking: boolean,
+  realtimePresence: RealtimePresenceState,
 ): PresenceProjectionState {
+  const realtimeWorkState = realtimePresenceWorkState(realtimePresence);
   return {
     ...projection,
     reply: projection.notice === null && reply !== null ? reply : projection.reply,
-    speaking,
+    work_state: realtimeWorkState ?? projection.work_state,
+    status_text: realtimeStatusText(realtimePresence) ?? projection.status_text,
+    speaking: realtimePresence === "speaking" || speaking,
   };
+}
+
+function realtimePresenceWorkState(
+  state: RealtimePresenceState,
+): PresenceProjectionState["work_state"] | null {
+  if (state === "starting" || state === "connecting" || state === "analyzing") return "analyzing";
+  if (state === "active" || state === "listening") return "ready";
+  if (state === "speaking") return "streaming";
+  if (state === "stopping") return "analyzing";
+  if (state === "completed") return "ready";
+  if (state === "error") return "error";
+  return null;
+}
+
+function realtimeStatusText(state: RealtimePresenceState): string | null {
+  if (state === "starting" || state === "connecting") return "Fairy is connecting";
+  if (state === "active" || state === "listening") return "Fairy is listening";
+  if (state === "analyzing") return "Fairy is watching the game";
+  if (state === "speaking") return "Fairy is speaking";
+  if (state === "stopping") return "Fairy is wrapping up";
+  if (state === "completed") return "Game session complete";
+  if (state === "error") return "Game companion needs attention";
+  return null;
 }
 
 function handleRequest(
@@ -100,6 +133,7 @@ function handleRequest(
   onSend: ((text: string) => void | Promise<void>) | undefined,
   onCancel: (() => void | Promise<void>) | undefined,
   onStopVoice: (() => void) | undefined,
+  onOpenRealtime: (() => void) | undefined,
 ): void {
   switch (request.kind) {
     case "projection":
@@ -107,6 +141,10 @@ function handleRequest(
       break;
     case "workspace.open":
       void openWorkspaceWindow();
+      break;
+    case "realtime.open":
+      void openWorkspaceWindow();
+      onOpenRealtime?.();
       break;
     case "chat.new":
       if (onNewChat !== undefined) enqueue(onNewChat);

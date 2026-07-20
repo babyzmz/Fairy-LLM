@@ -37,7 +37,7 @@ describe("presence runtime policy source", () => {
         kind: "presence.runtime-policy",
         policy: {
           schema_version: 1,
-          frame_rate_limit: 144,
+          frame_rate_limit: 300,
           power_saver: false,
           foreground_fullscreen: false,
         },
@@ -62,7 +62,7 @@ describe("presence runtime policy source", () => {
     );
     expect(listener).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ frame_rate_limit: 144 }),
+      expect.objectContaining({ frame_rate_limit: 300 }),
     );
     stop();
   });

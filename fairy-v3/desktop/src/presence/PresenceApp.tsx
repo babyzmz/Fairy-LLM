@@ -279,12 +279,13 @@ export function PresenceApp({
             closeSubmission: () => undefined,
           dismissNotice,
           exit: () => void host.exit(),
-          movePointerDown: handlePointerDown,
-          movePointerMove: handlePointerMove,
-          movePointerUp: () => finishPointerGesture(),
           newChat: () => channel.requestNewChat(),
           openMain: () => {
             channel.requestWorkspaceOpen();
+            void host.openMain().catch(() => undefined);
+          },
+          openCompanion: () => {
+            channel.requestRealtimeOpen?.();
             void host.openMain().catch(() => undefined);
           },
           openReview: () => {
@@ -295,13 +296,9 @@ export function PresenceApp({
             requestInputFocus: () => void host.requestInputFocus(),
             resetPosition: () => void resetPosition(windowPort, settingsRef.current),
             retrySubmission: () => undefined,
-            send: (text) => channel.requestChatSend(text, createPresenceSubmissionId()),
+          send: (text) => channel.requestChatSend(text, createPresenceSubmissionId()),
           setInputOpen,
           setMenuOpen,
-          showMoveGrip: () => {
-            setMenuOpen(false);
-            setInputOpen(true);
-          },
           toggleAlwaysOnTop: () =>
             void updatePetPreferences({ pet_always_on_top: !alwaysOnTop }),
           toggleAutoPlay: () =>
@@ -316,7 +313,6 @@ export function PresenceApp({
         autoPlay={autoPlay}
         inputOpen={inputOpen}
         menuOpen={menuOpen}
-        moving={dragging}
         muted={muted}
           reply={reply}
           submission={null}

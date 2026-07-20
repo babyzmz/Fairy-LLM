@@ -1,12 +1,6 @@
-Texture2D<float4> desktop_texture : register(t0);
-SamplerState desktop_sampler : register(s0);
-
-// Apple-style lensing keeps the innermost core optically quiet, then bends one continuous
-// backdrop sample across a broad transition into the perimeter. Values are logical pixels and
-// scale with the active display.
+// HostBackdropBrush owns the desktop pixels. This shader draws only Fairy's material and identity
+// layers, so it can never sample a previous Fairy frame or amplify capture quantization noise.
 static const float EDGE_LENS_DEPTH_PX = 48.0;
-static const float EDGE_REFRACTION_PX = 10.0;
-static const float EDGE_DISPERSION_PX = 0.38;
 
 cbuffer PresenceConstants : register(b0) {
     float2 output_size;
@@ -57,32 +51,10 @@ VertexOutput vs_main(uint vertex_id : SV_VertexID) {
     return output;
 }
 
-float3 srgb_to_linear(float3 color) {
-    float3 low = color / 12.92;
-    float3 high = pow((color + 0.055) / 1.055, 2.4);
-    return lerp(low, high, step(0.04045, color));
-}
-
 float3 linear_to_srgb(float3 color) {
     float3 low = color * 12.92;
     float3 high = 1.055 * pow(max(color, 0.0), 1.0 / 2.4) - 0.055;
     return lerp(low, high, step(0.0031308, color));
-}
-
-float3 sample_desktop_linear(float2 uv) {
-    // WGC supplies one monitor texture. Restrict every shader lookup to the pet surface plus a
-    // small optical guard band so refraction cannot address unrelated regions of that texture.
-    float optical_guard_px = 24.0 * max(surface_scale, 0.01);
-    float2 minimum_uv = (source_origin_px - optical_guard_px) / capture_size;
-    float2 maximum_uv = (source_origin_px + output_size + optical_guard_px) / capture_size;
-    uv = clamp(uv, minimum_uv, maximum_uv);
-    float3 color = desktop_texture.Sample(desktop_sampler, uv).rgb;
-    if (capture_linear > 0.5) {
-        color = max(color, 0.0);
-        float peak = max(color.r, max(color.g, color.b));
-        return color / max(1.0, peak);
-    }
-    return srgb_to_linear(saturate(color));
 }
 
 float circle_sdf(float2 position_px, float radius) {
@@ -215,19 +187,6 @@ float edge_refraction_profile(float signed_distance) {
     return rim * rim * (3.0 - 2.0 * rim);
 }
 
-float2 lens_warp_px(float2 position_px, float signed_distance, float2 normal) {
-    float scale = max(surface_scale, 0.01);
-    float edge_lens = edge_refraction_profile(signed_distance);
-    float bottom_lip = smoothstep(0.54, 0.90, position_px.y / max(output_size.y, 1.0));
-    // A convex lens maps perimeter pixels toward the interior. The identity center is never
-    // displaced, avoiding the doubled text and magnified center seen in the previous material.
-    float2 warp =
-        -normal * pow(edge_lens, 1.25) * EDGE_REFRACTION_PX * scale
-        + float2(0.0, bottom_lip * edge_lens * 2.4 * scale);
-    if (reduced_transparency > 0.5) return warp * 0.35;
-    return warp;
-}
-
 float state_energy_value() {
     return state_energy;
 }
@@ -288,28 +247,8 @@ float4 ps_main(VertexOutput input) : SV_Target {
 
     float thickness = thickness_field(signed_distance, local_px);
     float2 normal = surface_normal(local_px);
-    float2 base_uv = (source_origin_px + local_px) / capture_size;
     float edge_focus = edge_refraction_profile(signed_distance);
-    float2 warp_uv = lens_warp_px(local_px, signed_distance, normal) / capture_size;
-    float dispersion_px = EDGE_DISPERSION_PX * smoothstep(0.72, 1.0, edge_focus) * scale;
-    if (reduced_transparency > 0.5 || increased_contrast > 0.5) {
-        dispersion_px = 0.0;
-    }
-    float2 dispersion_uv = normal * dispersion_px / capture_size;
-    float3 refracted = float3(0.72, 0.82, 0.90);
-    if (capture_source_valid > 0.5) {
-        // One displaced sample is the optical source of truth. The tiny spectral correction is
-        // confined to the outer rim and blended back into that source, so it cannot create three
-        // readable copies of text or icons.
-        float3 primary_sample = sample_desktop_linear(base_uv + warp_uv);
-        float3 spectral_sample = float3(
-            sample_desktop_linear(base_uv + warp_uv + dispersion_uv).r,
-            primary_sample.g,
-            sample_desktop_linear(base_uv + warp_uv - dispersion_uv).b
-        );
-        float spectral_mix = smoothstep(0.78, 1.0, edge_focus) * 0.42;
-        refracted = lerp(primary_sample, spectral_sample, spectral_mix);
-    }
+    float3 material_base = float3(0.76, 0.86, 0.92);
 
     float rim_fresnel = pow(edge_focus, 1.55);
     float silhouette = exp(-abs(signed_distance) / max(1.35 * scale, 0.75));
@@ -334,11 +273,10 @@ float4 ps_main(VertexOutput input) : SV_Target {
 
     float state_energy = state_energy_value();
     float3 accent = state_accent_color();
-    float luminance = dot(refracted, float3(0.2126, 0.7152, 0.0722));
-    float adaptive_tint = lerp(0.026, 0.006, saturate(luminance));
-    float material_tint = adaptive_tint * (0.18 + 0.82 * rim_fresnel);
+    float luminance = dot(material_base, float3(0.2126, 0.7152, 0.0722));
+    float material_tint = 0.014 * (0.18 + 0.82 * rim_fresnel);
     if (increased_contrast > 0.5) material_tint = 0.0;
-    float3 color = lerp(refracted, float3(0.84, 0.94, 1.0), material_tint);
+    float3 color = lerp(material_base, float3(0.84, 0.94, 1.0), material_tint);
     if (reduced_transparency > 0.5) {
         float accessibility_fill = luminance > 0.58 ? 0.08 : 0.94;
         color = lerp(color, accessibility_fill.xxx, 0.20);
@@ -385,56 +323,24 @@ float4 ps_main(VertexOutput input) : SV_Target {
         + atmosphere_inner * (0.035 + state_energy * 0.035)
     ) * lerp(0.82, 1.0, pulse);
     float notify_halo = exp(-abs(core_radius - 50.0) / 7.0) * notify_wave;
-    float3 core_light = accent * core_glow * (0.035 + state_energy * 0.11);
-    core_light += float3(0.92, 0.985, 1.0)
-        * core_orb
-        * (0.28 + state_energy * 0.56 + voice_pulse * 0.24)
-        * pulse;
-    core_light += float3(1.0, 0.86, 0.56) * notify_halo * 0.12;
-    core_light += float3(0.82, 0.96, 1.0) * particle_sparkles(local_px) * 0.24;
-    // Preserve the sampled desktop through the center. Emission adapts to the captured
-    // luminance and may only use available display headroom, so a bright backdrop cannot turn
-    // the whole Fairy core into an opaque white disc.
-    float core_background_adaptation = lerp(
-        1.0,
-        0.14,
-        smoothstep(0.42, 0.88, luminance)
-    );
-    float3 core_headroom = max(0.0.xxx, 0.88.xxx - color);
-    color += min(core_light * core_background_adaptation, core_headroom);
-    // These restrained atmosphere lines and the beacon are a foreground identity layer. They
-    // never alter desktop sampling coordinates, so text behind Fairy remains structurally intact.
-    color += max(0.0.xxx, float3(0.86, 0.96, 1.0) - color) * atmosphere_alpha;
-    // Keep Fairy's identity point legible independently of the clear glass center. The compact
-    // Gaussian limits this emission to roughly 10-12 px and preserves the undistorted backdrop
-    // everywhere else.
+    // Fairy's atmosphere rings and beacon are an independent foreground identity layer. Their
+    // color is calculated without the refracted material, so dispersion and caustics cannot be
+    // inherited by the marks even when the desktop underneath has high contrast.
+    float3 identity_color = float3(0.86, 0.96, 1.0);
     float beacon_emission = core_orb
         * (0.48 + state_energy * 0.42 + voice_pulse * 0.12)
         * lerp(0.74, 1.0, pulse);
-    color += max(0.0.xxx, float3(0.96, 0.985, 1.0) - color) * beacon_emission;
+    float sparkle = particle_sparkles(local_px);
+    color += float3(0.82, 0.96, 1.0) * sparkle * 0.24;
 
     float shape_mask = saturate((1.5 * scale - signed_distance) / (2.5 * scale));
-    // The center behaves like clear glass and lets the real desktop remain the source of truth.
-    // Opacity rises only through the broad optical rim, where the displaced sample must replace
-    // the undisplaced desktop to produce a readable lens instead of a double image.
+    // HostBackdrop supplies the real desktop behind the complete core. Material opacity therefore
+    // remains low and only rises around the optical rim; it never replaces desktop pixels itself.
     float center_alpha = reduced_transparency > 0.5
-        ? lerp(0.18, 0.26, material_opacity)
-        : lerp(0.028, 0.045, material_opacity);
-    // Leave enough transmission for the monitor compositor to reconstruct the live desktop from
-    // the previous premultiplied overlay. Values near one make that reconstruction ill-conditioned
-    // and freeze animated content under a stationary lens.
-    float edge_alpha = lerp(0.900, 0.925, material_opacity);
-    // During a cross-monitor handoff the old surface can briefly lose a valid composite source.
-    // Keep that optical shell transparent until the candidate monitor session has a first frame.
-    if (capture_source_valid < 0.5) {
-        center_alpha = min(center_alpha, 0.012);
-        edge_alpha = min(edge_alpha, 0.24);
-    }
-    // Once pixels are displaced, replace the undisplaced desktop almost completely. A partially
-    // transparent displaced sample is perceived as a duplicate image rather than refraction.
-    float displacement_px = length(warp_uv * capture_size);
-    float displaced_replacement = smoothstep(0.30 * scale, 1.15 * scale, displacement_px);
-    float edge_material = max(pow(saturate(edge_focus), 1.20), displaced_replacement);
+        ? lerp(0.12, 0.18, material_opacity)
+        : lerp(0.012, 0.022, material_opacity);
+    float edge_alpha = lerp(0.16, 0.24, material_opacity);
+    float edge_material = pow(saturate(edge_focus), 1.20);
     float alpha = shape_mask * lerp(center_alpha, edge_alpha, edge_material);
     float optical_highlight_alpha = saturate(
         key_highlight * 0.72
@@ -443,13 +349,35 @@ float4 ps_main(VertexOutput input) : SV_Target {
         + silhouette * 0.12
     );
     alpha = max(alpha, shape_mask * optical_highlight_alpha);
-    // The identity beacon is emissive, not part of the glass fill. Give it independent coverage so
-    // the optically clear center does not erase the breathing point after premultiplication.
-    float beacon_alpha = core_orb
-        * (0.52 + state_energy * 0.28 + voice_pulse * 0.16)
-        * lerp(0.70, 1.0, pulse);
-    alpha = max(alpha, shape_mask * atmosphere_alpha);
-    alpha = max(alpha, shape_mask * beacon_alpha);
-    color = linear_to_srgb(saturate(color));
-    return float4(color * alpha, alpha);
+    float atmosphere_layer_alpha = saturate(atmosphere_alpha * 1.55) * shape_mask;
+    float glow_layer_alpha = saturate(
+        core_glow * (0.045 + state_energy * 0.075)
+    ) * shape_mask;
+    float notify_layer_alpha = saturate(notify_halo * 0.12) * shape_mask;
+    float beacon_layer_alpha = saturate(beacon_emission) * shape_mask;
+    float identity_alpha = 1.0
+        - (1.0 - atmosphere_layer_alpha)
+        * (1.0 - glow_layer_alpha)
+        * (1.0 - notify_layer_alpha)
+        * (1.0 - beacon_layer_alpha);
+    float material_alpha = alpha;
+    float3 material_premultiplied = linear_to_srgb(saturate(color)) * material_alpha;
+    float3 identity_premultiplied = linear_to_srgb(identity_color)
+        * atmosphere_layer_alpha;
+    identity_premultiplied += linear_to_srgb(saturate(accent))
+        * glow_layer_alpha
+        * (1.0 - atmosphere_layer_alpha);
+    identity_premultiplied += linear_to_srgb(float3(1.0, 0.86, 0.56))
+        * notify_layer_alpha
+        * (1.0 - atmosphere_layer_alpha)
+        * (1.0 - glow_layer_alpha);
+    identity_premultiplied += linear_to_srgb(float3(0.96, 0.985, 1.0))
+        * beacon_layer_alpha
+        * (1.0 - atmosphere_layer_alpha)
+        * (1.0 - glow_layer_alpha)
+        * (1.0 - notify_layer_alpha);
+    float3 foreground_premultiplied = identity_premultiplied
+        + material_premultiplied * (1.0 - identity_alpha);
+    float foreground_alpha = identity_alpha + material_alpha * (1.0 - identity_alpha);
+    return float4(foreground_premultiplied, foreground_alpha);
 }

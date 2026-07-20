@@ -14,16 +14,22 @@ use crate::presence_runtime::{
 use crate::presence_window_policy::{
     input_follows_render, relation_for_phase, PresenceWindowRelation,
 };
-use crate::{PET_INPUT_LABEL, PET_RENDER_LABEL};
+use crate::{
+    PET_INPUT_LABEL, PET_RENDER_LABEL, PRESENCE_INPUT_REQUESTED_EVENT,
+    PRESENCE_MENU_REQUESTED_EVENT,
+};
 
 pub const PRESENCE_INTERACTION_EVENT: &str = "presence-interaction-snapshot";
-const CORE_ANCHOR_X: f64 = 96.0;
-const CORE_ANCHOR_Y: f64 = 130.0;
+pub const PET_CORE_ANCHOR_X_LOGICAL: f64 = 96.0;
+pub const PET_CORE_ANCHOR_Y_LOGICAL: f64 = 88.0;
 pub const PET_CORE_EXTENT_LOGICAL: f64 = 144.0;
-pub const PET_INPUT_COMPACT_WIDTH_LOGICAL: f64 = 616.0;
-pub const PET_INPUT_COMPACT_HEIGHT_LOGICAL: f64 = 144.0;
+pub const PET_INPUT_COMPACT_MIN_WIDTH_LOGICAL: f64 = 280.0;
+pub const PET_INPUT_COMPACT_WIDTH_LOGICAL: f64 = 300.0;
+pub const PET_INPUT_COMPACT_MAX_WIDTH_LOGICAL: f64 = 420.0;
+pub const PET_INPUT_COMPACT_HEIGHT_LOGICAL: f64 = 260.0;
 pub const PET_INPUT_EXPANDED_WIDTH_LOGICAL: f64 = 616.0;
 pub const PET_INPUT_EXPANDED_HEIGHT_LOGICAL: f64 = 360.0;
+const PET_INPUT_EDGE_INSET_LOGICAL: f64 = 24.0;
 const AWARE_RADIUS: f64 = 220.0;
 const ACTIVE_RADIUS: f64 = 120.0;
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(16);
@@ -33,6 +39,10 @@ const PLACEMENT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 const RUNTIME_POLICY_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const PROJECTION_RECOVERY_HEARTBEAT_MS: u64 = 30_000;
 const CURSOR_FAILURE_LIMIT: u8 = 3;
+const NATIVE_DRAG_HOLD_MS: u64 = 320;
+const NATIVE_DRAG_DISTANCE_PX: i32 = 6;
+const NATIVE_DOUBLE_CLICK_MS: u64 = 350;
+const NATIVE_DOUBLE_CLICK_DISTANCE_PX: i32 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PresenceCoordinatorConfig {
@@ -314,8 +324,10 @@ pub fn resolve_presence_placement(
     previous_direction: Option<ExpansionDirection>,
 ) -> PresenceWindowPlacement {
     let scale = scale_factor.clamp(0.5, 4.0);
-    let anchor_x_offset = (CORE_ANCHOR_X * scale).round() as i64;
-    let anchor_y_offset = (CORE_ANCHOR_Y * scale).round() as i64;
+    let anchor_x_offset = (PET_CORE_ANCHOR_X_LOGICAL * scale).round() as i64;
+    let anchor_y_offset = (PET_CORE_ANCHOR_Y_LOGICAL * scale).round() as i64;
+    let core_radius = ((PET_CORE_EXTENT_LOGICAL * scale).round() as i64) / 2;
+    let transparent_edge_overhang = anchor_x_offset.saturating_sub(core_radius);
     let compact_width = (PET_INPUT_COMPACT_WIDTH_LOGICAL * scale).round() as u32;
     let compact_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale).round() as u32;
     let expanded_width = (PET_INPUT_EXPANDED_WIDTH_LOGICAL * scale).round() as u32;
@@ -347,8 +359,8 @@ pub fn resolve_presence_placement(
     let desired_y = i64::from(original_anchor.y) - anchor_y_offset;
     let render_x = clamp_axis(
         desired_x,
-        i64::from(work_area.x),
-        work_area.right() - i64::from(render_frame.width),
+        i64::from(work_area.x) - transparent_edge_overhang,
+        work_area.right() - i64::from(render_frame.width) + transparent_edge_overhang,
     );
     let expanded_top_offset = i64::from(render_frame.height) / 2 + i64::from(compact_height) / 2
         - i64::from(expanded_height);
@@ -401,8 +413,8 @@ pub fn resolve_presence_placement_for_anchor(
 ) -> PresenceWindowPlacement {
     let scale = scale_factor.clamp(0.5, 4.0);
     let direction = previous_direction.unwrap_or(ExpansionDirection::Right);
-    let anchor_x_offset = (CORE_ANCHOR_X * scale).round() as i64;
-    let anchor_y_offset = (CORE_ANCHOR_Y * scale).round() as i64;
+    let anchor_x_offset = (PET_CORE_ANCHOR_X_LOGICAL * scale).round() as i64;
+    let anchor_y_offset = (PET_CORE_ANCHOR_Y_LOGICAL * scale).round() as i64;
     let frame = PhysicalFrame {
         x: match direction {
             ExpansionDirection::Right => i64::from(anchor.x) - anchor_x_offset,
@@ -415,6 +427,54 @@ pub fn resolve_presence_placement_for_anchor(
         height: render_size.1,
     };
     resolve_presence_placement(frame, work_area, scale, Some(direction))
+}
+
+pub fn resolve_drag_presence_placement_for_anchor(
+    anchor: PhysicalPoint,
+    render_size: (u32, u32),
+    work_area: PhysicalFrame,
+    scale_factor: f64,
+    expansion_direction: ExpansionDirection,
+) -> PresenceWindowPlacement {
+    let scale = scale_factor.clamp(0.5, 4.0);
+    let anchor_x_offset = (PET_CORE_ANCHOR_X_LOGICAL * scale).round() as i64;
+    let anchor_y_offset = (PET_CORE_ANCHOR_Y_LOGICAL * scale).round() as i64;
+    let compact_width = (PET_INPUT_COMPACT_WIDTH_LOGICAL * scale).round() as u32;
+    let compact_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale).round() as u32;
+    let expanded_width = (PET_INPUT_EXPANDED_WIDTH_LOGICAL * scale).round() as u32;
+    let expanded_height = (PET_INPUT_EXPANDED_HEIGHT_LOGICAL * scale).round() as u32;
+    let render_frame = PhysicalFrame {
+        x: match expansion_direction {
+            ExpansionDirection::Right => i64::from(anchor.x) - anchor_x_offset,
+            ExpansionDirection::Left => {
+                i64::from(anchor.x) - i64::from(render_size.0) + anchor_x_offset
+            }
+        } as i32,
+        y: (i64::from(anchor.y) - anchor_y_offset) as i32,
+        width: render_size.0,
+        height: render_size.1,
+    };
+    PresenceWindowPlacement {
+        anchor,
+        render_frame,
+        input_compact_frame: input_frame(
+            render_frame,
+            expansion_direction,
+            compact_width,
+            compact_height,
+            compact_height,
+        ),
+        input_expanded_frame: input_frame(
+            render_frame,
+            expansion_direction,
+            expanded_width,
+            expanded_height,
+            compact_height,
+        ),
+        monitor_work_area: work_area,
+        scale_factor: scale,
+        expansion_direction,
+    }
 }
 
 pub fn anchor_ratios(anchor: PhysicalPoint, work_area: PhysicalFrame) -> (f64, f64) {
@@ -491,6 +551,170 @@ struct CoordinatorThreadState {
     window_relation: Arc<AtomicU8>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct NativePointerPress {
+    point: PhysicalPoint,
+    sampled_at_ms: u64,
+}
+
+#[derive(Default)]
+struct NativePointerController {
+    primary_was_down: bool,
+    secondary_was_down: bool,
+    primary_press: Option<NativePointerPress>,
+    secondary_press: Option<NativePointerPress>,
+    pending_click: Option<NativePointerPress>,
+    dragging: bool,
+}
+
+impl NativePointerController {
+    fn update(
+        &mut self,
+        app: &tauri::AppHandle,
+        placement: PresenceWindowPlacement,
+        point: Option<PhysicalPoint>,
+        sampled_at_ms: u64,
+    ) {
+        if self.pending_click.is_some_and(|click| {
+            sampled_at_ms.saturating_sub(click.sampled_at_ms) > NATIVE_DOUBLE_CLICK_MS
+        }) {
+            self.pending_click = None;
+            let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_INPUT_REQUESTED_EVENT, ());
+        }
+
+        let (primary_down, secondary_down) = pointer_button_state();
+        let primary_pressed = primary_down && !self.primary_was_down;
+        let primary_released = !primary_down && self.primary_was_down;
+        let secondary_pressed = secondary_down && !self.secondary_was_down;
+        let secondary_released = !secondary_down && self.secondary_was_down;
+
+        if primary_pressed {
+            self.primary_press = point
+                .filter(|point| point_inside_native_core(*point, placement))
+                .map(|point| NativePointerPress {
+                    point,
+                    sampled_at_ms,
+                });
+        }
+
+        if primary_down && !self.dragging {
+            if let (Some(press), Some(point)) = (self.primary_press, point) {
+                let held_long_enough =
+                    sampled_at_ms.saturating_sub(press.sampled_at_ms) >= NATIVE_DRAG_HOLD_MS;
+                let moved_far_enough =
+                    point_distance_exceeds(press.point, point, NATIVE_DRAG_DISTANCE_PX);
+                if held_long_enough || moved_far_enough {
+                    if let Some(state) = app.try_state::<crate::DesktopState>() {
+                        match crate::begin_native_pet_drag(
+                            app,
+                            state.inner(),
+                            press.point,
+                            placement,
+                        ) {
+                            Ok(()) => {
+                                self.dragging = true;
+                                self.pending_click = None;
+                            }
+                            Err(error) => eprintln!("failed to begin native pet drag: {error}"),
+                        }
+                    }
+                }
+            }
+        }
+
+        if primary_down && self.dragging {
+            if let (Some(point), Some(state)) = (point, app.try_state::<crate::DesktopState>()) {
+                if let Err(error) = crate::move_native_pet_drag(app, state.inner(), point) {
+                    eprintln!("failed to move native pet drag: {error}");
+                }
+            }
+        }
+
+        if primary_released {
+            if self.dragging {
+                if let Some(state) = app.try_state::<crate::DesktopState>() {
+                    if let Err(error) = crate::end_native_pet_drag(app, state.inner()) {
+                        eprintln!("failed to end native pet drag: {error}");
+                    }
+                }
+                self.dragging = false;
+            } else if let (Some(press), Some(point)) = (self.primary_press.take(), point) {
+                if point_inside_native_core(point, placement)
+                    && !point_distance_exceeds(press.point, point, NATIVE_DOUBLE_CLICK_DISTANCE_PX)
+                {
+                    if self.pending_click.is_some_and(|click| {
+                        sampled_at_ms.saturating_sub(click.sampled_at_ms) <= NATIVE_DOUBLE_CLICK_MS
+                            && !point_distance_exceeds(
+                                click.point,
+                                point,
+                                NATIVE_DOUBLE_CLICK_DISTANCE_PX,
+                            )
+                    }) {
+                        self.pending_click = None;
+                        if let Err(error) = crate::show_main_window_from_presence(app) {
+                            eprintln!("failed to open Fairy from native pet: {error}");
+                        }
+                    } else {
+                        self.pending_click = Some(NativePointerPress {
+                            point,
+                            sampled_at_ms,
+                        });
+                    }
+                }
+            }
+            self.primary_press = None;
+        }
+
+        if secondary_pressed {
+            self.secondary_press = point
+                .filter(|point| point_inside_native_core(*point, placement))
+                .map(|point| NativePointerPress {
+                    point,
+                    sampled_at_ms,
+                });
+        }
+        if secondary_released {
+            if let (Some(press), Some(point)) = (self.secondary_press.take(), point) {
+                if point_inside_native_core(point, placement)
+                    && !point_distance_exceeds(press.point, point, NATIVE_DOUBLE_CLICK_DISTANCE_PX)
+                {
+                    let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_MENU_REQUESTED_EVENT, ());
+                }
+            }
+        }
+
+        self.primary_was_down = primary_down;
+        self.secondary_was_down = secondary_down;
+    }
+}
+
+fn point_inside_native_core(point: PhysicalPoint, placement: PresenceWindowPlacement) -> bool {
+    let radius = PET_CORE_EXTENT_LOGICAL * placement.scale_factor.clamp(0.5, 4.0) / 2.0;
+    let dx = f64::from(point.x.saturating_sub(placement.anchor.x));
+    let dy = f64::from(point.y.saturating_sub(placement.anchor.y));
+    dx.mul_add(dx, dy * dy) <= radius * radius
+}
+
+fn point_distance_exceeds(left: PhysicalPoint, right: PhysicalPoint, threshold: i32) -> bool {
+    let dx = i64::from(left.x) - i64::from(right.x);
+    let dy = i64::from(left.y) - i64::from(right.y);
+    dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy)) > i64::from(threshold).pow(2)
+}
+
+#[cfg(target_os = "windows")]
+fn pointer_button_state() -> (bool, bool) {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON,
+    };
+    let pressed = |button| unsafe { (GetAsyncKeyState(button) as u16 & 0x8000) != 0 };
+    (pressed(VK_LBUTTON as i32), pressed(VK_RBUTTON as i32))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn pointer_button_state() -> (bool, bool) {
+    (false, false)
+}
+
 impl PresenceCoordinatorHandle {
     pub fn new(config: PresenceCoordinatorConfig) -> Self {
         Self {
@@ -553,6 +777,10 @@ impl PresenceCoordinatorHandle {
         self.repositioning.store(repositioning, Ordering::Release);
     }
 
+    pub fn is_repositioning(&self) -> bool {
+        self.repositioning.load(Ordering::Acquire)
+    }
+
     pub fn window_relation(&self) -> PresenceWindowRelation {
         PresenceWindowRelation::from_atomic(self.window_relation.load(Ordering::Acquire))
     }
@@ -584,19 +812,27 @@ fn run_coordinator(app: tauri::AppHandle, state: CoordinatorThreadState) {
     let mut tracker = CursorTracker::default();
     let mut interaction = PresenceInteractionStateMachine::new(0);
     let mut sequence = 0_u64;
-    let mut placement: Option<PresenceWindowPlacement> = None;
+    let mut placement = latest_placement.read().ok().and_then(|value| *value);
     let mut placement_refreshed_at = Instant::now() - PLACEMENT_REFRESH_INTERVAL;
     let mut runtime_policy_refreshed_at = Instant::now() - RUNTIME_POLICY_REFRESH_INTERVAL;
     let mut emission_gate = InteractionEmissionGate::default();
     let mut runtime_policy_emission_gate = RuntimePolicyEmissionGate::default();
     let mut cursor_sampling = CursorSamplingHealth::default();
+    let mut native_pointer = NativePointerController::default();
 
     while !shutdown.load(Ordering::Acquire) {
         let Some(render) = app.get_webview_window(PET_RENDER_LABEL) else {
             thread::sleep(HIDDEN_POLL_INTERVAL);
             continue;
         };
-        if !render.is_visible().unwrap_or(false) {
+        let native_surface_visible = app.try_state::<crate::DesktopState>().is_some_and(|state| {
+            matches!(
+                state.native_gpu.status().lifecycle,
+                crate::presence_native_gpu::NativeGpuLifecycle::Starting
+                    | crate::presence_native_gpu::NativeGpuLifecycle::Running
+            )
+        });
+        if !render.is_visible().unwrap_or(false) && !native_surface_visible {
             interaction.suspend(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
             window_relation.store(PresenceWindowRelation::Independent as u8, Ordering::Release);
             thread::sleep(HIDDEN_POLL_INTERVAL);
@@ -610,7 +846,7 @@ fn run_coordinator(app: tauri::AppHandle, state: CoordinatorThreadState) {
             }
             runtime_policy_refreshed_at = Instant::now();
         }
-        let is_repositioning = repositioning.load(Ordering::Acquire);
+        let mut is_repositioning = repositioning.load(Ordering::Acquire);
         if is_repositioning {
             if let Ok(value) = latest_placement.read() {
                 if value.is_some() {
@@ -633,12 +869,22 @@ fn run_coordinator(app: tauri::AppHandle, state: CoordinatorThreadState) {
             }
             placement_refreshed_at = Instant::now();
         }
-        let Some(current_placement) = placement else {
+        let Some(mut current_placement) = placement else {
             thread::sleep(HIDDEN_POLL_INTERVAL);
             continue;
         };
         let sampled_at_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
         let point = global_cursor_position();
+        native_pointer.update(&app, current_placement, point, sampled_at_ms);
+        is_repositioning = repositioning.load(Ordering::Acquire);
+        if is_repositioning {
+            if let Ok(value) = latest_placement.read() {
+                if let Some(next) = *value {
+                    current_placement = next;
+                    placement = Some(next);
+                }
+            }
+        }
         let cursor = match point {
             Some(point) => {
                 cursor_sampling.record_success();
@@ -743,15 +989,55 @@ fn input_pointer_state(app: &tauri::AppHandle, point: PhysicalPoint) -> (bool, b
         .ok()
         .zip(input.outer_size().ok())
         .is_some_and(|(position, size)| {
-            PhysicalFrame {
-                x: position.x,
-                y: position.y,
-                width: size.width,
-                height: size.height,
-            }
-            .contains(point)
+            point_in_input_region(&input, point, position.x, position.y).unwrap_or_else(|| {
+                PhysicalFrame {
+                    x: position.x,
+                    y: position.y,
+                    width: size.width,
+                    height: size.height,
+                }
+                .contains(point)
+            })
         });
     (pointer_over, focused)
+}
+
+#[cfg(target_os = "windows")]
+fn point_in_input_region(
+    input: &tauri::WebviewWindow,
+    point: PhysicalPoint,
+    window_x: i32,
+    window_y: i32,
+) -> Option<bool> {
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreateRectRgn, DeleteObject, GetWindowRgn, PtInRegion,
+    };
+
+    let hwnd = input.hwnd().ok()?.0 as windows_sys::Win32::Foundation::HWND;
+    let region = unsafe { CreateRectRgn(0, 0, 0, 0) };
+    if region.is_null() {
+        return None;
+    }
+    let region_kind = unsafe { GetWindowRgn(hwnd, region) };
+    if region_kind == 0 {
+        unsafe { DeleteObject(region) };
+        return None;
+    }
+    let local_x = point.x.saturating_sub(window_x);
+    let local_y = point.y.saturating_sub(window_y);
+    let contains = unsafe { PtInRegion(region, local_x, local_y) } != 0;
+    unsafe { DeleteObject(region) };
+    Some(contains)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn point_in_input_region(
+    _input: &tauri::WebviewWindow,
+    _point: PhysicalPoint,
+    _window_x: i32,
+    _window_y: i32,
+) -> Option<bool> {
+    None
 }
 
 fn refresh_placement(
@@ -760,62 +1046,54 @@ fn refresh_placement(
     previous: Option<PresenceWindowPlacement>,
     relation: PresenceWindowRelation,
 ) -> Option<PresenceWindowPlacement> {
-    let position = render.outer_position().ok()?;
-    let size = render.outer_size().ok()?;
-    let scale = render.scale_factor().ok()?;
-    let current_frame = PhysicalFrame {
-        x: position.x,
-        y: position.y,
-        width: size.width,
-        height: size.height,
+    let state = app.try_state::<crate::DesktopState>()?;
+    let native_windows = crate::presence_native_windows(&state).ok()?;
+    let render_handle = native_windows.handle_for(PET_RENDER_LABEL).ok()?;
+    let tracking_frame = crate::presence_window_frame(render, render_handle).ok()?;
+    let current_frame = crate::presence_visible_render_frame(render, render_handle, &state).ok()?;
+    let monitors = crate::presence_monitors_for_app(app).ok()?;
+    let placement = if let Some(presentation) = state.native_gpu.presentation() {
+        crate::placement_from_native_presentation(current_frame, &monitors, presentation).ok()?
+    } else {
+        let provisional_scale = previous.map_or(1.0, |placement| placement.scale_factor);
+        let provisional = provisional_anchor(
+            current_frame,
+            provisional_scale,
+            previous.map(|value| value.expansion_direction),
+        );
+        let monitor = crate::monitor_for_anchor(&monitors, provisional)?;
+        resolve_presence_placement(
+            current_frame,
+            monitor.work_area,
+            monitor.scale_factor,
+            previous.map(|value| value.expansion_direction),
+        )
     };
-    let provisional = provisional_anchor(
-        current_frame,
-        scale,
-        previous.map(|value| value.expansion_direction),
-    );
-    let work_areas = render
-        .available_monitors()
-        .ok()?
-        .into_iter()
-        .map(|monitor| PhysicalFrame {
-            x: monitor.work_area().position.x,
-            y: monitor.work_area().position.y,
-            width: monitor.work_area().size.width,
-            height: monitor.work_area().size.height,
-        })
-        .collect::<Vec<_>>();
-    let work_area = select_work_area(provisional, &work_areas)?;
-    let placement = resolve_presence_placement(
-        current_frame,
-        work_area,
-        scale,
-        previous.map(|value| value.expansion_direction),
-    );
-    if placement.render_frame.x != current_frame.x || placement.render_frame.y != current_frame.y {
-        let _ = render.set_position(tauri::PhysicalPosition::new(
-            placement.render_frame.x,
-            placement.render_frame.y,
-        ));
-    }
+    let scale = placement.scale_factor;
+    let render_changed = placement.render_frame != tracking_frame;
+    let mut input_frame_to_apply = None;
     if let Some(input) = app.get_webview_window(PET_INPUT_LABEL) {
         if input.is_visible().unwrap_or(false) {
-            if let Ok(input_size) = input.outer_size() {
-                let core_extent = (PET_CORE_EXTENT_LOGICAL * scale).round() as u32;
-                let compact_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale).round() as u32;
-                let input_is_core_proxy =
-                    input_size.width == core_extent && input_size.height == core_extent;
-                if !input_follows_render(relation, input_is_core_proxy) {
-                    return Some(placement);
+            if let Ok(input_handle) = native_windows.handle_for(PET_INPUT_LABEL) {
+                let current_input_frame =
+                    crate::presence_window_frame(&input, input_handle).ok()?;
+                let geometry = crate::pet_input_geometry_from_frame(current_input_frame, scale);
+                let input_is_core_proxy = matches!(geometry.layout, crate::PetInputLayout::Core);
+                if render_changed || input_follows_render(relation, input_is_core_proxy) {
+                    let frame = crate::pet_input_frame_for_geometry(placement, geometry);
+                    if frame != current_input_frame || render_changed {
+                        input_frame_to_apply = Some(frame);
+                    }
                 }
-                let frame = if input_is_core_proxy {
-                    placement.core_frame(core_extent)
-                } else {
-                    placement.input_frame(input_size.width, input_size.height, compact_height)
-                };
-                let _ = input.set_position(tauri::PhysicalPosition::new(frame.x, frame.y));
             }
         }
+    }
+    if render_changed || input_frame_to_apply.is_some() {
+        let _ = crate::synchronize_presence_window_frames(
+            app,
+            placement.render_frame,
+            input_frame_to_apply,
+        );
     }
     Some(placement)
 }
@@ -825,8 +1103,8 @@ fn provisional_anchor(
     scale_factor: f64,
     direction: Option<ExpansionDirection>,
 ) -> PhysicalPoint {
-    let offset_x = (CORE_ANCHOR_X * scale_factor.clamp(0.5, 4.0)).round() as i64;
-    let offset_y = (CORE_ANCHOR_Y * scale_factor.clamp(0.5, 4.0)).round() as i64;
+    let offset_x = (PET_CORE_ANCHOR_X_LOGICAL * scale_factor.clamp(0.5, 4.0)).round() as i64;
+    let offset_y = (PET_CORE_ANCHOR_Y_LOGICAL * scale_factor.clamp(0.5, 4.0)).round() as i64;
     PhysicalPoint {
         x: match direction.unwrap_or(ExpansionDirection::Right) {
             ExpansionDirection::Right => i64::from(render.x) + offset_x,
@@ -843,17 +1121,17 @@ fn input_frame(
     height: u32,
     compact_height: u32,
 ) -> PhysicalFrame {
-    let render_center_y = i64::from(render.y) + i64::from(render.height) / 2;
-    let compact_bottom = render_center_y + i64::from(compact_height) / 2;
+    let scale = f64::from(render.width) / 640.0;
+    let edge_inset = (PET_INPUT_EDGE_INSET_LOGICAL * scale.clamp(0.5, 4.0)).round() as i64;
     let y = if height <= compact_height {
-        render_center_y - i64::from(height) / 2
+        i64::from(render.y)
     } else {
-        compact_bottom - i64::from(height)
+        render.bottom() - i64::from(height)
     };
     PhysicalFrame {
         x: match direction {
-            ExpansionDirection::Right => render.right() - i64::from(width),
-            ExpansionDirection::Left => i64::from(render.x),
+            ExpansionDirection::Right => i64::from(render.x) + edge_inset,
+            ExpansionDirection::Left => render.right() - edge_inset - i64::from(width),
         } as i32,
         y: y as i32,
         width,
@@ -880,6 +1158,7 @@ pub(crate) fn global_cursor_position() -> Option<PhysicalPoint> {
     use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
+    let _dpi_scope = crate::PerMonitorDpiScope::enter();
     let mut point = POINT { x: 0, y: 0 };
     // GetCursorPos samples global state and does not install a hook or intercept input.
     (unsafe { GetCursorPos(&mut point) } != 0).then_some(PhysicalPoint {
@@ -891,4 +1170,55 @@ pub(crate) fn global_cursor_position() -> Option<PhysicalPoint> {
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn global_cursor_position() -> Option<PhysicalPoint> {
     None
+}
+
+#[cfg(test)]
+mod native_pointer_tests {
+    use super::*;
+
+    fn placement(scale_factor: f64) -> PresenceWindowPlacement {
+        let empty = PhysicalFrame {
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 260,
+        };
+        PresenceWindowPlacement {
+            anchor: PhysicalPoint { x: 100, y: 200 },
+            render_frame: empty,
+            input_compact_frame: empty,
+            input_expanded_frame: empty,
+            monitor_work_area: empty,
+            scale_factor,
+            expansion_direction: ExpansionDirection::Right,
+        }
+    }
+
+    #[test]
+    fn native_pointer_hit_test_is_circular_and_dpi_aware() {
+        let placement = placement(1.25);
+        assert!(point_inside_native_core(
+            PhysicalPoint { x: 100, y: 110 },
+            placement,
+        ));
+        assert!(!point_inside_native_core(
+            PhysicalPoint { x: 10, y: 110 },
+            placement,
+        ));
+    }
+
+    #[test]
+    fn native_drag_threshold_uses_radial_distance() {
+        let origin = PhysicalPoint { x: 10, y: 10 };
+        assert!(!point_distance_exceeds(
+            origin,
+            PhysicalPoint { x: 14, y: 14 },
+            NATIVE_DRAG_DISTANCE_PX,
+        ));
+        assert!(point_distance_exceeds(
+            origin,
+            PhysicalPoint { x: 17, y: 10 },
+            NATIVE_DRAG_DISTANCE_PX,
+        ));
+    }
 }

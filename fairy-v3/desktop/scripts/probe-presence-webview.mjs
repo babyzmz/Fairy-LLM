@@ -34,8 +34,8 @@ if (!Number.isFinite(durationSeconds) || durationSeconds < 0) {
 if (!experimentModes.has(experimentMode)) {
   throw new Error("--experiment must be a supported Presence experiment mode");
 }
-if (![60, 144].includes(targetFps)) {
-  throw new Error("--target-fps must be 60 or 144");
+if (![60, 144, 300].includes(targetFps)) {
+  throw new Error("--target-fps must be 60, 144, or 300");
 }
 
 const browser = await connectWithRetry(`http://127.0.0.1:${port}`, 30_000);
@@ -142,7 +142,8 @@ async function findPresencePage(browser, timeoutMs) {
 async function configureExperiment(browser, mode, framesPerSecond) {
   const startedAt = Date.now();
   let presencePages = [];
-  while (presencePages.length < 2 && Date.now() - startedAt < 30_000) {
+  let renderPage = null;
+  while (renderPage === null && Date.now() - startedAt < 30_000) {
     presencePages = [];
     for (const context of browser.contexts()) {
       for (const page of context.pages()) {
@@ -151,21 +152,27 @@ async function configureExperiment(browser, mode, framesPerSecond) {
         ).catch(() => null);
         if (surface === "pet-render" || surface === "pet-input") {
           presencePages.push(page);
+          if (surface === "pet-render") renderPage = page;
         }
       }
     }
-    if (presencePages.length < 2) {
+    if (renderPage === null) {
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
   }
-  if (presencePages.length < 2) throw new Error("Presence experiment surfaces are unavailable");
+  if (renderPage === null) throw new Error("Presence render experiment surface is unavailable");
   for (const page of presencePages) {
     await page.evaluate(({ value, target }) => {
-      localStorage.setItem("fairy.presence.experiment", value);
-      localStorage.setItem("fairy.presence.target-fps-experiment", String(target));
+      const url = new URL(window.location.href);
+      url.searchParams.set("presence-diagnostics", "1");
+      window.history.replaceState(null, "", url);
+      sessionStorage.setItem("fairy.presence.experiment", value);
+      sessionStorage.setItem("fairy.presence.target-fps-experiment", String(target));
     }, { value: mode, target: framesPerSecond });
   }
-  await Promise.all(presencePages.map((page) => page.reload({ waitUntil: "domcontentloaded" })));
+  // Renderer diagnostics do not require reloading the hidden Input WebView. Reloading both
+  // auxiliary WebViews concurrently can deadlock WebView2's Windows environment creation.
+  await renderPage.reload({ waitUntil: "domcontentloaded" });
 }
 
 async function resetRuntimeMetrics(browser) {

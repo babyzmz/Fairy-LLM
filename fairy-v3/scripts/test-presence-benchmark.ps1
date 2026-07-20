@@ -6,8 +6,8 @@ param(
     [int]$DurationSeconds = 60,
     [ValidateRange(0, 60)]
     [int]$WarmupSeconds = 5,
-    [ValidateSet(60, 144)]
-    [int[]]$TargetFps = @(60, 144),
+    [ValidateSet(60, 144, 300)]
+    [int[]]$TargetFps = @(60, 144, 300),
     [string]$OutputPath
 )
 

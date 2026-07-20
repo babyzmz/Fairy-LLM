@@ -86,4 +86,18 @@ describe("RendererFrameLoop", () => {
     expect(draw.mock.calls.length).toBeGreaterThanOrEqual(144);
     expect(draw.mock.calls.length).toBeLessThanOrEqual(146);
   });
+
+  it("uses every available callback for a 300 FPS target on a 300 Hz display", () => {
+    const harness = schedulerHarness();
+    const draw = vi.fn();
+    const loop = new RendererFrameLoop(draw, () => 1_000 / 300, harness.scheduler);
+
+    loop.start();
+    for (let frame = 1; frame <= 300; frame += 1) {
+      harness.flush(frame * (1_000 / 300));
+    }
+
+    expect(draw.mock.calls.length).toBeGreaterThanOrEqual(300);
+    expect(draw.mock.calls.length).toBeLessThanOrEqual(301);
+  });
 });

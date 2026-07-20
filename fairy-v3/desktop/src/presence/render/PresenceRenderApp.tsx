@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   resolvePresenceExperimentMode,
@@ -18,6 +18,7 @@ import {
 import {
   createPresenceInputPresentationChannel,
   DEFAULT_INPUT_PRESENTATION,
+  isNewerInputPresentation,
   type PresenceInputPresentationChannel,
 } from "../transport/inputPresentation";
 import {
@@ -31,6 +32,7 @@ import {
 import {
   createPresenceRenderSettingsChannel,
   DEFAULT_PRESENCE_RENDER_SETTINGS,
+  loadNativePresenceRenderSettings,
   type PresenceRenderSettings,
   type PresenceRenderSettingsChannel,
 } from "../transport/renderSettings";
@@ -38,6 +40,10 @@ import {
   createPresenceRuntimePolicySource,
   type PresenceRuntimePolicySource,
 } from "../transport/runtimePolicyEvents";
+import {
+  createNativeRendererLifecycleSource,
+  type NativeRendererLifecycleSource,
+} from "../transport/nativeRendererLifecycle";
 import { useDeferredChannelClose } from "../transport/useDeferredChannelClose";
 import {
   DEFAULT_PRESENCE_RUNTIME_POLICY,
@@ -47,7 +53,17 @@ import {
   createPresenceRendererHealthHost,
   type PresenceRendererHealthHost,
 } from "../host/rendererHealthHost";
+import { usePresenceAccessibilityPreferences } from "../host/usePresenceAccessibility";
 import { PresenceRendererCanvas } from "./PresenceRendererCanvas";
+import {
+  NativePresenceRendererHost,
+  type NativePresenceRendererHostOptions,
+  type NativeRendererState,
+} from "./NativePresenceRendererHost";
+import type {
+  PresenceRendererHealth,
+  PresenceRenderSnapshot,
+} from "./presenceRenderer";
 import "../presence.css";
 import "./presence-render.css";
 
@@ -58,7 +74,11 @@ interface PresenceRenderAppProps {
   renderSettingsChannel?: PresenceRenderSettingsChannel;
   voiceLevelSource?: PresenceVoiceLevelSource;
   runtimePolicySource?: PresenceRuntimePolicySource;
+  nativeLifecycleSource?: NativeRendererLifecycleSource;
   rendererHealthHost?: PresenceRendererHealthHost;
+  nativeRendererHostFactory?: (
+    options: NativePresenceRendererHostOptions,
+  ) => NativePresenceRendererHost;
   now?: () => number;
 }
 
@@ -69,7 +89,9 @@ export function PresenceRenderApp({
   renderSettingsChannel: suppliedRenderSettingsChannel,
   voiceLevelSource: suppliedVoiceLevelSource,
   runtimePolicySource: suppliedRuntimePolicySource,
+  nativeLifecycleSource: suppliedNativeLifecycleSource,
   rendererHealthHost: suppliedRendererHealthHost,
+  nativeRendererHostFactory,
   now = Date.now,
 }: PresenceRenderAppProps) {
   const [channel] = useState(() => suppliedChannel ?? createPresenceChannel());
@@ -87,6 +109,9 @@ export function PresenceRenderApp({
   );
   const [runtimePolicySource] = useState(
     () => suppliedRuntimePolicySource ?? createPresenceRuntimePolicySource(),
+  );
+  const [nativeLifecycleSource] = useState(
+    () => suppliedNativeLifecycleSource ?? createNativeRendererLifecycleSource(),
   );
   const [rendererHealthHost] = useState(
     () => suppliedRendererHealthHost ?? createPresenceRendererHealthHost(),
@@ -109,9 +134,23 @@ export function PresenceRenderApp({
   );
   const [forcedCompatibility, setForcedCompatibility] = useState(false);
   const [sessionDisabled, setSessionDisabled] = useState(false);
+  const [nativeRendererState, setNativeRendererState] = useState<NativeRendererState>("idle");
   const [experimentMode] = useState(resolvePresenceExperimentMode);
   const [targetFpsOverride] = useState(resolvePresenceTargetFpsOverride);
+  const accessibility = usePresenceAccessibilityPreferences();
   const targetFrameRate = targetFpsOverride ?? renderSettings.target_frame_rate;
+  const handleRendererHealth = useCallback((health: PresenceRendererHealth) => {
+    void rendererHealthHost.report(health).then((directive) => {
+      if (directive === "force_compatibility") setForcedCompatibility(true);
+      if (directive === "disable_pet") setSessionDisabled(true);
+    });
+  }, [rendererHealthHost]);
+  const [nativeRendererHost] = useState(() => (
+    nativeRendererHostFactory ?? ((options) => new NativePresenceRendererHost(options))
+  )({
+    onHealth: handleRendererHealth,
+    onStateChange: setNativeRendererState,
+  }));
 
   useEffect(() => {
     const stop = channel.onProjection((next) => {
@@ -127,7 +166,7 @@ export function PresenceRenderApp({
   useEffect(() => {
     const stop = inputPresentationChannel.onPresentation((next) => {
       setInputPresentation((current) =>
-        next.sequence > current.sequence ? next : current,
+        isNewerInputPresentation(next, current) ? next : current,
       );
     });
     inputPresentationChannel.request();
@@ -141,8 +180,16 @@ export function PresenceRenderApp({
 
   useEffect(() => {
     const stop = renderSettingsChannel.onSettings(setRenderSettings);
-    renderSettingsChannel.request();
-    return stop;
+    let disposed = false;
+    void loadNativePresenceRenderSettings().then((settings) => {
+      if (!disposed && settings !== null) setRenderSettings(settings);
+    }).finally(() => {
+      if (!disposed) renderSettingsChannel.request();
+    });
+    return () => {
+      disposed = true;
+      stop();
+    };
   }, [renderSettingsChannel]);
 
   useDeferredChannelClose(
@@ -200,24 +247,121 @@ export function PresenceRenderApp({
 
   const view = derivePresenceView(projection, {
     now_ms: clock,
-    quiet_mode: false,
+    quiet_mode: inputPresentation.motion.do_not_disturb,
     dismissed_notice_ids: [],
   });
   const reducedMotion =
     interaction?.reduced_motion === true ||
     !renderSettings.motion_enabled ||
-    (typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    accessibility.reduced_motion;
   const interactionActive = interaction !== null && (
     interaction.cursor.band !== "outside" ||
     !["idle", "suspended"].includes(interaction.phase)
   );
-  const workActive = ["analyzing", "tool", "streaming"].includes(view.work_state);
+  const motionActive = !["idle", "sleeping", "suspended"].includes(
+    inputPresentation.motion.state,
+  );
   const idleForMs = useRenderIdleDuration(
-    projection.speaking || interactionActive || workActive,
+    motionActive || interactionActive,
     now,
   );
   const requestedMode = forcedCompatibility ? "compatibility" : renderSettings.mode;
+  const renderSnapshot: PresenceRenderSnapshot = {
+    interaction,
+    motion: inputPresentation.motion,
+    input_capsule_visible: inputPresentation.capsule_visible,
+    input_capsule_width: inputPresentation.capsule_width,
+    reduced_motion: reducedMotion,
+    reduced_transparency: accessibility.reduced_transparency,
+    increased_contrast: accessibility.increased_contrast,
+    sleeping: inputPresentation.motion.state === "sleeping",
+    speaking: inputPresentation.motion.state === "speaking",
+    voice_level: inputPresentation.motion.state === "speaking" ? voiceLevel : 0,
+    work_state: view.work_state,
+    size_scale: renderSettings.size_scale,
+    opacity: renderSettings.opacity,
+    particles_enabled:
+      renderSettings.particles_enabled && experimentMode !== "no-particles",
+    optics_mode: renderSettings.optics_mode,
+    idle_for_ms: idleForMs,
+    target_frame_rate: targetFrameRate,
+    frame_rate_limit: runtimePolicy.frame_rate_limit,
+  };
+  const renderSnapshotRef = useRef(renderSnapshot);
+  renderSnapshotRef.current = renderSnapshot;
+  const nativeStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void nativeLifecycleSource.subscribe((signal) => {
+      if (disposed) return;
+      if (signal.reason === "shutdown") {
+        void nativeRendererHost.stop();
+        return;
+      }
+      if (signal.reason === "drag_suspended") {
+        // Drag mode is handled by the native session. Keep the last valid frame visible while a
+        // cross-monitor candidate is prepared instead of tearing down the active surface.
+        return;
+      }
+      if (signal.reason === "drag_ended") {
+        nativeRendererHost.refreshCaptureSource(renderSnapshotRef.current);
+        return;
+      }
+      nativeRendererHost.reconfigure(renderSnapshotRef.current);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, [nativeLifecycleSource, nativeRendererHost]);
+
+  const nativeRendererRequested =
+    !sessionDisabled &&
+    interactionReady &&
+    interaction !== null &&
+    requestedMode !== "compatibility" &&
+    renderSettings.optics_mode === "enhanced" &&
+    experimentMode === "normal";
+  const fallbackOccluded = nativeRendererOccludesFallback(
+    nativeRendererRequested,
+    nativeRendererState,
+  );
+
+  useEffect(() => {
+    nativeRendererHost.setSnapshot(renderSnapshot);
+  }, [nativeRendererHost, renderSnapshot]);
+
+  useEffect(() => {
+    if (nativeRendererRequested) {
+      void nativeRendererHost.start(renderSnapshotRef.current);
+    } else {
+      void nativeRendererHost.stop();
+    }
+  }, [nativeRendererHost, nativeRendererRequested, targetFrameRate]);
+
+  useEffect(() => {
+    if (nativeStopTimerRef.current !== null) {
+      clearTimeout(nativeStopTimerRef.current);
+      nativeStopTimerRef.current = null;
+    }
+    return () => {
+      // StrictMode immediately remounts effects in development. Defer teardown by one task so
+      // the replay can cancel it; a real unmount still closes the native session.
+      nativeStopTimerRef.current = setTimeout(() => {
+        nativeStopTimerRef.current = null;
+        void nativeRendererHost.stop();
+      }, 0);
+    };
+  }, [nativeRendererHost]);
+
+  const fallbackSnapshot = renderSettings.optics_mode === "enhanced"
+    ? { ...renderSnapshot, optics_mode: "standard" as const }
+    : renderSnapshot;
   return (
     <main
       aria-hidden="true"
@@ -238,9 +382,16 @@ export function PresenceRenderApp({
       data-work-area-height={interaction?.placement.monitor_work_area.height ?? ""}
       data-interaction-phase={interaction?.phase ?? "idle"}
       data-interaction-ready={String(interactionReady)}
+      data-motion-activity={inputPresentation.motion.activity}
+      data-motion-state={inputPresentation.motion.state}
+      data-motion-surface={inputPresentation.motion.surface}
       data-input-capsule-visible={String(inputPresentation.capsule_visible)}
+      data-input-presentation-session={inputPresentation.session_id}
+      data-input-presentation-revision={inputPresentation.sequence}
       data-reduced-motion={String(reducedMotion)}
-      data-speaking={String(projection.speaking)}
+      data-reduced-transparency={String(accessibility.reduced_transparency)}
+      data-increased-contrast={String(accessibility.increased_contrast)}
+      data-speaking={String(inputPresentation.motion.state === "speaking")}
       data-work-state={view.work_state}
       data-target-frame-rate={targetFrameRate}
       data-optics-mode={renderSettings.optics_mode}
@@ -248,6 +399,9 @@ export function PresenceRenderApp({
       data-power-saver={String(runtimePolicy.power_saver)}
       data-foreground-fullscreen={String(runtimePolicy.foreground_fullscreen)}
       data-session-disabled={String(sessionDisabled)}
+      data-native-renderer-requested={String(nativeRendererRequested)}
+      data-native-renderer-state={nativeRendererState}
+      data-fallback-occluded={String(fallbackOccluded)}
       data-experiment-mode={experimentMode}
       data-testid="presence-render-surface"
     >
@@ -255,33 +409,25 @@ export function PresenceRenderApp({
         <PresenceRendererCanvas
           requestedMode={requestedMode}
           experimentMode={experimentMode}
+          standbyHidden={fallbackOccluded}
           onHealth={(health) => {
-            void rendererHealthHost.report(health).then((directive) => {
-              if (directive === "force_compatibility") setForcedCompatibility(true);
-              if (directive === "disable_pet") setSessionDisabled(true);
-            });
+            if (nativeRendererState !== "running" && nativeRendererState !== "starting") {
+              handleRendererHealth(health);
+            }
           }}
-          snapshot={{
-            interaction,
-            input_capsule_visible: inputPresentation.capsule_visible,
-            reduced_motion: reducedMotion,
-            sleeping: view.density === "quiet",
-            speaking: projection.speaking,
-            voice_level: projection.speaking ? voiceLevel : 0,
-            work_state: view.work_state,
-            size_scale: renderSettings.size_scale,
-            opacity: renderSettings.opacity,
-            particles_enabled:
-              renderSettings.particles_enabled && experimentMode !== "no-particles",
-            optics_mode: renderSettings.optics_mode,
-            idle_for_ms: idleForMs,
-            target_frame_rate: targetFrameRate,
-            frame_rate_limit: runtimePolicy.frame_rate_limit,
-          }}
+          snapshot={fallbackSnapshot}
         />
       )}
     </main>
   );
+}
+
+export function nativeRendererOccludesFallback(
+  requested: boolean,
+  state: NativeRendererState,
+): boolean {
+  if (state === "fallback") return false;
+  return requested || state === "starting" || state === "running" || state === "stopping";
 }
 
 function useRenderIdleDuration(active: boolean, now: () => number): number {

@@ -21,7 +21,7 @@ export function presenceInputGate(
   if (snapshot.phase === "input_reveal") {
     return {
       window_visible: true,
-      content_visible: snapshot.reduced_motion || elapsed >= 130,
+      content_visible: snapshot.reduced_motion ? elapsed >= 80 : elapsed >= 130,
       interactive: false,
     };
   }
@@ -35,7 +35,7 @@ export function presenceInputGate(
   if (snapshot.phase === "returning") {
     return {
       window_visible: true,
-      content_visible: snapshot.reduced_motion ? false : elapsed < 150,
+      content_visible: snapshot.reduced_motion ? elapsed < 80 : elapsed < 150,
       interactive: false,
     };
   }

@@ -1,23 +1,28 @@
 import type { PresenceInteractionSnapshot } from "../domain/interaction";
+import type { FairyMotionSnapshot } from "../domain/motionState";
 import type { PresenceWorkState } from "../domain/projection";
 import type { FairyVisualState } from "./CompatibilityFairyCanvas";
 import type { PresenceRendererMode } from "./rendererSupport";
 
 export interface PresenceRenderSnapshot {
   interaction: PresenceInteractionSnapshot | null;
+  motion: FairyMotionSnapshot;
   input_capsule_visible: boolean;
+  input_capsule_width: number;
   work_state: PresenceWorkState;
   speaking: boolean;
   voice_level: number;
   sleeping: boolean;
   reduced_motion: boolean;
+  reduced_transparency?: boolean;
+  increased_contrast?: boolean;
   size_scale: number;
   opacity: number;
   particles_enabled: boolean;
   optics_mode: "standard" | "enhanced";
   idle_for_ms: number;
-  target_frame_rate: 60 | 144;
-  frame_rate_limit: 15 | 30 | 60 | 144;
+  target_frame_rate: 60 | 144 | 300;
+  frame_rate_limit: 15 | 30 | 60 | 144 | 300;
 }
 
 export type PresenceRendererStatus =
@@ -31,7 +36,7 @@ export type PresenceRendererStatus =
   | "disposed";
 
 export interface PresenceRendererHealth {
-  mode: Exclude<PresenceRendererMode, "auto">;
+  mode: "native" | Exclude<PresenceRendererMode, "auto">;
   status: PresenceRendererStatus;
   error_code:
     | "WEBGL2_UNAVAILABLE"
@@ -39,6 +44,11 @@ export interface PresenceRendererHealth {
     | "WEBGL_CONTEXT_LOST"
     | "SHADER_INITIALIZATION_FAILED"
     | "CANVAS2D_UNAVAILABLE"
+    | "NATIVE_GPU_UNAVAILABLE"
+    | "NATIVE_GPU_START_FAILED"
+    | "NATIVE_GPU_UPDATE_FAILED"
+    | "NATIVE_GPU_RUNTIME_FAILED"
+    | "NATIVE_GPU_STOP_FAILED"
     | null;
 }
 
@@ -54,21 +64,24 @@ export interface PresenceRenderer {
 export function visualStateForSnapshot(
   snapshot: PresenceRenderSnapshot,
 ): FairyVisualState {
-  if (snapshot.speaking) return "speaking";
-  if (snapshot.work_state !== "idle") return snapshot.work_state;
-  if (
-    snapshot.interaction?.phase === "input_reveal" ||
-    snapshot.interaction?.phase === "interactive"
-  ) {
-    return "hover";
+  switch (snapshot.motion.state) {
+    case "error": return "error";
+    case "awaiting_confirmation": return "awaiting_confirmation";
+    case "speaking": return "speaking";
+    case "responding": return "streaming";
+    case "thinking": return snapshot.motion.activity === "tool" ? "tool" : "analyzing";
+    case "submitting": return "analyzing";
+    case "notify": return "ready";
+    case "input":
+    case "options": return "listening";
+    case "aware":
+    case "forming":
+    case "returning": return "hover";
+    case "repositioning": return "dragging";
+    case "suspended":
+    case "sleeping": return "sleeping";
+    case "idle": return "idle";
   }
-  if (
-    snapshot.interaction !== null &&
-    snapshot.interaction.cursor.band !== "outside"
-  ) {
-    return "hover";
-  }
-  return snapshot.sleeping ? "sleeping" : "idle";
 }
 
 export function rendererFrameInterval(snapshot: PresenceRenderSnapshot): number {

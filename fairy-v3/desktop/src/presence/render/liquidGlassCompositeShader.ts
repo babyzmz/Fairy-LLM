@@ -10,6 +10,7 @@ export const LIQUID_GLASS_COMPOSITE_GLSL = `
     float thickness = thicknessField(point, distanceField);
     float curvature = curvatureApprox(point);
     float edgeLens = edgeLensResponse(distanceField, thickness, curvature);
+    float edgeBand = exp(-abs(distanceField) / (3.2 * uDpr));
 
     vec2 localScreenPixel = vec2(pixel.x, uResolution.y - pixel.y);
     vec2 absoluteScreenPixel = uRenderOrigin + localScreenPixel;
@@ -31,13 +32,22 @@ export const LIQUID_GLASS_COMPOSITE_GLSL = `
       * edgeLens
       * mix(0.72, 1.0, curvature);
     vec2 refractedPixel = absoluteScreenPixel + screenNormal * refractionDistance;
-    float chromaMask = pow(edgeLens, 2.5)
-      * saturate(curvature * 1.15);
-    float spectralDistance = min(1.0, uDispersionPx) * chromaMask;
-    vec3 transmitted = chromaticDispersion(
+    float chromaMask = smoothstep(0.76, 1.0, edgeLens)
+      * mix(0.6, 1.0, curvature);
+    float spectralDistance = min(0.45, uDispersionPx) * chromaMask;
+    if (uReducedTransparency > 0.5 || uIncreasedContrast > 0.5) {
+      spectralDistance = 0.0;
+    }
+    vec3 primaryTransmission = screenSpaceEnvironment(refractedPixel);
+    vec3 spectralTransmission = chromaticDispersion(
       refractedPixel,
       screenNormal,
       spectralDistance
+    );
+    vec3 transmitted = mix(
+      primaryTransmission,
+      spectralTransmission,
+      chromaMask * 0.42
     );
     vec3 directEnvironment = screenSpaceEnvironment(absoluteScreenPixel);
     vec2 adaptationNormal = mix(
@@ -60,6 +70,10 @@ export const LIQUID_GLASS_COMPOSITE_GLSL = `
       vec3(perceivedLuminance(glassColor)),
       adaptation.saturation * 0.035
     );
+    if (uReducedTransparency > 0.5) {
+      float accessibilityFillLuminance = adaptation.luminance > 0.58 ? 0.08 : 0.94;
+      glassColor = mix(glassColor, vec3(accessibilityFillLuminance), 0.2);
+    }
 
     float bottomLip = saturate((thickness - 0.88) / 0.42)
       * smoothstep(-0.1, 0.9, -point.y / max(1.0, 72.0 * uDpr));
@@ -89,7 +103,6 @@ export const LIQUID_GLASS_COMPOSITE_GLSL = `
     glassColor += vec3(1.0, 0.997, 0.98) * keyHighlight * 0.42;
     glassColor += vec3(0.82, 0.94, 1.0) * counterHighlight * 0.2;
 
-    float edgeBand = exp(-abs(distanceField) / (3.2 * uDpr));
     float rimLighting = 0.5
       + 0.5 * dot(rimNormal, normalize(vec2(-0.58, 0.82)));
     vec3 lightRim = mix(vec3(0.64, 0.68, 0.72), vec3(0.99), rimLighting);
@@ -104,12 +117,16 @@ export const LIQUID_GLASS_COMPOSITE_GLSL = `
         + edgeLens * (0.105 + fresnel * 0.11)
     ) * uRimStrength;
     glassColor = mix(glassColor, adaptiveRim, saturate(rimMix));
+    if (uIncreasedContrast > 0.5) {
+      float contrastTone = adaptation.luminance > 0.58 ? 0.01 : 0.99;
+      glassColor = mix(glassColor, vec3(contrastTone), saturate(edgeBand * 0.24));
+    }
 
     float spectralPolarity = dot(rimNormal, normalize(vec2(-0.76, 0.65)));
-    vec3 spectralHint = vec3(0.035, 0.0, -0.035)
-      * spectralPolarity
-      * chromaMask;
-    glassColor += spectralHint;
+    float warmDispersion = max(spectralPolarity, 0.0) * chromaMask;
+    float coolDispersion = max(-spectralPolarity, 0.0) * chromaMask;
+    glassColor += vec3(0.10, 0.006, -0.045) * warmDispersion;
+    glassColor += vec3(-0.03, 0.006, 0.065) * coolDispersion;
 
     vec2 internalRefraction = screenNormal * refractionDistance * 0.16;
     float particle = particleField(point + internalRefraction);
@@ -121,88 +138,101 @@ export const LIQUID_GLASS_COMPOSITE_GLSL = `
     shadow *= smoothstep(0.0, 7.0 * uDpr, windowEdgeDistance);
     if (coverage + particle + shadow <= 0.001) discard;
 
-    vec2 coreOffset = point + internalRefraction - uGaze * 3.5 * uDpr;
-    float coreDistance = length(coreOffset);
-    float innerCore = 1.0 - smoothstep(
-      5.0 * uDpr * uSizeScale,
-      14.0 * uDpr * uSizeScale,
-      coreDistance
+    // Fairy's identity marks live above the optical material. Their geometry must remain in
+    // undisplaced surface coordinates so refraction, dispersion and caustics cannot bend them.
+    vec2 identityOffset = point - uGaze * 3.5 * uDpr;
+    float coreDistance = length(identityOffset);
+    float identityScale = max(0.5, uDpr * uSizeScale);
+    float identityPoint = exp(
+      -(coreDistance * coreDistance) / (42.0 * identityScale * identityScale)
     );
-    float innerHalo = exp(-coreDistance / (20.0 * uDpr * uSizeScale));
-    float coreRing = exp(
-      -abs(coreDistance - 30.0 * uDpr * uSizeScale)
-        / (2.2 * uDpr * uSizeScale)
+    float identityGlow = exp(
+      -(coreDistance * coreDistance) / (210.0 * identityScale * identityScale)
     );
-    float outerCoreRing = exp(
-      -abs(coreDistance - 44.0 * uDpr * uSizeScale)
-        / (1.5 * uDpr * uSizeScale)
+    float identityBreath = 0.82 + 0.18 * sin(uTime * max(0.35, uPulseSpeed));
+    float identityAtmosphereOuter = exp(
+      -abs(coreDistance - 36.0 * identityScale) / (1.25 * identityScale)
     );
-    float orbitHighlight = outerCoreRing * pow(
-      max(
-        dot(
-          normalize(coreOffset + vec2(0.0001)),
-          normalize(vec2(-0.7, 0.72))
-        ),
-        0.0
-      ),
-      4.0
+    float identityAtmosphereInner = exp(
+      -abs(coreDistance - 24.0 * identityScale) / (1.05 * identityScale)
     );
-    float coreChannel = smoothstep(
-      15.0 * uDpr * uSizeScale,
-      21.0 * uDpr * uSizeScale,
-      coreDistance
-    ) * (1.0 - smoothstep(
-      35.0 * uDpr * uSizeScale,
-      43.0 * uDpr * uSizeScale,
-      coreDistance
-    ));
-    vec3 aiLight = mix(
-      uAccent * 0.82,
-      vec3(0.88, 0.98, 1.0),
-      innerCore * 0.72
-    );
-    glassColor = mix(glassColor, vec3(0.04, 0.12, 0.17), coreChannel * 0.18);
-    glassColor = mix(
-      glassColor,
-      aiLight,
-      saturate(innerHalo * 0.25 + coreRing * 0.68 + outerCoreRing * 0.3)
-    );
-    glassColor += vec3(0.94, 0.99, 1.0) * orbitHighlight * 0.28;
-    glassColor = mix(glassColor, vec3(0.98, 1.0, 1.0), innerCore * 0.76);
+    float identityAtmosphere = (
+      identityAtmosphereOuter * (0.055 + uEnergy * 0.045)
+        + identityAtmosphereInner * (0.035 + uEnergy * 0.035)
+    ) * mix(0.82, 1.0, identityBreath);
+    vec3 identityLight = mix(uAccent, vec3(0.95, 0.99, 1.0), 0.72);
 
-    float centerAlpha = 0.052 + adaptation.variance * 0.008;
+    float centerAlpha = mix(
+      0.038 + adaptation.variance * 0.008,
+      0.22,
+      uReducedTransparency
+    );
+    float displacedReplacement = smoothstep(
+      0.3 * uDpr,
+      1.15 * uDpr,
+      abs(refractionDistance)
+    );
+    float replacementMaterial = max(pow(edgeLens, 1.2), displacedReplacement);
     float glassAlpha = clamp(
       centerAlpha
-        + edgeLens * 0.17 * uRimStrength
-        + edgeBand * 0.055 * uRimStrength
-        + fresnel * edgeLens * 0.045
-        + keyHighlight * 0.05
-        + counterHighlight * 0.03
-        + causticLight * 0.1,
+        + replacementMaterial * 0.93 * uRimStrength
+        + edgeBand * 0.18 * uRimStrength
+        + fresnel * edgeLens * 0.08
+        + keyHighlight * 0.12
+        + counterHighlight * 0.07
+        + causticLight * 0.16,
       0.0,
-      0.42
+      0.94
     ) * coverage;
     float speechPulse = uSpeechLevel * (0.5 + 0.5 * sin(uTime * 10.0));
-    float lightAlpha = (
-      innerCore * (0.42 + speechPulse * 0.18)
-        + coreRing * (0.34 + uEnergy * 0.05)
-        + outerCoreRing * 0.12
-        + innerHalo * 0.08
-    ) * coverage;
+    float atmosphereLayerAlpha = clamp(
+      identityAtmosphere * 1.55 * coverage * uOpacity,
+      0.0,
+      0.92
+    );
+    float glowLayerAlpha = clamp(
+      identityGlow * (0.045 + uEnergy * 0.075) * coverage * uOpacity,
+      0.0,
+      0.92
+    );
+    float pointLayerAlpha = clamp(
+      identityPoint
+        * (0.48 + uEnergy * 0.18 + speechPulse * 0.18)
+        * identityBreath
+        * coverage
+        * uOpacity,
+      0.0,
+      0.92
+    );
+    float identityAlpha = 1.0
+      - (1.0 - atmosphereLayerAlpha)
+        * (1.0 - glowLayerAlpha)
+        * (1.0 - pointLayerAlpha);
     float particleAlpha = particle * mix(0.18, 0.3, uEnergy);
     glassColor = mix(
       glassColor,
       uAccent,
-      saturate(particle * 0.85 + coreRing * 0.16)
+      saturate(particle * 0.85 + identityGlow * uEnergy * 0.08)
     );
-    float foregroundAlpha = clamp(
-      glassAlpha + lightAlpha + particleAlpha,
+    float materialAlpha = clamp(
+      glassAlpha + particleAlpha,
       0.0,
-      0.78
+      0.96
     ) * uOpacity;
+    vec3 materialPremultiplied = clamp(glassColor, 0.0, 1.0) * materialAlpha;
+    vec3 identityPremultiplied = identityLight * atmosphereLayerAlpha;
+    identityPremultiplied += mix(uAccent, identityLight, 0.55)
+      * glowLayerAlpha
+      * (1.0 - atmosphereLayerAlpha);
+    identityPremultiplied += vec3(0.97, 0.99, 1.0)
+      * pointLayerAlpha
+      * (1.0 - atmosphereLayerAlpha)
+      * (1.0 - glowLayerAlpha);
+    vec3 foregroundPremultiplied = identityPremultiplied
+      + materialPremultiplied * (1.0 - identityAlpha);
+    float foregroundAlpha = identityAlpha + materialAlpha * (1.0 - identityAlpha);
     float shadowAlpha = shadow * (1.0 - foregroundAlpha) * uOpacity;
-    float alpha = clamp(foregroundAlpha + shadowAlpha, 0.0, 0.78);
-    vec3 premultiplied = clamp(glassColor, 0.0, 1.0) * foregroundAlpha;
-    gl_FragColor = vec4(premultiplied, alpha);
+    float alpha = clamp(foregroundAlpha + shadowAlpha, 0.0, 0.96);
+    gl_FragColor = vec4(foregroundPremultiplied, alpha);
   }
 `;

@@ -20,8 +20,9 @@ interface ReadableStorage {
 export function resolvePresenceExperimentMode(
   storage: ReadableStorage | null = browserStorage(),
   development = import.meta.env.DEV,
+  diagnosticsEnabled = browserDiagnosticsEnabled(),
 ): PresenceExperimentMode {
-  if (!development || storage === null) return "normal";
+  if (!development || !diagnosticsEnabled || storage === null) return "normal";
   try {
     const value = storage.getItem(PRESENCE_EXPERIMENT_STORAGE_KEY);
     return isPresenceExperimentMode(value) ? value : "normal";
@@ -40,12 +41,14 @@ export function backdropCommandMode(
 export function resolvePresenceTargetFpsOverride(
   storage: ReadableStorage | null = browserStorage(),
   development = import.meta.env.DEV,
-): 60 | 144 | null {
-  if (!development || storage === null) return null;
+  diagnosticsEnabled = browserDiagnosticsEnabled(),
+): 60 | 144 | 300 | null {
+  if (!development || !diagnosticsEnabled || storage === null) return null;
   try {
     const value = storage.getItem(PRESENCE_TARGET_FPS_STORAGE_KEY);
     if (value === "60") return 60;
     if (value === "144") return 144;
+    if (value === "300") return 300;
   } catch {
     // Storage can be unavailable in hardened WebViews.
   }
@@ -62,5 +65,12 @@ export function isPresenceExperimentMode(
 
 function browserStorage(): ReadableStorage | null {
   if (typeof window === "undefined") return null;
-  return window.localStorage;
+  // Presence experiments belong to one diagnostic WebView lifetime. Persisting them in
+  // localStorage silently disabled refraction on later normal development launches.
+  return window.sessionStorage;
+}
+
+function browserDiagnosticsEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("presence-diagnostics") === "1";
 }

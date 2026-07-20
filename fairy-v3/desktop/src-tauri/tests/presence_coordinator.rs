@@ -1,5 +1,6 @@
 use fairy_desktop_v3::presence_coordinator::{
-    anchor_from_ratios, anchor_ratios, configured_cursor_band, resolve_presence_placement,
+    anchor_from_ratios, anchor_ratios, configured_cursor_band,
+    resolve_drag_presence_placement_for_anchor, resolve_presence_placement,
     resolve_presence_placement_for_anchor, select_work_area, CursorBand, CursorMetrics,
     CursorSamplingHealth, CursorTracker, ExpansionDirection, InteractionEmissionGate,
     NormalizedDirection, PhysicalFrame, PhysicalPoint, RuntimePolicyEmissionGate,
@@ -47,18 +48,28 @@ fn placement_flips_left_near_the_right_edge_and_preserves_the_core_anchor() {
         resolve_presence_placement(render, work_area, 1.0, Some(ExpansionDirection::Right));
 
     assert_eq!(placement.expansion_direction, ExpansionDirection::Left);
-    assert_eq!(placement.anchor, PhysicalPoint { x: 1596, y: 630 });
+    assert_eq!(placement.anchor, PhysicalPoint { x: 1596, y: 588 });
     assert_eq!(placement.render_frame.x, 1052);
-    assert_eq!(placement.input_compact_frame.x, 1052);
+    assert_eq!(placement.input_compact_frame.x, 1368);
     assert_eq!(placement.input_expanded_frame.x, 1052);
     assert_eq!(
         placement.core_frame(144),
         PhysicalFrame {
             x: 1524,
-            y: 558,
+            y: 516,
             width: 144,
             height: 144,
         }
+    );
+    assert!(placement.core_frame(144).x >= placement.render_frame.x);
+    assert!(placement.core_frame(144).right() <= placement.render_frame.right());
+    assert!(placement.core_frame(144).x >= work_area.x);
+    assert!(placement.core_frame(144).right() <= work_area.right());
+    assert_eq!(placement.input_compact_frame.width, 300);
+    assert_eq!(placement.input_compact_frame.height, 260);
+    assert_eq!(
+        placement.input_compact_frame.right(),
+        placement.core_frame(144).right()
     );
 }
 
@@ -82,7 +93,94 @@ fn placement_supports_negative_monitor_coordinates_and_work_area_clamping() {
     assert_eq!(placement.render_frame.x, -1880);
     assert_eq!(placement.render_frame.y, 700);
     assert!(placement.anchor.x < 0);
-    assert_eq!(placement.anchor.y, 830);
+    assert_eq!(placement.anchor.y, 788);
+}
+
+#[test]
+fn placement_keeps_the_core_flush_at_the_right_edge_without_insetting_the_pet() {
+    let work_area = PhysicalFrame {
+        x: 0,
+        y: 0,
+        width: 2048,
+        height: 1104,
+    };
+    let placement = resolve_presence_placement_for_anchor(
+        PhysicalPoint { x: 2048, y: 700 },
+        (640, 260),
+        work_area,
+        1.0,
+        Some(ExpansionDirection::Left),
+    );
+
+    assert_eq!(placement.expansion_direction, ExpansionDirection::Left);
+    assert_eq!(placement.render_frame.right(), work_area.right() + 24);
+    assert_eq!(placement.anchor.x, 1976);
+    assert_eq!(placement.core_frame(144).right(), work_area.right());
+}
+
+#[test]
+fn placement_keeps_the_core_flush_at_the_left_edge_without_insetting_the_pet() {
+    let work_area = PhysicalFrame {
+        x: 2560,
+        y: -114,
+        width: 1920,
+        height: 1032,
+    };
+    let placement = resolve_presence_placement_for_anchor(
+        PhysicalPoint { x: 2560, y: 500 },
+        (640, 260),
+        work_area,
+        1.0,
+        Some(ExpansionDirection::Right),
+    );
+
+    assert_eq!(placement.expansion_direction, ExpansionDirection::Right);
+    assert_eq!(placement.render_frame.x, work_area.x - 24);
+    assert_eq!(placement.anchor.x, 2632);
+    assert_eq!(placement.core_frame(144).x, work_area.x);
+}
+
+#[test]
+fn active_drag_preserves_the_pointer_anchor_at_a_monitor_seam() {
+    let target_work_area = PhysicalFrame {
+        x: 1_920,
+        y: -120,
+        width: 2_560,
+        height: 1_440,
+    };
+    let pointer = PhysicalPoint { x: 1_920, y: 620 };
+    let placement = resolve_drag_presence_placement_for_anchor(
+        pointer,
+        (640, 260),
+        target_work_area,
+        1.0,
+        ExpansionDirection::Left,
+    );
+
+    assert_eq!(placement.anchor, pointer);
+    assert_eq!(placement.core_frame(144).x, pointer.x - 72);
+    assert_eq!(placement.render_frame.x, 1_376);
+    assert_eq!(placement.monitor_work_area, target_work_area);
+}
+
+#[test]
+fn edge_overhang_scales_with_monitor_dpi_while_the_core_remains_visible() {
+    let work_area = PhysicalFrame {
+        x: -3000,
+        y: 0,
+        width: 3000,
+        height: 1600,
+    };
+    let placement = resolve_presence_placement_for_anchor(
+        PhysicalPoint { x: -3000, y: 800 },
+        (960, 390),
+        work_area,
+        1.5,
+        Some(ExpansionDirection::Right),
+    );
+
+    assert_eq!(placement.render_frame.x, work_area.x - 36);
+    assert_eq!(placement.core_frame(216).x, work_area.x);
 }
 
 #[test]
@@ -104,9 +202,9 @@ fn placement_scales_anchor_and_input_frames_in_physical_pixels() {
         None,
     );
 
-    assert_eq!(placement.anchor, PhysicalPoint { x: 444, y: 432 });
-    assert_eq!(placement.input_compact_frame.width, 924);
-    assert_eq!(placement.input_compact_frame.height, 216);
+    assert_eq!(placement.anchor, PhysicalPoint { x: 444, y: 282 });
+    assert_eq!(placement.input_compact_frame.width, 450);
+    assert_eq!(placement.input_compact_frame.height, 390);
     assert_eq!(placement.input_expanded_frame.width, 924);
     assert_eq!(placement.input_expanded_frame.height, 540);
     assert!(placement.input_expanded_frame.y >= placement.monitor_work_area.y);

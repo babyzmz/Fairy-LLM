@@ -103,3 +103,74 @@ fn clamp_axis(value: i64, minimum: i64, maximum: i64) -> i64 {
         value.clamp(minimum, maximum)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(x: i32, y: i32, width: u32, height: u32) -> PhysicalFrame {
+        PhysicalFrame {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn only_transition_phases_couple_the_render_and_input_surfaces() {
+        for phase in [
+            PresenceInteractionPhase::Droplet,
+            PresenceInteractionPhase::Stretching,
+            PresenceInteractionPhase::InputReveal,
+        ] {
+            assert_eq!(
+                relation_for_phase(phase),
+                PresenceWindowRelation::CoupledTransition
+            );
+        }
+        for phase in [
+            PresenceInteractionPhase::Idle,
+            PresenceInteractionPhase::Aware,
+            PresenceInteractionPhase::Interactive,
+            PresenceInteractionPhase::Returning,
+            PresenceInteractionPhase::Suspended,
+            PresenceInteractionPhase::Repositioning,
+        ] {
+            assert_eq!(
+                relation_for_phase(phase),
+                PresenceWindowRelation::Independent
+            );
+        }
+    }
+
+    #[test]
+    fn clamping_preserves_negative_monitor_coordinates() {
+        let work_area = frame(-2_560, -200, 2_560, 1_440);
+        assert_eq!(
+            moved_frame(frame(-2_500, -100, 640, 260), -500, -500, work_area),
+            frame(-2_560, -200, 640, 260)
+        );
+        assert_eq!(
+            moved_frame(frame(-2_500, -100, 640, 260), 4_000, 2_000, work_area),
+            frame(-640, 980, 640, 260)
+        );
+    }
+
+    #[test]
+    fn resizing_keeps_the_compact_bottom_edge_stable() {
+        let work_area = frame(0, 0, 1_920, 1_040);
+        assert_eq!(
+            resized_frame_preserving_bottom(frame(1_200, 700, 320, 72), 616, 360, work_area,),
+            frame(1_200, 412, 616, 360)
+        );
+    }
+
+    #[test]
+    fn an_oversized_surface_anchors_at_the_work_area_origin() {
+        assert_eq!(
+            clamped_frame(frame(100, 100, 1_600, 1_200), frame(-800, -100, 800, 600)),
+            frame(-800, -100, 1_600, 1_200)
+        );
+    }
+}

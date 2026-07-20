@@ -51,7 +51,12 @@ export interface PresenceView extends PresenceProjectionState {
 const PRESENCE_STATUS_TEXTS = [
   "Standing by",
   "Reviewing your request",
+  "Choosing the best model",
+  "Planning the next step",
   "Preparing the next step",
+  "Checking the result",
+  "Preparing the result",
+  "Generating media",
   "Writing the reply",
   "Resuming interrupted work",
   "Working in the project",
@@ -67,6 +72,9 @@ const PRESENCE_NOTICE_TEXTS = [
   "An approval needs your decision",
   "Fairy needs your attention",
   "Preview could not be prepared",
+  "Media is ready",
+  "Media generation could not be completed",
+  "The action was not run",
 ] as const;
 
 export const presenceProjectionStateSchema = z
@@ -133,7 +141,22 @@ const RULES: Readonly<Record<string, ProjectionRule>> = Object.freeze({
     workState: "analyzing",
     statusText: "Reviewing your request",
   },
+  "assistant.route.selected": {
+    activity: "attending",
+    workState: "analyzing",
+    statusText: "Choosing the best model",
+  },
+  "turn.trace.started": {
+    activity: "attending",
+    workState: "analyzing",
+    statusText: "Planning the next step",
+  },
   "command.created": {
+    activity: "attending",
+    workState: "analyzing",
+    statusText: "Preparing the next step",
+  },
+  "command.queued": {
     activity: "attending",
     workState: "analyzing",
     statusText: "Preparing the next step",
@@ -147,6 +170,11 @@ const RULES: Readonly<Record<string, ProjectionRule>> = Object.freeze({
     activity: "working",
     workState: "tool",
     statusText: "Working in the project",
+  },
+  "command.succeeded": {
+    activity: "attending",
+    workState: "analyzing",
+    statusText: "Checking the result",
   },
   "preview.starting": {
     activity: "working",
@@ -165,11 +193,22 @@ const RULES: Readonly<Record<string, ProjectionRule>> = Object.freeze({
     statusText: "Waiting for your decision",
     notice: { tone: "critical", text: "An approval needs your decision" },
   },
+  "assistant.budget.approval_requested": {
+    activity: "needs_attention",
+    workState: "awaiting_confirmation",
+    statusText: "Waiting for your decision",
+    notice: { tone: "critical", text: "An approval needs your decision" },
+  },
   "command.waiting_approval": {
     activity: "needs_attention",
     workState: "awaiting_confirmation",
     statusText: "Waiting for your decision",
     notice: { tone: "critical", text: "An approval needs your decision" },
+  },
+  "approval.decided": {
+    activity: "attending",
+    workState: "analyzing",
+    statusText: "Preparing the next step",
   },
   "system.action.completed": {
     activity: "ready",
@@ -209,13 +248,88 @@ const RULES: Readonly<Record<string, ProjectionRule>> = Object.freeze({
     statusText: "Needs attention",
     notice: { tone: "critical", text: "Fairy needs your attention" },
   },
+  "command.failed": {
+    activity: "needs_attention",
+    workState: "error",
+    statusText: "Needs attention",
+    notice: { tone: "critical", text: "Fairy needs your attention" },
+  },
+  "command.interrupted": {
+    activity: "needs_attention",
+    workState: "error",
+    statusText: "Needs attention",
+    notice: { tone: "critical", text: "Fairy needs your attention" },
+  },
+  "command.rejected": {
+    activity: "ambient",
+    workState: "idle",
+    statusText: "Standing by",
+    notice: { tone: "info", text: "The action was not run" },
+  },
+  "command.cancelled": {
+    activity: "ambient",
+    workState: "idle",
+    statusText: "Standing by",
+  },
   "preview.failed": {
     activity: "needs_attention",
     workState: "error",
     statusText: "Needs attention",
     notice: { tone: "critical", text: "Preview could not be prepared" },
   },
+  "media.generation.started": {
+    activity: "working",
+    workState: "tool",
+    statusText: "Generating media",
+  },
+  "media.generation.progress": {
+    activity: "working",
+    workState: "tool",
+    statusText: "Generating media",
+  },
+  "media.generation.completed": {
+    activity: "ready",
+    workState: "ready",
+    statusText: "Preparing the result",
+    notice: { tone: "info", text: "Media is ready" },
+  },
+  "media.generation.cancelled": {
+    activity: "ambient",
+    workState: "idle",
+    statusText: "Standing by",
+  },
+  "media.generation.failed": {
+    activity: "needs_attention",
+    workState: "error",
+    statusText: "Needs attention",
+    notice: { tone: "critical", text: "Media generation could not be completed" },
+  },
 });
+
+const traceStepPayloadSchema = z.object({
+  kind: z.enum([
+    "route",
+    "plan",
+    "reasoning",
+    "model",
+    "tool",
+    "approval",
+    "observation",
+    "verification",
+    "artifact",
+    "response",
+    "voice",
+  ]),
+  status: z.enum([
+    "pending",
+    "running",
+    "waiting",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "skipped",
+  ]),
+}).passthrough();
 
 function initialPresenceProjection(): PresenceProjectionState {
   return {
@@ -237,7 +351,7 @@ function reducePresenceProjection(
   event: EventEnvelope,
 ): PresenceProjectionState {
   if (event.visibility !== "user" || event.cursor <= state.last_cursor) return state;
-  const rule = RULES[event.event_type];
+  const rule = RULES[event.event_type] ?? traceProjectionRule(event);
   if (rule === undefined) return state;
   const occurredAt = Date.parse(event.created_at);
   if (!Number.isFinite(occurredAt) || occurredAt < 0) return state;
@@ -269,6 +383,51 @@ function reducePresenceProjection(
   };
 }
 
+function traceProjectionRule(event: EventEnvelope): ProjectionRule | undefined {
+  if (!event.event_type.startsWith("turn.trace.step.")) return undefined;
+  const parsed = traceStepPayloadSchema.safeParse(event.payload);
+  if (!parsed.success) return undefined;
+  const { kind, status } = parsed.data;
+  if (status === "failed") {
+    return {
+      activity: "needs_attention",
+      workState: "error",
+      statusText: "Needs attention",
+      notice: { tone: "critical", text: "Fairy needs your attention" },
+    };
+  }
+  if (status === "cancelled") {
+    return { activity: "ambient", workState: "idle", statusText: "Standing by" };
+  }
+  if (kind === "approval" && status === "waiting") {
+    return {
+      activity: "needs_attention",
+      workState: "awaiting_confirmation",
+      statusText: "Waiting for your decision",
+      notice: { tone: "critical", text: "An approval needs your decision" },
+    };
+  }
+  if (kind === "tool" || kind === "artifact") {
+    return status === "succeeded"
+      ? { activity: "attending", workState: "analyzing", statusText: "Checking the result" }
+      : { activity: "working", workState: "tool", statusText: "Working in the project" };
+  }
+  if (kind === "response") {
+    return { activity: "working", workState: "streaming", statusText: "Writing the reply" };
+  }
+  if (kind === "voice") {
+    return { activity: "ready", workState: "ready", statusText: "Ready for review" };
+  }
+  if (kind === "observation" || kind === "verification") {
+    return { activity: "attending", workState: "analyzing", statusText: "Checking the result" };
+  }
+  return {
+    activity: "attending",
+    workState: "analyzing",
+    statusText: kind === "plan" ? "Planning the next step" : "Preparing the next step",
+  };
+}
+
 export const PresenceProjection = Object.freeze({
   initial: initialPresenceProjection,
   reduce: reducePresenceProjection,
@@ -284,8 +443,10 @@ export function derivePresenceView(
   state: PresenceProjectionState,
   options: PresenceViewOptions,
 ): PresenceView {
-  const afk =
-    state.updated_at_ms === 0 || options.now_ms - state.updated_at_ms >= AFK_AFTER_MS;
+  const afkEligible = state.work_state === "idle" || state.work_state === "ready";
+  const afk = afkEligible && (
+    state.updated_at_ms === 0 || options.now_ms - state.updated_at_ms >= AFK_AFTER_MS
+  );
   const activeInWindow = state.recent_activity_ms.filter(
     (value) => value >= options.now_ms - DENSITY_WINDOW_MS,
   ).length;

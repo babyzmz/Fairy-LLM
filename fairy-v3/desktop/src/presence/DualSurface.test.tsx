@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
+import { StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -9,12 +10,25 @@ import type { PresenceProjectionState } from "./domain/projection";
 import type { PetHost } from "./host/petHost";
 import type { StorageLike } from "./host/persistence";
 import { PresenceInputApp } from "./input/PresenceInputApp";
-import { PresenceRenderApp } from "./render/PresenceRenderApp";
+import { NativePresenceRendererHost } from "./render/NativePresenceRendererHost";
+import {
+  nativeRendererOccludesFallback,
+  PresenceRenderApp,
+} from "./render/PresenceRenderApp";
 import type {
   PresenceChannel,
   PresenceSubmissionUpdate,
 } from "./transport/presenceChannel";
 import type { PresenceInteractionSource } from "./transport/interactionEvents";
+import type {
+  NativeRendererLifecycleSignal,
+  NativeRendererLifecycleSource,
+} from "./transport/nativeRendererLifecycle";
+import {
+  DEFAULT_PRESENCE_RENDER_SETTINGS,
+  type PresenceRenderSettings,
+  type PresenceRenderSettingsChannel,
+} from "./transport/renderSettings";
 
 function channelHarness() {
   let listener: ((state: PresenceProjectionState) => void) | null = null;
@@ -89,6 +103,12 @@ function preferences(): DesktopPreferences {
     memory_enabled: true,
     memory_retention_days: 90,
     analytics_enabled: false,
+    realtime_provider: "auto",
+    realtime_voice_mode: "native",
+    realtime_game_audio_default: false,
+    realtime_memory_enabled: true,
+    realtime_max_session_minutes: 30,
+    trash_auto_purge_30_days: false,
     pet_enabled: true,
     pet_always_on_top: true,
     pet_muted: false,
@@ -110,6 +130,13 @@ function preferences(): DesktopPreferences {
 
 function hostHarness() {
   let inputListener: (() => void) | null = null;
+  const setInputLayout = vi.fn<PetHost["setInputLayout"]>(async () => undefined);
+  const setInputInteractive = vi.fn<PetHost["setInputInteractive"]>(
+    async () => undefined,
+  );
+  const requestInputFocus = vi.fn<PetHost["requestInputFocus"]>(
+    async () => undefined,
+  );
   const host: PetHost = {
     getPreferences: vi.fn(async () => preferences()),
     updatePreferences: vi.fn(async () => preferences()),
@@ -120,13 +147,23 @@ function hostHarness() {
         inputListener = null;
       };
     }),
+    onMenuRequested: vi.fn(async () => () => undefined),
     onNewChatRequested: vi.fn(async () => () => undefined),
     setExpanded: vi.fn(async () => undefined),
-    setInputLayout: vi.fn(async () => undefined),
-    setInputInteractive: vi.fn(async () => undefined),
-    requestInputFocus: vi.fn(async () => undefined),
+    setInputLayout,
+    setInputInteractive,
+    requestInputFocus,
+    beginInputPresentationSession: vi.fn(async () => ({ session_id: 1, revision: 0 })),
+    applyInputPresentation: vi.fn(async (input) => {
+      await setInputInteractive(false);
+      if (input.compact_width === undefined) await setInputLayout(input.layout);
+      else await setInputLayout(input.layout, input.compact_width);
+      if (input.interactive) await setInputInteractive(true);
+      if (input.request_focus) await requestInputFocus();
+      return { session_id: input.session_id, revision: input.revision };
+    }),
     beginGroupDrag: vi.fn(async () => undefined),
-    moveGroupDrag: vi.fn(async () => undefined),
+    moveGroupDrag: vi.fn(async () => true),
     endGroupDrag: vi.fn(async () => preferences()),
     resetPosition: vi.fn(async () => preferences()),
     openMain: vi.fn(async () => undefined),
@@ -142,19 +179,59 @@ function hostHarness() {
 }
 
 function interactionHarness() {
-  let listener: ((snapshot: PresenceInteractionSnapshot) => void) | null = null;
+  const listeners = new Set<(snapshot: PresenceInteractionSnapshot) => void>();
   const source: PresenceInteractionSource = {
     async subscribe(next) {
-      listener = next;
+      listeners.add(next);
       return () => {
-        listener = null;
+        listeners.delete(next);
       };
     },
   };
   return {
     source,
     emit(snapshot: PresenceInteractionSnapshot) {
-      listener?.(snapshot);
+      for (const listener of listeners) listener(snapshot);
+    },
+  };
+}
+
+function renderSettingsHarness() {
+  let listener: ((settings: PresenceRenderSettings) => void) | null = null;
+  const channel: PresenceRenderSettingsChannel = {
+    publish: vi.fn(),
+    request: vi.fn(),
+    onSettings(next) {
+      listener = next;
+      return () => {
+        listener = null;
+      };
+    },
+    onRequest: vi.fn(() => () => undefined),
+    close: vi.fn(),
+  };
+  return {
+    channel,
+    emit(settings: PresenceRenderSettings) {
+      listener?.(settings);
+    },
+  };
+}
+
+function nativeLifecycleHarness() {
+  const listeners = new Set<(signal: NativeRendererLifecycleSignal) => void>();
+  const source: NativeRendererLifecycleSource = {
+    async subscribe(next) {
+      listeners.add(next);
+      return () => {
+        listeners.delete(next);
+      };
+    },
+  };
+  return {
+    source,
+    emit(reason: NativeRendererLifecycleSignal["reason"]) {
+      for (const listener of listeners) listener({ schema_version: 1, reason });
     },
   };
 }
@@ -198,6 +275,16 @@ afterEach(() => {
 });
 
 describe("dual presence surfaces", () => {
+  it("never draws the compatibility identity while a native surface can be visible", () => {
+    expect(nativeRendererOccludesFallback(true, "idle")).toBe(true);
+    expect(nativeRendererOccludesFallback(true, "starting")).toBe(true);
+    expect(nativeRendererOccludesFallback(true, "running")).toBe(true);
+    expect(nativeRendererOccludesFallback(false, "stopping")).toBe(true);
+    expect(nativeRendererOccludesFallback(true, "fallback")).toBe(false);
+    expect(nativeRendererOccludesFallback(false, "idle")).toBe(false);
+    expect(nativeRendererOccludesFallback(false, "suspended")).toBe(false);
+  });
+
   it("keeps the render surface projection-only and ignores stale native snapshots", async () => {
     const harness = channelHarness();
     const coordinator = interactionHarness();
@@ -235,7 +322,135 @@ describe("dual presence surfaces", () => {
     );
   });
 
-  it("keeps a core hit proxy available and expands for input or projected cards", async () => {
+  it("activates the zero-copy native surface under StrictMode while retaining the fallback", async () => {
+    const harness = channelHarness();
+    const coordinator = interactionHarness();
+    const settings = renderSettingsHarness();
+    const lifecycle = nativeLifecycleHarness();
+    const commands: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    render(
+      <StrictMode>
+        <PresenceRenderApp
+          channel={harness.channel}
+          interactionSource={coordinator.source}
+          renderSettingsChannel={settings.channel}
+          nativeLifecycleSource={lifecycle.source}
+          rendererHealthHost={{ report: vi.fn(async () => "continue" as const) }}
+          nativeRendererHostFactory={(options) => new NativePresenceRendererHost({
+            ...options,
+            watchdogIntervalMs: 60_000,
+            invokeCommand: async (command, args) => {
+              commands.push({ command, args });
+              return {
+                backend: "windows_host_backdrop_d3d11_composition",
+                lifecycle: "running",
+                zero_copy_capture: true,
+                pixel_ipc: false,
+                hdr_capture: false,
+                target_frame_rate: 144,
+                effective_frame_rate: 144,
+                display_refresh_rate_hz: 144,
+                capture_frame_rate_limit: 144,
+                frames_presented: 1,
+                capture_fps_avg: 144,
+                frame_interval_p1_fps: 120,
+                source_frames_received: 1,
+                source_capture_fps_avg: 144,
+                source_frame_interval_p1_fps: 120,
+                callback_to_present_p95_ms: 0.4,
+                present_p95_ms: 0.2,
+                surface_width: 640,
+                surface_height: 260,
+                target_x: 0,
+                target_y: 0,
+                monitor_x: 0,
+                monitor_y: 0,
+                monitor_width: 1920,
+                monitor_height: 1080,
+                monitor_handle: "0x0000000000000001",
+                monitor_device_name: "\\\\.\\DISPLAY1",
+                monitor_friendly_name: "Test display",
+                adapter_name: "Test adapter",
+                adapter_index: 0,
+                output_device_name: "\\\\.\\DISPLAY1",
+                output_index: 0,
+                hdr_color_space: "0",
+                capture_item_width: 1920,
+                capture_item_height: 1080,
+                capture_window_handle: null,
+                capture_source_stage: "monitor_capture_started",
+                capture_source_hresult: null,
+                started_at_ms: 1,
+                last_presented_at_ms: 2,
+                presentation_revision: 0,
+                error_code: null,
+              };
+            },
+          })}
+          now={() => Date.now()}
+        />
+      </StrictMode>,
+    );
+
+    act(() => settings.emit({
+      ...DEFAULT_PRESENCE_RENDER_SETTINGS,
+      optics_mode: "enhanced",
+      target_frame_rate: 144,
+    }));
+    await waitFor(() => expect(screen.getByTestId("presence-render-surface")).toHaveAttribute(
+      "data-interaction-ready",
+      "true",
+    ));
+    expect(commands.some((entry) => entry.command === "pet_native_gpu_start")).toBe(false);
+
+    act(() => coordinator.emit(interaction(1)));
+
+    await waitFor(() => expect(screen.getByTestId("presence-render-surface")).toHaveAttribute(
+      "data-native-renderer-state",
+      "running",
+    ));
+    expect(screen.getByTestId("presence-render-surface")).toHaveAttribute(
+      "data-native-renderer-requested",
+      "true",
+    );
+    expect(screen.getByTestId("presence-renderer")).toBeInTheDocument();
+    const start = commands.find((entry) => entry.command === "pet_native_gpu_start");
+    expect(start?.args).toEqual({
+      request: expect.objectContaining({
+        target_frame_rate: 144,
+        frame_rate_limit: 144,
+      }),
+    });
+    expect(JSON.stringify(start?.args)).not.toMatch(/rgba|pixel|data_url|backdrop/i);
+
+    const startCount = () => commands.filter(
+      (entry) => entry.command === "pet_native_gpu_start",
+    ).length;
+    const stopCount = () => commands.filter(
+      (entry) => entry.command === "pet_native_gpu_stop",
+    ).length;
+    const startsBeforeDrag = startCount();
+    const stopsBeforeDrag = stopCount();
+
+    act(() => lifecycle.emit("drag_suspended"));
+    await act(async () => Promise.resolve());
+    expect(stopCount()).toBe(stopsBeforeDrag);
+    act(() => lifecycle.emit("surface_changed"));
+    await waitFor(() => expect(commands.filter(
+      (entry) => entry.command === "pet_native_gpu_rebind",
+    )).toHaveLength(1));
+    expect(startCount()).toBe(startsBeforeDrag);
+
+    act(() => lifecycle.emit("drag_ended"));
+    await act(async () => Promise.resolve());
+    expect(commands.filter(
+      (entry) => entry.command === "pet_native_gpu_rebind",
+    )).toHaveLength(1);
+    expect(startCount()).toBe(startsBeforeDrag);
+    expect(stopCount()).toBe(stopsBeforeDrag);
+  });
+
+  it("keeps the idle input WebView hidden and expands only for input or projected cards", async () => {
     const channel = channelHarness();
     const host = hostHarness();
     render(
@@ -247,10 +462,10 @@ describe("dual presence surfaces", () => {
       />,
     );
 
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
     expect(screen.getByRole("button", { name: "Open Fairy quick input" })).toBeInTheDocument();
     act(() => host.requestInput());
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("compact"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("compact", 280));
     const textarea = screen.getByLabelText("Quick message to Fairy");
     const inputField = screen.getByTestId("presence-input-field");
     expect(inputField).toContainElement(textarea);
@@ -294,22 +509,48 @@ describe("dual presence surfaces", () => {
       />,
     );
 
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
     fireEvent.contextMenu(screen.getByRole("button", { name: "Open Fairy quick input" }));
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("expanded"));
     expect(screen.getByRole("menu", { name: "Fairy menu" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Quick message to Fairy")).not.toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "Escape" });
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+    const surface = screen.getByTestId("presence-input-surface");
+    expect(surface).toHaveAttribute("data-layout", "expanded");
+    expect(surface).toHaveAttribute("data-content-visible", "false");
+    expect(surface).toHaveAttribute("data-interactive", "false");
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
     expect(screen.queryByRole("menu", { name: "Fairy menu" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open Fairy quick input" }));
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 280));
     expect(screen.getByLabelText("Quick message to Fairy")).toBeInTheDocument();
   });
 
-  it("gates hover reveal at 300ms, content at 430ms, and clicks at 520ms", async () => {
+  it("closes the menu after 600ms of window focus loss", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Open Fairy quick input" }));
+    expect(await screen.findByRole("menu", { name: "Fairy menu" })).toBeInTheDocument();
+
+    fireEvent.blur(window);
+    await waitFor(
+      () => expect(screen.queryByRole("menu", { name: "Fairy menu" })).not.toBeInTheDocument(),
+      { timeout: 1_000 },
+    );
+  });
+
+  it("gates materialization at 300ms, content at 430ms, and clicks at 520ms", async () => {
     const channel = channelHarness();
     const host = hostHarness();
     const coordinator = interactionHarness();
@@ -323,10 +564,10 @@ describe("dual presence surfaces", () => {
       />,
     );
     const surface = screen.getByTestId("presence-input-surface");
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
 
     act(() => coordinator.emit(interactionAt(20, "input_reveal", 300, 300)));
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 280));
     await waitFor(() => expect(host.host.setInputInteractive).toHaveBeenLastCalledWith(false));
     const passiveCall = vi.mocked(host.host.setInputInteractive).mock.invocationCallOrder.at(-1);
     const layoutCall = vi.mocked(host.host.setInputLayout).mock.invocationCallOrder.at(-1);
@@ -359,7 +600,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
     act(() => host.requestInput());
     const input = await screen.findByLabelText("Quick message to Fairy");
     fireEvent.change(input, { target: { value: "\u4f60\u597d Fairy" } });
@@ -389,7 +630,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
     act(() => host.requestInput());
     const input = await screen.findByLabelText("Quick message to Fairy");
     fireEvent.change(input, { target: { value: "Stream this reply" } });
@@ -435,7 +676,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
     act(() => host.requestInput());
     const input = await screen.findByLabelText("Quick message to Fairy");
     fireEvent.change(input, { target: { value: "Retry safely" } });
@@ -466,7 +707,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
     vi.useFakeTimers();
     act(() => channel.emit(projection({
       reply: {
@@ -496,6 +737,9 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Open Fairy quick input" }));
+    expect(await screen.findByRole("menu", { name: "Fairy menu" })).toBeInTheDocument();
     act(() => channel.emit(projection({
       activity: "needs_attention",
       work_state: "awaiting_confirmation",
@@ -506,6 +750,9 @@ describe("dual presence surfaces", () => {
         text: "An approval needs your decision",
       },
     })));
+    await waitFor(() => {
+      expect(screen.queryByRole("menu", { name: "Fairy menu" })).not.toBeInTheDocument();
+    });
     expect(screen.queryByRole("button", { name: /approve/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /reject/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Review in Fairy" }));
@@ -550,15 +797,9 @@ describe("dual presence surfaces", () => {
     expect(legacyStorage.setItem).not.toHaveBeenCalled();
   });
 
-  it("moves the native window group from the visible grip", async () => {
+  it("removes the separate drag control from quick input and the pet menu", async () => {
     const channel = channelHarness();
     const host = hostHarness();
-    let finishDrag: ((value: DesktopPreferences) => void) | undefined;
-    vi.mocked(host.host.endGroupDrag).mockImplementation(
-      () => new Promise((resolve) => {
-        finishDrag = resolve;
-      }),
-    );
     render(
       <PresenceInputApp
         channel={channel.channel}
@@ -568,53 +809,45 @@ describe("dual presence surfaces", () => {
       />,
     );
     act(() => host.requestInput());
-    const grip = await screen.findByRole("button", { name: "Move Fairy" });
-    fireEvent.pointerDown(grip, {
-      pointerId: 4,
-      clientX: 10,
-      clientY: 20,
-      screenX: 110,
-      screenY: 220,
-    });
-    expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
-      "data-moving",
-      "true",
-    );
-    expect(screen.getByTestId("presence-input-field")).toHaveAttribute(
-      "data-optical-layer",
-      "transparent-overlay",
-    );
-    fireEvent.pointerMove(grip, {
-      pointerId: 4,
-      clientX: 12,
-      clientY: 21,
-      screenX: 148,
-      screenY: 235,
-    });
-    fireEvent.pointerUp(grip, {
-      pointerId: 4,
-      clientX: 12,
-      clientY: 21,
-      screenX: 148,
-      screenY: 235,
-    });
+    expect(await screen.findByLabelText("Quick message to Fairy")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Move Fairy" })).toBeNull();
 
-    await waitFor(() => expect(host.host.beginGroupDrag).toHaveBeenCalledOnce());
-    await waitFor(() => expect(host.host.moveGroupDrag).toHaveBeenCalledWith(38, 15));
-    await waitFor(() => expect(host.host.endGroupDrag).toHaveBeenCalledWith(0));
-    expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
-      "data-moving",
-      "true",
-    );
-    act(() => finishDrag?.(preferences()));
-    await waitFor(() => expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
-      "data-moving",
-      "false",
-    ));
-    expect(screen.getByTestId("presence-input-field").querySelector("canvas")).toBeNull();
+    fireEvent.contextMenu(screen.getByTestId("presence-input-surface"));
+    expect(await screen.findByRole("menu", { name: "Fairy menu" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Move Fairy" })).toBeNull();
   });
 
-  it("moves the same native group from the Fairy body without opening input", async () => {
+  it("keeps a short press on the Fairy body as quick-input activation", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+    const core = await screen.findByRole("button", { name: "Open Fairy quick input" });
+    fireEvent.pointerDown(core, {
+      button: 0,
+      pointerId: 8,
+      screenX: 520,
+      screenY: 420,
+    });
+    fireEvent.pointerUp(core, {
+      button: 0,
+      pointerId: 8,
+      screenX: 520,
+      screenY: 420,
+    });
+    fireEvent.click(core);
+
+    expect(host.host.beginGroupDrag).not.toHaveBeenCalled();
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 280));
+  });
+
+  it("never starts a WebView drag session after a long press", async () => {
     const channel = channelHarness();
     const host = hostHarness();
     render(
@@ -636,6 +869,14 @@ describe("dual presence surfaces", () => {
       screenX: 520,
       screenY: 420,
     });
+    expect(host.host.beginGroupDrag).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 340));
+    });
+    expect(host.host.beginGroupDrag).not.toHaveBeenCalled();
+    expect(surface).toHaveAttribute("data-moving", "false");
+
     fireEvent.pointerMove(core, {
       pointerId: 9,
       clientX: 22,
@@ -643,19 +884,199 @@ describe("dual presence surfaces", () => {
       screenX: 552,
       screenY: 431,
     });
-    fireEvent.pointerUp(core, {
+    fireEvent.pointerUp(window, {
       pointerId: 9,
       clientX: 22,
       clientY: 21,
       screenX: 552,
       screenY: 431,
     });
-    fireEvent.click(core);
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    });
+    expect(host.host.moveGroupDrag).not.toHaveBeenCalled();
+    expect(host.host.endGroupDrag).not.toHaveBeenCalled();
+    expect(surface).toHaveAttribute("data-moving", "false");
+    expect(surface).toHaveAttribute("data-layout", "hidden");
+  });
 
-    await waitFor(() => expect(host.host.beginGroupDrag).toHaveBeenCalledOnce());
-    await waitFor(() => expect(host.host.moveGroupDrag).toHaveBeenCalledWith(32, 11));
-    await waitFor(() => expect(host.host.endGroupDrag).toHaveBeenCalledWith(0));
-    expect(surface).toHaveAttribute("data-layout", "core");
+  it("does not let pointer movement create a second drag owner", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    const core = await screen.findByRole("button", { name: "Open Fairy quick input" });
+    fireEvent.pointerDown(core, {
+      button: 0,
+      pointerId: 10,
+      screenX: 520,
+      screenY: 420,
+    });
+    fireEvent.pointerMove(core, {
+      pointerId: 10,
+      screenX: 548,
+      screenY: 432,
+    });
+    expect(host.host.beginGroupDrag).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(window, {
+      pointerId: 10,
+      screenX: 548,
+      screenY: 432,
+    });
+    expect(host.host.moveGroupDrag).not.toHaveBeenCalled();
+    expect(host.host.endGroupDrag).not.toHaveBeenCalled();
+  });
+
+  it("does not capture the pointer or poll native drag RPCs", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    const moveGroupDrag = vi.mocked(host.host.moveGroupDrag);
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    const core = await screen.findByRole("button", { name: "Open Fairy quick input" });
+    const capturedPointers = new Set<number>();
+    const releasePointerCapture = vi.fn((pointerId: number) => {
+      capturedPointers.delete(pointerId);
+    });
+    Object.defineProperties(core, {
+      setPointerCapture: {
+        configurable: true,
+        value: vi.fn((pointerId: number) => capturedPointers.add(pointerId)),
+      },
+      hasPointerCapture: {
+        configurable: true,
+        value: vi.fn((pointerId: number) => capturedPointers.has(pointerId)),
+      },
+      releasePointerCapture: {
+        configurable: true,
+        value: releasePointerCapture,
+      },
+    });
+    const surface = screen.getByTestId("presence-input-surface");
+    fireEvent.pointerDown(core, {
+      button: 0,
+      pointerId: 11,
+      screenX: 520,
+      screenY: 420,
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 340));
+    });
+    expect(surface).toHaveAttribute("data-moving", "false");
+
+    fireEvent.lostPointerCapture(core, { pointerId: 11 });
+    expect(host.host.endGroupDrag).not.toHaveBeenCalled();
+
+    moveGroupDrag.mockResolvedValue(false);
+    expect(host.host.moveGroupDrag).not.toHaveBeenCalled();
+    expect(host.host.endGroupDrag).not.toHaveBeenCalled();
+    expect(releasePointerCapture).not.toHaveBeenCalled();
+    expect(surface).toHaveAttribute("data-moving", "false");
+  });
+
+  it("keeps repeated pointer gestures out of the native drag command surface", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    const core = await screen.findByRole("button", { name: "Open Fairy quick input" });
+    const drag = async (pointerId: number, startX: number) => {
+      fireEvent.pointerDown(core, {
+        button: 0,
+        pointerId,
+        screenX: startX,
+        screenY: 420,
+      });
+      fireEvent.pointerMove(core, {
+        pointerId,
+        screenX: startX + 24,
+        screenY: 432,
+      });
+      fireEvent.pointerUp(window, {
+        pointerId,
+        screenX: startX + 24,
+        screenY: 432,
+      });
+      await Promise.resolve();
+    };
+
+    await drag(21, 520);
+    await drag(22, 580);
+
+    const sessions = vi.mocked(host.host.beginGroupDrag).mock.calls.map(([sessionId]) => sessionId);
+    expect(sessions).toHaveLength(0);
+    expect(host.host.moveGroupDrag).not.toHaveBeenCalled();
+    expect(host.host.endGroupDrag).not.toHaveBeenCalled();
+  });
+
+  it("projects native coordinator repositioning without opening a WebView drag session", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    const coordinator = interactionHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        interactionSource={coordinator.source}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    act(() => coordinator.emit(interactionAt(30, "idle", 0, 0)));
+    const core = await screen.findByRole("button", { name: "Open Fairy quick input" });
+    fireEvent.pointerDown(core, {
+      button: 0,
+      pointerId: 31,
+      screenX: 520,
+      screenY: 420,
+    });
+    fireEvent.pointerMove(core, {
+      pointerId: 31,
+      screenX: 544,
+      screenY: 432,
+    });
+    fireEvent.pointerUp(window, {
+      pointerId: 31,
+      screenX: 544,
+      screenY: 432,
+    });
+    expect(host.host.endGroupDrag).not.toHaveBeenCalled();
+
+    act(() => coordinator.emit(interactionAt(31, "repositioning", 300, 300)));
+    await waitFor(() => expect(screen.getByTestId("presence-input-surface"))
+      .toHaveAttribute("data-moving", "true"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
+
+    act(() => coordinator.emit(interactionAt(32, "idle", 700, 700)));
+    await waitFor(() => expect(screen.getByTestId("presence-input-surface"))
+      .toHaveAttribute("data-moving", "false"));
+    act(() => coordinator.emit(interactionAt(33, "input_reveal", 1_000, 1_000)));
+    await waitFor(() =>
+      expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 280)
+    );
   });
 });
 

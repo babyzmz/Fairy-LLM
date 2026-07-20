@@ -77,7 +77,7 @@ test("input surface owns cards and controls without duplicating the renderer", a
   await context.close();
 });
 
-test("core context target opens the pet menu and keeps the input shell singular", async ({
+test("hidden input fallback opens the pet menu and keeps the input shell singular", async ({
   browser,
 }, testInfo) => {
   const context = await browser.newContext({ viewport: { width: 616, height: 360 } });
@@ -85,10 +85,10 @@ test("core context target opens the pet menu and keeps the input shell singular"
   await page.goto("/?surface=pet-input");
   const surface = page.getByTestId("presence-input-surface");
 
-  await expect(surface).toHaveAttribute("data-layout", "core");
-  await page.getByRole("button", { name: "Open Fairy quick input" }).click({
-    button: "right",
-  });
+  await expect(surface).toHaveAttribute("data-layout", "hidden");
+  const fallbackTarget = page.getByRole("button", { name: "Open Fairy quick input" });
+  await expect(fallbackTarget).toBeAttached();
+  await fallbackTarget.dispatchEvent("contextmenu");
   await expect(surface).toHaveAttribute("data-layout", "expanded");
   await expect(page.getByRole("menu", { name: "Fairy menu" })).toBeVisible();
   await expect(page.getByLabel("Quick message to Fairy")).toHaveCount(0);
@@ -210,14 +210,14 @@ test("pet input reuses one streaming turn and keeps voice and approval isolated"
 test("hover input stays passive until the 520ms interaction gate", async ({
   browser,
 }, testInfo) => {
-  const context = await browser.newContext({ viewport: { width: 616, height: 144 } });
+  const context = await browser.newContext({ viewport: { width: 280, height: 260 } });
   const page = await context.newPage();
   await page.goto("/?surface=pet-input");
   const surface = page.getByTestId("presence-input-surface");
 
   await publishInteraction(
     page,
-    interactionSnapshot("right", 96, "input_reveal", 300, 30, 300),
+    interactionSnapshot("right", 96, "input_reveal", 290, 30, 290),
   );
   await expect(surface).toHaveAttribute("data-layout", "compact");
   await expect(surface).toHaveAttribute("data-content-visible", "false");
@@ -244,19 +244,23 @@ test("hover input stays passive until the 520ms interaction gate", async ({
   await expect(input).not.toBeFocused();
   await input.click();
   await expect(input).toBeFocused();
-  const grip = page.getByRole("button", { name: "Move Fairy" });
-  await expect(grip).toBeVisible();
-  const bounds = await grip.boundingBox();
+  await expect(page.getByRole("button", { name: "Move Fairy" })).toHaveCount(0);
+  const core = page.getByRole("button", { name: "Open Fairy quick input" });
+  const bounds = await core.boundingBox();
   expect(bounds).not.toBeNull();
-  await page.mouse.move((bounds?.x ?? 0) + 5, (bounds?.y ?? 0) + 5);
+  await page.mouse.move(
+    (bounds?.x ?? 0) + (bounds?.width ?? 0) / 2,
+    (bounds?.y ?? 0) + (bounds?.height ?? 0) / 2,
+  );
   await page.mouse.down();
+  await page.waitForTimeout(340);
   await expect(surface).toHaveAttribute("data-moving", "true");
   await page.mouse.move((bounds?.x ?? 0) + 24, (bounds?.y ?? 0) + 14);
   await page.mouse.up();
   await expect(surface).toHaveAttribute("data-moving", "false");
   expect(await overflow(page)).toEqual({ horizontal: 0, vertical: 0 });
   await page.screenshot({
-    path: testInfo.outputPath("pet-input-grip.png"),
+    path: testInfo.outputPath("pet-input-long-press.png"),
     omitBackground: true,
   });
   await context.close();
@@ -277,12 +281,14 @@ test("render settings switch modes through the safe companion-only channel", asy
     channel.postMessage({
       kind: "render-settings.snapshot",
       settings: {
-        schema_version: 1,
+        schema_version: 3,
         mode: "compatibility",
+        optics_mode: "standard",
         size_scale: 0.75,
         opacity: 0.4,
         motion_enabled: false,
         particles_enabled: false,
+        target_frame_rate: 60,
       },
     });
     window.setTimeout(() => channel.close(), 100);
@@ -300,12 +306,14 @@ test("render settings switch modes through the safe companion-only channel", asy
     channel.postMessage({
       kind: "render-settings.snapshot",
       settings: {
-        schema_version: 1,
+        schema_version: 3,
         mode: "liquid",
+        optics_mode: "standard",
         size_scale: 1.5,
         opacity: 1,
         motion_enabled: true,
         particles_enabled: false,
+        target_frame_rate: 60,
       },
     });
     window.setTimeout(() => channel.close(), 100);
@@ -322,7 +330,7 @@ test("render settings switch modes through the safe companion-only channel", asy
   const pixels = PNG.sync.read(screenshot);
   expect(alphaAt(pixels, 0, 130)).toBeLessThanOrEqual(4);
   expect(alphaAt(pixels, 639, 130)).toBeLessThanOrEqual(4);
-  expect(alphaAt(pixels, 112, 130)).toBeGreaterThan(20);
+  expect(maximumAlpha(pixels, 112, 0, 196)).toBeGreaterThan(20);
   await context.close();
 });
 
@@ -332,6 +340,8 @@ test("public work and speaking states drive the render surface", async ({
   const context = await browser.newContext({ viewport: { width: 640, height: 260 } });
   const page = await context.newPage();
   await page.goto("/?surface=pet-render");
+  const inputPage = await context.newPage();
+  await inputPage.goto("/?surface=pet-input");
   const surface = page.getByTestId("presence-render-surface");
 
   await publishProjection(page, {
@@ -371,7 +381,7 @@ test("public work and speaking states drive the render surface", async ({
 });
 
 for (const expansionDirection of ["right", "left"] as const) {
-  test(`Liquid Glass material forms a continuous ${expansionDirection} capsule`, async ({
+  test(`Liquid Glass material keeps the ${expansionDirection} core and input capsule aligned`, async ({
     browser,
   }, testInfo) => {
     const context = await browser.newContext({ viewport: { width: 640, height: 260 } });
@@ -394,14 +404,15 @@ for (const expansionDirection of ["right", "left"] as const) {
     });
     const pixels = PNG.sync.read(screenshot);
     const direction = expansionDirection === "right" ? 1 : -1;
-    const glassCenter = alphaAt(pixels, anchorX + direction * 42, 130);
-    const glassEdge = maximumAlpha(pixels, anchorX, 196, 202);
-    expect(glassCenter).toBeGreaterThanOrEqual(15);
-    expect(glassCenter).toBeLessThanOrEqual(31);
+    const capsuleCenterX = expansionDirection === "right" ? 164 : 476;
+    const glassCenter = alphaAt(pixels, anchorX + direction * 42, 88);
+    const glassEdge = maximumAlpha(pixels, anchorX, 52, 124);
+    expect(glassCenter).toBeGreaterThanOrEqual(8);
+    expect(glassCenter).toBeLessThanOrEqual(22);
     expect(glassEdge).toBeGreaterThanOrEqual(54);
-    expect(glassEdge).toBeLessThanOrEqual(90);
-    expect(alphaAt(pixels, anchorX + direction * 126, 130)).toBeGreaterThan(4);
-    expect(alphaAt(pixels, anchorX + direction * 220, 130)).toBeGreaterThan(4);
+    expect(glassEdge).toBeLessThanOrEqual(140);
+    expect(alphaAt(pixels, capsuleCenterX, 220)).toBeGreaterThan(4);
+    expect(alphaAt(pixels, anchorX + direction * 94, 176)).toBeLessThanOrEqual(4);
     expect(alphaAt(pixels, 0, 0)).toBe(0);
     await context.close();
   });
@@ -504,6 +515,46 @@ test("runtime policy and renderer metrics remain bounded and non-visible", async
   await context.close();
 });
 
+test("system accessibility modes reach both pet surfaces", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 640, height: 260 } });
+  await context.addInitScript(() => {
+    const nativeMatchMedia = window.matchMedia.bind(window);
+    const activeQueries = new Set([
+      "(prefers-reduced-motion: reduce)",
+      "(prefers-reduced-transparency: reduce)",
+      "(forced-colors: active)",
+    ]);
+    window.matchMedia = ((query: string) => {
+      if (!activeQueries.has(query)) return nativeMatchMedia(query);
+      return {
+        matches: true,
+        media: query,
+        onchange: null,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+        dispatchEvent: () => true,
+      } as MediaQueryList;
+    }) as typeof window.matchMedia;
+  });
+
+  const renderPage = await context.newPage();
+  await renderPage.goto("/?surface=pet-render");
+  const renderSurface = renderPage.getByTestId("presence-render-surface");
+  await expect(renderSurface).toHaveAttribute("data-reduced-motion", "true");
+  await expect(renderSurface).toHaveAttribute("data-reduced-transparency", "true");
+  await expect(renderSurface).toHaveAttribute("data-increased-contrast", "true");
+
+  const inputPage = await context.newPage();
+  await inputPage.goto("/?surface=pet-input");
+  const inputSurface = inputPage.getByTestId("presence-input-surface");
+  await expect(inputSurface).toHaveAttribute("data-reduced-motion", "true");
+  await expect(inputSurface).toHaveAttribute("data-reduced-transparency", "true");
+  await expect(inputSurface).toHaveAttribute("data-increased-contrast", "true");
+  await context.close();
+});
+
 async function publishProjection(page: Page, projection: PresenceProjectionState) {
   await page.evaluate((value) => {
     const channel = new BroadcastChannel("fairy.presence.v2");
@@ -591,7 +642,7 @@ function interactionSnapshot(
     phase_started_at_ms: phaseStartedAt,
     reduced_motion: false,
     cursor: {
-      point: { x: anchorX + (expansion_direction === "right" ? 40 : -40), y: 130 },
+      point: { x: anchorX + (expansion_direction === "right" ? 40 : -40), y: 88 },
       direction: { x: expansion_direction === "right" ? 1 : -1, y: 0 },
       distance_px: 40,
       speed_px_s: 80,
@@ -599,17 +650,17 @@ function interactionSnapshot(
       band: "active",
     },
     placement: {
-      anchor: { x: anchorX, y: 130 },
+      anchor: { x: anchorX, y: 88 },
       render_frame: { x: 0, y: 0, width: 640, height: 260 },
       input_compact_frame: {
-        x: expansion_direction === "right" ? 24 : 0,
-        y: 58,
-        width: 616,
-        height: 144,
+        x: expansion_direction === "right" ? 24 : 336,
+        y: 0,
+        width: 280,
+        height: 260,
       },
       input_expanded_frame: {
         x: expansion_direction === "right" ? 24 : 0,
-        y: -158,
+        y: -100,
         width: 616,
         height: 360,
       },
@@ -625,6 +676,7 @@ async function advanceInteraction(
   direction: "left" | "right",
   anchorX: number,
 ) {
+  await publishInputPresentation(page, true);
   const stages: ReadonlyArray<{
     phase: PresenceInteractionSnapshot["phase"];
     sampledAt: number;
@@ -643,6 +695,42 @@ async function advanceInteraction(
     );
     if (stage.waitAfter > 0) await page.waitForTimeout(stage.waitAfter);
   }
+}
+
+async function publishInputPresentation(page: Page, capsuleVisible: boolean) {
+  await page.evaluate((visible) => {
+    const channel = new BroadcastChannel("fairy.presence.input-presentation.v3");
+    const message = {
+      kind: "input-presentation.snapshot",
+      presentation: {
+        schema_version: 3,
+        sequence: 1,
+        layout: visible ? "compact" : "core",
+        capsule_visible: visible,
+        capsule_width: 280,
+        motion: {
+          schema_version: 1,
+          revision: 1,
+          state: visible ? "input" : "idle",
+          surface: visible ? "input" : "core",
+          activity: "none",
+          state_started_at_ms: 0,
+          state_duration_ms: null,
+          phase_progress: 1,
+          content_visible: visible,
+          surface_interactive: true,
+          capsule_visible: visible,
+          reduced_motion: false,
+          do_not_disturb: false,
+        },
+      },
+    };
+    const publish = () => channel.postMessage(message);
+    publish();
+    window.setTimeout(publish, 30);
+    window.setTimeout(publish, 80);
+    window.setTimeout(() => channel.close(), 120);
+  }, capsuleVisible);
 }
 
 function visiblePngPixels(image: PNG): number {

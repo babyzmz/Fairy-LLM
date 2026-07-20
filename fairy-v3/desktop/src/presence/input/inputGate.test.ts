@@ -36,7 +36,7 @@ function snapshot(
 }
 
 describe("presence input gate", () => {
-  it("shows a passive transparent window at 300ms and content at 430ms", () => {
+  it("shows the passive material at 300ms and content at 430ms", () => {
     expect(presenceInputGate(snapshot("input_reveal", 0))).toEqual({
       window_visible: true,
       content_visible: false,
@@ -60,8 +60,13 @@ describe("presence input gate", () => {
     expect(presenceInputGate(snapshot("returning", 150)).content_visible).toBe(false);
   });
 
-  it("snaps visual content but not focus for reduced motion", () => {
-    expect(presenceInputGate(snapshot("input_reveal", 0, true))).toEqual({
+  it("uses a short opacity-only reveal without granting focus for reduced motion", () => {
+    expect(presenceInputGate(snapshot("input_reveal", 79, true))).toEqual({
+      window_visible: true,
+      content_visible: false,
+      interactive: false,
+    });
+    expect(presenceInputGate(snapshot("input_reveal", 80, true))).toEqual({
       window_visible: true,
       content_visible: true,
       interactive: false,

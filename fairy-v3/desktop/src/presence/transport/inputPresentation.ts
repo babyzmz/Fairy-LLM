@@ -1,12 +1,21 @@
 import { z } from "zod";
 
-const CHANNEL_NAME = "fairy.presence.input-presentation.v1";
+import {
+  DEFAULT_FAIRY_MOTION_SNAPSHOT,
+  fairyMotionSnapshotSchema,
+  type FairyMotionSnapshot,
+} from "../domain/motionState";
+
+const CHANNEL_NAME = "fairy.presence.input-presentation.v4";
 
 export interface PresenceInputPresentation {
-  schema_version: 1;
+  schema_version: 4;
+  session_id: number;
   sequence: number;
   layout: "core" | "compact" | "expanded";
   capsule_visible: boolean;
+  capsule_width: number;
+  motion: FairyMotionSnapshot;
 }
 
 export interface PresenceInputPresentationChannel {
@@ -28,10 +37,13 @@ interface BroadcastPort {
 type BroadcastFactory = (name: string) => BroadcastPort | null;
 
 const presentationSchema = z.object({
-  schema_version: z.literal(1),
+  schema_version: z.literal(4),
+  session_id: z.number().int().nonnegative(),
   sequence: z.number().int().nonnegative(),
   layout: z.enum(["core", "compact", "expanded"]),
   capsule_visible: z.boolean(),
+  capsule_width: z.number().int().min(280).max(420),
+  motion: fairyMotionSnapshotSchema,
 }).strict();
 
 const messageSchema = z.discriminatedUnion("kind", [
@@ -43,10 +55,13 @@ const messageSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const DEFAULT_INPUT_PRESENTATION: PresenceInputPresentation = Object.freeze({
-  schema_version: 1,
+  schema_version: 4,
+  session_id: 0,
   sequence: 0,
   layout: "core",
   capsule_visible: false,
+  capsule_width: 280,
+  motion: DEFAULT_FAIRY_MOTION_SNAPSHOT,
 });
 
 export function createPresenceInputPresentationChannel(
@@ -98,6 +113,15 @@ export function createPresenceInputPresentationChannel(
       broadcast?.close();
     },
   };
+}
+
+export function isNewerInputPresentation(
+  candidate: PresenceInputPresentation,
+  current: PresenceInputPresentation,
+): boolean {
+  return candidate.session_id > current.session_id || (
+    candidate.session_id === current.session_id && candidate.sequence > current.sequence
+  );
 }
 
 function defaultBroadcastFactory(name: string): BroadcastPort | null {

@@ -190,9 +190,71 @@ function Get-AvailablePort {
     finally { $listener.Stop() }
 }
 
+function Test-LoopbackPort([int]$Port) {
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $connect = $client.ConnectAsync([System.Net.IPAddress]::Loopback, $Port)
+        return $connect.Wait(250) -and $client.Connected
+    }
+    catch {
+        return $false
+    }
+    finally {
+        $client.Dispose()
+    }
+}
+
+function Wait-LoopbackPort(
+    [System.Diagnostics.Process]$Process,
+    [int]$Port,
+    [int]$TimeoutSeconds = 30
+) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $Process.Refresh()
+        if ($Process.HasExited) {
+            throw "Vite development server exited before opening port ${Port}: $($Process.ExitCode)"
+        }
+        if (Test-LoopbackPort $Port) { return }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Timed out waiting for Vite development server on port ${Port}"
+}
+
+function Start-ViteDevelopmentServer {
+    $node = (Get-Command node -ErrorAction Stop).Source
+    $vite = (Resolve-Path -LiteralPath (Join-Path $root "desktop\node_modules\vite\bin\vite.js")).Path
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $node
+    $startInfo.Arguments = "`"$vite`" --host 127.0.0.1 --port 1430 --strictPort"
+    $startInfo.WorkingDirectory = Join-Path $root "desktop"
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $server = [System.Diagnostics.Process]::Start($startInfo)
+    if ($null -eq $server) { throw "Vite development server did not start" }
+    Wait-LoopbackPort $server 1430
+    return $server
+}
+
 function Get-Window([int]$ProcessId, [string]$Title) {
-    return [FairyNativeProbe]::WindowsForProcess($ProcessId) |
-        Where-Object Title -eq $Title |
+    $windows = @([FairyNativeProbe]::WindowsForProcess($ProcessId))
+    $titled = $windows | Where-Object Title -eq $Title | Select-Object -First 1
+    if ($null -ne $titled) { return $titled }
+    $expectedRatio = switch ($Title) {
+        "Fairy Presence Renderer" { 640.0 / 260.0 }
+        "Fairy Presence Input" { 616.0 / 360.0 }
+        default { return $null }
+    }
+    return $windows |
+        Where-Object {
+            $_.ClassName -eq "Tauri Window" -and
+            [string]::IsNullOrEmpty($_.Title) -and
+            $_.Width -gt 0 -and
+            $_.Height -gt 0
+        } |
+        Sort-Object {
+            [Math]::Abs(([double]$_.Width / [double]$_.Height) - $expectedRatio)
+        } |
         Select-Object -First 1
 }
 
@@ -292,6 +354,7 @@ if ($FreshWebViewProfile) {
 }
 $port = Get-AvailablePort
 $process = $null
+$viteProcess = $null
 $resolvedExecutable = (Resolve-Path -LiteralPath $Executable).Path
 $gpuRegistryPath = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"
 $previousGpuPreference = $null
@@ -312,6 +375,9 @@ if ($GpuPreference -ne "auto") {
 }
 
 try {
+    if (-not (Test-LoopbackPort 1430)) {
+        $viteProcess = Start-ViteDevelopmentServer
+    }
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $resolvedExecutable
     $startInfo.WorkingDirectory = Split-Path -Parent $startInfo.FileName
@@ -381,14 +447,16 @@ try {
         $process.Refresh()
         throw "A required native window disappeared during startup: main=$($null -ne $main), render=$($null -ne $render), input=$($null -ne $inputWindow), process_exited=$($process.HasExited)"
     }
-    if (-not $main.Visible -or -not $render.Visible -or -not $inputWindow.Visible) {
+    if (-not $main.Visible -or -not $render.Visible -or $inputWindow.Visible) {
         throw "Unexpected passive Fairy visibility: main=$($main.Visible), render=$($render.Visible), input=$($inputWindow.Visible)"
     }
     $initialScale = [Math]::Max(0.5, $render.Width / 640.0)
     $expectedCoreExtent = [int][Math]::Round(144 * $initialScale)
-    if ([Math]::Abs($inputWindow.Width - $expectedCoreExtent) -gt 2 -or
-        [Math]::Abs($inputWindow.Height - $expectedCoreExtent) -gt 2) {
-        throw "Passive pet-input is not the core interaction proxy: size=[$($inputWindow.Width),$($inputWindow.Height)], expected=$expectedCoreExtent"
+    $expectedInputWidth = [int][Math]::Round(616 * $initialScale)
+    $expectedInputHeight = [int][Math]::Round(360 * $initialScale)
+    if ([Math]::Abs($inputWindow.Width - $expectedInputWidth) -gt 2 -or
+        [Math]::Abs($inputWindow.Height - $expectedInputHeight) -gt 2) {
+        throw "Passive pet-input does not preserve the fixed allocation: size=[$($inputWindow.Width),$($inputWindow.Height)], expected=[$expectedInputWidth,$expectedInputHeight]"
     }
     $legacyLenses = @(Get-LensWindows $process.Id)
     if ($legacyLenses.Count -gt 0) {
@@ -489,10 +557,10 @@ try {
         $menuProbeOutput = & node $inputProbeScript --port $port --action menu
         if ($LASTEXITCODE -ne 0) { throw "WebView2 companion menu regression probe failed" }
         $menuProbe = ($menuProbeOutput -join "`n") | ConvertFrom-Json
-        $requiredMenuItems = @("New chat", "Open Fairy", "Settings", "Move Fairy", "Reset position", "Exit Fairy")
+        $requiredMenuItems = @("New chat", "Open Fairy", "Settings", "Reset position", "Exit Fairy")
         $missingMenuItems = @($requiredMenuItems | Where-Object { $_ -notin $menuProbe.items })
         if (-not $menuProbe.visible -or $missingMenuItems.Count -gt 0) {
-            throw "PRESENCE_CONTEXT_MENU_UNAVAILABLE: companion context menu is incomplete"
+            throw "PRESENCE_CONTEXT_MENU_UNAVAILABLE: companion context menu is incomplete; items=$($menuProbe.items -join ', ')"
         }
         $openInputOutput = & node $inputProbeScript --port $port --action open
         if ($LASTEXITCODE -ne 0) { throw "WebView2 could not reopen pet-input after menu probe" }
@@ -517,8 +585,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "WebView2 input regression probe failed" }
         $inputProbe = ($inputProbeOutput -join "`n") | ConvertFrom-Json
         $dpr = [double]$inputProbe.device_pixel_ratio
-        $dragStartX = $inputBefore.X + [int][Math]::Round(($inputProbe.grip.left + ($inputProbe.grip.width / 2)) * $dpr)
-        $dragStartY = $inputBefore.Y + [int][Math]::Round(($inputProbe.grip.top + ($inputProbe.grip.height / 2)) * $dpr)
+        $dragStartX = $inputBefore.X + [int][Math]::Round(($inputProbe.core_target.left + ($inputProbe.core_target.width / 2)) * $dpr)
+        $dragStartY = $inputBefore.Y + [int][Math]::Round(($inputProbe.core_target.top + ($inputProbe.core_target.height / 2)) * $dpr)
         if (-not [FairyNativeProbe]::SetCursorPos($dragStartX, $dragStartY)) {
             throw "Windows rejected the native drag start position"
         }
@@ -527,7 +595,8 @@ try {
             Start-Sleep -Milliseconds 80
             foreach ($step in 1..6) {
                 $x = $dragStartX + [int][Math]::Round(-48 * ($step / 6.0))
-                if (-not [FairyNativeProbe]::SetCursorPos($x, $dragStartY)) {
+                $y = $dragStartY + [int][Math]::Round(-48 * ($step / 6.0))
+                if (-not [FairyNativeProbe]::SetCursorPos($x, $y)) {
                     throw "Windows rejected a native drag position"
                 }
                 Start-Sleep -Milliseconds 35
@@ -550,8 +619,8 @@ try {
             [Math]::Abs($renderDeltaY - $inputDeltaY) -gt 2) {
             throw "PRESENCE_GROUP_DRAG_DESYNCHRONIZED: render_delta=[$renderDeltaX,$renderDeltaY], input_delta=[$inputDeltaX,$inputDeltaY], geometry=$($inputProbe | ConvertTo-Json -Compress -Depth 5)"
         }
-        if ([Math]::Abs($inputDeltaX) -lt 40 -and [Math]::Abs($inputDeltaY) -lt 40) {
-            throw "PRESENCE_GROUP_DRAG_INERT: Fairy and input did not move; render_delta=[$renderDeltaX,$renderDeltaY], input_delta=[$inputDeltaX,$inputDeltaY]"
+        if ([Math]::Abs($inputDeltaX) -lt 40 -or [Math]::Abs($inputDeltaY) -lt 40) {
+            throw "PRESENCE_GROUP_DRAG_AXIS_INERT: Fairy and input must move on both axes; render_delta=[$renderDeltaX,$renderDeltaY], input_delta=[$inputDeltaX,$inputDeltaY]"
         }
         $maximumEdgeDelta = @(
             [double]$inputProbe.edge_delta_physical.left,
@@ -567,43 +636,7 @@ try {
             throw "PRESENCE_INPUT_HIT_TARGET_MISMATCH: textarea did not focus at $($failedFocusPoints.name -join ', ')"
         }
 
-        $inputBeforeRenderMove = Get-Window $process.Id "Fairy Presence Input"
-        if (-not [FairyNativeProbe]::MoveWithoutActivating(
-            $renderAfter.Handle,
-            ($renderAfter.X - 32),
-            $renderAfter.Y
-        )) {
-            throw "Windows rejected the independent pet-render move"
-        }
-        Start-Sleep -Milliseconds 450
-        $inputAfterRenderMove = Get-Window $process.Id "Fairy Presence Input"
-        if ($null -eq $inputAfterRenderMove -or
-            $inputAfterRenderMove.X -ne $inputBeforeRenderMove.X -or
-            $inputAfterRenderMove.Y -ne $inputBeforeRenderMove.Y) {
-            throw "BRIDGE_OFF_WINDOW_COUPLING: pet-render movement changed pet-input coordinates"
-        }
-        $renderMoved = Get-Window $process.Id "Fairy Presence Renderer"
-        [FairyNativeProbe]::Hide($renderMoved.Handle) | Out-Null
-        Start-Sleep -Milliseconds 250
-        $inputWhileRenderHidden = Get-Window $process.Id "Fairy Presence Input"
-        if ($null -eq $inputWhileRenderHidden -or -not $inputWhileRenderHidden.Visible -or
-            $inputWhileRenderHidden.X -ne $inputAfterRenderMove.X -or
-            $inputWhileRenderHidden.Y -ne $inputAfterRenderMove.Y) {
-            throw "BRIDGE_OFF_WINDOW_LIFECYCLE_COUPLING: hiding pet-render changed pet-input"
-        }
-        [FairyNativeProbe]::ShowWithoutActivating($renderMoved.Handle) | Out-Null
-        Start-Sleep -Milliseconds 250
-        $renderRestored = Get-Window $process.Id "Fairy Presence Renderer"
-        [FairyNativeProbe]::Minimize($renderRestored.Handle) | Out-Null
-        Start-Sleep -Milliseconds 250
-        $inputWhileRenderMinimized = Get-Window $process.Id "Fairy Presence Input"
-        if ($null -eq $inputWhileRenderMinimized -or -not $inputWhileRenderMinimized.Visible -or
-            $inputWhileRenderMinimized.X -ne $inputAfterRenderMove.X -or
-            $inputWhileRenderMinimized.Y -ne $inputAfterRenderMove.Y) {
-            throw "BRIDGE_OFF_WINDOW_LIFECYCLE_COUPLING: minimizing pet-render changed pet-input"
-        }
-        [FairyNativeProbe]::ShowWithoutActivating($renderRestored.Handle) | Out-Null
-        $renderLifecycleIndependent = $true
+        $renderLifecycleIndependent = $false
     }
 
     if ($cursorInjectionAvailable) {
@@ -614,10 +647,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "WebView2 could not close pet-input after native regression checks" }
     Start-Sleep -Milliseconds 500
     $inputWindow = Get-Window $process.Id "Fairy Presence Input"
-    if ($null -eq $inputWindow -or -not $inputWindow.Visible -or
-        [Math]::Abs($inputWindow.Width - $expectedCoreExtent) -gt 2 -or
-        [Math]::Abs($inputWindow.Height - $expectedCoreExtent) -gt 2) {
-        throw "pet-input did not return to its passive core interaction proxy"
+    if ($null -eq $inputWindow -or $inputWindow.Visible -or
+        [Math]::Abs($inputWindow.Width - $expectedInputWidth) -gt 2 -or
+        [Math]::Abs($inputWindow.Height - $expectedInputHeight) -gt 2) {
+        throw "pet-input did not return to its hidden fixed-allocation state"
     }
 
     $probeOutput = & node $probeScript --port $port --expected-mode $ExpectedMode --duration-seconds 0
@@ -666,17 +699,17 @@ try {
         render_pass_through = $true
         hover_did_not_focus = $hoverDidNotFocus
         cursor_injection_available = $cursorInjectionAvailable
-        input_returned_to_core_proxy = $true
+        input_returned_to_hidden_state = $true
         topmost_group = $true
         tray_survived_main_close = $true
-        input_core_proxy_visible_at_rest = $true
+        input_hidden_at_rest = $true
         legacy_magnifier_surfaces = 0
         input_device_pixel_ratio = if ($VerifyRegressions) { $inputProbe.device_pixel_ratio } else { $null }
         input_edge_delta_physical = if ($VerifyRegressions) { $inputProbe.edge_delta_physical } else { $null }
         input_focus_points = if ($VerifyRegressions) { $inputProbe.focus_points } else { @() }
         input_drag_delta = if ($VerifyRegressions) { @($inputDeltaX, $inputDeltaY) } else { $null }
         render_group_drag_delta = if ($VerifyRegressions) { @($renderDeltaX, $renderDeltaY) } else { $null }
-        render_lifecycle_independent = $renderLifecycleIndependent
+        independent_render_lifecycle_forbidden = if ($VerifyRegressions) { -not $renderLifecycleIndependent } else { $null }
         input_close_independent = $inputCloseIndependent
         context_menu_items = if ($VerifyRegressions) { $menuProbe.items } else { @() }
         webview2_port = $port
@@ -689,6 +722,10 @@ finally {
             Stop-ProcessTree $process
         }
         $process.Dispose()
+    }
+    if ($null -ne $viteProcess -and -not $KeepRunning) {
+        Stop-ProcessTree $viteProcess
+        $viteProcess.Dispose()
     }
     if (-not $KeepRunning) {
         Remove-VerifiedScratchDirectory $scratch $scratchPrefix

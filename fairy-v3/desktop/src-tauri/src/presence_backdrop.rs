@@ -259,11 +259,6 @@ fn encode_backdrop(frame: CapturedBackdrop) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(target_os = "windows")]
-pub fn exclude_window_from_capture(hwnd: isize) -> Result<(), String> {
-    set_window_capture_excluded(hwnd, true)
-}
-
-#[cfg(target_os = "windows")]
 pub fn set_window_capture_excluded(hwnd: isize, excluded: bool) -> Result<(), String> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
@@ -275,13 +270,8 @@ pub fn set_window_capture_excluded(hwnd: isize, excluded: bool) -> Result<(), St
         WDA_NONE
     };
     if unsafe { SetWindowDisplayAffinity(hwnd as _, affinity) } == 0 {
-        return Err("PRESENCE_BACKDROP_EXCLUSION_FAILED".to_owned());
+        return Err("PRESENCE_CAPTURE_AFFINITY_FAILED".to_owned());
     }
-    Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn exclude_window_from_capture(_hwnd: isize) -> Result<(), String> {
     Ok(())
 }
 

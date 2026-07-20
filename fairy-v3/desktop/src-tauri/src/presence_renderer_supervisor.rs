@@ -9,6 +9,7 @@ const HARD_FAILURE_LIMIT: usize = 3;
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum PresenceRendererMode {
+    Native,
     Liquid,
     Compatibility,
 }
@@ -34,6 +35,11 @@ pub enum PresenceRendererErrorCode {
     WebglContextLost,
     ShaderInitializationFailed,
     Canvas2dUnavailable,
+    NativeGpuUnavailable,
+    NativeGpuStartFailed,
+    NativeGpuUpdateFailed,
+    NativeGpuRuntimeFailed,
+    NativeGpuStopFailed,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -62,7 +68,8 @@ pub enum PresenceRendererDirective {
 #[derive(Default)]
 pub struct PresenceRendererSupervisor {
     context_losses: VecDeque<u64>,
-    hard_failures: VecDeque<u64>,
+    native_failures: VecDeque<u64>,
+    compatibility_failures: VecDeque<u64>,
     force_compatibility: bool,
     session_disabled: bool,
 }
@@ -85,9 +92,22 @@ impl PresenceRendererSupervisor {
             }
         }
         if report.status == PresenceRendererStatus::Failed {
-            self.hard_failures.push_back(now_ms);
-            if self.hard_failures.len() >= HARD_FAILURE_LIMIT {
-                self.session_disabled = true;
+            match report.mode {
+                PresenceRendererMode::Native => {
+                    self.native_failures.push_back(now_ms);
+                    if self.native_failures.len() >= HARD_FAILURE_LIMIT {
+                        self.force_compatibility = true;
+                    }
+                }
+                PresenceRendererMode::Liquid => {
+                    self.force_compatibility = true;
+                }
+                PresenceRendererMode::Compatibility => {
+                    self.compatibility_failures.push_back(now_ms);
+                    if self.compatibility_failures.len() >= HARD_FAILURE_LIMIT {
+                        self.session_disabled = true;
+                    }
+                }
             }
         }
 
@@ -109,8 +129,82 @@ impl PresenceRendererSupervisor {
         while self.context_losses.front().is_some_and(|at| *at < cutoff) {
             self.context_losses.pop_front();
         }
-        while self.hard_failures.front().is_some_and(|at| *at < cutoff) {
-            self.hard_failures.pop_front();
+        while self.native_failures.front().is_some_and(|at| *at < cutoff) {
+            self.native_failures.pop_front();
         }
+        while self
+            .compatibility_failures
+            .front()
+            .is_some_and(|at| *at < cutoff)
+        {
+            self.compatibility_failures.pop_front();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn failed(mode: PresenceRendererMode) -> PresenceRendererHealthReport {
+        PresenceRendererHealthReport {
+            schema_version: 1,
+            mode,
+            status: PresenceRendererStatus::Failed,
+            error_code: None,
+        }
+    }
+
+    #[test]
+    fn three_native_failures_disable_enhanced_optics_without_disabling_the_pet() {
+        let mut supervisor = PresenceRendererSupervisor::default();
+        assert_eq!(
+            supervisor.observe_at(failed(PresenceRendererMode::Native), 1),
+            PresenceRendererDirective::Continue
+        );
+        assert_eq!(
+            supervisor.observe_at(failed(PresenceRendererMode::Native), 2),
+            PresenceRendererDirective::Continue
+        );
+        assert_eq!(
+            supervisor.observe_at(failed(PresenceRendererMode::Native), 3),
+            PresenceRendererDirective::ForceCompatibility
+        );
+        assert!(!supervisor.session_disabled());
+    }
+
+    #[test]
+    fn only_repeated_compatibility_failures_disable_the_pet_session() {
+        let mut supervisor = PresenceRendererSupervisor::default();
+        for now_ms in 1..HARD_FAILURE_LIMIT as u64 {
+            assert_eq!(
+                supervisor.observe_at(failed(PresenceRendererMode::Compatibility), now_ms),
+                PresenceRendererDirective::Continue
+            );
+        }
+        assert_eq!(
+            supervisor.observe_at(
+                failed(PresenceRendererMode::Compatibility),
+                HARD_FAILURE_LIMIT as u64,
+            ),
+            PresenceRendererDirective::DisablePet
+        );
+    }
+
+    #[test]
+    fn expired_native_failures_do_not_poison_a_later_session() {
+        let mut supervisor = PresenceRendererSupervisor::default();
+        assert_eq!(
+            supervisor.observe_at(failed(PresenceRendererMode::Native), 1),
+            PresenceRendererDirective::Continue
+        );
+        assert_eq!(
+            supervisor.observe_at(failed(PresenceRendererMode::Native), 2),
+            PresenceRendererDirective::Continue
+        );
+        assert_eq!(
+            supervisor.observe_at(failed(PresenceRendererMode::Native), INCIDENT_WINDOW_MS + 3,),
+            PresenceRendererDirective::Continue
+        );
     }
 }

@@ -123,6 +123,118 @@ describe("PresenceProjection", () => {
     expect(completed.status_text).toBe("System action complete");
   });
 
+  it("closes every public Command lifecycle state without leaving Fairy stuck", () => {
+    const queued = PresenceProjection.reduce(
+      PresenceProjection.initial(),
+      event("command.queued"),
+    );
+    expect(queued.work_state).toBe("analyzing");
+
+    const succeeded = PresenceProjection.reduce(
+      queued,
+      event("command.succeeded", {
+        cursor: 2,
+        id: "01989f92-4b80-7000-8000-000000000021",
+        payload: { public_summary: "must not be copied" },
+      }),
+    );
+    expect(succeeded.status_text).toBe("Checking the result");
+    expect(JSON.stringify(succeeded)).not.toContain("must not be copied");
+
+    const rejected = PresenceProjection.reduce(
+      succeeded,
+      event("command.rejected", {
+        cursor: 3,
+        id: "01989f92-4b80-7000-8000-000000000022",
+      }),
+    );
+    expect(rejected.work_state).toBe("idle");
+    expect(rejected.notice?.text).toBe("The action was not run");
+    expect(presenceProjectionStateSchema.parse(rejected)).toEqual(rejected);
+  });
+
+  it("treats routing budget approval as the same safe approval state", () => {
+    const pending = PresenceProjection.reduce(
+      PresenceProjection.initial(),
+      event("assistant.budget.approval_requested"),
+    );
+    expect(pending.work_state).toBe("awaiting_confirmation");
+    expect(pending.notice?.text).toBe("An approval needs your decision");
+  });
+
+  it("projects the safe TurnTrace kind and status as one causal work chain", () => {
+    const thinking = PresenceProjection.reduce(
+      PresenceProjection.initial(),
+      event("turn.trace.step.updated", {
+        payload: {
+          kind: "reasoning",
+          status: "running",
+          public_summary: "safe but deliberately not copied",
+          hidden_reasoning: "must not cross",
+        },
+      }),
+    );
+    expect(thinking.work_state).toBe("analyzing");
+    expect(JSON.stringify(thinking)).not.toContain("safe but deliberately not copied");
+    expect(JSON.stringify(thinking)).not.toContain("must not cross");
+
+    const tool = PresenceProjection.reduce(
+      thinking,
+      event("turn.trace.step.updated", {
+        id: "01989f92-4b80-7000-8000-000000000030",
+        cursor: 2,
+        created_at: new Date(BASE_TIME + 1_000).toISOString(),
+        payload: { kind: "tool", status: "running", arguments: ["secret"] },
+      }),
+    );
+    expect(tool.work_state).toBe("tool");
+    expect(JSON.stringify(tool)).not.toContain("secret");
+
+    const approval = PresenceProjection.reduce(
+      tool,
+      event("turn.trace.step.updated", {
+        id: "01989f92-4b80-7000-8000-000000000031",
+        cursor: 3,
+        created_at: new Date(BASE_TIME + 2_000).toISOString(),
+        payload: { kind: "approval", status: "waiting" },
+      }),
+    );
+    expect(approval.work_state).toBe("awaiting_confirmation");
+
+    const resumed = PresenceProjection.reduce(
+      approval,
+      event("approval.decided", {
+        id: "01989f92-4b80-7000-8000-000000000032",
+        cursor: 4,
+        created_at: new Date(BASE_TIME + 3_000).toISOString(),
+      }),
+    );
+    expect(resumed.work_state).toBe("analyzing");
+    expect(resumed.status_text).toBe("Preparing the next step");
+  });
+
+  it("projects media generation without copying job payloads", () => {
+    const active = PresenceProjection.reduce(
+      PresenceProjection.initial(),
+      event("media.generation.progress", {
+        payload: { job_id: "private-job", kind: "video", progress: 0.4 },
+      }),
+    );
+    expect(active.work_state).toBe("tool");
+    expect(active.status_text).toBe("Generating media");
+    expect(JSON.stringify(active)).not.toContain("private-job");
+
+    const ready = PresenceProjection.reduce(
+      active,
+      event("media.generation.completed", {
+        id: "01989f92-4b80-7000-8000-000000000040",
+        cursor: 2,
+        created_at: new Date(BASE_TIME + 1_000).toISOString(),
+      }),
+    );
+    expect(ready.notice?.text).toBe("Media is ready");
+  });
+
   it("rejects arbitrary cross-window text even when the shape is otherwise valid", () => {
     const state = PresenceProjection.reduce(
       PresenceProjection.initial(),
@@ -196,7 +308,23 @@ describe("PresenceProjection", () => {
     });
     expect(dismissed.notice).toBeNull();
 
-    const afk = derivePresenceView(failed, {
+    const pending = PresenceProjection.reduce(
+      failed,
+      event("approval.requested", {
+        id: "01989f92-4b80-7000-8000-000000000012",
+        cursor: 12,
+        created_at: new Date(BASE_TIME + 13_000).toISOString(),
+      }),
+    );
+    const stillPending = derivePresenceView(pending, {
+      now_ms: BASE_TIME + 6 * 60_000,
+      quiet_mode: false,
+      dismissed_notice_ids: [],
+    });
+    expect(stillPending.work_state).toBe("awaiting_confirmation");
+    expect(stillPending.notice?.text).toBe("An approval needs your decision");
+
+    const afk = derivePresenceView(completed, {
       now_ms: BASE_TIME + 6 * 60_000,
       quiet_mode: false,
       dismissed_notice_ids: [],

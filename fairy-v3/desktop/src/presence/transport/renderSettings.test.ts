@@ -3,10 +3,50 @@ import { describe, expect, it, vi } from "vitest";
 import type { DesktopPreferences } from "../../settings/client";
 import {
   createPresenceRenderSettingsChannel,
+  loadNativePresenceRenderSettings,
   safeRenderSettingsFromPreferences,
 } from "./renderSettings";
 
 describe("presence render settings", () => {
+  it("loads only the bounded native render settings contract", async () => {
+    await expect(loadNativePresenceRenderSettings(async (command) => {
+      expect(command).toBe("pet_render_settings_get");
+      return {
+        schema_version: 3,
+        mode: "liquid",
+        optics_mode: "enhanced",
+        size_scale: 1.05,
+        opacity: 1,
+        motion_enabled: true,
+        particles_enabled: true,
+        target_frame_rate: 300,
+      };
+    })).resolves.toEqual({
+      schema_version: 3,
+      mode: "liquid",
+      optics_mode: "enhanced",
+      size_scale: 1.05,
+      opacity: 1,
+      motion_enabled: true,
+      particles_enabled: true,
+      target_frame_rate: 300,
+    });
+  });
+
+  it("rejects an expanded native settings payload", async () => {
+    await expect(loadNativePresenceRenderSettings(async () => ({
+      schema_version: 3,
+      mode: "liquid",
+      optics_mode: "enhanced",
+      size_scale: 1,
+      opacity: 1,
+      motion_enabled: true,
+      particles_enabled: true,
+      target_frame_rate: 300,
+      developer_mode: true,
+    }))).resolves.toBeNull();
+  });
+
   it("projects only bounded renderer fields from desktop preferences", () => {
     const projected = safeRenderSettingsFromPreferences(preferences());
     expect(projected).toEqual({
@@ -17,7 +57,7 @@ describe("presence render settings", () => {
       opacity: 0.84,
       motion_enabled: false,
       particles_enabled: true,
-      target_frame_rate: 144,
+      target_frame_rate: 300,
     });
     expect(projected).not.toHaveProperty("selected_profile_id");
     expect(projected).not.toHaveProperty("pet_anchor");
@@ -64,6 +104,12 @@ function preferences(): DesktopPreferences {
     memory_enabled: true,
     memory_retention_days: 90,
     analytics_enabled: false,
+    realtime_provider: "auto",
+    realtime_voice_mode: "native",
+    realtime_game_audio_default: false,
+    realtime_memory_enabled: true,
+    realtime_max_session_minutes: 30,
+    trash_auto_purge_30_days: false,
     pet_enabled: true,
     pet_always_on_top: true,
     pet_muted: false,
@@ -77,7 +123,7 @@ function preferences(): DesktopPreferences {
     pet_remember_position: true,
     pet_renderer_mode: "liquid",
     pet_optics_mode: "standard",
-    pet_target_fps: 144,
+    pet_target_fps: 300,
     pet_anchor: { monitor_id: "primary", x_ratio: 0.5, y_ratio: 0.5 },
     developer_mode: false,
   };

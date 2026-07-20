@@ -8,6 +8,7 @@ import {
 export type PresenceRequest =
   | { kind: "projection" }
   | { kind: "workspace.open" }
+  | { kind: "realtime.open" }
   | { kind: "chat.new" }
   | { kind: "chat.send"; submission_id: string; text: string }
   | { kind: "chat.cancel"; submission_id: string }
@@ -26,6 +27,7 @@ export interface PresenceChannel {
   publishSubmission(update: PresenceSubmissionUpdate): void;
   requestProjection(): void;
   requestWorkspaceOpen(): void;
+  requestRealtimeOpen?(): void;
   requestNewChat(): void;
   requestChatSend(text: string, submissionId: string): void;
   requestChatCancel(submissionId: string): void;
@@ -51,6 +53,7 @@ const submissionIdSchema = z.string().min(1).max(128);
 const requestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("projection") }).strict(),
   z.object({ kind: z.literal("workspace.open") }).strict(),
+  z.object({ kind: z.literal("realtime.open") }).strict(),
   z.object({ kind: z.literal("chat.new") }).strict(),
   z
     .object({
@@ -143,6 +146,7 @@ export function createPresenceChannel(): PresenceChannel {
     },
     requestProjection: () => postRequest({ kind: "projection" }),
     requestWorkspaceOpen: () => postRequest({ kind: "workspace.open" }),
+    requestRealtimeOpen: () => postRequest({ kind: "realtime.open" }),
     requestNewChat: () => postRequest({ kind: "chat.new" }),
     requestChatSend: (text, submissionId) =>
       postRequest({ kind: "chat.send", submission_id: submissionId, text }),

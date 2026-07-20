@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_FAIRY_MOTION_SNAPSHOT } from "../domain/motionState";
 import type { PresenceRenderSnapshot } from "./presenceRenderer";
 import {
   rendererFrameInterval,
@@ -10,8 +11,10 @@ function snapshot(
   overrides: Partial<PresenceRenderSnapshot> = {},
 ): PresenceRenderSnapshot {
   return {
+    motion: DEFAULT_FAIRY_MOTION_SNAPSHOT,
     interaction: null,
     input_capsule_visible: false,
+    input_capsule_width: 280,
     work_state: "idle",
     speaking: false,
     voice_level: 0,
@@ -31,13 +34,18 @@ function snapshot(
 describe("presence renderer scheduling", () => {
   it("maps public presence state without importing project state", () => {
     expect(visualStateForSnapshot(snapshot())).toBe("idle");
-    expect(visualStateForSnapshot(snapshot({ work_state: "tool" }))).toBe("tool");
-    expect(visualStateForSnapshot(snapshot({ speaking: true, work_state: "error" }))).toBe(
-      "speaking",
-    );
-    expect(visualStateForSnapshot(snapshot({ interaction: interactiveSnapshot() }))).toBe(
-      "hover",
-    );
+    expect(visualStateForSnapshot(snapshot({
+      motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "thinking", activity: "tool" },
+    }))).toBe("tool");
+    expect(visualStateForSnapshot(snapshot({
+      motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "error" },
+      speaking: true,
+      work_state: "error",
+    }))).toBe("error");
+    expect(visualStateForSnapshot(snapshot({
+      motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "input", surface: "input" },
+      interaction: interactiveSnapshot(),
+    }))).toBe("listening");
   });
 
   it("uses 60 FPS while fresh, 30 FPS after idle, and 15 FPS when constrained", () => {
@@ -65,6 +73,22 @@ describe("presence renderer scheduling", () => {
     expect(rendererFrameInterval(snapshot({
       target_frame_rate: 144,
       frame_rate_limit: 144,
+      idle_for_ms: 15_000,
+    }))).toBeCloseTo(1_000 / 30);
+  });
+
+  it("uses 300 FPS only while active and unconstrained", () => {
+    expect(rendererFrameInterval(snapshot({
+      target_frame_rate: 300,
+      frame_rate_limit: 300,
+    }))).toBeCloseTo(1_000 / 300);
+    expect(rendererFrameInterval(snapshot({
+      target_frame_rate: 300,
+      frame_rate_limit: 144,
+    }))).toBeCloseTo(1_000 / 144);
+    expect(rendererFrameInterval(snapshot({
+      target_frame_rate: 300,
+      frame_rate_limit: 300,
       idle_for_ms: 15_000,
     }))).toBeCloseTo(1_000 / 30);
   });

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_FAIRY_MOTION_SNAPSHOT } from "../domain/motionState";
 import type { PresenceRenderSnapshot } from "./presenceRenderer";
-import { liquidAnchorForSnapshot } from "./liquidGeometry";
+import {
+  liquidAnchorForSnapshot,
+  liquidCapsuleGeometryForSnapshot,
+} from "./liquidGeometry";
 
 describe("Liquid renderer coordinate spaces", () => {
   it("does not multiply physical placement coordinates by DPR twice", () => {
@@ -12,6 +16,23 @@ describe("Liquid renderer coordinate spaces", () => {
       liquidAnchorForSnapshot(snapshot(2, 192, 260), 640, 260, 2),
     ).toEqual({ x: 192, y: 260 });
   });
+
+  it("places a bounded dynamic capsule below the core on either edge", () => {
+    const right = snapshot(1, 96, 88);
+    right.input_capsule_width = 280;
+    expect(liquidCapsuleGeometryForSnapshot(right, 640, 260, 1)).toEqual({
+      center_x: 164,
+      center_y: 40,
+      half_width: 132,
+    });
+    right.interaction!.placement.expansion_direction = "left";
+    right.input_capsule_width = 420;
+    expect(liquidCapsuleGeometryForSnapshot(right, 640, 260, 1)).toEqual({
+      center_x: 406,
+      center_y: 40,
+      half_width: 202,
+    });
+  });
 });
 
 function snapshot(
@@ -20,6 +41,12 @@ function snapshot(
   localAnchorY: number,
 ): PresenceRenderSnapshot {
   return {
+    motion: {
+      ...DEFAULT_FAIRY_MOTION_SNAPSHOT,
+      state: "input",
+      surface: "input",
+      capsule_visible: true,
+    },
     interaction: {
       schema_version: 1,
       sequence: 1,
@@ -51,6 +78,7 @@ function snapshot(
       },
     },
     input_capsule_visible: true,
+    input_capsule_width: 280,
     work_state: "idle",
     speaking: false,
     voice_level: 0,

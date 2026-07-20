@@ -16,7 +16,7 @@ param(
     [string]$ExpectedGpuPattern,
     [ValidateSet("normal", "static-backdrop", "capture-only", "ipc-upload-only", "single-renderer", "no-particles", "no-refraction")]
     [string]$ExperimentMode = "normal",
-    [ValidateSet(60, 144)]
+    [ValidateSet(60, 144, 300)]
     [int]$TargetFps = 60,
     [ValidateSet("standard", "enhanced")]
     [string]$OpticsMode = "standard",
@@ -56,7 +56,7 @@ public static class FairyPresenceSoakCursor {
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetWindowTextW(IntPtr window, StringBuilder text, int capacity);
+    private static extern int GetClassNameW(IntPtr window, StringBuilder text, int capacity);
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr window, out RECT rectangle);
     [DllImport("user32.dll")]
@@ -68,9 +68,9 @@ public static class FairyPresenceSoakCursor {
             uint processId;
             GetWindowThreadProcessId(window, out processId);
             if (processId != (uint)expectedProcessId) return true;
-            var title = new StringBuilder(256);
-            GetWindowTextW(window, title, title.Capacity);
-            if (title.ToString() != "Fairy Presence Renderer") return true;
+            var className = new StringBuilder(256);
+            GetClassNameW(window, className, className.Capacity);
+            if (className.ToString() != "FairyNativePresenceHitProxyClass") return true;
             RECT rectangle;
             if (!GetWindowRect(window, out rectangle)) return false;
             moved = SetCursorPos(

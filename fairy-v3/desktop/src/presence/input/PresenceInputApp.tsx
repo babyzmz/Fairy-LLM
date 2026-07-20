@@ -1,13 +1,20 @@
 import {
-  type PointerEvent as ReactPointerEvent,
+  type CSSProperties,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 
 import type { DesktopPreferences } from "../../settings/client";
 import type { PresenceInteractionSnapshot } from "../domain/interaction";
+import {
+  advanceFairyMotionSnapshot,
+  DEFAULT_FAIRY_MOTION_SNAPSHOT,
+  type FairyMotionSnapshot,
+  type FairySurface,
+} from "../domain/motionState";
 import {
   derivePresenceView,
   PresenceProjection,
@@ -16,6 +23,7 @@ import {
 import {
   createDefaultPetHost,
   type PetHost,
+  type PetInputPresentationApply,
   type PetInputLayout,
   type PetPreferencePatch,
 } from "../host/petHost";
@@ -25,6 +33,7 @@ import {
   type StorageLike,
   savePresenceSettings,
 } from "../host/persistence";
+import { usePresenceAccessibilityPreferences } from "../host/usePresenceAccessibility";
 import {
   createPresenceSubmissionId,
   createPresenceChannel,
@@ -51,6 +60,7 @@ import { useDeferredChannelClose } from "../transport/useDeferredChannelClose";
 import { presenceInputGate } from "./inputGate";
 import {
   PresencePanel,
+  PRESENCE_COMPACT_INPUT_MIN_WIDTH,
   type PresenceSubmissionCard,
 } from "./PresencePanel";
 import "../presence.css";
@@ -69,31 +79,16 @@ interface PresenceInputAppProps {
 const MAX_DISMISSED_NOTICES = 128;
 const COMPLETED_REPLY_VISIBLE_MS = 5_000;
 const TERMINAL_STATUS_VISIBLE_MS = 2_400;
+const PET_DRAG_CLICK_SUPPRESSION_MS = 450;
+const PRESENCE_SURFACE_EXIT_MS = 240;
+const PRESENCE_SURFACE_REDUCED_EXIT_MS = 80;
+const MENU_FOCUS_LOSS_MS = 600;
 
 interface PresenceSubmissionState {
   id: string;
   text: string;
   phase: PresenceSubmissionCard["phase"];
   failure: PresenceSubmissionFailure | null;
-}
-
-interface PetDragPointer {
-  pointerId: number;
-  source: "core" | "grip";
-  startScreenX: number;
-  startScreenY: number;
-  deltaX: number;
-  deltaY: number;
-  frame: number | null;
-  ready: Promise<void>;
-  inFlight: Promise<void> | null;
-  pending: boolean;
-}
-
-interface PetDragPresentation {
-  layout: PetInputLayout;
-  contentVisible: boolean;
-  surfaceInteractive: boolean;
 }
 
 export function PresenceInputApp({
@@ -106,6 +101,7 @@ export function PresenceInputApp({
   storage = window.localStorage,
 }: PresenceInputAppProps) {
   const [channel] = useState(() => suppliedChannel ?? createPresenceChannel());
+  const accessibility = usePresenceAccessibilityPreferences();
   const [host] = useState(() => suppliedHost ?? createDefaultPetHost());
   const [interactionSource] = useState(
     () => suppliedInteractionSource ?? createPresenceInteractionSource(),
@@ -116,12 +112,17 @@ export function PresenceInputApp({
   const [inputPresentationChannel] = useState(
     () => suppliedInputPresentationChannel ?? createPresenceInputPresentationChannel(),
   );
-  const inputPresentationSequence = useRef(0);
+  const [inputPresentationSessionId, setInputPresentationSessionId] = useState<
+    number | null
+  >(null);
   const latestInputPresentation = useRef<PresenceInputPresentation>(
     DEFAULT_INPUT_PRESENTATION,
   );
   const [projection, setProjection] = useState<PresenceProjectionState>(() =>
     PresenceProjection.initial(),
+  );
+  const motionSnapshot = useRef<FairyMotionSnapshot>(
+    DEFAULT_FAIRY_MOTION_SNAPSHOT,
   );
   const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
   const preferencesRef = useRef(preferences);
@@ -141,14 +142,42 @@ export function PresenceInputApp({
   const [interactionReady, setInteractionReady] = useState(false);
   const [hoverSuppressed, setHoverSuppressed] = useState(false);
   const [focusRequest, setFocusRequest] = useState(0);
-  const [moving, setMoving] = useState(false);
-  const [dragPresentation, setDragPresentation] = useState<PetDragPresentation | null>(null);
+  const [compactWidth, setCompactWidth] = useState(PRESENCE_COMPACT_INPUT_MIN_WIDTH);
   const presentationQueue = useRef(Promise.resolve());
+  const presentationRevision = useRef(0);
   const appliedFocusRequest = useRef(0);
   const previouslyMuted = useRef(false);
   const legacyPositionMigrationAttempted = useRef(false);
-  const dragPointer = useRef<PetDragPointer | null>(null);
   const suppressCoreActivation = useRef(false);
+  const suppressCoreActivationTimer = useRef<number | null>(null);
+  const nativeDragWasActive = useRef(false);
+  const menuFocusLossTimer = useRef<number | null>(null);
+  const updateCompactWidth = useCallback((width: number) => {
+    setCompactWidth((current) => current === width ? current : width);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (suppressCoreActivationTimer.current !== null) {
+        window.clearTimeout(suppressCoreActivationTimer.current);
+      }
+      if (menuFocusLossTimer.current !== null) {
+        window.clearTimeout(menuFocusLossTimer.current);
+      }
+    },
+    [],
+  );
+
+  function suppressCoreClickAfterDrag() {
+    suppressCoreActivation.current = true;
+    if (suppressCoreActivationTimer.current !== null) {
+      window.clearTimeout(suppressCoreActivationTimer.current);
+    }
+    suppressCoreActivationTimer.current = window.setTimeout(() => {
+      suppressCoreActivation.current = false;
+      suppressCoreActivationTimer.current = null;
+    }, PET_DRAG_CLICK_SUPPRESSION_MS);
+  }
 
   useEffect(() => {
     const stop = channel.onProjection((next) => {
@@ -171,8 +200,34 @@ export function PresenceInputApp({
 
   useEffect(() => {
     let disposed = false;
+    presentationRevision.current = 0;
+    latestInputPresentation.current = DEFAULT_INPUT_PRESENTATION;
+    writeInputPresentationDiagnostics(null, "starting");
+    setInputPresentationSessionId(null);
+    void host.beginInputPresentationSession().then((commit) => {
+      if (!disposed) {
+        writeInputPresentationDiagnostics({
+          session_id: commit.session_id,
+          revision: commit.revision,
+        }, "pending");
+        setInputPresentationSessionId(commit.session_id);
+      }
+    }).catch(() => {
+      if (!disposed) {
+        writeInputPresentationDiagnostics(null, "failed");
+        void host.setInputInteractive(false).catch(() => undefined);
+      }
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [host]);
+
+  useEffect(() => {
+    let disposed = false;
     let stopPreferences: (() => void) | undefined;
     let stopInput: (() => void) | undefined;
+    let stopMenu: (() => void) | undefined;
     let stopNewChat: (() => void) | undefined;
     void host.getPreferences().then((value) => {
       if (!disposed) setPreferences(value);
@@ -193,6 +248,15 @@ export function PresenceInputApp({
       if (disposed) stop();
       else stopInput = stop;
     });
+    void host.onMenuRequested(() => {
+      if (disposed) return;
+      setHoverSuppressed(false);
+      setManualInputOpen(false);
+      setMenuOpen(true);
+    }).then((stop) => {
+      if (disposed) stop();
+      else stopMenu = stop;
+    });
     void host.onNewChatRequested(() => {
       if (disposed) return;
       channel.requestNewChat();
@@ -208,6 +272,7 @@ export function PresenceInputApp({
       disposed = true;
       stopPreferences?.();
       stopInput?.();
+      stopMenu?.();
       stopNewChat?.();
     };
   }, [channel, host]);
@@ -284,7 +349,7 @@ export function PresenceInputApp({
   }, [interactionSource]);
 
   useEffect(() => {
-    if (interaction?.phase === "idle" || interaction?.phase === "aware") {
+    if (interaction?.phase === "idle") {
       setHoverSuppressed(false);
     }
   }, [interaction?.phase]);
@@ -309,6 +374,33 @@ export function PresenceInputApp({
     return () => window.removeEventListener("keydown", handleEscape, true);
   }, []);
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const cancelClose = () => {
+      if (menuFocusLossTimer.current === null) return;
+      window.clearTimeout(menuFocusLossTimer.current);
+      menuFocusLossTimer.current = null;
+    };
+    const scheduleClose = () => {
+      cancelClose();
+      menuFocusLossTimer.current = window.setTimeout(() => {
+        menuFocusLossTimer.current = null;
+        setMenuOpen(false);
+      }, MENU_FOCUS_LOSS_MS);
+    };
+    window.addEventListener("blur", scheduleClose);
+    window.addEventListener("focus", cancelClose);
+    document.addEventListener("focusin", cancelClose);
+    document.addEventListener("pointerdown", cancelClose, true);
+    return () => {
+      window.removeEventListener("blur", scheduleClose);
+      window.removeEventListener("focus", cancelClose);
+      document.removeEventListener("focusin", cancelClose);
+      document.removeEventListener("pointerdown", cancelClose, true);
+      cancelClose();
+    };
+  }, [menuOpen]);
+
   const view = derivePresenceView(projection, {
     now_ms: clock,
     quiet_mode: preferences?.pet_do_not_disturb ?? false,
@@ -316,39 +408,92 @@ export function PresenceInputApp({
   });
   const reply = view.reply?.id === closedReplyId ? null : view.reply;
   const submissionCard = toSubmissionCard(submission, view);
-  const hoverGate = presenceInputGate(interaction, hoverSuppressed);
-  const cardOpen =
-    menuOpen || reply !== null || view.notice !== null || submissionCard !== null;
-  const inputOpen = manualInputOpen || hoverGate.window_visible;
-  const requestedLayout: PetInputLayout = cardOpen
-    ? "expanded"
-    : inputOpen
-      ? "compact"
-      : "core";
-  const requestedContentVisible = cardOpen || manualInputOpen || hoverGate.content_visible;
-  const requestedSurfaceInteractive =
-    requestedLayout === "core" || cardOpen || manualInputOpen || hoverGate.interactive;
-  const layout = dragPresentation?.layout ?? requestedLayout;
-  const contentVisible = dragPresentation?.contentVisible ?? requestedContentVisible;
-  const surfaceInteractive =
-    dragPresentation?.surfaceInteractive ?? requestedSurfaceInteractive;
-  const capsuleVisible = layout === "compact" && inputOpen && !cardOpen;
-
+  const menuBlocked =
+    view.notice !== null ||
+    reply !== null ||
+    submission !== null ||
+    view.speaking ||
+    !["idle", "ready"].includes(view.work_state);
+  const effectiveMenuOpen = menuOpen && !menuBlocked;
   useEffect(() => {
-    const presentation: PresenceInputPresentation = {
-      schema_version: 1,
-      sequence: inputPresentationSequence.current + 1,
-      layout: layout === "hidden" ? "core" : layout,
-      capsule_visible: capsuleVisible,
-    };
-    inputPresentationSequence.current = presentation.sequence;
-    latestInputPresentation.current = presentation;
-    inputPresentationChannel.publish(presentation);
-  }, [capsuleVisible, inputPresentationChannel, layout]);
+    if (menuOpen && menuBlocked) setMenuOpen(false);
+  }, [menuBlocked, menuOpen]);
+  const hoverGate = presenceInputGate(interaction, hoverSuppressed);
+  const reducedMotion =
+    interaction?.reduced_motion === true ||
+    preferences?.reduced_motion === true ||
+    accessibility.reduced_motion;
+  const moving = interaction?.phase === "repositioning";
+  useEffect(() => {
+    if (moving) {
+      nativeDragWasActive.current = true;
+      suppressCoreActivation.current = true;
+      if (suppressCoreActivationTimer.current !== null) {
+        window.clearTimeout(suppressCoreActivationTimer.current);
+        suppressCoreActivationTimer.current = null;
+      }
+      return;
+    }
+    if (!nativeDragWasActive.current) return;
+    nativeDragWasActive.current = false;
+    suppressCoreClickAfterDrag();
+  }, [moving]);
+  const nextMotionSnapshot = advanceFairyMotionSnapshot(
+    motionSnapshot.current,
+    {
+      interaction,
+      input_window_visible: hoverGate.window_visible,
+      input_content_visible: hoverGate.content_visible,
+      input_interactive: hoverGate.interactive,
+      manual_input_open: manualInputOpen,
+      menu_open: effectiveMenuOpen,
+      reply,
+      notice_tone: view.notice?.tone ?? null,
+      submission_phase: submission?.phase ?? null,
+      work_state: view.work_state,
+      speaking: view.speaking,
+      moving,
+      sleeping: view.density === "quiet",
+      reduced_motion: reducedMotion,
+      do_not_disturb: preferences?.pet_do_not_disturb ?? false,
+    },
+    now(),
+  );
+  motionSnapshot.current = nextMotionSnapshot;
+  const requestedLayout = layoutForSurface(nextMotionSnapshot.surface);
+  const requestedContentVisible = nextMotionSnapshot.content_visible;
+  const requestedSurfaceInteractive = nextMotionSnapshot.surface_interactive;
+  const [retainedLayout, setRetainedLayout] = useState<PetInputLayout>("hidden");
+  useLayoutEffect(() => {
+    if (requestedLayout !== "hidden") {
+      setRetainedLayout(requestedLayout);
+      return;
+    }
+    if (retainedLayout === "hidden") return;
+    const timer = window.setTimeout(
+      () => setRetainedLayout("hidden"),
+      reducedMotion ? PRESENCE_SURFACE_REDUCED_EXIT_MS : PRESENCE_SURFACE_EXIT_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [reducedMotion, requestedLayout, retainedLayout]);
+  const layout = requestedLayout === "hidden" ? retainedLayout : requestedLayout;
+  const retainingExitSurface =
+    requestedLayout === "hidden" && layout !== "hidden";
+  const contentVisible = requestedContentVisible;
+  const surfaceInteractive = (
+    retainingExitSurface ? false : requestedSurfaceInteractive
+  );
+  const capsuleVisible =
+    layout === "compact" && nextMotionSnapshot.capsule_visible;
+  const presentedMotionSnapshot: FairyMotionSnapshot = nextMotionSnapshot;
+  const cardOpen = layout === "expanded";
+  const inputOpen = nextMotionSnapshot.surface === "input";
 
   useEffect(
     () => inputPresentationChannel.onRequest(() => {
-      inputPresentationChannel.publish(latestInputPresentation.current);
+      if (latestInputPresentation.current.session_id > 0) {
+        inputPresentationChannel.publish(latestInputPresentation.current);
+      }
     }),
     [inputPresentationChannel],
   );
@@ -380,26 +525,65 @@ export function PresenceInputApp({
   }, [reply?.id, reply?.streaming, view.notice?.id]);
 
   useEffect(() => {
+    if (inputPresentationSessionId === null) return;
+    const revision = presentationRevision.current + 1;
+    presentationRevision.current = revision;
+    const presentation: PresenceInputPresentation = {
+      schema_version: 4,
+      session_id: inputPresentationSessionId,
+      sequence: revision,
+      layout: layout === "hidden" ? "core" : layout,
+      capsule_visible: capsuleVisible,
+      capsule_width: compactWidth,
+      motion: presentedMotionSnapshot,
+    };
+    const requestFocus = surfaceInteractive && focusRequest > appliedFocusRequest.current;
+    const nativePresentation: PetInputPresentationApply = {
+      session_id: inputPresentationSessionId,
+      revision,
+      layout,
+      ...(layout === "compact" ? { compact_width: compactWidth } : {}),
+      interactive: surfaceInteractive,
+      request_focus: requestFocus,
+    };
     presentationQueue.current = presentationQueue.current
       .catch(() => undefined)
       .then(async () => {
-        if (!surfaceInteractive) {
-          await host.setInputInteractive(false);
-        }
-        await host.setInputLayout(layout);
-        if (surfaceInteractive) {
-          await host.setInputInteractive(true);
-        }
+        if (revision !== presentationRevision.current) return;
+        const commit = await host.applyInputPresentation(nativePresentation);
         if (
-          surfaceInteractive &&
-          focusRequest > appliedFocusRequest.current
+          commit.session_id !== inputPresentationSessionId ||
+          commit.revision !== revision
         ) {
-          appliedFocusRequest.current = focusRequest;
-          await host.requestInputFocus();
+          throw new Error("PET_INPUT_PRESENTATION_COMMIT_MISMATCH");
         }
+        if (requestFocus) {
+          appliedFocusRequest.current = focusRequest;
+        }
+        if (revision !== presentationRevision.current) return;
+        latestInputPresentation.current = presentation;
+        writeInputPresentationDiagnostics(commit, "committed");
+        inputPresentationChannel.publish(presentation);
       })
-      .catch(() => undefined);
-  }, [focusRequest, host, layout, surfaceInteractive]);
+      .catch(() => {
+        if (revision !== presentationRevision.current) return;
+        writeInputPresentationDiagnostics({
+          session_id: inputPresentationSessionId,
+          revision,
+        }, "failed");
+        void host.setInputInteractive(false).catch(() => undefined);
+      });
+  }, [
+    capsuleVisible,
+    compactWidth,
+    focusRequest,
+    host,
+    inputPresentationChannel,
+    inputPresentationSessionId,
+    layout,
+    presentedMotionSnapshot.revision,
+    surfaceInteractive,
+  ]);
 
   const updatePetPreferences = useCallback(
     async (patch: Omit<PetPreferencePatch, "expected_revision">) => {
@@ -457,6 +641,7 @@ export function PresenceInputApp({
   }
 
   function openContextMenu() {
+    if (menuBlocked) return;
     setManualInputOpen(false);
     setHoverSuppressed(true);
     setMenuOpen(true);
@@ -489,116 +674,6 @@ export function PresenceInputApp({
     sendMessage(submission.text);
   }
 
-  function movePointerDown(
-    event: ReactPointerEvent<HTMLButtonElement>,
-    source: PetDragPointer["source"] = "grip",
-  ) {
-    if (event.button !== 0 || dragPointer.current !== null) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setMenuOpen(false);
-    setHoverSuppressed(true);
-    setDragPresentation({ layout, contentVisible, surfaceInteractive });
-    if (typeof event.currentTarget.setPointerCapture === "function") {
-      event.currentTarget.setPointerCapture(event.pointerId);
-    }
-    const ready = host.beginGroupDrag();
-    dragPointer.current = {
-      pointerId: event.pointerId,
-      source,
-      startScreenX: event.screenX,
-      startScreenY: event.screenY,
-      deltaX: 0,
-      deltaY: 0,
-      frame: null,
-      ready,
-      inFlight: null,
-      pending: false,
-    };
-    setMoving(true);
-  }
-
-  function requestGroupMove(drag: PetDragPointer) {
-    if (drag.inFlight !== null) {
-      drag.pending = true;
-      return;
-    }
-    drag.pending = false;
-    drag.inFlight = drag.ready
-      .then(() => host.moveGroupDrag(drag.deltaX, drag.deltaY))
-      .catch(() => undefined)
-      .finally(() => {
-        drag.inFlight = null;
-        if (drag.pending && dragPointer.current === drag) requestGroupMove(drag);
-      });
-  }
-
-  function movePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
-    const drag = dragPointer.current;
-    if (drag === null || drag.pointerId !== event.pointerId) return;
-    drag.deltaX = event.screenX - drag.startScreenX;
-    drag.deltaY = event.screenY - drag.startScreenY;
-    if (drag.source === "core" && Math.hypot(drag.deltaX, drag.deltaY) >= 4) {
-      suppressCoreActivation.current = true;
-    }
-    if (drag.frame !== null) return;
-    drag.frame = window.requestAnimationFrame(() => {
-      const current = dragPointer.current;
-      if (current === null || current.pointerId !== drag.pointerId) return;
-      current.frame = null;
-      requestGroupMove(current);
-    });
-  }
-
-  function movePointerUp(event: ReactPointerEvent<HTMLButtonElement>) {
-    const drag = dragPointer.current;
-    if (drag === null || drag.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (drag.frame !== null) window.cancelAnimationFrame(drag.frame);
-    dragPointer.current = null;
-    if (drag.source === "core" && Math.hypot(drag.deltaX, drag.deltaY) >= 4) {
-      suppressCoreActivation.current = true;
-      window.setTimeout(() => {
-        suppressCoreActivation.current = false;
-      }, 0);
-    }
-    if (
-      typeof event.currentTarget.hasPointerCapture === "function" &&
-      event.currentTarget.hasPointerCapture(event.pointerId)
-    ) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    const currentPreferences = preferencesRef.current;
-    void drag.ready
-      .then(async () => {
-        await drag.inFlight?.catch(() => undefined);
-        await host.moveGroupDrag(drag.deltaX, drag.deltaY).catch(() => undefined);
-        const revision = currentPreferences?.revision
-          ?? (await host.getPreferences()).revision;
-        return host.endGroupDrag(revision);
-      })
-      .then((saved) => {
-        preferencesRef.current = saved;
-        setPreferences(saved);
-      })
-      .catch(async () => {
-        const saved = await host.getPreferences().catch(() => null);
-        if (saved !== null) {
-          preferencesRef.current = saved;
-          setPreferences(saved);
-        }
-      })
-      .finally(() => {
-        window.requestAnimationFrame(() => {
-          window.requestAnimationFrame(() => {
-            setMoving(false);
-            setDragPresentation(null);
-          });
-        });
-      });
-  }
-
   function resetPosition() {
     const current = preferencesRef.current;
     if (current === null) return;
@@ -618,6 +693,9 @@ export function PresenceInputApp({
   return (
     <main
       className="presence-input-window"
+      style={{
+        "--presence-compact-width": `${compactWidth}px`,
+      } as CSSProperties}
       data-content-visible={String(contentVisible)}
       data-expansion-direction={
         interaction?.placement.expansion_direction ?? "right"
@@ -625,12 +703,15 @@ export function PresenceInputApp({
       data-interactive={String(surfaceInteractive)}
       data-interaction-phase={interaction?.phase ?? "idle"}
       data-interaction-ready={String(interactionReady)}
+      data-motion-activity={presentedMotionSnapshot.activity}
+      data-motion-state={presentedMotionSnapshot.state}
+      data-motion-surface={presentedMotionSnapshot.surface}
       data-layout={layout}
-      data-menu-open={String(menuOpen)}
+      data-menu-open={String(effectiveMenuOpen)}
       data-moving={String(moving)}
-      data-reduced-motion={String(
-        interaction?.reduced_motion === true || preferences?.reduced_motion === true
-      )}
+      data-reduced-motion={String(reducedMotion)}
+      data-reduced-transparency={String(accessibility.reduced_transparency)}
+      data-increased-contrast={String(accessibility.increased_contrast)}
       data-testid="presence-input-surface"
       onPointerDown={() => setReplyInteraction((value) => value + 1)}
       onPointerEnter={() => setReplyInteraction((value) => value + 1)}
@@ -644,7 +725,7 @@ export function PresenceInputApp({
         aria-label="Open Fairy quick input"
         className="presence-core-hit-target"
         onClick={() => {
-          if (suppressCoreActivation.current) return;
+          if (suppressCoreActivation.current || moving) return;
           openQuickInput();
         }}
         onContextMenu={(event) => {
@@ -653,18 +734,15 @@ export function PresenceInputApp({
           openContextMenu();
         }}
         onDoubleClick={() => {
+          if (suppressCoreActivation.current || moving) return;
           channel.requestWorkspaceOpen();
           void host.openMain().catch(() => undefined);
         }}
-        onLostPointerCapture={movePointerUp}
-        onPointerCancel={movePointerUp}
-        onPointerDown={(event) => movePointerDown(event, "core")}
-        onPointerMove={movePointerMove}
-        onPointerUp={movePointerUp}
-        title="Fairy"
+        tabIndex={-1}
         type="button"
       />
       <PresencePanel
+        onCompactWidthChange={updateCompactWidth}
         actions={{
           cancelTurn,
           closeReply: (replyId) => {
@@ -674,12 +752,13 @@ export function PresenceInputApp({
           closeSubmission: () => setSubmission(null),
           dismissNotice,
           exit: () => void host.exit(),
-          movePointerDown,
-          movePointerMove,
-          movePointerUp,
           newChat: () => channel.requestNewChat(),
           openMain: () => {
             channel.requestWorkspaceOpen();
+            void host.openMain().catch(() => undefined);
+          },
+          openCompanion: () => {
+            channel.requestRealtimeOpen?.();
             void host.openMain().catch(() => undefined);
           },
           openReview: () => {
@@ -693,11 +772,6 @@ export function PresenceInputApp({
           send: sendMessage,
           setInputOpen,
           setMenuOpen,
-          showMoveGrip: () => {
-            setMenuOpen(false);
-            setHoverSuppressed(false);
-            setManualInputOpen(true);
-          },
           toggleAlwaysOnTop: () =>
             void updatePetPreferences({ pet_always_on_top: !alwaysOnTop }),
           toggleAutoPlay: () =>
@@ -713,8 +787,7 @@ export function PresenceInputApp({
         focusRequest={focusRequest}
         inputOpen={inputOpen && !cardOpen}
         interactive={surfaceInteractive}
-        menuOpen={menuOpen}
-        moving={moving}
+        menuOpen={effectiveMenuOpen}
         muted={muted}
         reply={reply}
         submission={submissionCard}
@@ -791,4 +864,32 @@ function failureTitle(failure: PresenceSubmissionFailure | null): string {
   if (failure === "offline") return "Fairy is offline";
   if (failure === "busy") return "Fairy is already working";
   return "Message could not be sent";
+}
+
+function layoutForSurface(surface: FairySurface): PetInputLayout {
+  switch (surface) {
+    case "input": return "compact";
+    case "options":
+    case "submission":
+    case "reply":
+    case "notice": return "expanded";
+    case "core": return "hidden";
+  }
+}
+
+function writeInputPresentationDiagnostics(
+  commit: { session_id: number; revision: number } | null,
+  status: "starting" | "pending" | "committed" | "failed",
+): void {
+  if (typeof document === "undefined") return;
+  const targets = [
+    document.documentElement,
+    document.querySelector('[data-testid="presence-input-surface"]'),
+  ];
+  for (const target of targets) {
+    if (!(target instanceof HTMLElement)) continue;
+    target.dataset.inputPresentationStatus = status;
+    target.dataset.inputPresentationSession = String(commit?.session_id ?? 0);
+    target.dataset.inputPresentationRevision = String(commit?.revision ?? 0);
+  }
 }

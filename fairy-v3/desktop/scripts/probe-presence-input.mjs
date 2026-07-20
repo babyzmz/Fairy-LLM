@@ -2,25 +2,21 @@ import { chromium } from "playwright";
 
 const args = parseArguments(process.argv.slice(2));
 const port = Number(args.port);
-const action = args.action ?? "probe";
-const deltaX = Number(args["delta-x"] ?? -48);
-const deltaY = Number(args["delta-y"] ?? 0);
+const action = args.action ?? "measure";
 const screenshotPrefix = args["screenshot-prefix"] ?? null;
 
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error("--port must be a valid TCP port");
 }
-if (!new Set(["close", "measure", "menu", "open", "probe"]).has(action)) {
-  throw new Error("--action must be close, measure, menu, open, or probe");
-}
-if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) {
-  throw new Error("drag deltas must be finite numbers");
+if (!new Set(["close", "measure", "menu", "open"]).has(action)) {
+  throw new Error("--action must be close, measure, menu, or open");
 }
 
 const browser = await connectWithRetry(`http://127.0.0.1:${port}`, 30_000);
 try {
   const page = await findInputPage(browser, 30_000);
   if (action === "menu") {
+    await waitForPresentationCommit(page, browser);
     await page.locator(".presence-core-hit-target").click({ button: "right", force: true });
     const menu = page.getByRole("menu", { name: "Fairy menu" });
     await menu.waitFor({ state: "visible", timeout: 10_000 });
@@ -32,13 +28,14 @@ try {
     process.stdout.write(`${JSON.stringify(state)}\n`);
   } else {
     await ensureInputOpen(page);
+    const presentation = await waitForPresentationCommit(page, browser);
     if (action === "close") {
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => {
       const surface = document.querySelector('[data-testid="presence-input-surface"]');
-      return surface instanceof HTMLElement && surface.dataset.layout === "core";
+      return surface instanceof HTMLElement && surface.dataset.layout === "hidden";
     });
-    process.stdout.write(`${JSON.stringify({ input_open: false, layout: "core" })}\n`);
+    process.stdout.write(`${JSON.stringify({ input_open: false, layout: "hidden" })}\n`);
     } else if (action === "open") {
     if (screenshotPrefix !== null) {
       await page.waitForTimeout(350);
@@ -64,6 +61,7 @@ try {
     });
     process.stdout.write(`${JSON.stringify({
       ...state,
+      presentation,
       render: await readRenderSurface(browser),
     })}\n`);
     } else {
@@ -76,22 +74,11 @@ try {
       );
       focusPoints.push({ name: point.name, focused });
     }
-    if (action === "probe") {
-      await page.evaluate(async ({ x, y }) => {
-        const invoke = window.__TAURI_INTERNALS__?.invoke;
-        if (typeof invoke !== "function") throw new Error("Tauri invoke is unavailable");
-        const preferences = await invoke("desktop_preferences_get");
-        await invoke("pet_window_group_begin_drag");
-        await invoke("pet_window_group_move", {
-          deltaX: Math.round(x),
-          deltaY: Math.round(y),
-        });
-        await invoke("pet_window_group_end_drag", {
-          expectedRevision: preferences.revision,
-        });
-      }, { x: deltaX, y: deltaY });
-    }
-    process.stdout.write(`${JSON.stringify({ ...result, focus_points: focusPoints })}\n`);
+    process.stdout.write(`${JSON.stringify({
+      ...result,
+      focus_points: focusPoints,
+      presentation,
+    })}\n`);
     }
   }
 } finally {
@@ -111,7 +98,7 @@ async function ensureInputOpen(page) {
 }
 
 async function measureInput(page) {
-  return page.evaluate(async () => {
+  return page.evaluate(() => {
     const rect = (value) => ({
       left: value.left,
       top: value.top,
@@ -120,19 +107,14 @@ async function measureInput(page) {
       width: value.width,
       height: value.height,
     });
-    const invoke = window.__TAURI_INTERNALS__?.invoke;
-    if (typeof invoke !== "function") throw new Error("Tauri invoke is unavailable");
-    await invoke("pet_input_set_layout", { layout: "compact" });
-    await invoke("pet_input_set_interactive", { interactive: true });
-    await new Promise((resolve) => setTimeout(resolve, 80));
     const shell = document.querySelector('[data-testid="presence-input-field"]');
     const input = document.querySelector(".presence-input textarea");
-    const grip = document.querySelector(".presence-move-grip");
+    const coreTarget = document.querySelector(".presence-core-hit-target");
     const surface = document.querySelector('[data-testid="presence-input-surface"]');
     if (
       !(shell instanceof HTMLElement)
       || !(input instanceof HTMLTextAreaElement)
-      || !(grip instanceof HTMLElement)
+      || !(coreTarget instanceof HTMLElement)
     ) {
       throw new Error("Presence input geometry is unavailable");
     }
@@ -153,7 +135,7 @@ async function measureInput(page) {
       device_pixel_ratio: window.devicePixelRatio,
       shell: rect(shellRect),
       textarea: rect(inputRect),
-      grip: rect(grip.getBoundingClientRect()),
+      core_target: rect(coreTarget.getBoundingClientRect()),
       edge_delta_css: edgeDelta,
       edge_delta_physical: {
         left: edgeDelta.left * window.devicePixelRatio,
@@ -222,6 +204,12 @@ async function readRenderSurface(browser) {
       input_capsule_visible: root instanceof HTMLElement
         ? root.dataset.inputCapsuleVisible === "true"
         : false,
+      input_presentation: root instanceof HTMLElement
+        ? {
+            session_id: Number(root.dataset.inputPresentationSession ?? 0),
+            revision: Number(root.dataset.inputPresentationRevision ?? 0),
+          }
+        : null,
       shape: canvas instanceof HTMLCanvasElement
         ? {
             droplet: canvas.dataset.shapeDroplet ?? null,
@@ -231,6 +219,45 @@ async function readRenderSurface(browser) {
         : null,
     };
   });
+}
+
+async function waitForPresentationCommit(inputPage, browser) {
+  const renderPage = await findSurfacePage(browser, "pet-render");
+  if (renderPage === null) throw new Error("pet-render WebView was not exposed through CDP");
+  const deadline = Date.now() + 10_000;
+  let last = null;
+  while (Date.now() < deadline) {
+    const input = await inputPage.evaluate(() => {
+      const root = document.documentElement;
+      return {
+        status: root.dataset.inputPresentationStatus ?? null,
+        session_id: Number(root.dataset.inputPresentationSession ?? 0),
+        revision: Number(root.dataset.inputPresentationRevision ?? 0),
+      };
+    });
+    const render = await renderPage.evaluate(() => {
+      const root = document.querySelector('[data-testid="presence-render-surface"]');
+      return root instanceof HTMLElement
+        ? {
+            session_id: Number(root.dataset.inputPresentationSession ?? 0),
+            revision: Number(root.dataset.inputPresentationRevision ?? 0),
+          }
+        : null;
+    });
+    last = { input, render };
+    if (
+      input.status === "committed"
+      && input.session_id > 0
+      && input.revision > 0
+      && render !== null
+      && render.session_id === input.session_id
+      && render.revision === input.revision
+    ) {
+      return last;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Input/Renderer presentation did not converge: ${JSON.stringify(last)}`);
 }
 
 async function findSurfacePage(browser, expectedSurface) {
