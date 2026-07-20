@@ -15,6 +15,7 @@ import type {
   KnowledgeGraph,
   KnowledgeItem,
   ProjectKnowledgeOverview,
+  ObsidianConnectorHealth,
   MediaGenerationJob,
   ModelCatalogPage,
   ModelSelectionPreference,
@@ -94,6 +95,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   documents: Pick<CoreClient["documents"], "import" | "list" | "search" | "delete">;
   memory: Pick<CoreClient["memory"], "search" | "forget">;
   knowledge: Pick<CoreClient["knowledge"], "overview" | "listItems" | "graph">;
+  obsidian: Pick<CoreClient["obsidian"], "health">;
   voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
   systemActions: Pick<CoreClient["systemActions"], "execute">;
   events: Pick<CoreClient["events"], "sourceId" | "state" | "list" | "subscribe">;
@@ -149,6 +151,7 @@ export interface WorkspaceModel {
   knowledgeItems: KnowledgeItem[];
   knowledgeGraph: KnowledgeGraph | null;
   knowledgeLoading: boolean;
+  obsidianHealth: ObsidianConnectorHealth | null;
   mediaJobs: MediaGenerationJob[];
   assetSets: AssetSet[];
   workspaceFilesLoading: boolean;

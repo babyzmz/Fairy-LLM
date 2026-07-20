@@ -126,6 +126,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
 
   const projects = sortHistoryItems(projectsQuery.data?.items ?? []);
   const selectedProject = selectedItem(projects, projectSelection);
+  const obsidianHealthQuery = useQuery({
+    queryKey: [...workspaceKey, "obsidian", "health"],
+    queryFn: () => client.obsidian.health(),
+    enabled: healthQuery.isSuccess,
+    retry: false,
+  });
   const knowledgeOverviewQuery = useQuery({
     queryKey: [...workspaceKey, "knowledge", "overview", selectedProject?.id],
     queryFn: () => client.knowledge.overview(requireId(selectedProject?.id)),
@@ -1010,6 +1016,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     knowledgeGraph: knowledgeGraphQuery.data ?? null,
     knowledgeLoading:
       knowledgeOverviewQuery.isPending || knowledgeItemsQuery.isPending || knowledgeGraphQuery.isPending,
+    obsidianHealth: obsidianHealthQuery.data ?? null,
     mediaJobs: mediaJobsQuery.data?.items ?? [],
     assetSets: assetSetsQuery.data?.items ?? [],
     workspaceFilesLoading: workspaceFilesQuery.isPending && workspaceFilesQuery.isEnabled,

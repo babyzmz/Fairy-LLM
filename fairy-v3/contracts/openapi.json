@@ -8040,6 +8040,40 @@
         "title": "ObservationStatus",
         "type": "string"
       },
+      "ObsidianConnectorHealthModel": {
+        "additionalProperties": false,
+        "properties": {
+          "cli_available": {
+            "title": "Cli Available",
+            "type": "boolean"
+          },
+          "desktop_installed": {
+            "title": "Desktop Installed",
+            "type": "boolean"
+          },
+          "minimum_installer_version": {
+            "default": "1.12.7",
+            "title": "Minimum Installer Version",
+            "type": "string"
+          },
+          "public_summary": {
+            "title": "Public Summary",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "desktop_installed",
+          "cli_available",
+          "status",
+          "public_summary"
+        ],
+        "title": "ObsidianConnectorHealthModel",
+        "type": "object"
+      },
       "OpenSettingsAction": {
         "additionalProperties": false,
         "properties": {
@@ -19284,6 +19318,57 @@
           }
         ],
         "summary": "Update Model Selection"
+      }
+    },
+    "/v1/obsidian/health": {
+      "get": {
+        "operationId": "obsidian.health.get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObsidianConnectorHealthModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Obsidian Health"
       }
     },
     "/v1/permissions": {

@@ -1305,6 +1305,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/obsidian/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Obsidian Health */
+        get: operations["obsidian.health.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/permissions": {
         parameters: {
             query?: never;
@@ -5420,6 +5437,22 @@ export interface components {
          * @enum {string}
          */
         ObservationStatus: "pending" | "accepted" | "rejected" | "promoted" | "forgotten";
+        /** ObsidianConnectorHealthModel */
+        ObsidianConnectorHealthModel: {
+            /** Cli Available */
+            cli_available: boolean;
+            /** Desktop Installed */
+            desktop_installed: boolean;
+            /**
+             * Minimum Installer Version
+             * @default 1.12.7
+             */
+            minimum_installer_version: string;
+            /** Public Summary */
+            public_summary: string;
+            /** Status */
+            status: string;
+        };
         /** OpenSettingsAction */
         OpenSettingsAction: {
             page: components["schemas"]["SystemSettings"];
@@ -10417,6 +10450,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelSelectionPreferenceModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "obsidian.health.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObsidianConnectorHealthModel"];
                 };
             };
             /** @description Validation Error */

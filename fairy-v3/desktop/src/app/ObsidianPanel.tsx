@@ -107,7 +107,7 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
         ) : view === "graph" ? (
           <ProjectGraph nodes={graph.nodes} edges={graph.edges} />
         ) : (
-          <SyncStatus workspaceGeneration={model.workspaceGeneration} />
+          <SyncStatus workspaceGeneration={model.workspaceGeneration} health={model.obsidianHealth} />
         )}
       </div>
     </section>
@@ -201,11 +201,17 @@ function ProjectGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[]
   );
 }
 
-function SyncStatus({ workspaceGeneration }: { workspaceGeneration: number }) {
+function SyncStatus({
+  workspaceGeneration,
+  health,
+}: {
+  workspaceGeneration: number;
+  health: WorkspaceModel["obsidianHealth"];
+}) {
   return (
     <div className="obsidian-sync">
       <section><RefreshCw size={18} /><div><h3>Fairy project index</h3><p>Generation {workspaceGeneration || 0} is available for files, links, and graph projection.</p></div><strong>Ready</strong></section>
-      <section><Network size={18} /><div><h3>Official Obsidian Vault</h3><p>Not connected. Vault authorization, managed folder selection, and test sync will be configured here.</p></div><strong>Not connected</strong></section>
+      <section><Network size={18} /><div><h3>Official Obsidian Vault</h3><p>{health?.public_summary ?? "Checking the local Obsidian installation and official CLI."}</p></div><strong>{health?.status.replaceAll("_", " ") ?? "Checking"}</strong></section>
       <p className="obsidian-sync-note">Ordinary Vault folders remain read-only. Fairy writes only inside the managed <code>Fairy/</code> directory after explicit authorization.</p>
     </div>
   );

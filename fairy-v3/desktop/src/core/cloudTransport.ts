@@ -47,6 +47,7 @@ const routes = {
     getWithQuery(`/v1/projects/${pathParameter(params, "project_id")}/knowledge/items`, params, ["query", "limit"]),
   "knowledge.graph.get": (params) =>
     get(`/v1/projects/${pathParameter(params, "project_id")}/knowledge/graph`),
+  "obsidian.health.get": () => get("/v1/obsidian/health"),
   "trash.items.list": (params) => getWithQuery("/v1/history/trash", params, ["limit", "cursor"]),
   "trash.items.restore": (params) =>
     post(

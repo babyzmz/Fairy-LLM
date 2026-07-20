@@ -835,6 +835,15 @@ function createClient(
         edges: [],
       }),
     },
+    obsidian: {
+      health: async () => ({
+        desktop_installed: false,
+        cli_available: false,
+        minimum_installer_version: "1.12.7",
+        status: "not_installed",
+        public_summary: "Install Obsidian 1.12.7 or newer to connect a Vault",
+      }),
+    },
     assistant: {
       turns: {
         create:

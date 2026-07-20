@@ -497,6 +497,7 @@ function workspaceModel(): WorkspaceModel {
     knowledgeItems: [],
     knowledgeGraph: null,
     knowledgeLoading: false,
+    obsidianHealth: null,
     mediaJobs: [],
     assetSets: [],
     workspaceFilesLoading: false,

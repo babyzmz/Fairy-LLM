@@ -81,6 +81,7 @@ from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
 from fairy_core.memory.tools import MemoryToolExecutor
 from fairy_core.model_catalog.ports import ModelCatalogSource
+from fairy_core.obsidian import ObsidianConnector
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.presentation.packs import RendererPackInstaller
@@ -389,6 +390,7 @@ class CoreService(CoreServiceEndpointsMixin):
                 cancel_project_activity=self._cancel_project_activity,
             ),
             **knowledge_service_handlers(ProjectKnowledgeApplication(unit_of_work_factory)),
+            "obsidian.health.get": lambda _request: ObsidianConnector().health(),
             "documents.delete": self._delete_document,
             "documents.get": self._get_document,
             "documents.import": self._import_document,

@@ -237,6 +237,10 @@ export class CoreClient {
       this.transport.call("knowledge.graph.get", { project_id: projectId }),
   };
 
+  readonly obsidian = {
+    health: () => this.transport.call("obsidian.health.get", {}),
+  };
+
   readonly conversations = {
     create: (input: ConversationCreateInput) => this.transport.call("conversations.create", input),
     get: (conversationId: string) => this.transport.call("conversations.get", { conversation_id: conversationId }),

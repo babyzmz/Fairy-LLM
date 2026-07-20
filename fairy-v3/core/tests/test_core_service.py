@@ -913,6 +913,7 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "models.catalog.refresh",
         "models.selection.get",
         "models.selection.update",
+        "obsidian.health.get",
         "projects.create",
         "projects.archive",
         "projects.archived.delete",

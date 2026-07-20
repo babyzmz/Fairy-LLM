@@ -193,6 +193,7 @@ from fairy_core.contracts.models import (
     VoiceTranscribeInput,
     VoiceTranscriptModel,
 )
+from fairy_core.contracts.obsidian import ObsidianConnectorHealthModel
 from fairy_core.contracts.planning import (
     ExecutionPlanContextModel,
     ExecutionPlanCreateInput,
@@ -586,6 +587,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "models.selection.update",
             ModelSelectionUpdateInput,
             ModelSelectionPreferenceModel,
+        ),
+        "obsidian.health.get": CoreMethod(
+            "obsidian.health.get",
+            EmptyInput,
+            ObsidianConnectorHealthModel,
         ),
         "knowledge.graph.get": CoreMethod(
             "knowledge.graph.get",

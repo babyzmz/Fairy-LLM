@@ -103,6 +103,7 @@ from fairy_core.contracts.models import (
     VersionModel,
     VersionPageModel,
 )
+from fairy_core.contracts.obsidian import ObsidianConnectorHealthModel
 from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.contracts.turn_trace import TurnTraceModel
 from fairy_core.domain.errors import DomainError, IdempotencyConflictError, VersionConflictError
@@ -453,6 +454,14 @@ def create_cloud_app(
     def get_project_knowledge_graph(project_id: UUID) -> dict[str, Any]:
         request = KnowledgeProjectInput(project_id=project_id)
         return invoke("knowledge.graph.get", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/obsidian/health",
+        operation_id="obsidian.health.get",
+        response_model=ObsidianConnectorHealthModel,
+    )
+    def get_obsidian_health() -> dict[str, Any]:
+        return invoke("obsidian.health.get", {})
 
     @protected.post(
         "/documents/import",

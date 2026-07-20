@@ -65,6 +65,7 @@ export type KnowledgeItemListInput = NonNullable<operations["knowledge.items.lis
   project_id: string;
 };
 export type ProjectKnowledgeOverview = Schemas["ProjectKnowledgeOverviewModel"];
+export type ObsidianConnectorHealth = Schemas["ObsidianConnectorHealthModel"];
 export type MemoryClaim = Schemas["MemoryClaimModel"];
 export type MemoryClaimContext = Schemas["MemoryClaimContextModel"];
 export type MemoryClaimPage = Schemas["MemoryClaimPageModel"];
@@ -296,6 +297,7 @@ export interface CoreMethodMap {
     params: { project_id: string };
     result: ProjectKnowledgeOverview;
   };
+  "obsidian.health.get": { params: EmptyParams; result: ObsidianConnectorHealth };
   "tasks.archive": { params: TaskArchiveInput; result: Task };
   "tasks.create": { params: TaskCreateInput; result: TaskContext };
   "tasks.get": { params: { task_id: string }; result: Task };
