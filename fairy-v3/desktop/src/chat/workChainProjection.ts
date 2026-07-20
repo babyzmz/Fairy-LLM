@@ -67,6 +67,11 @@ const TERMINAL_STATUSES = new Set<TraceStepStatus>([
   "skipped",
 ]);
 const ACTIVE_STATUSES = new Set<TraceStepStatus>(["pending", "running", "waiting"]);
+const ACTIVE_MODEL_SUMMARIES = new Set([
+  "Analyzing the request",
+  "Working on the request",
+  "Reviewing the response",
+]);
 const STEP_KINDS = new Set<TraceStepKind>([
   "route",
   "plan",
@@ -159,6 +164,9 @@ export function projectWorkChain({
   }
 
   const terminalStatus = resolvedTerminalStatus(turn, trace, traceState, ordered);
+  const staleActiveStepIds = new Set(
+    ordered.filter((step) => ACTIVE_STATUSES.has(step.status)).map((step) => step.id),
+  );
   if (terminalStatus !== null) {
     ordered = ordered.map((step) =>
       ACTIVE_STATUSES.has(step.status)
@@ -171,8 +179,17 @@ export function projectWorkChain({
     );
   }
   const active = ordered.filter((step) => ACTIVE_STATUSES.has(step.status));
-  const current =
+  const projectedCurrent =
     active.at(-1) ?? ordered.at(-1) ?? fallbackStep(turn, trace, traceState, resolvedTurnId);
+  const current = terminalStatus !== null && (
+    staleActiveStepIds.has(projectedCurrent.id) ||
+    ACTIVE_MODEL_SUMMARIES.has(projectedCurrent.summary)
+  )
+    ? {
+        ...projectedCurrent,
+        summary: terminalSummary(turn, terminalStatus),
+      }
+    : projectedCurrent;
   const terminal =
     terminalStatus !== null ||
     (turn === null && trace === null && traceState === null && active.length === 0);
@@ -184,9 +201,22 @@ export function projectWorkChain({
     completedSteps: ordered.filter((step) => TERMINAL_STATUSES.has(step.status)).length,
     totalSteps: ordered.length,
     toolCount: ordered.filter((step) => step.kind === "tool").length,
-    modelCount: ordered.filter((step) => step.kind === "model").length,
+    modelCount: new Set(
+      ordered
+        .filter((step) => step.kind === "model")
+        .map((step) => step.modelId ?? step.modelRole ?? step.id),
+    ).size,
     durationMs: traceDuration(trace, ordered, terminal, now),
   };
+}
+
+function terminalSummary(
+  turn: AssistantTurn | null,
+  status: TraceStepStatus,
+): string {
+  if (turn?.status === "failed" || status === "failed") return "Response failed";
+  if (turn?.status === "cancelled" || status === "cancelled") return "Response stopped";
+  return "Response ready";
 }
 
 export function withVoiceStep(

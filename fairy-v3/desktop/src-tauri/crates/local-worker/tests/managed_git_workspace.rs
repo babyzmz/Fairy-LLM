@@ -4,6 +4,36 @@ use fairy_local_worker::{WorkerError, WorkspaceManager};
 use tempfile::tempdir;
 
 #[test]
+fn workspace_lifecycle_counts_and_purges_current_and_legacy_roots() {
+    let temp = tempdir().expect("tempdir");
+    let managed = temp.path().join("managed");
+    let manager = WorkspaceManager::new(&managed);
+    let current = manager
+        .create_empty("workspace-1", "version-1")
+        .expect("current workspace");
+    let legacy = manager
+        .create_scratch("workspace-1", "task-1")
+        .expect("legacy workspace");
+    fs::write(current.root.join("current.bin"), b"current").expect("current file");
+    fs::write(legacy.join("legacy.bin"), b"legacy").expect("legacy file");
+
+    let expected = manager
+        .workspace_size("workspace-1")
+        .expect("workspace size");
+    assert!(expected >= 13);
+    assert_eq!(
+        manager
+            .purge_workspace("workspace-1")
+            .expect("workspace purge"),
+        expected
+    );
+    assert_eq!(manager.workspace_size("workspace-1").unwrap(), 0);
+    assert!(!managed.join("projects/workspace-1").exists());
+    assert!(!managed.join("scratch/workspace-1").exists());
+    assert_eq!(manager.purge_workspace("workspace-1").unwrap(), 0);
+}
+
+#[test]
 fn import_and_fork_keep_source_and_parent_unchanged() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source");
@@ -84,6 +114,14 @@ fn checkpoint_commits_changes_to_the_version_branch() {
         .checkpoint("project-1", "version-base", "Task completed")
         .expect("idempotent checkpoint");
     assert_eq!(retried, commit);
+
+    let next = manager
+        .fork_version("project-1", "version-base", "version-next")
+        .expect("fork checkpointed version");
+    assert_eq!(
+        fs::read_to_string(next.root.join("README.md")).unwrap(),
+        "updated"
+    );
 }
 
 #[test]

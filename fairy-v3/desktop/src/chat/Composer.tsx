@@ -53,6 +53,8 @@ export function Composer({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const draftRevisionRef = useRef(0);
+  const submittingRef = useRef(false);
   const effectiveBusy = isBusy || isSubmitting;
   const canSubmit =
     !disabled &&
@@ -62,6 +64,7 @@ export function Composer({
 
   useEffect(() => {
     if (draft === null) return;
+    draftRevisionRef.current += 1;
     setValue(draft.value);
     setFiles(draft.files);
     setCapture(draft.images[0] ?? null);
@@ -76,16 +79,36 @@ export function Composer({
   }, [value]);
 
   const submit = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || submittingRef.current) return;
+    const submittedDraft = {
+      value,
+      files,
+      capture,
+      revision: draftRevisionRef.current,
+    };
+    submittingRef.current = true;
     setIsSubmitting(true);
+    setValue("");
+    setFiles([]);
+    setCapture(null);
+    setAttachmentError(null);
+    if (fileInputRef.current !== null) fileInputRef.current.value = "";
+    inputRef.current?.focus();
     try {
-      await onSubmit(value.trim(), files, capture === null ? [] : [capture]);
-      setValue("");
-      setFiles([]);
-      setCapture(null);
-      setAttachmentError(null);
-      inputRef.current?.focus();
+      await onSubmit(
+        submittedDraft.value.trim(),
+        submittedDraft.files,
+        submittedDraft.capture === null ? [] : [submittedDraft.capture],
+      );
+    } catch (error) {
+      if (draftRevisionRef.current === submittedDraft.revision) {
+        setValue(submittedDraft.value);
+        setFiles(submittedDraft.files);
+        setCapture(submittedDraft.capture);
+      }
+      throw error;
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -107,7 +130,10 @@ export function Composer({
                 type="button"
                 aria-label={`Remove ${file.name}`}
                 title={`Remove ${file.name}`}
-                onClick={() => setFiles((current) => current.filter((_, item) => item !== index))}
+                onClick={() => {
+                  draftRevisionRef.current += 1;
+                  setFiles((current) => current.filter((_, item) => item !== index));
+                }}
               >
                 <X size={13} />
               </button>
@@ -130,7 +156,10 @@ export function Composer({
             rows={1}
             placeholder="Message Fairy"
             disabled={disabled}
-            onChange={(event) => setValue(event.target.value)}
+            onChange={(event) => {
+              draftRevisionRef.current += 1;
+              setValue(event.target.value);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
@@ -163,6 +192,7 @@ export function Composer({
               setAttachmentError(`${oversized.name} exceeds the 20 MiB document limit`);
             } else {
               setAttachmentError(null);
+              draftRevisionRef.current += 1;
               setFiles((current) => [...current, ...selected].slice(0, 10));
             }
             event.currentTarget.value = "";
@@ -182,7 +212,10 @@ export function Composer({
           disabled={disabled || effectiveBusy}
           visionAvailable={visionAvailable}
           value={capture}
-          onChange={setCapture}
+          onChange={(nextCapture) => {
+            draftRevisionRef.current += 1;
+            setCapture(nextCapture);
+          }}
         />
         <ModelSelector
           catalog={modelCatalog}
@@ -195,9 +228,10 @@ export function Composer({
           <div className="composer-toolbar-end">
         <VoiceRecordControl
           disabled={disabled || effectiveBusy}
-          onTranscript={(text) =>
-            setValue((current) => (current.trim() ? `${current.trimEnd()} ${text}` : text))
-          }
+          onTranscript={(text) => {
+            draftRevisionRef.current += 1;
+            setValue((current) => (current.trim() ? `${current.trimEnd()} ${text}` : text));
+          }}
         />
         {effectiveBusy ? (
           <button

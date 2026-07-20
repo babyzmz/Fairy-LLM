@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAssistantTurn } from "../chat/useAssistantTurn";
 import { useTurnTraces } from "../chat/useTurnTraces";
-import type { Conversation, EventEnvelope, McpToolPolicyInput, Project, Task } from "../core/client";
+import type { EventEnvelope, McpToolPolicyInput, Task } from "../core/client";
 import { runEventDelivery } from "../core/eventStream";
 import { CoreRpcError } from "../core/tauriTransport";
 import type { McpServerDraft } from "../settings/extensionTypes";
@@ -25,6 +25,13 @@ import {
 } from "./workspacePreferences";
 import { equalOverrides, extensionUpdateKey, permissionUpdateKey, requireMcpServer } from "./workspaceCommandKeys";
 import { createWorkspaceFileActions } from "./workspaceFileActions";
+import { previewStartIdempotencyKey } from "./workspacePreviewActions";
+import {
+  collectCursorPages,
+  createWorkspaceHistoryActions,
+  projectOverviewSelection,
+  sortHistoryItems,
+} from "./workspaceHistoryActions";
 
 const workspaceKey = ["workspace"] as const;
 const permissionQueryKey = [...workspaceKey, "permissions"] as const;
@@ -35,7 +42,6 @@ const terminalAssistantEvents = new Set([
   "assistant.turn.cancelled",
   "assistant.turn.failed",
 ]);
-
 export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const queryClient = useQueryClient();
   const [mode, setMode] = usePersistedEnum<WorkspaceMode>("fairy.workspace.mode", "project", ["project", "chat"]);
@@ -52,6 +58,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const [actionErrorCode, setActionErrorCode] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
   const [chatTaskId, setChatTaskId] = useState<string | null>(null);
+  const [projectTurnTaskId, setProjectTurnTaskId] = useState<string | null>(null);
   const [petTaskId, setPetTaskId] = useState<string | null>(null);
   const petSubmissionRef = useRef(false);
   const petConversationIdRef = useRef<string | null>(null);
@@ -75,13 +82,13 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const permissionProfile = permissionsQuery.data?.profile ?? null;
   const projectsQuery = useQuery({
     queryKey: [...workspaceKey, "projects"],
-    queryFn: () => client.projects.list({ limit: 100 }),
+    queryFn: () => collectCursorPages((cursor) => client.projects.list({ limit: 100, cursor })),
     enabled: healthQuery.isSuccess,
     retry: false,
   });
   const conversationsQuery = useQuery({
     queryKey: [...workspaceKey, "conversations"],
-    queryFn: () => client.conversations.list({ limit: 100 }),
+    queryFn: () => collectCursorPages((cursor) => client.conversations.list({ limit: 100, cursor })),
     enabled: healthQuery.isSuccess,
     retry: false,
   });
@@ -117,9 +124,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   });
   const modelController = useModelSelection(client, healthQuery.isSuccess);
 
-  const projects = projectsQuery.data?.items ?? [];
+  const projects = sortHistoryItems(projectsQuery.data?.items ?? []);
   const selectedProject = selectedItem(projects, projectSelection);
-  const allConversations = conversationsQuery.data?.items ?? [];
+  const allConversations = sortHistoryItems(conversationsQuery.data?.items ?? []);
   const conversations = allConversations.filter((conversation) => conversation.project_id === selectedProject?.id);
   const projectConversations = allConversations.filter(
     (conversation) => conversation.workspace_type === "project_chat",
@@ -127,7 +134,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const chatConversations = allConversations.filter(
     (conversation) => conversation.project_id === null && conversation.workspace_type === "chat_scratch",
   );
-  const selectedConversation = selectedItem(conversations, conversationSelection);
+  const selectedConversation = conversationSelection === projectOverviewSelection
+    ? null
+    : selectedItem(conversations, conversationSelection);
   const selectedChatConversation = selectedItem(chatConversations, chatConversationSelection);
   const providers = providersQuery.data?.items ?? [];
   const providerHealth = providerHealthQuery.data?.items ?? [];
@@ -148,16 +157,26 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
 
   const tasksQuery = useQuery({
     queryKey: [...workspaceKey, "tasks"],
-    queryFn: () => client.tasks.list({ limit: 100 }),
+    queryFn: () => collectCursorPages((cursor) => client.tasks.list({ limit: 100, cursor })),
     enabled: healthQuery.isSuccess,
     retry: false,
   });
   const allTasks = tasksQuery.data?.items ?? [];
   const tasks = allTasks.filter((task) => task.conversation_id === selectedConversation?.id);
-  const selectedTask = selectedItem(tasks, taskSelection);
+  const requestedProjectTask = selectedItem(tasks, taskSelection);
   const chatTasks = allTasks.filter((task) => task.conversation_id === selectedChatConversation?.id);
+  const projectWorkspaceTask =
+    tasks.find((task) => task.id === projectTurnTaskId) ??
+    tasks.find((task) => task.id === selectedConversation?.active_task_id) ??
+    [...tasks].sort((left, right) => right.updated_at.localeCompare(left.updated_at)).at(0) ??
+    null;
+  const selectedTask = requestedProjectTask ?? projectWorkspaceTask;
   const workspaceTask =
-    mode === "chat" ? (chatTasks.find((task) => task.id === chatTaskId) ?? chatTasks.at(-1) ?? null) : selectedTask;
+    mode === "chat"
+      ? (chatTasks.find((task) => task.id === chatTaskId) ??
+        [...chatTasks].sort((left, right) => right.updated_at.localeCompare(left.updated_at)).at(0) ??
+        null)
+      : projectWorkspaceTask;
   const messagesQuery = useQuery({
     queryKey: [...workspaceKey, "messages", selectedChatConversation?.id],
     queryFn: () =>
@@ -322,8 +341,14 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     modelSelection: modelController.selection,
     operationMode: "continue_current_chat_draft",
     events: allEvents,
-    onTaskCreated: setTaskSelection,
-    onSettled: invalidateWorkspace,
+    onTaskCreated(taskId) {
+      setProjectTurnTaskId(taskId);
+      setTaskSelection(taskId);
+    },
+    onSettled() {
+      setProjectTurnTaskId(null);
+      void invalidateWorkspace();
+    },
   });
   const { turnTraces, turnTraceStates, projectTrace, projectTraceState } = useTurnTraces(client, {
     enabled: healthQuery.isSuccess,
@@ -581,123 +606,50 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     [client.mcp.servers, mcpServersQuery.data?.items, runAction],
   );
 
+  const historyActions = useMemo(
+    () =>
+      createWorkspaceHistoryActions({
+        client,
+        runAction,
+        projects,
+        selectedProjectId: selectedProject?.id ?? null,
+        projectConversations,
+        chatConversations,
+        conversationSelection,
+        chatConversationSelection,
+        setProjectSelection,
+        setConversationSelection,
+        setChatConversationSelection,
+        setTaskSelection,
+        setChatTaskId,
+        setPetTaskId,
+        setPetConversationId: (value) => {
+          petConversationIdRef.current = value;
+        },
+        setMode,
+        resetChatAssistant: chatAssistant.reset,
+      }),
+    [
+      chatAssistant.reset,
+      chatConversationSelection,
+      chatConversations,
+      client,
+      conversationSelection,
+      projectConversations,
+      projects,
+      runAction,
+      selectedProject?.id,
+      setChatConversationSelection,
+      setConversationSelection,
+      setMode,
+      setProjectSelection,
+      setTaskSelection,
+    ],
+  );
+
   const actions = useMemo(
     () => ({
-      selectProject(projectId: string) {
-        setProjectSelection(projectId);
-        setConversationSelection(null);
-        setTaskSelection(null);
-      },
-      selectConversation(conversationId: string) {
-        setConversationSelection(conversationId);
-        setTaskSelection(null);
-      },
-      selectChatConversation(conversationId: string) {
-        setMode("chat");
-        if (chatConversationSelection === conversationId) return;
-        setChatConversationSelection(conversationId);
-        setChatTaskId(null);
-        setPetTaskId(null);
-        petConversationIdRef.current = null;
-        chatAssistant.reset();
-      },
-      async createProject(name: string) {
-        const result = await runAction(() => client.projects.create({ name, residency: "local_only" }));
-        setProjectSelection(result.project.id);
-        setConversationSelection(null);
-        setTaskSelection(null);
-      },
-      async importProject(name: string, sourcePath: string) {
-        const result = await runAction(() =>
-          client.projects.import({
-            name,
-            residency: "local_only",
-            source_path: sourcePath,
-          }),
-        );
-        setProjectSelection(result.project.id);
-        setConversationSelection(null);
-        setTaskSelection(null);
-      },
-      async createChatConversation() {
-        const conversation = await runAction(() =>
-          client.conversations.create({
-            project_id: null,
-            workspace_type: "chat_scratch",
-          }),
-        );
-        setChatConversationSelection(conversation.id);
-        setChatTaskId(null);
-        setPetTaskId(null);
-        petConversationIdRef.current = null;
-        setMode("chat");
-        chatAssistant.reset();
-      },
-      async createPetChatConversation() {
-        const conversation = await runAction(() =>
-          client.conversations.create({
-            project_id: null,
-            workspace_type: "chat_scratch",
-          }),
-        );
-        petConversationIdRef.current = conversation.id;
-        setChatConversationSelection(conversation.id);
-        setChatTaskId(null);
-        setPetTaskId(null);
-        setMode("chat");
-        chatAssistant.reset();
-      },
-      async renameConversation(conversation: Conversation, title: string) {
-        await runAction(async () => {
-          const latest = await client.conversations.get(conversation.id);
-          return client.conversations.update({
-            conversation_id: conversation.id,
-            title,
-            expected_revision: latest.revision,
-          });
-        });
-      },
-      async setConversationPinned(conversation: Conversation, pinned: boolean) {
-        await runAction(async () => {
-          const latest = await client.conversations.get(conversation.id);
-          return client.conversations.update({
-            conversation_id: conversation.id,
-            pinned,
-            expected_revision: latest.revision,
-          });
-        });
-      },
-      async deleteConversation(conversation: Conversation) {
-        await runAction(async () => {
-          const latest = await client.conversations.get(conversation.id);
-          return client.conversations.delete({
-            conversation_id: conversation.id,
-            expected_revision: latest.revision,
-            user_confirmed: true,
-          });
-        });
-        if (chatConversationSelection === conversation.id) {
-          setChatConversationSelection(null);
-          setChatTaskId(null);
-          chatAssistant.reset();
-        }
-      },
-      async moveConversationToProject(conversation: Conversation, project: Project) {
-        const result = await runAction(async () => {
-          const latest = await client.conversations.get(conversation.id);
-          return client.conversations.moveToProject({
-            conversation_id: conversation.id,
-            target_project_id: project.id,
-            expected_revision: latest.revision,
-            user_confirmed: true,
-            idempotency_key: `desktop:conversation-move:${conversation.id}:${project.id}:${latest.revision}`,
-          });
-        });
-        setProjectSelection(project.id);
-        setConversationSelection(result.destination_conversation.id);
-        setTaskSelection(null);
-        setMode("project");
-      },
+      ...historyActions,
       async sendPetMessage(value: string) {
         const text = value.trim();
         if (text.length === 0) return;
@@ -768,6 +720,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         if (workspaceTask === null) throw new Error("Task is unavailable");
         const workspace = selectedWorkspaceQuery.data;
         const versionId = workspaceTask.target_version_id;
+        const preview = previewQuery.data?.preview;
         if (workspace === undefined || versionId === null) {
           throw new Error("Workspace Version is unavailable");
         }
@@ -777,7 +730,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             workspace_id: workspaceTask.workspace_id,
             version_id: versionId,
             expected_workspace_revision: workspace.revision,
-            idempotency_key: `desktop:preview:${workspaceTask.id}`,
+            idempotency_key: previewStartIdempotencyKey(workspaceTask.id, preview),
           }),
         );
       },
@@ -915,6 +868,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       chatConversationSelection,
       chatTaskId,
       client,
+      historyActions,
       previewQuery.data?.preview,
       projectAssistant,
       invalidateWorkspace,
@@ -958,26 +912,31 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     permissionsQuery.error,
     capabilitiesQuery.error,
   );
-  const isLoading =
+  const isWorkspaceLoading =
     healthQuery.isPending ||
     (healthQuery.isSuccess && permissionsQuery.isPending) ||
     (healthQuery.isSuccess &&
       (projectsQuery.isPending ||
         conversationsQuery.isPending ||
-        providersQuery.isPending ||
-        providerHealthQuery.isPending ||
-        openRouterStatusQuery.isPending)) ||
-    modelController.loading ||
-    (healthQuery.isSuccess && (skillsQuery.isPending || mcpServersQuery.isPending)) ||
+        tasksQuery.isPending)) ||
     (selectedProject !== null && conversationsQuery.isPending) ||
-    (selectedConversation !== null && tasksQuery.isPending) ||
     (selectedChatConversation !== null && messagesQuery.isPending);
-  const state = healthQuery.isError ? "offline" : isLoading ? "loading" : projects.length === 0 ? "empty" : "ready";
+  const state = healthQuery.isError
+    ? "offline"
+    : isWorkspaceLoading
+      ? "loading"
+      : projects.length === 0
+        ? "empty"
+        : "ready";
 
   return {
     state,
     mode,
-    statusLabel: state === "offline" ? "Core offline" : state === "loading" ? "Core starting" : "Core ready",
+    statusLabel: healthQuery.isError
+      ? "Core offline"
+      : healthQuery.isPending
+        ? "Core starting"
+        : "Core ready",
     errorMessage: queryError === null ? null : errorMessage(queryError),
     actionError,
     actionErrorCode,
@@ -1074,6 +1033,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     selectProjectFolder,
     createChatConversation: actions.createChatConversation,
     createPetChatConversation: actions.createPetChatConversation,
+    createProjectConversation: actions.createProjectConversation,
+    renameProject: actions.renameProject,
+    setProjectPinned: actions.setProjectPinned,
+    archiveProject: actions.archiveProject,
+    deleteProject: actions.deleteProject,
     renameConversation: actions.renameConversation,
     setConversationPinned: actions.setConversationPinned,
     deleteConversation: actions.deleteConversation,
@@ -1145,7 +1109,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
 }
 
 function selectedItem<T extends { id: string }>(items: T[], selectedId: string | null): T | null {
-  return items.find((item) => item.id === selectedId) ?? items.at(-1) ?? null;
+  return items.find((item) => item.id === selectedId) ?? items.at(0) ?? null;
 }
 
 function requireId(value: string | null | undefined): string {

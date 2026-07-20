@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const PREFERENCES_FILE: &str = "preferences/desktop.json";
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -31,6 +31,24 @@ pub enum PetOpticsMode {
     #[default]
     Standard,
     Enhanced,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RealtimeProviderPreference {
+    #[default]
+    Auto,
+    GeminiLive,
+    GlmRealtimeFlash,
+    GlmRealtimeAir,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RealtimeVoicePreference {
+    #[default]
+    Native,
+    Fairy,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -59,6 +77,18 @@ pub struct DesktopPreferences {
     pub memory_enabled: bool,
     pub memory_retention_days: u16,
     pub analytics_enabled: bool,
+    #[serde(default)]
+    pub realtime_provider: RealtimeProviderPreference,
+    #[serde(default)]
+    pub realtime_voice_mode: RealtimeVoicePreference,
+    #[serde(default)]
+    pub realtime_game_audio_default: bool,
+    #[serde(default = "default_true")]
+    pub realtime_memory_enabled: bool,
+    #[serde(default = "default_realtime_session_minutes")]
+    pub realtime_max_session_minutes: u8,
+    #[serde(default)]
+    pub trash_auto_purge_30_days: bool,
     pub pet_enabled: bool,
     pub pet_always_on_top: bool,
     pub pet_muted: bool,
@@ -109,6 +139,12 @@ impl Default for DesktopPreferences {
             memory_enabled: true,
             memory_retention_days: 90,
             analytics_enabled: false,
+            realtime_provider: RealtimeProviderPreference::Auto,
+            realtime_voice_mode: RealtimeVoicePreference::Native,
+            realtime_game_audio_default: false,
+            realtime_memory_enabled: true,
+            realtime_max_session_minutes: default_realtime_session_minutes(),
+            trash_auto_purge_30_days: false,
             pet_enabled: true,
             pet_always_on_top: true,
             pet_muted: false,
@@ -181,7 +217,7 @@ impl DesktopPreferencesStore {
                     .get("schema_version")
                     .and_then(serde_json::Value::as_u64)
             });
-        let legacy = matches!(schema_version, Some(1..=3));
+        let legacy = matches!(schema_version, Some(1..=5));
         let mut preferences = match serde_json::from_slice::<DesktopPreferences>(&bytes) {
             Ok(preferences) => preferences,
             Err(_) if legacy => return Ok(DesktopPreferences::default()),
@@ -295,6 +331,11 @@ fn validate(preferences: &DesktopPreferences) -> Result<(), DesktopPreferencesEr
             "memory retention must be between 1 and 3650 days".to_owned(),
         ));
     }
+    if !(5..=120).contains(&preferences.realtime_max_session_minutes) {
+        return Err(DesktopPreferencesError::Invalid(
+            "realtime session length must be between 5 and 120 minutes".to_owned(),
+        ));
+    }
     if !(75..=150).contains(&preferences.pet_size_percent) {
         return Err(DesktopPreferencesError::Invalid(
             "pet size must be between 75 and 150 percent".to_owned(),
@@ -310,9 +351,9 @@ fn validate(preferences: &DesktopPreferences) -> Result<(), DesktopPreferencesEr
             "pet hover dwell must be between 100 and 1000 milliseconds".to_owned(),
         ));
     }
-    if ![60, 144].contains(&preferences.pet_target_fps) {
+    if ![60, 144, 300].contains(&preferences.pet_target_fps) {
         return Err(DesktopPreferencesError::Invalid(
-            "pet target fps must be 60 or 144".to_owned(),
+            "pet target fps must be 60, 144, or 300".to_owned(),
         ));
     }
     if let Some(anchor) = &preferences.pet_anchor {
@@ -355,6 +396,10 @@ const fn default_pet_hover_dwell_ms() -> u16 {
 
 const fn default_pet_target_fps() -> u16 {
     60
+}
+
+const fn default_realtime_session_minutes() -> u8 {
+    30
 }
 
 #[cfg(windows)]
@@ -457,6 +502,31 @@ mod tests {
     }
 
     #[test]
+    fn desktop_preferences_accept_only_the_supported_pet_frame_rates() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        let mut preferences = DesktopPreferences::default();
+        preferences.pet_target_fps = 300;
+        let saved = store
+            .update(DesktopPreferencesUpdate {
+                expected_revision: 0,
+                preferences: preferences.clone(),
+            })
+            .expect("save 300 FPS preference");
+        assert_eq!(saved.pet_target_fps, 300);
+
+        preferences.revision = saved.revision;
+        preferences.pet_target_fps = 240;
+        assert!(matches!(
+            store.update(DesktopPreferencesUpdate {
+                expected_revision: saved.revision,
+                preferences,
+            }),
+            Err(DesktopPreferencesError::Invalid(_))
+        ));
+    }
+
+    #[test]
     fn version_one_preferences_migrate_without_losing_existing_pet_values() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let store = DesktopPreferencesStore::new(directory.path());
@@ -493,7 +563,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 4);
+        assert_eq!(migrated.schema_version, 6);
         assert!(!migrated.voice_auto_play_pet);
         assert!(!migrated.pet_always_on_top);
         assert!(migrated.pet_muted);
@@ -522,7 +592,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 4);
+        assert_eq!(migrated.schema_version, 6);
         assert_eq!(migrated.pet_target_fps, 60);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -546,8 +616,32 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 4);
+        assert_eq!(migrated.schema_version, 6);
         assert_eq!(migrated.pet_optics_mode, PetOpticsMode::Standard);
+        assert_eq!(store.load().expect("reload migrated"), migrated);
+    }
+
+    #[test]
+    fn version_four_preferences_default_to_manual_trash_cleanup() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        let path = directory.path().join("preferences/desktop.json");
+        std::fs::create_dir_all(path.parent().expect("preferences parent"))
+            .expect("create preferences parent");
+        let mut legacy =
+            serde_json::to_value(DesktopPreferences::default()).expect("serialize defaults");
+        let object = legacy.as_object_mut().expect("preferences object");
+        object.insert("schema_version".to_owned(), serde_json::json!(4));
+        object.remove("trash_auto_purge_30_days");
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&legacy).expect("legacy bytes"),
+        )
+        .expect("write legacy preferences");
+
+        let migrated = store.load().expect("migrate preferences");
+        assert_eq!(migrated.schema_version, 6);
+        assert!(!migrated.trash_auto_purge_30_days);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
 }

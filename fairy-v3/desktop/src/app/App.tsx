@@ -5,16 +5,23 @@ import { PresenceBridge } from "../presence/PresenceBridge";
 import { projectPetReply } from "../presence/domain/reply";
 import { VoiceController, useVoicePresence } from "../voice/VoiceController";
 import { DesktopPreferencesBridge } from "../settings/DesktopPreferencesBridge";
+import type { CoreClient } from "../core/client";
+import {
+  RealtimeCompanion,
+  type RealtimePresenceState,
+} from "../realtime/RealtimeCompanion";
 
 import { WorkspaceShell } from "./WorkspaceShell";
 import { type WorkspaceClient, useWorkspaceModel } from "./workspaceModel";
 
 interface AppProps {
-  client: WorkspaceClient;
+  client: WorkspaceClient & { realtime?: CoreClient["realtime"] };
 }
 
 function Workspace({ client }: AppProps) {
   const model = useWorkspaceModel(client);
+  const [realtimePresence, setRealtimePresence] = useState<RealtimePresenceState>("idle");
+  const [realtimeOpenRequest, setRealtimeOpenRequest] = useState(0);
   const profile =
     model.providers.find((provider) => provider.id === model.selectedProfileId) ?? null;
   const health =
@@ -27,7 +34,14 @@ function Workspace({ client }: AppProps) {
       : model.selectedConversation?.id ?? null;
   return (
     <>
-      <DesktopPreferencesBridge />
+      <DesktopPreferencesBridge trash={client.trash} />
+      {client.realtime ? (
+        <RealtimeCompanion
+          client={client.realtime}
+          onPresenceChange={setRealtimePresence}
+          openRequest={realtimeOpenRequest}
+        />
+      ) : null}
       <VoiceController
         client={client}
         conversationId={conversationId}
@@ -37,14 +51,26 @@ function Workspace({ client }: AppProps) {
         events={model.mode === "chat" ? model.chatEvents : []}
         petTaskId={model.petTaskId}
       >
-        <WorkspacePresence model={model} />
+        <WorkspacePresence
+          model={model}
+          realtimePresence={realtimePresence}
+          onOpenRealtime={() => setRealtimeOpenRequest((value) => value + 1)}
+        />
         <WorkspaceShell model={model} />
       </VoiceController>
     </>
   );
 }
 
-function WorkspacePresence({ model }: { model: ReturnType<typeof useWorkspaceModel> }) {
+function WorkspacePresence({
+  model,
+  realtimePresence,
+  onOpenRealtime,
+}: {
+  model: ReturnType<typeof useWorkspaceModel>;
+  realtimePresence: RealtimePresenceState;
+  onOpenRealtime(): void;
+}) {
   const voice = useVoicePresence();
   return (
     <PresenceBridge
@@ -60,6 +86,8 @@ function WorkspacePresence({ model }: { model: ReturnType<typeof useWorkspaceMod
         messages: model.messages,
       })}
       speaking={voice.speaking}
+      realtimePresence={realtimePresence}
+      onOpenRealtime={onOpenRealtime}
     />
   );
 }

@@ -6,7 +6,13 @@ import { Composer } from "../chat/Composer";
 import { HistorySidebar } from "./HistorySidebar";
 import { ContextBar } from "./ContextBar";
 import { WorkspaceInspector } from "./WorkspaceInspector";
-import { EmptyWorkspace, folderName, ProjectSetup, RecoveryNotice } from "./ProjectWorkspaceStates";
+import {
+  EmptyWorkspace,
+  folderName,
+  ProjectOverview,
+  ProjectSetup,
+  RecoveryNotice,
+} from "./ProjectWorkspaceStates";
 import { TaskTimeline } from "./TaskTimeline";
 import type { WorkspaceModel } from "./workspaceModel";
 import "./workspace.css";
@@ -57,6 +63,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
         {model.state === "loading" || model.state === "offline" ? (
           <EmptyWorkspace
             state={model.state}
+            statusLabel={model.statusLabel}
             projectName={projectName}
             importPath={importPath}
             isActing={model.isActing}
@@ -110,6 +117,8 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
             />
             <WorkspaceInspector model={model} />
           </div>
+        ) : model.state === "ready" && model.selectedProject !== null && model.selectedConversation === null ? (
+          <ProjectOverview model={model} />
         ) : model.state === "ready" ? (
           <section className="project-workspace" aria-label="Project workspace">
             <main className="workspace-main">
@@ -149,6 +158,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
         ) : (
           <EmptyWorkspace
             state={model.state}
+            statusLabel={model.statusLabel}
             projectName={projectName}
             importPath={importPath}
             isActing={model.isActing}

@@ -30,6 +30,29 @@ const routes = {
   "projects.import": (params) => post("/v1/projects/import", params),
   "projects.get": (params) => get(`/v1/projects/${pathParameter(params, "project_id")}`),
   "projects.list": (params) => getWithQuery("/v1/projects", params, ["limit", "cursor"]),
+  "projects.update_metadata": (params) =>
+    put(`/v1/projects/${pathParameter(params, "project_id")}/metadata`, params),
+  "projects.archive": (params) =>
+    post(`/v1/projects/${pathParameter(params, "project_id")}/archive`, params),
+  "projects.delete": (params) => remove(`/v1/projects/${pathParameter(params, "project_id")}`, params),
+  "projects.archived.list": (params) =>
+    getWithQuery("/v1/history/archived-projects", params, ["limit", "cursor"]),
+  "projects.archived.restore": (params) =>
+    post(`/v1/history/archived-projects/${pathParameter(params, "project_id")}/restore`, params),
+  "projects.archived.delete": (params) =>
+    remove(`/v1/history/archived-projects/${pathParameter(params, "project_id")}`, params),
+  "trash.items.list": (params) => getWithQuery("/v1/history/trash", params, ["limit", "cursor"]),
+  "trash.items.restore": (params) =>
+    post(
+      `/v1/history/trash/${pathParameter(params, "item_type")}/${pathParameter(params, "item_id")}/restore`,
+      params,
+    ),
+  "trash.items.purge": (params) =>
+    remove(
+      `/v1/history/trash/${pathParameter(params, "item_type")}/${pathParameter(params, "item_id")}`,
+      params,
+    ),
+  "trash.items.purge_all": (params) => remove("/v1/history/trash", params),
   "conversations.create": (params) => post("/v1/conversations", params),
   "conversations.delete": (params) => remove(`/v1/conversations/${pathParameter(params, "conversation_id")}`, params),
   "conversations.get": (params) => get(`/v1/conversations/${pathParameter(params, "conversation_id")}`),
@@ -115,6 +138,9 @@ const routes = {
   "extensions.catalog.list": () => get("/v1/extensions/catalog"),
   "skills.install": (params) =>
     postWithIdempotency(`/v1/skills/${pathParameter(params, "catalog_id")}`, params),
+  "skills.import.inspect": (params) => post("/v1/skills/import/inspect", params),
+  "skills.import.install": (params) => postWithIdempotency("/v1/skills/import/install", params),
+  "skills.create": (params) => postWithIdempotency("/v1/skills/create", params),
   "skills.list": () => get("/v1/skills"),
   "skills.remove": (params) =>
     deleteWithIdempotency(`/v1/skills/${pathParameter(params, "name")}`, params),
@@ -123,6 +149,8 @@ const routes = {
   "skills.update": (params) =>
     putWithIdempotency(`/v1/skills/${pathParameter(params, "name")}`, params),
   "mcp.servers.list": () => get("/v1/mcp/servers"),
+  "mcp.presets.install": (params) =>
+    postWithIdempotency(`/v1/mcp/presets/${pathParameter(params, "catalog_id")}`, params),
   "mcp.servers.configure": (params) =>
     putWithIdempotency(`/v1/mcp/servers/${pathParameter(params, "server_id")}`, params),
   "mcp.servers.discover": (params) =>
@@ -165,6 +193,20 @@ const routes = {
   "voice.sessions.get": (params) => get(`/v1/voice/sessions/${pathParameter(params, "session_id")}`),
   "voice.sessions.cancel": (params) => remove(`/v1/voice/sessions/${pathParameter(params, "session_id")}`),
   "voice.transcribe": (params) => post("/v1/voice/transcriptions", params),
+  "realtime.sessions.start": (params) => post("/v1/realtime/sessions", params),
+  "realtime.sessions.get": (params) =>
+    get(`/v1/realtime/sessions/${pathParameter(params, "session_id")}`),
+  "realtime.sessions.list": (params) =>
+    getWithQuery("/v1/realtime/sessions", params, ["limit"]),
+  "realtime.sessions.report": (params) =>
+    post(`/v1/realtime/sessions/${pathParameter(params, "session_id")}/report`, params),
+  "realtime.sessions.stop": (params) =>
+    post(`/v1/realtime/sessions/${pathParameter(params, "session_id")}/stop`, params),
+  "realtime.memories.save": (params) => post("/v1/realtime/memories", params),
+  "realtime.memories.list": (params) =>
+    getWithQuery("/v1/realtime/memories", params, ["limit"]),
+  "realtime.memories.delete": (params) =>
+    remove(`/v1/realtime/memories/${pathParameter(params, "memory_id")}`),
   "memory.observations.create": (params) => post("/v1/memory/observations", params),
   "memory.observations.list": (params) =>
     get(
@@ -211,10 +253,10 @@ const eventEnvelopeSchema = z
     cursor: z.number().int().positive(),
     run_id: z.uuid().nullable(),
     project_id: z.uuid().nullable(),
-    conversation_id: z.uuid(),
-    task_id: z.uuid(),
+    conversation_id: z.uuid().nullable(),
+    task_id: z.uuid().nullable(),
     version_id: z.uuid().nullable(),
-    task_sequence: z.number().int().positive(),
+    task_sequence: z.number().int().positive().nullable(),
     event_type: z.string().min(1),
     visibility: z.enum(["user", "developer", "internal"]),
     message: z.string(),

@@ -5,10 +5,10 @@ export interface CoreEvent {
   cursor: number;
   run_id: string | null;
   project_id: string | null;
-  conversation_id: string;
-  task_id: string;
+  conversation_id: string | null;
+  task_id: string | null;
   version_id: string | null;
-  task_sequence: number;
+  task_sequence: number | null;
   event_type: string;
   visibility: EventVisibility;
   message: string;
@@ -35,7 +35,7 @@ export function applyEvent(state: EventState, event: CoreEvent): EventState {
   return {
     lastCursor: event.cursor,
     timeline: event.visibility === "internal" ? state.timeline : [...state.timeline, event],
-    taskStatus: status
+    taskStatus: status && event.task_id !== null
       ? { ...state.taskStatus, [event.task_id]: status }
       : state.taskStatus,
   };

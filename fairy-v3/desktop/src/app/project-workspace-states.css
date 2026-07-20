@@ -1,0 +1,72 @@
+.project-overview {
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+  padding: 32px clamp(24px, 5vw, 64px);
+}
+
+.project-overview > header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #353736;
+}
+
+.project-overview h1 {
+  margin: 4px 0 6px;
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.project-overview p {
+  margin: 0;
+  color: #969c99;
+}
+
+.project-overview-threads {
+  display: grid;
+  margin-top: 12px;
+}
+
+.project-overview-threads > button {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 54px;
+  padding: 8px 4px;
+  color: #eceeed;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #2d302f;
+}
+
+.project-overview-threads > button:hover,
+.project-overview-threads > button:focus-visible {
+  color: #77ded5;
+  background: rgb(103 216 207 / 7%);
+}
+
+.project-overview-threads span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.project-overview-threads strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-overview-threads small {
+  color: #969c99;
+}
+
+.project-overview-empty {
+  padding: 32px 4px;
+}

@@ -7,6 +7,12 @@ import type {
 import type {
   OpenRouterConfigurationInput,
   OpenRouterConfigurationStatus,
+  RealtimeCredentialProvider,
+  RealtimeProviderCredentialInput,
+  RealtimeProviderCredentialStatus,
+  RealtimeWorkerStartInput,
+  RealtimeWorkerStatus,
+  RealtimeWorkerToolResultInput,
 } from "./client";
 import { parseMemoryResult } from "./memoryValidation";
 import { parseRuntimeResult } from "./runtimeValidation";
@@ -37,6 +43,14 @@ interface JsonRpcFailure {
 
 type JsonRpcResponse<T> = JsonRpcSuccess<T> | JsonRpcFailure;
 
+interface CoreStartupPolicy {
+  timeoutMs?: number;
+  retryDelayMs?: number;
+}
+
+const defaultCoreStartupTimeoutMs = 30_000;
+const defaultCoreStartupRetryDelayMs = 100;
+
 export class CoreRpcError extends Error {
   readonly rpcCode: number;
   readonly errorCode: string;
@@ -55,8 +69,16 @@ export class TauriCoreTransport implements CoreTransport {
   readonly eventSourceId = "local:stdio";
 
   private requestId = 0;
+  private readonly startupTimeoutMs: number;
+  private readonly startupRetryDelayMs: number;
 
-  constructor(private readonly invoke: InvokeFunction) {}
+  constructor(
+    private readonly invoke: InvokeFunction,
+    startupPolicy: CoreStartupPolicy = {},
+  ) {
+    this.startupTimeoutMs = startupPolicy.timeoutMs ?? defaultCoreStartupTimeoutMs;
+    this.startupRetryDelayMs = startupPolicy.retryDelayMs ?? defaultCoreStartupRetryDelayMs;
+  }
 
   providerOpenRouterStatus(): Promise<OpenRouterConfigurationStatus> {
     return this.invoke("provider_openrouter_status");
@@ -70,6 +92,40 @@ export class TauriCoreTransport implements CoreTransport {
 
   providerOpenRouterDelete(): Promise<OpenRouterConfigurationStatus> {
     return this.invoke("provider_openrouter_delete");
+  }
+
+  providerRealtimeStatus(
+    provider: RealtimeCredentialProvider,
+  ): Promise<RealtimeProviderCredentialStatus> {
+    return this.invoke("provider_realtime_status", { input: { provider } });
+  }
+
+  providerRealtimeConfigure(
+    input: RealtimeProviderCredentialInput,
+  ): Promise<RealtimeProviderCredentialStatus> {
+    return this.invoke("provider_realtime_configure", { input });
+  }
+
+  providerRealtimeDelete(
+    provider: RealtimeCredentialProvider,
+  ): Promise<RealtimeProviderCredentialStatus> {
+    return this.invoke("provider_realtime_delete", { input: { provider } });
+  }
+
+  realtimeWorkerStatus(): Promise<RealtimeWorkerStatus> {
+    return this.invoke("realtime_worker_status");
+  }
+
+  realtimeWorkerStart(input: RealtimeWorkerStartInput): Promise<RealtimeWorkerStatus> {
+    return this.invoke("realtime_worker_start", { input });
+  }
+
+  realtimeWorkerStop(sessionId: string): Promise<RealtimeWorkerStatus> {
+    return this.invoke("realtime_worker_stop", { input: { session_id: sessionId } });
+  }
+
+  realtimeWorkerToolResult(input: RealtimeWorkerToolResultInput): Promise<void> {
+    return this.invoke("realtime_worker_tool_result", { input });
   }
 
   selectProjectFolder(): Promise<string | null> {
@@ -86,16 +142,16 @@ export class TauriCoreTransport implements CoreTransport {
     options: CoreCallOptions = {},
   ): Promise<CoreMethodMap[M]["result"]> {
     options.signal?.throwIfAborted();
-    const response = await this.invoke<JsonRpcResponse<CoreMethodMap[M]["result"]>>(
-      "core_rpc",
-      {
-        request: {
-          jsonrpc: "2.0",
-          id: ++this.requestId,
-          method,
-          params,
-        },
-      },
+    const request = {
+      jsonrpc: "2.0" as const,
+      id: ++this.requestId,
+      method,
+      params,
+    };
+    const response = await this.invokeCore(
+      request,
+      method === "health",
+      options.signal,
     );
     if ("error" in response) {
       throw new CoreRpcError(response.error);
@@ -105,4 +161,53 @@ export class TauriCoreTransport implements CoreTransport {
       parseMemoryResult(method, response.result),
     ) as CoreMethodMap[M]["result"];
   }
+
+  private async invokeCore<T>(
+    request: Record<string, unknown>,
+    waitForStartup: boolean,
+    signal?: AbortSignal,
+  ): Promise<JsonRpcResponse<T>> {
+    const deadline = Date.now() + this.startupTimeoutMs;
+    while (true) {
+      signal?.throwIfAborted();
+      const response = await this.invoke<JsonRpcResponse<T>>("core_rpc", { request });
+      if (
+        !waitForStartup ||
+        !("error" in response) ||
+        response.error.data?.error_code !== "WORKER_INTERRUPTED" ||
+        Date.now() >= deadline
+      ) {
+        return response;
+      }
+      await delayUntilCoreRetry(
+        Math.min(this.startupRetryDelayMs, Math.max(0, deadline - Date.now())),
+        signal,
+      );
+    }
+  }
+}
+
+function delayUntilCoreRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (delayMs <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = globalThis.setTimeout(finish, delayMs);
+    signal?.addEventListener("abort", abort, { once: true });
+
+    function finish() {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }
+
+    function abort() {
+      globalThis.clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      try {
+        signal?.throwIfAborted();
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      reject(new DOMException("Core startup wait was aborted", "AbortError"));
+    }
+  });
 }

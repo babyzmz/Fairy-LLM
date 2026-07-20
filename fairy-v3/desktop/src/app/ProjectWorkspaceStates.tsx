@@ -3,10 +3,12 @@ import {
   FolderInput,
   FolderOpen,
   FolderPlus,
+  MessageSquarePlus,
   RefreshCw,
   WifiOff,
 } from "lucide-react";
 
+import "./project-workspace-states.css";
 import type { WorkspaceModel } from "./workspaceModel";
 
 interface ProjectSetupProps {
@@ -22,11 +24,13 @@ interface ProjectSetupProps {
 
 interface EmptyWorkspaceProps extends ProjectSetupProps {
   state: WorkspaceModel["state"];
+  statusLabel: WorkspaceModel["statusLabel"];
   onRetry(): Promise<void>;
 }
 
 export function EmptyWorkspace({
   state,
+  statusLabel,
   onRetry,
   ...setup
 }: EmptyWorkspaceProps) {
@@ -35,7 +39,7 @@ export function EmptyWorkspace({
       <section className="workspace-state" aria-label="Loading workspace">
         <span className="state-pulse" />
         <h1>Opening Fairy</h1>
-        <p>Connecting to Core</p>
+        <p>{statusLabel === "Core starting" ? "Connecting to Core" : "Loading workspace data"}</p>
       </section>
     );
   if (state === "offline")
@@ -78,6 +82,8 @@ export function RecoveryNotice({ model }: { model: WorkspaceModel }) {
   const title =
     code === "VERSION_CONFLICT"
       ? "Version conflict preserved"
+      : code === "PROJECT_BUSY"
+        ? "Project is busy"
       : code === "WORKER_INTERRUPTED"
         ? "Worker interrupted"
         : permissionBlocked
@@ -86,6 +92,8 @@ export function RecoveryNotice({ model }: { model: WorkspaceModel }) {
   const detail =
     code === "VERSION_CONFLICT"
       ? "The candidate version remains separate. Active Version was not overwritten."
+      : code === "PROJECT_BUSY"
+        ? "Finish or cancel the active Turn, Preview, or Runtime before continuing."
       : permissionBlocked
         ? "Project Tasks require Standard or Autonomous permissions. Observe remains read-only."
       : (model.actionError ?? model.errorMessage ?? model.projectError);
@@ -106,6 +114,55 @@ export function RecoveryNotice({ model }: { model: WorkspaceModel }) {
       </button>
     </div>
   );
+}
+
+export function ProjectOverview({ model }: { model: WorkspaceModel }) {
+  const project = model.selectedProject;
+  if (project === null) return null;
+  const conversations = model.projectConversations.filter(
+    (conversation) => conversation.project_id === project.id,
+  );
+  return (
+    <section className="project-overview" aria-labelledby="project-overview-heading">
+      <header>
+        <div>
+          <span className="eyebrow">Project</span>
+          <h1 id="project-overview-heading">{project.name}</h1>
+          <p>{conversations.length} chat{conversations.length === 1 ? "" : "s"}</p>
+        </div>
+        <button
+          className="primary-command"
+          type="button"
+          disabled={model.isActing}
+          onClick={() => void model.createProjectConversation(project)}
+        >
+          <MessageSquarePlus size={16} /> New chat
+        </button>
+      </header>
+      <div className="project-overview-threads" aria-label="Project chats">
+        {conversations.length === 0 ? (
+          <p className="project-overview-empty">No chats</p>
+        ) : conversations.map((conversation) => (
+          <button
+            key={conversation.id}
+            type="button"
+            onClick={() => model.selectConversation(conversation.id)}
+          >
+            <MessageSquarePlus size={15} />
+            <span>
+              <strong>{conversation.title}</strong>
+              <small>{formatOverviewDate(conversation.updated_at)}</small>
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function formatOverviewDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" })
+    .format(new Date(value));
 }
 
 export function ProjectSetup({

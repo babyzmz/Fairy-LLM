@@ -10,6 +10,7 @@ import type {
   McpServerDeleteInput,
   McpServerDiscoverInput,
   McpServerSetEnabledInput,
+  McpPresetInstallInput,
   ModelCatalogPage,
   ModelSelectionPreference,
   ModelSelectionUpdateInput,
@@ -17,12 +18,28 @@ import type {
   OpenRouterConfigurationStatus,
   ProviderHealthPage,
   ProviderProfilePage,
+  RealtimeCredentialProvider,
+  RealtimeProviderCredentialInput,
+  RealtimeProviderCredentialStatus,
+  ProjectArchiveInput,
+  ProjectArchivedListInput,
+  ProjectArchivedPage,
+  ProjectDeleteInput,
   SkillPage,
+  SkillCreateInput,
+  SkillImportInspectInput,
+  SkillImportInstallInput,
   SkillInstallInput,
   SkillRemoveInput,
   SkillSetEnabledInput,
   SkillUpdateInput,
   TaskPage,
+  TrashItemActionInput,
+  TrashItemPage,
+  TrashListInput,
+  TrashMutationResult,
+  TrashPurgeAllInput,
+  TrashPurgeResult,
   McpServerPage,
 } from "../core/client";
 import { CoreRpcError, type InvokeFunction } from "../core/tauriTransport";
@@ -56,6 +73,12 @@ export interface DesktopPreferences {
   memory_enabled: boolean;
   memory_retention_days: number;
   analytics_enabled: boolean;
+  realtime_provider: "auto" | "gemini_live" | "glm_realtime_flash" | "glm_realtime_air";
+  realtime_voice_mode: "native" | "fairy";
+  realtime_game_audio_default: boolean;
+  realtime_memory_enabled: boolean;
+  realtime_max_session_minutes: number;
+  trash_auto_purge_30_days: boolean;
   pet_enabled: boolean;
   pet_always_on_top: boolean;
   pet_muted: boolean;
@@ -69,7 +92,7 @@ export interface DesktopPreferences {
   pet_remember_position: boolean;
   pet_renderer_mode: PetRendererMode;
   pet_optics_mode: PetOpticsMode;
-  pet_target_fps: 60 | 144;
+  pet_target_fps: 60 | 144 | 300;
   pet_anchor: PetAnchorPreference | null;
   developer_mode: boolean;
 }
@@ -135,6 +158,18 @@ export class SettingsClient {
       this.invoke<OpenRouterConfigurationStatus>("provider_openrouter_configure", { input }),
     deleteOpenRouter: () =>
       this.invoke<OpenRouterConfigurationStatus>("provider_openrouter_delete"),
+    realtimeStatus: (provider: RealtimeCredentialProvider) =>
+      this.invoke<RealtimeProviderCredentialStatus>("provider_realtime_status", {
+        input: { provider },
+      }),
+    configureRealtime: (input: RealtimeProviderCredentialInput) =>
+      this.invoke<RealtimeProviderCredentialStatus>("provider_realtime_configure", {
+        input,
+      }),
+    deleteRealtime: (provider: RealtimeCredentialProvider) =>
+      this.invoke<RealtimeProviderCredentialStatus>("provider_realtime_delete", {
+        input: { provider },
+      }),
   };
 
   readonly models = {
@@ -158,15 +193,24 @@ export class SettingsClient {
   };
 
   readonly extensions = {
+    selectSkillSource: (sourceKind: "folder" | "zip") =>
+      this.invoke<string | null>("select_skill_source", { sourceKind }),
     catalog: () =>
       this.call("extensions.catalog.list", {}) as Promise<ExtensionCatalogPage>,
     skills: () => this.call("skills.list", {}) as Promise<SkillPage>,
     installSkill: (input: SkillInstallInput) => this.call("skills.install", input),
+    inspectSkillImport: (input: SkillImportInspectInput) =>
+      this.call("skills.import.inspect", input),
+    installSkillImport: (input: SkillImportInstallInput) =>
+      this.call("skills.import.install", input),
+    createSkill: (input: SkillCreateInput) => this.call("skills.create", input),
     updateSkill: (input: SkillUpdateInput) => this.call("skills.update", input),
     setSkillEnabled: (input: SkillSetEnabledInput) =>
       this.call("skills.set_enabled", input),
     removeSkill: (input: SkillRemoveInput) => this.call("skills.remove", input),
     servers: () => this.call("mcp.servers.list", {}) as Promise<McpServerPage>,
+    installPreset: (input: McpPresetInstallInput) =>
+      this.call("mcp.presets.install", input),
     configure: (input: McpServerConfigureInput) =>
       this.call("mcp.servers.configure", input),
     discover: (input: McpServerDiscoverInput) =>
@@ -180,6 +224,27 @@ export class SettingsClient {
   readonly context = {
     latestTask: () =>
       this.call("tasks.list", { limit: 1 }) as Promise<TaskPage>,
+  };
+
+  readonly projectManagement = {
+    archived: {
+      list: (input: ProjectArchivedListInput = {}) =>
+        this.call("projects.archived.list", input) as Promise<ProjectArchivedPage>,
+      restore: (input: ProjectArchiveInput) =>
+        this.call("projects.archived.restore", input),
+      delete: (input: ProjectDeleteInput) =>
+        this.call("projects.archived.delete", input),
+    },
+    trash: {
+      list: (input: TrashListInput = {}) =>
+        this.call("trash.items.list", input) as Promise<TrashItemPage>,
+      restore: (input: TrashItemActionInput) =>
+        this.call("trash.items.restore", input) as Promise<TrashMutationResult>,
+      purge: (input: TrashItemActionInput) =>
+        this.call("trash.items.purge", input) as Promise<TrashMutationResult>,
+      purgeAll: (input: TrashPurgeAllInput) =>
+        this.call("trash.items.purge_all", input) as Promise<TrashPurgeResult>,
+    },
   };
 
   readonly voice = {

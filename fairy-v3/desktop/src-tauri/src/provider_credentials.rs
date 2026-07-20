@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use thiserror::Error;
 
-const CREDENTIAL_FILE: &str = "credentials/openrouter.dpapi";
+const CREDENTIAL_DIRECTORY: &str = "credentials";
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
@@ -20,10 +20,12 @@ pub enum CredentialError {
     Encoding,
     #[error("secure provider credential storage requires Windows")]
     Unsupported,
+    #[error("provider credential name is invalid")]
+    InvalidProvider,
 }
 
 pub struct ProviderCredentialStore {
-    path: PathBuf,
+    data_dir: PathBuf,
 }
 
 pub struct CredentialReplacement {
@@ -35,44 +37,66 @@ pub struct CredentialReplacement {
 impl ProviderCredentialStore {
     pub fn new(data_dir: impl AsRef<Path>) -> Self {
         Self {
-            path: data_dir.as_ref().join(CREDENTIAL_FILE),
+            data_dir: data_dir.as_ref().to_path_buf(),
         }
     }
 
     pub fn configured(&self) -> bool {
-        self.path.is_file()
+        self.configured_for("openrouter").unwrap_or(false)
+    }
+
+    pub fn configured_for(&self, provider: &str) -> Result<bool, CredentialError> {
+        Ok(self.path_for(provider)?.is_file())
     }
 
     pub fn save_openrouter(&self, secret: &str) -> Result<(), CredentialError> {
+        self.save("openrouter", secret)
+    }
+
+    pub fn save(&self, provider: &str, secret: &str) -> Result<(), CredentialError> {
         let normalized = secret.trim();
         if normalized.is_empty() {
             return Err(CredentialError::Empty);
         }
-        write_protected(&self.path, &protect(normalized.as_bytes())?)
+        write_protected(&self.path_for(provider)?, &protect(normalized.as_bytes())?)
     }
 
     pub fn begin_openrouter_replacement(
         &self,
         secret: &str,
     ) -> Result<CredentialReplacement, CredentialError> {
-        let previous = match fs::read(&self.path) {
+        self.begin_replacement("openrouter", secret)
+    }
+
+    pub fn begin_replacement(
+        &self,
+        provider: &str,
+        secret: &str,
+    ) -> Result<CredentialReplacement, CredentialError> {
+        let path = self.path_for(provider)?;
+        let previous = match fs::read(&path) {
             Ok(value) => Some(value),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(error.into()),
         };
-        self.save_openrouter(secret)?;
+        self.save(provider, secret)?;
         Ok(CredentialReplacement {
-            path: self.path.clone(),
+            path,
             previous,
             finished: false,
         })
     }
 
     pub fn load_openrouter(&self) -> Result<Option<String>, CredentialError> {
-        if !self.path.is_file() {
+        self.load("openrouter")
+    }
+
+    pub fn load(&self, provider: &str) -> Result<Option<String>, CredentialError> {
+        let path = self.path_for(provider)?;
+        if !path.is_file() {
             return Ok(None);
         }
-        let protected = fs::read(&self.path)?;
+        let protected = fs::read(path)?;
         let clear = unprotect(&protected)?;
         String::from_utf8(clear)
             .map(Some)
@@ -80,11 +104,25 @@ impl ProviderCredentialStore {
     }
 
     pub fn delete_openrouter(&self) -> Result<(), CredentialError> {
-        match fs::remove_file(&self.path) {
+        self.delete("openrouter")
+    }
+
+    pub fn delete(&self, provider: &str) -> Result<(), CredentialError> {
+        match fs::remove_file(self.path_for(provider)?) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error.into()),
         }
+    }
+
+    fn path_for(&self, provider: &str) -> Result<PathBuf, CredentialError> {
+        if !matches!(provider, "openrouter" | "gemini" | "zhipu") {
+            return Err(CredentialError::InvalidProvider);
+        }
+        Ok(self
+            .data_dir
+            .join(CREDENTIAL_DIRECTORY)
+            .join(format!("{provider}.dpapi")))
     }
 }
 
@@ -262,7 +300,7 @@ fn unprotect(_protected: &[u8]) -> Result<Vec<u8>, CredentialError> {
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::ProviderCredentialStore;
+    use super::{CredentialError, ProviderCredentialStore};
 
     #[test]
     fn openrouter_credential_is_encrypted_replaceable_and_deletable() {
@@ -355,5 +393,28 @@ mod tests {
             store.load_openrouter().expect("load committed").as_deref(),
             Some("sk-or-v1-valid-candidate")
         );
+    }
+
+    #[test]
+    fn provider_credentials_are_namespaced_and_never_cross_loaded() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = ProviderCredentialStore::new(directory.path());
+
+        store.save("gemini", "gemini-secret").expect("save Gemini");
+        store.save("zhipu", "zhipu-secret").expect("save Zhipu");
+
+        assert_eq!(
+            store.load("gemini").expect("load Gemini").as_deref(),
+            Some("gemini-secret")
+        );
+        assert_eq!(
+            store.load("zhipu").expect("load Zhipu").as_deref(),
+            Some("zhipu-secret")
+        );
+        assert_eq!(store.load_openrouter().expect("missing OpenRouter"), None);
+        assert!(matches!(
+            store.save("../escape", "secret"),
+            Err(CredentialError::InvalidProvider)
+        ));
     }
 }

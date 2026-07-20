@@ -119,6 +119,7 @@ test("a user message appears before Core task creation returns", async ({ page }
   await composer.fill("Visible before Core confirms");
   await page.getByRole("button", { name: "Send message" }).click();
 
+  await expect(composer).toHaveValue("");
   await expect(
     page.getByLabel("Conversation messages").getByText("Visible before Core confirms"),
   ).toBeVisible();

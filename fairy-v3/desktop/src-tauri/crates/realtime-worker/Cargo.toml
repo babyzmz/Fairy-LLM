@@ -1,0 +1,30 @@
+[package]
+name = "fairy-realtime-worker"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "fairy_realtime_worker"
+
+[[bin]]
+name = "fairy-realtime-worker"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.22"
+cpal = "0.16"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
+url = "2.5"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+flexaudio-core = "0.2.0"
+flexaudio-os-windows = "0.2.0"
+xcap = { version = "0.9.6", default-features = false }
+
+[dev-dependencies]
+pretty_assertions = "1"

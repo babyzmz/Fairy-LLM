@@ -32,22 +32,34 @@ import type {
   MediaImageGenerateInput,
   MediaVideoCancelInput,
   MediaVideoStartInput,
+  GameMemorySaveInput,
   ModelSelectionUpdateInput,
   McpServerAcceptInput,
   McpServerConfigureInput,
   McpServerDeleteInput,
   McpServerDiscoverInput,
   McpServerSetEnabledInput,
+  McpPresetInstallInput,
   MessageListInput,
   ProjectCreateInput,
+  ProjectArchiveInput,
+  ProjectArchivedListInput,
+  ProjectDeleteInput,
   ProjectImportInput,
   ProjectListInput,
+  ProjectMetadataUpdateInput,
   PreviewResolveInput,
   PreviewStartInput,
   PreviewStopInput,
   ProviderHealthInput,
+  RealtimeSessionReportInput,
+  RealtimeSessionStartInput,
+  RealtimeSessionStopInput,
   SystemActionRequest,
   SkillInstallInput,
+  SkillCreateInput,
+  SkillImportInspectInput,
+  SkillImportInstallInput,
   SkillRemoveInput,
   SkillSetEnabledInput,
   SkillUpdateInput,
@@ -55,6 +67,9 @@ import type {
   TaskArchiveInput,
   TaskListInput,
   TaskMetadataUpdateInput,
+  TrashItemActionInput,
+  TrashListInput,
+  TrashPurgeAllInput,
   VersionAcceptInput,
   VersionListInput,
   VoiceSynthesizeInput,
@@ -97,6 +112,46 @@ export interface OpenRouterConfigurationStatus {
   account_id: string | null;
 }
 
+export type RealtimeCredentialProvider = "gemini" | "zhipu";
+
+export interface RealtimeProviderCredentialInput {
+  provider: RealtimeCredentialProvider;
+  api_key: string;
+}
+
+export interface RealtimeProviderCredentialStatus {
+  provider: RealtimeCredentialProvider;
+  configured: boolean;
+}
+
+export type RealtimeWorkerProvider = "gemini_live" | "glm_realtime_flash" | "glm_realtime_air";
+
+export interface RealtimeWorkerStartInput {
+  session_id: string;
+  provider: RealtimeWorkerProvider;
+  voice_mode: "native" | "fairy";
+  source_id: number | null;
+  screen_enabled: boolean;
+  game_audio_enabled: boolean;
+}
+
+export interface RealtimeWorkerStatus {
+  running: boolean;
+  session_id: string | null;
+  audio_input_ms: number;
+  audio_output_ms: number;
+  video_frame_count: number;
+  interruption_count: number;
+  tool_call_count: number;
+}
+
+export interface RealtimeWorkerToolResultInput {
+  session_id: string;
+  call_id: string;
+  public_summary: string;
+  succeeded: boolean;
+}
+
 export interface CoreTransport {
   readonly eventSourceId?: string;
 
@@ -111,6 +166,19 @@ export interface CoreTransport {
   providerOpenRouterStatus?(): Promise<OpenRouterConfigurationStatus>;
   providerOpenRouterConfigure?(input: OpenRouterConfigurationInput): Promise<OpenRouterConfigurationStatus>;
   providerOpenRouterDelete?(): Promise<OpenRouterConfigurationStatus>;
+  providerRealtimeStatus?(
+    provider: RealtimeCredentialProvider,
+  ): Promise<RealtimeProviderCredentialStatus>;
+  providerRealtimeConfigure?(
+    input: RealtimeProviderCredentialInput,
+  ): Promise<RealtimeProviderCredentialStatus>;
+  providerRealtimeDelete?(
+    provider: RealtimeCredentialProvider,
+  ): Promise<RealtimeProviderCredentialStatus>;
+  realtimeWorkerStatus?(): Promise<RealtimeWorkerStatus>;
+  realtimeWorkerStart?(input: RealtimeWorkerStartInput): Promise<RealtimeWorkerStatus>;
+  realtimeWorkerStop?(sessionId: string): Promise<RealtimeWorkerStatus>;
+  realtimeWorkerToolResult?(input: RealtimeWorkerToolResultInput): Promise<void>;
   selectProjectFolder?(): Promise<string | null>;
   openSettingsWindow?(): Promise<void>;
 }
@@ -130,12 +198,31 @@ export class CoreClient {
     import: (input: ProjectImportInput) => this.transport.call("projects.import", input),
     get: (projectId: string) => this.transport.call("projects.get", { project_id: projectId }),
     list: (input: ProjectListInput = {}) => this.transport.call("projects.list", input),
+    updateMetadata: (input: ProjectMetadataUpdateInput) =>
+      this.transport.call("projects.update_metadata", input),
+    archive: (input: ProjectArchiveInput) => this.transport.call("projects.archive", input),
+    delete: (input: ProjectDeleteInput) => this.transport.call("projects.delete", input),
+    archived: {
+      list: (input: ProjectArchivedListInput = {}) =>
+        this.transport.call("projects.archived.list", input),
+      restore: (input: ProjectArchiveInput) =>
+        this.transport.call("projects.archived.restore", input),
+      delete: (input: ProjectDeleteInput) =>
+        this.transport.call("projects.archived.delete", input),
+    },
     selectFolder: () => {
       if (this.transport.selectProjectFolder === undefined) {
         throw new Error("Project folder selection requires the Fairy desktop host");
       }
       return this.transport.selectProjectFolder();
     },
+  };
+
+  readonly trash = {
+    list: (input: TrashListInput = {}) => this.transport.call("trash.items.list", input),
+    restore: (input: TrashItemActionInput) => this.transport.call("trash.items.restore", input),
+    purge: (input: TrashItemActionInput) => this.transport.call("trash.items.purge", input),
+    purgeAll: (input: TrashPurgeAllInput) => this.transport.call("trash.items.purge_all", input),
   };
 
   readonly conversations = {
@@ -243,6 +330,24 @@ export class CoreClient {
     openRouterStatus: () => this.requireProviderHost("status")(),
     configureOpenRouter: (input: OpenRouterConfigurationInput) => this.requireProviderHost("configure")(input),
     deleteOpenRouter: () => this.requireProviderHost("delete")(),
+    realtimeStatus: (provider: RealtimeCredentialProvider) => {
+      if (this.transport.providerRealtimeStatus === undefined) {
+        throw new Error("Realtime credentials require the Fairy desktop host");
+      }
+      return this.transport.providerRealtimeStatus(provider);
+    },
+    configureRealtime: (input: RealtimeProviderCredentialInput) => {
+      if (this.transport.providerRealtimeConfigure === undefined) {
+        throw new Error("Realtime credentials require the Fairy desktop host");
+      }
+      return this.transport.providerRealtimeConfigure(input);
+    },
+    deleteRealtime: (provider: RealtimeCredentialProvider) => {
+      if (this.transport.providerRealtimeDelete === undefined) {
+        throw new Error("Realtime credentials require the Fairy desktop host");
+      }
+      return this.transport.providerRealtimeDelete(provider);
+    },
   };
 
   readonly models = {
@@ -281,6 +386,11 @@ export class CoreClient {
   readonly skills = {
     catalog: () => this.transport.call("extensions.catalog.list", {}),
     install: (input: SkillInstallInput) => this.transport.call("skills.install", input),
+    inspectImport: (input: SkillImportInspectInput) =>
+      this.transport.call("skills.import.inspect", input),
+    installImport: (input: SkillImportInstallInput) =>
+      this.transport.call("skills.import.install", input),
+    create: (input: SkillCreateInput) => this.transport.call("skills.create", input),
     list: () => this.transport.call("skills.list", {}),
     remove: (input: SkillRemoveInput) => this.transport.call("skills.remove", input),
     setEnabled: (input: SkillSetEnabledInput) =>
@@ -289,6 +399,8 @@ export class CoreClient {
   };
 
   readonly mcp = {
+    installPreset: (input: McpPresetInstallInput) =>
+      this.transport.call("mcp.presets.install", input),
     servers: {
       list: () => this.transport.call("mcp.servers.list", {}),
       configure: (input: McpServerConfigureInput) => this.transport.call("mcp.servers.configure", input),
@@ -357,6 +469,45 @@ export class CoreClient {
       start: (input: VoiceSessionStartInput) => this.transport.call("voice.sessions.start", input),
       get: (sessionId: string) => this.transport.call("voice.sessions.get", { session_id: sessionId }),
       cancel: (sessionId: string) => this.transport.call("voice.sessions.cancel", { session_id: sessionId }),
+    },
+  };
+
+  readonly realtime = {
+    sessions: {
+      start: (input: RealtimeSessionStartInput) =>
+        this.transport.call("realtime.sessions.start", input),
+      get: (sessionId: string) =>
+        this.transport.call("realtime.sessions.get", { session_id: sessionId }),
+      list: (limit = 50) => this.transport.call("realtime.sessions.list", { limit }),
+      report: (input: RealtimeSessionReportInput) =>
+        this.transport.call("realtime.sessions.report", input),
+      stop: (input: RealtimeSessionStopInput) =>
+        this.transport.call("realtime.sessions.stop", input),
+    },
+    memories: {
+      save: (input: GameMemorySaveInput) =>
+        this.transport.call("realtime.memories.save", input),
+      list: (limit = 50) => this.transport.call("realtime.memories.list", { limit }),
+      delete: (memoryId: string) =>
+        this.transport.call("realtime.memories.delete", { memory_id: memoryId }),
+    },
+    worker: {
+      status: () => {
+        if (!this.transport.realtimeWorkerStatus) throw new Error("Realtime requires Fairy desktop");
+        return this.transport.realtimeWorkerStatus();
+      },
+      start: (input: RealtimeWorkerStartInput) => {
+        if (!this.transport.realtimeWorkerStart) throw new Error("Realtime requires Fairy desktop");
+        return this.transport.realtimeWorkerStart(input);
+      },
+      stop: (sessionId: string) => {
+        if (!this.transport.realtimeWorkerStop) throw new Error("Realtime requires Fairy desktop");
+        return this.transport.realtimeWorkerStop(sessionId);
+      },
+      toolResult: (input: RealtimeWorkerToolResultInput) => {
+        if (!this.transport.realtimeWorkerToolResult) throw new Error("Realtime requires Fairy desktop");
+        return this.transport.realtimeWorkerToolResult(input);
+      },
     },
   };
 

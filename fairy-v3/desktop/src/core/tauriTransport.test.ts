@@ -28,6 +28,33 @@ describe("TauriCoreTransport", () => {
     });
   });
 
+  it("waits through the native Core startup race before returning health", async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({
+        jsonrpc: "2.0",
+        id: 1,
+        error: {
+          code: -32050,
+          message: "Fairy Core process was interrupted",
+          data: { error_code: "WORKER_INTERRUPTED" },
+        },
+      })
+      .mockResolvedValue({
+        jsonrpc: "2.0",
+        id: 1,
+        result: { status: "ok" },
+      });
+    const transport = new TauriCoreTransport(invoke, {
+      retryDelayMs: 0,
+      timeoutMs: 100,
+    });
+
+    await expect(transport.call("health", {})).resolves.toEqual({ status: "ok" });
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke.mock.calls[1]).toEqual(invoke.mock.calls[0]);
+  });
+
   it("surfaces typed errors returned by Core", async () => {
     const invoke = vi.fn().mockResolvedValue({
       jsonrpc: "2.0",

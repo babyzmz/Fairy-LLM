@@ -704,6 +704,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/history/archived-projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Archived Projects */
+        get: operations["projects.archived.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/history/archived-projects/{project_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Archived Project */
+        delete: operations["projects.archived.delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/history/archived-projects/{project_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Archived Project */
+        post: operations["projects.archived.restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/history/trash": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Trash */
+        get: operations["trash.items.list"];
+        put?: never;
+        post?: never;
+        /** Purge All Trash */
+        delete: operations["trash.items.purge_all"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/history/trash/{item_type}/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Purge Trash Item */
+        delete: operations["trash.items.purge"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/history/trash/{item_type}/{item_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Trash Item */
+        post: operations["trash.items.restore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mcp/presets/{catalog_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install Mcp Preset */
+        post: operations["mcp.presets.install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/mcp/servers": {
         parameters: {
             query?: never;
@@ -1248,6 +1368,41 @@ export interface paths {
         get: operations["projects.get"];
         put?: never;
         post?: never;
+        /** Delete Project */
+        delete: operations["projects.delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{project_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Project */
+        post: operations["projects.archive"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{project_id}/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Project Metadata */
+        put: operations["projects.update_metadata"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1299,6 +1454,110 @@ export interface paths {
         get: operations["cloud.ready"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/realtime/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Memories */
+        get: operations["realtime.memories.list"];
+        put?: never;
+        /** Save Memory */
+        post: operations["realtime.memories.save"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/realtime/memories/{memory_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Memory */
+        delete: operations["realtime.memories.delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/realtime/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sessions */
+        get: operations["realtime.sessions.list"];
+        put?: never;
+        /** Start Session */
+        post: operations["realtime.sessions.start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/realtime/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Session */
+        get: operations["realtime.sessions.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/realtime/sessions/{session_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Report Session */
+        post: operations["realtime.sessions.report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/realtime/sessions/{session_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop Session */
+        post: operations["realtime.sessions.stop"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1452,6 +1711,57 @@ export interface paths {
         get: operations["skills.list"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Skill */
+        post: operations["skills.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/import/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Inspect Skill Import */
+        post: operations["skills.import.inspect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/skills/import/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Install Skill Import */
+        post: operations["skills.import.install"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2549,6 +2859,8 @@ export interface components {
             created_at: string;
             /** Deleted At */
             deleted_at: string | null;
+            /** Deleted By Project At */
+            deleted_by_project_at: string | null;
             /**
              * Id
              * Format: uuid
@@ -2558,6 +2870,8 @@ export interface components {
             pinned_at: string | null;
             /** Project Id */
             project_id: string | null;
+            /** Purged At */
+            purged_at: string | null;
             /** Revision */
             revision: number;
             /** Title */
@@ -2926,11 +3240,8 @@ export interface components {
         };
         /** EventEnvelopeModel */
         EventEnvelopeModel: {
-            /**
-             * Conversation Id
-             * Format: uuid
-             */
-            conversation_id: string;
+            /** Conversation Id */
+            conversation_id: string | null;
             /**
              * Created At
              * Format: date-time
@@ -2957,13 +3268,10 @@ export interface components {
             run_id: string | null;
             /** Schema Version */
             schema_version: number;
-            /**
-             * Task Id
-             * Format: uuid
-             */
-            task_id: string;
+            /** Task Id */
+            task_id: string | null;
             /** Task Sequence */
-            task_sequence: number;
+            task_sequence: number | null;
             /** Version Id */
             version_id: string | null;
             visibility: components["schemas"]["EventVisibilityModel"];
@@ -3132,8 +3440,22 @@ export interface components {
             name: string;
             /** Publisher */
             publisher: string;
+            /**
+             * Requirements
+             * @default []
+             */
+            requirements: string[];
             /** Source */
             source: string;
+            /** Source Kind */
+            source_kind: string;
+            /**
+             * Tags
+             * @default []
+             */
+            tags: string[];
+            /** Trust */
+            trust: string;
             /** Version */
             version: string;
         };
@@ -3472,6 +3794,83 @@ export interface components {
              */
             workspace_id: string;
         };
+        /** GameMemoryDeleteResult */
+        GameMemoryDeleteResult: {
+            /** Deleted */
+            deleted: boolean;
+            /**
+             * Memory Id
+             * Format: uuid
+             */
+            memory_id: string;
+        };
+        /** GameMemoryDigestModel */
+        GameMemoryDigestModel: {
+            /** Accepted */
+            accepted: boolean;
+            /** Activities */
+            activities: string[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Duration Seconds */
+            duration_seconds: number;
+            /** Game Title */
+            game_title: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Next Goal */
+            next_goal: string | null;
+            /** Notable Outcome */
+            notable_outcome: string | null;
+            /**
+             * Played At
+             * Format: date-time
+             */
+            played_at: string;
+            /** Progress Summary */
+            progress_summary: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+        };
+        /** GameMemoryPageModel */
+        GameMemoryPageModel: {
+            /** Items */
+            items: components["schemas"]["GameMemoryDigestModel"][];
+        };
+        /** GameMemorySaveInput */
+        GameMemorySaveInput: {
+            /** Activities */
+            activities: string[];
+            /** Duration Seconds */
+            duration_seconds: number;
+            /** Game Title */
+            game_title: string;
+            /** Next Goal */
+            next_goal?: string | null;
+            /** Notable Outcome */
+            notable_outcome?: string | null;
+            /**
+             * Played At
+             * Format: date-time
+             */
+            played_at: string;
+            /** Progress Summary */
+            progress_summary: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -3611,6 +4010,20 @@ export interface components {
             /** Version Id */
             version_id: string | null;
             visibility: components["schemas"]["DocumentVisibility"];
+        };
+        /** McpPresetInstallInput */
+        McpPresetInstallInput: {
+            /** Catalog Id */
+            catalog_id: string;
+            /** Credential Ref */
+            credential_ref?: string | null;
+            /**
+             * Expected Revision
+             * @default 0
+             */
+            expected_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
         };
         /** McpServerAcceptInput */
         McpServerAcceptInput: {
@@ -4875,6 +5288,34 @@ export interface components {
          * @enum {string}
          */
         PreviewVisibility: "chat_draft" | "project_active" | "private";
+        /** ProjectArchiveInput */
+        ProjectArchiveInput: {
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+        };
+        /** ProjectArchivedItemModel */
+        ProjectArchivedItemModel: {
+            /**
+             * Archived At
+             * Format: date-time
+             */
+            archived_at: string;
+            project: components["schemas"]["ProjectModel"];
+            /** Thread Count */
+            thread_count: number;
+        };
+        /** ProjectArchivedPageModel */
+        ProjectArchivedPageModel: {
+            /** Items */
+            items: components["schemas"]["ProjectArchivedItemModel"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** ProjectContextModel */
         ProjectContextModel: {
             initial_version: components["schemas"]["VersionModel"];
@@ -4885,6 +5326,23 @@ export interface components {
             /** Name */
             name: string;
             residency: components["schemas"]["ProjectResidency"];
+        };
+        /** ProjectDeleteInput */
+        ProjectDeleteInput: {
+            /**
+             * Cancel Active
+             * @default false
+             */
+            cancel_active: boolean;
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
         };
         /** ProjectImport */
         ProjectImport: {
@@ -4897,24 +5355,48 @@ export interface components {
              */
             source_path: string;
         };
+        /** ProjectMetadataUpdateInput */
+        ProjectMetadataUpdateInput: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Name */
+            name?: string | null;
+            /** Pinned */
+            pinned?: boolean | null;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+        };
         /** ProjectModel */
         ProjectModel: {
             /** Active Preview Id */
             active_preview_id: string | null;
             /** Active Version Id */
             active_version_id: string | null;
+            /** Archived At */
+            archived_at: string | null;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+            /** Deleted At */
+            deleted_at: string | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
+            /** Metadata Revision */
+            metadata_revision: number;
             /** Name */
             name: string;
+            /** Pinned At */
+            pinned_at: string | null;
+            /** Purged At */
+            purged_at: string | null;
             residency: components["schemas"]["ProjectResidency"];
             /** Revision */
             revision: number;
@@ -5025,6 +5507,161 @@ export interface components {
          * @enum {string}
          */
         PublicMessageVisibilityModel: "user" | "developer";
+        /**
+         * RealtimeMemoryMode
+         * @enum {string}
+         */
+        RealtimeMemoryMode: "progress_digest" | "none";
+        /**
+         * RealtimeProvider
+         * @enum {string}
+         */
+        RealtimeProvider: "gemini_live" | "glm_realtime_flash" | "glm_realtime_air";
+        /**
+         * RealtimeProviderSelection
+         * @enum {string}
+         */
+        RealtimeProviderSelection: "auto" | "gemini_live" | "glm_realtime_flash" | "glm_realtime_air";
+        /** RealtimeSessionModel */
+        RealtimeSessionModel: {
+            /** Audio Input Ms */
+            audio_input_ms: number;
+            /** Audio Output Ms */
+            audio_output_ms: number;
+            /** Conversation Id */
+            conversation_id: string | null;
+            /** Device Id */
+            device_id: string;
+            /** Ended At */
+            ended_at: string | null;
+            /** Game Audio Consent */
+            game_audio_consent: boolean;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Interruption Count */
+            interruption_count: number;
+            /** Last Error Code */
+            last_error_code: string | null;
+            memory_mode: components["schemas"]["RealtimeMemoryMode"];
+            /** Microphone Consent */
+            microphone_consent: boolean;
+            /** Model Id */
+            model_id: string;
+            provider: components["schemas"]["RealtimeProvider"];
+            /** Revision */
+            revision: number;
+            /** Screen Consent */
+            screen_consent: boolean;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            status: components["schemas"]["RealtimeSessionStatus"];
+            /** Tool Call Count */
+            tool_call_count: number;
+            /** Video Frame Count */
+            video_frame_count: number;
+            voice_mode: components["schemas"]["RealtimeVoiceMode"];
+        };
+        /** RealtimeSessionPageModel */
+        RealtimeSessionPageModel: {
+            /** Items */
+            items: components["schemas"]["RealtimeSessionModel"][];
+        };
+        /** RealtimeSessionReportInput */
+        RealtimeSessionReportInput: {
+            /**
+             * Audio Input Ms
+             * @default 0
+             */
+            audio_input_ms: number;
+            /**
+             * Audio Output Ms
+             * @default 0
+             */
+            audio_output_ms: number;
+            /** Error Code */
+            error_code?: string | null;
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Interruption Count
+             * @default 0
+             */
+            interruption_count: number;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+            status: components["schemas"]["RealtimeSessionStatus"];
+            /**
+             * Tool Call Count
+             * @default 0
+             */
+            tool_call_count: number;
+            /**
+             * Video Frame Count
+             * @default 0
+             */
+            video_frame_count: number;
+        };
+        /** RealtimeSessionStartInput */
+        RealtimeSessionStartInput: {
+            /** Conversation Id */
+            conversation_id?: string | null;
+            /** Device Id */
+            device_id: string;
+            /**
+             * Game Audio Consent
+             * @default false
+             */
+            game_audio_consent: boolean;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Locale
+             * @default zh-CN
+             */
+            locale: string;
+            /** @default progress_digest */
+            memory_mode: components["schemas"]["RealtimeMemoryMode"];
+            /** Microphone Consent */
+            microphone_consent: boolean;
+            /** @default auto */
+            provider: components["schemas"]["RealtimeProviderSelection"];
+            /**
+             * Screen Consent
+             * @default false
+             */
+            screen_consent: boolean;
+            /** @default native */
+            voice_mode: components["schemas"]["RealtimeVoiceMode"];
+        };
+        /**
+         * RealtimeSessionStatus
+         * @enum {string}
+         */
+        RealtimeSessionStatus: "starting" | "active" | "stopping" | "completed" | "failed" | "cancelled" | "interrupted";
+        /** RealtimeSessionStopInput */
+        RealtimeSessionStopInput: {
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+        };
+        /**
+         * RealtimeVoiceMode
+         * @enum {string}
+         */
+        RealtimeVoiceMode: "native" | "fairy";
         /** RendererPackInstallInput */
         RendererPackInstallInput: {
             /** Bundle Path */
@@ -5120,6 +5757,8 @@ export interface components {
             primary_model_id: string;
             /** Public Summary */
             public_summary: string;
+            /** Requires Workspace Changes */
+            requires_workspace_changes: boolean;
             /** Reviewer Model Id */
             reviewer_model_id?: string | null;
             task_kind: components["schemas"]["RoutingTaskKind"];
@@ -5371,6 +6010,98 @@ export interface components {
          * @enum {string}
          */
         SideEffect: "none" | "read" | "write" | "execute";
+        /** SkillCreateInput */
+        SkillCreateInput: {
+            /**
+             * Compatible Mcp Servers
+             * @default []
+             */
+            compatible_mcp_servers: string[];
+            /** Description */
+            description: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Input Schema */
+            input_schema?: {
+                [key: string]: unknown;
+            };
+            /** Instructions */
+            instructions: string;
+            /** License */
+            license: string;
+            /** Name */
+            name: string;
+            /** Publisher */
+            publisher: string;
+            /**
+             * Required Capabilities
+             * @default []
+             */
+            required_capabilities: string[];
+            /** Version */
+            version: string;
+        };
+        /** SkillImportInspectInput */
+        SkillImportInspectInput: {
+            /** Source */
+            source: string;
+            /** Source Kind */
+            source_kind: string;
+        };
+        /** SkillImportInspectionModel */
+        SkillImportInspectionModel: {
+            /** Content Bytes */
+            content_bytes: number;
+            /** Description */
+            description: string;
+            /** File Count */
+            file_count: number;
+            /** Has Manifest */
+            has_manifest: boolean;
+            /** Inspection Token */
+            inspection_token: string;
+            /** License */
+            license?: string | null;
+            /** Name */
+            name: string;
+            /** Publisher */
+            publisher?: string | null;
+            /** Source */
+            source: string;
+            /** Version */
+            version?: string | null;
+        };
+        /** SkillImportInstallInput */
+        SkillImportInstallInput: {
+            /**
+             * Compatible Mcp Servers
+             * @default []
+             */
+            compatible_mcp_servers: string[];
+            /** Description */
+            description: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Input Schema */
+            input_schema?: {
+                [key: string]: unknown;
+            };
+            /** Inspection Token */
+            inspection_token: string;
+            /** License */
+            license: string;
+            /** Name */
+            name: string;
+            /** Publisher */
+            publisher: string;
+            /**
+             * Required Capabilities
+             * @default []
+             */
+            required_capabilities: string[];
+            /** Version */
+            version: string;
+        };
         /** SkillInstallInput */
         SkillInstallInput: {
             /** Catalog Id */
@@ -5807,6 +6538,97 @@ export interface components {
             start_seconds: number;
             /** Text */
             text: string;
+        };
+        /** TrashItemActionInput */
+        TrashItemActionInput: {
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            item_type: components["schemas"]["TrashItemType"];
+            /**
+             * User Confirmed
+             * @default false
+             */
+            user_confirmed: boolean;
+        };
+        /** TrashItemModel */
+        TrashItemModel: {
+            /** Can Restore */
+            can_restore: boolean;
+            /**
+             * Deleted At
+             * Format: date-time
+             */
+            deleted_at: string;
+            /** Estimated Bytes */
+            estimated_bytes: number;
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            item_type: components["schemas"]["TrashItemType"];
+            /** Metadata Revision */
+            metadata_revision: number;
+            /** Source Project Id */
+            source_project_id: string | null;
+            /** Source Project Title */
+            source_project_title: string | null;
+            /** Thread Count */
+            thread_count: number;
+            /** Title */
+            title: string;
+        };
+        /** TrashItemPageModel */
+        TrashItemPageModel: {
+            /** Items */
+            items: components["schemas"]["TrashItemModel"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * TrashItemType
+         * @enum {string}
+         */
+        TrashItemType: "project" | "conversation" | "project_conversation";
+        /** TrashMutationResultModel */
+        TrashMutationResultModel: {
+            /**
+             * Item Id
+             * Format: uuid
+             */
+            item_id: string;
+            item_type: components["schemas"]["TrashItemType"];
+            /** Released Bytes */
+            released_bytes: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "restored" | "purged";
+        };
+        /** TrashPurgeAllInput */
+        TrashPurgeAllInput: {
+            /** Deleted Before */
+            deleted_before?: string | null;
+            /**
+             * Maintenance
+             * @default false
+             */
+            maintenance: boolean;
+            /** User Confirmed */
+            user_confirmed: boolean;
+        };
+        /** TrashPurgeResultModel */
+        TrashPurgeResultModel: {
+            /** Purged Count */
+            purged_count: number;
+            /** Released Bytes */
+            released_bytes: number;
         };
         /** TurnTraceModel */
         TurnTraceModel: {
@@ -7821,6 +8643,297 @@ export interface operations {
             };
         };
     };
+    "projects.archived.list": {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectArchivedPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "projects.archived.delete": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectDeleteInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "projects.archived.restore": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectArchiveInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "trash.items.list": {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrashItemPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "trash.items.purge_all": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrashPurgeAllInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrashPurgeResultModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "trash.items.purge": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                item_type: components["schemas"]["TrashItemType"];
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrashItemActionInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrashMutationResultModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "trash.items.restore": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                item_type: components["schemas"]["TrashItemType"];
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrashItemActionInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrashMutationResultModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "mcp.presets.install": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                catalog_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpPresetInstallInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpServerModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "mcp.servers.list": {
         parameters: {
             query?: never;
@@ -9150,6 +10263,117 @@ export interface operations {
             };
         };
     };
+    "projects.delete": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectDeleteInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "projects.archive": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectArchiveInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "projects.update_metadata": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectMetadataUpdateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "providers.list": {
         parameters: {
             query?: never;
@@ -9232,6 +10456,283 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    "realtime.memories.list": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GameMemoryPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "realtime.memories.save": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GameMemorySaveInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GameMemoryDigestModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "realtime.memories.delete": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                memory_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GameMemoryDeleteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "realtime.sessions.list": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealtimeSessionPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "realtime.sessions.start": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RealtimeSessionStartInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealtimeSessionModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "realtime.sessions.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealtimeSessionModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "realtime.sessions.report": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RealtimeSessionReportInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealtimeSessionModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "realtime.sessions.stop": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RealtimeSessionStopInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealtimeSessionModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9514,6 +11015,113 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "skills.create": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillCreateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "skills.import.inspect": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillImportInspectInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillImportInspectionModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "skills.import.install": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillImportInstallInput"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

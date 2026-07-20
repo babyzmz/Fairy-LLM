@@ -51,8 +51,12 @@ export interface WorkspaceClient extends AssistantTurnClient {
       Pick<CoreClient["assistant"]["turns"], "trace">;
   };
   desktop: Pick<CoreClient["desktop"], "openSettings">;
+  trash?: Pick<CoreClient["trash"], "purgeAll">;
   health: CoreClient["health"];
-  projects: Pick<CoreClient["projects"], "list" | "create" | "import" | "selectFolder">;
+  projects: Pick<
+    CoreClient["projects"],
+    "list" | "create" | "import" | "get" | "updateMetadata" | "archive" | "delete" | "selectFolder"
+  >;
   conversations: Pick<CoreClient["conversations"], "list" | "create" | "get" | "update" | "delete" | "moveToProject">;
   tasks: Pick<CoreClient["tasks"], "list" | "create" | "get" | "review" | "updateMetadata" | "archive">;
   approvals: Pick<CoreClient["approvals"], "list" | "decide">;
@@ -182,6 +186,11 @@ export interface WorkspaceModel {
   selectProjectFolder(): Promise<string | null>;
   createChatConversation(): Promise<void>;
   createPetChatConversation(): Promise<void>;
+  createProjectConversation(project: Project): Promise<void>;
+  renameProject(project: Project, name: string): Promise<void>;
+  setProjectPinned(project: Project, pinned: boolean): Promise<void>;
+  archiveProject(project: Project): Promise<void>;
+  deleteProject(project: Project, cancelActive?: boolean): Promise<void>;
   renameConversation(conversation: Conversation, title: string): Promise<void>;
   setConversationPinned(conversation: Conversation, pinned: boolean): Promise<void>;
   deleteConversation(conversation: Conversation): Promise<void>;

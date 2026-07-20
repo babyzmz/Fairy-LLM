@@ -146,6 +146,8 @@ describe("ChatWorkspace", () => {
         turn={{ ...TURN, status: "failed", error_code: "PROVIDER_UNAVAILABLE" }}
       />,
     );
+    expect(screen.getByText("Response stopped before completion")).toBeVisible();
+    expect(screen.queryByText("PROVIDER_UNAVAILABLE")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry response" }));
     expect(props.onRetry).toHaveBeenCalledOnce();
   });

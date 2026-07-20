@@ -1,9 +1,14 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { CapabilityManifest, CoreMethodName } from "../core/client";
+import type {
+  CapabilityManifest,
+  CoreMethodName,
+  ProjectArchivedItem,
+  TrashItem,
+} from "../core/client";
 import type { InvokeFunction } from "../core/tauriTransport";
 import { SettingsApp } from "./SettingsApp";
 import { SettingsClient, type DesktopPreferences } from "./client";
@@ -33,6 +38,18 @@ describe("SettingsApp", () => {
     const update = invoke.mock.calls.find(([command]) => command === "desktop_preferences_update")?.[1] as { input: { preferences: DesktopPreferences } };
     expect(update.input.preferences.developer_mode).toBe(true);
     expect(localStorage.getItem("fairy.workspace.developer")).toBe("true");
+  });
+
+  it("shows native string errors instead of replacing them with a generic failure", async () => {
+    const invoke = settingsInvoke();
+    invoke.mockImplementationOnce(async () => defaultPreferences());
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+
+    await screen.findByRole("heading", { name: "General" });
+    invoke.mockRejectedValueOnce("Pet render window is unavailable");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Launch at startup" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Pet render window is unavailable");
   });
 
   it("updates Core permissions only through settings_rpc", async () => {
@@ -110,9 +127,10 @@ describe("SettingsApp", () => {
       screen.getByRole("combobox", { name: "Glass privacy" }),
       "enhanced",
     );
+    expect(await screen.findByText(/GPU-acquires the active monitor/)).toBeVisible();
     await userEvent.selectOptions(
       screen.getByRole("combobox", { name: "Animation frame rate" }),
-      "144",
+      "300",
     );
     fireEvent.click(screen.getByRole("checkbox", { name: "Do not disturb" }));
     await vi.waitFor(() => {
@@ -129,7 +147,7 @@ describe("SettingsApp", () => {
       .map(([, args]) => (args as { input: { preferences: DesktopPreferences } }).input.preferences);
     expect(updates.some((preferences) => preferences.pet_renderer_mode === "compatibility")).toBe(true);
     expect(updates.some((preferences) => preferences.pet_optics_mode === "enhanced")).toBe(true);
-    expect(updates.some((preferences) => preferences.pet_target_fps === 144)).toBe(true);
+    expect(updates.some((preferences) => preferences.pet_target_fps === 300)).toBe(true);
     expect(updates.some((preferences) => preferences.pet_do_not_disturb)).toBe(true);
     expect(updates.at(-1)?.pet_remember_position).toBe(false);
   });
@@ -147,9 +165,289 @@ describe("SettingsApp", () => {
       idempotency_key: "settings:catalog:design-taste-frontend:install",
     }));
   });
+
+  it("installs the official GSAP ScrollTrigger Skill from the curated store", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+    await userEvent.click(screen.getByRole("button", { name: /Skills \/ MCP/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Store" }));
+
+    const entry = screen.getByText("GSAP ScrollTrigger").closest("section");
+    expect(entry).not.toBeNull();
+    await userEvent.click(within(entry as HTMLElement).getByRole("button", { name: "Install" }));
+
+    await vi.waitFor(() => expect(rpcRequest(invoke, "skills.install")?.params).toEqual({
+      catalog_id: "gsap-scrolltrigger",
+      idempotency_key: "settings:catalog:gsap-scrolltrigger:install",
+    }));
+  });
+
+  it("provides an independent MCP store and installs Playwright as a disabled preset", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+    await userEvent.click(screen.getByRole("button", { name: /Skills \/ MCP/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^MCP/ }));
+
+    expect(screen.getByRole("tab", { name: "Installed" })).toBeVisible();
+    await userEvent.click(screen.getByRole("tab", { name: "Store" }));
+    expect(screen.queryByText("Taste Skill")).not.toBeInTheDocument();
+    const entry = screen.getByText("Playwright MCP").closest("section");
+    expect(entry).not.toBeNull();
+    await userEvent.click(within(entry as HTMLElement).getByRole("button", { name: "Install" }));
+
+    await vi.waitFor(() => expect(rpcRequest(invoke, "mcp.presets.install")?.params).toEqual({
+      catalog_id: "playwright",
+      credential_ref: null,
+      expected_revision: 0,
+      idempotency_key: "settings:mcp:preset:playwright:install",
+    }));
+    expect(rpcRequest(invoke, "mcp.servers.accept")).toBeUndefined();
+  });
+
+  it("inspects an external GitHub Skill before installing a managed copy", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+    await userEvent.click(screen.getByRole("button", { name: /Skills \/ MCP/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Add external" }));
+    await userEvent.click(screen.getByRole("radio", { name: "GitHub" }));
+    await userEvent.type(screen.getByLabelText("Skill source"), "https://github.com/example/fairy-skill");
+    await userEvent.click(screen.getByRole("button", { name: "Inspect" }));
+
+    expect(await screen.findByText(/3 files/)).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Install reviewed Skill" }));
+    await vi.waitFor(() => expect(rpcRequest(invoke, "skills.import.install")?.params).toEqual(
+      expect.objectContaining({
+        inspection_token: "inspection-token",
+        name: "example-skill",
+        version: "1.0.0",
+        publisher: "Local user",
+      }),
+    ));
+  });
+
+  it("switches directly between external import and local Skill creation", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+    await userEvent.click(screen.getByRole("button", { name: /Skills \/ MCP/ }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Add external" }));
+    expect(screen.getByText("Fairy copies the reviewed package into managed storage; the source remains unchanged.")).toBeVisible();
+    const createButton = screen.getByRole("button", { name: "Create Skill" });
+    await userEvent.click(createButton);
+
+    expect(screen.queryByText("Fairy copies the reviewed package into managed storage; the source remains unchanged.")).not.toBeInTheDocument();
+    expect(screen.getByText("Build a local, versioned instruction package managed by Fairy.")).toBeVisible();
+    expect(createButton).toHaveAttribute("aria-pressed", "true");
+    expect(createButton).toHaveAccessibleName("Cancel");
+  });
+
+  it("creates a local Skill and imports bounded MCP JSON without raw secrets", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+    await userEvent.click(screen.getByRole("button", { name: /Skills \/ MCP/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Create Skill" }));
+    await userEvent.type(screen.getByLabelText("Skill ID"), "review-flow");
+    await userEvent.type(screen.getByLabelText("Description"), "Review generated work.");
+    await userEvent.type(screen.getByLabelText("Instructions"), "Inspect the artifact and report actionable issues.");
+    await userEvent.click(screen.getByRole("button", { name: "Create and install" }));
+    await vi.waitFor(() => expect(rpcRequest(invoke, "skills.create")?.params).toEqual(
+      expect.objectContaining({ name: "review-flow", version: "1.0.0" }),
+    ));
+
+    await userEvent.click(screen.getByRole("tab", { name: /^MCP/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Import JSON" }));
+    fireEvent.change(screen.getByLabelText("MCP JSON configuration"), {
+      target: { value: '{"mcpServers":{"context-helper":{"command":"npx","args":["-y","example-mcp"]}}}' },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Review and save" }));
+    await vi.waitFor(() => expect(rpcRequest(invoke, "mcp.servers.configure")?.params).toEqual(
+      expect.objectContaining({
+        server_id: "context-helper",
+        command: "npx",
+        arguments: ["-y", "example-mcp"],
+        environment_refs: {},
+      }),
+    ));
+
+    const configuredCalls = rpcRequests(invoke, "mcp.servers.configure").length;
+    await userEvent.click(screen.getByRole("button", { name: "Import JSON" }));
+    fireEvent.change(screen.getByLabelText("MCP JSON configuration"), {
+      target: { value: '{"mcpServers":{"unsafe":{"command":"npx","env":{"TOKEN":"secret"}}}}' },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Review and save" }));
+    expect(await screen.findByText(/Raw env values are not accepted/)).toBeVisible();
+    expect(rpcRequests(invoke, "mcp.servers.configure")).toHaveLength(configuredCalls);
+  });
+
+  it("configures a stdio MCP server with one argument per line", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+    await userEvent.click(screen.getByRole("button", { name: /Skills \/ MCP/ }));
+    await userEvent.click(screen.getByRole("tab", { name: /^MCP/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Add server" }));
+
+    await userEvent.type(screen.getByLabelText("Server ID"), "playwright");
+    await userEvent.type(screen.getByLabelText("Display name"), "Playwright");
+    await userEvent.type(screen.getByLabelText("Command"), "npx.cmd");
+    fireEvent.change(screen.getByLabelText("Arguments (one per line)"), {
+      target: { value: "-y\n@playwright/mcp@0.0.78\n--isolated\n--headless\n" },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Save server" }));
+
+    await vi.waitFor(() => expect(rpcRequest(invoke, "mcp.servers.configure")?.params)
+      .toEqual(expect.objectContaining({
+        server_id: "playwright",
+        command: "npx.cmd",
+        arguments: ["-y", "@playwright/mcp@0.0.78", "--isolated", "--headless"],
+      })));
+  });
+
+  it("manages archived projects and every conversation type in Recently deleted", async () => {
+    const invoke = settingsInvoke({
+      archivedProjects: archivedProjectPage.items,
+      trashItems: trashPage.items,
+    });
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+
+    expect(await screen.findByText("Archived workspace")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await vi.waitFor(() => {
+      expect(rpcRequest(invoke, "projects.archived.restore")?.params).toEqual({
+        project_id: archivedProjectPage.items[0].project.id,
+        expected_revision: 4,
+      });
+    });
+
+    await userEvent.click(screen.getByRole("tab", { name: /Recently deleted/ }));
+    expect(screen.getByText("Scratch notes")).toBeVisible();
+    expect(screen.getByText("Deleted project chat")).toBeVisible();
+    const disabledRestore = screen.getAllByRole("button", { name: "Restore" }).find(
+      (button) => button.getAttribute("title") === "Restore the parent project first",
+    );
+    expect(disabledRestore).toBeDisabled();
+
+    await userEvent.click(screen.getByLabelText("Permanently delete Scratch notes"));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("exclusive Workspace");
+    await userEvent.click(screen.getByRole("button", { name: "Permanently delete" }));
+    await vi.waitFor(() => {
+      expect(rpcRequest(invoke, "trash.items.purge")?.params).toEqual(
+        expect.objectContaining({ item_type: "conversation", user_confirmed: true }),
+      );
+    });
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /^Permanently delete after 30 days/ }));
+    await vi.waitFor(() => {
+      const update = invoke.mock.calls.find(([command]) => command === "desktop_preferences_update");
+      expect((update?.[1] as { input: { preferences: DesktopPreferences } }).input.preferences)
+        .toEqual(expect.objectContaining({ trash_auto_purge_30_days: true }));
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    await userEvent.click(screen.getByRole("button", { name: "Permanently delete" }));
+    await vi.waitFor(() => {
+      expect(rpcRequest(invoke, "trash.items.purge_all")?.params).toEqual({
+        user_confirmed: true,
+        deleted_before: null,
+        maintenance: false,
+      });
+    });
+  });
+
+  it("loads every archived and trash page", async () => {
+    const secondArchived: ProjectArchivedItem = {
+      ...archivedProjectPage.items[0],
+      project: {
+        ...archivedProjectPage.items[0].project,
+        id: "019f566f-f8b4-7000-8000-000000000093",
+        workspace_id: "019f566f-f8b4-7000-8000-000000000093",
+        name: "Second archived workspace",
+      },
+    };
+    const secondTrash: TrashItem = {
+      ...trashPage.items[0],
+      item_id: "019f566f-f8b4-7000-8000-000000000094",
+      title: "Second deleted chat",
+    };
+    const invoke = settingsInvoke({
+      archivedProjects: [...archivedProjectPage.items, secondArchived],
+      trashItems: [trashPage.items[0], secondTrash],
+      historyPageSize: 1,
+    });
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+
+    expect(await screen.findByText("Second archived workspace")).toBeVisible();
+    await userEvent.click(screen.getByRole("tab", { name: /Recently deleted/ }));
+    expect(screen.getByText("Second deleted chat")).toBeVisible();
+    expect(rpcRequests(invoke, "projects.archived.list")).toHaveLength(2);
+    expect(rpcRequests(invoke, "trash.items.list")).toHaveLength(2);
+  });
 });
 
-function settingsInvoke() {
+const archivedProjectPage: { items: ProjectArchivedItem[]; next_cursor: null } = {
+  items: [{
+    project: {
+      id: "019f566f-f8b4-7000-8000-000000000090",
+      name: "Archived workspace",
+      residency: "local_only",
+      workspace_id: "019f566f-f8b4-7000-8000-000000000090",
+      active_version_id: null,
+      active_preview_id: null,
+      revision: 0,
+      pinned_at: null,
+      archived_at: "2026-06-01T00:00:00Z",
+      deleted_at: null,
+      purged_at: null,
+      metadata_revision: 4,
+      created_at: "2026-05-01T00:00:00Z",
+      updated_at: "2026-06-01T00:00:00Z",
+    },
+    thread_count: 3,
+    archived_at: "2026-06-01T00:00:00Z",
+  }],
+  next_cursor: null,
+};
+
+const trashPage: { items: TrashItem[]; next_cursor: null } = {
+  items: [
+    {
+      item_type: "conversation",
+      item_id: "019f566f-f8b4-7000-8000-000000000091",
+      title: "Scratch notes",
+      source_project_id: null,
+      source_project_title: null,
+      thread_count: 0,
+      deleted_at: "2026-06-02T00:00:00Z",
+      estimated_bytes: 4096,
+      can_restore: true,
+      metadata_revision: 2,
+    },
+    {
+      item_type: "project_conversation",
+      item_id: "019f566f-f8b4-7000-8000-000000000092",
+      title: "Deleted project chat",
+      source_project_id: archivedProjectPage.items[0].project.id,
+      source_project_title: "Archived workspace",
+      thread_count: 0,
+      deleted_at: "2026-06-03T00:00:00Z",
+      estimated_bytes: 0,
+      can_restore: false,
+      metadata_revision: 3,
+    },
+  ],
+  next_cursor: null,
+};
+
+function settingsInvoke(options: {
+  archivedProjects?: ProjectArchivedItem[];
+  trashItems?: TrashItem[];
+  historyPageSize?: number;
+} = {}) {
   let preferences = defaultPreferences();
   let openRouterConfigured = true;
   return vi.fn(async (command: string, args?: Record<string, unknown>) => {
@@ -169,10 +467,32 @@ function settingsInvoke() {
     }
     if (command === "settings_rpc") {
       const request = args?.request as { id: number; method: CoreMethodName; params: Record<string, unknown> };
-      return { jsonrpc: "2.0", id: request.id, result: resultFor(request.method, request.params) };
+      const result = request.method === "projects.archived.list"
+        ? historyPage(options.archivedProjects ?? [], request.params, options.historyPageSize)
+        : request.method === "trash.items.list"
+          ? historyPage(options.trashItems ?? [], request.params, options.historyPageSize)
+          : resultFor(request.method, request.params);
+      return { jsonrpc: "2.0", id: request.id, result };
     }
     throw new Error(`Unexpected command: ${command}`);
   });
+}
+
+function historyPage<T>(items: T[], params: Record<string, unknown>, requestedSize?: number) {
+  const start = params.cursor === null || params.cursor === undefined ? 0 : Number(params.cursor);
+  const pageSize = requestedSize ?? 100;
+  const end = Math.min(start + pageSize, items.length);
+  return {
+    items: items.slice(start, end),
+    next_cursor: end < items.length ? String(end) : null,
+  };
+}
+
+function rpcRequests(invoke: ReturnType<typeof settingsInvoke>, method: CoreMethodName) {
+  return invoke.mock.calls.filter(([command, args]) =>
+    command === "settings_rpc" &&
+    (args as { request?: { method?: CoreMethodName } } | undefined)?.request?.method === method
+  );
 }
 
 function resultFor(method: CoreMethodName, params: Record<string, unknown>) {
@@ -200,10 +520,58 @@ function resultFor(method: CoreMethodName, params: Record<string, unknown>) {
       license: "MIT",
       experimental: true,
       installed: false,
+      source_kind: "curated",
+      trust: "verified_publisher",
+      tags: ["design", "frontend"],
+      requirements: [],
+    }, {
+      extension_id: "gsap-scrolltrigger",
+      kind: "skill",
+      name: "GSAP ScrollTrigger",
+      description: "Official scroll animation guidance.",
+      publisher: "GreenSock",
+      version: "1.0.0+aed9cfd",
+      source: "https://github.com/greensock/gsap-skills",
+      license: "MIT",
+      experimental: false,
+      installed: false,
+      source_kind: "curated",
+      trust: "verified_publisher",
+      tags: ["animation", "frontend"],
+      requirements: [],
+    }, {
+      extension_id: "playwright",
+      kind: "mcp_preset",
+      name: "Playwright MCP",
+      description: "Official browser automation server.",
+      publisher: "Microsoft",
+      version: "0.0.78",
+      source: "https://github.com/microsoft/playwright-mcp",
+      license: "Apache-2.0",
+      experimental: false,
+      installed: false,
+      source_kind: "curated",
+      trust: "verified_publisher",
+      tags: ["browser", "testing"],
+      requirements: ["Node.js 20 or newer"],
     }] };
+    case "skills.import.inspect": return {
+      inspection_token: "inspection-token",
+      name: "example-skill",
+      description: "Imported example Skill.",
+      version: null,
+      publisher: null,
+      license: null,
+      source: "https://github.com/example/fairy-skill",
+      has_manifest: false,
+      file_count: 3,
+      content_bytes: 4096,
+    };
     case "skills.list": return { items: [], next_cursor: null };
     case "mcp.servers.list": return { items: [], next_cursor: null };
     case "tasks.list": return { items: [], next_cursor: null };
+    case "projects.archived.list": return { items: [], next_cursor: null };
+    case "trash.items.list": return { items: [], next_cursor: null };
     default: return {};
   }
 }
@@ -277,6 +645,12 @@ function defaultPreferences(): DesktopPreferences {
     memory_enabled: true,
     memory_retention_days: 90,
     analytics_enabled: false,
+    realtime_provider: "auto",
+    realtime_voice_mode: "native",
+    realtime_game_audio_default: false,
+    realtime_memory_enabled: true,
+    realtime_max_session_minutes: 30,
+    trash_auto_purge_30_days: false,
     pet_enabled: true,
     pet_always_on_top: true,
     pet_muted: false,

@@ -18,14 +18,18 @@ use desktop_preferences::{
     PetPreferencesUpdate,
 };
 use presence_coordinator::{
-    anchor_from_ratios, anchor_ratios, global_cursor_position, resolve_presence_placement,
+    anchor_from_ratios, anchor_ratios, global_cursor_position,
+    resolve_drag_presence_placement_for_anchor, resolve_presence_placement,
     resolve_presence_placement_for_anchor, select_work_area, ExpansionDirection, PhysicalFrame,
     PhysicalPoint, PresenceCoordinatorConfig, PresenceCoordinatorHandle, PresenceWindowPlacement,
-    PET_CORE_EXTENT_LOGICAL, PET_INPUT_COMPACT_HEIGHT_LOGICAL, PET_INPUT_COMPACT_WIDTH_LOGICAL,
+    PET_CORE_ANCHOR_X_LOGICAL, PET_CORE_ANCHOR_Y_LOGICAL, PET_CORE_EXTENT_LOGICAL,
+    PET_INPUT_COMPACT_HEIGHT_LOGICAL, PET_INPUT_COMPACT_MAX_WIDTH_LOGICAL,
+    PET_INPUT_COMPACT_MIN_WIDTH_LOGICAL, PET_INPUT_COMPACT_WIDTH_LOGICAL,
     PET_INPUT_EXPANDED_HEIGHT_LOGICAL, PET_INPUT_EXPANDED_WIDTH_LOGICAL,
 };
 use presence_native_gpu::{
-    NativeGpuConfig, NativeGpuStartRequest, NativeGpuStatus, NativePresenceGpuManager,
+    NativeGpuConfig, NativeGpuExpansionDirection, NativeGpuLifecycle, NativeGpuPresentation,
+    NativeGpuStartRequest, NativeGpuStatus, NativePresenceGpuManager,
 };
 use presence_renderer_supervisor::{
     PresenceRendererDirective, PresenceRendererHealthReport, PresenceRendererStatus,
@@ -34,9 +38,15 @@ use presence_renderer_supervisor::{
 use presence_startup::PresenceStartupGate;
 use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStore};
 use provider_credentials::{CredentialReplacement, ProviderCredentialStore};
+use realtime_worker::{
+    bundled_realtime_launch, development_realtime_launch, RealtimeWorkerManager,
+    RealtimeWorkerStartInput, RealtimeWorkerStatus, RealtimeWorkerStopInput,
+    RealtimeWorkerToolResultInput,
+};
 use voice_worker::{
-    bundled_voice_launch, development_voice_launch, prepared_test_session, PreparedVoiceSession,
-    VoiceStreamEvent, VoiceStreamInput, VoiceWorkerManager,
+    bundled_voice_launch, development_voice_launch, prepared_realtime_session,
+    prepared_test_session, PreparedVoiceSession, VoiceStreamEvent, VoiceStreamInput,
+    VoiceWorkerManager,
 };
 
 pub mod capture;
@@ -49,12 +59,17 @@ pub mod presence_renderer_supervisor;
 pub mod presence_runtime;
 pub mod presence_startup;
 pub mod presence_window_policy;
+mod process_lifetime;
 pub mod provider_configuration;
 pub mod provider_credentials;
+pub mod realtime_worker;
 pub mod voice_worker;
 
 pub const PET_RENDER_LABEL: &str = "pet-render";
 pub const PET_INPUT_LABEL: &str = "pet-input";
+const PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT: &str = "presence-native-renderer-lifecycle";
+pub(crate) const PRESENCE_INPUT_REQUESTED_EVENT: &str = "presence-input-requested";
+pub(crate) const PRESENCE_MENU_REQUESTED_EVENT: &str = "presence-menu-requested";
 const TRAY_ASK_ID: &str = "fairy.tray.ask";
 const TRAY_NEW_CHAT_ID: &str = "fairy.tray.new_chat";
 const TRAY_AUTO_PLAY_ID: &str = "fairy.tray.auto_play";
@@ -64,6 +79,33 @@ const TRAY_OPEN_ID: &str = "fairy.tray.open";
 const TRAY_SETTINGS_ID: &str = "fairy.tray.settings";
 const TRAY_RESET_ID: &str = "fairy.tray.reset";
 const TRAY_EXIT_ID: &str = "fairy.tray.exit";
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct PetRenderSettings {
+    schema_version: u16,
+    mode: desktop_preferences::PetRendererMode,
+    optics_mode: desktop_preferences::PetOpticsMode,
+    size_scale: f32,
+    opacity: f32,
+    motion_enabled: bool,
+    particles_enabled: bool,
+    target_frame_rate: u16,
+}
+
+impl From<&DesktopPreferences> for PetRenderSettings {
+    fn from(preferences: &DesktopPreferences) -> Self {
+        Self {
+            schema_version: 3,
+            mode: preferences.pet_renderer_mode.clone(),
+            optics_mode: preferences.pet_optics_mode,
+            size_scale: f32::from(preferences.pet_size_percent) / 100.0,
+            opacity: f32::from(preferences.pet_opacity_percent) / 100.0,
+            motion_enabled: preferences.pet_motion_enabled,
+            particles_enabled: preferences.pet_particles_enabled,
+            target_frame_rate: preferences.pet_target_fps,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FairyTrayAction {
@@ -100,6 +142,45 @@ pub struct WindowScopeError;
 pub struct AuxiliaryWindowPolicy {
     pub ignore_cursor_events: bool,
     pub focusable: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PresenceWindowCreationSpec {
+    pub label: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub min_width: u32,
+    pub min_height: u32,
+    pub max_width: u32,
+    pub max_height: u32,
+    pub focusable: bool,
+}
+
+pub const fn presence_window_creation_specs() -> [PresenceWindowCreationSpec; 2] {
+    [
+        PresenceWindowCreationSpec {
+            label: PET_RENDER_LABEL,
+            width: 640,
+            height: 260,
+            min_width: 640,
+            min_height: 260,
+            max_width: 640,
+            max_height: 260,
+            focusable: false,
+        },
+        PresenceWindowCreationSpec {
+            label: PET_INPUT_LABEL,
+            // Keep the transparent WebView surface allocation stable. Resizing WebView2 while it
+            // becomes visible exposes an opaque resize buffer for one compositor frame.
+            width: 616,
+            height: 360,
+            min_width: 616,
+            min_height: 360,
+            max_width: 616,
+            max_height: 360,
+            focusable: true,
+        },
+    ]
 }
 
 pub fn authorize_core_rpc_window(label: &str) -> Result<(), WindowScopeError> {
@@ -167,19 +248,30 @@ pub fn settings_method_allowed(method: &str) -> bool {
             | "models.catalog.refresh"
             | "models.selection.get"
             | "models.selection.update"
+            | "projects.archived.delete"
+            | "projects.archived.list"
+            | "projects.archived.restore"
             | "skills.list"
             | "extensions.catalog.list"
             | "skills.install"
+            | "skills.import.inspect"
+            | "skills.import.install"
+            | "skills.create"
             | "skills.update"
             | "skills.set_enabled"
             | "skills.remove"
             | "tasks.list"
             | "mcp.servers.list"
+            | "mcp.presets.install"
             | "mcp.servers.configure"
             | "mcp.servers.discover"
             | "mcp.servers.accept"
             | "mcp.servers.set_enabled"
             | "mcp.servers.delete"
+            | "trash.items.list"
+            | "trash.items.purge"
+            | "trash.items.purge_all"
+            | "trash.items.restore"
     )
 }
 
@@ -203,16 +295,15 @@ pub fn anchored_pet_input_frame(
     target_height: u32,
     compact_height: u32,
 ) -> PetWindowFrame {
-    let render_right = i64::from(render.x) + i64::from(render.width);
-    let render_center_y = i64::from(render.y) + i64::from(render.height) / 2;
-    let compact_bottom = render_center_y + i64::from(compact_height) / 2;
+    let scale = f64::from(render.width) / 640.0;
+    let edge_inset = (24.0 * scale.clamp(0.5, 4.0)).round() as i64;
     let y = if target_height <= compact_height {
-        render_center_y - i64::from(target_height) / 2
+        i64::from(render.y)
     } else {
-        compact_bottom - i64::from(target_height)
+        i64::from(render.y) + i64::from(render.height) - i64::from(target_height)
     };
     PetWindowFrame {
-        x: (render_right - i64::from(target_width)) as i32,
+        x: (i64::from(render.x) + edge_inset) as i32,
         y: y as i32,
         width: target_width,
         height: target_height,
@@ -226,8 +317,8 @@ pub fn anchored_pet_core_frame(
     direction: ExpansionDirection,
 ) -> PetWindowFrame {
     let scale = scale_factor.clamp(0.5, 4.0);
-    let anchor_x_offset = (96.0 * scale).round() as i64;
-    let anchor_y_offset = (130.0 * scale).round() as i64;
+    let anchor_x_offset = (PET_CORE_ANCHOR_X_LOGICAL * scale).round() as i64;
+    let anchor_y_offset = (PET_CORE_ANCHOR_Y_LOGICAL * scale).round() as i64;
     let radius = i64::from(target_extent) / 2;
     let anchor_x = match direction {
         ExpansionDirection::Right => i64::from(render.x) + anchor_x_offset,
@@ -289,6 +380,7 @@ pub fn bridge_failure_response(id: Value, error: &CoreBridgeError) -> Value {
 struct DesktopState {
     core: Arc<Mutex<Option<CoreBridge>>>,
     voice: Arc<VoiceWorkerManager>,
+    realtime: Arc<RealtimeWorkerManager>,
     preferences: Mutex<()>,
     provider_update_in_progress: AtomicBool,
     data_dir: PathBuf,
@@ -296,12 +388,69 @@ struct DesktopState {
     resource_dir: PathBuf,
     presence: PresenceCoordinatorHandle,
     native_gpu: Arc<NativePresenceGpuManager>,
+    native_gpu_reset_in_flight: AtomicBool,
     presence_windows: Mutex<Option<PresenceNativeWindows>>,
     pet_drag: Mutex<Option<PetGroupDragSession>>,
+    pet_input_geometry: Mutex<PetInputGeometry>,
+    pet_input_presentation: Mutex<PetInputPresentationFence>,
     renderer_supervisor: Mutex<PresenceRendererSupervisor>,
     presence_startup: PresenceStartupGate,
     pet_placement_reconciled: AtomicBool,
     started_at: Instant,
+}
+
+#[tauri::command]
+async fn realtime_worker_status(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<RealtimeWorkerStatus, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    Ok(state.realtime.status())
+}
+
+#[tauri::command]
+async fn realtime_worker_start(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    input: RealtimeWorkerStartInput,
+) -> Result<RealtimeWorkerStatus, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let credential_provider = input.provider.credential_provider();
+    let credential = ProviderCredentialStore::new(&state.data_dir)
+        .load(credential_provider)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "REALTIME_CREDENTIAL_MISSING".to_owned())?;
+    state
+        .realtime
+        .start(&app, input, zeroize::Zeroizing::new(credential))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn realtime_worker_stop(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: RealtimeWorkerStopInput,
+) -> Result<RealtimeWorkerStatus, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .realtime
+        .stop(&input.session_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn realtime_worker_tool_result(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: RealtimeWorkerToolResultInput,
+) -> Result<(), String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .realtime
+        .tool_result(input)
+        .map_err(|error| error.to_string())
 }
 
 struct ProviderUpdateGuard<'a> {
@@ -329,6 +478,39 @@ type PresenceNativeHandle = isize;
 
 #[cfg(not(target_os = "windows"))]
 type PresenceNativeHandle = ();
+
+#[cfg(target_os = "windows")]
+struct PerMonitorDpiScope {
+    previous: windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT,
+}
+
+#[cfg(target_os = "windows")]
+impl PerMonitorDpiScope {
+    fn enter() -> Self {
+        use windows_sys::Win32::UI::HiDpi::{
+            SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        };
+
+        Self {
+            previous: unsafe {
+                SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+            },
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for PerMonitorDpiScope {
+    fn drop(&mut self) {
+        use windows_sys::Win32::UI::HiDpi::SetThreadDpiAwarenessContext;
+
+        if !self.previous.is_null() {
+            unsafe {
+                SetThreadDpiAwarenessContext(self.previous);
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 struct PresenceNativeWindows {
@@ -395,11 +577,15 @@ struct PresenceMonitor {
 
 #[derive(Debug)]
 struct PetGroupDragSession {
+    session_id: String,
     start_pointer: PhysicalPoint,
     start_anchor: PhysicalPoint,
     current_placement: PresenceWindowPlacement,
+    input_geometry: PetInputGeometry,
     monitors: Vec<PresenceMonitor>,
     native_windows: PresenceNativeWindows,
+    native_renderer_drag_active: bool,
+    native_renderer_suspended: bool,
 }
 
 fn scope_failure_response(id: Value, message: &str) -> Value {
@@ -491,6 +677,87 @@ struct OpenRouterConfigureInput {
 struct OpenRouterStatus {
     configured: bool,
     account_id: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct RealtimeProviderCredentialInput {
+    provider: String,
+    api_key: String,
+}
+
+#[derive(serde::Deserialize)]
+struct RealtimeProviderCredentialTarget {
+    provider: String,
+}
+
+#[derive(serde::Serialize)]
+struct RealtimeProviderCredentialStatus {
+    provider: String,
+    configured: bool,
+}
+
+fn realtime_credential_provider(value: &str) -> Result<&str, String> {
+    match value {
+        "gemini" | "zhipu" => Ok(value),
+        _ => Err("Unsupported realtime provider".to_owned()),
+    }
+}
+
+#[tauri::command]
+async fn provider_realtime_status(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: RealtimeProviderCredentialTarget,
+) -> Result<RealtimeProviderCredentialStatus, String> {
+    if authorize_settings_window(window.label()).is_err()
+        && authorize_core_rpc_window(window.label()).is_err()
+    {
+        return Err("Window is not authorized".to_owned());
+    }
+    let provider = realtime_credential_provider(&input.provider)?;
+    let configured = ProviderCredentialStore::new(&state.data_dir)
+        .configured_for(provider)
+        .map_err(|error| error.to_string())?;
+    Ok(RealtimeProviderCredentialStatus {
+        provider: provider.to_owned(),
+        configured,
+    })
+}
+
+#[tauri::command]
+async fn provider_realtime_configure(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: RealtimeProviderCredentialInput,
+) -> Result<RealtimeProviderCredentialStatus, String> {
+    authorize_settings_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let provider = realtime_credential_provider(&input.provider)?;
+    let _update_guard = begin_provider_update(&state)?;
+    ProviderCredentialStore::new(&state.data_dir)
+        .save(provider, &input.api_key)
+        .map_err(|error| error.to_string())?;
+    Ok(RealtimeProviderCredentialStatus {
+        provider: provider.to_owned(),
+        configured: true,
+    })
+}
+
+#[tauri::command]
+async fn provider_realtime_delete(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: RealtimeProviderCredentialTarget,
+) -> Result<RealtimeProviderCredentialStatus, String> {
+    authorize_settings_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let provider = realtime_credential_provider(&input.provider)?;
+    let _update_guard = begin_provider_update(&state)?;
+    ProviderCredentialStore::new(&state.data_dir)
+        .delete(provider)
+        .map_err(|error| error.to_string())?;
+    Ok(RealtimeProviderCredentialStatus {
+        provider: provider.to_owned(),
+        configured: false,
+    })
 }
 
 #[tauri::command]
@@ -693,11 +960,7 @@ async fn desktop_preferences_update(
             DesktopPreferencesError::RevisionConflict => "PREFERENCES_REVISION_CONFLICT".to_owned(),
             other => other.to_string(),
         })?;
-    state.presence.set_preferences(coordinator_config(&next));
-    apply_pet_window_preferences(&app, &next)?;
-    app.emit("desktop-preferences-changed", &next)
-        .map_err(|error| error.to_string())?;
-    sync_tray_preferences(&app, &next);
+    apply_persisted_preferences(&app, &state, &next);
     Ok(next)
 }
 
@@ -713,8 +976,12 @@ async fn pet_preferences_update(
     let anchor_changed = input.pet_anchor.is_some() || input.clear_pet_anchor;
     let next = persist_pet_preferences(&app, &state, input)?;
     if anchor_changed && next.pet_remember_position {
-        let placement = place_pet_windows(&app, &next, Some(presence_native_windows(&state)?))?;
-        set_presence_placement(&state, placement);
+        let placement = presence_native_windows(&state)
+            .and_then(|windows| place_pet_windows(&app, &next, Some(windows)));
+        match placement {
+            Ok(placement) => set_presence_placement(&state, placement),
+            Err(error) => eprintln!("failed to apply persisted pet position: {error}"),
+        }
     }
     Ok(next)
 }
@@ -734,34 +1001,100 @@ fn persist_pet_preferences(
             DesktopPreferencesError::RevisionConflict => "PREFERENCES_REVISION_CONFLICT".to_owned(),
             other => other.to_string(),
         })?;
-    state.presence.set_preferences(coordinator_config(&next));
-    apply_pet_window_preferences(app, &next)?;
-    app.emit("desktop-preferences-changed", &next)
-        .map_err(|error| error.to_string())?;
-    sync_tray_preferences(app, &next);
+    apply_persisted_preferences(app, state, &next);
     Ok(next)
 }
 
-#[tauri::command]
-async fn pet_window_group_begin_drag(
-    window: WebviewWindow,
-    state: State<'_, DesktopState>,
+fn apply_persisted_preferences(
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+    next: &DesktopPreferences,
+) {
+    state.presence.set_preferences(coordinator_config(&next));
+    if let Err(error) = apply_pet_window_preferences(app, next) {
+        eprintln!("failed to apply persisted pet window preferences: {error}");
+    }
+    if let Err(error) = app.emit("desktop-preferences-changed", next) {
+        eprintln!("failed to publish persisted desktop preferences: {error}");
+    }
+    sync_tray_preferences(app, &next);
+}
+
+#[cfg(target_os = "windows")]
+fn primary_pointer_pressed() -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+
+    unsafe { (GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000) != 0 }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn primary_pointer_pressed() -> bool {
+    true
+}
+
+fn validate_pet_drag_session_id(session_id: &str) -> Result<(), String> {
+    if session_id.is_empty()
+        || session_id.len() > 128
+        || !session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err("PET_DRAG_SESSION_INVALID".to_owned());
+    }
+    Ok(())
+}
+
+pub(crate) fn begin_native_pet_drag(
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+    start_pointer: PhysicalPoint,
+    fallback_placement: PresenceWindowPlacement,
 ) -> Result<(), String> {
-    authorize_pet_input_window(window.label())
-        .map_err(|_| "Window is not authorized".to_owned())?;
+    {
+        let drag = state
+            .pet_drag
+            .lock()
+            .map_err(|_| "Pet drag lock is unavailable".to_owned())?;
+        if drag.is_some() {
+            return Ok(());
+        }
+    }
     state.presence.set_repositioning(true);
+    if let Err(error) = state.native_gpu.set_drag_active(true) {
+        state.presence.set_repositioning(false);
+        return Err(error.to_string());
+    }
     let result = (|| {
-        let app = window.app_handle();
-        let native_windows = presence_native_windows(&state)?;
-        let placement =
-            current_pet_placement(app, Some(native_windows), state.presence.latest_placement())?;
+        let native_windows = presence_native_windows(state)?;
+        let monitors = presence_monitors_for_app(app)?;
+        let placement = app
+            .get_webview_window(PET_RENDER_LABEL)
+            .and_then(|render| {
+                let render_handle = native_windows.handle_for(PET_RENDER_LABEL).ok()?;
+                let render_frame =
+                    presence_visible_render_frame(&render, render_handle, state).ok()?;
+                let presentation = state.native_gpu.presentation()?;
+                placement_from_native_presentation(render_frame, &monitors, presentation).ok()
+            })
+            .unwrap_or(fallback_placement);
+        set_presence_placement(state, placement);
+        if let Some(input) = app.get_webview_window(PET_INPUT_LABEL) {
+            let _ = input.set_ignore_cursor_events(true);
+            let _ = input.hide();
+        }
         let session = PetGroupDragSession {
-            start_pointer: global_cursor_position()
-                .ok_or_else(|| "Pet cursor position is unavailable".to_owned())?,
+            session_id: "native-pointer".to_owned(),
+            start_pointer,
             start_anchor: placement.anchor,
             current_placement: placement,
-            monitors: presence_monitors_for_app(app)?,
+            input_geometry: PetInputGeometry {
+                layout: PetInputLayout::Hidden,
+                compact_width_logical: PET_INPUT_COMPACT_WIDTH_LOGICAL,
+            },
+            monitors,
             native_windows,
+            native_renderer_drag_active: true,
+            native_renderer_suspended: false,
         };
         let mut drag = state
             .pet_drag
@@ -771,6 +1104,225 @@ async fn pet_window_group_begin_drag(
         Ok(())
     })();
     if result.is_err() {
+        let _ = state.native_gpu.set_drag_active(false);
+        state.presence.set_repositioning(false);
+    }
+    result
+}
+
+pub(crate) fn move_native_pet_drag(
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+    current_pointer: PhysicalPoint,
+) -> Result<(), String> {
+    let mut drag = state
+        .pet_drag
+        .lock()
+        .map_err(|_| "Pet drag lock is unavailable".to_owned())?;
+    let session = drag
+        .as_mut()
+        .ok_or_else(|| "Pet drag has not started".to_owned())?;
+    if session.session_id != "native-pointer" {
+        return Err("PET_DRAG_SESSION_MISMATCH".to_owned());
+    }
+    let desired_anchor = PhysicalPoint {
+        x: session
+            .start_anchor
+            .x
+            .saturating_add(current_pointer.x.saturating_sub(session.start_pointer.x)),
+        y: session
+            .start_anchor
+            .y
+            .saturating_add(current_pointer.y.saturating_sub(session.start_pointer.y)),
+    };
+    let monitor = monitor_for_anchor(&session.monitors, current_pointer)
+        .ok_or_else(|| "No monitor is available".to_owned())?;
+    let placement = resolve_drag_presence_placement_for_anchor(
+        desired_anchor,
+        render_size_for_scale(monitor.scale_factor),
+        monitor.work_area,
+        monitor.scale_factor,
+        session.current_placement.expansion_direction,
+    );
+    if placement == session.current_placement {
+        return Ok(());
+    }
+    let crossed_surface = placement.monitor_work_area
+        != session.current_placement.monitor_work_area
+        || (placement.scale_factor - session.current_placement.scale_factor).abs() > f64::EPSILON;
+    if crossed_surface && !session.native_renderer_suspended {
+        let _ = app.emit_to(
+            PET_RENDER_LABEL,
+            PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT,
+            NativeRendererLifecycleSignal {
+                schema_version: 1,
+                reason: "drag_suspended",
+            },
+        );
+        session.native_renderer_suspended = true;
+    }
+    move_pet_window_visual(app, Some(session.native_windows), &placement)?;
+    session.current_placement = placement;
+    set_presence_placement(state, placement);
+    Ok(())
+}
+
+pub(crate) fn end_native_pet_drag(
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+) -> Result<(), String> {
+    let session = {
+        let mut drag = state
+            .pet_drag
+            .lock()
+            .map_err(|_| "Pet drag lock is unavailable".to_owned())?;
+        match drag.as_ref() {
+            Some(session) if session.session_id == "native-pointer" => drag.take(),
+            Some(_) => return Err("PET_DRAG_SESSION_MISMATCH".to_owned()),
+            None => None,
+        }
+    };
+    let native_renderer_suspended = session
+        .as_ref()
+        .is_some_and(|session| session.native_renderer_suspended);
+    let native_renderer_drag_active = session
+        .as_ref()
+        .is_some_and(|session| session.native_renderer_drag_active);
+    let result = (|| {
+        let current = DesktopPreferencesStore::new(&state.data_dir)
+            .load()
+            .map_err(|error| error.to_string())?;
+        let placement = match session.as_ref() {
+            Some(session) => settle_pet_drag_placement(app, state, session)?,
+            None => return Ok(()),
+        };
+        if current.pet_remember_position {
+            let monitor = presence_monitors_for_app(app)?
+                .into_iter()
+                .find(|candidate| candidate.work_area == placement.monitor_work_area)
+                .ok_or_else(|| "Pet monitor is unavailable".to_owned())?;
+            let (x_ratio, y_ratio) = anchor_ratios(placement.anchor, monitor.work_area);
+            persist_pet_preferences(
+                app,
+                state,
+                PetPreferencesUpdate {
+                    expected_revision: current.revision,
+                    voice_auto_play_pet: None,
+                    pet_muted: None,
+                    pet_always_on_top: None,
+                    pet_anchor: Some(desktop_preferences::PetAnchorPreference {
+                        monitor_id: monitor.id,
+                        x_ratio,
+                        y_ratio,
+                    }),
+                    clear_pet_anchor: false,
+                },
+            )?;
+        }
+        Ok(())
+    })();
+    state.presence.set_repositioning(false);
+    let resume_result = if native_renderer_drag_active && !native_renderer_suspended {
+        state
+            .native_gpu
+            .set_drag_active(false)
+            .map_err(|error| error.to_string())
+    } else {
+        Ok(())
+    };
+    let _ = app.emit_to(
+        PET_RENDER_LABEL,
+        PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT,
+        NativeRendererLifecycleSignal {
+            schema_version: 1,
+            reason: "drag_ended",
+        },
+    );
+    result.and(resume_result)
+}
+
+pub(crate) fn show_main_window_from_presence(app: &tauri::AppHandle) -> Result<(), String> {
+    show_and_focus(&main_window(app)?)
+}
+
+#[tauri::command]
+async fn pet_window_group_begin_drag(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    session_id: String,
+    initial_delta_x: i32,
+    initial_delta_y: i32,
+) -> Result<(), String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    // Physical drag is exclusively owned by NativePointerController. Keep the legacy command
+    // fenced while old dev WebViews can still be alive during hot reload; they must never replace
+    // the native-pointer session in DesktopState.
+    if window.label() == PET_INPUT_LABEL {
+        return Err("PET_DRAG_OWNED_BY_NATIVE_POINTER".to_owned());
+    }
+    validate_pet_drag_session_id(&session_id)?;
+    // Native liquid rendering can become visible before the transparent input proxy receives
+    // its first presentation update. Reconcile the proxy synchronously so the first long-press
+    // cannot start from a stale blank rectangle or snap the visible core back to that position.
+    let _ = align_pet_input_to_native_presentation(window.app_handle(), state.inner())?;
+    state.presence.set_repositioning(true);
+    if let Err(error) = state.native_gpu.set_drag_active(true) {
+        state.presence.set_repositioning(false);
+        return Err(error.to_string());
+    }
+    let result = (|| {
+        let app = window.app_handle();
+        let native_windows = presence_native_windows(&state)?;
+        let render = app
+            .get_webview_window(PET_RENDER_LABEL)
+            .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
+        let input = app
+            .get_webview_window(PET_INPUT_LABEL)
+            .ok_or_else(|| "Pet input window is unavailable".to_owned())?;
+        let render_handle = native_windows.handle_for(PET_RENDER_LABEL)?;
+        let render_frame = presence_visible_render_frame(&render, render_handle, state.inner())?;
+        let input_frame =
+            presence_window_frame(&input, native_windows.handle_for(PET_INPUT_LABEL)?)?;
+        let monitors = presence_monitors_for_app(app)?;
+        let (placement, _) = placement_from_actual_pet_windows(
+            render_frame,
+            input_frame,
+            &monitors,
+            state.presence.latest_placement(),
+            state.native_gpu.presentation(),
+        )?;
+        let input_geometry = current_pet_input_geometry(&state)?;
+        let current_pointer = global_cursor_position()
+            .ok_or_else(|| "Pet cursor position is unavailable".to_owned())?;
+        let start_pointer = calibrated_pet_drag_start_pointer(
+            current_pointer,
+            (initial_delta_x, initial_delta_y),
+            placement.scale_factor,
+        );
+        let session = PetGroupDragSession {
+            session_id,
+            // The WebView can move past the drag threshold before the async command reaches
+            // Rust. Reconstruct pointer-down in physical coordinates so native deltas never
+            // jump back when they replace the first CSS fallback sample.
+            start_pointer,
+            start_anchor: placement.anchor,
+            current_placement: placement,
+            input_geometry,
+            monitors,
+            native_windows,
+            native_renderer_drag_active: true,
+            native_renderer_suspended: false,
+        };
+        let mut drag = state
+            .pet_drag
+            .lock()
+            .map_err(|_| "Pet drag lock is unavailable".to_owned())?;
+        *drag = Some(session);
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = state.native_gpu.set_drag_active(false);
         state.presence.set_repositioning(false);
     }
     result
@@ -780,11 +1332,16 @@ async fn pet_window_group_begin_drag(
 async fn pet_window_group_move(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
+    session_id: String,
     delta_x: i32,
     delta_y: i32,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
+    validate_pet_drag_session_id(&session_id)?;
+    if !primary_pointer_pressed() {
+        return Ok(false);
+    }
     let app = window.app_handle();
     let mut drag = state
         .pet_drag
@@ -793,9 +1350,13 @@ async fn pet_window_group_move(
     let session = drag
         .as_mut()
         .ok_or_else(|| "Pet drag has not started".to_owned())?;
+    if session.session_id != session_id {
+        return Err("PET_DRAG_SESSION_MISMATCH".to_owned());
+    }
+    let current_pointer = global_cursor_position();
     let (pointer_delta_x, pointer_delta_y) = resolve_pet_drag_delta(
         session.start_pointer,
-        global_cursor_position(),
+        current_pointer,
         (delta_x, delta_y),
         session.current_placement.scale_factor,
     );
@@ -803,19 +1364,39 @@ async fn pet_window_group_move(
         x: session.start_anchor.x.saturating_add(pointer_delta_x),
         y: session.start_anchor.y.saturating_add(pointer_delta_y),
     };
-    let monitor = monitor_for_anchor(&session.monitors, desired_anchor)
+    let monitor = monitor_for_anchor(&session.monitors, current_pointer.unwrap_or(desired_anchor))
         .ok_or_else(|| "No monitor is available".to_owned())?;
-    let placement = resolve_presence_placement_for_anchor(
+    let placement = resolve_drag_presence_placement_for_anchor(
         desired_anchor,
         render_size_for_scale(monitor.scale_factor),
         monitor.work_area,
         monitor.scale_factor,
-        Some(session.current_placement.expansion_direction),
+        session.current_placement.expansion_direction,
     );
-    move_pet_window_group(app, Some(session.native_windows), &placement)?;
+    if placement == session.current_placement {
+        return Ok(true);
+    }
+    let crossed_surface = placement.monitor_work_area
+        != session.current_placement.monitor_work_area
+        || (placement.scale_factor - session.current_placement.scale_factor).abs() > f64::EPSILON;
+    if crossed_surface && !session.native_renderer_suspended {
+        let _ = app.emit_to(
+            PET_RENDER_LABEL,
+            PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT,
+            NativeRendererLifecycleSignal {
+                schema_version: 1,
+                reason: "drag_suspended",
+            },
+        );
+        session.native_renderer_suspended = true;
+    }
+    // Keep WebView2 stationary while the pointer is captured. Moving its transparent top-level
+    // surface every frame can preserve stale compositor pixels; the native visual follows the
+    // pointer and the input surface is synchronized once when the drag settles.
+    move_pet_window_visual(app, Some(session.native_windows), &placement)?;
     session.current_placement = placement;
     set_presence_placement(&state, placement);
-    Ok(())
+    Ok(true)
 }
 
 fn resolve_pet_drag_delta(
@@ -824,15 +1405,18 @@ fn resolve_pet_drag_delta(
     requested_css_delta: (i32, i32),
     scale_factor: f64,
 ) -> (i32, i32) {
-    let native_delta = current_pointer.map(|pointer| {
-        (
-            pointer.x.saturating_sub(start_pointer.x),
-            pointer.y.saturating_sub(start_pointer.y),
-        )
-    });
-    if native_delta.is_some_and(|delta| delta != (0, 0)) || requested_css_delta == (0, 0) {
-        return native_delta.unwrap_or(requested_css_delta);
-    }
+    current_pointer.map_or_else(
+        || scaled_pet_drag_delta(requested_css_delta, scale_factor),
+        |pointer| {
+            (
+                pointer.x.saturating_sub(start_pointer.x),
+                pointer.y.saturating_sub(start_pointer.y),
+            )
+        },
+    )
+}
+
+fn scaled_pet_drag_delta(requested_css_delta: (i32, i32), scale_factor: f64) -> (i32, i32) {
     let scale = if scale_factor.is_finite() {
         scale_factor.clamp(0.5, 4.0)
     } else {
@@ -844,26 +1428,75 @@ fn resolve_pet_drag_delta(
     )
 }
 
+fn calibrated_pet_drag_start_pointer(
+    current_pointer: PhysicalPoint,
+    initial_css_delta: (i32, i32),
+    scale_factor: f64,
+) -> PhysicalPoint {
+    let delta = scaled_pet_drag_delta(initial_css_delta, scale_factor);
+    PhysicalPoint {
+        x: current_pointer.x.saturating_sub(delta.0),
+        y: current_pointer.y.saturating_sub(delta.1),
+    }
+}
+
+fn settle_pet_drag_placement(
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+    session: &PetGroupDragSession,
+) -> Result<PresenceWindowPlacement, String> {
+    let monitor = monitor_for_anchor(&session.monitors, session.current_placement.anchor)
+        .ok_or_else(|| "No monitor is available".to_owned())?;
+    let settled = resolve_presence_placement_for_anchor(
+        session.current_placement.anchor,
+        render_size_for_scale(monitor.scale_factor),
+        monitor.work_area,
+        monitor.scale_factor,
+        Some(session.current_placement.expansion_direction),
+    );
+    move_pet_window_group_with_geometry(
+        app,
+        Some(session.native_windows),
+        &settled,
+        Some(session.input_geometry),
+    )?;
+    set_presence_placement(state, settled);
+    Ok(settled)
+}
+
 #[tauri::command]
 async fn pet_window_group_end_drag(
     window: WebviewWindow,
     app: tauri::AppHandle,
     state: State<'_, DesktopState>,
+    session_id: String,
     expected_revision: u64,
 ) -> Result<DesktopPreferences, String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
-    let session = state
-        .pet_drag
-        .lock()
-        .map_err(|_| "Pet drag lock is unavailable".to_owned())?
-        .take();
+    validate_pet_drag_session_id(&session_id)?;
+    let session = {
+        let mut drag = state
+            .pet_drag
+            .lock()
+            .map_err(|_| "Pet drag lock is unavailable".to_owned())?;
+        if drag.as_ref().map(|session| session.session_id.as_str()) != Some(session_id.as_str()) {
+            return Err("PET_DRAG_SESSION_MISMATCH".to_owned());
+        }
+        drag.take()
+    };
+    let native_renderer_suspended = session
+        .as_ref()
+        .is_some_and(|session| session.native_renderer_suspended);
+    let native_renderer_drag_active = session
+        .as_ref()
+        .is_some_and(|session| session.native_renderer_drag_active);
     let result = (|| {
         let current = DesktopPreferencesStore::new(&state.data_dir)
             .load()
             .map_err(|error| error.to_string())?;
-        let placement = match session {
-            Some(session) => session.current_placement,
+        let placement = match session.as_ref() {
+            Some(session) => settle_pet_drag_placement(&app, state.inner(), session)?,
             None => state
                 .presence
                 .latest_placement()
@@ -895,7 +1528,27 @@ async fn pet_window_group_end_drag(
         )
     })();
     state.presence.set_repositioning(false);
-    result
+    let resume_result = if native_renderer_drag_active && !native_renderer_suspended {
+        state
+            .native_gpu
+            .set_drag_active(false)
+            .map_err(|error| error.to_string())
+    } else {
+        Ok(())
+    };
+    let _ = app.emit_to(
+        PET_RENDER_LABEL,
+        PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT,
+        NativeRendererLifecycleSignal {
+            schema_version: 1,
+            reason: "drag_ended",
+        },
+    );
+    match (result, resume_result) {
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Ok(preferences), Ok(())) => Ok(preferences),
+    }
 }
 
 #[tauri::command]
@@ -908,27 +1561,59 @@ async fn pet_window_group_reset_position(
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
     state.presence.set_repositioning(false);
-    if let Ok(mut drag) = state.pet_drag.lock() {
-        *drag = None;
-    }
-    let next = persist_pet_preferences(
-        &app,
-        &state,
-        PetPreferencesUpdate {
-            expected_revision,
-            voice_auto_play_pet: None,
-            pet_muted: None,
-            pet_always_on_top: None,
-            pet_anchor: None,
-            clear_pet_anchor: true,
+    let (native_renderer_drag_active, native_renderer_suspended) = state
+        .pet_drag
+        .lock()
+        .map(|mut drag| {
+            drag.take().map_or((false, false), |session| {
+                (
+                    session.native_renderer_drag_active,
+                    session.native_renderer_suspended,
+                )
+            })
+        })
+        .unwrap_or((false, false));
+    let result = (|| {
+        let next = persist_pet_preferences(
+            &app,
+            &state,
+            PetPreferencesUpdate {
+                expected_revision,
+                voice_auto_play_pet: None,
+                pet_muted: None,
+                pet_always_on_top: None,
+                pet_anchor: None,
+                clear_pet_anchor: true,
+            },
+        )?;
+        let placement = place_pet_windows(&app, &next, Some(presence_native_windows(&state)?))?;
+        set_presence_placement(&state, placement);
+        Ok(next)
+    })();
+    let resume_result = if native_renderer_drag_active && !native_renderer_suspended {
+        state
+            .native_gpu
+            .set_drag_active(false)
+            .map_err(|error| error.to_string())
+    } else {
+        Ok(())
+    };
+    let _ = app.emit_to(
+        PET_RENDER_LABEL,
+        PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT,
+        NativeRendererLifecycleSignal {
+            schema_version: 1,
+            reason: "drag_ended",
         },
-    )?;
-    let placement = place_pet_windows(&app, &next, Some(presence_native_windows(&state)?))?;
-    set_presence_placement(&state, placement);
-    Ok(next)
+    );
+    match (result, resume_result) {
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Ok(preferences), Ok(())) => Ok(preferences),
+    }
 }
 
-#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum PetInputLayout {
     Hidden,
@@ -937,15 +1622,313 @@ enum PetInputLayout {
     Expanded,
 }
 
-#[tauri::command]
-async fn pet_input_set_layout(
-    window: WebviewWindow,
-    state: State<'_, DesktopState>,
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PetInputGeometry {
     layout: PetInputLayout,
+    compact_width_logical: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PetInputPresentationFence {
+    session_id: u64,
+    revision: u64,
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+struct PetInputPresentationRequest {
+    session_id: u64,
+    revision: u64,
+    layout: PetInputLayout,
+    compact_width: Option<f64>,
+    interactive: bool,
+    request_focus: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+struct PetInputPresentationCommit {
+    session_id: u64,
+    revision: u64,
+}
+
+impl PetInputPresentationFence {
+    fn begin(&mut self) -> PetInputPresentationCommit {
+        self.session_id = self.session_id.saturating_add(1).max(1);
+        self.revision = 0;
+        self.commit()
+    }
+
+    fn validate(&self, session_id: u64, revision: u64) -> Result<(), &'static str> {
+        if session_id == 0 || revision == 0 {
+            return Err("PET_INPUT_PRESENTATION_INVALID_REVISION");
+        }
+        if session_id != self.session_id {
+            return Err("PET_INPUT_PRESENTATION_STALE_SESSION");
+        }
+        if revision <= self.revision {
+            return Err("PET_INPUT_PRESENTATION_STALE_REVISION");
+        }
+        Ok(())
+    }
+
+    fn commit(&self) -> PetInputPresentationCommit {
+        PetInputPresentationCommit {
+            session_id: self.session_id,
+            revision: self.revision,
+        }
+    }
+}
+
+fn pet_input_geometry_from_frame(frame: PhysicalFrame, scale_factor: f64) -> PetInputGeometry {
+    let scale = scale_factor.clamp(0.5, 4.0);
+    let scaled = |logical: f64| (logical * scale).round() as u32;
+    let core_extent = scaled(PET_CORE_EXTENT_LOGICAL);
+    let compact_height = scaled(PET_INPUT_COMPACT_HEIGHT_LOGICAL);
+    let expanded_height = scaled(PET_INPUT_EXPANDED_HEIGHT_LOGICAL);
+    let core_distance = frame.width.abs_diff(core_extent) + frame.height.abs_diff(core_extent);
+    let compact_distance = frame.height.abs_diff(compact_height);
+    let expanded_distance = frame.height.abs_diff(expanded_height);
+    let layout = if core_distance <= 4 {
+        PetInputLayout::Core
+    } else if expanded_distance < compact_distance {
+        PetInputLayout::Expanded
+    } else {
+        PetInputLayout::Compact
+    };
+    PetInputGeometry {
+        layout,
+        compact_width_logical: (f64::from(frame.width) / scale).clamp(
+            PET_INPUT_COMPACT_MIN_WIDTH_LOGICAL,
+            PET_INPUT_COMPACT_MAX_WIDTH_LOGICAL,
+        ),
+    }
+}
+
+fn pet_input_frame_for_geometry(
+    placement: PresenceWindowPlacement,
+    _geometry: PetInputGeometry,
+) -> PhysicalFrame {
+    let scale = placement.scale_factor.clamp(0.5, 4.0);
+    let scaled = |logical: f64| (logical * scale).round() as u32;
+    let compact_height = scaled(PET_INPUT_COMPACT_HEIGHT_LOGICAL);
+    placement.input_frame(
+        scaled(PET_INPUT_EXPANDED_WIDTH_LOGICAL),
+        scaled(PET_INPUT_EXPANDED_HEIGHT_LOGICAL),
+        compact_height,
+    )
+}
+
+fn current_pet_input_geometry(state: &DesktopState) -> Result<PetInputGeometry, String> {
+    state
+        .pet_input_geometry
+        .lock()
+        .map(|geometry| *geometry)
+        .map_err(|_| "Pet input geometry lock is unavailable".to_owned())
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PetInputRegionKind {
+    Ellipse,
+    RoundedRectangle,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PetInputRegionPart {
+    kind: PetInputRegionKind,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    corner_diameter: i32,
+}
+
+#[cfg(target_os = "windows")]
+fn pet_input_region_parts(
+    layout: PetInputLayout,
+    width: u32,
+    height: u32,
+    compact_content_width: u32,
+    scale_factor: f64,
+    direction: ExpansionDirection,
+) -> Vec<PetInputRegionPart> {
+    let width = width.min(i32::MAX as u32) as i32;
+    let height = height.min(i32::MAX as u32) as i32;
+    let scale = scale_factor.clamp(0.5, 4.0);
+    let scaled = |logical: f64| (logical * scale).round() as i32;
+    let mut parts = Vec::with_capacity(2);
+
+    if matches!(
+        layout,
+        PetInputLayout::Core | PetInputLayout::Compact | PetInputLayout::Expanded
+    ) {
+        let core_extent = scaled(PET_CORE_EXTENT_LOGICAL)
+            .max(1)
+            .min(width)
+            .min(height);
+        let core_top = scaled(116.0).clamp(0, height.saturating_sub(core_extent));
+        let core_left = match direction {
+            ExpansionDirection::Right => 0,
+            ExpansionDirection::Left => width.saturating_sub(core_extent),
+        };
+        parts.push(PetInputRegionPart {
+            kind: PetInputRegionKind::Ellipse,
+            left: core_left,
+            top: core_top,
+            right: core_left.saturating_add(core_extent),
+            bottom: core_top.saturating_add(core_extent),
+            corner_diameter: 0,
+        });
+    }
+
+    match layout {
+        PetInputLayout::Compact => {
+            let content_width = i32::try_from(compact_content_width)
+                .unwrap_or(i32::MAX)
+                .clamp(scaled(PET_INPUT_COMPACT_MIN_WIDTH_LOGICAL), width);
+            let inset = scaled(8.0).clamp(0, content_width / 2);
+            let (left, right) = match direction {
+                ExpansionDirection::Right => (inset, content_width.saturating_sub(inset)),
+                ExpansionDirection::Left => (
+                    width.saturating_sub(content_width).saturating_add(inset),
+                    width.saturating_sub(inset),
+                ),
+            };
+            parts.push(PetInputRegionPart {
+                kind: PetInputRegionKind::RoundedRectangle,
+                left,
+                top: scaled(288.0).clamp(0, height),
+                right,
+                bottom: scaled(352.0).clamp(0, height),
+                corner_diameter: scaled(64.0).max(1),
+            });
+        }
+        PetInputLayout::Expanded => {
+            let content_inset = scaled(8.0).clamp(0, width / 2);
+            let core_gutter = scaled(148.0).clamp(content_inset, width);
+            let (left, right) = match direction {
+                ExpansionDirection::Right => (core_gutter, width),
+                ExpansionDirection::Left => (0, width.saturating_sub(core_gutter)),
+            };
+            parts.push(PetInputRegionPart {
+                kind: PetInputRegionKind::RoundedRectangle,
+                left,
+                top: 0,
+                right,
+                bottom: height,
+                corner_diameter: scaled(16.0).max(1),
+            });
+        }
+        PetInputLayout::Hidden | PetInputLayout::Core => {}
+    }
+    parts
+}
+
+#[cfg(target_os = "windows")]
+fn apply_pet_input_window_region(
+    handle: PresenceNativeHandle,
+    layout: PetInputLayout,
+    width: u32,
+    height: u32,
+    compact_content_width: u32,
+    scale_factor: f64,
+    direction: ExpansionDirection,
 ) -> Result<(), String> {
-    authorize_pet_input_window(window.label())
-        .map_err(|_| "Window is not authorized".to_owned())?;
     if matches!(layout, PetInputLayout::Hidden) {
+        return Ok(());
+    }
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::Graphics::Gdi::{
+        CombineRgn, CreateEllipticRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn, ERROR, HRGN,
+        RGN_OR,
+    };
+
+    let _dpi_scope = PerMonitorDpiScope::enter();
+    let mut combined: HRGN = std::ptr::null_mut();
+    for part in pet_input_region_parts(
+        layout,
+        width,
+        height,
+        compact_content_width,
+        scale_factor,
+        direction,
+    ) {
+        let region = unsafe {
+            match part.kind {
+                PetInputRegionKind::Ellipse => {
+                    CreateEllipticRgn(part.left, part.top, part.right, part.bottom)
+                }
+                PetInputRegionKind::RoundedRectangle => CreateRoundRectRgn(
+                    part.left,
+                    part.top,
+                    part.right,
+                    part.bottom,
+                    part.corner_diameter,
+                    part.corner_diameter,
+                ),
+            }
+        };
+        if region.is_null() {
+            if !combined.is_null() {
+                unsafe { DeleteObject(combined) };
+            }
+            return Err("PET_INPUT_REGION_CREATE_FAILED".to_owned());
+        }
+        if combined.is_null() {
+            combined = region;
+            continue;
+        }
+        let result = unsafe { CombineRgn(combined, combined, region, RGN_OR) };
+        unsafe { DeleteObject(region) };
+        if result == ERROR {
+            unsafe { DeleteObject(combined) };
+            return Err("PET_INPUT_REGION_COMBINE_FAILED".to_owned());
+        }
+    }
+
+    if combined.is_null() {
+        return Err("PET_INPUT_REGION_EMPTY".to_owned());
+    }
+    if unsafe { SetWindowRgn(handle as HWND, combined, 1) } == 0 {
+        unsafe { DeleteObject(combined) };
+        return Err(format!(
+            "PET_INPUT_REGION_APPLY_FAILED: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_pet_input_window_region(
+    _handle: PresenceNativeHandle,
+    _layout: PetInputLayout,
+    _width: u32,
+    _height: u32,
+    _compact_content_width: u32,
+    _scale_factor: f64,
+    _direction: ExpansionDirection,
+) -> Result<(), String> {
+    Ok(())
+}
+
+fn apply_pet_input_layout(
+    window: &WebviewWindow,
+    state: &DesktopState,
+    layout: PetInputLayout,
+    compact_width: Option<f64>,
+) -> Result<(), String> {
+    if state.presence.is_repositioning() {
+        return Err("PET_INPUT_PRESENTATION_REPOSITIONING".to_owned());
+    }
+    if matches!(layout, PetInputLayout::Hidden) {
+        *state
+            .pet_input_geometry
+            .lock()
+            .map_err(|_| "Pet input geometry lock is unavailable".to_owned())? = PetInputGeometry {
+            layout,
+            compact_width_logical: compact_width.unwrap_or(PET_INPUT_COMPACT_WIDTH_LOGICAL),
+        };
         window
             .set_ignore_cursor_events(true)
             .map_err(|error| error.to_string())?;
@@ -956,6 +1939,7 @@ async fn pet_input_set_layout(
     }
 
     let app = window.app_handle();
+    let _ = align_pet_input_to_native_presentation(app, state)?;
     let input = app
         .get_webview_window(PET_INPUT_LABEL)
         .ok_or_else(|| "Pet input window is unavailable".to_owned())?;
@@ -964,45 +1948,71 @@ async fn pet_input_set_layout(
         .latest_placement()
         .ok_or_else(|| "Pet placement is unavailable".to_owned())?;
     let scale = placement.scale_factor.clamp(0.5, 4.0);
-    let (logical_width, logical_height) = match layout {
-        PetInputLayout::Core => (PET_CORE_EXTENT_LOGICAL, PET_CORE_EXTENT_LOGICAL),
-        PetInputLayout::Compact => (
-            PET_INPUT_COMPACT_WIDTH_LOGICAL,
-            PET_INPUT_COMPACT_HEIGHT_LOGICAL,
-        ),
-        PetInputLayout::Expanded => (
-            PET_INPUT_EXPANDED_WIDTH_LOGICAL,
-            PET_INPUT_EXPANDED_HEIGHT_LOGICAL,
-        ),
-        PetInputLayout::Hidden => unreachable!(),
-    };
-    let target_width = (logical_width * scale).round() as u32;
-    let target_height = (logical_height * scale).round() as u32;
+    let compact_width = compact_width
+        .unwrap_or(PET_INPUT_COMPACT_WIDTH_LOGICAL)
+        .clamp(
+            PET_INPUT_COMPACT_MIN_WIDTH_LOGICAL,
+            PET_INPUT_COMPACT_MAX_WIDTH_LOGICAL,
+        );
+    let target_width = (PET_INPUT_EXPANDED_WIDTH_LOGICAL * scale).round() as u32;
+    let target_height = (PET_INPUT_EXPANDED_HEIGHT_LOGICAL * scale).round() as u32;
+    let compact_content_width = (compact_width * scale).round() as u32;
     let compact_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale).round() as u32;
-    let anchored_frame = match layout {
-        PetInputLayout::Core => placement.core_frame(target_width),
-        PetInputLayout::Compact | PetInputLayout::Expanded => {
-            placement.input_frame(target_width, target_height, compact_height)
-        }
-        PetInputLayout::Hidden => unreachable!(),
-    };
+    let anchored_frame = placement.input_frame(target_width, target_height, compact_height);
     let frame = PhysicalFrame {
         x: anchored_frame.x,
         y: anchored_frame.y,
         width: anchored_frame.width,
         height: anchored_frame.height,
     };
-    let input_handle = presence_native_windows(&state)?.handle_for(PET_INPUT_LABEL)?;
-    set_presence_window_frame(&input, input_handle, frame)?;
+    let native_windows = presence_native_windows(state)?;
+    let input_handle = native_windows.handle_for(PET_INPUT_LABEL)?;
+    // The top-level WebView remains at one allocation for core, input, cards, and menus. Only its
+    // exact native hit region changes, eliminating the opaque resize frame seen on hover.
+    move_presence_input_window(&input, input_handle, frame)?;
+    apply_pet_input_window_region(
+        input_handle,
+        layout,
+        frame.width,
+        frame.height,
+        compact_content_width,
+        scale,
+        placement.expansion_direction,
+    )?;
     input.show().map_err(|error| error.to_string())?;
+    *state
+        .pet_input_geometry
+        .lock()
+        .map_err(|_| "Pet input geometry lock is unavailable".to_owned())? = PetInputGeometry {
+        layout,
+        compact_width_logical: compact_width,
+    };
+    #[cfg(target_os = "windows")]
+    enforce_presence_window_shell_policy(input_handle, None)?;
     Ok(())
 }
 
 #[tauri::command]
-async fn pet_input_set_interactive(window: WebviewWindow, interactive: bool) -> Result<(), String> {
+async fn pet_input_set_layout(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    layout: PetInputLayout,
+    compact_width: Option<f64>,
+) -> Result<(), String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
-    if interactive {
+    apply_pet_input_layout(&window, state.inner(), layout, compact_width)
+}
+
+fn apply_pet_input_interactive(
+    window: &WebviewWindow,
+    state: &DesktopState,
+    interactive: bool,
+) -> Result<(), String> {
+    if state.presence.is_repositioning() && !interactive {
+        return Err("PET_INPUT_PRESENTATION_REPOSITIONING".to_owned());
+    }
+    let result = if interactive {
         window
             .set_focusable(true)
             .map_err(|error| error.to_string())?;
@@ -1016,13 +2026,31 @@ async fn pet_input_set_interactive(window: WebviewWindow, interactive: bool) -> 
         window
             .set_focusable(false)
             .map_err(|error| error.to_string())
-    }
+    };
+    result?;
+    #[cfg(target_os = "windows")]
+    enforce_presence_window_shell_policy(
+        window.hwnd().map_err(|error| error.to_string())?.0 as isize,
+        Some(interactive),
+    )?;
+    Ok(())
 }
 
 #[tauri::command]
-async fn pet_input_request_focus(window: WebviewWindow) -> Result<(), String> {
+async fn pet_input_set_interactive(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    interactive: bool,
+) -> Result<(), String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
+    apply_pet_input_interactive(&window, state.inner(), interactive)
+}
+
+fn apply_pet_input_focus(window: &WebviewWindow, state: &DesktopState) -> Result<(), String> {
+    if state.presence.is_repositioning() {
+        return Err("PET_INPUT_PRESENTATION_REPOSITIONING".to_owned());
+    }
     window
         .set_focusable(true)
         .map_err(|error| error.to_string())?;
@@ -1030,7 +2058,71 @@ async fn pet_input_request_focus(window: WebviewWindow) -> Result<(), String> {
         .set_ignore_cursor_events(false)
         .map_err(|error| error.to_string())?;
     window.show().map_err(|error| error.to_string())?;
+    #[cfg(target_os = "windows")]
+    enforce_presence_window_shell_policy(
+        window.hwnd().map_err(|error| error.to_string())?.0 as isize,
+        Some(true),
+    )?;
     window.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn pet_input_request_focus(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    apply_pet_input_focus(&window, state.inner())
+}
+
+#[tauri::command]
+async fn pet_input_presentation_begin(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<PetInputPresentationCommit, String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let mut fence = state
+        .pet_input_presentation
+        .lock()
+        .map_err(|_| "Pet input presentation lock is unavailable".to_owned())?;
+    Ok(fence.begin())
+}
+
+#[tauri::command]
+async fn pet_input_presentation_apply(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: PetInputPresentationRequest,
+) -> Result<PetInputPresentationCommit, String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    if input.request_focus && !input.interactive {
+        return Err("PET_INPUT_PRESENTATION_FOCUS_REQUIRES_INTERACTION".to_owned());
+    }
+
+    let mut fence = state
+        .pet_input_presentation
+        .lock()
+        .map_err(|_| "Pet input presentation lock is unavailable".to_owned())?;
+    fence
+        .validate(input.session_id, input.revision)
+        .map_err(str::to_owned)?;
+
+    // Keep the full WebView click-through while its HWND position and exact HRGN are updated.
+    // Renderer publication happens only after this transaction returns the same revision.
+    apply_pet_input_interactive(&window, state.inner(), false)?;
+    apply_pet_input_layout(&window, state.inner(), input.layout, input.compact_width)?;
+    if input.interactive {
+        apply_pet_input_interactive(&window, state.inner(), true)?;
+    }
+    if input.request_focus {
+        apply_pet_input_focus(&window, state.inner())?;
+    }
+
+    fence.revision = input.revision;
+    Ok(fence.commit())
 }
 
 #[tauri::command]
@@ -1131,10 +2223,76 @@ fn pet_renderer_report_health(
 }
 
 fn hide_pet_windows(app: &tauri::AppHandle) {
+    stop_native_presence(app);
     for label in [PET_RENDER_LABEL, PET_INPUT_LABEL] {
         if let Some(window) = app.get_webview_window(label) {
             let _ = window.hide();
         }
+    }
+}
+
+fn stop_native_presence(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<DesktopState>() {
+        let _ = state.native_gpu.stop();
+    }
+}
+
+#[derive(Clone, Copy, serde::Serialize)]
+struct NativeRendererLifecycleSignal {
+    schema_version: u16,
+    reason: &'static str,
+}
+
+fn reset_native_presence(app: &tauri::AppHandle, reason: &'static str) {
+    let Some(state) = app.try_state::<DesktopState>() else {
+        return;
+    };
+    if state
+        .native_gpu_reset_in_flight
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+    let lifecycle = state.native_gpu.status().lifecycle;
+    if !matches!(
+        lifecycle,
+        NativeGpuLifecycle::Starting | NativeGpuLifecycle::Running | NativeGpuLifecycle::Failed
+    ) {
+        state
+            .native_gpu_reset_in_flight
+            .store(false, Ordering::Release);
+        return;
+    }
+    let manager = Arc::clone(&state.native_gpu);
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(error) = manager.stop() {
+            eprintln!("[presence-native-gpu] reset stop failed: reason={reason}; error={error}");
+        }
+        let _ = app.emit_to(
+            PET_RENDER_LABEL,
+            PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT,
+            NativeRendererLifecycleSignal {
+                schema_version: 1,
+                reason,
+            },
+        );
+        if let Some(state) = app.try_state::<DesktopState>() {
+            state
+                .native_gpu_reset_in_flight
+                .store(false, Ordering::Release);
+        }
+    });
+}
+
+fn reset_native_presence_after_resume(app: &tauri::AppHandle) {
+    reset_native_presence(app, "resume");
+    let Some(state) = app.try_state::<DesktopState>() else {
+        return;
+    };
+    if let Ok(preferences) = DesktopPreferencesStore::new(&state.data_dir).load() {
+        let _ = apply_pet_window_preferences(app, &preferences);
     }
 }
 
@@ -1164,8 +2322,15 @@ fn apply_pet_window_preferences(
             .set_always_on_top(preferences.pet_always_on_top)
             .map_err(|error| error.to_string())?;
     }
+    if let Some(state) = app.try_state::<DesktopState>() {
+        state
+            .native_gpu
+            .set_always_on_top(preferences.pet_always_on_top)
+            .map_err(|error| error.to_string())?;
+    }
     let enabled = preferences.pet_enabled && !pet_session_disabled(app);
     if !enabled {
+        stop_native_presence(app);
         render.hide().map_err(|error| error.to_string())?;
         if let Some(input) = input {
             input.hide().map_err(|error| error.to_string())?;
@@ -1176,13 +2341,27 @@ fn apply_pet_window_preferences(
         render.hide().map_err(|error| error.to_string())?;
         return main_window(app).and_then(|window| show_and_focus(&window));
     }
-    render.show().map_err(|error| error.to_string())
+    let native_owns_surface = app.try_state::<DesktopState>().is_some_and(|state| {
+        matches!(
+            state.native_gpu.status().lifecycle,
+            NativeGpuLifecycle::Starting | NativeGpuLifecycle::Running
+        )
+    });
+    let startup_ready = app
+        .try_state::<DesktopState>()
+        .is_some_and(|state| state.presence_startup.ready());
+    if native_owns_surface || !startup_ready {
+        render.hide().map_err(|error| error.to_string())?;
+    } else {
+        show_presence_tracking_window(app)?;
+    }
+    Ok(())
 }
 
 fn coordinator_config(preferences: &DesktopPreferences) -> PresenceCoordinatorConfig {
     PresenceCoordinatorConfig {
         reduced_motion: preferences.reduced_motion || !preferences.pet_motion_enabled,
-        hover_enabled: preferences.pet_hover_enabled,
+        hover_enabled: preferences.pet_hover_enabled && !preferences.pet_do_not_disturb,
         hover_dwell_ms: preferences.pet_hover_dwell_ms,
     }
 }
@@ -1291,6 +2470,7 @@ fn presence_monitors_for_app(_app: &tauri::AppHandle) -> Result<Vec<PresenceMoni
         1
     }
 
+    let _dpi_scope = PerMonitorDpiScope::enter();
     let mut monitors: Vec<PresenceMonitor> = Vec::new();
     if unsafe {
         EnumDisplayMonitors(
@@ -1388,44 +2568,226 @@ fn place_pet_windows(
     Ok(placement)
 }
 
-fn current_pet_placement(
-    app: &tauri::AppHandle,
-    native_windows: Option<PresenceNativeWindows>,
+fn placement_from_actual_pet_windows(
+    render_frame: PhysicalFrame,
+    input_frame: PhysicalFrame,
+    monitors: &[PresenceMonitor],
     previous: Option<PresenceWindowPlacement>,
+    native_presentation: Option<NativeGpuPresentation>,
+) -> Result<(PresenceWindowPlacement, PetInputGeometry), String> {
+    if let Some(presentation) = native_presentation {
+        let placement = placement_from_native_presentation(render_frame, monitors, presentation)?;
+        return Ok((
+            placement,
+            pet_input_geometry_from_frame(input_frame, placement.scale_factor),
+        ));
+    }
+    let input_center = physical_frame_center(input_frame);
+    let render_center = physical_frame_center(render_frame);
+    let monitor = monitor_for_anchor(monitors, input_center)
+        .or_else(|| monitor_for_anchor(monitors, render_center))
+        .ok_or_else(|| "No monitor is available".to_owned())?;
+    let geometry = pet_input_geometry_from_frame(input_frame, monitor.scale_factor);
+    let mut candidates = [ExpansionDirection::Right, ExpansionDirection::Left].map(|direction| {
+        let placement = resolve_presence_placement(
+            render_frame,
+            monitor.work_area,
+            monitor.scale_factor,
+            Some(direction),
+        );
+        let score = if geometry.layout == PetInputLayout::Core {
+            point_distance_squared(placement.anchor, input_center)
+        } else {
+            frame_distance(
+                pet_input_frame_for_geometry(placement, geometry),
+                input_frame,
+            )
+        };
+        let tie_break = u8::from(
+            previous
+                .is_some_and(|value| value.expansion_direction != placement.expansion_direction),
+        );
+        (score, tie_break, placement)
+    });
+    candidates.sort_by_key(|(score, tie_break, _)| (*score, *tie_break));
+    let mut placement = candidates[0].2;
+    if geometry.layout == PetInputLayout::Core {
+        placement = resolve_presence_placement_for_anchor(
+            input_center,
+            (render_frame.width, render_frame.height),
+            monitor.work_area,
+            monitor.scale_factor,
+            Some(placement.expansion_direction),
+        );
+    }
+    Ok((placement, geometry))
+}
+
+fn placement_from_native_presentation(
+    render_frame: PhysicalFrame,
+    monitors: &[PresenceMonitor],
+    presentation: NativeGpuPresentation,
 ) -> Result<PresenceWindowPlacement, String> {
+    let render_scale = (f64::from(render_frame.width) / 640.0).clamp(0.5, 4.0);
+    let anchor = PhysicalPoint {
+        x: (f64::from(render_frame.x) + f64::from(presentation.core_x) * render_scale).round()
+            as i32,
+        y: (f64::from(render_frame.y) + f64::from(presentation.core_y) * render_scale).round()
+            as i32,
+    };
+    let monitor =
+        monitor_for_anchor(monitors, anchor).ok_or_else(|| "No monitor is available".to_owned())?;
+    let direction = match presentation.expansion_direction {
+        NativeGpuExpansionDirection::Left => ExpansionDirection::Left,
+        NativeGpuExpansionDirection::Right => ExpansionDirection::Right,
+    };
+    // The DirectComposition surface is already the visible fact. Re-resolving it through the
+    // work-area clamp here can move the renderer before the first drag sample and produce the
+    // characteristic flash back to an older edge position. Preserve this exact frame and only
+    // derive the companion frames around it.
+    let scale_factor = render_scale;
+    let compact_width = (PET_INPUT_COMPACT_WIDTH_LOGICAL * scale_factor).round() as u32;
+    let compact_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale_factor).round() as u32;
+    let expanded_width = (PET_INPUT_EXPANDED_WIDTH_LOGICAL * scale_factor).round() as u32;
+    let expanded_height = (PET_INPUT_EXPANDED_HEIGHT_LOGICAL * scale_factor).round() as u32;
+    let mut placement = PresenceWindowPlacement {
+        anchor,
+        render_frame,
+        input_compact_frame: render_frame,
+        input_expanded_frame: render_frame,
+        monitor_work_area: monitor.work_area,
+        scale_factor,
+        expansion_direction: direction,
+    };
+    placement.input_compact_frame =
+        placement.input_frame(compact_width, compact_height, compact_height);
+    placement.input_expanded_frame =
+        placement.input_frame(expanded_width, expanded_height, compact_height);
+    Ok(placement)
+}
+
+fn presence_visible_render_frame(
+    render: &WebviewWindow,
+    tracking_handle: PresenceNativeHandle,
+    state: &DesktopState,
+) -> Result<PhysicalFrame, String> {
+    let tracking_frame = presence_window_frame(render, tracking_handle)?;
+    #[cfg(target_os = "windows")]
+    if let Some(surface_handle) = state.native_gpu.surface_handle() {
+        if let Ok(surface_frame) = native_presence_window_frame(surface_handle) {
+            return Ok(surface_frame);
+        }
+    }
+    Ok(tracking_frame)
+}
+
+fn align_pet_input_to_native_presentation(
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+) -> Result<Option<PresenceWindowPlacement>, String> {
+    if state.presence.is_repositioning() {
+        return Ok(None);
+    }
+    let Some(presentation) = state.native_gpu.presentation() else {
+        return Ok(None);
+    };
+    let native_windows = presence_native_windows(state)?;
     let render = app
         .get_webview_window(PET_RENDER_LABEL)
         .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
-    let render_handle = native_windows
-        .ok_or_else(|| "Pet native windows are unavailable".to_owned())?
-        .handle_for(PET_RENDER_LABEL)?;
-    let frame = presence_window_frame(&render, render_handle)?;
+    let input = app
+        .get_webview_window(PET_INPUT_LABEL)
+        .ok_or_else(|| "Pet input window is unavailable".to_owned())?;
+    let render_handle = native_windows.handle_for(PET_RENDER_LABEL)?;
+    let input_handle = native_windows.handle_for(PET_INPUT_LABEL)?;
+    let tracking_frame = presence_window_frame(&render, render_handle)?;
+    let render_frame = presence_visible_render_frame(&render, render_handle, state)?;
+    let input_frame = presence_window_frame(&input, input_handle)?;
     let monitors = presence_monitors_for_app(app)?;
-    let provisional = previous.map_or(
-        PhysicalPoint {
-            x: frame
-                .x
-                .saturating_add(i32::try_from(frame.width / 2).unwrap_or(i32::MAX)),
-            y: frame
-                .y
-                .saturating_add(i32::try_from(frame.height / 2).unwrap_or(i32::MAX)),
-        },
-        |placement| placement.anchor,
-    );
-    let monitor = monitor_for_anchor(&monitors, provisional)
-        .ok_or_else(|| "No monitor is available".to_owned())?;
-    Ok(resolve_presence_placement(
-        frame,
-        monitor.work_area,
-        monitor.scale_factor,
-        previous.map(|placement| placement.expansion_direction),
-    ))
+    let placement = placement_from_native_presentation(render_frame, &monitors, presentation)?;
+    let geometry = current_pet_input_geometry(state)?;
+    let target_input_frame = pet_input_frame_for_geometry(placement, geometry);
+    if tracking_frame != render_frame {
+        move_presence_window_positions(
+            &render,
+            render_handle,
+            render_frame,
+            Some((&input, input_handle, target_input_frame)),
+        )?;
+    } else if target_input_frame != input_frame {
+        move_presence_input_window(&input, input_handle, target_input_frame)?;
+    }
+    // The frame can remain unchanged while the expansion direction flips. Reapply the region so
+    // the native hit surface follows the visible core instead of retaining the old-side mask.
+    apply_pet_input_window_region(
+        input_handle,
+        geometry.layout,
+        target_input_frame.width,
+        target_input_frame.height,
+        (geometry.compact_width_logical * placement.scale_factor)
+            .round()
+            .max(0.0) as u32,
+        placement.scale_factor,
+        placement.expansion_direction,
+    )?;
+    set_presence_placement(state, placement);
+    Ok(Some(placement))
+}
+
+fn physical_frame_center(frame: PhysicalFrame) -> PhysicalPoint {
+    PhysicalPoint {
+        x: frame
+            .x
+            .saturating_add(i32::try_from(frame.width / 2).unwrap_or(i32::MAX)),
+        y: frame
+            .y
+            .saturating_add(i32::try_from(frame.height / 2).unwrap_or(i32::MAX)),
+    }
+}
+
+fn point_distance_squared(left: PhysicalPoint, right: PhysicalPoint) -> u64 {
+    let dx = i64::from(left.x) - i64::from(right.x);
+    let dy = i64::from(left.y) - i64::from(right.y);
+    dx.unsigned_abs()
+        .saturating_mul(dx.unsigned_abs())
+        .saturating_add(dy.unsigned_abs().saturating_mul(dy.unsigned_abs()))
+}
+
+fn frame_distance(left: PhysicalFrame, right: PhysicalFrame) -> u64 {
+    i64::from(left.x)
+        .abs_diff(i64::from(right.x))
+        .saturating_add(i64::from(left.y).abs_diff(i64::from(right.y)))
+        .saturating_add(u64::from(left.width.abs_diff(right.width)))
+        .saturating_add(u64::from(left.height.abs_diff(right.height)))
 }
 
 fn move_pet_window_group(
     app: &tauri::AppHandle,
     native_windows: Option<PresenceNativeWindows>,
     placement: &PresenceWindowPlacement,
+) -> Result<(), String> {
+    move_pet_window_group_with_geometry(app, native_windows, placement, None)
+}
+
+fn move_pet_window_visual(
+    app: &tauri::AppHandle,
+    native_windows: Option<PresenceNativeWindows>,
+    placement: &PresenceWindowPlacement,
+) -> Result<(), String> {
+    let native_windows =
+        native_windows.ok_or_else(|| "Pet native windows are unavailable".to_owned())?;
+    let render = app
+        .get_webview_window(PET_RENDER_LABEL)
+        .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
+    let render_handle = native_windows.handle_for(PET_RENDER_LABEL)?;
+    move_presence_window_positions(&render, render_handle, placement.render_frame, None)
+}
+
+fn move_pet_window_group_with_geometry(
+    app: &tauri::AppHandle,
+    native_windows: Option<PresenceNativeWindows>,
+    placement: &PresenceWindowPlacement,
+    input_geometry: Option<PetInputGeometry>,
 ) -> Result<(), String> {
     let native_windows =
         native_windows.ok_or_else(|| "Pet native windows are unavailable".to_owned())?;
@@ -1442,26 +2804,114 @@ fn move_pet_window_group(
         );
     };
     let input_handle = native_windows.handle_for(PET_INPUT_LABEL)?;
-    let input_size = presence_window_frame(&input, input_handle)?;
+    let input_frame = presence_window_frame(&input, input_handle)?;
     let scale = placement.scale_factor.clamp(0.5, 4.0);
-    let core_extent = (PET_CORE_EXTENT_LOGICAL * scale).round() as u32;
-    let compact_width = (PET_INPUT_COMPACT_WIDTH_LOGICAL * scale).round() as u32;
-    let compact_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale).round() as u32;
-    let expanded_width = (PET_INPUT_EXPANDED_WIDTH_LOGICAL * scale).round() as u32;
-    let expanded_height = (PET_INPUT_EXPANDED_HEIGHT_LOGICAL * scale).round() as u32;
-    let frame = if input_size.width == core_extent && input_size.height == core_extent {
-        placement.core_frame(core_extent)
-    } else if input_size.height > compact_height {
-        placement.input_frame(expanded_width, expanded_height, compact_height)
-    } else {
-        placement.input_frame(compact_width, compact_height, compact_height)
-    };
+    let geometry = input_geometry
+        .unwrap_or_else(|| pet_input_geometry_from_frame(input_frame, placement.scale_factor));
+    if matches!(geometry.layout, PetInputLayout::Hidden) {
+        input
+            .set_ignore_cursor_events(true)
+            .map_err(|error| error.to_string())?;
+        input
+            .set_focusable(false)
+            .map_err(|error| error.to_string())?;
+        input.hide().map_err(|error| error.to_string())?;
+        return move_presence_window_positions(
+            &render,
+            render_handle,
+            placement.render_frame,
+            None,
+        );
+    }
+    let frame = pet_input_frame_for_geometry(*placement, geometry);
     move_presence_window_positions(
         &render,
         render_handle,
         placement.render_frame,
         Some((&input, input_handle, frame)),
+    )?;
+    apply_pet_input_window_region(
+        input_handle,
+        geometry.layout,
+        frame.width,
+        frame.height,
+        (geometry.compact_width_logical * scale).round().max(0.0) as u32,
+        scale,
+        placement.expansion_direction,
     )
+}
+
+fn show_presence_tracking_window(app: &tauri::AppHandle) -> Result<(), String> {
+    let render = app
+        .get_webview_window(PET_RENDER_LABEL)
+        .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
+    render.set_title("").map_err(|error| error.to_string())?;
+    render
+        .set_skip_taskbar(true)
+        .map_err(|error| error.to_string())?;
+    render
+        .set_focusable(false)
+        .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "windows")]
+    enforce_presence_window_shell_policy(
+        render.hwnd().map_err(|error| error.to_string())?.0 as isize,
+        Some(false),
+    )?;
+    render.show().map_err(|error| error.to_string())?;
+    #[cfg(target_os = "windows")]
+    enforce_presence_window_shell_policy(
+        render.hwnd().map_err(|error| error.to_string())?.0 as isize,
+        Some(false),
+    )?;
+    render
+        .set_ignore_cursor_events(true)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn enforce_presence_window_shell_policy(
+    handle: PresenceNativeHandle,
+    focusable: Option<bool>,
+) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, GWL_EXSTYLE,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_APPWINDOW,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    };
+
+    let hwnd = native_presence_hwnd(handle);
+    let current = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+    let mut next = (current as u32 & !WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
+    match focusable {
+        Some(true) => next &= !WS_EX_NOACTIVATE,
+        Some(false) => next |= WS_EX_NOACTIVATE,
+        None => {}
+    }
+    unsafe { SetLastError(0) };
+    let previous = unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next as isize) };
+    if previous == 0 && unsafe { GetLastError() } != 0 {
+        return Err("PRESENCE_WINDOW_STYLE_FAILED".to_owned());
+    }
+    let empty_title = [0_u16];
+    if unsafe { SetWindowTextW(hwnd, empty_title.as_ptr()) } == 0 {
+        return Err("PRESENCE_WINDOW_TITLE_FAILED".to_owned());
+    }
+    if unsafe {
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+        )
+    } == 0
+    {
+        return Err("PRESENCE_WINDOW_STYLE_REFRESH_FAILED".to_owned());
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -1474,6 +2924,7 @@ fn native_presence_window_frame(handle: PresenceNativeHandle) -> Result<Physical
     use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
+    let _dpi_scope = PerMonitorDpiScope::enter();
     let mut rect = RECT::default();
     if unsafe { GetWindowRect(native_presence_hwnd(handle), std::ptr::addr_of_mut!(rect)) } == 0 {
         return Err("PRESENCE_NATIVE_FRAME_UNAVAILABLE".to_owned());
@@ -1489,6 +2940,39 @@ fn native_presence_window_frame(handle: PresenceNativeHandle) -> Result<Physical
         width: width as u32,
         height: height as u32,
     })
+}
+
+#[cfg(target_os = "windows")]
+fn move_presence_input_window(
+    _window: &WebviewWindow,
+    handle: PresenceNativeHandle,
+    frame: PhysicalFrame,
+) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
+    };
+
+    let _dpi_scope = PerMonitorDpiScope::enter();
+    let current = native_presence_window_frame(handle)?;
+    let mut flags = SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOOWNERZORDER | SWP_NOZORDER;
+    if current.width == frame.width && current.height == frame.height {
+        flags |= SWP_NOSIZE;
+    }
+    if unsafe {
+        SetWindowPos(
+            native_presence_hwnd(handle),
+            std::ptr::null_mut(),
+            frame.x,
+            frame.y,
+            i32::try_from(frame.width).map_err(|_| "PRESENCE_FRAME_INVALID".to_owned())?,
+            i32::try_from(frame.height).map_err(|_| "PRESENCE_FRAME_INVALID".to_owned())?,
+            flags,
+        )
+    } == 0
+    {
+        return Err("PRESENCE_INPUT_MOVE_FAILED".to_owned());
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -1514,33 +2998,6 @@ fn presence_window_frame(
     })
 }
 
-#[cfg(target_os = "windows")]
-fn set_presence_window_frame(
-    _window: &WebviewWindow,
-    handle: PresenceNativeHandle,
-    frame: PhysicalFrame,
-) -> Result<(), String> {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
-
-    let width = i32::try_from(frame.width).map_err(|_| "PRESENCE_FRAME_INVALID".to_owned())?;
-    let height = i32::try_from(frame.height).map_err(|_| "PRESENCE_FRAME_INVALID".to_owned())?;
-    if unsafe {
-        SetWindowPos(
-            native_presence_hwnd(handle),
-            std::ptr::null_mut(),
-            frame.x,
-            frame.y,
-            width,
-            height,
-            SWP_NOACTIVATE | SWP_NOZORDER,
-        )
-    } == 0
-    {
-        return Err("PRESENCE_FRAME_UPDATE_FAILED".to_owned());
-    }
-    Ok(())
-}
-
 #[cfg(not(target_os = "windows"))]
 fn set_presence_window_frame(
     window: &WebviewWindow,
@@ -1555,16 +3012,30 @@ fn set_presence_window_frame(
         .map_err(|error| error.to_string())
 }
 
+#[cfg(not(target_os = "windows"))]
+fn move_presence_input_window(
+    window: &WebviewWindow,
+    handle: PresenceNativeHandle,
+    frame: PhysicalFrame,
+) -> Result<(), String> {
+    set_presence_window_frame(window, handle, frame)
+}
+
 #[cfg(target_os = "windows")]
 fn move_presence_window_positions(
-    _render: &WebviewWindow,
+    render: &WebviewWindow,
     render_handle: PresenceNativeHandle,
     render_frame: PhysicalFrame,
     input: Option<(&WebviewWindow, PresenceNativeHandle, PhysicalFrame)>,
 ) -> Result<(), String> {
+    let native_surface_handle = render
+        .app_handle()
+        .try_state::<DesktopState>()
+        .and_then(|state| state.native_gpu.surface_handle());
     move_native_presence_window_positions(
         render_handle,
         render_frame,
+        native_surface_handle,
         input.map(|(_window, handle, frame)| (handle, frame)),
     )
 }
@@ -1573,17 +3044,51 @@ fn move_presence_window_positions(
 fn move_native_presence_window_positions(
     render_handle: PresenceNativeHandle,
     render_frame: PhysicalFrame,
+    native_surface_handle: Option<PresenceNativeHandle>,
+    input: Option<(PresenceNativeHandle, PhysicalFrame)>,
+) -> Result<(), String> {
+    let result = move_native_presence_window_positions_once(
+        render_handle,
+        render_frame,
+        native_surface_handle,
+        input,
+    );
+    if result.is_err() && native_surface_handle.is_some() {
+        // The capture thread can invalidate its DirectComposition HWND between validation and
+        // EndDeferWindowPos. Retry the authoritative Tauri pair without that optional surface;
+        // the renderer lifecycle will independently rebuild the native layer.
+        return move_native_presence_window_positions_once(
+            render_handle,
+            render_frame,
+            None,
+            input,
+        );
+    }
+    result
+}
+
+#[cfg(target_os = "windows")]
+fn move_native_presence_window_positions_once(
+    render_handle: PresenceNativeHandle,
+    render_frame: PhysicalFrame,
+    native_surface_handle: Option<PresenceNativeHandle>,
     input: Option<(PresenceNativeHandle, PhysicalFrame)>,
 ) -> Result<(), String> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        BeginDeferWindowPos, DeferWindowPos, EndDeferWindowPos, SWP_NOACTIVATE, SWP_NOSIZE,
-        SWP_NOZORDER,
+        BeginDeferWindowPos, DeferWindowPos, EndDeferWindowPos, SWP_NOACTIVATE, SWP_NOCOPYBITS,
+        SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
     };
 
+    let _dpi_scope = PerMonitorDpiScope::enter();
     let render_hwnd = native_presence_hwnd(render_handle);
     let render_current = native_presence_window_frame(render_handle)?;
     let render_flags = SWP_NOACTIVATE
-        | SWP_NOZORDER
+        | SWP_NOCOPYBITS
+        | if input.is_some() {
+            SWP_NOOWNERZORDER
+        } else {
+            SWP_NOZORDER
+        }
         | if render_current.width == render_frame.width
             && render_current.height == render_frame.height
         {
@@ -1595,6 +3100,7 @@ fn move_native_presence_window_positions(
         .map(|(handle, frame)| {
             let current = native_presence_window_frame(handle)?;
             let flags = SWP_NOACTIVATE
+                | SWP_NOCOPYBITS
                 | SWP_NOZORDER
                 | if current.width == frame.width && current.height == frame.height {
                     SWP_NOSIZE
@@ -1604,6 +3110,25 @@ fn move_native_presence_window_positions(
             Ok::<_, String>((native_presence_hwnd(handle), frame, flags))
         })
         .transpose()?;
+    // The DirectComposition surface is created on the capture thread and can disappear while a
+    // monitor, DPI, or renderer recovery transition is in flight. A stale surface must never make
+    // the Tauri render/input pair immovable; the renderer supervisor will rebuild it separately.
+    let native_surface = native_surface_handle.and_then(|handle| {
+        let current = native_presence_window_frame(handle).ok()?;
+        let flags = SWP_NOACTIVATE
+            | SWP_NOCOPYBITS
+            | if input.is_some() {
+                SWP_NOOWNERZORDER
+            } else {
+                SWP_NOZORDER
+            }
+            | if current.width == render_frame.width && current.height == render_frame.height {
+                SWP_NOSIZE
+            } else {
+                0
+            };
+        Some((native_presence_hwnd(handle), flags))
+    });
     let render_width =
         i32::try_from(render_frame.width).map_err(|_| "PRESENCE_FRAME_INVALID".to_owned())?;
     let render_height =
@@ -1617,7 +3142,7 @@ fn move_native_presence_window_positions(
             Ok::<_, String>((handle, frame, flags, width, height))
         })
         .transpose()?;
-    let count = if input.is_some() { 2 } else { 1 };
+    let count = 1 + i32::from(native_surface.is_some()) + i32::from(input.is_some());
     let mut batch = unsafe { BeginDeferWindowPos(count) };
     if batch.is_null() {
         return Err("PRESENCE_GROUP_MOVE_UNAVAILABLE".to_owned());
@@ -1626,7 +3151,14 @@ fn move_native_presence_window_positions(
         DeferWindowPos(
             batch,
             render_hwnd,
-            std::ptr::null_mut(),
+            native_surface.as_ref().map_or_else(
+                || {
+                    input
+                        .as_ref()
+                        .map_or(std::ptr::null_mut(), |(handle, ..)| *handle)
+                },
+                |(handle, _)| *handle,
+            ),
             render_frame.x,
             render_frame.y,
             render_width,
@@ -1636,6 +3168,25 @@ fn move_native_presence_window_positions(
     };
     if batch.is_null() {
         return Err("PRESENCE_GROUP_MOVE_FAILED".to_owned());
+    }
+    if let Some((native_surface_hwnd, flags)) = native_surface {
+        batch = unsafe {
+            DeferWindowPos(
+                batch,
+                native_surface_hwnd,
+                input
+                    .as_ref()
+                    .map_or(std::ptr::null_mut(), |(handle, ..)| *handle),
+                render_frame.x,
+                render_frame.y,
+                render_width,
+                render_height,
+                flags,
+            )
+        };
+        if batch.is_null() {
+            return Err("PRESENCE_GROUP_MOVE_FAILED".to_owned());
+        }
     }
     if let Some((input_hwnd, frame, flags, width, height)) = input {
         batch = unsafe {
@@ -1672,6 +3223,37 @@ fn move_presence_window_positions(
         set_presence_window_frame(input, input_handle, frame)?;
     }
     Ok(())
+}
+
+pub(crate) fn synchronize_presence_window_frames(
+    app: &tauri::AppHandle,
+    render_frame: PhysicalFrame,
+    input_frame: Option<PhysicalFrame>,
+) -> Result<(), String> {
+    let state = app
+        .try_state::<DesktopState>()
+        .ok_or_else(|| "Desktop state is unavailable".to_owned())?;
+    let native_windows = presence_native_windows(&state)?;
+    let render = app
+        .get_webview_window(PET_RENDER_LABEL)
+        .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
+    let render_handle = native_windows.handle_for(PET_RENDER_LABEL)?;
+    let input = input_frame
+        .zip(app.get_webview_window(PET_INPUT_LABEL))
+        .map(|(frame, window)| {
+            native_windows
+                .handle_for(PET_INPUT_LABEL)
+                .map(|handle| (window, handle, frame))
+        })
+        .transpose()?;
+    move_presence_window_positions(
+        &render,
+        render_handle,
+        render_frame,
+        input
+            .as_ref()
+            .map(|(window, handle, frame)| (window, *handle, *frame)),
+    )
 }
 
 fn build_fairy_tray(
@@ -1844,6 +3426,19 @@ async fn open_settings_window(window: WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn pet_render_settings_get(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<PetRenderSettings, String> {
+    authorize_pet_render_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    DesktopPreferencesStore::new(&state.data_dir)
+        .load()
+        .map(|preferences| PetRenderSettings::from(&preferences))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn pet_native_gpu_start(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
@@ -1851,43 +3446,108 @@ async fn pet_native_gpu_start(
 ) -> Result<NativeGpuStatus, String> {
     authorize_pet_render_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
+    if !state.presence_startup.ready() {
+        return Err("PRESENCE_NATIVE_GPU_NOT_READY".to_owned());
+    }
+    let config = native_gpu_config(&window, state.inner(), request)?;
+    // Keep the compatibility tracking WebView hidden while native DirectComposition owns the
+    // visible surface. The HWND remains the authoritative placement target for the render worker.
+    window.hide().map_err(|error| error.to_string())?;
+    let manager = Arc::clone(&state.native_gpu);
+    let starting_manager = Arc::clone(&manager);
+    let start_result =
+        tauri::async_runtime::spawn_blocking(move || match starting_manager.start(config) {
+            Err(presence_native_gpu::NativeGpuError::AlreadyRunning)
+                if starting_manager.status().target_frame_rate == config.target_frame_rate =>
+            {
+                starting_manager.update(config.presentation)
+            }
+            result => result,
+        })
+        .await
+        .map_err(|_| "PRESENCE_NATIVE_GPU_WORKER_INTERRUPTED".to_owned())?;
+    let status = match start_result {
+        Ok(status) => status,
+        Err(error) => {
+            let failed = manager.status();
+            eprintln!(
+                "[presence-native-gpu] start failed: error={error}; stage={}; hresult={}; target=({},{} {}x{}); monitor=({},{} {}x{}); monitor_handle={}; device={}; adapter={}; output={}",
+                failed.capture_source_stage,
+                failed.capture_source_hresult.as_deref().unwrap_or("none"),
+                failed.target_x,
+                failed.target_y,
+                failed.surface_width,
+                failed.surface_height,
+                failed.monitor_x,
+                failed.monitor_y,
+                failed.monitor_width,
+                failed.monitor_height,
+                failed.monitor_handle.as_deref().unwrap_or("none"),
+                failed.monitor_device_name.as_deref().unwrap_or("none"),
+                failed.adapter_name.as_deref().unwrap_or("none"),
+                failed.output_device_name.as_deref().unwrap_or("none"),
+            );
+            if !state.presence.is_repositioning() {
+                let _ = show_presence_tracking_window(window.app_handle());
+            }
+            return Err(error.to_string());
+        }
+    };
+    if let Err(error) = align_pet_input_to_native_presentation(window.app_handle(), state.inner()) {
+        let stopping_manager = Arc::clone(&manager);
+        let _ = tauri::async_runtime::spawn_blocking(move || stopping_manager.stop()).await;
+        if !state.presence.is_repositioning() {
+            let _ = show_presence_tracking_window(window.app_handle());
+        }
+        return Err(format!(
+            "PRESENCE_NATIVE_GPU_INPUT_ALIGNMENT_FAILED: {error}"
+        ));
+    }
+    Ok(status)
+}
+
+fn native_gpu_config(
+    window: &WebviewWindow,
+    state: &DesktopState,
+    request: NativeGpuStartRequest,
+) -> Result<NativeGpuConfig, String> {
     let preferences = DesktopPreferencesStore::new(&state.data_dir)
         .load()
         .map_err(|_| "PRESENCE_NATIVE_GPU_PREFERENCES_UNAVAILABLE".to_owned())?;
     if preferences.pet_optics_mode != desktop_preferences::PetOpticsMode::Enhanced {
         return Err("PRESENCE_NATIVE_GPU_PRIVACY_MODE".to_owned());
     }
-    let position = window.outer_position().map_err(|error| error.to_string())?;
-    let size = window.outer_size().map_err(|error| error.to_string())?;
-    let native_windows = presence_native_windows(&state)?;
+    let native_windows = presence_native_windows(state)?;
     let render_hwnd = native_gpu_render_handle(native_windows)?;
     let input_hwnd = native_gpu_input_handle(native_windows)?;
-    let manager = Arc::clone(&state.native_gpu);
-    let starting_manager = Arc::clone(&manager);
-    let status = tauri::async_runtime::spawn_blocking(move || {
-        starting_manager.start(NativeGpuConfig {
-            render_hwnd,
-            input_hwnd,
-            render_frame: PhysicalFrame {
-                x: position.x,
-                y: position.y,
-                width: size.width,
-                height: size.height,
-            },
-            target_frame_rate: request.target_frame_rate,
-            capsule_visible: request.capsule_visible,
-            visual_state: request.visual_state,
-            opacity: request.opacity,
-        })
+    let render_frame = presence_window_frame(window, render_hwnd)?;
+    Ok(NativeGpuConfig {
+        render_hwnd,
+        input_hwnd,
+        render_frame,
+        always_on_top: preferences.pet_always_on_top,
+        target_frame_rate: request.target_frame_rate,
+        presentation: request.presentation,
     })
-    .await
-    .map_err(|_| "PRESENCE_NATIVE_GPU_WORKER_INTERRUPTED".to_owned())?
-    .map_err(|error| error.to_string())?;
-    if let Err(error) = window.hide() {
-        let _ = tauri::async_runtime::spawn_blocking(move || manager.stop()).await;
-        return Err(error.to_string());
+}
+
+#[tauri::command]
+async fn pet_native_gpu_rebind(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    request: NativeGpuStartRequest,
+) -> Result<NativeGpuStatus, String> {
+    authorize_pet_render_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    if !state.presence_startup.ready() {
+        return Err("PRESENCE_NATIVE_GPU_NOT_READY".to_owned());
     }
-    Ok(status)
+    let config = native_gpu_config(&window, state.inner(), request)?;
+    let manager = Arc::clone(&state.native_gpu);
+    tauri::async_runtime::spawn_blocking(move || manager.rebind(config))
+        .await
+        .map_err(|_| "PRESENCE_NATIVE_GPU_WORKER_INTERRUPTED".to_owned())?
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1898,6 +3558,23 @@ async fn pet_native_gpu_status(
     authorize_pet_render_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
     Ok(state.native_gpu.status())
+}
+
+#[tauri::command]
+async fn pet_native_gpu_update(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    request: NativeGpuPresentation,
+) -> Result<NativeGpuStatus, String> {
+    authorize_pet_render_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    let manager = Arc::clone(&state.native_gpu);
+    let status = tauri::async_runtime::spawn_blocking(move || manager.update(request))
+        .await
+        .map_err(|_| "PRESENCE_NATIVE_GPU_WORKER_INTERRUPTED".to_owned())?
+        .map_err(|error| error.to_string())?;
+    align_pet_input_to_native_presentation(window.app_handle(), state.inner())?;
+    Ok(status)
 }
 
 #[tauri::command]
@@ -1929,10 +3606,14 @@ async fn pet_native_gpu_stop(
         .await
         .map_err(|_| "PRESENCE_NATIVE_GPU_WORKER_INTERRUPTED".to_owned())?
         .map_err(|error| error.to_string())?;
-    window.show().map_err(|error| error.to_string())?;
-    window
-        .set_ignore_cursor_events(true)
-        .map_err(|error| error.to_string())?;
+    if state.presence_startup.ready() && !state.presence.is_repositioning() {
+        show_presence_tracking_window(window.app_handle())?;
+    } else {
+        // A monitor transition stops and recreates the capture source. Showing the transparent
+        // tracking WebView during that handoff exposes a white titled rectangle on some WebView2
+        // builds, so keep it hidden until the native renderer has resumed or drag has ended.
+        window.hide().map_err(|error| error.to_string())?;
+    }
     Ok(status)
 }
 
@@ -2096,6 +3777,54 @@ async fn voice_test_cancel(
 }
 
 #[tauri::command]
+async fn realtime_voice_start(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    text: String,
+    audio: Channel<Response>,
+    events: Channel<VoiceStreamEvent>,
+) -> Result<PreparedVoiceSession, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let session =
+        prepared_realtime_session(&text).map_err(|error| error.public_code().to_owned())?;
+    let worker_session = session.clone();
+    let failed_session_id = session.id.clone();
+    let voice = Arc::clone(&state.voice);
+    let failure_events = events.clone();
+    tauri::async_runtime::spawn(async move {
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            voice.stream(worker_session, audio, events)
+        })
+        .await;
+        let error_code = match result {
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => error.public_code().to_owned(),
+            Err(_) => "VOICE_WORKER_INTERRUPTED".to_owned(),
+        };
+        let _ = failure_events.send(VoiceStreamEvent::Failed {
+            session_id: failed_session_id,
+            error_code,
+            message: "Realtime Fairy voice playback could not start.".to_owned(),
+        });
+    });
+    Ok(session)
+}
+
+#[tauri::command]
+async fn realtime_voice_cancel(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    session_id: String,
+) -> Result<(), String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let voice = Arc::clone(&state.voice);
+    tauri::async_runtime::spawn_blocking(move || voice.cancel(&session_id))
+        .await
+        .map_err(|_| "VOICE_WORKER_INTERRUPTED".to_owned())?
+        .map_err(|error| error.public_code().to_owned())
+}
+
+#[tauri::command]
 async fn select_project_folder(
     window: WebviewWindow,
     app: tauri::AppHandle,
@@ -2113,6 +3842,31 @@ async fn select_project_folder(
     })
     .await
     .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn select_skill_source(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    source_kind: String,
+) -> Result<Option<String>, String> {
+    authorize_settings_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let dialog = app.dialog().file().set_title("Add an external Fairy Skill");
+        let selected = match source_kind.as_str() {
+            "folder" => dialog.blocking_pick_folder(),
+            "zip" => dialog
+                .add_filter("Fairy Skill archive", &["zip"])
+                .blocking_pick_file(),
+            _ => return Err("SKILL_SOURCE_KIND_UNSUPPORTED".to_owned()),
+        };
+        Ok(selected.map(|value| match value {
+            FilePath::Path(path) => path.to_string_lossy().into_owned(),
+            FilePath::Url(url) => url.to_string(),
+        }))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn development_core_root() -> PathBuf {
@@ -2260,7 +4014,14 @@ fn initialize_presence_after_main_load(app: tauri::AppHandle) {
             return;
         };
         match result {
-            Ok(()) => state.presence_startup.succeeded(),
+            Ok(()) => {
+                state.presence_startup.succeeded();
+                if let Ok(preferences) = DesktopPreferencesStore::new(&state.data_dir).load() {
+                    if let Err(error) = apply_pet_window_preferences(&app, &preferences) {
+                        eprintln!("failed to reveal initialized Fairy Presence: {error}");
+                    }
+                }
+            }
             Err(error) => {
                 eprintln!("failed to initialize Fairy Presence: {error}");
                 if let Some(delay) = state.presence_startup.failed() {
@@ -2287,7 +4048,7 @@ fn initialize_presence(app: &tauri::AppHandle) -> Result<(), String> {
     *stored = Some(native_windows);
     drop(stored);
     reconcile_pet_window_placement(app)?;
-    exclude_presence_windows_from_capture(native_windows)?;
+    allow_presence_windows_in_capture(native_windows)?;
     let preferences = DesktopPreferencesStore::new(&state.data_dir)
         .load()
         .map_err(|error| error.to_string())?;
@@ -2313,45 +4074,115 @@ fn create_presence_windows(
     #[cfg(target_os = "windows")]
     wait_native_presence_handle("Fairy", Duration::from_secs(20))?;
 
-    let (_, render) = ensure_presence_window(
-        app,
-        PET_RENDER_LABEL,
-        "Fairy Presence Renderer",
-        Duration::from_secs(12),
-    )?;
-    let (_, input) = ensure_presence_window(
-        app,
-        PET_INPUT_LABEL,
-        "Fairy Presence Input",
-        Duration::from_secs(12),
-    )?;
+    let [render_spec, input_spec] = presence_window_creation_specs();
+    let (_, render) = ensure_presence_window(app, render_spec.label, Duration::from_secs(12))?;
+    let (_, input) = ensure_presence_window(app, input_spec.label, Duration::from_secs(12))?;
     Ok(PresenceNativeWindows { render, input })
 }
 
 fn ensure_presence_window(
     app: &tauri::AppHandle,
     label: &str,
-    title: &str,
     timeout: Duration,
 ) -> Result<(WebviewWindow, PresenceNativeHandle), Box<dyn std::error::Error>> {
-    let window = app.get_webview_window(label).ok_or_else(|| {
-        std::io::Error::other(format!(
-            "Startup-created pet window is unavailable: {label}"
-        ))
-    })?;
+    let window = create_presence_window_on_main_thread(app, label, timeout)?;
     let policy = auxiliary_window_policy(label)
         .ok_or_else(|| std::io::Error::other("Missing pet window policy"))?;
 
     #[cfg(target_os = "windows")]
-    let handle = wait_native_presence_handle(title, timeout)?;
+    let handle = {
+        let handle = window.hwnd()?.0 as isize;
+        if handle == 0 {
+            return Err(std::io::Error::other(format!(
+                "Native window handle is unavailable: {label}"
+            ))
+            .into());
+        }
+        handle
+    };
     #[cfg(not(target_os = "windows"))]
     let handle = {
-        let _ = (title, timeout);
+        let _ = timeout;
     };
 
     window.set_ignore_cursor_events(policy.ignore_cursor_events)?;
     window.set_focusable(policy.focusable)?;
+    #[cfg(target_os = "windows")]
+    enforce_presence_window_shell_policy(handle, Some(policy.focusable))
+        .map_err(std::io::Error::other)?;
     Ok((window, handle))
+}
+
+fn create_presence_window_on_main_thread(
+    app: &tauri::AppHandle,
+    label: &str,
+    timeout: Duration,
+) -> Result<WebviewWindow, Box<dyn std::error::Error>> {
+    if let Some(window) = app.get_webview_window(label) {
+        return Ok(window);
+    }
+    if !matches!(label, PET_RENDER_LABEL | PET_INPUT_LABEL) {
+        return Err(
+            std::io::Error::other(format!("Unsupported presence window label: {label}")).into(),
+        );
+    }
+
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let window_app = app.clone();
+    let window_label = label.to_owned();
+    app.run_on_main_thread(move || {
+        let result = build_presence_window(&window_app, &window_label)
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+        let _ = sender.send(result);
+    })?;
+    receiver
+        .recv_timeout(timeout)
+        .map_err(|_| std::io::Error::other(format!("Timed out creating presence window: {label}")))?
+        .map_err(std::io::Error::other)?;
+    app.get_webview_window(label)
+        .ok_or_else(|| {
+            std::io::Error::other(format!("Presence window was not registered: {label}"))
+        })
+        .map_err(Into::into)
+}
+
+fn build_presence_window(
+    app: &tauri::AppHandle,
+    label: &str,
+) -> Result<WebviewWindow, tauri::Error> {
+    let spec = presence_window_creation_specs()
+        .into_iter()
+        .find(|spec| spec.label == label)
+        .expect("presence label was validated before window creation");
+    let builder = WebviewWindowBuilder::new(
+        app,
+        label,
+        WebviewUrl::App(format!("index.html?surface={label}").into()),
+    )
+    .position(-32_000.0, -32_000.0)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .decorations(false)
+    .transparent(true)
+    .background_color(tauri::webview::Color(0, 0, 0, 0))
+    .focused(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .shadow(false)
+    .visible(false)
+    // Auxiliary surfaces are intentionally untitled. Their accessible names live in the DOM;
+    // exposing an HWND title lets Windows/WebView2 paint it during focus and drag transitions.
+    .title("")
+    .inner_size(f64::from(spec.width), f64::from(spec.height))
+    .min_inner_size(f64::from(spec.min_width), f64::from(spec.min_height))
+    .max_inner_size(f64::from(spec.max_width), f64::from(spec.max_height));
+    if spec.focusable {
+        builder.build()
+    } else {
+        builder.focusable(false).build()
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -2415,23 +4246,22 @@ fn native_presence_handle_for_title(title: &str) -> Option<PresenceNativeHandle>
 }
 
 #[cfg(target_os = "windows")]
-fn exclude_presence_windows_from_capture(
-    native_windows: PresenceNativeWindows,
-) -> Result<(), String> {
+fn allow_presence_windows_in_capture(native_windows: PresenceNativeWindows) -> Result<(), String> {
     for handle in [native_windows.render, native_windows.input] {
-        presence_backdrop::exclude_window_from_capture(handle)?;
+        presence_backdrop::set_window_capture_excluded(handle, false)?;
     }
     Ok(())
 }
 
 #[cfg(not(target_os = "windows"))]
-fn exclude_presence_windows_from_capture(
-    _native_windows: PresenceNativeWindows,
-) -> Result<(), String> {
+fn allow_presence_windows_in_capture(_native_windows: PresenceNativeWindows) -> Result<(), String> {
     Ok(())
 }
 
 pub fn run() {
+    if let Err(error) = process_lifetime::protect_process_tree() {
+        eprintln!("failed to protect Fairy child-process lifetime: {error}");
+    }
     let application = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .on_page_load(|webview, payload| {
@@ -2455,6 +4285,12 @@ pub fn run() {
                 bundled_voice_launch(&data_dir, &resource_dir, &desktop_program)
             };
             let voice = Arc::new(VoiceWorkerManager::new(voice_launch));
+            let realtime_launch = if cfg!(debug_assertions) {
+                development_realtime_launch(&data_dir)
+            } else {
+                bundled_realtime_launch(&data_dir, &resource_dir)
+            };
+            let realtime = Arc::new(RealtimeWorkerManager::new(realtime_launch));
             let warming_voice = Arc::clone(&voice);
             tauri::async_runtime::spawn_blocking(move || {
                 let _ = warming_voice.health();
@@ -2464,6 +4300,7 @@ pub fn run() {
             app.manage(DesktopState {
                 core: Arc::new(Mutex::new(None)),
                 voice,
+                realtime,
                 preferences: Mutex::new(()),
                 provider_update_in_progress: AtomicBool::new(false),
                 data_dir,
@@ -2471,14 +4308,19 @@ pub fn run() {
                 resource_dir,
                 presence,
                 native_gpu: Arc::new(NativePresenceGpuManager::default()),
+                native_gpu_reset_in_flight: AtomicBool::new(false),
                 presence_windows: Mutex::new(None),
                 pet_drag: Mutex::new(None),
+                pet_input_geometry: Mutex::new(PetInputGeometry {
+                    layout: PetInputLayout::Hidden,
+                    compact_width_logical: PET_INPUT_COMPACT_WIDTH_LOGICAL,
+                }),
+                pet_input_presentation: Mutex::new(PetInputPresentationFence::default()),
                 renderer_supervisor: Mutex::new(PresenceRendererSupervisor::default()),
                 presence_startup: PresenceStartupGate::default(),
                 pet_placement_reconciled: AtomicBool::new(false),
                 started_at: Instant::now(),
             });
-            request_presence_initialization(app.handle().clone());
             let tray = build_fairy_tray(app, &preferences)?;
             app.manage(tray);
             sync_tray_preferences(app.handle(), &preferences);
@@ -2507,19 +4349,31 @@ pub fn run() {
             provider_openrouter_status,
             provider_openrouter_configure,
             provider_openrouter_delete,
+            provider_realtime_status,
+            provider_realtime_configure,
+            provider_realtime_delete,
+            realtime_worker_status,
+            realtime_worker_start,
+            realtime_worker_stop,
+            realtime_worker_tool_result,
             desktop_preferences_get,
             desktop_preferences_update,
             pet_preferences_update,
             pet_input_set_layout,
             pet_input_set_interactive,
             pet_input_request_focus,
+            pet_input_presentation_begin,
+            pet_input_presentation_apply,
             pet_window_group_begin_drag,
             pet_window_group_move,
             pet_window_group_end_drag,
             pet_window_group_reset_position,
             pet_renderer_report_health,
+            pet_render_settings_get,
             pet_native_gpu_start,
             pet_native_gpu_status,
+            pet_native_gpu_update,
+            pet_native_gpu_rebind,
             pet_native_gpu_prepare_visual_test,
             pet_native_gpu_stop,
             pet_exit,
@@ -2531,21 +4385,94 @@ pub fn run() {
             voice_session_cancel,
             voice_test_start,
             voice_test_cancel,
+            realtime_voice_start,
+            realtime_voice_cancel,
             select_project_folder,
+            select_skill_source,
             capture::list_capture_surfaces,
             capture::capture_surface,
             presence_backdrop::pet_backdrop_capture
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Fairy desktop");
-    application.run(|_, _| {});
+    application.run(|app, event| match event {
+        tauri::RunEvent::Resumed => reset_native_presence_after_resume(app),
+        tauri::RunEvent::WindowEvent { label, event, .. } if label == PET_RENDER_LABEL => {
+            match event {
+                tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                    reset_native_presence(app, "surface_changed");
+                }
+                tauri::WindowEvent::Destroyed => stop_native_presence(app),
+                _ => {}
+            }
+        }
+        tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. } => {
+            let _ = app.emit_to(
+                PET_RENDER_LABEL,
+                PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT,
+                NativeRendererLifecycleSignal {
+                    schema_version: 1,
+                    reason: "shutdown",
+                },
+            );
+            stop_native_presence(app);
+        }
+        _ => {}
+    });
+}
+
+#[cfg(test)]
+mod pet_input_presentation_tests {
+    use super::PetInputPresentationFence;
+
+    #[test]
+    fn new_session_fences_every_revision_from_the_previous_webview() {
+        let mut fence = PetInputPresentationFence::default();
+        let first = fence.begin();
+        fence.validate(first.session_id, 12).unwrap();
+        fence.revision = 12;
+
+        let second = fence.begin();
+        assert!(second.session_id > first.session_id);
+        assert_eq!(second.revision, 0);
+        assert_eq!(
+            fence.validate(first.session_id, 13),
+            Err("PET_INPUT_PRESENTATION_STALE_SESSION")
+        );
+        assert!(fence.validate(second.session_id, 1).is_ok());
+    }
+
+    #[test]
+    fn duplicate_and_out_of_order_revisions_are_rejected() {
+        let mut fence = PetInputPresentationFence::default();
+        let session = fence.begin();
+        fence.validate(session.session_id, 3).unwrap();
+        fence.revision = 3;
+
+        assert_eq!(
+            fence.validate(session.session_id, 3),
+            Err("PET_INPUT_PRESENTATION_STALE_REVISION")
+        );
+        assert_eq!(
+            fence.validate(session.session_id, 2),
+            Err("PET_INPUT_PRESENTATION_STALE_REVISION")
+        );
+        assert!(fence.validate(session.session_id, 4).is_ok());
+    }
 }
 
 #[cfg(all(test, target_os = "windows"))]
 mod native_window_group_tests {
     use super::*;
     use windows_sys::Win32::Foundation::HWND;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WS_POPUP};
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreateRectRgn, DeleteObject, GetWindowRgn, PtInRegion,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, GetWindow, GetWindowLongPtrW, GetWindowTextLengthW,
+        SetWindowPos, GWL_EXSTYLE, GW_HWNDPREV, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    };
 
     struct TestWindow(HWND);
 
@@ -2558,6 +4485,7 @@ mod native_window_group_tests {
     }
 
     fn create_test_window(frame: PhysicalFrame) -> TestWindow {
+        let _dpi_scope = PerMonitorDpiScope::enter();
         let class = "STATIC\0".encode_utf16().collect::<Vec<_>>();
         let title = "Fairy native group test\0"
             .encode_utf16()
@@ -2580,6 +4508,498 @@ mod native_window_group_tests {
         };
         assert!(!handle.is_null(), "test HWND must be created");
         TestWindow(handle)
+    }
+
+    fn window_is_above(upper: HWND, lower: HWND) -> bool {
+        let mut current = lower;
+        for _ in 0..512 {
+            current = unsafe { GetWindow(current, GW_HWNDPREV) };
+            if current.is_null() {
+                return false;
+            }
+            if current == upper {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn render_shell_policy_clears_titles_and_never_creates_a_taskbar_window() {
+        let render = create_test_window(PhysicalFrame {
+            x: 100,
+            y: 100,
+            width: 640,
+            height: 260,
+        });
+
+        enforce_presence_window_shell_policy(render.0 as isize, Some(false))
+            .expect("render shell policy should apply");
+
+        let style = unsafe { GetWindowLongPtrW(render.0, GWL_EXSTYLE) } as u32;
+        assert_eq!(style & WS_EX_APPWINDOW, 0);
+        assert_ne!(style & WS_EX_TOOLWINDOW, 0);
+        assert_ne!(style & WS_EX_NOACTIVATE, 0);
+        assert_eq!(unsafe { GetWindowTextLengthW(render.0) }, 0);
+    }
+
+    #[test]
+    fn core_input_region_is_circular_instead_of_a_rectangular_hit_surface() {
+        let _dpi_scope = PerMonitorDpiScope::enter();
+        let input = create_test_window(PhysicalFrame {
+            x: 0,
+            y: 0,
+            width: 616,
+            height: 360,
+        });
+        apply_pet_input_window_region(
+            input.0 as isize,
+            PetInputLayout::Core,
+            616,
+            360,
+            300,
+            1.0,
+            ExpansionDirection::Right,
+        )
+        .expect("core input region should apply");
+
+        let region = unsafe { CreateRectRgn(0, 0, 0, 0) };
+        assert!(!region.is_null());
+        assert_ne!(unsafe { GetWindowRgn(input.0, region) }, 0);
+        assert_ne!(unsafe { PtInRegion(region, 72, 188) }, 0);
+        assert_eq!(unsafe { PtInRegion(region, 2, 2) }, 0);
+        unsafe { DeleteObject(region) };
+    }
+
+    #[test]
+    fn hidden_input_layout_requires_no_native_hit_region() {
+        apply_pet_input_window_region(
+            0,
+            PetInputLayout::Hidden,
+            0,
+            0,
+            0,
+            1.0,
+            ExpansionDirection::Right,
+        )
+        .expect("hidden input layout should not create a native region");
+    }
+
+    #[test]
+    fn compact_input_region_exposes_the_core_and_dynamic_capsule_only() {
+        let _dpi_scope = PerMonitorDpiScope::enter();
+        let parts = pet_input_region_parts(
+            PetInputLayout::Compact,
+            616,
+            360,
+            308,
+            1.0,
+            ExpansionDirection::Right,
+        );
+        assert_eq!(
+            parts,
+            vec![
+                PetInputRegionPart {
+                    kind: PetInputRegionKind::Ellipse,
+                    left: 0,
+                    top: 116,
+                    right: 144,
+                    bottom: 260,
+                    corner_diameter: 0,
+                },
+                PetInputRegionPart {
+                    kind: PetInputRegionKind::RoundedRectangle,
+                    left: 8,
+                    top: 288,
+                    right: 300,
+                    bottom: 352,
+                    corner_diameter: 64,
+                },
+            ]
+        );
+
+        let input = create_test_window(PhysicalFrame {
+            x: 0,
+            y: 0,
+            width: 616,
+            height: 360,
+        });
+        apply_pet_input_window_region(
+            input.0 as isize,
+            PetInputLayout::Compact,
+            616,
+            360,
+            308,
+            1.0,
+            ExpansionDirection::Right,
+        )
+        .expect("compact input region should apply");
+        let region = unsafe { CreateRectRgn(0, 0, 0, 0) };
+        assert!(!region.is_null());
+        assert_ne!(unsafe { GetWindowRgn(input.0, region) }, 0);
+        assert_ne!(unsafe { PtInRegion(region, 72, 188) }, 0);
+        assert_ne!(unsafe { PtInRegion(region, 154, 320) }, 0);
+        assert_eq!(unsafe { PtInRegion(region, 220, 100) }, 0);
+        unsafe { DeleteObject(region) };
+    }
+
+    #[test]
+    fn compact_input_region_moves_only_the_core_with_expansion_direction() {
+        let parts = pet_input_region_parts(
+            PetInputLayout::Compact,
+            616,
+            360,
+            308,
+            1.0,
+            ExpansionDirection::Left,
+        );
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].kind, PetInputRegionKind::Ellipse);
+        assert_eq!(parts[0].left, 472);
+        assert_eq!(parts[0].right, 616);
+        assert_eq!(parts[1].left, 316);
+        assert_eq!(parts[1].right, 608);
+    }
+
+    #[test]
+    fn compact_input_region_can_be_reapplied_after_direction_changes() {
+        let _dpi_scope = PerMonitorDpiScope::enter();
+        let input = create_test_window(PhysicalFrame {
+            x: 0,
+            y: 0,
+            width: 616,
+            height: 360,
+        });
+        apply_pet_input_window_region(
+            input.0 as isize,
+            PetInputLayout::Compact,
+            616,
+            360,
+            308,
+            1.0,
+            ExpansionDirection::Right,
+        )
+        .expect("right-facing input region should apply");
+        apply_pet_input_window_region(
+            input.0 as isize,
+            PetInputLayout::Compact,
+            616,
+            360,
+            308,
+            1.0,
+            ExpansionDirection::Left,
+        )
+        .expect("left-facing input region should replace the old region");
+
+        let region = unsafe { CreateRectRgn(0, 0, 0, 0) };
+        assert!(!region.is_null());
+        assert_ne!(unsafe { GetWindowRgn(input.0, region) }, 0);
+        assert_ne!(unsafe { PtInRegion(region, 544, 188) }, 0);
+        assert_eq!(unsafe { PtInRegion(region, 72, 188) }, 0);
+        assert_ne!(unsafe { PtInRegion(region, 462, 320) }, 0);
+        unsafe { DeleteObject(region) };
+    }
+
+    #[test]
+    fn expanded_input_region_keeps_the_core_and_menu_interactive() {
+        let parts = pet_input_region_parts(
+            PetInputLayout::Expanded,
+            616,
+            360,
+            300,
+            1.0,
+            ExpansionDirection::Right,
+        );
+        assert_eq!(parts.len(), 2);
+        assert_eq!(
+            parts[0],
+            PetInputRegionPart {
+                kind: PetInputRegionKind::Ellipse,
+                left: 0,
+                top: 116,
+                right: 144,
+                bottom: 260,
+                corner_diameter: 0,
+            }
+        );
+        assert_eq!(parts[1].kind, PetInputRegionKind::RoundedRectangle);
+        assert_eq!(parts[1].left, 148);
+        assert_eq!(parts[1].right, 616);
+    }
+
+    #[test]
+    fn drag_session_ids_are_bounded_opaque_tokens() {
+        assert!(validate_pet_drag_session_id("48ebc11a-a24c-48e5-bae1-97fabc81bc41").is_ok());
+        assert!(validate_pet_drag_session_id("").is_err());
+        assert!(validate_pet_drag_session_id("invalid session").is_err());
+        assert!(validate_pet_drag_session_id(&"x".repeat(129)).is_err());
+    }
+
+    #[test]
+    fn native_geometry_scope_uses_per_monitor_v2_and_restores_the_caller() {
+        use windows_sys::Win32::UI::HiDpi::{
+            AreDpiAwarenessContextsEqual, GetThreadDpiAwarenessContext,
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        };
+
+        let before = unsafe { GetThreadDpiAwarenessContext() };
+        {
+            let _scope = PerMonitorDpiScope::enter();
+            let current = unsafe { GetThreadDpiAwarenessContext() };
+            assert_ne!(
+                unsafe {
+                    AreDpiAwarenessContextsEqual(
+                        current,
+                        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+                    )
+                },
+                0
+            );
+        }
+        let restored = unsafe { GetThreadDpiAwarenessContext() };
+        assert_ne!(unsafe { AreDpiAwarenessContextsEqual(before, restored) }, 0);
+    }
+
+    #[test]
+    fn drag_geometry_preserves_core_layout_across_dpi_changes() {
+        let source = resolve_presence_placement_for_anchor(
+            PhysicalPoint { x: 900, y: 600 },
+            render_size_for_scale(1.0),
+            PhysicalFrame {
+                x: 0,
+                y: 0,
+                width: 1_920,
+                height: 1_040,
+            },
+            1.0,
+            Some(ExpansionDirection::Left),
+        );
+        let target = resolve_presence_placement_for_anchor(
+            PhysicalPoint { x: 3_200, y: 500 },
+            render_size_for_scale(1.25),
+            PhysicalFrame {
+                x: 2_560,
+                y: -114,
+                width: 1_920,
+                height: 1_032,
+            },
+            1.25,
+            Some(ExpansionDirection::Left),
+        );
+        let geometry = pet_input_geometry_from_frame(source.core_frame(144), 1.0);
+
+        assert_eq!(geometry.layout, PetInputLayout::Core);
+        assert_eq!(pet_input_frame_for_geometry(target, geometry).width, 770);
+        assert_eq!(pet_input_frame_for_geometry(target, geometry).height, 450);
+    }
+
+    #[test]
+    fn first_drag_uses_the_visible_core_instead_of_a_stale_direction() {
+        let monitor = PresenceMonitor {
+            id: "primary".to_owned(),
+            work_area: PhysicalFrame {
+                x: 0,
+                y: 0,
+                width: 2_560,
+                height: 1_400,
+            },
+            scale_factor: 1.0,
+            is_primary: true,
+        };
+        let actual = resolve_presence_placement_for_anchor(
+            PhysicalPoint { x: 1_300, y: 600 },
+            render_size_for_scale(1.0),
+            monitor.work_area,
+            1.0,
+            Some(ExpansionDirection::Left),
+        );
+        let stale = resolve_presence_placement_for_anchor(
+            PhysicalPoint { x: 500, y: 300 },
+            render_size_for_scale(1.0),
+            monitor.work_area,
+            1.0,
+            Some(ExpansionDirection::Right),
+        );
+
+        let (resolved, geometry) = placement_from_actual_pet_windows(
+            actual.render_frame,
+            actual.core_frame(144),
+            &[monitor],
+            Some(stale),
+            None,
+        )
+        .expect("visible windows should define the first drag anchor");
+
+        assert_eq!(geometry.layout, PetInputLayout::Core);
+        assert_eq!(resolved.anchor, actual.anchor);
+        assert_eq!(resolved.expansion_direction, ExpansionDirection::Left);
+        assert_eq!(resolved.render_frame, actual.render_frame);
+    }
+
+    #[test]
+    fn first_drag_uses_the_monitor_containing_the_visible_input_surface() {
+        let primary = PresenceMonitor {
+            id: "primary".to_owned(),
+            work_area: PhysicalFrame {
+                x: 0,
+                y: 0,
+                width: 1_920,
+                height: 1_040,
+            },
+            scale_factor: 1.0,
+            is_primary: true,
+        };
+        let secondary = PresenceMonitor {
+            id: "secondary".to_owned(),
+            work_area: PhysicalFrame {
+                x: 1_920,
+                y: -120,
+                width: 2_560,
+                height: 1_440,
+            },
+            scale_factor: 1.25,
+            is_primary: false,
+        };
+        let actual = resolve_presence_placement_for_anchor(
+            PhysicalPoint { x: 3_200, y: 540 },
+            render_size_for_scale(secondary.scale_factor),
+            secondary.work_area,
+            secondary.scale_factor,
+            Some(ExpansionDirection::Right),
+        );
+        let stale = resolve_presence_placement_for_anchor(
+            PhysicalPoint { x: 500, y: 300 },
+            render_size_for_scale(primary.scale_factor),
+            primary.work_area,
+            primary.scale_factor,
+            Some(ExpansionDirection::Left),
+        );
+        let core_extent = (PET_CORE_EXTENT_LOGICAL * secondary.scale_factor).round() as u32;
+
+        let (resolved, _) = placement_from_actual_pet_windows(
+            actual.render_frame,
+            actual.core_frame(core_extent),
+            &[primary, secondary.clone()],
+            Some(stale),
+            None,
+        )
+        .expect("visible input should select the secondary monitor");
+
+        assert_eq!(resolved.monitor_work_area, secondary.work_area);
+        assert_eq!(resolved.anchor, actual.anchor);
+        assert_eq!(resolved.scale_factor, secondary.scale_factor);
+    }
+
+    #[test]
+    fn native_core_position_overrides_a_stale_input_proxy() {
+        let monitor = PresenceMonitor {
+            id: "primary".to_owned(),
+            work_area: PhysicalFrame {
+                x: 0,
+                y: 0,
+                width: 2_560,
+                height: 1_400,
+            },
+            scale_factor: 1.0,
+            is_primary: true,
+        };
+        let visible = resolve_presence_placement_for_anchor(
+            PhysicalPoint { x: 1_528, y: 932 },
+            render_size_for_scale(1.0),
+            monitor.work_area,
+            1.0,
+            Some(ExpansionDirection::Left),
+        );
+        let stale_input = PhysicalFrame {
+            x: 1_904,
+            y: 860,
+            width: 144,
+            height: 144,
+        };
+        let presentation = NativeGpuPresentation {
+            expansion_direction: NativeGpuExpansionDirection::Left,
+            core_x: 544.0,
+            core_y: 88.0,
+            ..NativeGpuPresentation::default()
+        };
+
+        let (resolved, geometry) = placement_from_actual_pet_windows(
+            visible.render_frame,
+            stale_input,
+            &[monitor],
+            None,
+            Some(presentation),
+        )
+        .expect("native presentation should define the visible core anchor");
+
+        assert_eq!(geometry.layout, PetInputLayout::Core);
+        assert_eq!(resolved.anchor, visible.anchor);
+        assert_eq!(resolved.expansion_direction, ExpansionDirection::Left);
+        assert_eq!(resolved.render_frame, visible.render_frame);
+        assert_ne!(physical_frame_center(stale_input), resolved.anchor);
+    }
+
+    #[test]
+    fn native_presentation_preserves_the_visible_edge_frame() {
+        let monitor = PresenceMonitor {
+            id: "primary".to_owned(),
+            work_area: PhysicalFrame {
+                x: 0,
+                y: 0,
+                width: 1_280,
+                height: 720,
+            },
+            scale_factor: 1.0,
+            is_primary: true,
+        };
+        let visible_frame = PhysicalFrame {
+            x: 720,
+            y: 320,
+            width: 640,
+            height: 260,
+        };
+        let presentation = NativeGpuPresentation {
+            expansion_direction: NativeGpuExpansionDirection::Right,
+            core_x: 96.0,
+            core_y: 88.0,
+            ..NativeGpuPresentation::default()
+        };
+
+        let placement = placement_from_native_presentation(visible_frame, &[monitor], presentation)
+            .expect("the visible native surface should define drag geometry");
+
+        assert_eq!(placement.render_frame, visible_frame);
+        assert_eq!(placement.anchor, PhysicalPoint { x: 816, y: 408 });
+    }
+
+    #[test]
+    fn drag_geometry_preserves_compact_logical_width_across_dpi_changes() {
+        let target = resolve_presence_placement_for_anchor(
+            PhysicalPoint { x: 3_200, y: 500 },
+            render_size_for_scale(1.25),
+            PhysicalFrame {
+                x: 2_560,
+                y: -114,
+                width: 1_920,
+                height: 1_032,
+            },
+            1.25,
+            Some(ExpansionDirection::Right),
+        );
+        let geometry = pet_input_geometry_from_frame(
+            PhysicalFrame {
+                x: 0,
+                y: 0,
+                width: 308,
+                height: 260,
+            },
+            1.0,
+        );
+        let frame = pet_input_frame_for_geometry(target, geometry);
+
+        assert_eq!(geometry.layout, PetInputLayout::Compact);
+        assert_eq!(frame.width, 770);
+        assert_eq!(frame.height, 450);
     }
 
     #[test]
@@ -2612,6 +5032,7 @@ mod native_window_group_tests {
         move_native_presence_window_positions(
             render.0 as isize,
             render_target,
+            None,
             Some((input.0 as isize, input_target)),
         )
         .expect("native window group should move");
@@ -2628,15 +5049,270 @@ mod native_window_group_tests {
             render_after.y - render_start.y,
             input_after.y - input_start.y
         );
+        assert!(window_is_above(input.0, render.0));
     }
 
     #[test]
-    fn drag_delta_falls_back_to_scaled_webview_coordinates_when_cursor_is_stale() {
+    fn native_batch_resizes_both_surfaces_for_a_cross_dpi_move() {
+        let render = create_test_window(PhysicalFrame {
+            x: 1_200,
+            y: 600,
+            width: 640,
+            height: 260,
+        });
+        let input = create_test_window(PhysicalFrame {
+            x: 1_300,
+            y: 620,
+            width: 144,
+            height: 144,
+        });
+        let render_target = PhysicalFrame {
+            x: 2_700,
+            y: -80,
+            width: 800,
+            height: 325,
+        };
+        let input_target = PhysicalFrame {
+            x: 2_730,
+            y: -55,
+            width: 180,
+            height: 180,
+        };
+
+        move_native_presence_window_positions(
+            render.0 as isize,
+            render_target,
+            None,
+            Some((input.0 as isize, input_target)),
+        )
+        .expect("cross-DPI window group move should resize atomically");
+
+        assert_eq!(
+            native_presence_window_frame(render.0 as isize).unwrap(),
+            render_target
+        );
+        assert_eq!(
+            native_presence_window_frame(input.0 as isize).unwrap(),
+            input_target
+        );
+        assert!(window_is_above(input.0, render.0));
+    }
+
+    #[test]
+    fn native_batch_restores_input_above_render_and_supports_negative_coordinates() {
+        let render = create_test_window(PhysicalFrame {
+            x: 20,
+            y: 20,
+            width: 640,
+            height: 260,
+        });
+        let input = create_test_window(PhysicalFrame {
+            x: 300,
+            y: 100,
+            width: 320,
+            height: 72,
+        });
+        assert_ne!(
+            unsafe {
+                SetWindowPos(
+                    render.0,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                )
+            },
+            0
+        );
+
+        let render_target = PhysicalFrame {
+            x: -2_400,
+            y: -160,
+            width: 640,
+            height: 260,
+        };
+        let input_target = PhysicalFrame {
+            x: -2_120,
+            y: -80,
+            width: 320,
+            height: 72,
+        };
+        move_native_presence_window_positions(
+            render.0 as isize,
+            render_target,
+            None,
+            Some((input.0 as isize, input_target)),
+        )
+        .expect("native window group should restore its z-order");
+
+        assert_eq!(
+            native_presence_window_frame(render.0 as isize).unwrap(),
+            render_target
+        );
+        assert_eq!(
+            native_presence_window_frame(input.0 as isize).unwrap(),
+            input_target
+        );
+        assert!(window_is_above(input.0, render.0));
+    }
+
+    #[test]
+    fn native_batch_moves_composition_surface_with_render_and_below_input() {
+        let render = create_test_window(PhysicalFrame {
+            x: 80,
+            y: 90,
+            width: 640,
+            height: 260,
+        });
+        let native_surface = create_test_window(PhysicalFrame {
+            x: 80,
+            y: 90,
+            width: 640,
+            height: 260,
+        });
+        let input = create_test_window(PhysicalFrame {
+            x: 360,
+            y: 184,
+            width: 320,
+            height: 72,
+        });
+        let render_target = PhysicalFrame {
+            x: -1_920,
+            y: 240,
+            width: 640,
+            height: 260,
+        };
+        let input_target = PhysicalFrame {
+            x: -1_640,
+            y: 334,
+            width: 320,
+            height: 72,
+        };
+
+        move_native_presence_window_positions(
+            render.0 as isize,
+            render_target,
+            Some(native_surface.0 as isize),
+            Some((input.0 as isize, input_target)),
+        )
+        .expect("native surface, render shell, and input should move in one batch");
+
+        assert_eq!(
+            native_presence_window_frame(render.0 as isize).unwrap(),
+            render_target
+        );
+        assert_eq!(
+            native_presence_window_frame(native_surface.0 as isize).unwrap(),
+            render_target
+        );
+        assert_eq!(
+            native_presence_window_frame(input.0 as isize).unwrap(),
+            input_target
+        );
+        assert!(window_is_above(input.0, native_surface.0));
+        assert!(window_is_above(native_surface.0, render.0));
+    }
+
+    #[test]
+    fn native_drag_moves_only_the_visual_until_input_settlement() {
+        let render_start = PhysicalFrame {
+            x: 80,
+            y: 90,
+            width: 640,
+            height: 260,
+        };
+        let input_start = PhysicalFrame {
+            x: 360,
+            y: 184,
+            width: 144,
+            height: 144,
+        };
+        let render = create_test_window(render_start);
+        let native_surface = create_test_window(render_start);
+        let input = create_test_window(input_start);
+        let render_target = PhysicalFrame {
+            x: 600,
+            y: 310,
+            ..render_start
+        };
+
+        move_native_presence_window_positions(
+            render.0 as isize,
+            render_target,
+            Some(native_surface.0 as isize),
+            None,
+        )
+        .expect("native visual should move without relocating WebView2 input");
+
+        assert_eq!(
+            native_presence_window_frame(render.0 as isize).unwrap(),
+            render_target
+        );
+        assert_eq!(
+            native_presence_window_frame(native_surface.0 as isize).unwrap(),
+            render_target
+        );
+        assert_eq!(
+            native_presence_window_frame(input.0 as isize).unwrap(),
+            input_start
+        );
+    }
+
+    #[test]
+    fn stale_native_surface_never_blocks_the_authoritative_window_pair() {
+        let render = create_test_window(PhysicalFrame {
+            x: 40,
+            y: 60,
+            width: 640,
+            height: 260,
+        });
+        let input = create_test_window(PhysicalFrame {
+            x: 320,
+            y: 154,
+            width: 320,
+            height: 72,
+        });
+        let render_target = PhysicalFrame {
+            x: 500,
+            y: 280,
+            width: 640,
+            height: 260,
+        };
+        let input_target = PhysicalFrame {
+            x: 780,
+            y: 374,
+            width: 320,
+            height: 72,
+        };
+
+        move_native_presence_window_positions(
+            render.0 as isize,
+            render_target,
+            Some(isize::MAX),
+            Some((input.0 as isize, input_target)),
+        )
+        .expect("a destroyed optional surface must not block the Tauri window pair");
+
+        assert_eq!(
+            native_presence_window_frame(render.0 as isize).unwrap(),
+            render_target
+        );
+        assert_eq!(
+            native_presence_window_frame(input.0 as isize).unwrap(),
+            input_target
+        );
+        assert!(window_is_above(input.0, render.0));
+    }
+
+    #[test]
+    fn drag_delta_uses_one_calibrated_native_coordinate_space() {
         let start = PhysicalPoint { x: 500, y: 300 };
 
         assert_eq!(
             resolve_pet_drag_delta(start, Some(start), (-48, 12), 1.25),
-            (-60, 15)
+            (0, 0)
         );
         assert_eq!(
             resolve_pet_drag_delta(
@@ -2646,6 +5322,31 @@ mod native_window_group_tests {
                 2.0,
             ),
             (-48, 12)
+        );
+        assert_eq!(
+            resolve_pet_drag_delta(start, None, (-48, 12), 1.25),
+            (-60, 15)
+        );
+    }
+
+    #[test]
+    fn async_drag_handoff_preserves_the_initial_pointer_delta() {
+        let current = PhysicalPoint { x: 1_030, y: 515 };
+        let start = calibrated_pet_drag_start_pointer(current, (24, 12), 1.25);
+
+        assert_eq!(start, PhysicalPoint { x: 1_000, y: 500 });
+        assert_eq!(
+            resolve_pet_drag_delta(start, Some(current), (24, 12), 1.25),
+            (30, 15)
+        );
+        assert_eq!(
+            resolve_pet_drag_delta(
+                start,
+                Some(PhysicalPoint { x: 1_040, y: 520 }),
+                (32, 16),
+                1.25,
+            ),
+            (40, 20)
         );
     }
 }

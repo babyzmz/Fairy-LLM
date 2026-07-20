@@ -102,6 +102,76 @@ impl WorkspaceManager {
             .map_err(|_error| WorkerError::LockPoisoned)
     }
 
+    pub fn workspace_size(&self, workspace_id: &str) -> Result<u64, WorkerError> {
+        let _operation = self.lock()?;
+        validate_identifier(workspace_id)?;
+        let staging = self.managed_root.join(".purge-staging").join(workspace_id);
+        if staging.exists() {
+            return tree_bytes(&staging);
+        }
+        let mut bytes = 0_u64;
+        for root in self.workspace_roots(workspace_id) {
+            if root.exists() {
+                bytes = bytes.saturating_add(tree_bytes(&root)?);
+            }
+        }
+        Ok(bytes)
+    }
+
+    pub fn purge_workspace(&self, workspace_id: &str) -> Result<u64, WorkerError> {
+        let _operation = self.lock()?;
+        validate_identifier(workspace_id)?;
+        let staging = self.managed_root.join(".purge-staging").join(workspace_id);
+        if staging.exists() {
+            let bytes = tree_bytes(&staging)?;
+            fs::remove_dir_all(staging)?;
+            return Ok(bytes);
+        }
+
+        let sources: Vec<(&str, PathBuf)> = ["project", "scratch"]
+            .into_iter()
+            .zip(self.workspace_roots(workspace_id))
+            .filter(|(_label, root)| root.exists())
+            .collect();
+        let mut bytes = 0_u64;
+        for (_label, root) in &sources {
+            bytes = bytes.saturating_add(tree_bytes(root)?);
+        }
+        if sources.is_empty() {
+            return Ok(0);
+        }
+
+        fs::create_dir_all(&staging)?;
+        let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+        for (label, source) in sources {
+            let destination = staging.join(label);
+            if let Err(error) = fs::rename(&source, &destination) {
+                for (original, staged) in moved.into_iter().rev() {
+                    if staged.exists() && !original.exists() {
+                        if let Some(parent) = original.parent() {
+                            let _ignored = fs::create_dir_all(parent);
+                        }
+                        let _ignored = fs::rename(staged, original);
+                    }
+                }
+                let _ignored = fs::remove_dir_all(&staging);
+                return Err(error.into());
+            }
+            moved.push((source, destination));
+        }
+
+        // A failed removal leaves the stable staging path so the next call can retry.
+        fs::remove_dir_all(staging)?;
+        Ok(bytes)
+    }
+
+    fn workspace_roots(&self, workspace_id: &str) -> [PathBuf; 2] {
+        [
+            self.project_root(workspace_id),
+            self.managed_root.join("scratch").join(workspace_id),
+        ]
+    }
+
     pub fn import_project(
         &self,
         source: impl AsRef<Path>,

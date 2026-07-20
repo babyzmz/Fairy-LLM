@@ -44,6 +44,11 @@ const project: Project = {
   active_version_id: ID.version,
   active_preview_id: null,
   revision: 1,
+  pinned_at: null,
+  archived_at: null,
+  deleted_at: null,
+  purged_at: null,
+  metadata_revision: 0,
   created_at: timestamp,
   updated_at: timestamp,
 };
@@ -59,6 +64,8 @@ const conversation: Conversation = {
   title: "Project conversation",
   pinned_at: null,
   deleted_at: null,
+  deleted_by_project_at: null,
+  purged_at: null,
   revision: 0,
   created_at: timestamp,
   updated_at: timestamp,
@@ -105,6 +112,8 @@ const scratchConversation: Conversation = {
   title: "New conversation",
   pinned_at: null,
   deleted_at: null,
+  deleted_by_project_at: null,
+  purged_at: null,
   revision: 0,
   created_at: timestamp,
   updated_at: timestamp,
@@ -246,6 +255,7 @@ describe("App", () => {
     expect(screen.queryByText("Scope resolved")).not.toBeInTheDocument();
     expect(screen.queryByText("Developer diagnostic")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Task Timeline" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Select task" })).toHaveValue(ID.task);
     await userEvent.click(screen.getByRole("tab", { name: "Preview" }));
     expect(screen.getByRole("heading", { name: "Preview" })).toBeVisible();
     expect(screen.getByLabelText("Workspace status")).toHaveTextContent("Core ready");
@@ -254,6 +264,52 @@ describe("App", () => {
     expect(document.body).not.toHaveTextContent("$12");
     expect(document.body.textContent).not.toMatch(/[璺鈥]/u);
     expect(health).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads every project page before rendering history navigation", async () => {
+    const secondProject: Project = {
+      ...project,
+      id: "0198f4de-0114-7000-8000-000000000099",
+      name: "Second workspace",
+      workspace_id: "0198f4de-0114-7000-8000-000000000098",
+    };
+    const listProjects = vi.fn<WorkspaceClient["projects"]["list"]>(async (request) =>
+      request?.cursor === "page-2"
+        ? { items: [secondProject], next_cursor: null }
+        : { items: [project], next_cursor: "page-2" },
+    );
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [project, secondProject],
+      { listProjects },
+    );
+
+    render(<App client={client} />);
+
+    const history = await screen.findByLabelText("History navigation");
+    await waitFor(() => expect(history).toHaveTextContent("Second workspace"));
+    expect(listProjects).toHaveBeenCalledWith(expect.objectContaining({ cursor: "page-2" }));
+  });
+
+  it("opens the workspace while the optional model catalog is still loading", async () => {
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [project],
+      { listModelCatalog: () => new Promise(() => undefined) },
+    );
+
+    render(<App client={client} />);
+
+    expect(await screen.findByRole("heading", { name: "Task Timeline" })).toBeVisible();
+    expect(screen.getByLabelText("Workspace status")).toHaveTextContent("Core ready");
   });
 
   it("renders real create and import actions for an empty repository", async () => {
@@ -530,15 +586,21 @@ function createClient(
     listMessages?: WorkspaceClient["messages"]["list"];
     getConversation?: WorkspaceClient["conversations"]["get"];
     deleteConversation?: WorkspaceClient["conversations"]["delete"];
+    listModelCatalog?: WorkspaceClient["models"]["catalog"]["list"];
+    listProjects?: WorkspaceClient["projects"]["list"];
   } = {},
 ): WorkspaceClient {
   return {
     desktop: { openSettings: async () => undefined },
     health,
     projects: {
-      list: async () => ({ items: projects, next_cursor: null }),
+      list: options.listProjects ?? (async () => ({ items: projects, next_cursor: null })),
       create: async () => ({ project, initial_version: version }),
       import: async () => ({ project, initial_version: version }),
+      get: async () => project,
+      updateMetadata: async () => project,
+      archive: async () => project,
+      delete: async () => project,
       selectFolder: async () => "C:\\Projects\\selected",
     },
     conversations: {
@@ -690,7 +752,7 @@ function createClient(
     },
     models: {
       catalog: {
-        list: async () => modelCatalog,
+        list: options.listModelCatalog ?? (async () => modelCatalog),
         refresh: async () => modelCatalog,
       },
       selection: {

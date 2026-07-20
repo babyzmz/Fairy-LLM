@@ -7,26 +7,56 @@ const VOICE_WAV_BASE64 = Buffer.from(VOICE_WAV).toString("base64");
 const VOICE_WAV_HASH = createHash("sha256").update(VOICE_WAV).digest("hex");
 const CAPTURE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-const CAPTURE_PNG_HASH = createHash("sha256").update(Buffer.from(CAPTURE_PNG_BASE64, "base64")).digest("hex");
+const CAPTURE_PNG_HASH = createHash("sha256")
+  .update(Buffer.from(CAPTURE_PNG_BASE64, "base64"))
+  .digest("hex");
 const PDF_FIXTURE_BASE64 =
   "JVBERi0xLjMKJeLjz9MKMSAwIG9iago8PAovUHJvZHVjZXIgKHB5cGRmKQovVGl0bGUgKEZhaXJ5IFBERiBGaXh0dXJlKQo+PgplbmRvYmoKMiAwIG9iago8PAovVHlwZSAvUGFnZXMKL0NvdW50IDEKL0tpZHMgWyA0IDAgUiBdCj4+CmVuZG9iagozIDAgb2JqCjw8Ci9UeXBlIC9DYXRhbG9nCi9QYWdlcyAyIDAgUgo+PgplbmRvYmoKNCAwIG9iago8PAovVHlwZSAvUGFnZQovUmVzb3VyY2VzIDw8Cj4+Ci9NZWRpYUJveCBbIDAuMCAwLjAgMzAwIDIwMCBdCi9QYXJlbnQgMiAwIFIKPj4KZW5kb2JqCnhyZWYKMCA1CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAxNSAwMDAwIG4gCjAwMDAwMDAwODEgMDAwMDAgbiAKMDAwMDAwMDE0MCAwMDAwMCBuIAowMDAwMDAwMTg5IDAwMDAwIG4gCnRyYWlsZXIKPDwKL1NpemUgNQovUm9vdCAzIDAgUgovSW5mbyAxIDAgUgo+PgpzdGFydHhyZWYKMjg4CiUlRU9GCg==";
 const PDF_FIXTURE = Buffer.from(PDF_FIXTURE_BASE64, "base64");
 const PDF_FIXTURE_HASH = createHash("sha256").update(PDF_FIXTURE).digest("hex");
 const MODEL_BUFFER = Buffer.alloc(36);
-[-1, -1, 0, 1, -1, 0, 0, 1, 0].forEach((value, index) => MODEL_BUFFER.writeFloatLE(value, index * 4));
+[-1, -1, 0, 1, -1, 0, 0, 1, 0].forEach((value, index) =>
+  MODEL_BUFFER.writeFloatLE(value, index * 4),
+);
 const MODEL_FIXTURE_TEXT = JSON.stringify({
   asset: { version: "2.0", generator: "Fairy fixture" },
-  buffers: [{ uri: `data:application/octet-stream;base64,${MODEL_BUFFER.toString("base64")}`, byteLength: 36 }],
+  buffers: [
+    {
+      uri: `data:application/octet-stream;base64,${MODEL_BUFFER.toString("base64")}`,
+      byteLength: 36,
+    },
+  ],
   bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36 }],
-  accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [-1, -1, 0], max: [1, 1, 0] }],
-  materials: [{ name: "Fairy mint", pbrMetallicRoughness: { baseColorFactor: [0.2, 0.8, 0.72, 1] } }],
-  meshes: [{ name: "Triangle", primitives: [{ attributes: { POSITION: 0 }, material: 0 }] }],
+  accessors: [
+    {
+      bufferView: 0,
+      componentType: 5126,
+      count: 3,
+      type: "VEC3",
+      min: [-1, -1, 0],
+      max: [1, 1, 0],
+    },
+  ],
+  materials: [
+    {
+      name: "Fairy mint",
+      pbrMetallicRoughness: { baseColorFactor: [0.2, 0.8, 0.72, 1] },
+    },
+  ],
+  meshes: [
+    {
+      name: "Triangle",
+      primitives: [{ attributes: { POSITION: 0 }, material: 0 }],
+    },
+  ],
   nodes: [{ name: "Fairy Triangle", mesh: 0 }],
   scenes: [{ nodes: [0] }],
   scene: 0,
 });
 const MODEL_FIXTURE = Buffer.from(MODEL_FIXTURE_TEXT);
-const MODEL_FIXTURE_HASH = createHash("sha256").update(MODEL_FIXTURE).digest("hex");
+const MODEL_FIXTURE_HASH = createHash("sha256")
+  .update(MODEL_FIXTURE)
+  .digest("hex");
 
 export async function installWorkspaceFixture(page: Page) {
   await installCoreFixture(page);
@@ -37,7 +67,8 @@ export async function installWorkspaceFixture(page: Page) {
         body: PDF_FIXTURE,
         headers: {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range",
+          "Access-Control-Expose-Headers":
+            "Accept-Ranges, Content-Length, Content-Range",
           "Accept-Ranges": "bytes",
         },
       });
@@ -90,7 +121,6 @@ async function installCoreFixture(page: Page) {
         __FAIRY_PUSH_EVENT__: (message: string) => number;
       };
       fixtureWindow.isTauri = true;
-      fixtureWindow.__FAIRY_BOOT_STARTED_AT__ = performance.now();
       fixtureWindow.__FAIRY_FIXTURE_CALLS__ = [];
       Object.defineProperty(navigator, "mediaDevices", {
         configurable: true,
@@ -173,8 +203,12 @@ async function installCoreFixture(page: Page) {
       };
       const timestamp = "2026-07-11T00:00:00Z";
       const fixtureParams = new URLSearchParams(window.location.search);
-      const initialTaskStatus = fixtureParams.get("taskStatus") === "previewing" ? "previewing" : "ready";
+      const initialTaskStatus =
+        fixtureParams.get("taskStatus") === "previewing"
+          ? "previewing"
+          : "ready";
       const executionRecovery = fixtureParams.get("executionRecovery") === "1";
+      const historySeed = fixtureParams.get("historySeed") === "1";
       let project = {
         id: id.project,
         workspace_id: id.project,
@@ -183,10 +217,15 @@ async function installCoreFixture(page: Page) {
         active_version_id: id.version,
         active_preview_id: id.preview,
         revision: 1,
+        pinned_at: null as string | null,
+        archived_at: historySeed ? timestamp : null,
+        deleted_at: null as string | null,
+        purged_at: null as string | null,
+        metadata_revision: 0,
         created_at: timestamp,
         updated_at: timestamp,
       };
-      const conversation = {
+      let conversation = {
         id: id.conversation,
         project_id: id.project,
         workspace_id: id.project,
@@ -198,6 +237,8 @@ async function installCoreFixture(page: Page) {
         title: "Project conversation",
         pinned_at: null,
         deleted_at: null,
+        deleted_by_project_at: null as string | null,
+        purged_at: null as string | null,
         revision: 0,
         created_at: timestamp,
         updated_at: timestamp,
@@ -221,7 +262,7 @@ async function installCoreFixture(page: Page) {
         created_at: timestamp,
         updated_at: timestamp,
       };
-      const scratchConversation = {
+      let scratchConversation = {
         id: id.scratchConversation,
         project_id: null,
         workspace_id: id.scratchConversation,
@@ -232,7 +273,9 @@ async function installCoreFixture(page: Page) {
         active_preview_id: null,
         title: "Scratch chat",
         pinned_at: null,
-        deleted_at: null,
+        deleted_at: historySeed ? timestamp : null,
+        deleted_by_project_at: null as string | null,
+        purged_at: null as string | null,
         revision: 0,
         created_at: timestamp,
         updated_at: timestamp,
@@ -582,14 +625,56 @@ async function installCoreFixture(page: Page) {
           credential_status: "configured",
         },
         items: [
-          modelEntry("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "primary", "chat", true),
+          modelEntry(
+            "deepseek/deepseek-v4-pro",
+            "DeepSeek V4 Pro",
+            "primary",
+            "chat",
+            true,
+          ),
           modelEntry("z-ai/glm-5.2", "GLM 5.2", "strongest", "chat", true),
-          modelEntry("moonshotai/kimi-k2.7-code", "Kimi K2.7 Code", "code", "chat", true),
-          modelEntry("google/gemini-3.1-flash-lite-image", "Gemini 3.1 Flash Lite Image", "image", "images", true),
-          modelEntry("google/lyria-3-pro-preview", "Lyria 3 Pro Preview", "music", "audio", true),
-          modelEntry("bytedance/seedance-2.0", "Seedance 2.0", "video", "videos", true),
-          modelEntry("nvidia/nemotron-3-ultra-550b-a55b:free", "Nemotron 3 Ultra", "free_general", "chat", false),
-          modelEntry("qwen/qwen3-coder:free", "Qwen3 Coder", "free_code", "chat", false),
+          modelEntry(
+            "moonshotai/kimi-k2.7-code",
+            "Kimi K2.7 Code",
+            "code",
+            "chat",
+            true,
+          ),
+          modelEntry(
+            "google/gemini-3.1-flash-lite-image",
+            "Gemini 3.1 Flash Lite Image",
+            "image",
+            "images",
+            true,
+          ),
+          modelEntry(
+            "google/lyria-3-pro-preview",
+            "Lyria 3 Pro Preview",
+            "music",
+            "audio",
+            true,
+          ),
+          modelEntry(
+            "bytedance/seedance-2.0",
+            "Seedance 2.0",
+            "video",
+            "videos",
+            true,
+          ),
+          modelEntry(
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
+            "Nemotron 3 Ultra",
+            "free_general",
+            "chat",
+            false,
+          ),
+          modelEntry(
+            "qwen/qwen3-coder:free",
+            "Qwen3 Coder",
+            "free_code",
+            "chat",
+            false,
+          ),
         ],
         fetched_at: "2026-07-11T00:00:00Z",
         expires_at: "2026-07-11T06:00:00Z",
@@ -982,7 +1067,8 @@ async function installCoreFixture(page: Page) {
                 publisher: "Fairy Labs",
                 license: "Apache-2.0",
               },
-              content_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              content_sha256:
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               enabled: true,
               available: false,
             },
@@ -1145,7 +1231,8 @@ async function installCoreFixture(page: Page) {
               kind: "route",
               status: "succeeded",
               public_summary: "Request routed for implementation",
-              public_detail: "Kimi implements the request and Fairy verifies the result.",
+              public_detail:
+                "Kimi implements the request and Fairy verifies the result.",
               model_id: null,
               model_role: null,
               provider_attempt_id: null,
@@ -1243,9 +1330,96 @@ async function installCoreFixture(page: Page) {
         },
       };
 
+      const activeProjects = () =>
+        project.archived_at === null &&
+        project.deleted_at === null &&
+        project.purged_at === null
+          ? [{ ...project }]
+          : [];
+      const activeConversations = () =>
+        [conversation, scratchConversation].filter(
+          (item) => item.deleted_at === null && item.purged_at === null,
+        );
+      const archivedProjects = () =>
+        project.archived_at !== null &&
+        project.deleted_at === null &&
+        project.purged_at === null
+          ? [
+              {
+                project: { ...project },
+                thread_count: 1,
+                archived_at: project.archived_at,
+              },
+            ]
+          : [];
+      const trashItems = () => {
+        const items: Array<Record<string, unknown>> = [];
+        if (project.deleted_at !== null && project.purged_at === null) {
+          items.push({
+            item_type: "project",
+            item_id: project.id,
+            title: project.name,
+            source_project_id: null,
+            source_project_title: null,
+            thread_count: 1,
+            deleted_at: project.deleted_at,
+            estimated_bytes: 4096,
+            can_restore: true,
+            metadata_revision: project.metadata_revision,
+          });
+        }
+        for (const item of [conversation, scratchConversation]) {
+          if (
+            item.deleted_at === null ||
+            item.purged_at !== null ||
+            item.deleted_by_project_at !== null
+          ) {
+            continue;
+          }
+          items.push({
+            item_type:
+              item.project_id === null
+                ? "conversation"
+                : "project_conversation",
+            item_id: item.id,
+            title: item.title,
+            source_project_id: item.project_id,
+            source_project_title:
+              item.project_id === null ? null : project.name,
+            thread_count: 0,
+            deleted_at: item.deleted_at,
+            estimated_bytes: item.project_id === null ? 2048 : 0,
+            can_restore:
+              item.project_id === null || project.deleted_at === null,
+            metadata_revision: item.revision,
+          });
+        }
+        return items;
+      };
+      const requireRevision = (actual: number, expected: unknown) => {
+        if (actual !== Number(expected)) throw new Error("VERSION_CONFLICT");
+      };
+      const selectedConversation = (conversationId: unknown) => {
+        if (conversationId === conversation.id) return conversation;
+        if (conversationId === scratchConversation.id)
+          return scratchConversation;
+        throw new Error("Conversation is unavailable");
+      };
+      const storeConversation = (
+        value: typeof conversation | typeof scratchConversation,
+      ) => {
+        if (value.id === conversation.id)
+          conversation = value as typeof conversation;
+        else scratchConversation = value as typeof scratchConversation;
+        return { ...value };
+      };
+
       const tauriWindow = window as unknown as {
         __TAURI_INTERNALS__: {
-          invoke(command: string, args: Record<string, unknown>): Promise<unknown>;
+          invoke(
+            command: string,
+            args: Record<string, unknown>,
+          ): Promise<unknown>;
           transformCallback(callback: (payload: unknown) => void): number;
           unregisterCallback(callbackId: number): void;
         };
@@ -1295,7 +1469,10 @@ async function installCoreFixture(page: Page) {
             return {
               kind: captureRequest.kind,
               source_id: captureRequest.source_id,
-              source_label: captureRequest.kind === "window" ? "Game window" : "Primary display",
+              source_label:
+                captureRequest.kind === "window"
+                  ? "Game window"
+                  : "Primary display",
               media_type: "image/png",
               png_base64: capturePngBase64,
               width: captureRequest.kind === "window" ? 1 : 1920,
@@ -1309,7 +1486,10 @@ async function installCoreFixture(page: Page) {
             return openRouterStatus;
           }
           if (command === "provider_openrouter_configure") {
-            openRouterStatus = { configured: true, account_id: "openrouter-default" };
+            openRouterStatus = {
+              configured: true,
+              account_id: "openrouter-default",
+            };
             return openRouterStatus;
           }
           if (command === "provider_openrouter_delete") {
@@ -1388,7 +1568,10 @@ async function installCoreFixture(page: Page) {
             method: request.method,
             params: request.params,
           });
-          if (request.method === "permissions.update" && permissionConflictPending) {
+          if (
+            request.method === "permissions.update" &&
+            permissionConflictPending
+          ) {
             permissionConflictPending = false;
             permissions = {
               profile: "observe",
@@ -1415,7 +1598,8 @@ async function installCoreFixture(page: Page) {
           if (request.method === "models.selection.update") {
             modelSelection = {
               mode: request.params.mode as "auto" | "manual",
-              model_id: (request.params.model_id as string | null | undefined) ?? null,
+              model_id:
+                (request.params.model_id as string | null | undefined) ?? null,
               allow_free_fallback: Boolean(request.params.allow_free_fallback),
               zero_data_retention: Boolean(request.params.zero_data_retention),
               revision: Number(request.params.expected_revision) + 1,
@@ -1423,474 +1607,1101 @@ async function installCoreFixture(page: Page) {
             };
             return { jsonrpc: "2.0", id: request.id, result: modelSelection };
           }
+          if (request.method === "projects.get") {
+            if (request.params.project_id !== project.id)
+              throw new Error("Project is unavailable");
+            return { jsonrpc: "2.0", id: request.id, result: { ...project } };
+          }
+          if (request.method === "conversations.get") {
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                ...selectedConversation(request.params.conversation_id),
+              },
+            };
+          }
+          if (request.method === "projects.update_metadata") {
+            requireRevision(
+              project.metadata_revision,
+              request.params.expected_revision,
+            );
+            project = {
+              ...project,
+              name:
+                request.params.name === null ||
+                request.params.name === undefined
+                  ? project.name
+                  : String(request.params.name),
+              pinned_at:
+                request.params.pinned === undefined
+                  ? project.pinned_at
+                  : request.params.pinned
+                    ? timestamp
+                    : null,
+              metadata_revision: project.metadata_revision + 1,
+              updated_at: timestamp,
+            };
+            return { jsonrpc: "2.0", id: request.id, result: { ...project } };
+          }
+          if (request.method === "projects.archive") {
+            requireRevision(
+              project.metadata_revision,
+              request.params.expected_revision,
+            );
+            project = {
+              ...project,
+              archived_at: timestamp,
+              pinned_at: null,
+              metadata_revision: project.metadata_revision + 1,
+              updated_at: timestamp,
+            };
+            return { jsonrpc: "2.0", id: request.id, result: { ...project } };
+          }
+          if (request.method === "projects.archived.restore") {
+            requireRevision(
+              project.metadata_revision,
+              request.params.expected_revision,
+            );
+            project = {
+              ...project,
+              archived_at: null,
+              metadata_revision: project.metadata_revision + 1,
+              updated_at: timestamp,
+            };
+            return { jsonrpc: "2.0", id: request.id, result: { ...project } };
+          }
+          if (
+            request.method === "projects.delete" ||
+            request.method === "projects.archived.delete"
+          ) {
+            requireRevision(
+              project.metadata_revision,
+              request.params.expected_revision,
+            );
+            project = {
+              ...project,
+              deleted_at: timestamp,
+              pinned_at: null,
+              metadata_revision: project.metadata_revision + 1,
+              updated_at: timestamp,
+            };
+            if (conversation.deleted_at === null) {
+              conversation = {
+                ...conversation,
+                deleted_at: timestamp,
+                deleted_by_project_at: timestamp,
+                pinned_at: null,
+                revision: conversation.revision + 1,
+                updated_at: timestamp,
+              };
+            }
+            return { jsonrpc: "2.0", id: request.id, result: { ...project } };
+          }
+          if (request.method === "conversations.update") {
+            const current = selectedConversation(
+              request.params.conversation_id,
+            );
+            requireRevision(current.revision, request.params.expected_revision);
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: storeConversation({
+                ...current,
+                title:
+                  request.params.title === null ||
+                  request.params.title === undefined
+                    ? current.title
+                    : String(request.params.title),
+                pinned_at:
+                  request.params.pinned === undefined
+                    ? current.pinned_at
+                    : request.params.pinned
+                      ? timestamp
+                      : null,
+                revision: current.revision + 1,
+                updated_at: timestamp,
+              }),
+            };
+          }
+          if (request.method === "conversations.delete") {
+            const current = selectedConversation(
+              request.params.conversation_id,
+            );
+            requireRevision(current.revision, request.params.expected_revision);
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: storeConversation({
+                ...current,
+                deleted_at: timestamp,
+                deleted_by_project_at: null,
+                pinned_at: null,
+                revision: current.revision + 1,
+                updated_at: timestamp,
+              }),
+            };
+          }
+          if (request.method === "trash.items.restore") {
+            if (request.params.item_type === "project") {
+              requireRevision(
+                project.metadata_revision,
+                request.params.expected_revision,
+              );
+              project = {
+                ...project,
+                deleted_at: null,
+                metadata_revision: project.metadata_revision + 1,
+                updated_at: timestamp,
+              };
+              if (conversation.deleted_by_project_at !== null) {
+                conversation = {
+                  ...conversation,
+                  deleted_at: null,
+                  deleted_by_project_at: null,
+                  revision: conversation.revision + 1,
+                  updated_at: timestamp,
+                };
+              }
+            } else {
+              const current = selectedConversation(request.params.item_id);
+              requireRevision(
+                current.revision,
+                request.params.expected_revision,
+              );
+              storeConversation({
+                ...current,
+                deleted_at: null,
+                deleted_by_project_at: null,
+                revision: current.revision + 1,
+                updated_at: timestamp,
+              });
+            }
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                item_type: request.params.item_type,
+                item_id: request.params.item_id,
+                status: "restored",
+                released_bytes: 0,
+              },
+            };
+          }
+          if (request.method === "trash.items.purge") {
+            if (request.params.item_type === "project") {
+              requireRevision(
+                project.metadata_revision,
+                request.params.expected_revision,
+              );
+              project = {
+                ...project,
+                name: "Deleted project",
+                purged_at: timestamp,
+                metadata_revision: project.metadata_revision + 1,
+                updated_at: timestamp,
+              };
+            } else {
+              const current = selectedConversation(request.params.item_id);
+              requireRevision(
+                current.revision,
+                request.params.expected_revision,
+              );
+              storeConversation({
+                ...current,
+                title: "Deleted chat",
+                purged_at: timestamp,
+                revision: current.revision + 1,
+                updated_at: timestamp,
+              });
+            }
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                item_type: request.params.item_type,
+                item_id: request.params.item_id,
+                status: "purged",
+                released_bytes: 2048,
+              },
+            };
+          }
+          if (request.method === "trash.items.purge_all") {
+            const items = trashItems();
+            if (project.deleted_at !== null) {
+              project = {
+                ...project,
+                name: "Deleted project",
+                purged_at: timestamp,
+                metadata_revision: project.metadata_revision + 1,
+                updated_at: timestamp,
+              };
+            }
+            for (const current of [conversation, scratchConversation]) {
+              if (current.deleted_at !== null && current.purged_at === null) {
+                storeConversation({
+                  ...current,
+                  title: "Deleted chat",
+                  purged_at: timestamp,
+                  revision: current.revision + 1,
+                  updated_at: timestamp,
+                });
+              }
+            }
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                purged_count: items.length,
+                released_bytes: items.length * 2048,
+              },
+            };
+          }
           const result =
             request.method === "projects.list"
-              ? { items: [{ ...project }], next_cursor: null }
-              : request.method === "tasks.list"
-                ? {
-                    items: [{ ...task }, { ...scratchTask }],
-                    next_cursor: null,
-                  }
-                : request.method === "workspaces.get"
-                  ? {
-                      ...(results["workspaces.get"] as Record<string, unknown>),
-                      id: request.params.workspace_id,
-                      active_version_id:
-                        request.params.workspace_id === id.scratchConversation ? id.scratchVersion : id.version,
-                      active_preview_id: request.params.workspace_id === id.scratchConversation ? null : id.preview,
-                    }
-                  : request.method === "workspaces.files.list"
+              ? { items: activeProjects(), next_cursor: null }
+              : request.method === "projects.archived.list"
+                ? { items: archivedProjects(), next_cursor: null }
+                : request.method === "trash.items.list"
+                  ? { items: trashItems(), next_cursor: null }
+                  : request.method === "conversations.list"
                     ? {
-                        ...(results["workspaces.files.list"] as Record<string, unknown>),
-                        workspace_id: request.params.workspace_id,
-                        version_id: request.params.version_id,
+                        items: activeConversations().filter(
+                          (item) =>
+                            request.params.project_id === null ||
+                            request.params.project_id === undefined ||
+                            item.project_id === request.params.project_id,
+                        ),
+                        next_cursor: null,
                       }
-                    : request.method === "file_sets.resolve"
+                    : request.method === "tasks.list"
                       ? {
-                          id: "0198f4de-0114-7000-8000-000000000043",
-                          workspace_id: request.params.workspace_id,
-                          version_id: request.params.version_id,
-                          kind: request.params.path === "models/triangle.gltf" ? "gltf" : "single",
-                          primary_path: request.params.path,
-                          parser_version: "1.0.0",
-                          manifest_hash: "a".repeat(64),
-                          members: [
-                            {
-                              path: request.params.path,
-                              content_hash:
-                                request.params.path === "models/triangle.gltf" ? modelFixtureHash : "a".repeat(64),
-                              byte_length:
-                                request.params.path === "models/triangle.gltf" ? modelFixtureByteLength : 1,
-                              role: "primary",
-                            },
-                          ],
-                          missing_dependencies: [],
-                          blocked_dependencies: [],
+                          items: [{ ...task }, { ...scratchTask }],
+                          next_cursor: null,
                         }
-                      : request.method === "workspaces.files.read" && request.params.path === "models/triangle.gltf"
+                      : request.method === "workspaces.get"
                         ? {
-                            file: {
-                              path: "models/triangle.gltf",
-                              byte_length: modelFixtureByteLength,
-                              content_hash: modelFixtureHash,
-                              kind: "manifest",
-                              language: "json",
-                            },
-                            media_type: "model/gltf+json",
-                            text: modelFixtureText,
-                            content_base64: null,
-                            stream_required: false,
+                            ...(results["workspaces.get"] as Record<
+                              string,
+                              unknown
+                            >),
+                            id: request.params.workspace_id,
+                            active_version_id:
+                              request.params.workspace_id ===
+                              id.scratchConversation
+                                ? id.scratchVersion
+                                : id.version,
+                            active_preview_id:
+                              request.params.workspace_id ===
+                              id.scratchConversation
+                                ? null
+                                : id.preview,
                           }
-                    : request.method === "workspaces.files.read" && request.params.path === "docs/sample.pdf"
-                      ? {
-                          file: {
-                            path: "docs/sample.pdf",
-                            byte_length: pdfFixtureByteLength,
-                            content_hash: pdfFixtureHash,
-                            kind: "binary",
-                            language: null,
-                          },
-                          media_type: "application/pdf",
-                          text: null,
-                          content_base64: null,
-                          stream_required: true,
-                        }
-                      : request.method === "workspaces.files.read" && request.params.path === "media/generated.png"
-                        ? {
-                            file: {
-                              path: "media/generated.png",
-                              byte_length: 68,
-                              content_hash: capturePngHash,
-                              kind: "binary",
-                              language: null,
-                            },
-                            media_type: "image/png",
-                            text: null,
-                            content_base64: null,
-                            stream_required: true,
-                          }
-                        : request.method === "files.open_stream"
+                        : request.method === "workspaces.files.list"
                           ? {
-                              session_id: "0198f4de-0114-7000-8000-000000000030",
+                              ...(results["workspaces.files.list"] as Record<
+                                string,
+                                unknown
+                              >),
                               workspace_id: request.params.workspace_id,
                               version_id: request.params.version_id,
-                              path: request.params.path,
-                              content_hash:
-                                request.params.path === "media/generated.png"
-                                  ? capturePngHash
-                                  : request.params.path === "models/triangle.gltf"
-                                    ? modelFixtureHash
-                                    : pdfFixtureHash,
-                              byte_length:
-                                request.params.path === "media/generated.png"
-                                  ? 68
-                                  : request.params.path === "models/triangle.gltf"
-                                    ? modelFixtureByteLength
-                                    : pdfFixtureByteLength,
-                              media_type:
-                                request.params.path === "media/generated.png"
-                                  ? "image/png"
-                                  : request.params.path === "models/triangle.gltf"
-                                    ? "model/gltf+json"
-                                    : "application/pdf",
-                              url: `${previewUrl}${
-                                request.params.path === "media/generated.png"
-                                  ? "fixture.png"
-                                  : request.params.path === "models/triangle.gltf"
-                                    ? "fixture.gltf"
-                                    : "fixture.pdf"
-                              }`,
-                              expires_at: "2026-07-11T00:02:00Z",
                             }
-                          : request.method === "files.present"
-                            ? request.params.path === "docs/sample.pdf"
-                              ? pdfPresentation
-                              : request.params.path === "models/triangle.gltf"
-                                ? modelPresentation
-                                : filePresentation
-                            : request.method === "annotations.list"
-                              ? { document: annotationDocument }
-                              : request.method === "annotations.update"
-                                ? (() => {
-                                    annotationDocument = {
-                                      id: id.annotation,
-                                      workspace_id: request.params.workspace_id,
-                                      version_id: request.params.version_id,
-                                      file_set_id: request.params.file_set_id,
-                                      source_hash: request.params.source_hash,
-                                      annotations: request.params.annotations,
-                                      revision: Number(request.params.expected_revision) + 1,
-                                      created_at: timestamp,
-                                      updated_at: timestamp,
-                                    };
-                                    return annotationDocument;
-                                  })()
-                                : request.method === "selections.create"
+                          : request.method === "file_sets.resolve"
+                            ? {
+                                id: "0198f4de-0114-7000-8000-000000000043",
+                                workspace_id: request.params.workspace_id,
+                                version_id: request.params.version_id,
+                                kind:
+                                  request.params.path === "models/triangle.gltf"
+                                    ? "gltf"
+                                    : "single",
+                                primary_path: request.params.path,
+                                parser_version: "1.0.0",
+                                manifest_hash: "a".repeat(64),
+                                members: [
+                                  {
+                                    path: request.params.path,
+                                    content_hash:
+                                      request.params.path ===
+                                      "models/triangle.gltf"
+                                        ? modelFixtureHash
+                                        : "a".repeat(64),
+                                    byte_length:
+                                      request.params.path ===
+                                      "models/triangle.gltf"
+                                        ? modelFixtureByteLength
+                                        : 1,
+                                    role: "primary",
+                                  },
+                                ],
+                                missing_dependencies: [],
+                                blocked_dependencies: [],
+                              }
+                            : request.method === "workspaces.files.read" &&
+                                request.params.path === "models/triangle.gltf"
+                              ? {
+                                  file: {
+                                    path: "models/triangle.gltf",
+                                    byte_length: modelFixtureByteLength,
+                                    content_hash: modelFixtureHash,
+                                    kind: "manifest",
+                                    language: "json",
+                                  },
+                                  media_type: "model/gltf+json",
+                                  text: modelFixtureText,
+                                  content_base64: null,
+                                  stream_required: false,
+                                }
+                              : request.method === "workspaces.files.read" &&
+                                  request.params.path === "docs/sample.pdf"
+                                ? {
+                                    file: {
+                                      path: "docs/sample.pdf",
+                                      byte_length: pdfFixtureByteLength,
+                                      content_hash: pdfFixtureHash,
+                                      kind: "binary",
+                                      language: null,
+                                    },
+                                    media_type: "application/pdf",
+                                    text: null,
+                                    content_base64: null,
+                                    stream_required: true,
+                                  }
+                                : request.method === "workspaces.files.read" &&
+                                    request.params.path ===
+                                      "media/generated.png"
                                   ? {
-                                      id: id.selection,
-                                      workspace_id: request.params.workspace_id,
-                                      version_id: request.params.version_id,
-                                      file_set_id: request.params.file_set_id,
-                                      source_path: request.params.source_path,
-                                      source_hash: request.params.source_hash,
-                                      viewer_kind: request.params.viewer_kind,
-                                      locator_kind: request.params.locator_kind,
-                                      locator: request.params.locator,
-                                      created_at: timestamp,
+                                      file: {
+                                        path: "media/generated.png",
+                                        byte_length: 68,
+                                        content_hash: capturePngHash,
+                                        kind: "binary",
+                                        language: null,
+                                      },
+                                      media_type: "image/png",
+                                      text: null,
+                                      content_base64: null,
+                                      stream_required: true,
                                     }
-                                  : request.method === "previews.resolve"
-                                    ? request.params.task_id === id.scratchTask
-                                      ? null
-                                      : {
-                                          task: { ...task },
-                                          runtime: { ...runtime },
-                                          preview: { ...preview },
-                                        }
-                                    : request.method === "voice.synthesize"
-                                      ? {
-                                          task_id: request.params.task_id,
-                                          turn_id: request.params.turn_id,
-                                          message_id: request.params.message_id,
-                                          profile_id: request.params.profile_id,
-                                          start_offset: request.params.start_offset,
-                                          end_offset: request.params.end_offset,
-                                          media_type: "audio/wav",
-                                          audio_base64: voiceWavBase64,
-                                          sample_rate: 24_000,
-                                          channels: 1,
-                                          frames: 2,
-                                          content_hash: voiceWavHash,
-                                        }
-                                      : request.method === "tasks.create"
-                                        ? (() => {
-                                            const userRequest = String(request.params.user_request ?? "");
-                                            latestUserRequest = userRequest;
-                                            approvalScenario = userRequest === "Request a governed notification";
-                                            approvalVisible = false;
-                                            approvalDecision = "pending";
-                                            messages = [scratchMessage, toolMessage];
-                                            return {
-                                              task: {
-                                                ...scratchTask,
-                                                user_request: userRequest,
-                                              },
-                                            };
-                                          })()
-                                        : request.method === "assistant.turns.create"
+                                  : request.method === "files.open_stream"
+                                    ? {
+                                        session_id:
+                                          "0198f4de-0114-7000-8000-000000000030",
+                                        workspace_id:
+                                          request.params.workspace_id,
+                                        version_id: request.params.version_id,
+                                        path: request.params.path,
+                                        content_hash:
+                                          request.params.path ===
+                                          "media/generated.png"
+                                            ? capturePngHash
+                                            : request.params.path ===
+                                                "models/triangle.gltf"
+                                              ? modelFixtureHash
+                                              : pdfFixtureHash,
+                                        byte_length:
+                                          request.params.path ===
+                                          "media/generated.png"
+                                            ? 68
+                                            : request.params.path ===
+                                                "models/triangle.gltf"
+                                              ? modelFixtureByteLength
+                                              : pdfFixtureByteLength,
+                                        media_type:
+                                          request.params.path ===
+                                          "media/generated.png"
+                                            ? "image/png"
+                                            : request.params.path ===
+                                                "models/triangle.gltf"
+                                              ? "model/gltf+json"
+                                              : "application/pdf",
+                                        url: `${previewUrl}${
+                                          request.params.path ===
+                                          "media/generated.png"
+                                            ? "fixture.png"
+                                            : request.params.path ===
+                                                "models/triangle.gltf"
+                                              ? "fixture.gltf"
+                                              : "fixture.pdf"
+                                        }`,
+                                        expires_at: "2026-07-11T00:02:00Z",
+                                      }
+                                    : request.method === "files.present"
+                                      ? request.params.path ===
+                                        "docs/sample.pdf"
+                                        ? pdfPresentation
+                                        : request.params.path ===
+                                            "models/triangle.gltf"
+                                          ? modelPresentation
+                                          : filePresentation
+                                      : request.method === "annotations.list"
+                                        ? { document: annotationDocument }
+                                        : request.method ===
+                                            "annotations.update"
                                           ? (() => {
-                                              messages = [
-                                                ...messages,
-                                                {
-                                                  ...scratchMessage,
-                                                  id: "0198f4de-0114-7000-8000-000000000030",
-                                                  task_id: id.scratchTask,
-                                                  turn_id: id.turn,
-                                                  sequence: 3,
-                                                  role: "user",
-                                                  content: latestUserRequest,
-                                                },
-                                              ];
-                                              return {
-                                                ...completedTurn,
-                                                status: "created",
-                                                completed_at: null,
+                                              annotationDocument = {
+                                                id: id.annotation,
+                                                workspace_id:
+                                                  request.params.workspace_id,
+                                                version_id:
+                                                  request.params.version_id,
+                                                file_set_id:
+                                                  request.params.file_set_id,
+                                                source_hash:
+                                                  request.params.source_hash,
+                                                annotations:
+                                                  request.params.annotations,
+                                                revision:
+                                                  Number(
+                                                    request.params
+                                                      .expected_revision,
+                                                  ) + 1,
+                                                created_at: timestamp,
+                                                updated_at: timestamp,
                                               };
+                                              return annotationDocument;
                                             })()
-                                          : request.method === "assistant.turns.start"
-                                            ? (() => {
-                                                if (!approvalScenario) {
-                                                  messages = [
-                                                    ...messages,
-                                                    {
-                                                      ...resumedMessage,
-                                                      id: "0198f4de-0114-7000-8000-000000000031",
-                                                      sequence: 4,
-                                                      content: "Fixture streamed response completed",
-                                                    },
-                                                  ];
-                                                  return completedTurn;
-                                                }
-                                                if (approvalDecision === "pending") {
-                                                  approvalVisible = true;
-                                                  return waitingTurn;
-                                                }
-                                                if (!messages.some((message) => message.id === resumedMessage.id)) {
-                                                  messages = [...messages, resumedMessage];
-                                                }
-                                                return completedTurn;
-                                              })()
-                                            : request.method === "assistant.turns.trace.list"
-                                              ? request.params.turn_id === id.projectTurn
-                                                ? projectTrace
-                                                : results[request.method]
-                                            : request.method === "messages.list"
-                                              ? {
-                                                  items:
-                                                    request.params.conversation_id === id.conversation
-                                                      ? [projectMessage]
-                                                      : messages,
-                                                  next_cursor: null,
-                                                }
-                                              : request.method === "approvals.list"
-                                                ? {
-                                                    items:
-                                                      approvalVisible && request.params.task_id === id.scratchTask
-                                                        ? [
-                                                            {
-                                                              ...pendingApproval,
-                                                              decision: approvalDecision,
-                                                              decided_by:
-                                                                approvalDecision === "pending" ? null : "user",
-                                                              decided_at:
-                                                                approvalDecision === "pending" ? null : timestamp,
-                                                            },
-                                                          ]
-                                                        : [],
-                                                    next_cursor: null,
+                                          : request.method ===
+                                              "selections.create"
+                                            ? {
+                                                id: id.selection,
+                                                workspace_id:
+                                                  request.params.workspace_id,
+                                                version_id:
+                                                  request.params.version_id,
+                                                file_set_id:
+                                                  request.params.file_set_id,
+                                                source_path:
+                                                  request.params.source_path,
+                                                source_hash:
+                                                  request.params.source_hash,
+                                                viewer_kind:
+                                                  request.params.viewer_kind,
+                                                locator_kind:
+                                                  request.params.locator_kind,
+                                                locator: request.params.locator,
+                                                created_at: timestamp,
+                                              }
+                                            : request.method ===
+                                                "previews.resolve"
+                                              ? request.params.task_id ===
+                                                id.scratchTask
+                                                ? null
+                                                : {
+                                                    task: { ...task },
+                                                    runtime: { ...runtime },
+                                                    preview: { ...preview },
                                                   }
-                                                : request.method === "approvals.decide"
+                                              : request.method ===
+                                                  "voice.synthesize"
+                                                ? {
+                                                    task_id:
+                                                      request.params.task_id,
+                                                    turn_id:
+                                                      request.params.turn_id,
+                                                    message_id:
+                                                      request.params.message_id,
+                                                    profile_id:
+                                                      request.params.profile_id,
+                                                    start_offset:
+                                                      request.params
+                                                        .start_offset,
+                                                    end_offset:
+                                                      request.params.end_offset,
+                                                    media_type: "audio/wav",
+                                                    audio_base64:
+                                                      voiceWavBase64,
+                                                    sample_rate: 24_000,
+                                                    channels: 1,
+                                                    frames: 2,
+                                                    content_hash: voiceWavHash,
+                                                  }
+                                                : request.method ===
+                                                    "tasks.create"
                                                   ? (() => {
-                                                      if (request.params.approval_id !== id.approval) {
-                                                        throw new Error("Approval is unavailable");
-                                                      }
-                                                      if ("decided_by" in request.params) {
-                                                        throw new Error("Renderer cannot choose decided_by");
-                                                      }
-                                                      approvalDecision = request.params.approved
-                                                        ? "approved"
-                                                        : "rejected";
+                                                      const userRequest =
+                                                        String(
+                                                          request.params
+                                                            .user_request ?? "",
+                                                        );
+                                                      latestUserRequest =
+                                                        userRequest;
+                                                      approvalScenario =
+                                                        userRequest ===
+                                                        "Request a governed notification";
                                                       approvalVisible = false;
-                                                      if (
-                                                        approvalDecision === "approved" &&
-                                                        !messages.some((message) => message.id === resumedMessage.id)
-                                                      ) {
-                                                        messages = [...messages, resumedMessage];
-                                                      }
-                                                      const cursor = (events.at(-1)?.cursor ?? 0) + 1;
-                                                      events.push({
-                                                        ...event,
-                                                        id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
-                                                        cursor,
-                                                        run_id: id.commandRun,
-                                                        project_id: null,
-                                                        conversation_id: id.scratchConversation,
-                                                        task_id: id.scratchTask,
-                                                        version_id: null,
-                                                        task_sequence: cursor,
-                                                        event_type: "approval.decided",
-                                                        message: `Approval ${approvalDecision}`,
-                                                        payload: {
-                                                          approval_id: id.approval,
-                                                          decision: approvalDecision,
-                                                        },
-                                                      });
+                                                      approvalDecision =
+                                                        "pending";
+                                                      messages = [
+                                                        scratchMessage,
+                                                        toolMessage,
+                                                      ];
                                                       return {
-                                                        approval: {
-                                                          ...pendingApproval,
-                                                          decision: approvalDecision,
-                                                          decided_by: "user",
-                                                          decided_at: timestamp,
+                                                        task: {
+                                                          ...scratchTask,
+                                                          user_request:
+                                                            userRequest,
                                                         },
-                                                        changeset: null,
                                                       };
                                                     })()
-                                                  : request.method === "tasks.review"
+                                                  : request.method ===
+                                                      "assistant.turns.create"
                                                     ? (() => {
-                                                        if (request.params.task_id !== id.task) {
-                                                          throw new Error("Task is unavailable");
-                                                        }
-                                                        task = {
-                                                          ...task,
-                                                          status: "ready",
-                                                        };
-                                                        const cursor = (events.at(-1)?.cursor ?? 0) + 1;
-                                                        events.push({
-                                                          ...event,
-                                                          id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
-                                                          cursor,
-                                                          task_sequence: cursor,
-                                                          event_type: "task.reviewed",
-                                                          message: "Review complete",
-                                                          payload: {
-                                                            status: "ready",
-                                                            checkpoint_id: id.checkpoint,
+                                                        messages = [
+                                                          ...messages,
+                                                          {
+                                                            ...scratchMessage,
+                                                            id: "0198f4de-0114-7000-8000-000000000030",
+                                                            task_id:
+                                                              id.scratchTask,
+                                                            turn_id: id.turn,
+                                                            sequence: 3,
+                                                            role: "user",
+                                                            content:
+                                                              latestUserRequest,
                                                           },
-                                                        });
+                                                        ];
                                                         return {
-                                                          id: id.checkpoint,
-                                                          task_id: id.task,
-                                                          version_id: id.version,
-                                                          changed_files: ["README.md"],
-                                                          command_run_ids: [id.commandRun],
-                                                          preview_artifact_id: null,
-                                                          created_at: timestamp,
+                                                          ...completedTurn,
+                                                          status: "created",
+                                                          completed_at: null,
                                                         };
                                                       })()
-                                                    : request.method === "versions.accept"
+                                                    : request.method ===
+                                                        "assistant.turns.start"
                                                       ? (() => {
-                                                          task = {
-                                                            ...task,
-                                                            status: "accepted",
-                                                          };
-                                                          project = {
-                                                            ...project,
-                                                            active_version_id: id.version,
-                                                            revision: project.revision + 1,
-                                                          };
-                                                          return project;
+                                                          if (
+                                                            !approvalScenario
+                                                          ) {
+                                                            messages = [
+                                                              ...messages,
+                                                              {
+                                                                ...resumedMessage,
+                                                                id: "0198f4de-0114-7000-8000-000000000031",
+                                                                sequence: 4,
+                                                                content:
+                                                                  "Fixture streamed response completed",
+                                                              },
+                                                            ];
+                                                            return completedTurn;
+                                                          }
+                                                          if (
+                                                            approvalDecision ===
+                                                            "pending"
+                                                          ) {
+                                                            approvalVisible = true;
+                                                            return waitingTurn;
+                                                          }
+                                                          if (
+                                                            !messages.some(
+                                                              (message) =>
+                                                                message.id ===
+                                                                resumedMessage.id,
+                                                            )
+                                                          ) {
+                                                            messages = [
+                                                              ...messages,
+                                                              resumedMessage,
+                                                            ];
+                                                          }
+                                                          return completedTurn;
                                                         })()
-                                                      : request.method === "permissions.get"
-                                                        ? permissions
-                                                        : request.method === "permissions.update"
-                                                          ? (() => {
-                                                              if (
-                                                                request.params.expected_revision !==
-                                                                permissions.revision
-                                                              ) {
-                                                                throw new Error("VERSION_CONFLICT");
+                                                      : request.method ===
+                                                          "assistant.turns.trace.list"
+                                                        ? request.params
+                                                            .turn_id ===
+                                                          id.projectTurn
+                                                          ? projectTrace
+                                                          : results[
+                                                              request.method
+                                                            ]
+                                                        : request.method ===
+                                                            "messages.list"
+                                                          ? {
+                                                              items:
+                                                                request.params
+                                                                  .conversation_id ===
+                                                                id.conversation
+                                                                  ? [
+                                                                      projectMessage,
+                                                                    ]
+                                                                  : messages,
+                                                              next_cursor: null,
+                                                            }
+                                                          : request.method ===
+                                                              "approvals.list"
+                                                            ? {
+                                                                items:
+                                                                  approvalVisible &&
+                                                                  request.params
+                                                                    .task_id ===
+                                                                    id.scratchTask
+                                                                    ? [
+                                                                        {
+                                                                          ...pendingApproval,
+                                                                          decision:
+                                                                            approvalDecision,
+                                                                          decided_by:
+                                                                            approvalDecision ===
+                                                                            "pending"
+                                                                              ? null
+                                                                              : "user",
+                                                                          decided_at:
+                                                                            approvalDecision ===
+                                                                            "pending"
+                                                                              ? null
+                                                                              : timestamp,
+                                                                        },
+                                                                      ]
+                                                                    : [],
+                                                                next_cursor:
+                                                                  null,
                                                               }
-                                                              permissions = {
-                                                                profile: String(request.params.profile),
-                                                                capability_overrides:
-                                                                  (request.params.capability_overrides as Record<
-                                                                    string,
-                                                                    boolean
-                                                                  >) ?? {},
-                                                                revision: permissions.revision + 1,
-                                                                updated_at: "2026-07-11T00:00:01Z",
-                                                              };
-                                                              return permissions;
-                                                            })()
-                                                          : request.method === "capabilities.get"
-                                                            ? (() => {
-                                                                const base = results["capabilities.get"] as {
-                                                                  slash_commands: Array<{
-                                                                    required_operation: string | null;
-                                                                    available: boolean;
-                                                                  }>;
-                                                                  [key: string]: unknown;
-                                                                };
-                                                                const operations: Record<string, boolean> = {
-                                                                  "model.generate": true,
-                                                                  "workspace.create_scratch":
-                                                                    permissions.profile !== "observe",
-                                                                  "web.search":
-                                                                    permissions.capability_overrides["web.search"] !==
-                                                                    false,
-                                                                  "run.sandboxed":
-                                                                    permissions.profile === "autonomous" &&
-                                                                    !scenarios.has("sandboxUnavailable") &&
-                                                                    permissions.capability_overrides[
-                                                                      "run.sandboxed"
-                                                                    ] !== false,
-                                                                };
-                                                                return {
-                                                                  ...base,
-                                                                  profile: permissions.profile,
-                                                                  operations,
-                                                                  sandbox_healthy: !scenarios.has("sandboxUnavailable"),
-                                                                  slash_commands: base.slash_commands.map(
-                                                                    (command) => ({
-                                                                      ...command,
-                                                                      available:
-                                                                        command.required_operation === null ||
-                                                                        operations[command.required_operation] === true,
-                                                                    }),
-                                                                  ),
-                                                                };
-                                                              })()
-                                                            : request.method === "mcp.servers.list"
-                                                              ? {
-                                                                  items: mcpServer === null ? [] : [mcpServer],
-                                                                }
-                                                              : request.method === "mcp.servers.accept"
+                                                            : request.method ===
+                                                                "approvals.decide"
+                                                              ? (() => {
+                                                                  if (
+                                                                    request
+                                                                      .params
+                                                                      .approval_id !==
+                                                                    id.approval
+                                                                  ) {
+                                                                    throw new Error(
+                                                                      "Approval is unavailable",
+                                                                    );
+                                                                  }
+                                                                  if (
+                                                                    "decided_by" in
+                                                                    request.params
+                                                                  ) {
+                                                                    throw new Error(
+                                                                      "Renderer cannot choose decided_by",
+                                                                    );
+                                                                  }
+                                                                  approvalDecision =
+                                                                    request
+                                                                      .params
+                                                                      .approved
+                                                                      ? "approved"
+                                                                      : "rejected";
+                                                                  approvalVisible = false;
+                                                                  if (
+                                                                    approvalDecision ===
+                                                                      "approved" &&
+                                                                    !messages.some(
+                                                                      (
+                                                                        message,
+                                                                      ) =>
+                                                                        message.id ===
+                                                                        resumedMessage.id,
+                                                                    )
+                                                                  ) {
+                                                                    messages = [
+                                                                      ...messages,
+                                                                      resumedMessage,
+                                                                    ];
+                                                                  }
+                                                                  const cursor =
+                                                                    (events.at(
+                                                                      -1,
+                                                                    )?.cursor ??
+                                                                      0) + 1;
+                                                                  events.push({
+                                                                    ...event,
+                                                                    id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
+                                                                    cursor,
+                                                                    run_id:
+                                                                      id.commandRun,
+                                                                    project_id:
+                                                                      null,
+                                                                    conversation_id:
+                                                                      id.scratchConversation,
+                                                                    task_id:
+                                                                      id.scratchTask,
+                                                                    version_id:
+                                                                      null,
+                                                                    task_sequence:
+                                                                      cursor,
+                                                                    event_type:
+                                                                      "approval.decided",
+                                                                    message: `Approval ${approvalDecision}`,
+                                                                    payload: {
+                                                                      approval_id:
+                                                                        id.approval,
+                                                                      decision:
+                                                                        approvalDecision,
+                                                                    },
+                                                                  });
+                                                                  return {
+                                                                    approval: {
+                                                                      ...pendingApproval,
+                                                                      decision:
+                                                                        approvalDecision,
+                                                                      decided_by:
+                                                                        "user",
+                                                                      decided_at:
+                                                                        timestamp,
+                                                                    },
+                                                                    changeset:
+                                                                      null,
+                                                                  };
+                                                                })()
+                                                              : request.method ===
+                                                                  "tasks.review"
                                                                 ? (() => {
                                                                     if (
-                                                                      mcpServer === null ||
-                                                                      request.params.server_id !==
-                                                                        mcpServer.server_id ||
-                                                                      request.params.expected_revision !==
-                                                                        mcpServer.revision ||
-                                                                      request.params.schema_digest !==
-                                                                        mcpServer.pending_schema_digest
+                                                                      request
+                                                                        .params
+                                                                        .task_id !==
+                                                                      id.task
                                                                     ) {
                                                                       throw new Error(
-                                                                        "MCP acceptance revision mismatch",
+                                                                        "Task is unavailable",
                                                                       );
                                                                     }
-                                                                    mcpServer = {
-                                                                      ...mcpServer,
-                                                                      enabled: Boolean(request.params.enabled),
-                                                                      status: request.params.enabled
-                                                                        ? "ready"
-                                                                        : "disabled",
-                                                                      revision: mcpServer.revision + 1,
-                                                                      accepted_schema_digest:
-                                                                        mcpServer.pending_schema_digest,
-                                                                      accepted_tools: mcpServer.pending_tools,
-                                                                      policies: request.params.tools,
-                                                                      updated_at: "2026-07-11T00:00:01Z",
+                                                                    task = {
+                                                                      ...task,
+                                                                      status:
+                                                                        "ready",
                                                                     };
-                                                                    return mcpServer;
+                                                                    const cursor =
+                                                                      (events.at(
+                                                                        -1,
+                                                                      )
+                                                                        ?.cursor ??
+                                                                        0) + 1;
+                                                                    events.push(
+                                                                      {
+                                                                        ...event,
+                                                                        id: `0198f4de-0114-7000-8000-${String(100_000_000_000 + cursor)}`,
+                                                                        cursor,
+                                                                        task_sequence:
+                                                                          cursor,
+                                                                        event_type:
+                                                                          "task.reviewed",
+                                                                        message:
+                                                                          "Review complete",
+                                                                        payload:
+                                                                          {
+                                                                            status:
+                                                                              "ready",
+                                                                            checkpoint_id:
+                                                                              id.checkpoint,
+                                                                          },
+                                                                      },
+                                                                    );
+                                                                    return {
+                                                                      id: id.checkpoint,
+                                                                      task_id:
+                                                                        id.task,
+                                                                      version_id:
+                                                                        id.version,
+                                                                      changed_files:
+                                                                        [
+                                                                          "README.md",
+                                                                        ],
+                                                                      command_run_ids:
+                                                                        [
+                                                                          id.commandRun,
+                                                                        ],
+                                                                      preview_artifact_id:
+                                                                        null,
+                                                                      created_at:
+                                                                        timestamp,
+                                                                    };
                                                                   })()
-                                                                : request.method === "events.subscribe"
+                                                                : request.method ===
+                                                                    "versions.accept"
                                                                   ? (() => {
-                                                                      const cursor = Number(request.params.cursor ?? 0);
-                                                                      const items = events.filter(
-                                                                        (item) => item.cursor > cursor,
-                                                                      );
-                                                                      return {
-                                                                        items,
-                                                                        next_cursor: items.at(-1)?.cursor ?? cursor,
+                                                                      task = {
+                                                                        ...task,
+                                                                        status:
+                                                                          "accepted",
                                                                       };
+                                                                      project =
+                                                                        {
+                                                                          ...project,
+                                                                          active_version_id:
+                                                                            id.version,
+                                                                          revision:
+                                                                            project.revision +
+                                                                            1,
+                                                                        };
+                                                                      return project;
                                                                     })()
-                                                                  : results[request.method];
+                                                                  : request.method ===
+                                                                      "permissions.get"
+                                                                    ? permissions
+                                                                    : request.method ===
+                                                                        "permissions.update"
+                                                                      ? (() => {
+                                                                          if (
+                                                                            request
+                                                                              .params
+                                                                              .expected_revision !==
+                                                                            permissions.revision
+                                                                          ) {
+                                                                            throw new Error(
+                                                                              "VERSION_CONFLICT",
+                                                                            );
+                                                                          }
+                                                                          permissions =
+                                                                            {
+                                                                              profile:
+                                                                                String(
+                                                                                  request
+                                                                                    .params
+                                                                                    .profile,
+                                                                                ),
+                                                                              capability_overrides:
+                                                                                (request
+                                                                                  .params
+                                                                                  .capability_overrides as Record<
+                                                                                  string,
+                                                                                  boolean
+                                                                                >) ??
+                                                                                {},
+                                                                              revision:
+                                                                                permissions.revision +
+                                                                                1,
+                                                                              updated_at:
+                                                                                "2026-07-11T00:00:01Z",
+                                                                            };
+                                                                          return permissions;
+                                                                        })()
+                                                                      : request.method ===
+                                                                          "capabilities.get"
+                                                                        ? (() => {
+                                                                            const base =
+                                                                              results[
+                                                                                "capabilities.get"
+                                                                              ] as {
+                                                                                slash_commands: Array<{
+                                                                                  required_operation:
+                                                                                    | string
+                                                                                    | null;
+                                                                                  available: boolean;
+                                                                                }>;
+                                                                                [
+                                                                                  key: string
+                                                                                ]: unknown;
+                                                                              };
+                                                                            const operations: Record<
+                                                                              string,
+                                                                              boolean
+                                                                            > =
+                                                                              {
+                                                                                "model.generate": true,
+                                                                                "workspace.create_scratch":
+                                                                                  permissions.profile !==
+                                                                                  "observe",
+                                                                                "web.search":
+                                                                                  permissions
+                                                                                    .capability_overrides[
+                                                                                    "web.search"
+                                                                                  ] !==
+                                                                                  false,
+                                                                                "run.sandboxed":
+                                                                                  permissions.profile ===
+                                                                                    "autonomous" &&
+                                                                                  !scenarios.has(
+                                                                                    "sandboxUnavailable",
+                                                                                  ) &&
+                                                                                  permissions
+                                                                                    .capability_overrides[
+                                                                                    "run.sandboxed"
+                                                                                  ] !==
+                                                                                    false,
+                                                                              };
+                                                                            return {
+                                                                              ...base,
+                                                                              profile:
+                                                                                permissions.profile,
+                                                                              operations,
+                                                                              sandbox_healthy:
+                                                                                !scenarios.has(
+                                                                                  "sandboxUnavailable",
+                                                                                ),
+                                                                              slash_commands:
+                                                                                base.slash_commands.map(
+                                                                                  (
+                                                                                    command,
+                                                                                  ) => ({
+                                                                                    ...command,
+                                                                                    available:
+                                                                                      command.required_operation ===
+                                                                                        null ||
+                                                                                      operations[
+                                                                                        command
+                                                                                          .required_operation
+                                                                                      ] ===
+                                                                                        true,
+                                                                                  }),
+                                                                                ),
+                                                                            };
+                                                                          })()
+                                                                        : request.method ===
+                                                                            "mcp.servers.list"
+                                                                          ? {
+                                                                              items:
+                                                                                mcpServer ===
+                                                                                null
+                                                                                  ? []
+                                                                                  : [
+                                                                                      mcpServer,
+                                                                                    ],
+                                                                            }
+                                                                          : request.method ===
+                                                                              "mcp.servers.accept"
+                                                                            ? (() => {
+                                                                                if (
+                                                                                  mcpServer ===
+                                                                                    null ||
+                                                                                  request
+                                                                                    .params
+                                                                                    .server_id !==
+                                                                                    mcpServer.server_id ||
+                                                                                  request
+                                                                                    .params
+                                                                                    .expected_revision !==
+                                                                                    mcpServer.revision ||
+                                                                                  request
+                                                                                    .params
+                                                                                    .schema_digest !==
+                                                                                    mcpServer.pending_schema_digest
+                                                                                ) {
+                                                                                  throw new Error(
+                                                                                    "MCP acceptance revision mismatch",
+                                                                                  );
+                                                                                }
+                                                                                mcpServer =
+                                                                                  {
+                                                                                    ...mcpServer,
+                                                                                    enabled:
+                                                                                      Boolean(
+                                                                                        request
+                                                                                          .params
+                                                                                          .enabled,
+                                                                                      ),
+                                                                                    status:
+                                                                                      request
+                                                                                        .params
+                                                                                        .enabled
+                                                                                        ? "ready"
+                                                                                        : "disabled",
+                                                                                    revision:
+                                                                                      mcpServer.revision +
+                                                                                      1,
+                                                                                    accepted_schema_digest:
+                                                                                      mcpServer.pending_schema_digest,
+                                                                                    accepted_tools:
+                                                                                      mcpServer.pending_tools,
+                                                                                    policies:
+                                                                                      request
+                                                                                        .params
+                                                                                        .tools,
+                                                                                    updated_at:
+                                                                                      "2026-07-11T00:00:01Z",
+                                                                                  };
+                                                                                return mcpServer;
+                                                                              })()
+                                                                            : request.method ===
+                                                                                "events.state"
+                                                                              ? {
+                                                                                  ledger_id:
+                                                                                    "0198f4de-0114-7000-8000-000000000045",
+                                                                                  oldest_cursor:
+                                                                                    events.at(
+                                                                                      0,
+                                                                                    )
+                                                                                      ?.cursor ??
+                                                                                    0,
+                                                                                  latest_cursor:
+                                                                                    events.at(
+                                                                                      -1,
+                                                                                    )
+                                                                                      ?.cursor ??
+                                                                                    0,
+                                                                                }
+                                                                              : request.method ===
+                                                                                  "events.list"
+                                                                                ? (() => {
+                                                                                    const cursor =
+                                                                                      Number(
+                                                                                        request
+                                                                                          .params
+                                                                                          .cursor ??
+                                                                                          0,
+                                                                                      );
+                                                                                    const limit =
+                                                                                      Number(
+                                                                                        request
+                                                                                          .params
+                                                                                          .limit ??
+                                                                                          500,
+                                                                                      );
+                                                                                    const items =
+                                                                                      events
+                                                                                        .filter(
+                                                                                          (
+                                                                                            item,
+                                                                                          ) =>
+                                                                                            item.cursor >
+                                                                                            cursor,
+                                                                                        )
+                                                                                        .slice(
+                                                                                          0,
+                                                                                          limit,
+                                                                                        );
+                                                                                    return {
+                                                                                      items,
+                                                                                      next_cursor:
+                                                                                        items.at(
+                                                                                          -1,
+                                                                                        )
+                                                                                          ?.cursor ??
+                                                                                        cursor,
+                                                                                    };
+                                                                                  })()
+                                                                                : request.method ===
+                                                                                    "events.subscribe"
+                                                                                  ? (() => {
+                                                                                      const cursor =
+                                                                                        Number(
+                                                                                          request
+                                                                                            .params
+                                                                                            .cursor ??
+                                                                                            0,
+                                                                                        );
+                                                                                      const items =
+                                                                                        events.filter(
+                                                                                          (
+                                                                                            item,
+                                                                                          ) =>
+                                                                                            item.cursor >
+                                                                                            cursor,
+                                                                                        );
+                                                                                      return {
+                                                                                        items,
+                                                                                        next_cursor:
+                                                                                          items.at(
+                                                                                            -1,
+                                                                                          )
+                                                                                            ?.cursor ??
+                                                                                          cursor,
+                                                                                      };
+                                                                                    })()
+                                                                                  : results[
+                                                                                      request
+                                                                                        .method
+                                                                                    ];
           if (result === undefined) {
             throw new Error(`Unexpected Core method: ${request.method}`);
           }
           return { jsonrpc: "2.0", id: request.id, result };
         },
       };
+      fixtureWindow.__FAIRY_BOOT_STARTED_AT__ = performance.now();
     },
     {
       previewUrl: PREVIEW_URL,

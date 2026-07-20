@@ -116,6 +116,34 @@ describe("projectWorkChain", () => {
     expect(withVoice.current.causedByStepId).toBeNull();
   });
 
+  it("counts distinct models instead of model calls", () => {
+    const trace = turnTrace([
+      step({
+        id: STEP_ID,
+        sequence: 1,
+        kind: "model",
+        model_id: "deepseek/deepseek-v4-pro",
+        model_role: "coordinator",
+      }),
+      step({
+        id: DEVELOPER_STEP_ID,
+        sequence: 2,
+        kind: "model",
+        model_id: "moonshotai/kimi-k2.7-code",
+        model_role: "primary",
+      }),
+      step({
+        id: INTERNAL_STEP_ID,
+        sequence: 3,
+        kind: "model",
+        model_id: "moonshotai/kimi-k2.7-code",
+        model_role: "primary",
+      }),
+    ]);
+
+    expect(projectWorkChain({ trace }).modelCount).toBe(2);
+  });
+
   it("does not mark a running trace terminal between durable steps", () => {
     const trace = {
       ...turnTrace([step({ id: STEP_ID, sequence: 1, status: "succeeded" })]),
@@ -160,6 +188,7 @@ describe("projectWorkChain", () => {
 
     expect(projection.terminal).toBe(true);
     expect(projection.current.status).toBe("succeeded");
+    expect(projection.current.summary).toBe("Response ready");
   });
 
   it.each([
@@ -185,6 +214,9 @@ describe("projectWorkChain", () => {
 
     expect(projection.terminal).toBe(true);
     expect(projection.current.status).toBe(stepStatus);
+    expect(projection.current.summary).toBe(
+      turnStatus === "failed" ? "Response failed" : "Response stopped",
+    );
   });
 
   it("settles missing and failed trace loads without leaving active work", () => {

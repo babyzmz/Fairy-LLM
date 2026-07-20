@@ -1,0 +1,31 @@
+.realtime-launch { position: fixed; z-index: 45; right: 18px; top: 78px; height: 36px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border: 1px solid #3b4b48; background: #151a19; color: #dce9e5; box-shadow: 0 8px 20px #0007; }
+.realtime-launch:hover { border-color: #6ac6bd; }
+.realtime-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 18px; background: #050706b8; }
+.realtime-panel { width: min(560px, 100%); max-height: calc(100vh - 36px); overflow: auto; background: #141817; border: 1px solid #3b4643; box-shadow: 0 24px 70px #000b; color: #eef5f2; }
+.realtime-panel > header { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; padding: 18px 20px; background: #141817f5; border-bottom: 1px solid #303735; }
+.realtime-panel header span { color: #78cfc5; font: 600 11px/1.2 monospace; text-transform: uppercase; }
+.realtime-panel h2 { margin: 3px 0 0; font-size: 20px; }
+.realtime-panel header button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; background: transparent; color: #b8c2bf; }
+.realtime-privacy { display: flex; gap: 10px; margin: 18px 20px 0; padding: 12px; background: #10201d; border-left: 2px solid #5fc4b8; color: #b9cbc6; font-size: 12px; line-height: 1.45; }
+.realtime-config, .realtime-live, .realtime-memory { display: grid; gap: 14px; padding: 20px; }
+.realtime-config > label:not(.realtime-consent), .realtime-memory label { display: grid; gap: 7px; color: #aeb8b5; font-size: 12px; }
+.realtime-config label > span { display: flex; align-items: center; gap: 7px; }
+.realtime-config select, .realtime-memory input, .realtime-memory textarea { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid #3a4441; background: #0f1211; color: #edf3f1; }
+.realtime-memory textarea { min-height: 86px; resize: vertical; }
+.realtime-policy { display: grid; grid-template-columns: auto 1fr; gap: 7px 18px; padding: 12px; border: 1px solid #303735; font-size: 12px; }
+.realtime-policy span { color: #84908c; }.realtime-policy strong { font-weight: 600; }
+.realtime-consent { min-height: 38px; display: grid; grid-template-columns: 18px 18px 1fr; gap: 9px; align-items: center; border-bottom: 1px solid #29302e; font-size: 13px; }
+.realtime-primary, .realtime-memory button { min-height: 40px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid #6ed1c5; background: #63cabe; color: #07110f; font-weight: 700; }
+.realtime-primary:disabled, .realtime-memory button:disabled { opacity: .45; }
+.realtime-live-status { display: flex; align-items: center; gap: 11px; padding: 12px; border: 1px solid #36413e; }
+.realtime-live-status > div { min-width: 0; flex: 1; display: grid; gap: 3px; }.realtime-live-status small { color: #84908c; }
+.realtime-live-status button { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid #774b47; background: #351b19; color: #ffc0b8; }
+.realtime-pulse { width: 10px; height: 10px; border-radius: 50%; background: #65cfc1; box-shadow: 0 0 0 5px #65cfc11c; animation: realtime-pulse 1.4s ease-in-out infinite; }
+.realtime-pulse.speaking { background: #8bbcff; }.realtime-pulse.error, .realtime-pulse.failed { background: #ff796d; }
+.realtime-captions { min-height: 190px; max-height: 300px; overflow: auto; padding: 14px; background: #0c0f0e; border: 1px solid #29302e; }
+.realtime-captions p { margin: 0; padding: 9px 0; border-bottom: 1px solid #222826; line-height: 1.5; }.realtime-captions span { color: #7f8b87; }
+.realtime-memory { border-top: 1px solid #303735; }.realtime-memory h3 { margin: 0; font-size: 15px; }
+.realtime-error { margin: 0 20px 20px; padding: 11px 12px; border-left: 2px solid #ef7369; background: #341c1a; color: #ffc4bd; font-size: 12px; }
+@keyframes realtime-pulse { 50% { transform: scale(.72); opacity: .65; } }
+@media (prefers-reduced-motion: reduce) { .realtime-pulse { animation: none; } }
+@media (max-width: 720px) { .realtime-launch span { display: none; }.realtime-launch { right: 10px; top: 72px; width: 36px; padding: 0; justify-content: center; } }

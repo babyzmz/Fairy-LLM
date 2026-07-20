@@ -9,6 +9,22 @@
   overflow: hidden;
 }
 
+.history-resizer {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+}
+
+.history-resizer:hover,
+.history-resizer:focus-visible {
+  background: rgb(117 221 212 / 38%);
+  outline: 0;
+}
+
 .history-brand {
   display: flex;
   align-items: center;
@@ -97,9 +113,9 @@
 .history-icon-button,
 .history-row-main,
 .history-row-menu,
-.project-tree summary,
-.conversation-tree summary,
-.history-menu button {
+.project-expand,
+.project-row-main,
+.project-row-action {
   border: 0;
   color: inherit;
   background: transparent;
@@ -121,15 +137,11 @@
   text-transform: uppercase;
 }
 
-.history-group-toggle svg,
-.project-tree summary > svg:first-child,
-.conversation-tree summary > svg:first-child {
+.history-group-toggle svg {
   transition: transform 150ms ease;
 }
 
-.history-group-toggle svg:not(.expanded),
-.project-tree:not([open]) summary > svg:first-child,
-.conversation-tree:not([open]) summary > svg:first-child {
+.history-group-toggle svg:not(.expanded) {
   transform: rotate(-90deg);
 }
 
@@ -154,8 +166,7 @@
 }
 
 .history-group-content,
-.project-conversations,
-.task-tree {
+.project-conversations {
   display: grid;
   gap: 2px;
 }
@@ -172,10 +183,8 @@
 
 .history-row:hover,
 .history-row.active,
-.project-tree summary:hover,
-.project-tree summary.active,
-.conversation-tree summary:hover,
-.conversation-tree summary.active {
+.project-row:hover,
+.project-row.active {
   color: #f1f4f2;
   background: #292c2a;
 }
@@ -200,9 +209,8 @@
 }
 
 .history-row-main span,
-.project-tree summary span,
-.conversation-tree summary span,
-.history-menu-projects span {
+.project-row-main span,
+.history-menu-item span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -223,48 +231,82 @@
   opacity: 1;
 }
 
-.project-tree summary,
-.conversation-tree summary {
+.project-row {
   min-width: 0;
   height: 31px;
   display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 24px 24px;
   align-items: center;
-  gap: 5px;
   border-radius: 3px;
-  list-style: none;
-  text-align: left;
+  color: #c3c8c5;
 }
 
-.project-tree summary {
-  grid-template-columns: 14px 16px minmax(0, 1fr);
-  padding: 0 7px 0 5px;
-  color: #c3c8c5;
+.project-row.active {
+  box-shadow: inset 2px 0 #75ddd4;
+}
+
+.project-expand,
+.project-row-action,
+.project-row .history-row-menu {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  color: #848c87;
+}
+
+.project-expand svg {
+  transition: transform 150ms ease;
+}
+
+.project-expand svg:not(.expanded) {
+  transform: rotate(-90deg);
+}
+
+.project-row-main {
+  min-width: 0;
+  height: 31px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 3px;
+  text-align: left;
   font-size: 12px;
 }
 
-.conversation-tree summary {
-  grid-template-columns: 13px 15px minmax(0, 1fr) auto;
-  margin-left: 13px;
-  padding: 0 7px 0 4px;
-  color: #a4aaa7;
-  font-size: 11px;
+.project-row-main small {
+  color: #68706c;
+  font: 10px/1 "Cascadia Mono", monospace;
 }
 
-.project-tree summary::-webkit-details-marker,
-.conversation-tree summary::-webkit-details-marker {
-  display: none;
+.project-row-action,
+.project-row .history-row-menu {
+  opacity: 0;
 }
 
-.task-tree {
-  margin-left: 29px;
+.project-row:hover .project-row-action,
+.project-row:hover .history-row-menu,
+.project-row:focus-within .project-row-action,
+.project-row:focus-within .history-row-menu {
+  opacity: 1;
 }
 
-.task-dot {
-  width: 6px;
-  height: 6px;
-  justify-self: center;
-  border-radius: 50%;
-  background: #d2ae67;
+.project-row-action:hover,
+.project-expand:hover,
+.project-row .history-row-menu:hover {
+  color: #eef2f0;
+  background: #303331;
+}
+
+.history-row.nested {
+  margin-left: 20px;
+  width: calc(100% - 20px);
+}
+
+.project-empty {
+  margin-left: 20px;
 }
 
 .history-empty {
@@ -273,19 +315,33 @@
   font-size: 11px;
 }
 
-.history-menu {
+.history-menu-anchor {
   position: fixed;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  pointer-events: none;
+}
+
+.history-menu-popover {
   z-index: 80;
+  outline: 0;
+}
+
+.history-menu {
   width: 210px;
+  max-height: min(360px, calc(100vh - 16px));
   padding: 5px;
   border: 1px solid #4b504d;
   border-radius: 4px;
   background: #222422;
   box-shadow: 0 14px 34px rgb(0 0 0 / 46%);
+  outline: 0;
+  overflow-y: auto;
 }
 
-.history-menu > button,
-.history-menu-projects button {
+.history-menu-item {
   width: 100%;
   min-width: 0;
   height: 31px;
@@ -298,23 +354,35 @@
   color: #d6dad8;
   text-align: left;
   font-size: 12px;
+  outline: 0;
+  cursor: pointer;
 }
 
-.history-menu > button:hover,
-.history-menu-projects button:hover {
+.history-menu-item[data-focused],
+.history-menu-item[data-hovered] {
   background: #353936;
 }
 
-.history-menu > button.danger {
+.history-menu-item.danger {
   color: #f19a92;
 }
 
-.history-menu-projects {
-  max-height: 150px;
-  margin: 3px 0;
-  padding: 3px 0 3px 14px;
-  border-left: 1px solid #4a504c;
-  overflow-y: auto;
+.history-menu-item[data-disabled] {
+  color: #747b77;
+  cursor: default;
+}
+
+.history-submenu {
+  width: 220px;
+}
+
+.history-status {
+  margin: 6px 4px 10px;
+  padding: 8px 9px;
+  border-left: 2px solid #d5ad63;
+  background: #211f19;
+  color: #a7aaa7;
+  font-size: 11px;
 }
 
 @media (max-width: 900px) {
@@ -325,8 +393,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .history-group-toggle svg,
-  .project-tree summary > svg:first-child,
-  .conversation-tree summary > svg:first-child {
+  .project-expand svg {
     transition: none;
   }
 }

@@ -207,7 +207,11 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       )}
       {retryAvailable ? (
         <div className="chat-retry-bar">
-          <span>{props.turn?.error_code ?? "Response stopped"}</span>
+          <span>
+            {props.developerMode && props.turn?.error_code
+              ? props.turn.error_code
+              : "Response stopped before completion"}
+          </span>
           <button className="secondary-command" type="button" onClick={() => void props.onRetry()}>
             <RotateCcw size={14} /> Retry response
           </button>

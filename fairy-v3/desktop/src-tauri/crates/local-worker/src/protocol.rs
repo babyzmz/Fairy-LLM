@@ -41,6 +41,11 @@ struct ScratchParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct WorkspaceLifecycleParams {
+    workspace_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct VersionParams {
     project_id: String,
     version_id: String,
@@ -255,6 +260,16 @@ fn execute_method(
     params: Value,
 ) -> Result<Value, ProtocolError> {
     match method {
+        "workspace.size" => {
+            let params: WorkspaceLifecycleParams = parse_params(params)?;
+            let bytes = worker.workspace.workspace_size(&params.workspace_id)?;
+            Ok(json!({"bytes": bytes}))
+        }
+        "workspace.purge" => {
+            let params: WorkspaceLifecycleParams = parse_params(params)?;
+            let bytes = worker.workspace.purge_workspace(&params.workspace_id)?;
+            Ok(json!({"bytes": bytes}))
+        }
         "workspace.create_empty" => {
             let params: EmptyProjectParams = parse_params(params)?;
             let workspace = worker

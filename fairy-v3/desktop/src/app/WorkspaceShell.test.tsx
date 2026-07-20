@@ -1,9 +1,9 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceShell } from "./WorkspaceShell";
-import type { Conversation, Task, Version, WorkspaceFile } from "../core/client";
+import type { Conversation, Project, Task, Version, WorkspaceFile } from "../core/client";
 import type { WorkspaceModel } from "./workspaceModel";
 
 afterEach(() => {
@@ -209,6 +209,8 @@ describe("WorkspaceShell", () => {
       title: "Research notes",
       pinned_at: null,
       deleted_at: null,
+      deleted_by_project_at: null,
+      purged_at: null,
       revision: 3,
       created_at: "2026-07-12T00:00:00Z",
       updated_at: "2026-07-12T00:00:00Z",
@@ -237,6 +239,8 @@ describe("WorkspaceShell", () => {
       title: "Research notes",
       pinned_at: null,
       deleted_at: null,
+      deleted_by_project_at: null,
+      purged_at: null,
       revision: 3,
       created_at: "2026-07-12T00:00:00Z",
       updated_at: "2026-07-12T00:00:00Z",
@@ -251,7 +255,161 @@ describe("WorkspaceShell", () => {
 
     await waitFor(() => expect(model.deleteConversation).toHaveBeenCalledWith(chat));
   });
+
+  it("renders projects as folders with chats only and shares project menu actions", async () => {
+    const project: Project = {
+      id: "019f566f-f8b4-7000-8000-000000000020",
+      name: "Launch site",
+      residency: "local_only",
+      workspace_id: "019f566f-f8b4-7000-8000-000000000020",
+      active_version_id: null,
+      active_preview_id: null,
+      revision: 0,
+      pinned_at: null,
+      archived_at: null,
+      deleted_at: null,
+      purged_at: null,
+      metadata_revision: 2,
+      created_at: "2026-07-12T00:00:00Z",
+      updated_at: "2026-07-12T00:00:00Z",
+    };
+    const thread: Conversation = {
+      id: "019f566f-f8b4-7000-8000-000000000021",
+      project_id: project.id,
+      workspace_id: project.workspace_id,
+      workspace_type: "project_chat",
+      base_version_id: null,
+      active_draft_version_id: null,
+      active_task_id: null,
+      active_preview_id: null,
+      title: "Homepage direction",
+      pinned_at: null,
+      deleted_at: null,
+      deleted_by_project_at: null,
+      purged_at: null,
+      revision: 1,
+      created_at: "2026-07-12T00:00:00Z",
+      updated_at: "2026-07-12T00:00:00Z",
+    };
+    const model = {
+      ...workspaceModel(),
+      projects: [project],
+      projectConversations: [thread],
+      allTasks: [{ ...workspaceTask(), display_title: "Internal Task must stay hidden" }],
+    };
+    render(<WorkspaceShell model={model} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand Launch site" }));
+    expect(screen.getByTitle("Homepage direction")).toBeInTheDocument();
+    expect(screen.queryByText("Internal Task must stay hidden")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat in Launch site" }));
+    expect(model.createProjectConversation).toHaveBeenCalledWith(project);
+
+    fireEvent.contextMenu(screen.getByTitle("Launch site"));
+    expect(screen.getByRole("menuitem", { name: "New chat" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Archive" })).toBeVisible();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    expect(screen.getByRole("dialog", { name: "Archive project" })).toHaveTextContent("1 chat");
+    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+
+    await waitFor(() => expect(model.archiveProject).toHaveBeenCalledWith(project));
+  });
+
+  it("allows the selected project folder to collapse independently of selection", () => {
+    const project = projectFixture();
+    const thread = projectConversationFixture(project);
+    const model = {
+      ...workspaceModel(),
+      projects: [project],
+      projectConversations: [thread],
+      selectedProject: project,
+      selectedConversation: thread,
+    };
+    render(<WorkspaceShell model={model} />);
+
+    fireEvent.click(screen.getByRole("button", { name: `Expand ${project.name}` }));
+    expect(screen.getByTitle(thread.title)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: `Collapse ${project.name}` }));
+
+    expect(screen.queryByTitle(thread.title)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `Expand ${project.name}` }))
+      .toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("opens a project overview with its chats and new chat action", () => {
+    const project = projectFixture();
+    const thread = projectConversationFixture(project);
+    const model = {
+      ...workspaceModel(),
+      projects: [project],
+      selectedProject: project,
+      selectedConversation: null,
+      projectConversations: [thread],
+    };
+    render(<WorkspaceShell model={model} />);
+
+    expect(screen.getByRole("heading", { name: project.name })).toBeVisible();
+    const overview = screen.getByRole("region", { name: project.name });
+    fireEvent.click(within(overview).getByRole("button", { name: "New chat" }));
+    expect(model.createProjectConversation).toHaveBeenCalledWith(project);
+    fireEvent.click(within(screen.getByLabelText("Project chats")).getByRole("button"));
+    expect(model.selectConversation).toHaveBeenCalledWith(thread.id);
+  });
+
+  it("presents PROJECT_BUSY without exposing an internal error code", () => {
+    const model = {
+      ...workspaceModel(),
+      actionError: "Project has an active Preview",
+      actionErrorCode: "PROJECT_BUSY",
+    };
+    render(<WorkspaceShell model={model} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Project is busy");
+    expect(screen.getByRole("alert")).toHaveTextContent("Finish or cancel the active Turn");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("PROJECT_BUSY");
+  });
 });
+
+function projectFixture(): Project {
+  return {
+    id: "019f566f-f8b4-7000-8000-000000000120",
+    name: "Project overview",
+    residency: "local_only",
+    workspace_id: "019f566f-f8b4-7000-8000-000000000120",
+    active_version_id: null,
+    active_preview_id: null,
+    revision: 0,
+    pinned_at: null,
+    archived_at: null,
+    deleted_at: null,
+    purged_at: null,
+    metadata_revision: 0,
+    created_at: "2026-07-12T00:00:00Z",
+    updated_at: "2026-07-12T00:00:00Z",
+  };
+}
+
+function projectConversationFixture(project: Project): Conversation {
+  return {
+    id: "019f566f-f8b4-7000-8000-000000000121",
+    project_id: project.id,
+    workspace_id: project.workspace_id,
+    workspace_type: "project_chat",
+    base_version_id: null,
+    active_draft_version_id: null,
+    active_task_id: null,
+    active_preview_id: null,
+    title: "Implementation thread",
+    pinned_at: null,
+    deleted_at: null,
+    deleted_by_project_at: null,
+    purged_at: null,
+    revision: 0,
+    created_at: "2026-07-12T00:00:00Z",
+    updated_at: "2026-07-12T00:00:00Z",
+  };
+}
 
 function workspaceModel(): WorkspaceModel {
   return {
@@ -350,6 +508,11 @@ function workspaceModel(): WorkspaceModel {
     selectProjectFolder: vi.fn(async () => "C:\\Projects\\selected"),
     createChatConversation: vi.fn(async () => undefined),
     createPetChatConversation: vi.fn(async () => undefined),
+    createProjectConversation: vi.fn(async () => undefined),
+    renameProject: vi.fn(async () => undefined),
+    setProjectPinned: vi.fn(async () => undefined),
+    archiveProject: vi.fn(async () => undefined),
+    deleteProject: vi.fn(async () => undefined),
     renameConversation: vi.fn(async () => undefined),
     setConversationPinned: vi.fn(async () => undefined),
     deleteConversation: vi.fn(async () => undefined),

@@ -357,6 +357,32 @@ pub fn prepared_test_session() -> Result<PreparedVoiceSession, VoiceWorkerError>
     })
 }
 
+pub fn prepared_realtime_session(text: &str) -> Result<PreparedVoiceSession, VoiceWorkerError> {
+    let text = text.trim();
+    if text.is_empty() || text.chars().count() > 2_000 || text.chars().any(|char| char == '\0') {
+        return Err(VoiceWorkerError::Protocol(
+            "realtime voice text is invalid".to_owned(),
+        ));
+    }
+    let id = secure_token()?;
+    let scope_digest = format!("{:x}", Sha256::digest(format!("{id}:{text}").as_bytes()));
+    Ok(PreparedVoiceSession {
+        id,
+        task_id: "realtime".to_owned(),
+        conversation_id: "realtime".to_owned(),
+        turn_id: "realtime".to_owned(),
+        message_id: None,
+        start_offset: 0,
+        end_offset: text.chars().count(),
+        validated_text: text.to_owned(),
+        scope_digest,
+        source_cursor: 0,
+        status: "prepared".to_owned(),
+        created_at: "transient".to_owned(),
+        cancelled_at: None,
+    })
+}
+
 impl Drop for VoiceWorkerManager {
     fn drop(&mut self) {
         if let Ok(mut guard) = self.process.lock() {
