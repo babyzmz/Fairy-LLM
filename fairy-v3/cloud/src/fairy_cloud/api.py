@@ -11,6 +11,13 @@ from fairy_core.application.service import (
 )
 from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
 from fairy_core.contracts.capabilities import CapabilityManifestModel
+from fairy_core.contracts.knowledge import (
+    KnowledgeGraphModel,
+    KnowledgeItemListInput,
+    KnowledgeItemPageModel,
+    KnowledgeProjectInput,
+    ProjectKnowledgeOverviewModel,
+)
 from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.contracts.models import (
     ApprovalDecisionResultModel,
@@ -415,6 +422,37 @@ def create_cloud_app(
             "messages.list",
             request.model_dump(mode="json", exclude_none=True),
         )
+
+    @protected.get(
+        "/projects/{project_id}/knowledge",
+        operation_id="knowledge.projects.overview",
+        response_model=ProjectKnowledgeOverviewModel,
+    )
+    def get_project_knowledge(project_id: UUID) -> dict[str, Any]:
+        request = KnowledgeProjectInput(project_id=project_id)
+        return invoke("knowledge.projects.overview", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/projects/{project_id}/knowledge/items",
+        operation_id="knowledge.items.list",
+        response_model=KnowledgeItemPageModel,
+    )
+    def list_project_knowledge_items(
+        project_id: UUID,
+        query: str | None = None,
+        limit: int = 500,
+    ) -> dict[str, Any]:
+        request = KnowledgeItemListInput(project_id=project_id, query=query, limit=limit)
+        return invoke("knowledge.items.list", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/projects/{project_id}/knowledge/graph",
+        operation_id="knowledge.graph.get",
+        response_model=KnowledgeGraphModel,
+    )
+    def get_project_knowledge_graph(project_id: UUID) -> dict[str, Any]:
+        request = KnowledgeProjectInput(project_id=project_id)
+        return invoke("knowledge.graph.get", request.model_dump(mode="json"))
 
     @protected.post(
         "/documents/import",

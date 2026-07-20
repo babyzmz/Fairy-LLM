@@ -35,6 +35,7 @@ import type {
   MediaVideoCancelInput,
   MediaVideoStartInput,
   GameMemorySaveInput,
+  KnowledgeItemListInput,
   ModelSelectionUpdateInput,
   McpServerAcceptInput,
   McpServerConfigureInput,
@@ -225,6 +226,15 @@ export class CoreClient {
     restore: (input: TrashItemActionInput) => this.transport.call("trash.items.restore", input),
     purge: (input: TrashItemActionInput) => this.transport.call("trash.items.purge", input),
     purgeAll: (input: TrashPurgeAllInput) => this.transport.call("trash.items.purge_all", input),
+  };
+
+  readonly knowledge = {
+    overview: (projectId: string) =>
+      this.transport.call("knowledge.projects.overview", { project_id: projectId }),
+    listItems: (input: KnowledgeItemListInput) =>
+      this.transport.call("knowledge.items.list", input),
+    graph: (projectId: string) =>
+      this.transport.call("knowledge.graph.get", { project_id: projectId }),
   };
 
   readonly conversations = {

@@ -68,6 +68,13 @@ from fairy_core.contracts.history import (
     TrashPurgeAllInput,
     TrashPurgeResultModel,
 )
+from fairy_core.contracts.knowledge import (
+    KnowledgeGraphModel,
+    KnowledgeItemListInput,
+    KnowledgeItemPageModel,
+    KnowledgeProjectInput,
+    ProjectKnowledgeOverviewModel,
+)
 from fairy_core.contracts.media import (
     MediaAudioGenerateInput,
     MediaGenerationJobModel,
@@ -579,6 +586,21 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "models.selection.update",
             ModelSelectionUpdateInput,
             ModelSelectionPreferenceModel,
+        ),
+        "knowledge.graph.get": CoreMethod(
+            "knowledge.graph.get",
+            KnowledgeProjectInput,
+            KnowledgeGraphModel,
+        ),
+        "knowledge.items.list": CoreMethod(
+            "knowledge.items.list",
+            KnowledgeItemListInput,
+            KnowledgeItemPageModel,
+        ),
+        "knowledge.projects.overview": CoreMethod(
+            "knowledge.projects.overview",
+            KnowledgeProjectInput,
+            ProjectKnowledgeOverviewModel,
         ),
         "projects.create": CoreMethod(
             "projects.create",

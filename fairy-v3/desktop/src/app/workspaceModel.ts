@@ -126,6 +126,24 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
 
   const projects = sortHistoryItems(projectsQuery.data?.items ?? []);
   const selectedProject = selectedItem(projects, projectSelection);
+  const knowledgeOverviewQuery = useQuery({
+    queryKey: [...workspaceKey, "knowledge", "overview", selectedProject?.id],
+    queryFn: () => client.knowledge.overview(requireId(selectedProject?.id)),
+    enabled: healthQuery.isSuccess && selectedProject !== null,
+    retry: false,
+  });
+  const knowledgeItemsQuery = useQuery({
+    queryKey: [...workspaceKey, "knowledge", "items", selectedProject?.id],
+    queryFn: () => client.knowledge.listItems({ project_id: requireId(selectedProject?.id), limit: 500 }),
+    enabled: healthQuery.isSuccess && selectedProject !== null,
+    retry: false,
+  });
+  const knowledgeGraphQuery = useQuery({
+    queryKey: [...workspaceKey, "knowledge", "graph", selectedProject?.id],
+    queryFn: () => client.knowledge.graph(requireId(selectedProject?.id)),
+    enabled: healthQuery.isSuccess && selectedProject !== null,
+    retry: false,
+  });
   const allConversations = sortHistoryItems(conversationsQuery.data?.items ?? []);
   const conversations = allConversations.filter((conversation) => conversation.project_id === selectedProject?.id);
   const projectConversations = allConversations.filter(
@@ -987,6 +1005,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     runtimeHealth: runtimeHealthQuery.data ?? null,
     workspaceFiles: workspaceFilesQuery.data?.items ?? [],
     workspaceGeneration: workspaceFilesQuery.data?.generation ?? 0,
+    knowledgeOverview: knowledgeOverviewQuery.data ?? null,
+    knowledgeItems: knowledgeItemsQuery.data?.items ?? [],
+    knowledgeGraph: knowledgeGraphQuery.data ?? null,
+    knowledgeLoading:
+      knowledgeOverviewQuery.isPending || knowledgeItemsQuery.isPending || knowledgeGraphQuery.isPending,
     mediaJobs: mediaJobsQuery.data?.items ?? [],
     assetSets: assetSetsQuery.data?.items ?? [],
     workspaceFilesLoading: workspaceFilesQuery.isPending && workspaceFilesQuery.isEnabled,

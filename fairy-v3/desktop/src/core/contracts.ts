@@ -56,6 +56,15 @@ export type TraceStepStatus = Schemas["TraceStepStatus"];
 export type TraceVisibility = Schemas["TraceVisibility"];
 export type TurnTrace = Schemas["TurnTraceModel"];
 export type Health = Schemas["HealthModel"];
+export type KnowledgeGraph = Schemas["KnowledgeGraphModel"];
+export type KnowledgeGraphEdge = Schemas["KnowledgeGraphEdgeModel"];
+export type KnowledgeGraphNode = Schemas["KnowledgeGraphNodeModel"];
+export type KnowledgeItem = Schemas["KnowledgeItemModel"];
+export type KnowledgeItemPage = Schemas["KnowledgeItemPageModel"];
+export type KnowledgeItemListInput = NonNullable<operations["knowledge.items.list"]["parameters"]["query"]> & {
+  project_id: string;
+};
+export type ProjectKnowledgeOverview = Schemas["ProjectKnowledgeOverviewModel"];
 export type MemoryClaim = Schemas["MemoryClaimModel"];
 export type MemoryClaimContext = Schemas["MemoryClaimContextModel"];
 export type MemoryClaimPage = Schemas["MemoryClaimPageModel"];
@@ -281,6 +290,12 @@ export interface CoreMethodMap {
   };
   "documents.search": { params: DocumentSearchInput; result: DocumentSearchPage };
   "documents.delete": { params: DocumentDeleteInput; result: DocumentContext };
+  "knowledge.graph.get": { params: { project_id: string }; result: KnowledgeGraph };
+  "knowledge.items.list": { params: KnowledgeItemListInput; result: KnowledgeItemPage };
+  "knowledge.projects.overview": {
+    params: { project_id: string };
+    result: ProjectKnowledgeOverview;
+  };
   "tasks.archive": { params: TaskArchiveInput; result: Task };
   "tasks.create": { params: TaskCreateInput; result: TaskContext };
   "tasks.get": { params: { task_id: string }; result: Task };

@@ -41,6 +41,12 @@ const routes = {
     post(`/v1/history/archived-projects/${pathParameter(params, "project_id")}/restore`, params),
   "projects.archived.delete": (params) =>
     remove(`/v1/history/archived-projects/${pathParameter(params, "project_id")}`, params),
+  "knowledge.projects.overview": (params) =>
+    get(`/v1/projects/${pathParameter(params, "project_id")}/knowledge`),
+  "knowledge.items.list": (params) =>
+    getWithQuery(`/v1/projects/${pathParameter(params, "project_id")}/knowledge/items`, params, ["query", "limit"]),
+  "knowledge.graph.get": (params) =>
+    get(`/v1/projects/${pathParameter(params, "project_id")}/knowledge/graph`),
   "trash.items.list": (params) => getWithQuery("/v1/history/trash", params, ["limit", "cursor"]),
   "trash.items.restore": (params) =>
     post(

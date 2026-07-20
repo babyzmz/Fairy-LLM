@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.extension_service import ExtensionService
 from fairy_core.application.history_service import history_service_handlers
+from fairy_core.application.knowledge_service import knowledge_service_handlers
 from fairy_core.application.model_catalog_service import ModelCatalogService
 from fairy_core.application.planning_service import planning_service_handlers
 from fairy_core.application.presentation_service import presentation_service_handlers
@@ -69,6 +70,7 @@ from fairy_core.execution.application import (
     ProjectExecutionToolExecutor,
 )
 from fairy_core.execution.plans import TaskStep, TaskStepKind, TaskStepStatus
+from fairy_core.knowledge import ProjectKnowledgeApplication
 from fairy_core.mcp.application import McpApplication
 from fairy_core.mcp.tools import McpToolExecutor
 from fairy_core.media.composition import build_media_composition
@@ -386,6 +388,7 @@ class CoreService(CoreServiceEndpointsMixin):
                 unit_of_work_factory=unit_of_work_factory,
                 cancel_project_activity=self._cancel_project_activity,
             ),
+            **knowledge_service_handlers(ProjectKnowledgeApplication(unit_of_work_factory)),
             "documents.delete": self._delete_document,
             "documents.get": self._get_document,
             "documents.import": self._import_document,

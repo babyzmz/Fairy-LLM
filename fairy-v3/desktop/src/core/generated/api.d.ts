@@ -1461,6 +1461,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{project_id}/knowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Project Knowledge */
+        get: operations["knowledge.projects.overview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{project_id}/knowledge/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Project Knowledge Graph */
+        get: operations["knowledge.graph.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{project_id}/knowledge/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Knowledge Items */
+        get: operations["knowledge.items.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{project_id}/metadata": {
         parameters: {
             query?: never;
@@ -4034,6 +4085,97 @@ export interface components {
             turn_id: string | null;
             visibility: components["schemas"]["PublicMessageVisibilityModel"];
         };
+        /** KnowledgeGraphEdgeModel */
+        KnowledgeGraphEdgeModel: {
+            /** Id */
+            id: string;
+            relation: components["schemas"]["KnowledgeRelationKind"];
+            /** Source Id */
+            source_id: string;
+            /** Target Id */
+            target_id: string;
+        };
+        /** KnowledgeGraphModel */
+        KnowledgeGraphModel: {
+            /** Edges */
+            edges: components["schemas"]["KnowledgeGraphEdgeModel"][];
+            /** Nodes */
+            nodes: components["schemas"]["KnowledgeGraphNodeModel"][];
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Source Revision */
+            source_revision: number;
+            /** Source Version Id */
+            source_version_id: string | null;
+        };
+        /** KnowledgeGraphNodeModel */
+        KnowledgeGraphNodeModel: {
+            /** Byte Length */
+            byte_length?: number | null;
+            /** Content Hash */
+            content_hash?: string | null;
+            /** Conversation Id */
+            conversation_id?: string | null;
+            /** Id */
+            id: string;
+            kind: components["schemas"]["KnowledgeNodeKind"];
+            /** Language */
+            language?: string | null;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Relative Path */
+            relative_path?: string | null;
+            /** Revision */
+            revision: number;
+            /** Title */
+            title: string;
+        };
+        /** KnowledgeItemModel */
+        KnowledgeItemModel: {
+            /** Byte Length */
+            byte_length?: number | null;
+            /** Content Hash */
+            content_hash?: string | null;
+            /** Id */
+            id: string;
+            kind: components["schemas"]["KnowledgeNodeKind"];
+            /** Language */
+            language?: string | null;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Relative Path */
+            relative_path?: string | null;
+            /** Revision */
+            revision: number;
+            /** Title */
+            title: string;
+        };
+        /** KnowledgeItemPageModel */
+        KnowledgeItemPageModel: {
+            /** Items */
+            items: components["schemas"]["KnowledgeItemModel"][];
+            /** Source Revision */
+            source_revision: number;
+        };
+        /**
+         * KnowledgeNodeKind
+         * @enum {string}
+         */
+        KnowledgeNodeKind: "project" | "conversation" | "folder" | "file" | "note" | "artifact" | "memory";
+        /**
+         * KnowledgeRelationKind
+         * @enum {string}
+         */
+        KnowledgeRelationKind: "contains" | "imports" | "references" | "derived_from" | "discussed_in";
         /** ManagedDocumentModel */
         ManagedDocumentModel: {
             /** Byte Length */
@@ -5528,6 +5670,30 @@ export interface components {
              * Format: path
              */
             source_path: string;
+        };
+        /** ProjectKnowledgeOverviewModel */
+        ProjectKnowledgeOverviewModel: {
+            /** Conversation Count */
+            conversation_count: number;
+            /** File Count */
+            file_count: number;
+            /** Note Count */
+            note_count: number;
+            /** Obsidian Connected */
+            obsidian_connected: boolean;
+            /** Obsidian Health */
+            obsidian_health: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Relation Count */
+            relation_count: number;
+            /** Source Revision */
+            source_revision: number;
+            /** Source Version Id */
+            source_version_id: string | null;
         };
         /** ProjectMetadataUpdateInput */
         ProjectMetadataUpdateInput: {
@@ -10672,6 +10838,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "knowledge.projects.overview": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectKnowledgeOverviewModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "knowledge.graph.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeGraphModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "knowledge.items.list": {
+        parameters: {
+            query?: {
+                query?: string | null;
+                limit?: number;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeItemPageModel"];
                 };
             };
             /** @description Validation Error */

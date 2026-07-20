@@ -814,6 +814,27 @@ function createClient(
       search: async () => ({ items: [] }),
       forget: async () => ({}) as never,
     },
+    knowledge: {
+      overview: async (projectId) => ({
+        project_id: projectId,
+        source_version_id: null,
+        source_revision: 0,
+        file_count: 0,
+        note_count: 0,
+        conversation_count: 0,
+        relation_count: 0,
+        obsidian_connected: false,
+        obsidian_health: "not_connected",
+      }),
+      listItems: async () => ({ items: [], source_revision: 0 }),
+      graph: async (projectId) => ({
+        project_id: projectId,
+        source_version_id: null,
+        source_revision: 0,
+        nodes: [],
+        edges: [],
+      }),
+    },
     assistant: {
       turns: {
         create:

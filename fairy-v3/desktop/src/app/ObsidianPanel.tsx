@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { WorkspaceFile } from "../core/client";
+import type { KnowledgeItem, WorkspaceFile } from "../core/client";
 import type { WorkspaceModel } from "./workspaceModel";
 import "./obsidian-panel.css";
 
@@ -41,12 +41,21 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
     [model.projectConversations, project?.id],
   );
   const graph = useMemo(
-    () => buildProjectGraph(project?.id ?? null, project?.name ?? "Project", conversations, model.workspaceFiles),
-    [conversations, model.workspaceFiles, project?.id, project?.name],
+    () => model.knowledgeGraph === null
+      ? buildProjectGraph(project?.id ?? null, project?.name ?? "Project", conversations, model.workspaceFiles)
+      : {
+          nodes: model.knowledgeGraph.nodes.map((node) => ({
+            id: node.id,
+            label: node.title,
+            kind: graphKind(node.kind),
+          })),
+          edges: model.knowledgeGraph.edges.map((edge) => ({ source: edge.source_id, target: edge.target_id })),
+        },
+    [conversations, model.knowledgeGraph, model.workspaceFiles, project?.id, project?.name],
   );
   const noteFiles = useMemo(
-    () => model.workspaceFiles.filter((file) => /(^|\/)(notes?|docs?)\//i.test(file.path) || /\.mdx?$/i.test(file.path)),
-    [model.workspaceFiles],
+    () => model.knowledgeItems.filter((item) => item.kind === "note"),
+    [model.knowledgeItems],
   );
 
   if (project === null) {
@@ -85,10 +94,10 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
       <div className="obsidian-body">
         {view === "overview" ? (
           <Overview
-            fileCount={model.workspaceFiles.length}
-            noteCount={noteFiles.length}
-            conversationCount={conversations.length}
-            linkCount={graph.edges.length}
+            fileCount={model.knowledgeOverview?.file_count ?? model.workspaceFiles.length}
+            noteCount={model.knowledgeOverview?.note_count ?? noteFiles.length}
+            conversationCount={model.knowledgeOverview?.conversation_count ?? conversations.length}
+            linkCount={model.knowledgeOverview?.relation_count ?? graph.edges.length}
             onOpenFiles={onOpenFiles}
           />
         ) : view === "notes" ? (
@@ -139,17 +148,17 @@ function Overview({
   );
 }
 
-function Notes({ files, onOpenFiles }: { files: WorkspaceFile[]; onOpenFiles(): void }) {
+function Notes({ files, onOpenFiles }: { files: KnowledgeItem[]; onOpenFiles(): void }) {
   if (files.length === 0) {
     return <EmptyState icon={<BookOpenText size={22} />} title="No managed notes" detail="Markdown notes created for this project will appear here." />;
   }
   return (
     <div className="obsidian-list">
       {files.map((file) => (
-        <button key={file.path} type="button" onClick={onOpenFiles}>
+        <button key={file.id} type="button" onClick={onOpenFiles}>
           <BookOpenText size={15} />
-          <span><strong>{basename(file.path)}</strong><small>{file.path}</small></span>
-          <small>{formatBytes(file.byte_length)}</small>
+          <span><strong>{file.title}</strong><small>{file.relative_path}</small></span>
+          <small>{formatBytes(file.byte_length ?? 0)}</small>
         </button>
       ))}
     </div>
@@ -277,3 +286,7 @@ function drawGraph(canvas: HTMLCanvasElement, nodes: GraphNode[], edges: GraphEd
 
 function basename(path: string) { return path.split("/").at(-1) ?? path; }
 function formatBytes(value: number) { return value < 1024 ? `${value} B` : `${(value / 1024).toFixed(1)} KB`; }
+function graphKind(kind: string): GraphNode["kind"] {
+  if (kind === "project" || kind === "conversation" || kind === "folder") return kind;
+  return "file";
+}

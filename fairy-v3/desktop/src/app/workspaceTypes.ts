@@ -12,6 +12,9 @@ import type {
   ExecutionSettings,
   Message,
   MemorySearchHit,
+  KnowledgeGraph,
+  KnowledgeItem,
+  ProjectKnowledgeOverview,
   MediaGenerationJob,
   ModelCatalogPage,
   ModelSelectionPreference,
@@ -90,6 +93,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   messages: Pick<CoreClient["messages"], "list">;
   documents: Pick<CoreClient["documents"], "import" | "list" | "search" | "delete">;
   memory: Pick<CoreClient["memory"], "search" | "forget">;
+  knowledge: Pick<CoreClient["knowledge"], "overview" | "listItems" | "graph">;
   voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
   systemActions: Pick<CoreClient["systemActions"], "execute">;
   events: Pick<CoreClient["events"], "sourceId" | "state" | "list" | "subscribe">;
@@ -141,6 +145,10 @@ export interface WorkspaceModel {
   runtimeHealth: RuntimeHealth | null;
   workspaceFiles: WorkspaceFile[];
   workspaceGeneration: number;
+  knowledgeOverview: ProjectKnowledgeOverview | null;
+  knowledgeItems: KnowledgeItem[];
+  knowledgeGraph: KnowledgeGraph | null;
+  knowledgeLoading: boolean;
   mediaJobs: MediaGenerationJob[];
   assetSets: AssetSet[];
   workspaceFilesLoading: boolean;
