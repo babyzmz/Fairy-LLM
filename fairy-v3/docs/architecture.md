@@ -270,6 +270,35 @@ hashes, visibility, chunks, and local/S3 blob adapters. Document search creates
 bounded RAG context for the current Task. It cannot create or update a Hermes
 Claim; an explicit governed Memory command is required.
 
+### Project knowledge and Obsidian
+
+Project knowledge is a first-class Core domain separate from managed documents
+and Hermes memory. It stores device-local source registrations, immutable note
+revisions, tombstones, resumable sync runs, graph projections, and Task-bound
+Knowledge Snapshots. Workspace remains authoritative for executable project
+files; knowledge records may reference a Workspace file and its immutable Version
+but cannot mutate it.
+
+The official Obsidian desktop application is an optional editing companion. User
+selected Vault folders are read-only sources. Fairy writes only beneath an
+explicitly configured managed subtree through an allowlisted Obsidian CLI adapter;
+absolute Vault paths remain device-local. Managed Markdown index notes project
+Workspace files, Conversations, Tasks, Artifacts, and confirmed Hermes Claims into
+Obsidian links without creating a second source of truth.
+
+Fairy maintains a rebuildable Project Knowledge Graph over canonical project
+entities and immutable Knowledge revisions. The Workspace Inspector exposes
+Preview, Files, Outputs, and Obsidian tabs; the Obsidian surface contains Overview,
+Notes, Links, Graph, and Sync views. Obsidian Graph covers the managed Markdown
+subset, while Fairy Graph can also represent source files, symbols, Tasks,
+Artifacts, and memory provenance.
+
+Each Assistant Turn binds one immutable Harness Context Manifest containing Scope,
+Workspace Version, Memory Snapshot, Knowledge Snapshot, Tool Registry generation,
+Skill digests, MCP capabilities, model selection, source watermarks, and budgets.
+Live Vault, memory, Skill, or MCP changes never alter an active Turn. Vault edits
+can create governed Memory proposals but cannot directly change a Hermes Claim.
+
 ### Governed extensions
 
 Fairy Skills use a strict Agent Skills `SKILL.md` plus a versioned
