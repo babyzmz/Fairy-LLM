@@ -10,6 +10,7 @@ from fairy_core.memory.models import (
     MemoryObservation,
     MemoryTargetKind,
     MemoryTombstone,
+    ObservationStatus,
 )
 
 
@@ -27,6 +28,14 @@ class MemoryRepository(Protocol):
         *,
         include_forgotten: bool = False,
     ) -> MemoryObservation | None: ...
+
+    def transition_observation(
+        self,
+        observation_id: UUID,
+        *,
+        expected_status: ObservationStatus,
+        status: ObservationStatus,
+    ) -> MemoryObservation: ...
 
     def create_claim(
         self,

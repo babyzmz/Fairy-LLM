@@ -25,6 +25,9 @@ from fairy_core.contracts.models import (
     MemoryForgetInput,
     MemoryObservationQuery,
     MemoryObserveInput,
+    MemoryProposalActionInput,
+    MemoryProposalListInput,
+    MemorySuggestInput,
     TaskCreate,
 )
 from fairy_core.domain.errors import MemoryScopeViolationError
@@ -97,6 +100,10 @@ def test_memory_tools_have_exact_command_policy_metadata() -> None:
 
     assert set(definitions) == {
         "memory.observe",
+        "memory.search",
+        "memory.suggest",
+        "memory.proposal.accept",
+        "memory.proposal.reject",
         "memory.claim.promote",
         "memory.claim.supersede",
         "memory.claim.resolve_conflict",
@@ -108,13 +115,65 @@ def test_memory_tools_have_exact_command_policy_metadata() -> None:
     assert definitions["memory.observe"].risk_level is RiskLevel.LOW
     assert definitions["memory.observe"].approval_policy is ApprovalPolicy.NEVER
     assert all(definition.idempotent for definition in definitions.values())
-    assert all(
-        definitions[name].approval_policy is ApprovalPolicy.ALWAYS
-        for name in definitions
-        if name not in {"memory.observe", "memory.projection.refresh", "memory.snapshot.build"}
-    )
+    assert definitions["memory.search"].side_effect is SideEffect.READ
+    assert definitions["memory.search"].model_visible
+    assert definitions["memory.suggest"].side_effect is SideEffect.WRITE
+    assert definitions["memory.suggest"].approval_policy is ApprovalPolicy.NEVER
+    assert definitions["memory.suggest"].model_visible
+    for name in (
+        "memory.claim.promote",
+        "memory.claim.supersede",
+        "memory.claim.resolve_conflict",
+    ):
+        assert definitions[name].approval_policy is ApprovalPolicy.ALWAYS
+        assert not definitions[name].model_visible
+    assert not definitions["memory.observe"].model_visible
+    assert not definitions["memory.proposal.accept"].model_visible
+    assert not definitions["memory.proposal.reject"].model_visible
     assert not definitions["memory.projection.refresh"].model_visible
     assert not definitions["memory.snapshot.build"].model_visible
+
+
+def test_model_memory_suggestion_remains_pending_until_user_accepts(tmp_path: Path) -> None:
+    engine, core, memory = _applications(tmp_path)
+    task = _task(core, suffix="proposal")
+    suggestion = memory.suggest(
+        MemorySuggestInput(
+            task_id=task.task.id,
+            content="Use reduced motion for this project.",
+            proposed_namespace=MemoryNamespace.PROJECT_CANONICAL,
+            idempotency_key="memory:proposal:create",
+        )
+    )
+
+    assert suggestion.status.value == "pending"
+    assert suggestion.authority.value == "model_suggestion"
+    assert memory.list_proposals(
+        MemoryProposalListInput(task_id=task.task.id)
+    ) == (suggestion,)
+
+    accepted = memory.accept_proposal(
+        MemoryProposalActionInput(
+            task_id=task.task.id,
+            observation_id=suggestion.id,
+            user_confirmed=True,
+            idempotency_key="memory:proposal:accept",
+        )
+    )
+    assert accepted.status.value == "accepted"
+    assert memory.list_proposals(MemoryProposalListInput(task_id=task.task.id)) == ()
+    engine.dispose()
+
+
+def test_model_memory_suggestion_rejects_non_task_scopes() -> None:
+    for namespace in (MemoryNamespace.DEVICE_LOCAL, MemoryNamespace.USER_PROFILE):
+        with pytest.raises(ValueError, match="task-scoped namespace"):
+            MemorySuggestInput(
+                task_id=new_id(),
+                content="Remember this",
+                proposed_namespace=namespace,
+                idempotency_key=f"suggest-{namespace.value}",
+            )
 
 
 def test_memory_commit_refreshes_projection_without_mutating_bound_snapshot(

@@ -29,6 +29,7 @@ from fairy_core.storage.history_schema import (
 from fairy_core.storage.index_schema import build_state_indexes
 from fairy_core.storage.media_schema import build_media_schema
 from fairy_core.storage.media_work_schema import build_media_work_table
+from fairy_core.storage.memory_settings_schema import build_memory_settings_tables
 from fairy_core.storage.model_catalog_schema import build_model_catalog_tables
 from fairy_core.storage.planning_schema import build_planning_schema
 from fairy_core.storage.presentation_schema import build_presentation_schema
@@ -79,6 +80,7 @@ projects = build_project_table(
 )
 
 execution_settings, execution_setting_updates = build_execution_settings_tables(state_metadata)
+memory_settings, memory_setting_updates = build_memory_settings_tables(state_metadata)
 
 model_catalogs, model_selections, model_selection_updates = build_model_catalog_tables(
     state_metadata

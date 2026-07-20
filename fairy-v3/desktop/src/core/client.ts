@@ -27,7 +27,9 @@ import type {
   MemoryForgetInput,
   MemoryNamespace,
   MemoryObserveInput,
+  MemoryProposalActionInput,
   MemorySearchInput,
+  MemorySettingsUpdateInput,
   MediaAudioGenerateInput,
   MediaImageGenerateInput,
   MediaVideoCancelInput,
@@ -545,6 +547,19 @@ export class CoreClient {
     },
     projection: {
       health: (taskId: string) => this.transport.call("memory.projection.health", { task_id: taskId }),
+    },
+    proposals: {
+      list: (taskId: string, limit = 100) =>
+        this.transport.call("memory.proposals.list", { task_id: taskId, limit }),
+      accept: (input: MemoryProposalActionInput) =>
+        this.transport.call("memory.proposals.accept", input),
+      reject: (input: MemoryProposalActionInput) =>
+        this.transport.call("memory.proposals.reject", input),
+    },
+    settings: {
+      get: () => this.transport.call("memory.settings.get", {}),
+      update: (input: MemorySettingsUpdateInput) =>
+        this.transport.call("memory.settings.update", input),
     },
     forget: (input: MemoryForgetInput) => this.transport.call("memory.forget", input),
   };

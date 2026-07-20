@@ -21,7 +21,7 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260720_0037"]
+    assert scripts.get_heads() == ["20260720_0038"]
     assert scripts.get_revision("20260720_0037").down_revision == "20260717_0036"
     assert scripts.get_revision("20260712_0016").down_revision == "20260711_0015"
     assert scripts.get_revision("20260711_0015").down_revision == "20260711_0014"
@@ -270,6 +270,19 @@ def test_execution_settings_migration_has_reversible_ddl() -> None:
     assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_EXECUTION_SETTING_UPDATES"' in ddl
     assert "DROP TABLE CORE_EXECUTION_SETTING_UPDATES" in ddl
     assert "DROP TABLE CORE_EXECUTION_SETTINGS" in ddl
+
+
+def test_memory_settings_migration_has_reversible_rls_ddl() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260720_0038:20260720_0037", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_MEMORY_SETTINGS"' in ddl
+    assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_MEMORY_SETTING_UPDATES"' in ddl
+    assert "DROP TABLE CORE_MEMORY_SETTING_UPDATES" in ddl
+    assert "DROP TABLE CORE_MEMORY_SETTINGS" in ddl
 
 
 def test_generic_approval_migration_has_reversible_ddl() -> None:

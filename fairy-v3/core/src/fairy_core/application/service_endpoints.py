@@ -31,7 +31,10 @@ from fairy_core.contracts.models import (
     MemoryObservationQuery,
     MemoryObserveInput,
     MemoryProjectionHealthInput,
+    MemoryProposalActionInput,
+    MemoryProposalListInput,
     MemorySearchInput,
+    MemorySettingsUpdateInput,
     MemorySnapshotGetInput,
     MessageListInput,
     TaskCreate,
@@ -136,6 +139,24 @@ class CoreServiceEndpointsMixin:
             )
         return {"items": hits}
 
+    def _get_memory_settings(self, _request: BaseModel) -> Any:
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.memory_settings.get()
+
+    def _update_memory_settings(self, request: BaseModel) -> Any:
+        validated = cast(MemorySettingsUpdateInput, request)
+        with self._unit_of_work_factory() as unit_of_work:
+            changed = unit_of_work.memory_settings.update(
+                enabled=validated.enabled,
+                retention_days=validated.retention_days,
+                export_to_obsidian=validated.export_to_obsidian,
+                sync_normalized_content=validated.sync_normalized_content,
+                expected_revision=validated.expected_revision,
+                idempotency_key=validated.idempotency_key,
+            )
+            unit_of_work.commit()
+        return changed
+
     def _get_memory_snapshot(self, request: BaseModel) -> Any:
         validated = cast(MemorySnapshotGetInput, request)
         with self._unit_of_work_factory() as unit_of_work:
@@ -173,6 +194,23 @@ class CoreServiceEndpointsMixin:
             "last_error_code": health.last_error_code,
             "updated_at": health.updated_at,
         }
+
+    def _list_memory_proposals(self, request: BaseModel) -> dict[str, Any]:
+        return {
+            "items": self._memory_application.list_proposals(
+                cast(MemoryProposalListInput, request)
+            )
+        }
+
+    def _accept_memory_proposal(self, request: BaseModel) -> Any:
+        return self._memory_application.accept_proposal(
+            cast(MemoryProposalActionInput, request)
+        )
+
+    def _reject_memory_proposal(self, request: BaseModel) -> Any:
+        return self._memory_application.reject_proposal(
+            cast(MemoryProposalActionInput, request)
+        )
 
     def _create_task(self, request: BaseModel) -> Any:
         return self._application.create_task(cast(TaskCreate, request))

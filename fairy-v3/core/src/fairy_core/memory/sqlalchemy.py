@@ -167,6 +167,34 @@ class SqlAlchemyMemoryRepository:
             raise MemoryForgottenError(f"memory Observation has been forgotten: {observation_id}")
         return self._observation_from_row(row)
 
+    def transition_observation(
+        self,
+        observation_id: UUID,
+        *,
+        expected_status: ObservationStatus,
+        status: ObservationStatus,
+    ) -> MemoryObservation:
+        with self._session.write() as connection:
+            row = self._observation_row(connection, observation_id)
+            if row is None:
+                raise KeyError(f"memory Observation not found: {observation_id}")
+            current = self._observation_from_row(row)
+            if current.status is status:
+                return current
+            changed = current.transition_to(status)
+            result = connection.execute(
+                update(memory_observations)
+                .where(
+                    memory_observations.c.tenant_id == self._tenant_id,
+                    memory_observations.c.id == str(observation_id),
+                    memory_observations.c.status == expected_status.value,
+                )
+                .values(status=changed.status.value)
+            )
+            if result.rowcount != 1:
+                raise MemoryConflictError("memory Observation status changed")
+            return changed
+
     def observations_for_scope(
         self,
         *,

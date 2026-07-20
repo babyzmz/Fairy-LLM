@@ -238,6 +238,21 @@ const routes = {
     ),
   "memory.projection.health": (params) =>
     get(`/v1/memory/projection/health?task_id=${stringParameter(params, "task_id")}`),
+  "memory.proposals.list": (params) =>
+    getWithQuery("/v1/memory/proposals", params, ["task_id", "limit"]),
+  "memory.proposals.accept": (params) =>
+    postWithIdempotency(
+      `/v1/memory/proposals/${pathParameter(params, "observation_id")}/accept`,
+      params,
+    ),
+  "memory.proposals.reject": (params) =>
+    postWithIdempotency(
+      `/v1/memory/proposals/${pathParameter(params, "observation_id")}/reject`,
+      params,
+    ),
+  "memory.settings.get": () => get("/v1/memory/settings"),
+  "memory.settings.update": (params) =>
+    putWithIdempotency("/v1/memory/settings", params),
   "events.state": () => get("/v1/events/state"),
   "events.list": (params) =>
     get(

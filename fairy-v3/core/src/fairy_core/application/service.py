@@ -77,6 +77,7 @@ from fairy_core.media.staging import MediaStagingStore
 from fairy_core.media.tools import MediaToolExecutor
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
+from fairy_core.memory.tools import MemoryToolExecutor
 from fairy_core.model_catalog.ports import ModelCatalogSource
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -282,6 +283,10 @@ class CoreService(CoreServiceEndpointsMixin):
         self._media_scheduler = media.scheduler
         self._media_service = media.service
         effective_tool_executor = tool_executor
+        effective_tool_executor = MemoryToolExecutor(
+            application=self._memory_application,
+            delegate=effective_tool_executor,
+        )
         if research_fetch_port is not None:
             effective_tool_executor = ResearchToolExecutor(
                 application=ResearchApplication(
@@ -401,7 +406,12 @@ class CoreService(CoreServiceEndpointsMixin):
             "memory.observations.create": self._observe_memory,
             "memory.observations.list": self._list_memory_observations,
             "memory.projection.health": self._memory_projection_health,
+            "memory.proposals.accept": self._accept_memory_proposal,
+            "memory.proposals.list": self._list_memory_proposals,
+            "memory.proposals.reject": self._reject_memory_proposal,
             "memory.search": self._search_memory,
+            "memory.settings.get": self._get_memory_settings,
+            "memory.settings.update": self._update_memory_settings,
             "memory.snapshots.get": self._get_memory_snapshot,
             **self._media_service.handlers,
             "media.jobs.list": self._list_media_jobs,

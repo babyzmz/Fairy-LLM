@@ -942,6 +942,74 @@ def build_default_registry() -> ToolRegistry:
             active_profiles,
             "memory_application",
             idempotent=True,
+            model_visible=False,
+        ),
+        _tool(
+            "memory.search",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "memory_application",
+            idempotent=True,
+            description="Search the immutable Memory Snapshot bound to the current Task.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 1, "maxLength": 10_000},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        ),
+        _tool(
+            "memory.suggest",
+            SideEffect.WRITE,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "memory_application",
+            idempotent=True,
+            description=(
+                "Suggest a bounded memory for explicit user review. This never creates a Claim."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "minLength": 1, "maxLength": 10_000},
+                    "proposed_namespace": {
+                        "type": "string",
+                        "enum": [
+                            "project_canonical",
+                            "conversation_draft",
+                            "task_episode",
+                        ],
+                    },
+                },
+                "required": ["content", "proposed_namespace"],
+                "additionalProperties": False,
+            },
+        ),
+        _tool(
+            "memory.proposal.accept",
+            SideEffect.WRITE,
+            RiskLevel.MEDIUM,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "memory_application",
+            idempotent=True,
+            model_visible=False,
+        ),
+        _tool(
+            "memory.proposal.reject",
+            SideEffect.WRITE,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            active_profiles,
+            "memory_application",
+            idempotent=True,
+            model_visible=False,
         ),
         _tool(
             "memory.claim.promote",
@@ -951,6 +1019,7 @@ def build_default_registry() -> ToolRegistry:
             active_profiles,
             "memory_application",
             idempotent=True,
+            model_visible=False,
         ),
         _tool(
             "memory.claim.supersede",
@@ -960,6 +1029,7 @@ def build_default_registry() -> ToolRegistry:
             active_profiles,
             "memory_application",
             idempotent=True,
+            model_visible=False,
         ),
         _tool(
             "memory.claim.resolve_conflict",
@@ -969,6 +1039,7 @@ def build_default_registry() -> ToolRegistry:
             active_profiles,
             "memory_application",
             idempotent=True,
+            model_visible=False,
         ),
         _tool(
             "memory.forget",

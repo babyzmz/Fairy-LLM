@@ -21,6 +21,9 @@ from fairy_core.contracts.models import (
     MemoryForgetInput,
     MemoryObservationQuery,
     MemoryObserveInput,
+    MemoryProposalActionInput,
+    MemoryProposalListInput,
+    MemorySuggestInput,
 )
 from fairy_core.domain.errors import (
     InvalidTransitionError,
@@ -45,11 +48,13 @@ from fairy_core.memory.models import (
 )
 from fairy_core.memory.policy import MemoryPolicy, MemoryPolicyDecision
 from fairy_core.memory.projection import LexicalProjectionRefresher
+from fairy_core.memory.retrieval_models import MemorySnapshotItem
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
 from fairy_core.storage.ports import StateStore
 
 ScopeResolver = Callable[[StateStore, Task], ScopeContract]
 _USER_ACTOR = "user:core-client"
+_MODEL_ACTOR = "model:assistant"
 
 _READ_SCOPE_ALIASES: dict[MemoryNamespace, frozenset[str]] = {
     MemoryNamespace.PROJECT_CANONICAL: frozenset({"project_canonical"}),
@@ -93,6 +98,7 @@ class MemoryApplication:
     def observe(self, request: MemoryObserveInput) -> MemoryObservation:
         self._require_safe_content(request.content)
         with self._unit_of_work_factory() as unit_of_work:
+            self._require_memory_enabled(unit_of_work)
             task, base_scope = self._task_scope(unit_of_work, request.task_id)
             scope = self._scope_with_write(base_scope, MemoryNamespace.CONVERSATION_DRAFT)
             command = self._prepare_command(
@@ -150,11 +156,255 @@ class MemoryApplication:
         self._refresh_projection_after_commit(request.task_id, source_run_id)
         return persisted
 
+    def suggest(self, request: MemorySuggestInput) -> MemoryObservation:
+        self._require_safe_content(request.content)
+        with self._unit_of_work_factory() as unit_of_work:
+            self._require_memory_enabled(unit_of_work)
+            task, base_scope = self._task_scope(unit_of_work, request.task_id)
+            scope = self._scope_with_write(base_scope, request.proposed_namespace)
+            command = self._prepare_command(
+                unit_of_work,
+                tool_name="memory.suggest",
+                scope=scope,
+                payload={
+                    "task_id": str(task.id),
+                    "content": request.content,
+                    "proposed_namespace": request.proposed_namespace.value,
+                },
+                idempotency_key=request.idempotency_key,
+                approval_confirmed=False,
+            )
+            source_event = self._command_source_event(unit_of_work, command.run.id)
+            observation = MemoryObservation.create(
+                scope=scope,
+                source_event_id=source_event.id,
+                source_cursor=source_event.cursor,
+                source_type=MemorySourceType.MODEL_SUGGESTION,
+                content=request.content,
+                proposed_namespace=request.proposed_namespace,
+                authority=MemoryAuthority.MODEL_SUGGESTION,
+                confidence=0.5,
+                sensitivity=MemorySensitivity.PRIVATE,
+                actor=_MODEL_ACTOR,
+            )
+            scan = self._memory_policy.scan_content(
+                observation.content,
+                sensitivity=observation.sensitivity,
+            )
+            self._require_policy_allowed(scan)
+            observation = observation.with_scan_result(scan.scan_result)
+            persisted = unit_of_work.memory.append_observation(
+                observation,
+                request_fingerprint=self._stage_fingerprint(command.run.id, "suggestion"),
+            )
+            if command.execute:
+                self._finish(
+                    unit_of_work,
+                    command.run,
+                    event_type="memory.proposal.created",
+                    message="Memory proposal created",
+                    payload={
+                        "observation_id": str(persisted.id),
+                        "namespace": persisted.proposed_namespace.value,
+                        "status": persisted.status.value,
+                    },
+                )
+            unit_of_work.commit()
+        return persisted
+
+    def suggest_from_tool(
+        self,
+        *,
+        scope: ScopeContract,
+        content: str,
+        proposed_namespace: MemoryNamespace,
+        command_run: CommandRun,
+    ) -> MemoryObservation:
+        self._require_safe_content(content)
+        with self._unit_of_work_factory() as unit_of_work:
+            self._require_memory_enabled(unit_of_work)
+            task = unit_of_work.state.get_task(scope.task_id)
+            if task is None:
+                raise KeyError(f"task not found: {scope.task_id}")
+            canonical_scope = self._scope_resolver(unit_of_work.state, task)
+            if canonical_scope.scope_digest != scope.scope_digest:
+                raise MemoryScopeViolationError("Memory tool Scope is stale")
+            write_scope = self._scope_with_write(canonical_scope, proposed_namespace)
+            persisted_run = unit_of_work.commands.get_run(command_run.id)
+            if persisted_run is None or persisted_run.command_name != "memory.suggest":
+                raise MemoryScopeViolationError("Memory proposal Command is unavailable")
+            source_event = self._command_source_event(unit_of_work, persisted_run.id)
+            observation = MemoryObservation.create(
+                scope=write_scope,
+                source_event_id=source_event.id,
+                source_cursor=source_event.cursor,
+                source_type=MemorySourceType.MODEL_SUGGESTION,
+                content=content,
+                proposed_namespace=proposed_namespace,
+                authority=MemoryAuthority.MODEL_SUGGESTION,
+                confidence=0.5,
+                sensitivity=MemorySensitivity.PRIVATE,
+                actor=_MODEL_ACTOR,
+            )
+            scan = self._memory_policy.scan_content(
+                observation.content,
+                sensitivity=observation.sensitivity,
+            )
+            self._require_policy_allowed(scan)
+            persisted = unit_of_work.memory.append_observation(
+                observation.with_scan_result(scan.scan_result),
+                request_fingerprint=self._stage_fingerprint(persisted_run.id, "suggestion"),
+            )
+            event_payload = {
+                "observation_id": str(persisted.id),
+                "namespace": persisted.proposed_namespace.value,
+                "status": persisted.status.value,
+            }
+            if not unit_of_work.commands.has_domain_event(
+                event_type="memory.proposal.created",
+                project_id=write_scope.project_id,
+                conversation_id=write_scope.conversation_id,
+                payload=event_payload,
+            ):
+                unit_of_work.commands.append_domain_event(
+                    event_type="memory.proposal.created",
+                    visibility=EventVisibility.USER,
+                    message="Memory proposal created",
+                    payload=event_payload,
+                    actor=_MODEL_ACTOR,
+                    project_id=write_scope.project_id,
+                    conversation_id=write_scope.conversation_id,
+                    version_id=write_scope.target_version_id or write_scope.base_version_id,
+                )
+            unit_of_work.commit()
+            return persisted
+
+    def search_bound_snapshot(
+        self,
+        *,
+        scope: ScopeContract,
+        query: str,
+        limit: int,
+    ) -> tuple[MemorySnapshotItem, ...]:
+        normalized = " ".join(query.casefold().split())
+        if not normalized or not 1 <= limit <= 20:
+            raise ValueError("memory snapshot search query or limit is invalid")
+        terms = tuple(dict.fromkeys(normalized.split()))
+        with self._unit_of_work_factory() as unit_of_work:
+            self._require_memory_enabled(unit_of_work)
+            task = unit_of_work.state.get_task(scope.task_id)
+            if task is None or task.memory_snapshot_id is None:
+                return ()
+            canonical_scope = self._scope_resolver(unit_of_work.state, task)
+            if canonical_scope.scope_digest != scope.scope_digest:
+                raise MemoryScopeViolationError("Memory search Scope is stale")
+            snapshot = unit_of_work.snapshots.get(task.memory_snapshot_id, task_id=task.id)
+            if snapshot is None:
+                return ()
+            ranked = sorted(
+                (
+                    (sum(term in item.rendered_text.casefold() for term in terms), item)
+                    for item in snapshot.items
+                ),
+                key=lambda value: (-value[0], value[1].ordinal),
+            )
+            return tuple(item for score, item in ranked if score > 0)[:limit]
+
+    def list_proposals(
+        self,
+        request: MemoryProposalListInput,
+    ) -> tuple[MemoryObservation, ...]:
+        with self._unit_of_work_factory() as unit_of_work:
+            self._require_memory_enabled(unit_of_work)
+            _task, scope = self._task_scope(unit_of_work, request.task_id)
+            proposals: list[MemoryObservation] = []
+            for namespace in MemoryNamespace:
+                if not self._memory_policy.can_read_namespace(namespace, scope):
+                    continue
+                arguments = self._scope_arguments(scope, namespace)
+                proposals.extend(
+                    unit_of_work.memory.observations_for_scope(
+                        namespace=namespace,
+                        project_id=arguments["project_id"],
+                        conversation_id=arguments["conversation_id"],
+                        task_id=arguments["task_id"],
+                        newest_first=True,
+                        limit=request.limit,
+                    )
+                )
+            pending = [item for item in proposals if item.status is ObservationStatus.PENDING]
+            pending.sort(key=lambda item: (item.created_at, str(item.id)), reverse=True)
+            return tuple(pending[: request.limit])
+
+    def accept_proposal(self, request: MemoryProposalActionInput) -> MemoryObservation:
+        return self._decide_proposal(request, accepted=True)
+
+    def reject_proposal(self, request: MemoryProposalActionInput) -> MemoryObservation:
+        return self._decide_proposal(request, accepted=False)
+
+    def _decide_proposal(
+        self,
+        request: MemoryProposalActionInput,
+        *,
+        accepted: bool,
+    ) -> MemoryObservation:
+        self._require_confirmation(request.user_confirmed)
+        target_status = ObservationStatus.ACCEPTED if accepted else ObservationStatus.REJECTED
+        tool_name = "memory.proposal.accept" if accepted else "memory.proposal.reject"
+        event_type = "memory.proposal.accepted" if accepted else "memory.proposal.rejected"
+        with self._unit_of_work_factory() as unit_of_work:
+            self._require_memory_enabled(unit_of_work)
+            _task, base_scope = self._task_scope(unit_of_work, request.task_id)
+            observation = self._require_observation(unit_of_work, request.observation_id)
+            self._require_observation_identity(observation, base_scope)
+            self._require_policy_allowed(
+                self._memory_policy.scan_content(
+                    observation.content,
+                    sensitivity=observation.sensitivity,
+                )
+            )
+            if observation.source_type is not MemorySourceType.MODEL_SUGGESTION:
+                raise MemoryScopeViolationError("Only model suggestions are Memory proposals")
+            scope = self._scope_with_write(base_scope, observation.proposed_namespace)
+            command = self._prepare_command(
+                unit_of_work,
+                tool_name=tool_name,
+                scope=scope,
+                payload={
+                    "task_id": str(request.task_id),
+                    "observation_id": str(request.observation_id),
+                },
+                idempotency_key=request.idempotency_key,
+                approval_confirmed=True,
+            )
+            changed = unit_of_work.memory.transition_observation(
+                observation.id,
+                expected_status=ObservationStatus.PENDING,
+                status=target_status,
+            )
+            if command.execute:
+                self._finish(
+                    unit_of_work,
+                    command.run,
+                    event_type=event_type,
+                    message="Memory proposal accepted" if accepted else "Memory proposal rejected",
+                    payload={
+                        "observation_id": str(changed.id),
+                        "namespace": changed.proposed_namespace.value,
+                        "status": changed.status.value,
+                    },
+                )
+            unit_of_work.commit()
+            source_run_id = command.run.id
+        self._refresh_projection_after_commit(request.task_id, source_run_id)
+        return changed
+
     def list_observations(
         self,
         request: MemoryObservationQuery,
     ) -> tuple[MemoryObservation, ...]:
         with self._unit_of_work_factory() as unit_of_work:
+            self._require_memory_enabled(unit_of_work)
             _task, scope = self._task_scope(unit_of_work, request.task_id)
             self._require_read_namespace(scope, request.namespace)
             arguments = self._scope_arguments(scope, request.namespace)
@@ -486,6 +736,11 @@ class MemoryApplication:
                 unit_of_work.commit()
         except Exception as error:
             self._fail_projection_refresh(running, error)
+
+    @staticmethod
+    def _require_memory_enabled(unit_of_work: CoreUnitOfWork) -> None:
+        if not unit_of_work.memory_settings.get().enabled:
+            raise RuntimeError("Memory is disabled by Core settings")
 
     def _start_projection_refresh(
         self,

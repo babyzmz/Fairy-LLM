@@ -69,10 +69,15 @@ export type MemoryObservation = Schemas["MemoryObservationModel"];
 export type MemoryObservationPage = Schemas["MemoryObservationPageModel"];
 export type MemoryObserveInput = Schemas["MemoryObserveInput"];
 export type MemoryProjectionHealth = Schemas["MemoryProjectionHealthModel"];
+export type MemoryProposal = Schemas["MemoryProposalModel"];
+export type MemoryProposalActionInput = Schemas["MemoryProposalActionInput"];
+export type MemoryProposalPage = Schemas["MemoryProposalPageModel"];
 export type MemorySearchHit = Schemas["MemorySearchHitModel"];
 export type MemorySearchInput = operations["memory.search"]["parameters"]["query"];
 export type MemorySearchPage = Schemas["MemorySearchPageModel"];
 export type MemorySnapshot = Schemas["MemorySnapshotModel"];
+export type MemorySettings = Schemas["MemorySettingsModel"];
+export type MemorySettingsUpdateInput = Schemas["MemorySettingsUpdateInput"];
 export type MemoryTombstone = Schemas["MemoryTombstoneModel"];
 export type McpServer = Schemas["McpServerModel"];
 export type McpPresetInstallInput = Schemas["McpPresetInstallInput"];
@@ -529,6 +534,23 @@ export interface CoreMethodMap {
   "memory.projection.health": {
     params: { task_id: string };
     result: MemoryProjectionHealth;
+  };
+  "memory.proposals.list": {
+    params: { task_id: string; limit: number };
+    result: MemoryProposalPage;
+  };
+  "memory.proposals.accept": {
+    params: MemoryProposalActionInput;
+    result: MemoryProposal;
+  };
+  "memory.proposals.reject": {
+    params: MemoryProposalActionInput;
+    result: MemoryProposal;
+  };
+  "memory.settings.get": { params: EmptyParams; result: MemorySettings };
+  "memory.settings.update": {
+    params: MemorySettingsUpdateInput;
+    result: MemorySettings;
   };
 }
 

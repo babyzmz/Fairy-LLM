@@ -1133,6 +1133,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/memory/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Memory Proposals */
+        get: operations["memory.proposals.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/proposals/{observation_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept Memory Proposal */
+        post: operations["memory.proposals.accept"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/proposals/{observation_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject Memory Proposal */
+        post: operations["memory.proposals.reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/memory/search": {
         parameters: {
             query?: never;
@@ -1143,6 +1194,24 @@ export interface paths {
         /** Search Memory */
         get: operations["memory.search"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/memory/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Memory Settings */
+        get: operations["memory.settings.get"];
+        /** Update Memory Settings */
+        put: operations["memory.settings.update"];
         post?: never;
         delete?: never;
         options?: never;
@@ -4690,6 +4759,78 @@ export interface components {
              */
             updated_at: string;
         };
+        /** MemoryProposalActionInput */
+        MemoryProposalActionInput: {
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Observation Id
+             * Format: uuid
+             */
+            observation_id: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** User Confirmed */
+            user_confirmed: boolean;
+        };
+        /** MemoryProposalModel */
+        MemoryProposalModel: {
+            /** Actor */
+            actor: string;
+            authority: components["schemas"]["MemoryAuthority"];
+            /** Confidence */
+            confidence: number;
+            /** Content */
+            content: string;
+            /** Content Hash */
+            content_hash: string;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Project Id */
+            project_id: string | null;
+            proposed_namespace: components["schemas"]["MemoryNamespace"];
+            scan_result: components["schemas"]["MemoryScanResult"];
+            /** Scope Digest */
+            scope_digest: string;
+            sensitivity: components["schemas"]["MemorySensitivity"];
+            /** Source Cursor */
+            source_cursor: number;
+            /**
+             * Source Event Id
+             * Format: uuid
+             */
+            source_event_id: string;
+            source_type: components["schemas"]["MemorySourceType"];
+            status: components["schemas"]["ObservationStatus"];
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /** Version Id */
+            version_id: string | null;
+        };
+        /** MemoryProposalPageModel */
+        MemoryProposalPageModel: {
+            /** Items */
+            items: components["schemas"]["MemoryProposalModel"][];
+        };
         /**
          * MemoryScanResult
          * @enum {string}
@@ -4758,6 +4899,39 @@ export interface components {
          * @enum {string}
          */
         MemorySensitivity: "public" | "private" | "secret";
+        /** MemorySettingsModel */
+        MemorySettingsModel: {
+            /** Enabled */
+            enabled: boolean;
+            /** Export To Obsidian */
+            export_to_obsidian: boolean;
+            /** Retention Days */
+            retention_days: number;
+            /** Revision */
+            revision: number;
+            /** Sync Normalized Content */
+            sync_normalized_content: boolean;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** MemorySettingsUpdateInput */
+        MemorySettingsUpdateInput: {
+            /** Enabled */
+            enabled: boolean;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Export To Obsidian */
+            export_to_obsidian: boolean;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /** Retention Days */
+            retention_days: number;
+            /** Sync Normalized Content */
+            sync_normalized_content: boolean;
+        };
         /** MemorySnapshotItemModel */
         MemorySnapshotItemModel: {
             authority: components["schemas"]["MemoryAuthority"];
@@ -9682,6 +9856,114 @@ export interface operations {
             };
         };
     };
+    "memory.proposals.list": {
+        parameters: {
+            query: {
+                task_id: string;
+                limit?: number;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryProposalPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.proposals.accept": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                observation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryProposalActionInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryProposalModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.proposals.reject": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                observation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryProposalActionInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryProposalModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "memory.search": {
         parameters: {
             query: {
@@ -9704,6 +9986,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemorySearchPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.settings.get": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySettingsModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "memory.settings.update": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemorySettingsUpdateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySettingsModel"];
                 };
             };
             /** @description Validation Error */

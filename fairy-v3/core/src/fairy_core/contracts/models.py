@@ -293,6 +293,24 @@ class ExecutionSettingsModel(ContractModel):
     updated_at: datetime
 
 
+class MemorySettingsUpdateInput(ContractModel):
+    enabled: bool
+    retention_days: int = Field(ge=1, le=3_650)
+    export_to_obsidian: bool
+    sync_normalized_content: bool
+    expected_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=512)
+
+
+class MemorySettingsModel(ContractModel):
+    enabled: bool
+    retention_days: int = Field(ge=1, le=3_650)
+    export_to_obsidian: bool
+    sync_normalized_content: bool
+    revision: int = Field(ge=0)
+    updated_at: datetime
+
+
 class ProviderHealthInput(ContractModel):
     profile_id: str | None = Field(default=None, min_length=1, max_length=128)
 
@@ -856,6 +874,36 @@ class MemoryObserveInput(ContractModel):
     idempotency_key: str = Field(min_length=1, max_length=255)
 
 
+class MemorySuggestInput(ContractModel):
+    task_id: UUID
+    content: str = Field(min_length=1, max_length=10_000)
+    proposed_namespace: MemoryNamespace = MemoryNamespace.CONVERSATION_DRAFT
+    idempotency_key: str = Field(min_length=1, max_length=255)
+
+    @field_validator("proposed_namespace")
+    @classmethod
+    def validate_proposed_namespace(cls, value: MemoryNamespace) -> MemoryNamespace:
+        if value not in {
+            MemoryNamespace.PROJECT_CANONICAL,
+            MemoryNamespace.CONVERSATION_DRAFT,
+            MemoryNamespace.TASK_EPISODE,
+        }:
+            raise ValueError("model suggestions require a task-scoped namespace")
+        return value
+
+
+class MemoryProposalActionInput(ContractModel):
+    task_id: UUID
+    observation_id: UUID
+    user_confirmed: bool
+    idempotency_key: str = Field(min_length=1, max_length=255)
+
+
+class MemoryProposalListInput(ContractModel):
+    task_id: UUID
+    limit: int = Field(default=100, ge=1, le=500)
+
+
 class MemoryObservationQuery(ContractModel):
     task_id: UUID
     namespace: MemoryNamespace
@@ -962,6 +1010,14 @@ class MemoryObservationModel(ContractModel):
 
 class MemoryObservationPageModel(ContractModel):
     items: tuple[MemoryObservationModel, ...]
+
+
+class MemoryProposalModel(MemoryObservationModel):
+    pass
+
+
+class MemoryProposalPageModel(ContractModel):
+    items: tuple[MemoryProposalModel, ...]
 
 
 class MemoryClaimModel(ContractModel):

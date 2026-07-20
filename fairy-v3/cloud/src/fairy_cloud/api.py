@@ -55,8 +55,14 @@ from fairy_core.contracts.models import (
     MemoryObserveInput,
     MemoryProjectionHealthInput,
     MemoryProjectionHealthModel,
+    MemoryProposalActionInput,
+    MemoryProposalListInput,
+    MemoryProposalModel,
+    MemoryProposalPageModel,
     MemorySearchInput,
     MemorySearchPageModel,
+    MemorySettingsModel,
+    MemorySettingsUpdateInput,
     MemorySnapshotGetInput,
     MemorySnapshotModel,
     MemoryTombstoneModel,
@@ -944,6 +950,64 @@ def create_cloud_app(
         request: Annotated[MemoryProjectionHealthInput, Query()],
     ) -> dict[str, Any]:
         return invoke("memory.projection.health", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/memory/settings",
+        operation_id="memory.settings.get",
+        response_model=MemorySettingsModel,
+    )
+    def get_memory_settings() -> dict[str, Any]:
+        return invoke("memory.settings.get", {})
+
+    @protected.put(
+        "/memory/settings",
+        operation_id="memory.settings.update",
+        response_model=MemorySettingsModel,
+    )
+    def update_memory_settings(request: MemorySettingsUpdateInput) -> dict[str, Any]:
+        return invoke("memory.settings.update", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/memory/proposals",
+        operation_id="memory.proposals.list",
+        response_model=MemoryProposalPageModel,
+    )
+    def list_memory_proposals(
+        request: Annotated[MemoryProposalListInput, Query()],
+    ) -> dict[str, Any]:
+        return invoke("memory.proposals.list", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/memory/proposals/{observation_id}/accept",
+        operation_id="memory.proposals.accept",
+        response_model=MemoryProposalModel,
+    )
+    def accept_memory_proposal(
+        observation_id: UUID,
+        request: MemoryProposalActionInput,
+    ) -> dict[str, Any]:
+        if request.observation_id != observation_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "observation id mismatch"},
+            )
+        return invoke("memory.proposals.accept", request.model_dump(mode="json"))
+
+    @protected.post(
+        "/memory/proposals/{observation_id}/reject",
+        operation_id="memory.proposals.reject",
+        response_model=MemoryProposalModel,
+    )
+    def reject_memory_proposal(
+        observation_id: UUID,
+        request: MemoryProposalActionInput,
+    ) -> dict[str, Any]:
+        if request.observation_id != observation_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "observation id mismatch"},
+            )
+        return invoke("memory.proposals.reject", request.model_dump(mode="json"))
 
     @protected.post("/sync/projects", operation_id="sync.projects.register")
     async def register_synced_project(

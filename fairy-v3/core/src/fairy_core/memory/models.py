@@ -238,6 +238,11 @@ class MemoryObservation:
             scan_result=scan_result if scan_result is not None else self.scan_result,
         )
 
+    def with_scan_result(self, scan_result: MemoryScanResult) -> MemoryObservation:
+        if self.status is not ObservationStatus.PENDING:
+            raise InvalidTransitionError("only pending Memory observations can be scanned")
+        return replace(self, scan_result=scan_result)
+
 
 @dataclass(slots=True, init=False)
 class MemoryClaim:
