@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CoreClient, RealtimeWorkerStatus } from "../core/client";
 import type { RealtimeSession } from "../core/contracts";
-import { credentialProviderFor, RealtimeCompanion, mergeCaptionDelta } from "./RealtimeCompanion";
+import {
+  credentialProviderFor,
+  RealtimeCompanion,
+  mergeCaptionDelta,
+  realtimeProviderErrorMessage,
+} from "./RealtimeCompanion";
 
 const invoke = vi.fn();
 let eventListener: ((event: { payload: Record<string, unknown> }) => void) | null = null;
@@ -142,5 +147,20 @@ describe("mergeCaptionDelta", () => {
     expect(mergeCaptionDelta("Boss", "Boss incoming")).toBe("Boss incoming");
     expect(mergeCaptionDelta("Boss ", "incoming")).toBe("Boss incoming");
     expect(mergeCaptionDelta("Boss incoming", "incoming")).toBe("Boss incoming");
+  });
+});
+
+describe("realtimeProviderErrorMessage", () => {
+  it("turns safe worker codes into actionable user messages", () => {
+    expect(realtimeProviderErrorMessage("REALTIME_PROVIDER_QUOTA_EXHAUSTED"))
+      .toContain("balance or quota");
+    expect(realtimeProviderErrorMessage("REALTIME_PROVIDER_AUTHENTICATION_FAILED"))
+      .toContain("API key");
+    expect(realtimeProviderErrorMessage("REALTIME_CREDENTIAL_MISSING"))
+      .toContain("Settings");
+    expect(realtimeProviderErrorMessage("provider secret leaked here"))
+      .toBe("Realtime session failed.");
+    expect(realtimeProviderErrorMessage("UNRECOGNIZED_INTERNAL_CODE"))
+      .toBe("Realtime session failed.");
   });
 });

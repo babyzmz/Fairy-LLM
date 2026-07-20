@@ -122,8 +122,8 @@ fn run_session(
         native_audio,
     ) {
         Ok(provider) => provider,
-        Err(_) => {
-            emit_failed(&events, &session_id, "REALTIME_PROVIDER_UNAVAILABLE");
+        Err(error) => {
+            emit_failed(&events, &session_id, error.public_code());
             return;
         }
     };
@@ -194,11 +194,8 @@ fn run_session(
                 call_id,
                 public_summary,
             }) => {
-                if provider
-                    .send_tool_result(&call_id, &public_summary)
-                    .is_err()
-                {
-                    emit_failed(&events, &session_id, "REALTIME_PROVIDER_INTERRUPTED");
+                if let Err(error) = provider.send_tool_result(&call_id, &public_summary) {
+                    emit_failed(&events, &session_id, error.public_code());
                     return;
                 }
             }
@@ -221,18 +218,18 @@ fn run_session(
                 bytes.extend_from_slice(&sample.to_le_bytes());
             }
             samples.zeroize();
-            if provider.send_audio(&bytes).is_err() {
+            if let Err(error) = provider.send_audio(&bytes) {
                 bytes.zeroize();
-                emit_failed(&events, &session_id, "REALTIME_PROVIDER_INTERRUPTED");
+                emit_failed(&events, &session_id, error.public_code());
                 return;
             }
             bytes.zeroize();
         }
         if last_video_sent.elapsed() >= Duration::from_secs(1) {
             if let Some(mut frame) = video.as_ref().and_then(VideoCapture::take_latest) {
-                if provider.send_video(&frame.jpeg).is_err() {
+                if let Err(error) = provider.send_video(&frame.jpeg) {
                     frame.jpeg.zeroize();
-                    emit_failed(&events, &session_id, "REALTIME_PROVIDER_INTERRUPTED");
+                    emit_failed(&events, &session_id, error.public_code());
                     return;
                 }
                 frame.jpeg.zeroize();
@@ -242,8 +239,8 @@ fn run_session(
         }
         let outputs = match provider.receive() {
             Ok(outputs) => outputs,
-            Err(_) => {
-                emit_failed(&events, &session_id, "REALTIME_PROVIDER_INTERRUPTED");
+            Err(error) => {
+                emit_failed(&events, &session_id, error.public_code());
                 return;
             }
         };

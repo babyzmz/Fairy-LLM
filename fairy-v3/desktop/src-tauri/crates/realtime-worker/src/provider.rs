@@ -6,6 +6,7 @@ use thiserror::Error;
 const MAX_AUDIO_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_VIDEO_FRAME_BYTES: usize = 2 * 1024 * 1024;
 const MAX_PUBLIC_TEXT_CHARS: usize = 2_000;
+const MAX_TEXT_INPUT_CHARS: usize = 4_000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProviderOutput {
@@ -39,12 +40,15 @@ pub enum ProviderProtocolError {
     MediaTooLarge,
     #[error("provider event is invalid")]
     InvalidEvent,
+    #[error("provider text input is invalid")]
+    InvalidText,
     #[error("provider payload is not valid base64")]
     InvalidBase64,
 }
 
 pub trait RealtimeProtocol {
     fn setup(&self) -> Value;
+    fn text(&self, text: &str) -> Result<Vec<Value>, ProviderProtocolError>;
     fn audio(&self, pcm16: &[u8]) -> Result<Value, ProviderProtocolError>;
     fn video(&self, jpeg: &[u8]) -> Result<Value, ProviderProtocolError>;
     fn tool_result(&self, call_id: &str, output: &str) -> Value;
@@ -82,6 +86,16 @@ impl RealtimeProtocol for GeminiProtocol {
                 }
             }
         })
+    }
+
+    fn text(&self, text: &str) -> Result<Vec<Value>, ProviderProtocolError> {
+        let text = bounded_text_input(text)?;
+        Ok(vec![json!({
+            "clientContent": {
+                "turns": [{"role": "user", "parts": [{"text": text}]}],
+                "turnComplete": true
+            }
+        })])
     }
 
     fn audio(&self, pcm16: &[u8]) -> Result<Value, ProviderProtocolError> {
@@ -262,6 +276,23 @@ impl RealtimeProtocol for GlmProtocol {
         })
     }
 
+    fn text(&self, text: &str) -> Result<Vec<Value>, ProviderProtocolError> {
+        let text = bounded_text_input(text)?;
+        Ok(vec![
+            json!({
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "object": "realtime.item",
+                    "status": "completed",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": text}]
+                }
+            }),
+            json!({"type": "response.create"}),
+        ])
+    }
+
     fn audio(&self, pcm16: &[u8]) -> Result<Value, ProviderProtocolError> {
         media_limit(pcm16, MAX_AUDIO_CHUNK_BYTES)?;
         Ok(json!({"type": "input_audio_buffer.append", "audio": BASE64.encode(pcm16)}))
@@ -293,7 +324,8 @@ impl RealtimeProtocol for GlmProtocol {
             .and_then(Value::as_str)
             .ok_or(ProviderProtocolError::InvalidEvent)?;
         let output = match kind {
-            "session.created" | "session.updated" => Some(ProviderOutput::Ready),
+            "session.created" => None,
+            "session.updated" => Some(ProviderOutput::Ready),
             "input_audio_buffer.speech_started" => Some(ProviderOutput::SpeechStarted),
             "input_audio_buffer.speech_stopped" => Some(ProviderOutput::SpeechStopped),
             "response.audio.delta" => Some(ProviderOutput::Audio(
@@ -308,11 +340,21 @@ impl RealtimeProtocol for GlmProtocol {
                     speaker: CaptionSpeaker::Assistant,
                 })
             }
-            "response.text.done" | "response.audio_transcript.done" => {
+            "response.text.done" => Some(ProviderOutput::PublicCaption {
+                text: bounded_public_text(&required_string(event, "text")?),
+                stable: true,
+                speaker: CaptionSpeaker::Assistant,
+            }),
+            "response.audio_transcript.done" => Some(ProviderOutput::PublicCaption {
+                text: bounded_public_text(&required_string(event, "transcript")?),
+                stable: true,
+                speaker: CaptionSpeaker::Assistant,
+            }),
+            "conversation.item.input_audio_transcription.completed" => {
                 Some(ProviderOutput::PublicCaption {
-                    text: bounded_public_text(&required_string(event, "text")?),
+                    text: bounded_public_text(&required_string(event, "transcript")?),
                     stable: true,
-                    speaker: CaptionSpeaker::Assistant,
+                    speaker: CaptionSpeaker::User,
                 })
             }
             "response.function_call_arguments.done" => Some(ProviderOutput::ToolCall {
@@ -351,6 +393,14 @@ fn required_string(value: &Value, field: &str) -> Result<String, ProviderProtoco
 
 fn bounded_public_text(value: &str) -> String {
     value.chars().take(MAX_PUBLIC_TEXT_CHARS).collect()
+}
+
+fn bounded_text_input(value: &str) -> Result<String, ProviderProtocolError> {
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > MAX_TEXT_INPUT_CHARS {
+        return Err(ProviderProtocolError::InvalidText);
+    }
+    Ok(value.to_owned())
 }
 
 #[cfg(test)]
@@ -405,6 +455,22 @@ mod tests {
             protocol.audio(&[1, 2]).expect("audio").get("type"),
             Some(&json!("input_audio_buffer.append"))
         );
+        let text = protocol.text("hello").expect("text");
+        assert_eq!(
+            text[0].pointer("/item/content/0/text"),
+            Some(&json!("hello"))
+        );
+        assert_eq!(text[1].get("type"), Some(&json!("response.create")));
+        assert!(protocol
+            .parse(&json!({"type": "session.created"}))
+            .expect("created")
+            .is_empty());
+        assert_eq!(
+            protocol
+                .parse(&json!({"type": "session.updated"}))
+                .expect("updated"),
+            vec![ProviderOutput::Ready]
+        );
     }
 
     #[test]
@@ -423,6 +489,42 @@ mod tests {
                 text: "hello".to_owned(),
                 stable: false,
                 speaker: CaptionSpeaker::Assistant,
+            }]
+        );
+    }
+
+    #[test]
+    fn glm_transcription_completion_uses_the_official_transcript_field() {
+        let protocol = GlmProtocol {
+            model: "glm-realtime-flash".to_owned(),
+            system_instruction: String::new(),
+            video_enabled: false,
+            native_audio: true,
+        };
+        assert_eq!(
+            protocol
+                .parse(&json!({
+                    "type": "response.audio_transcript.done",
+                    "transcript": "assistant words"
+                }))
+                .expect("assistant transcript"),
+            vec![ProviderOutput::PublicCaption {
+                text: "assistant words".to_owned(),
+                stable: true,
+                speaker: CaptionSpeaker::Assistant,
+            }]
+        );
+        assert_eq!(
+            protocol
+                .parse(&json!({
+                    "type": "conversation.item.input_audio_transcription.completed",
+                    "transcript": "user words"
+                }))
+                .expect("user transcript"),
+            vec![ProviderOutput::PublicCaption {
+                text: "user words".to_owned(),
+                stable: true,
+                speaker: CaptionSpeaker::User,
             }]
         );
     }

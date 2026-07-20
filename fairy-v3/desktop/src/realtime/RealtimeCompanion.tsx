@@ -191,7 +191,7 @@ export function RealtimeCompanion({
       if (payload.type === "worker_interrupted") {
         if (current !== null) void report("interrupted", payload.error_code);
         setPresence("error");
-        setError("Realtime worker was interrupted");
+        setError(realtimeProviderErrorMessage(payload.error_code));
         return;
       }
       if (!("session_id" in payload) || payload.session_id !== current?.id) return;
@@ -200,7 +200,7 @@ export function RealtimeCompanion({
         if (payload.status === "active") void report("active");
         if (payload.status === "interrupted") void report("interrupted", payload.error_code ?? "WORKER_INTERRUPTED");
         if (payload.status === "failed") {
-          setError(payload.error_code ?? "Realtime session failed");
+          setError(realtimeProviderErrorMessage(payload.error_code));
           void (async () => {
             await report("failed", payload.error_code ?? "REALTIME_SESSION_FAILED");
             await client.worker.stop(payload.session_id).catch(() => undefined);
@@ -295,7 +295,7 @@ export function RealtimeCompanion({
       });
       setPresence("connecting");
     } catch (caught) {
-      setError(messageOf(caught));
+      setError(realtimeProviderErrorMessage(messageOf(caught)));
       if (sessionRef.current !== null) await report("failed", "REALTIME_START_FAILED");
     } finally {
       setBusy(false);
@@ -416,6 +416,30 @@ export function credentialProviderFor(
   if (provider === "gemini_live") return "gemini";
   if (provider === "glm_realtime_air" || provider === "glm_realtime_flash") return "zhipu";
   return locale.toLowerCase().startsWith("zh") ? "zhipu" : "gemini";
+}
+
+export function realtimeProviderErrorMessage(code?: string | null): string {
+  switch (code) {
+    case "REALTIME_PROVIDER_AUTHENTICATION_FAILED":
+      return "The realtime provider rejected the API key. Update it in Settings.";
+    case "REALTIME_PROVIDER_QUOTA_EXHAUSTED":
+      return "The realtime provider account has no available balance or quota.";
+    case "REALTIME_PROVIDER_RATE_LIMITED":
+      return "The realtime provider is busy or rate-limited. Try again shortly.";
+    case "REALTIME_PROVIDER_TIMEOUT":
+      return "The realtime provider did not respond in time.";
+    case "REALTIME_PROVIDER_REQUEST_REJECTED":
+    case "REALTIME_PROVIDER_PROTOCOL_ERROR":
+      return "The realtime provider rejected the session configuration.";
+    case "REALTIME_PROVIDER_UNAVAILABLE":
+    case "REALTIME_PROVIDER_INTERRUPTED":
+    case "WORKER_INTERRUPTED":
+      return "The realtime provider is temporarily unavailable.";
+    case "REALTIME_CREDENTIAL_MISSING":
+      return "Configure the realtime provider API key in Settings before starting.";
+    default:
+      return "Realtime session failed.";
+  }
 }
 
 function presenceLabel(value: string): string {
