@@ -419,6 +419,58 @@ describe("WorkspaceShell", () => {
     expect(model.readObsidianItem).toHaveBeenCalledWith(model.obsidianItems[0]);
   });
 
+  it("requires an explicit local Vault folder scope before connecting", async () => {
+    const project = projectFixture();
+    const thread = projectConversationFixture(project);
+    const model = {
+      ...workspaceModel(),
+      projects: [project],
+      selectedProject: project,
+      selectedConversation: thread,
+      projectConversations: [thread],
+      workspaceTask: workspaceTask(),
+      workspaceFiles: [{
+        workspace_id: project.workspace_id,
+        version_id: "019f566f-f8b4-7000-8000-000000000143",
+        path: "Notes/seed.md",
+        byte_length: 12,
+        content_hash: "c".repeat(64),
+        kind: "text",
+        language: "markdown",
+      }],
+      selectObsidianVault: vi.fn(async () => ({
+        local_path_token: "019f566f-f8b4-7000-8000-000000000142",
+        display_name: "Project Vault",
+        available_directories: ["Notes", "References"],
+      })),
+    };
+    render(<WorkspaceShell model={model} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Obsidian" }));
+    const knowledge = screen.getByLabelText("Obsidian project knowledge");
+    fireEvent.click(within(knowledge).getByRole("button", { name: "Sync" }));
+    fireEvent.click(within(knowledge).getByRole("button", { name: "Choose Vault" }));
+
+    expect(await within(knowledge).findByText("Project Vault")).toBeVisible();
+    const submit = within(knowledge).getByRole("button", { name: "Confirm connection" });
+    expect(submit).toBeDisabled();
+    fireEvent.click(within(knowledge).getByRole("checkbox", { name: "Notes" }));
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(model.connectObsidianVault).toHaveBeenCalledWith(
+      expect.objectContaining({
+        local_path_token: "019f566f-f8b4-7000-8000-000000000142",
+      }),
+      {
+        readScope: "selected_directories",
+        allowedDirectories: ["Notes"],
+        wholeVaultConfirmed: false,
+        managedDirectory: "Fairy",
+      },
+    ));
+  });
+
   it("presents PROJECT_BUSY without exposing an internal error code", () => {
     const model = {
       ...workspaceModel(),
@@ -576,6 +628,7 @@ function workspaceModel(): WorkspaceModel {
     createProject: vi.fn(async () => undefined),
     importProject: vi.fn(async () => undefined),
     selectProjectFolder: vi.fn(async () => "C:\\Projects\\selected"),
+    selectObsidianVault: vi.fn(async () => null),
     connectObsidianVault: vi.fn(async () => undefined),
     syncObsidianSource: vi.fn(async () => undefined),
     readObsidianItem: vi.fn(async (item) => ({

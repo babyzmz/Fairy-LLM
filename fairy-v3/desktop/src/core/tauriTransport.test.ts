@@ -111,6 +111,23 @@ describe("TauriCoreTransport", () => {
     expect(invoke).toHaveBeenCalledWith("select_project_folder");
   });
 
+  it("registers Obsidian Vault paths through the device-local host command", async () => {
+    const selection = {
+      local_path_token: "0198f4de-0114-7000-8000-000000000002",
+      display_name: "Project Vault",
+      available_directories: ["Notes"],
+    };
+    const invoke = vi.fn().mockResolvedValue(selection);
+    const transport = new TauriCoreTransport(invoke);
+
+    await expect(transport.selectObsidianVault()).resolves.toEqual(selection);
+    expect(invoke).toHaveBeenCalledWith("select_obsidian_vault");
+    expect(invoke).not.toHaveBeenCalledWith(
+      "core_rpc",
+      expect.objectContaining({ request: expect.objectContaining({ params: expect.anything() }) }),
+    );
+  });
+
   it("rejects malformed local Preview envelopes", async () => {
     const id = "0198f4de-0114-7000-8000-000000000001";
     const invoke = vi.fn().mockResolvedValue({

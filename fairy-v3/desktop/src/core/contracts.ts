@@ -1,4 +1,31 @@
 import type { components, operations } from "./generated/api";
+import type {
+  ObsidianConnectorHealth,
+  ObsidianSource,
+  ObsidianSourceCreateInput,
+  ObsidianSourcePage,
+  ObsidianSourceSyncInput,
+  ObsidianSyncResult,
+  ObsidianVaultItem,
+  ObsidianVaultItemContent,
+  ObsidianVaultItemPage,
+  ObsidianVaultItemReadInput,
+} from "./localContracts";
+
+export type {
+  ObsidianConnectorHealth,
+  ObsidianReadScope,
+  ObsidianSource,
+  ObsidianSourceCreateInput,
+  ObsidianSourceMode,
+  ObsidianSourcePage,
+  ObsidianSourceSyncInput,
+  ObsidianSyncResult,
+  ObsidianVaultItem,
+  ObsidianVaultItemContent,
+  ObsidianVaultItemPage,
+  ObsidianVaultItemReadInput,
+} from "./localContracts";
 
 type Schemas = components["schemas"];
 
@@ -65,16 +92,6 @@ export type KnowledgeItemListInput = NonNullable<operations["knowledge.items.lis
   project_id: string;
 };
 export type ProjectKnowledgeOverview = Schemas["ProjectKnowledgeOverviewModel"];
-export type ObsidianConnectorHealth = Schemas["ObsidianConnectorHealthModel"];
-export type ObsidianSource = Schemas["ObsidianSourceModel"];
-export type ObsidianSourceCreateInput = Schemas["ObsidianSourceCreateInput"];
-export type ObsidianSourcePage = Schemas["ObsidianSourcePageModel"];
-export type ObsidianSourceSyncInput = Schemas["ObsidianSourceSyncInput"];
-export type ObsidianSyncResult = Schemas["ObsidianSyncResultModel"];
-export type ObsidianVaultItemContent = Schemas["ObsidianVaultItemContentModel"];
-export type ObsidianVaultItem = Schemas["ObsidianVaultItemModel"];
-export type ObsidianVaultItemPage = Schemas["ObsidianVaultItemPageModel"];
-export type ObsidianVaultItemReadInput = Schemas["ObsidianVaultItemReadInput"];
 export type MemoryClaim = Schemas["MemoryClaimModel"];
 export type MemoryClaimContext = Schemas["MemoryClaimContextModel"];
 export type MemoryClaimPage = Schemas["MemoryClaimPageModel"];
@@ -593,10 +610,22 @@ export interface CoreMethodMap {
 
 export type CoreMethodName = keyof CoreMethodMap;
 
+export const LOCAL_ONLY_CORE_METHODS = [
+  "obsidian.health.get",
+  "obsidian.sources.create",
+  "obsidian.sources.items.list",
+  "obsidian.sources.items.read",
+  "obsidian.sources.list",
+  "obsidian.sync.start",
+] as const satisfies readonly CoreMethodName[];
+
+export type LocalOnlyCoreMethod = (typeof LOCAL_ONLY_CORE_METHODS)[number];
+export type CloudCoreMethod = Exclude<CoreMethodName, LocalOnlyCoreMethod>;
+
 type GeneratedRpcMethod = Exclude<keyof operations, "cloud.ready" | `sync.${string}`>;
 type CoreMethodContractCoverage =
-  Exclude<GeneratedRpcMethod, CoreMethodName> extends never
-    ? Exclude<CoreMethodName, GeneratedRpcMethod> extends never
+  Exclude<GeneratedRpcMethod, CloudCoreMethod> extends never
+    ? Exclude<CloudCoreMethod, GeneratedRpcMethod> extends never
       ? true
       : never
     : never;

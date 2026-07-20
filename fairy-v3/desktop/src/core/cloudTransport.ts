@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { LOCAL_ONLY_CORE_METHODS } from "./contracts";
 import type { CoreMethodMap, CoreMethodName, EventEnvelope, EventSubscriptionOptions } from "./contracts";
 import type { CoreCallOptions, CoreTransport } from "./client";
 import { parseMemoryResult } from "./memoryValidation";
@@ -23,6 +24,7 @@ interface RequestDescriptor {
 
 type RuntimeParams = Record<string, unknown>;
 type RouteBuilder = (params: RuntimeParams) => RequestDescriptor;
+const localOnlyMethods = new Set<CoreMethodName>(LOCAL_ONLY_CORE_METHODS);
 
 const routes = {
   health: () => get("/v1/health"),
@@ -47,16 +49,6 @@ const routes = {
     getWithQuery(`/v1/projects/${pathParameter(params, "project_id")}/knowledge/items`, params, ["query", "limit"]),
   "knowledge.graph.get": (params) =>
     get(`/v1/projects/${pathParameter(params, "project_id")}/knowledge/graph`),
-  "obsidian.health.get": () => get("/v1/obsidian/health"),
-  "obsidian.sources.create": (params) => post("/v1/obsidian/sources", params),
-  "obsidian.sources.list": (params) =>
-    getWithQuery("/v1/obsidian/sources", params, ["project_id"]),
-  "obsidian.sources.items.list": (params) =>
-    get(`/v1/obsidian/sources/${pathParameter(params, "source_id")}/items`),
-  "obsidian.sources.items.read": (params) =>
-    post(`/v1/obsidian/sources/${pathParameter(params, "source_id")}/items/read`, params),
-  "obsidian.sync.start": (params) =>
-    post(`/v1/obsidian/sources/${pathParameter(params, "source_id")}/sync`, params),
   "trash.items.list": (params) => getWithQuery("/v1/history/trash", params, ["limit", "cursor"]),
   "trash.items.restore": (params) =>
     post(
@@ -276,7 +268,7 @@ const routes = {
         `&limit=${integerParameter(params, "limit")}`,
     ),
   "events.subscribe": (params) => get(`/v1/events?cursor=${integerParameter(params, "cursor")}&follow=false`),
-} satisfies Record<CoreMethodName, RouteBuilder>;
+} satisfies Partial<Record<CoreMethodName, RouteBuilder>>;
 
 const eventEnvelopeSchema = z
   .object({
@@ -340,7 +332,20 @@ export class CloudCoreTransport implements CoreTransport {
     params: CoreMethodMap[M]["params"],
     options: CoreCallOptions = {},
   ): Promise<CoreMethodMap[M]["result"]> {
-    const descriptor = routes[method](params as RuntimeParams);
+    if (localOnlyMethods.has(method)) {
+      throw new CloudCoreError("This capability is available only on the local Fairy device", {
+        status: 400,
+        errorCode: "CAPABILITY_NOT_AVAILABLE",
+      });
+    }
+    const route = (routes as Partial<Record<CoreMethodName, RouteBuilder>>)[method];
+    if (route === undefined) {
+      throw new CloudCoreError("Cloud transport route is unavailable", {
+        status: 400,
+        errorCode: "CAPABILITY_NOT_AVAILABLE",
+      });
+    }
+    const descriptor = route(params as RuntimeParams);
     const response = await this.request(descriptor, {
       accept: method === "events.subscribe" ? "text/event-stream" : "application/json",
       signal: options.signal,

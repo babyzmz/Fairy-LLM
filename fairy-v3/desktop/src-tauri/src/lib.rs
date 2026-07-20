@@ -17,6 +17,7 @@ use desktop_preferences::{
     DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore, DesktopPreferencesUpdate,
     PetPreferencesUpdate,
 };
+use obsidian_path_registry::{ObsidianPathRegistry, ObsidianVaultSelection};
 use presence_coordinator::{
     anchor_from_ratios, anchor_ratios, global_cursor_position,
     resolve_drag_presence_placement_for_anchor, resolve_presence_placement,
@@ -51,6 +52,7 @@ use voice_worker::{
 
 pub mod capture;
 pub mod desktop_preferences;
+pub mod obsidian_path_registry;
 pub mod presence_backdrop;
 pub mod presence_coordinator;
 pub mod presence_interaction;
@@ -3845,6 +3847,32 @@ async fn select_project_folder(
 }
 
 #[tauri::command]
+async fn select_obsidian_vault(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<Option<ObsidianVaultSelection>, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let registry_path = state.data_dir.join("obsidian-paths.json");
+    tauri::async_runtime::spawn_blocking(move || {
+        let selected = app
+            .dialog()
+            .file()
+            .set_title("Select an Obsidian Vault")
+            .blocking_pick_folder();
+        let Some(FilePath::Path(path)) = selected else {
+            return Ok(None);
+        };
+        ObsidianPathRegistry::new(registry_path)
+            .register(&path)
+            .map(Some)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn select_skill_source(
     window: WebviewWindow,
     app: tauri::AppHandle,
@@ -4388,6 +4416,7 @@ pub fn run() {
             realtime_voice_start,
             realtime_voice_cancel,
             select_project_folder,
+            select_obsidian_vault,
             select_skill_source,
             capture::list_capture_surfaces,
             capture::capture_surface,

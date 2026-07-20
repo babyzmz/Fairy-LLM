@@ -13,6 +13,7 @@ from uuid import UUID
 
 from fairy_core.contracts.obsidian import (
     ObsidianConnectorHealthModel,
+    ObsidianReadScope,
     ObsidianSourceCreateInput,
     ObsidianSourceListInput,
     ObsidianSourceModel,
@@ -26,6 +27,7 @@ from fairy_core.contracts.obsidian import (
 )
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
 from fairy_core.domain.ids import new_id
+from fairy_core.obsidian.path_registry import ObsidianPathRegistry
 
 _WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]")
 _SUPPORTED_SUFFIXES = frozenset({".md", ".canvas"})
@@ -39,9 +41,13 @@ class ObsidianConnector:
         environment: Mapping[str, str] | None = None,
         *,
         registry_path: Path | None = None,
+        path_registry_path: Path | None = None,
     ) -> None:
         self._environment = dict(os.environ if environment is None else environment)
         self._registry_path = registry_path
+        self._path_registry = (
+            ObsidianPathRegistry(path_registry_path) if path_registry_path is not None else None
+        )
 
     def health(self) -> ObsidianConnectorHealthModel:
         desktop_installed = any(path.is_file() for path in self._desktop_candidates())
@@ -70,7 +76,9 @@ class ObsidianConnector:
             if prior["fingerprint"] != fingerprint:
                 raise IdempotencyConflictError("Obsidian source request changed")
             return self._source_model(registry["sources"][prior["source_id"]])
-        vault = self._canonical_vault(request.vault_path)
+        vault = self._canonical_vault(
+            self._require_path_registry().resolve(request.local_path_token)
+        )
         allowed = tuple(self._relative_directory(value) for value in request.allowed_directories)
         managed = self._relative_directory(request.managed_directory)
         now = datetime.now(UTC).isoformat()
@@ -79,7 +87,9 @@ class ObsidianConnector:
             "id": source_id,
             "project_id": str(request.project_id),
             "display_name": request.display_name.strip(),
-            "vault_path": str(vault),
+            "local_path_token": request.local_path_token,
+            "vault_display_path": vault.name or vault.drive,
+            "read_scope": request.read_scope.value,
             "allowed_directories": list(dict.fromkeys(allowed)),
             "managed_directory": managed,
             "mode": request.mode.value,
@@ -123,11 +133,9 @@ class ObsidianConnector:
         item = record["items"].get(relative)
         if item is None or item["content_hash"] != request.expected_content_hash:
             raise VersionConflictError("Obsidian item changed since it was indexed")
-        vault = self._canonical_vault(str(record["vault_path"]))
+        vault = self._source_vault(record)
         path = vault / PurePosixPath(relative)
-        if self._unsafe_file(path, vault):
-            raise ValueError("Obsidian item is outside the authorized Vault")
-        data = path.read_bytes()
+        data, _stat_result = self._read_authorized_file(path, vault)
         content_hash = hashlib.sha256(data).hexdigest()
         if content_hash != request.expected_content_hash:
             raise VersionConflictError("Obsidian item changed since it was indexed")
@@ -167,15 +175,22 @@ class ObsidianConnector:
         )
 
     def _scan(self, record: dict[str, object]) -> tuple[dict[str, object], int]:
-        vault = self._canonical_vault(str(record["vault_path"]))
+        vault = self._source_vault(record)
         allowed = tuple(record["allowed_directories"])
-        roots = (vault,) if not allowed else tuple(vault / value for value in allowed)
+        read_scope = ObsidianReadScope(str(record["read_scope"]))
+        roots = (
+            (vault,)
+            if read_scope is ObsidianReadScope.WHOLE_VAULT
+            else tuple(vault / value for value in allowed)
+        )
         items: dict[str, object] = {}
         failed = 0
         for root in roots:
             try:
+                if root.is_symlink() or self._is_reparse(root):
+                    raise ValueError("Obsidian directory cannot be a link or reparse point")
                 canonical_root = root.resolve(strict=True)
-            except (FileNotFoundError, OSError):
+            except (FileNotFoundError, OSError, ValueError):
                 failed += 1
                 continue
             if not canonical_root.is_dir() or not self._within(canonical_root, vault):
@@ -184,15 +199,11 @@ class ObsidianConnector:
             for path in canonical_root.rglob("*"):
                 try:
                     relative = path.relative_to(vault).as_posix()
-                    if self._excluded(relative) or self._unsafe_file(path, vault):
+                    if self._excluded(relative):
                         continue
                     if path.suffix.casefold() not in _SUPPORTED_SUFFIXES:
                         continue
-                    stat_result = path.stat(follow_symlinks=False)
-                    if stat_result.st_size > _MAX_ITEM_BYTES:
-                        failed += 1
-                        continue
-                    data = path.read_bytes()
+                    data, stat_result = self._read_authorized_file(path, vault)
                     text = data.decode("utf-8")
                     title = self._title(relative, text)
                     links = (
@@ -231,6 +242,23 @@ class ObsidianConnector:
         if not isinstance(parsed, dict) or not isinstance(parsed.get("sources"), dict):
             raise ValueError("Obsidian source registry is invalid")
         parsed.setdefault("requests", {})
+        migrated = False
+        for record in parsed["sources"].values():
+            if "vault_path" not in record:
+                continue
+            vault = self._canonical_vault(str(record.pop("vault_path")))
+            token = self._require_path_registry().register(vault)
+            record["local_path_token"] = token
+            record["vault_display_path"] = vault.name or vault.drive
+            allowed = tuple(record.get("allowed_directories", ()))
+            record["read_scope"] = (
+                ObsidianReadScope.SELECTED_DIRECTORIES.value
+                if allowed
+                else ObsidianReadScope.WHOLE_VAULT.value
+            )
+            migrated = True
+        if migrated:
+            self._save_registry(parsed)
         return parsed
 
     def _save_registry(self, registry: dict[str, object]) -> None:
@@ -243,7 +271,7 @@ class ObsidianConnector:
         )
         os.replace(temporary, self._registry_path)
 
-    def _canonical_vault(self, value: str) -> Path:
+    def _canonical_vault(self, value: str | Path) -> Path:
         candidate = Path(value).expanduser().resolve(strict=True)
         if not candidate.is_dir() or self._is_reparse(candidate):
             raise ValueError("Obsidian Vault must be a real local directory")
@@ -285,6 +313,82 @@ class ObsidianConnector:
             or not cls._within(path.resolve(strict=True), vault)
         )
 
+    @classmethod
+    def _read_authorized_file(cls, path: Path, vault: Path) -> tuple[bytes, os.stat_result]:
+        if not cls._within(path, vault) or cls._has_reparse_ancestor(path, vault):
+            raise ValueError("Obsidian item is outside the authorized Vault")
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOINHERIT", 0)
+        descriptor = os.open(path, flags)
+        try:
+            final_path = cls._final_path(descriptor, path)
+            if not cls._within(final_path, vault):
+                raise ValueError("Obsidian item is outside the authorized Vault")
+            stat_result = os.fstat(descriptor)
+            if not stat.S_ISREG(stat_result.st_mode):
+                raise ValueError("Obsidian item must be a regular file")
+            if stat_result.st_size > _MAX_ITEM_BYTES:
+                raise ValueError("Obsidian item exceeds the size limit")
+            chunks: list[bytes] = []
+            remaining = _MAX_ITEM_BYTES + 1
+            while remaining:
+                chunk = os.read(descriptor, min(remaining, 64 * 1024))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            data = b"".join(chunks)
+            if len(data) > _MAX_ITEM_BYTES:
+                raise ValueError("Obsidian item exceeds the size limit")
+            return data, stat_result
+        finally:
+            os.close(descriptor)
+
+    @classmethod
+    def _has_reparse_ancestor(cls, path: Path, vault: Path) -> bool:
+        current = path
+        while current != vault:
+            if current.is_symlink() or cls._is_reparse(current):
+                return True
+            parent = current.parent
+            if parent == current:
+                return True
+            current = parent
+        return False
+
+    @staticmethod
+    def _final_path(descriptor: int, fallback: Path) -> Path:
+        if os.name != "nt":
+            proc_path = Path(f"/proc/self/fd/{descriptor}")
+            return (
+                proc_path.resolve(strict=True)
+                if proc_path.exists()
+                else fallback.resolve(strict=True)
+            )
+        import ctypes
+        import msvcrt
+
+        handle = msvcrt.get_osfhandle(descriptor)
+        buffer = ctypes.create_unicode_buffer(32_768)
+        length = ctypes.windll.kernel32.GetFinalPathNameByHandleW(handle, buffer, len(buffer), 0)
+        if length == 0 or length >= len(buffer):
+            raise OSError("Unable to resolve the opened Obsidian item")
+        value = buffer.value
+        if value.startswith("\\\\?\\UNC\\"):
+            value = "\\\\" + value[8:]
+        elif value.startswith("\\\\?\\"):
+            value = value[4:]
+        return Path(value).resolve(strict=True)
+
+    def _source_vault(self, record: dict[str, object]) -> Path:
+        return self._canonical_vault(
+            self._require_path_registry().resolve(str(record["local_path_token"]))
+        )
+
+    def _require_path_registry(self) -> ObsidianPathRegistry:
+        if self._path_registry is None:
+            raise RuntimeError("Obsidian local path registry is unavailable")
+        return self._path_registry
+
     @staticmethod
     def _is_reparse(path: Path) -> bool:
         attributes = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
@@ -308,7 +412,8 @@ class ObsidianConnector:
             id=record["id"],
             project_id=record["project_id"],
             display_name=record["display_name"],
-            vault_display_path=record["vault_path"],
+            vault_display_path=record["vault_display_path"],
+            read_scope=record["read_scope"],
             allowed_directories=tuple(record["allowed_directories"]),
             managed_directory=record["managed_directory"],
             mode=record["mode"],

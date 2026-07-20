@@ -158,6 +158,12 @@ export interface RealtimeWorkerToolResultInput {
   succeeded: boolean;
 }
 
+export interface ObsidianVaultSelection {
+  local_path_token: string;
+  display_name: string;
+  available_directories: string[];
+}
+
 export interface CoreTransport {
   readonly eventSourceId?: string;
 
@@ -186,6 +192,7 @@ export interface CoreTransport {
   realtimeWorkerStop?(sessionId: string): Promise<RealtimeWorkerStatus>;
   realtimeWorkerToolResult?(input: RealtimeWorkerToolResultInput): Promise<void>;
   selectProjectFolder?(): Promise<string | null>;
+  selectObsidianVault?(): Promise<ObsidianVaultSelection | null>;
   openSettingsWindow?(): Promise<void>;
 }
 
@@ -241,6 +248,12 @@ export class CoreClient {
   };
 
   readonly obsidian = {
+    selectVault: () => {
+      if (this.transport.selectObsidianVault === undefined) {
+        throw new Error("Obsidian Vault selection requires the local Fairy desktop host");
+      }
+      return this.transport.selectObsidianVault();
+    },
     health: () => this.transport.call("obsidian.health.get", {}),
     createSource: (input: ObsidianSourceCreateInput) =>
       this.transport.call("obsidian.sources.create", input),

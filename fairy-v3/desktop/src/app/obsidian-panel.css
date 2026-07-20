@@ -61,6 +61,22 @@
 .obsidian-source-meta { margin: 12px 0 0 32px !important; color: #83d9b2 !important; font-family: "Cascadia Mono", monospace; }
 .obsidian-sync-note { margin-top: 14px !important; padding-left: 32px; }
 .obsidian-sync-note code { color: #d7ad63; }
+.obsidian-scope-form { display: grid; gap: 14px; margin: 14px 0 0 32px; padding: 14px; border: 1px solid #3b403d; background: #191c1a; }
+.obsidian-scope-form header { display: grid; gap: 3px; }
+.obsidian-scope-form header strong { color: #edf5f1; font-size: 13px; }
+.obsidian-scope-form header span, .obsidian-scope-form p { margin: 0; color: #8d9792; font-size: 11px; }
+.obsidian-scope-form fieldset { min-width: 0; display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0; padding: 10px 12px; border: 1px solid #363b38; }
+.obsidian-scope-form legend { padding: 0 5px; color: #8fa19a; font-size: 10px; }
+.obsidian-scope-form label { display: inline-flex; align-items: center; gap: 7px; color: #c7d1cc; font-size: 11px; }
+.obsidian-directory-list { max-height: 150px; overflow: auto; }
+.obsidian-directory-list label { flex: 0 1 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obsidian-whole-vault-confirmation { padding: 10px 12px; border-left: 2px solid #d7ad63; background: #27231a; }
+.obsidian-managed-directory { display: grid !important; grid-template-columns: minmax(140px, auto) minmax(0, 240px); justify-content: start; }
+.obsidian-managed-directory input { min-width: 0; height: 30px; padding: 0 8px; border: 1px solid #48514d; color: #e3ece8; background: #101211; }
+.obsidian-scope-form footer { display: flex; justify-content: flex-end; gap: 8px; }
+.obsidian-scope-form footer button { min-height: 30px; padding: 0 10px; border: 1px solid #48514d; color: #dce7e2; background: #242826; cursor: pointer; }
+.obsidian-scope-form footer button[type="submit"] { border-color: #5a9791; background: #255b57; }
+.obsidian-scope-form footer button:disabled { opacity: 0.45; cursor: default; }
 .obsidian-empty { min-height: 100%; display: grid; place-content: center; justify-items: center; gap: 8px; padding: 24px; color: #8d9792; text-align: center; }
 .obsidian-empty h2 { margin: 0; color: #dce5e1; font-size: 15px; }
 .obsidian-empty p { max-width: 380px; margin: 0; font-size: 12px; line-height: 1.5; }

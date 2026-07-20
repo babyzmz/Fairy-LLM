@@ -11,7 +11,7 @@ import pytest
 from fairy_capabilities.documents import CompositeDocumentParser, ManagedFileDocumentStore
 from fairy_core.application.service import CoreService
 from fairy_core.commanding.settings import StaticSandboxHealthProvider
-from fairy_core.contracts.methods import CORE_METHODS
+from fairy_core.contracts.methods import CORE_METHODS, CoreMethodTransport
 from fairy_core.contracts.models import ErrorCode
 from fairy_core.mcp.ports import McpError
 from fairy_core.runtime.models import (
@@ -711,7 +711,13 @@ def test_openapi_declares_native_typed_sse(app) -> None:
         for operation in path.values()
         if isinstance(operation, dict) and "operationId" in operation
     }
-    assert set(CORE_METHODS) <= operation_ids
+    cloud_methods = {
+        name
+        for name, method in CORE_METHODS.items()
+        if method.transport is CoreMethodTransport.LOCAL_AND_CLOUD
+    }
+    assert cloud_methods <= operation_ids
+    assert not {name for name in operation_ids if name.startswith("obsidian.")}
 
 
 @pytest.mark.asyncio

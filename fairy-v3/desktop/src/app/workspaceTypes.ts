@@ -17,6 +17,7 @@ import type {
   ProjectKnowledgeOverview,
   ObsidianConnectorHealth,
   ObsidianSource,
+  ObsidianVaultSelection,
   ObsidianVaultItemContent,
   ObsidianVaultItem,
   MediaGenerationJob,
@@ -98,7 +99,10 @@ export interface WorkspaceClient extends AssistantTurnClient {
   documents: Pick<CoreClient["documents"], "import" | "list" | "search" | "delete">;
   memory: Pick<CoreClient["memory"], "search" | "forget">;
   knowledge: Pick<CoreClient["knowledge"], "overview" | "listItems" | "graph">;
-  obsidian: Pick<CoreClient["obsidian"], "health" | "createSource" | "listSources" | "listItems" | "readItem" | "sync">;
+  obsidian: Pick<
+    CoreClient["obsidian"],
+    "selectVault" | "health" | "createSource" | "listSources" | "listItems" | "readItem" | "sync"
+  >;
   voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
   systemActions: Pick<CoreClient["systemActions"], "execute">;
   events: Pick<CoreClient["events"], "sourceId" | "state" | "list" | "subscribe">;
@@ -201,7 +205,16 @@ export interface WorkspaceModel {
   createProject(name: string): Promise<void>;
   importProject(name: string, sourcePath: string): Promise<void>;
   selectProjectFolder(): Promise<string | null>;
-  connectObsidianVault(vaultPath: string): Promise<void>;
+  selectObsidianVault(): Promise<ObsidianVaultSelection | null>;
+  connectObsidianVault(
+    selection: ObsidianVaultSelection,
+    options: {
+      readScope: "selected_directories" | "whole_vault";
+      allowedDirectories: string[];
+      wholeVaultConfirmed: boolean;
+      managedDirectory: string;
+    },
+  ): Promise<void>;
   syncObsidianSource(source: ObsidianSource): Promise<void>;
   readObsidianItem(item: ObsidianVaultItem): Promise<ObsidianVaultItemContent>;
   createChatConversation(): Promise<void>;

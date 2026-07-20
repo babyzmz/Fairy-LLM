@@ -1270,6 +1270,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tempfile",
  "thiserror 2.0.18",
+ "uuid",
  "windows 0.62.2",
  "windows-capture",
  "windows-numerics 0.3.1",

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { CoreClient } from "./client";
 import { CloudCoreTransport } from "./cloudTransport";
@@ -152,6 +152,35 @@ const PREVIEW_CONTEXT = {
 };
 
 describe("CloudCoreTransport", () => {
+  it("rejects device-local Obsidian methods before issuing a cloud request", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const transport = new CloudCoreTransport({
+      baseUrl: "https://cloud.fairy.test",
+      accessToken: () => "token",
+      deviceId: "device-1",
+      fetch: fetcher,
+    });
+
+    await expect(
+      transport.call("obsidian.sources.create", {
+        project_id: "0198f4de-0114-7000-8000-000000000001",
+        display_name: "Local Vault",
+        local_path_token: "0198f4de-0114-7000-8000-000000000002",
+        read_scope: "selected_directories",
+        allowed_directories: ["Notes"],
+        whole_vault_confirmed: false,
+        managed_directory: "Fairy",
+        mode: "read_only",
+        idempotency_key: "obsidian:local-only",
+      }),
+    ).rejects.toMatchObject({
+      name: "CloudCoreError",
+      status: 400,
+      errorCode: "CAPABILITY_NOT_AVAILABLE",
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("maps typed Core calls to authenticated REST requests", async () => {
     const requests: Request[] = [];
     const fetcher: typeof fetch = async (input, init) => {

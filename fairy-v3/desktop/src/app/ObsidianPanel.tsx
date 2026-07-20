@@ -14,7 +14,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import type { ObsidianVaultItem, ObsidianVaultItemContent, WorkspaceFile } from "../core/client";
+import type {
+  ObsidianVaultItem,
+  ObsidianVaultItemContent,
+  ObsidianVaultSelection,
+  WorkspaceFile,
+} from "../core/client";
 import type { WorkspaceModel } from "./workspaceModel";
 import "./obsidian-panel.css";
 
@@ -324,10 +329,36 @@ function ProjectGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[]
 
 function SyncStatus({ model }: { model: WorkspaceModel }) {
   const source = model.obsidianSources.at(0) ?? null;
-  const connect = async () => {
-    const path = await model.selectProjectFolder();
-    if (path !== null) await model.connectObsidianVault(path);
+  const [selection, setSelection] = useState<ObsidianVaultSelection | null>(null);
+  const [readScope, setReadScope] = useState<"selected_directories" | "whole_vault">(
+    "selected_directories",
+  );
+  const [allowedDirectories, setAllowedDirectories] = useState<string[]>([]);
+  const [wholeVaultConfirmed, setWholeVaultConfirmed] = useState(false);
+  const [managedDirectory, setManagedDirectory] = useState("Fairy");
+  const chooseVault = async () => {
+    const next = await model.selectObsidianVault();
+    if (next === null) return;
+    setSelection(next);
+    setReadScope("selected_directories");
+    setAllowedDirectories([]);
+    setWholeVaultConfirmed(false);
   };
+  const connect = async () => {
+    if (selection === null) return;
+    await model.connectObsidianVault(selection, {
+      readScope,
+      allowedDirectories: readScope === "selected_directories" ? allowedDirectories : [],
+      wholeVaultConfirmed: readScope === "whole_vault" && wholeVaultConfirmed,
+      managedDirectory: managedDirectory.trim(),
+    });
+    setSelection(null);
+  };
+  const canConnect = selection !== null && managedDirectory.trim().length > 0 && (
+    readScope === "selected_directories"
+      ? allowedDirectories.length > 0
+      : wholeVaultConfirmed
+  );
   return (
     <div className="obsidian-sync">
       <section><RefreshCw size={18} /><div><h3>Fairy project index</h3><p>Generation {model.workspaceGeneration || 0} is available for files, links, and graph projection.</p></div><strong>Ready</strong></section>
@@ -338,13 +369,103 @@ function SyncStatus({ model }: { model: WorkspaceModel }) {
           <p>{source?.vault_display_path ?? model.obsidianHealth?.public_summary ?? "Checking the local Obsidian installation and official CLI."}</p>
         </div>
         {source === null ? (
-          <button type="button" disabled={model.isActing} onClick={() => void connect()}>Connect Vault</button>
+          <button type="button" disabled={model.isActing} onClick={() => void chooseVault()}>
+            {selection === null ? "Choose Vault" : "Change Vault"}
+          </button>
         ) : (
           <button type="button" disabled={model.isActing} onClick={() => void model.syncObsidianSource(source)}>
             <RefreshCw size={13} /> Sync
           </button>
         )}
       </section>
+      {source === null && selection !== null ? (
+        <form
+          className="obsidian-scope-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void connect();
+          }}
+        >
+          <header>
+            <strong>{selection.display_name}</strong>
+            <span>The Vault path remains on this device.</span>
+          </header>
+          <fieldset>
+            <legend>Read scope</legend>
+            <label>
+              <input
+                type="radio"
+                name="obsidian-read-scope"
+                checked={readScope === "selected_directories"}
+                onChange={() => {
+                  setReadScope("selected_directories");
+                  setWholeVaultConfirmed(false);
+                }}
+              />
+              Selected folders
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="obsidian-read-scope"
+                checked={readScope === "whole_vault"}
+                onChange={() => {
+                  setReadScope("whole_vault");
+                  setAllowedDirectories([]);
+                }}
+              />
+              Entire Vault
+            </label>
+          </fieldset>
+          {readScope === "selected_directories" ? (
+            <fieldset className="obsidian-directory-list">
+              <legend>Folders Fairy may read</legend>
+              {selection.available_directories.length === 0 ? (
+                <p>This Vault has no eligible top-level folders.</p>
+              ) : selection.available_directories.map((directory) => (
+                <label key={directory}>
+                  <input
+                    type="checkbox"
+                    checked={allowedDirectories.includes(directory)}
+                    onChange={(event) => setAllowedDirectories((current) => (
+                      event.target.checked
+                        ? [...current, directory]
+                        : current.filter((item) => item !== directory)
+                    ))}
+                  />
+                  {directory}
+                </label>
+              ))}
+            </fieldset>
+          ) : (
+            <label className="obsidian-whole-vault-confirmation">
+              <input
+                type="checkbox"
+                checked={wholeVaultConfirmed}
+                onChange={(event) => setWholeVaultConfirmed(event.target.checked)}
+              />
+              I authorize Fairy to read all eligible folders in this Vault.
+            </label>
+          )}
+          <label className="obsidian-managed-directory">
+            Fairy managed folder
+            <input
+              type="text"
+              value={managedDirectory}
+              maxLength={120}
+              onChange={(event) => setManagedDirectory(event.target.value)}
+            />
+          </label>
+          <footer>
+            <button type="button" disabled={model.isActing} onClick={() => setSelection(null)}>
+              Cancel
+            </button>
+            <button type="submit" disabled={model.isActing || !canConnect}>
+              Confirm connection
+            </button>
+          </footer>
+        </form>
+      ) : null}
       {source !== null ? <p className="obsidian-source-meta">{source.item_count} items · {source.mode.replaceAll("_", " ")} · revision {source.revision}</p> : null}
       <p className="obsidian-sync-note">Ordinary Vault folders remain read-only. Fairy writes only inside the managed <code>Fairy/</code> directory after explicit authorization.</p>
     </div>

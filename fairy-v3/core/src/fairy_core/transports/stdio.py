@@ -230,6 +230,7 @@ def build_local_service(
             obsidian_connector=ObsidianConnector(
                 configured,
                 registry_path=data_dir / "obsidian-sources.json",
+                path_registry_path=data_dir / "obsidian-paths.json",
             ),
             media_staging_store=(
                 media_staging_store

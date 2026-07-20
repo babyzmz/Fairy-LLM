@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from types import MappingProxyType
 
 from pydantic import BaseModel, Field
@@ -280,11 +281,17 @@ class EventPageModel(ContractModel):
     next_cursor: int = Field(ge=0)
 
 
+class CoreMethodTransport(StrEnum):
+    LOCAL_ONLY = "local_only"
+    LOCAL_AND_CLOUD = "local_and_cloud"
+
+
 @dataclass(frozen=True, slots=True)
 class CoreMethod:
     name: str
     request_model: type[BaseModel]
     response_model: type[BaseModel]
+    transport: CoreMethodTransport = CoreMethodTransport.LOCAL_AND_CLOUD
 
 
 CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
@@ -604,31 +611,37 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "obsidian.health.get",
             EmptyInput,
             ObsidianConnectorHealthModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "obsidian.sources.create": CoreMethod(
             "obsidian.sources.create",
             ObsidianSourceCreateInput,
             ObsidianSourceModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "obsidian.sources.items.list": CoreMethod(
             "obsidian.sources.items.list",
             ObsidianSourceIdInput,
             ObsidianVaultItemPageModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "obsidian.sources.items.read": CoreMethod(
             "obsidian.sources.items.read",
             ObsidianVaultItemReadInput,
             ObsidianVaultItemContentModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "obsidian.sources.list": CoreMethod(
             "obsidian.sources.list",
             ObsidianSourceListInput,
             ObsidianSourcePageModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "obsidian.sync.start": CoreMethod(
             "obsidian.sync.start",
             ObsidianSourceSyncInput,
             ObsidianSyncResultModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "knowledge.graph.get": CoreMethod(
             "knowledge.graph.get",
@@ -992,6 +1005,7 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
 __all__ = [
     "CORE_METHODS",
     "CoreMethod",
+    "CoreMethodTransport",
     "EmptyInput",
     "EventListInput",
     "EventPageModel",

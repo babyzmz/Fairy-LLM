@@ -1077,16 +1077,19 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     createProject: actions.createProject,
     importProject: actions.importProject,
     selectProjectFolder,
-    connectObsidianVault: async (vaultPath) => {
+    selectObsidianVault: () => client.obsidian.selectVault(),
+    connectObsidianVault: async (selection, options) => {
       if (selectedProject === null) throw new Error("Select a project before connecting a Vault");
       await runAction(() => client.obsidian.createSource({
         project_id: selectedProject.id,
-        display_name: `${selectedProject.name} Vault`,
-        vault_path: vaultPath,
-        allowed_directories: [],
-        managed_directory: "Fairy",
+        display_name: selection.display_name,
+        local_path_token: selection.local_path_token,
+        read_scope: options.readScope,
+        allowed_directories: options.allowedDirectories,
+        whole_vault_confirmed: options.wholeVaultConfirmed,
+        managed_directory: options.managedDirectory,
         mode: "read_only",
-        idempotency_key: `obsidian:${selectedProject.id}:${vaultPath}`,
+        idempotency_key: `obsidian:${selectedProject.id}:${selection.local_path_token}`,
       }));
       await queryClient.invalidateQueries({ queryKey: [...workspaceKey, "obsidian"] });
     },

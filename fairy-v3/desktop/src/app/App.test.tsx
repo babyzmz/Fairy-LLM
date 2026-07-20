@@ -836,6 +836,7 @@ function createClient(
       }),
     },
     obsidian: {
+      selectVault: async () => null,
       health: async () => ({
         desktop_installed: false,
         cli_available: false,

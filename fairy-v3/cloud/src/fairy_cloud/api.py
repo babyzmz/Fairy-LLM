@@ -18,7 +18,7 @@ from fairy_core.contracts.knowledge import (
     KnowledgeProjectInput,
     ProjectKnowledgeOverviewModel,
 )
-from fairy_core.contracts.methods import CORE_METHODS
+from fairy_core.contracts.methods import CORE_METHODS, CoreMethodTransport
 from fairy_core.contracts.models import (
     ApprovalDecisionResultModel,
     ApprovalPageModel,
@@ -102,18 +102,6 @@ from fairy_core.contracts.models import (
     VersionListInput,
     VersionModel,
     VersionPageModel,
-)
-from fairy_core.contracts.obsidian import (
-    ObsidianConnectorHealthModel,
-    ObsidianSourceCreateInput,
-    ObsidianSourceListInput,
-    ObsidianSourceModel,
-    ObsidianSourcePageModel,
-    ObsidianSourceSyncInput,
-    ObsidianSyncResultModel,
-    ObsidianVaultItemContentModel,
-    ObsidianVaultItemPageModel,
-    ObsidianVaultItemReadInput,
 )
 from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.contracts.turn_trace import TurnTraceModel
@@ -465,71 +453,6 @@ def create_cloud_app(
     def get_project_knowledge_graph(project_id: UUID) -> dict[str, Any]:
         request = KnowledgeProjectInput(project_id=project_id)
         return invoke("knowledge.graph.get", request.model_dump(mode="json"))
-
-    @protected.get(
-        "/obsidian/health",
-        operation_id="obsidian.health.get",
-        response_model=ObsidianConnectorHealthModel,
-    )
-    def get_obsidian_health() -> dict[str, Any]:
-        return invoke("obsidian.health.get", {})
-
-    @protected.post(
-        "/obsidian/sources",
-        operation_id="obsidian.sources.create",
-        response_model=ObsidianSourceModel,
-    )
-    def create_obsidian_source(request: ObsidianSourceCreateInput) -> dict[str, Any]:
-        return invoke("obsidian.sources.create", request.model_dump(mode="json"))
-
-    @protected.get(
-        "/obsidian/sources",
-        operation_id="obsidian.sources.list",
-        response_model=ObsidianSourcePageModel,
-    )
-    def list_obsidian_sources(project_id: UUID) -> dict[str, Any]:
-        request = ObsidianSourceListInput(project_id=project_id)
-        return invoke("obsidian.sources.list", request.model_dump(mode="json"))
-
-    @protected.get(
-        "/obsidian/sources/{source_id}/items",
-        operation_id="obsidian.sources.items.list",
-        response_model=ObsidianVaultItemPageModel,
-    )
-    def list_obsidian_source_items(source_id: UUID) -> dict[str, Any]:
-        return invoke("obsidian.sources.items.list", {"source_id": str(source_id)})
-
-    @protected.post(
-        "/obsidian/sources/{source_id}/items/read",
-        operation_id="obsidian.sources.items.read",
-        response_model=ObsidianVaultItemContentModel,
-    )
-    def read_obsidian_source_item(
-        source_id: UUID,
-        request: ObsidianVaultItemReadInput,
-    ) -> dict[str, Any]:
-        if request.source_id != source_id:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "SCOPE_MISMATCH", "message": "source id mismatch"},
-            )
-        return invoke("obsidian.sources.items.read", request.model_dump(mode="json"))
-
-    @protected.post(
-        "/obsidian/sources/{source_id}/sync",
-        operation_id="obsidian.sync.start",
-        response_model=ObsidianSyncResultModel,
-    )
-    def sync_obsidian_source(
-        source_id: UUID,
-        request: ObsidianSourceSyncInput,
-    ) -> dict[str, Any]:
-        if request.source_id != source_id:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "SCOPE_MISMATCH", "message": "source id mismatch"},
-            )
-        return invoke("obsidian.sync.start", request.model_dump(mode="json"))
 
     @protected.post(
         "/documents/import",
@@ -1287,7 +1210,12 @@ def create_cloud_app(
         for route in (*app.routes, *protected.routes)
         if getattr(route, "operation_id", None) is not None
     }
-    missing_methods = set(CORE_METHODS).difference(operation_ids)
+    cloud_methods = {
+        name
+        for name, method in CORE_METHODS.items()
+        if method.transport is CoreMethodTransport.LOCAL_AND_CLOUD
+    }
+    missing_methods = cloud_methods.difference(operation_ids)
     if missing_methods:
         raise RuntimeError(f"FastAPI routes are missing Core methods: {sorted(missing_methods)}")
     app.include_router(protected)

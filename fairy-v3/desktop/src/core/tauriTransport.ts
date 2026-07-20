@@ -13,6 +13,7 @@ import type {
   RealtimeWorkerStartInput,
   RealtimeWorkerStatus,
   RealtimeWorkerToolResultInput,
+  ObsidianVaultSelection,
 } from "./client";
 import { parseMemoryResult } from "./memoryValidation";
 import { parseRuntimeResult } from "./runtimeValidation";
@@ -130,6 +131,10 @@ export class TauriCoreTransport implements CoreTransport {
 
   selectProjectFolder(): Promise<string | null> {
     return this.invoke("select_project_folder");
+  }
+
+  selectObsidianVault(): Promise<ObsidianVaultSelection | null> {
+    return this.invoke("select_obsidian_vault");
   }
 
   openSettingsWindow(): Promise<void> {
