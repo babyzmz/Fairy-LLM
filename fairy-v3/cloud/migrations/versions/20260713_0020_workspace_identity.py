@@ -116,11 +116,7 @@ def upgrade() -> None:
     for table_name in ("core_versions", "core_project_indexes", "core_changesets"):
         op.alter_column(table_name, "project_id", existing_type=sa.String(36), nullable=True)
     for table_name in WORKSPACE_OWNERS:
-        ondelete = (
-            None
-            if table_name in {"core_projects", "core_conversations"}
-            else "CASCADE"
-        )
+        ondelete = None if table_name in {"core_projects", "core_conversations"} else "CASCADE"
         op.alter_column(
             table_name,
             "workspace_id",

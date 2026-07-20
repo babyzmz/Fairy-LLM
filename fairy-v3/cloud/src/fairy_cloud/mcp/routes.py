@@ -5,6 +5,7 @@ from typing import Annotated, Any
 
 from fairy_core.contracts.extensions import (
     ExtensionCatalogPageModel,
+    McpPresetInstallInput,
     McpServerAcceptInput,
     McpServerConfigureInput,
     McpServerDeleteInput,
@@ -13,6 +14,10 @@ from fairy_core.contracts.extensions import (
     McpServerModel,
     McpServerPageModel,
     McpServerSetEnabledInput,
+    SkillCreateInput,
+    SkillImportInspectInput,
+    SkillImportInspectionModel,
+    SkillImportInstallInput,
     SkillInstallInput,
     SkillPageModel,
     SkillRemoveInput,
@@ -41,6 +46,42 @@ def install_extension_routes(router: APIRouter, invoke: CoreInvoker) -> None:
     )
     def list_skills() -> dict[str, Any]:
         return invoke("skills.list", {})
+
+    @router.post(
+        "/skills/import/inspect",
+        operation_id="skills.import.inspect",
+        response_model=SkillImportInspectionModel,
+    )
+    def inspect_skill_import(request: SkillImportInspectInput) -> dict[str, Any]:
+        return invoke("skills.import.inspect", request.model_dump(mode="json"))
+
+    @router.post(
+        "/skills/import/install",
+        operation_id="skills.import.install",
+        response_model=SkillPageModel,
+    )
+    def install_skill_import(
+        request: SkillImportInstallInput,
+        idempotency_key: Annotated[
+            str, Header(alias="Idempotency-Key", min_length=1, max_length=512)
+        ],
+    ) -> dict[str, Any]:
+        _validate_idempotency(request.idempotency_key, idempotency_key)
+        return invoke("skills.import.install", request.model_dump(mode="json"))
+
+    @router.post(
+        "/skills/create",
+        operation_id="skills.create",
+        response_model=SkillPageModel,
+    )
+    def create_skill(
+        request: SkillCreateInput,
+        idempotency_key: Annotated[
+            str, Header(alias="Idempotency-Key", min_length=1, max_length=512)
+        ],
+    ) -> dict[str, Any]:
+        _validate_idempotency(request.idempotency_key, idempotency_key)
+        return invoke("skills.create", request.model_dump(mode="json"))
 
     @router.post(
         "/skills/{catalog_id}",
@@ -109,6 +150,26 @@ def install_extension_routes(router: APIRouter, invoke: CoreInvoker) -> None:
     )
     def list_mcp_servers() -> dict[str, Any]:
         return invoke("mcp.servers.list", {})
+
+    @router.post(
+        "/mcp/presets/{catalog_id}",
+        operation_id="mcp.presets.install",
+        response_model=McpServerModel,
+    )
+    def install_mcp_preset(
+        catalog_id: str,
+        request: McpPresetInstallInput,
+        idempotency_key: Annotated[
+            str, Header(alias="Idempotency-Key", min_length=1, max_length=512)
+        ],
+    ) -> dict[str, Any]:
+        _validate_request(
+            catalog_id,
+            request.catalog_id,
+            request.idempotency_key,
+            idempotency_key,
+        )
+        return invoke("mcp.presets.install", request.model_dump(mode="json"))
 
     @router.put(
         "/mcp/servers/{server_id}",
@@ -205,6 +266,10 @@ def _validate_request(
                 "message": "MCP server path does not match Core params",
             },
         )
+    _validate_idempotency(body_idempotency_key, header_idempotency_key)
+
+
+def _validate_idempotency(body_idempotency_key: str, header_idempotency_key: str) -> None:
     if body_idempotency_key != header_idempotency_key:
         raise HTTPException(
             status_code=409,

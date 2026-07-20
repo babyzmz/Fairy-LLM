@@ -151,9 +151,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     for table_name in (STEP_TABLE, TRACE_TABLE):
         op.execute(
-            sa.text(
-                f'DROP POLICY IF EXISTS "tenant_isolation_{table_name}" ON "{table_name}"'
-            )
+            sa.text(f'DROP POLICY IF EXISTS "tenant_isolation_{table_name}" ON "{table_name}"')
         )
         op.execute(sa.text(f'ALTER TABLE "{table_name}" DISABLE ROW LEVEL SECURITY'))
     op.drop_index("ix_core_turn_trace_steps_command", table_name=STEP_TABLE)

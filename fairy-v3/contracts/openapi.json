@@ -1476,6 +1476,18 @@
             ],
             "title": "Deleted At"
           },
+          "deleted_by_project_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted By Project At"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -1504,6 +1516,18 @@
               }
             ],
             "title": "Project Id"
+          },
+          "purged_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purged At"
           },
           "revision": {
             "minimum": 0.0,
@@ -1540,6 +1564,8 @@
           "title",
           "pinned_at",
           "deleted_at",
+          "deleted_by_project_at",
+          "purged_at",
           "revision",
           "created_at",
           "updated_at"
@@ -2383,9 +2409,16 @@
         "additionalProperties": false,
         "properties": {
           "conversation_id": {
-            "format": "uuid",
-            "title": "Conversation Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
           },
           "created_at": {
             "format": "date-time",
@@ -2446,14 +2479,28 @@
             "type": "integer"
           },
           "task_id": {
-            "format": "uuid",
-            "title": "Task Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
           },
           "task_sequence": {
-            "minimum": 1.0,
-            "title": "Task Sequence",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Sequence"
           },
           "version_id": {
             "anyOf": [
@@ -2848,10 +2895,38 @@
             "title": "Publisher",
             "type": "string"
           },
+          "requirements": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Requirements",
+            "type": "array"
+          },
           "source": {
             "maxLength": 500,
             "minLength": 1,
             "title": "Source",
+            "type": "string"
+          },
+          "source_kind": {
+            "pattern": "^(curated|git|archive|local|created)$",
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Tags",
+            "type": "array"
+          },
+          "trust": {
+            "pattern": "^(verified_publisher|curated|external|local)$",
+            "title": "Trust",
             "type": "string"
           },
           "version": {
@@ -2871,7 +2946,9 @@
           "source",
           "license",
           "experimental",
-          "installed"
+          "installed",
+          "source_kind",
+          "trust"
         ],
         "title": "ExtensionCatalogEntryModel",
         "type": "object"
@@ -3731,6 +3808,205 @@
         "title": "FileSetResolveInput",
         "type": "object"
       },
+      "GameMemoryDeleteResult": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "memory_id": {
+            "format": "uuid",
+            "title": "Memory Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "memory_id",
+          "deleted"
+        ],
+        "title": "GameMemoryDeleteResult",
+        "type": "object"
+      },
+      "GameMemoryDigestModel": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "activities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Activities",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "title": "Duration Seconds",
+            "type": "integer"
+          },
+          "game_title": {
+            "title": "Game Title",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "next_goal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Goal"
+          },
+          "notable_outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notable Outcome"
+          },
+          "played_at": {
+            "format": "date-time",
+            "title": "Played At",
+            "type": "string"
+          },
+          "progress_summary": {
+            "title": "Progress Summary",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "game_title",
+          "played_at",
+          "duration_seconds",
+          "activities",
+          "progress_summary",
+          "next_goal",
+          "notable_outcome",
+          "accepted",
+          "created_at"
+        ],
+        "title": "GameMemoryDigestModel",
+        "type": "object"
+      },
+      "GameMemoryPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GameMemoryDigestModel"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "GameMemoryPageModel",
+        "type": "object"
+      },
+      "GameMemorySaveInput": {
+        "additionalProperties": false,
+        "properties": {
+          "activities": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Activities",
+            "type": "array"
+          },
+          "duration_seconds": {
+            "maximum": 86400.0,
+            "minimum": 0.0,
+            "title": "Duration Seconds",
+            "type": "integer"
+          },
+          "game_title": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Game Title",
+            "type": "string"
+          },
+          "next_goal": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Goal"
+          },
+          "notable_outcome": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notable Outcome"
+          },
+          "played_at": {
+            "format": "date-time",
+            "title": "Played At",
+            "type": "string"
+          },
+          "progress_summary": {
+            "maxLength": 800,
+            "minLength": 1,
+            "title": "Progress Summary",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "game_title",
+          "played_at",
+          "duration_seconds",
+          "activities",
+          "progress_summary"
+        ],
+        "title": "GameMemorySaveInput",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -4043,6 +4319,47 @@
           "updated_at"
         ],
         "title": "ManagedDocumentModel",
+        "type": "object"
+      },
+      "McpPresetInstallInput": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "title": "Catalog Id",
+            "type": "string"
+          },
+          "credential_ref": {
+            "anyOf": [
+              {
+                "maxLength": 288,
+                "minLength": 3,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Ref"
+          },
+          "expected_revision": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "catalog_id",
+          "idempotency_key"
+        ],
+        "title": "McpPresetInstallInput",
         "type": "object"
       },
       "McpServerAcceptInput": {
@@ -7582,6 +7899,81 @@
         "title": "PreviewVisibility",
         "type": "string"
       },
+      "ProjectArchiveInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "expected_revision"
+        ],
+        "title": "ProjectArchiveInput",
+        "type": "object"
+      },
+      "ProjectArchivedItemModel": {
+        "additionalProperties": false,
+        "properties": {
+          "archived_at": {
+            "format": "date-time",
+            "title": "Archived At",
+            "type": "string"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ProjectModel"
+          },
+          "thread_count": {
+            "minimum": 0.0,
+            "title": "Thread Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project",
+          "thread_count",
+          "archived_at"
+        ],
+        "title": "ProjectArchivedItemModel",
+        "type": "object"
+      },
+      "ProjectArchivedPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectArchivedItemModel"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "ProjectArchivedPageModel",
+        "type": "object"
+      },
       "ProjectContextModel": {
         "additionalProperties": false,
         "properties": {
@@ -7619,6 +8011,37 @@
         "title": "ProjectCreate",
         "type": "object"
       },
+      "ProjectDeleteInput": {
+        "additionalProperties": false,
+        "properties": {
+          "cancel_active": {
+            "default": false,
+            "title": "Cancel Active",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "user_confirmed": {
+            "title": "User Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "project_id",
+          "expected_revision",
+          "user_confirmed"
+        ],
+        "title": "ProjectDeleteInput",
+        "type": "object"
+      },
       "ProjectImport": {
         "additionalProperties": false,
         "properties": {
@@ -7643,6 +8066,51 @@
           "source_path"
         ],
         "title": "ProjectImport",
+        "type": "object"
+      },
+      "ProjectMetadataUpdateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "pinned": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "expected_revision"
+        ],
+        "title": "ProjectMetadataUpdateInput",
         "type": "object"
       },
       "ProjectModel": {
@@ -7672,19 +8140,72 @@
             ],
             "title": "Active Version Id"
           },
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
           },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
           },
+          "metadata_revision": {
+            "minimum": 0.0,
+            "title": "Metadata Revision",
+            "type": "integer"
+          },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "pinned_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pinned At"
+          },
+          "purged_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purged At"
           },
           "residency": {
             "$ref": "#/components/schemas/ProjectResidency"
@@ -7713,6 +8234,11 @@
           "active_version_id",
           "active_preview_id",
           "revision",
+          "pinned_at",
+          "archived_at",
+          "deleted_at",
+          "purged_at",
+          "metadata_revision",
           "created_at",
           "updated_at"
         ],
@@ -8003,6 +8529,359 @@
         "title": "PublicMessageVisibilityModel",
         "type": "string"
       },
+      "RealtimeMemoryMode": {
+        "enum": [
+          "progress_digest",
+          "none"
+        ],
+        "title": "RealtimeMemoryMode",
+        "type": "string"
+      },
+      "RealtimeProvider": {
+        "enum": [
+          "gemini_live",
+          "glm_realtime_flash",
+          "glm_realtime_air"
+        ],
+        "title": "RealtimeProvider",
+        "type": "string"
+      },
+      "RealtimeProviderSelection": {
+        "enum": [
+          "auto",
+          "gemini_live",
+          "glm_realtime_flash",
+          "glm_realtime_air"
+        ],
+        "title": "RealtimeProviderSelection",
+        "type": "string"
+      },
+      "RealtimeSessionModel": {
+        "additionalProperties": false,
+        "properties": {
+          "audio_input_ms": {
+            "title": "Audio Input Ms",
+            "type": "integer"
+          },
+          "audio_output_ms": {
+            "title": "Audio Output Ms",
+            "type": "integer"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "game_audio_consent": {
+            "title": "Game Audio Consent",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "interruption_count": {
+            "title": "Interruption Count",
+            "type": "integer"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "memory_mode": {
+            "$ref": "#/components/schemas/RealtimeMemoryMode"
+          },
+          "microphone_consent": {
+            "title": "Microphone Consent",
+            "type": "boolean"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/RealtimeProvider"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "screen_consent": {
+            "title": "Screen Consent",
+            "type": "boolean"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RealtimeSessionStatus"
+          },
+          "tool_call_count": {
+            "title": "Tool Call Count",
+            "type": "integer"
+          },
+          "video_frame_count": {
+            "title": "Video Frame Count",
+            "type": "integer"
+          },
+          "voice_mode": {
+            "$ref": "#/components/schemas/RealtimeVoiceMode"
+          }
+        },
+        "required": [
+          "id",
+          "device_id",
+          "conversation_id",
+          "provider",
+          "model_id",
+          "voice_mode",
+          "memory_mode",
+          "status",
+          "microphone_consent",
+          "screen_consent",
+          "game_audio_consent",
+          "audio_input_ms",
+          "audio_output_ms",
+          "video_frame_count",
+          "interruption_count",
+          "tool_call_count",
+          "last_error_code",
+          "started_at",
+          "ended_at",
+          "revision"
+        ],
+        "title": "RealtimeSessionModel",
+        "type": "object"
+      },
+      "RealtimeSessionPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RealtimeSessionModel"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "RealtimeSessionPageModel",
+        "type": "object"
+      },
+      "RealtimeSessionReportInput": {
+        "additionalProperties": false,
+        "properties": {
+          "audio_input_ms": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Audio Input Ms",
+            "type": "integer"
+          },
+          "audio_output_ms": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Audio Output Ms",
+            "type": "integer"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "interruption_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Interruption Count",
+            "type": "integer"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RealtimeSessionStatus"
+          },
+          "tool_call_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Tool Call Count",
+            "type": "integer"
+          },
+          "video_frame_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Video Frame Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "session_id",
+          "status",
+          "expected_revision"
+        ],
+        "title": "RealtimeSessionReportInput",
+        "type": "object"
+      },
+      "RealtimeSessionStartInput": {
+        "additionalProperties": false,
+        "properties": {
+          "conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "device_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Device Id",
+            "type": "string"
+          },
+          "game_audio_consent": {
+            "default": false,
+            "title": "Game Audio Consent",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "locale": {
+            "default": "zh-CN",
+            "maxLength": 32,
+            "minLength": 2,
+            "title": "Locale",
+            "type": "string"
+          },
+          "memory_mode": {
+            "$ref": "#/components/schemas/RealtimeMemoryMode",
+            "default": "progress_digest"
+          },
+          "microphone_consent": {
+            "title": "Microphone Consent",
+            "type": "boolean"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/RealtimeProviderSelection",
+            "default": "auto"
+          },
+          "screen_consent": {
+            "default": false,
+            "title": "Screen Consent",
+            "type": "boolean"
+          },
+          "voice_mode": {
+            "$ref": "#/components/schemas/RealtimeVoiceMode",
+            "default": "native"
+          }
+        },
+        "required": [
+          "device_id",
+          "microphone_consent",
+          "idempotency_key"
+        ],
+        "title": "RealtimeSessionStartInput",
+        "type": "object"
+      },
+      "RealtimeSessionStatus": {
+        "enum": [
+          "starting",
+          "active",
+          "stopping",
+          "completed",
+          "failed",
+          "cancelled",
+          "interrupted"
+        ],
+        "title": "RealtimeSessionStatus",
+        "type": "string"
+      },
+      "RealtimeSessionStopInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "expected_revision"
+        ],
+        "title": "RealtimeSessionStopInput",
+        "type": "object"
+      },
+      "RealtimeVoiceMode": {
+        "enum": [
+          "native",
+          "fairy"
+        ],
+        "title": "RealtimeVoiceMode",
+        "type": "string"
+      },
       "RendererPackInstallInput": {
         "additionalProperties": false,
         "properties": {
@@ -8262,6 +9141,10 @@
             "title": "Public Summary",
             "type": "string"
           },
+          "requires_workspace_changes": {
+            "title": "Requires Workspace Changes",
+            "type": "boolean"
+          },
           "reviewer_model_id": {
             "anyOf": [
               {
@@ -8286,6 +9169,7 @@
           "estimated_output_tokens",
           "cost_estimate_known",
           "approval_required",
+          "requires_workspace_changes",
           "public_summary"
         ],
         "title": "RoutingDecisionModel",
@@ -8931,6 +9815,280 @@
         ],
         "title": "SideEffect",
         "type": "string"
+      },
+      "SkillCreateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "compatible_mcp_servers": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Compatible Mcp Servers",
+            "type": "array"
+          },
+          "description": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "instructions": {
+            "maxLength": 131072,
+            "minLength": 1,
+            "title": "Instructions",
+            "type": "string"
+          },
+          "license": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "License",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "publisher": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Publisher",
+            "type": "string"
+          },
+          "required_capabilities": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Required Capabilities",
+            "type": "array"
+          },
+          "version": {
+            "maxLength": 128,
+            "minLength": 5,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "description",
+          "instructions",
+          "publisher",
+          "license",
+          "idempotency_key"
+        ],
+        "title": "SkillCreateInput",
+        "type": "object"
+      },
+      "SkillImportInspectInput": {
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "source_kind": {
+            "pattern": "^(folder|zip|github)$",
+            "title": "Source Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_kind",
+          "source"
+        ],
+        "title": "SkillImportInspectInput",
+        "type": "object"
+      },
+      "SkillImportInspectionModel": {
+        "additionalProperties": false,
+        "properties": {
+          "content_bytes": {
+            "maximum": 524288.0,
+            "minimum": 1.0,
+            "title": "Content Bytes",
+            "type": "integer"
+          },
+          "description": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "file_count": {
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "title": "File Count",
+            "type": "integer"
+          },
+          "has_manifest": {
+            "title": "Has Manifest",
+            "type": "boolean"
+          },
+          "inspection_token": {
+            "pattern": "^[A-Za-z0-9_-]{24,128}$",
+            "title": "Inspection Token",
+            "type": "string"
+          },
+          "license": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License"
+          },
+          "name": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "publisher": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher"
+          },
+          "source": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 5,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "inspection_token",
+          "name",
+          "description",
+          "source",
+          "has_manifest",
+          "file_count",
+          "content_bytes"
+        ],
+        "title": "SkillImportInspectionModel",
+        "type": "object"
+      },
+      "SkillImportInstallInput": {
+        "additionalProperties": false,
+        "properties": {
+          "compatible_mcp_servers": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Compatible Mcp Servers",
+            "type": "array"
+          },
+          "description": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "inspection_token": {
+            "pattern": "^[A-Za-z0-9_-]{24,128}$",
+            "title": "Inspection Token",
+            "type": "string"
+          },
+          "license": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "License",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "publisher": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Publisher",
+            "type": "string"
+          },
+          "required_capabilities": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Required Capabilities",
+            "type": "array"
+          },
+          "version": {
+            "maxLength": 128,
+            "minLength": 5,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "inspection_token",
+          "name",
+          "version",
+          "description",
+          "publisher",
+          "license",
+          "idempotency_key"
+        ],
+        "title": "SkillImportInstallInput",
+        "type": "object"
       },
       "SkillInstallInput": {
         "additionalProperties": false,
@@ -10250,6 +11408,238 @@
           "end_seconds"
         ],
         "title": "TranscriptSegmentModel",
+        "type": "object"
+      },
+      "TrashItemActionInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_type": {
+            "$ref": "#/components/schemas/TrashItemType"
+          },
+          "user_confirmed": {
+            "default": false,
+            "title": "User Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "item_type",
+          "item_id",
+          "expected_revision"
+        ],
+        "title": "TrashItemActionInput",
+        "type": "object"
+      },
+      "TrashItemModel": {
+        "additionalProperties": false,
+        "properties": {
+          "can_restore": {
+            "title": "Can Restore",
+            "type": "boolean"
+          },
+          "deleted_at": {
+            "format": "date-time",
+            "title": "Deleted At",
+            "type": "string"
+          },
+          "estimated_bytes": {
+            "minimum": 0.0,
+            "title": "Estimated Bytes",
+            "type": "integer"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_type": {
+            "$ref": "#/components/schemas/TrashItemType"
+          },
+          "metadata_revision": {
+            "minimum": 0.0,
+            "title": "Metadata Revision",
+            "type": "integer"
+          },
+          "source_project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Project Id"
+          },
+          "source_project_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Project Title"
+          },
+          "thread_count": {
+            "minimum": 0.0,
+            "title": "Thread Count",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_type",
+          "item_id",
+          "title",
+          "source_project_id",
+          "source_project_title",
+          "thread_count",
+          "deleted_at",
+          "estimated_bytes",
+          "can_restore",
+          "metadata_revision"
+        ],
+        "title": "TrashItemModel",
+        "type": "object"
+      },
+      "TrashItemPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TrashItemModel"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "TrashItemPageModel",
+        "type": "object"
+      },
+      "TrashItemType": {
+        "enum": [
+          "project",
+          "conversation",
+          "project_conversation"
+        ],
+        "title": "TrashItemType",
+        "type": "string"
+      },
+      "TrashMutationResultModel": {
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "item_type": {
+            "$ref": "#/components/schemas/TrashItemType"
+          },
+          "released_bytes": {
+            "minimum": 0.0,
+            "title": "Released Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "restored",
+              "purged"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_type",
+          "item_id",
+          "status",
+          "released_bytes"
+        ],
+        "title": "TrashMutationResultModel",
+        "type": "object"
+      },
+      "TrashPurgeAllInput": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted_before": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted Before"
+          },
+          "maintenance": {
+            "default": false,
+            "title": "Maintenance",
+            "type": "boolean"
+          },
+          "user_confirmed": {
+            "title": "User Confirmed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "user_confirmed"
+        ],
+        "title": "TrashPurgeAllInput",
+        "type": "object"
+      },
+      "TrashPurgeResultModel": {
+        "additionalProperties": false,
+        "properties": {
+          "purged_count": {
+            "minimum": 0.0,
+            "title": "Purged Count",
+            "type": "integer"
+          },
+          "released_bytes": {
+            "minimum": 0.0,
+            "title": "Released Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "purged_count",
+          "released_bytes"
+        ],
+        "title": "TrashPurgeResultModel",
         "type": "object"
       },
       "TurnTraceModel": {
@@ -14422,6 +15812,608 @@
         "summary": "Health"
       }
     },
+    "/v1/history/archived-projects": {
+      "get": {
+        "operationId": "projects.archived.list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectArchivedPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Archived Projects"
+      }
+    },
+    "/v1/history/archived-projects/{project_id}": {
+      "delete": {
+        "operationId": "projects.archived.delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectDeleteInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Archived Project"
+      }
+    },
+    "/v1/history/archived-projects/{project_id}/restore": {
+      "post": {
+        "operationId": "projects.archived.restore",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectArchiveInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore Archived Project"
+      }
+    },
+    "/v1/history/trash": {
+      "delete": {
+        "operationId": "trash.items.purge_all",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrashPurgeAllInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrashPurgeResultModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Purge All Trash"
+      },
+      "get": {
+        "operationId": "trash.items.list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrashItemPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Trash"
+      }
+    },
+    "/v1/history/trash/{item_type}/{item_id}": {
+      "delete": {
+        "operationId": "trash.items.purge",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_type",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TrashItemType"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrashItemActionInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrashMutationResultModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Purge Trash Item"
+      }
+    },
+    "/v1/history/trash/{item_type}/{item_id}/restore": {
+      "post": {
+        "operationId": "trash.items.restore",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_type",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TrashItemType"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrashItemActionInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrashMutationResultModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore Trash Item"
+      }
+    },
+    "/v1/mcp/presets/{catalog_id}": {
+      "post": {
+        "operationId": "mcp.presets.install",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "catalog_id",
+            "required": true,
+            "schema": {
+              "title": "Catalog Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpPresetInstallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Install Mcp Preset"
+      }
+    },
     "/v1/mcp/servers": {
       "get": {
         "operationId": "mcp.servers.list",
@@ -16992,6 +18984,75 @@
       }
     },
     "/v1/projects/{project_id}": {
+      "delete": {
+        "operationId": "projects.delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectDeleteInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Project"
+      },
       "get": {
         "operationId": "projects.get",
         "parameters": [
@@ -17050,6 +19111,148 @@
           }
         ],
         "summary": "Get Project"
+      }
+    },
+    "/v1/projects/{project_id}/archive": {
+      "post": {
+        "operationId": "projects.archive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectArchiveInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Archive Project"
+      }
+    },
+    "/v1/projects/{project_id}/metadata": {
+      "put": {
+        "operationId": "projects.update_metadata",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectMetadataUpdateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Project Metadata"
       }
     },
     "/v1/providers": {
@@ -17190,6 +19393,521 @@
           }
         },
         "summary": "Ready"
+      }
+    },
+    "/v1/realtime/memories": {
+      "get": {
+        "operationId": "realtime.memories.list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameMemoryPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Memories"
+      },
+      "post": {
+        "operationId": "realtime.memories.save",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GameMemorySaveInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameMemoryDigestModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Save Memory"
+      }
+    },
+    "/v1/realtime/memories/{memory_id}": {
+      "delete": {
+        "operationId": "realtime.memories.delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Memory Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameMemoryDeleteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Memory"
+      }
+    },
+    "/v1/realtime/sessions": {
+      "get": {
+        "operationId": "realtime.sessions.list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealtimeSessionPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Sessions"
+      },
+      "post": {
+        "operationId": "realtime.sessions.start",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RealtimeSessionStartInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealtimeSessionModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start Session"
+      }
+    },
+    "/v1/realtime/sessions/{session_id}": {
+      "get": {
+        "operationId": "realtime.sessions.get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealtimeSessionModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Session"
+      }
+    },
+    "/v1/realtime/sessions/{session_id}/report": {
+      "post": {
+        "operationId": "realtime.sessions.report",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RealtimeSessionReportInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealtimeSessionModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Report Session"
+      }
+    },
+    "/v1/realtime/sessions/{session_id}/stop": {
+      "post": {
+        "operationId": "realtime.sessions.stop",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RealtimeSessionStopInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealtimeSessionModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Stop Session"
       }
     },
     "/v1/renderer-packs": {
@@ -17709,6 +20427,211 @@
           }
         ],
         "summary": "List Skills"
+      }
+    },
+    "/v1/skills/create": {
+      "post": {
+        "operationId": "skills.create",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillCreateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Skill"
+      }
+    },
+    "/v1/skills/import/inspect": {
+      "post": {
+        "operationId": "skills.import.inspect",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillImportInspectInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillImportInspectionModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Inspect Skill Import"
+      }
+    },
+    "/v1/skills/import/install": {
+      "post": {
+        "operationId": "skills.import.install",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillImportInstallInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Install Skill Import"
       }
     },
     "/v1/skills/{catalog_id}": {

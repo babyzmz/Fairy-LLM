@@ -42,6 +42,7 @@ def test_cloud_public_error_and_event_latency_contract_is_complete() -> None:
     assert PUBLIC_ERROR_STATUS[ErrorCode.PATH_OUT_OF_SCOPE.value] == 403
     assert PUBLIC_ERROR_STATUS[ErrorCode.SECRET_EGRESS_BLOCKED.value] == 403
     assert PUBLIC_ERROR_STATUS[ErrorCode.WORKER_INTERRUPTED.value] == 503
+    assert PUBLIC_ERROR_STATUS[ErrorCode.PROJECT_BUSY.value] == 409
 
 
 class HttpRuntimeExecutor:
@@ -160,6 +161,11 @@ async def test_async_core_routes_run_sync_service_in_threadpool() -> None:
                     "active_version_id": "018f0f7c-1234-7000-8000-000000000002",
                     "active_preview_id": None,
                     "revision": 1,
+                    "pinned_at": None,
+                    "archived_at": None,
+                    "deleted_at": None,
+                    "purged_at": None,
+                    "metadata_revision": 0,
                     "created_at": now,
                     "updated_at": now,
                 },

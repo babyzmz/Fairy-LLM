@@ -80,9 +80,7 @@ def upgrade() -> None:
         sa.Column("started_at", sa.DateTime(timezone=True)),
         sa.Column("completed_at", sa.DateTime(timezone=True)),
         sa.PrimaryKeyConstraint("tenant_id", "id", name="pk_core_task_steps"),
-        sa.UniqueConstraint(
-            "tenant_id", "plan_id", "sequence", name="uq_core_task_steps_sequence"
-        ),
+        sa.UniqueConstraint("tenant_id", "plan_id", "sequence", name="uq_core_task_steps_sequence"),
         sa.CheckConstraint("sequence > 0", name="ck_core_task_steps_sequence"),
         sa.CheckConstraint("attempts >= 0", name="ck_core_task_steps_attempts"),
         sa.ForeignKeyConstraint(

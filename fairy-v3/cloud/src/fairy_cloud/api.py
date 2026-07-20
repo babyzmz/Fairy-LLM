@@ -111,6 +111,7 @@ from fairy_cloud.mcp.routes import install_extension_routes
 from fairy_cloud.media_routes import install_media_routes
 from fairy_cloud.model_routes import install_model_routes
 from fairy_cloud.planning_routes import install_planning_routes
+from fairy_cloud.realtime_routes import install_realtime_routes
 from fairy_cloud.runtime.proxy import CloudPreviewProxy
 from fairy_cloud.storage.objects import (
     ImmutableObjectConflict,
@@ -139,6 +140,7 @@ PUBLIC_ERROR_STATUS = {
     ErrorCode.SECRET_EGRESS_BLOCKED.value: 403,
     ErrorCode.CAPABILITY_NOT_AVAILABLE.value: 503,
     ErrorCode.WORKER_INTERRUPTED.value: 503,
+    ErrorCode.PROJECT_BUSY.value: 409,
     ErrorCode.MEMORY_SCOPE_VIOLATION.value: 409,
     ErrorCode.MEMORY_CONFLICT.value: 409,
     ErrorCode.MEMORY_INJECTION_BLOCKED.value: 403,
@@ -808,6 +810,11 @@ def create_cloud_app(
         protected,
         invoke=invoke,
         invoke_async=invoke_async,
+        guard=require_idempotency_match,
+    )
+    install_realtime_routes(
+        protected,
+        invoke=invoke,
         guard=require_idempotency_match,
     )
 

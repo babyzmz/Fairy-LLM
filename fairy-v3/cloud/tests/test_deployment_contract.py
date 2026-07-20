@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260716_0035"]
+    assert scripts.get_heads() == ["20260720_0037"]
+    assert scripts.get_revision("20260720_0037").down_revision == "20260717_0036"
     assert scripts.get_revision("20260712_0016").down_revision == "20260711_0015"
     assert scripts.get_revision("20260711_0015").down_revision == "20260711_0014"
     assert scripts.get_revision("20260711_0013").down_revision == "20260711_0012"
@@ -204,6 +205,40 @@ def test_media_generation_work_migration_has_reversible_fenced_tenant_ddl() -> N
     assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_MEDIA_GENERATION_WORK"' in ddl
     assert "DROP INDEX IX_CORE_MEDIA_GENERATION_WORK_CLAIM" in ddl
     assert "DROP TABLE CORE_MEDIA_GENERATION_WORK" in ddl
+
+
+def test_project_lifecycle_migration_has_reversible_metadata_ddl() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260717_0036:20260716_0035", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert "DROP INDEX IX_CORE_PROJECTS_TENANT_LIFECYCLE_UPDATED" in ddl
+    assert "DROP INDEX IX_CORE_CONVERSATIONS_TENANT_DELETED_UPDATED" in ddl
+    assert "ALTER TABLE CORE_PROJECTS DROP COLUMN METADATA_REVISION" in ddl
+    assert "ALTER TABLE CORE_CONVERSATIONS DROP COLUMN DELETED_BY_PROJECT_AT" in ddl
+
+
+def test_realtime_companion_migration_is_private_tenant_scoped_and_reversible() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.upgrade(config, "20260717_0036:20260720_0037", sql=True)
+    upgrade_ddl = " ".join(output.getvalue().upper().split())
+    for table in ("CORE_REALTIME_SESSIONS", "CORE_GAME_MEMORY_OBSERVATIONS"):
+        assert f'ALTER TABLE "{table}" ENABLE ROW LEVEL SECURITY' in upgrade_ddl
+        assert f'ALTER TABLE "{table}" FORCE ROW LEVEL SECURITY' in upgrade_ddl
+        assert f'CREATE POLICY "TENANT_ISOLATION_{table}"' in upgrade_ddl
+    for forbidden in ("TRANSCRIPT", "AUDIO_BLOB", "VIDEO_BLOB", "PROVIDER_CONTEXT", "REASONING"):
+        assert forbidden not in upgrade_ddl
+
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260720_0037:20260717_0036", sql=True)
+    downgrade_ddl = " ".join(output.getvalue().upper().split())
+    assert "DROP TABLE CORE_GAME_MEMORY_OBSERVATIONS" in downgrade_ddl
+    assert "DROP TABLE CORE_REALTIME_SESSIONS" in downgrade_ddl
 
 
 def test_event_outbox_migration_executes_asyncpg_ddl_one_command_at_a_time() -> None:

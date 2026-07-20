@@ -28,9 +28,7 @@ def upgrade() -> None:
         sa.Column("usage", sa.JSON(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("completed_at", sa.DateTime(timezone=True)),
-        sa.PrimaryKeyConstraint(
-            "tenant_id", "id", name="pk_core_assistant_provider_attempts"
-        ),
+        sa.PrimaryKeyConstraint("tenant_id", "id", name="pk_core_assistant_provider_attempts"),
         sa.UniqueConstraint(
             "tenant_id",
             "turn_id",

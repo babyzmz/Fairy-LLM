@@ -148,8 +148,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute(
         sa.text(
-            'DROP POLICY IF EXISTS "tenant_isolation_core_media_generation_jobs" '
-            f'ON "{TABLE_NAME}"'
+            f'DROP POLICY IF EXISTS "tenant_isolation_core_media_generation_jobs" ON "{TABLE_NAME}"'
         )
     )
     op.execute(sa.text(f'ALTER TABLE "{TABLE_NAME}" DISABLE ROW LEVEL SECURITY'))
