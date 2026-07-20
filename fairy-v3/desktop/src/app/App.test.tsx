@@ -846,6 +846,7 @@ function createClient(
       createSource: async () => ({}) as never,
       listSources: async () => ({ items: [] }),
       listItems: async () => ({ items: [], source_revision: 0 }),
+      readItem: async () => ({}) as never,
       sync: async () => ({}) as never,
     },
     assistant: {

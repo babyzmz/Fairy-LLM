@@ -71,8 +71,10 @@ export type ObsidianSourceCreateInput = Schemas["ObsidianSourceCreateInput"];
 export type ObsidianSourcePage = Schemas["ObsidianSourcePageModel"];
 export type ObsidianSourceSyncInput = Schemas["ObsidianSourceSyncInput"];
 export type ObsidianSyncResult = Schemas["ObsidianSyncResultModel"];
+export type ObsidianVaultItemContent = Schemas["ObsidianVaultItemContentModel"];
 export type ObsidianVaultItem = Schemas["ObsidianVaultItemModel"];
 export type ObsidianVaultItemPage = Schemas["ObsidianVaultItemPageModel"];
+export type ObsidianVaultItemReadInput = Schemas["ObsidianVaultItemReadInput"];
 export type MemoryClaim = Schemas["MemoryClaimModel"];
 export type MemoryClaimContext = Schemas["MemoryClaimContextModel"];
 export type MemoryClaimPage = Schemas["MemoryClaimPageModel"];
@@ -310,6 +312,10 @@ export interface CoreMethodMap {
   "obsidian.sources.items.list": {
     params: { source_id: string };
     result: ObsidianVaultItemPage;
+  };
+  "obsidian.sources.items.read": {
+    params: ObsidianVaultItemReadInput;
+    result: ObsidianVaultItemContent;
   };
   "obsidian.sync.start": { params: ObsidianSourceSyncInput; result: ObsidianSyncResult };
   "tasks.archive": { params: TaskArchiveInput; result: Task };

@@ -111,7 +111,9 @@ from fairy_core.contracts.obsidian import (
     ObsidianSourcePageModel,
     ObsidianSourceSyncInput,
     ObsidianSyncResultModel,
+    ObsidianVaultItemContentModel,
     ObsidianVaultItemPageModel,
+    ObsidianVaultItemReadInput,
 )
 from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.contracts.turn_trace import TurnTraceModel
@@ -496,6 +498,22 @@ def create_cloud_app(
     )
     def list_obsidian_source_items(source_id: UUID) -> dict[str, Any]:
         return invoke("obsidian.sources.items.list", {"source_id": str(source_id)})
+
+    @protected.post(
+        "/obsidian/sources/{source_id}/items/read",
+        operation_id="obsidian.sources.items.read",
+        response_model=ObsidianVaultItemContentModel,
+    )
+    def read_obsidian_source_item(
+        source_id: UUID,
+        request: ObsidianVaultItemReadInput,
+    ) -> dict[str, Any]:
+        if request.source_id != source_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "source id mismatch"},
+            )
+        return invoke("obsidian.sources.items.read", request.model_dump(mode="json"))
 
     @protected.post(
         "/obsidian/sources/{source_id}/sync",

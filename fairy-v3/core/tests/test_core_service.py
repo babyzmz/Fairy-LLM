@@ -916,6 +916,7 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "obsidian.health.get",
         "obsidian.sources.create",
         "obsidian.sources.items.list",
+        "obsidian.sources.items.read",
         "obsidian.sources.list",
         "obsidian.sync.start",
         "projects.create",

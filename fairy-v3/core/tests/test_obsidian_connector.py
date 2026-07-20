@@ -7,7 +7,9 @@ from fairy_core.contracts.obsidian import (
     ObsidianSourceListInput,
     ObsidianSourceMode,
     ObsidianSourceSyncInput,
+    ObsidianVaultItemReadInput,
 )
+from fairy_core.domain.errors import VersionConflictError
 from fairy_core.domain.ids import new_id
 from fairy_core.obsidian import ObsidianConnector
 from fairy_core.transports.stdio import build_local_service
@@ -84,6 +86,26 @@ def test_obsidian_source_scans_authorized_notes_and_wikilinks(tmp_path: Path) ->
     )
     architecture = next(item for item in items.items if item.title == "Architecture")
     assert architecture.links == ("API", "Project Plan")
+    content = connector.read_item(
+        ObsidianVaultItemReadInput(
+            source_id=source.id,
+            relative_path=architecture.relative_path,
+            expected_source_revision=result.source.revision,
+            expected_content_hash=architecture.content_hash,
+        )
+    )
+    assert content.content.startswith("# Architecture")
+
+    (notes / "Architecture.md").write_text("# Replaced", encoding="utf-8")
+    with pytest.raises(VersionConflictError, match="changed since it was indexed"):
+        connector.read_item(
+            ObsidianVaultItemReadInput(
+                source_id=source.id,
+                relative_path=architecture.relative_path,
+                expected_source_revision=result.source.revision,
+                expected_content_hash=architecture.content_hash,
+            )
+        )
 
 
 def test_obsidian_source_rejects_parent_directory_escape(tmp_path: Path) -> None:
@@ -135,9 +157,19 @@ def test_local_service_composes_obsidian_project_source(tmp_path: Path) -> None:
             {"source_id": source["id"], "expected_revision": source["revision"]},
         )
         items = service.invoke(
-            "obsidian.sources.items.list",
+        "obsidian.sources.items.list",
             {"source_id": source["id"]},
         )["items"]
+
+        content = service.invoke(
+            "obsidian.sources.items.read",
+            {
+                "source_id": source["id"],
+                "relative_path": items[0]["relative_path"],
+                "expected_source_revision": result["source"]["revision"],
+                "expected_content_hash": items[0]["content_hash"],
+            },
+        )
 
         assert result["scanned_count"] == 2
         assert {item["relative_path"] for item in items} == {
@@ -146,5 +178,6 @@ def test_local_service_composes_obsidian_project_source(tmp_path: Path) -> None:
         }
         architecture = next(item for item in items if item["title"] == "Architecture")
         assert architecture["links"] == ["Project Plan"]
+        assert content["content"].startswith("# ")
     finally:
         service.close()

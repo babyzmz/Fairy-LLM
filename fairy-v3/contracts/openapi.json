@@ -8294,6 +8294,46 @@
         "title": "ObsidianSyncResultModel",
         "type": "object"
       },
+      "ObsidianVaultItemContentModel": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "relative_path": {
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "relative_path",
+          "title",
+          "kind",
+          "content_hash",
+          "content"
+        ],
+        "title": "ObsidianVaultItemContentModel",
+        "type": "object"
+      },
       "ObsidianVaultItemModel": {
         "additionalProperties": false,
         "properties": {
@@ -8368,6 +8408,41 @@
           "source_revision"
         ],
         "title": "ObsidianVaultItemPageModel",
+        "type": "object"
+      },
+      "ObsidianVaultItemReadInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_content_hash": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Expected Content Hash",
+            "type": "string"
+          },
+          "expected_source_revision": {
+            "minimum": 1.0,
+            "title": "Expected Source Revision",
+            "type": "integer"
+          },
+          "relative_path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "relative_path",
+          "expected_source_revision",
+          "expected_content_hash"
+        ],
+        "title": "ObsidianVaultItemReadInput",
         "type": "object"
       },
       "OpenSettingsAction": {
@@ -19846,6 +19921,77 @@
           }
         ],
         "summary": "List Obsidian Source Items"
+      }
+    },
+    "/v1/obsidian/sources/{source_id}/items/read": {
+      "post": {
+        "operationId": "obsidian.sources.items.read",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObsidianVaultItemReadInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObsidianVaultItemContentModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Obsidian Source Item"
       }
     },
     "/v1/obsidian/sources/{source_id}/sync": {

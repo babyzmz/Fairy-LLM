@@ -53,6 +53,8 @@ const routes = {
     getWithQuery("/v1/obsidian/sources", params, ["project_id"]),
   "obsidian.sources.items.list": (params) =>
     get(`/v1/obsidian/sources/${pathParameter(params, "source_id")}/items`),
+  "obsidian.sources.items.read": (params) =>
+    post(`/v1/obsidian/sources/${pathParameter(params, "source_id")}/items/read`, params),
   "obsidian.sync.start": (params) =>
     post(`/v1/obsidian/sources/${pathParameter(params, "source_id")}/sync`, params),
   "trash.items.list": (params) => getWithQuery("/v1/history/trash", params, ["limit", "cursor"]),

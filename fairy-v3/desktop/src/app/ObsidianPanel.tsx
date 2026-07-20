@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   BookOpenText,
   CircleDot,
   FolderTree,
@@ -7,8 +8,10 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
-import type { WorkspaceFile } from "../core/client";
+import type { ObsidianVaultItem, ObsidianVaultItemContent, WorkspaceFile } from "../core/client";
 import type { WorkspaceModel } from "./workspaceModel";
 import "./obsidian-panel.css";
 
@@ -30,6 +33,7 @@ interface NoteEntry {
   title: string;
   relativePath: string;
   byteLength: number;
+  vaultItem?: ObsidianVaultItem;
 }
 
 const views: Array<{ id: ObsidianView; label: string }> = [
@@ -42,6 +46,9 @@ const views: Array<{ id: ObsidianView; label: string }> = [
 
 export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; onOpenFiles(): void }) {
   const [view, setView] = useState<ObsidianView>("overview");
+  const [openNote, setOpenNote] = useState<ObsidianVaultItemContent | null>(null);
+  const [noteLoading, setNoteLoading] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
   const project = model.selectedProject;
   const conversations = useMemo(
     () => model.projectConversations.filter((item) => item.project_id === project?.id),
@@ -76,10 +83,26 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
         title: item.title,
         relativePath: item.relative_path,
         byteLength: item.byte_length,
+        vaultItem: item,
       })),
     ],
     [model.knowledgeItems, model.obsidianItems],
   );
+  const showNote = async (entry: NoteEntry) => {
+    if (entry.vaultItem === undefined) {
+      onOpenFiles();
+      return;
+    }
+    setNoteLoading(true);
+    setNoteError(null);
+    try {
+      setOpenNote(await model.readObsidianItem(entry.vaultItem));
+    } catch (error) {
+      setNoteError(error instanceof Error ? error.message : "Unable to read this note");
+    } finally {
+      setNoteLoading(false);
+    }
+  };
 
   if (project === null) {
     return (
@@ -124,7 +147,11 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
             onOpenFiles={onOpenFiles}
           />
         ) : view === "notes" ? (
-          <Notes files={noteFiles} onOpenFiles={onOpenFiles} />
+          openNote !== null ? (
+            <NoteReader note={openNote} onBack={() => setOpenNote(null)} />
+          ) : (
+            <Notes files={noteFiles} loading={noteLoading} error={noteError} onOpenNote={showNote} />
+          )
         ) : view === "links" ? (
           <Links graph={graph} />
         ) : view === "graph" ? (
@@ -171,20 +198,51 @@ function Overview({
   );
 }
 
-function Notes({ files, onOpenFiles }: { files: NoteEntry[]; onOpenFiles(): void }) {
+function Notes({
+  files,
+  loading,
+  error,
+  onOpenNote,
+}: {
+  files: NoteEntry[];
+  loading: boolean;
+  error: string | null;
+  onOpenNote(file: NoteEntry): Promise<void>;
+}) {
   if (files.length === 0) {
     return <EmptyState icon={<BookOpenText size={22} />} title="No managed notes" detail="Markdown notes created for this project will appear here." />;
   }
   return (
     <div className="obsidian-list">
+      {error === null ? null : <p className="obsidian-note-error">{error}</p>}
       {files.map((file) => (
-        <button key={file.id} type="button" onClick={onOpenFiles}>
+        <button key={file.id} type="button" disabled={loading} onClick={() => void onOpenNote(file)}>
           <BookOpenText size={15} />
           <span><strong>{file.title}</strong><small>{file.relativePath}</small></span>
           <small>{formatBytes(file.byteLength)}</small>
         </button>
       ))}
     </div>
+  );
+}
+
+function NoteReader({ note, onBack }: { note: ObsidianVaultItemContent; onBack(): void }) {
+  return (
+    <article className="obsidian-note-reader">
+      <header>
+        <button type="button" onClick={onBack} aria-label="Back to notes" title="Back to notes">
+          <ArrowLeft size={16} />
+        </button>
+        <div><h3>{note.title}</h3><small>{note.relative_path}</small></div>
+      </header>
+      {note.kind === "markdown" ? (
+        <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{ a: ({ children }) => <span>{children}</span> }}>
+          {note.content}
+        </ReactMarkdown>
+      ) : (
+        <pre>{note.content}</pre>
+      )}
+    </article>
   );
 }
 

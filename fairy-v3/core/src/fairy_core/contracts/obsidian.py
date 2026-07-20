@@ -45,6 +45,13 @@ class ObsidianSourceSyncInput(ContractModel):
     expected_revision: int = Field(ge=1)
 
 
+class ObsidianVaultItemReadInput(ContractModel):
+    source_id: UUID
+    relative_path: str = Field(min_length=1, max_length=1024)
+    expected_source_revision: int = Field(ge=1)
+    expected_content_hash: str = Field(min_length=64, max_length=64)
+
+
 class ObsidianSourceModel(ContractModel):
     id: UUID
     project_id: UUID
@@ -81,6 +88,15 @@ class ObsidianVaultItemPageModel(ContractModel):
     source_revision: int
 
 
+class ObsidianVaultItemContentModel(ContractModel):
+    source_id: UUID
+    relative_path: str
+    title: str
+    kind: str
+    content_hash: str
+    content: str
+
+
 class ObsidianSyncResultModel(ContractModel):
     source: ObsidianSourceModel
     scanned_count: int
@@ -99,6 +115,8 @@ __all__ = [
     "ObsidianSourcePageModel",
     "ObsidianSourceSyncInput",
     "ObsidianSyncResultModel",
+    "ObsidianVaultItemContentModel",
     "ObsidianVaultItemModel",
     "ObsidianVaultItemPageModel",
+    "ObsidianVaultItemReadInput",
 ]

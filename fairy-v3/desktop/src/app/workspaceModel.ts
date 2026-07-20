@@ -1100,6 +1100,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         queryClient.invalidateQueries({ queryKey: [...workspaceKey, "knowledge"] }),
       ]);
     },
+    readObsidianItem: (item) => client.obsidian.readItem({
+      source_id: item.source_id,
+      relative_path: item.relative_path,
+      expected_source_revision: obsidianItemsQuery.data?.source_revision ?? 1,
+      expected_content_hash: item.content_hash,
+    }),
     createChatConversation: actions.createChatConversation,
     createPetChatConversation: actions.createPetChatConversation,
     createProjectConversation: actions.createProjectConversation,

@@ -54,6 +54,7 @@ from fairy_core.contracts.obsidian import (
     ObsidianSourceIdInput,
     ObsidianSourceListInput,
     ObsidianSourceSyncInput,
+    ObsidianVaultItemReadInput,
 )
 from fairy_core.contracts.voice_sessions import VoiceSessionIdInput, VoiceSessionStartInput
 from fairy_core.documents.application import DocumentApplication, DocumentToolExecutor
@@ -404,6 +405,9 @@ class CoreService(CoreServiceEndpointsMixin):
             ),
             "obsidian.sources.items.list": lambda request: selected_obsidian.list_items(
                 cast(ObsidianSourceIdInput, request).source_id
+            ),
+            "obsidian.sources.items.read": lambda request: selected_obsidian.read_item(
+                cast(ObsidianVaultItemReadInput, request)
             ),
             "obsidian.sources.list": lambda request: selected_obsidian.list_sources(
                 cast(ObsidianSourceListInput, request)

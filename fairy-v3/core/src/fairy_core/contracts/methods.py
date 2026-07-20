@@ -202,7 +202,9 @@ from fairy_core.contracts.obsidian import (
     ObsidianSourcePageModel,
     ObsidianSourceSyncInput,
     ObsidianSyncResultModel,
+    ObsidianVaultItemContentModel,
     ObsidianVaultItemPageModel,
+    ObsidianVaultItemReadInput,
 )
 from fairy_core.contracts.planning import (
     ExecutionPlanContextModel,
@@ -612,6 +614,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "obsidian.sources.items.list",
             ObsidianSourceIdInput,
             ObsidianVaultItemPageModel,
+        ),
+        "obsidian.sources.items.read": CoreMethod(
+            "obsidian.sources.items.read",
+            ObsidianVaultItemReadInput,
+            ObsidianVaultItemContentModel,
         ),
         "obsidian.sources.list": CoreMethod(
             "obsidian.sources.list",

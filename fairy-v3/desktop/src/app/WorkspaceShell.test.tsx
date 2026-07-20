@@ -387,6 +387,38 @@ describe("WorkspaceShell", () => {
     expect(within(knowledge).getByText("Official Obsidian Vault")).toBeVisible();
   });
 
+  it("reads an indexed Vault note inside the Obsidian tab", async () => {
+    const project = projectFixture();
+    const thread = projectConversationFixture(project);
+    const model = {
+      ...workspaceModel(),
+      projects: [project],
+      selectedProject: project,
+      selectedConversation: thread,
+      projectConversations: [thread],
+      workspaceTask: workspaceTask(),
+      obsidianItems: [{
+        source_id: "019f566f-f8b4-7000-8000-000000000141",
+        relative_path: "Notes/Architecture.md",
+        title: "Architecture",
+        kind: "markdown",
+        content_hash: "b".repeat(64),
+        byte_length: 96,
+        links: ["Project Plan"],
+        modified_at: "2026-07-12T00:00:00Z",
+      }],
+    };
+    render(<WorkspaceShell model={model} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Obsidian" }));
+    const knowledge = screen.getByLabelText("Obsidian project knowledge");
+    fireEvent.click(within(knowledge).getByRole("button", { name: "Notes" }));
+    fireEvent.click(within(knowledge).getByRole("button", { name: /Architecture/ }));
+
+    expect(await within(knowledge).findByRole("heading", { name: "Test note" })).toBeVisible();
+    expect(model.readObsidianItem).toHaveBeenCalledWith(model.obsidianItems[0]);
+  });
+
   it("presents PROJECT_BUSY without exposing an internal error code", () => {
     const model = {
       ...workspaceModel(),
@@ -546,6 +578,14 @@ function workspaceModel(): WorkspaceModel {
     selectProjectFolder: vi.fn(async () => "C:\\Projects\\selected"),
     connectObsidianVault: vi.fn(async () => undefined),
     syncObsidianSource: vi.fn(async () => undefined),
+    readObsidianItem: vi.fn(async (item) => ({
+      source_id: item.source_id,
+      relative_path: item.relative_path,
+      title: item.title,
+      kind: item.kind,
+      content_hash: item.content_hash,
+      content: "# Test note",
+    })),
     createChatConversation: vi.fn(async () => undefined),
     createPetChatConversation: vi.fn(async () => undefined),
     createProjectConversation: vi.fn(async () => undefined),

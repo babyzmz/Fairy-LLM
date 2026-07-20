@@ -19,8 +19,10 @@ from fairy_core.contracts.obsidian import (
     ObsidianSourcePageModel,
     ObsidianSourceSyncInput,
     ObsidianSyncResultModel,
+    ObsidianVaultItemContentModel,
     ObsidianVaultItemModel,
     ObsidianVaultItemPageModel,
+    ObsidianVaultItemReadInput,
 )
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
 from fairy_core.domain.ids import new_id
@@ -112,6 +114,31 @@ class ObsidianConnector:
             for item in sorted(record["items"].values(), key=lambda value: value["relative_path"])
         )
         return ObsidianVaultItemPageModel(items=items, source_revision=int(record["revision"]))
+
+    def read_item(self, request: ObsidianVaultItemReadInput) -> ObsidianVaultItemContentModel:
+        record = self._source_record(request.source_id)
+        if int(record["revision"]) != request.expected_source_revision:
+            raise VersionConflictError("Obsidian source changed concurrently")
+        relative = self._relative_file(request.relative_path)
+        item = record["items"].get(relative)
+        if item is None or item["content_hash"] != request.expected_content_hash:
+            raise VersionConflictError("Obsidian item changed since it was indexed")
+        vault = self._canonical_vault(str(record["vault_path"]))
+        path = vault / PurePosixPath(relative)
+        if self._unsafe_file(path, vault):
+            raise ValueError("Obsidian item is outside the authorized Vault")
+        data = path.read_bytes()
+        content_hash = hashlib.sha256(data).hexdigest()
+        if content_hash != request.expected_content_hash:
+            raise VersionConflictError("Obsidian item changed since it was indexed")
+        return ObsidianVaultItemContentModel(
+            source_id=request.source_id,
+            relative_path=relative,
+            title=str(item["title"]),
+            kind=str(item["kind"]),
+            content_hash=content_hash,
+            content=data.decode("utf-8"),
+        )
 
     def sync(self, request: ObsidianSourceSyncInput) -> ObsidianSyncResultModel:
         registry = self._load_registry()
@@ -233,6 +260,13 @@ class ObsidianConnector:
         if path.is_absolute() or ".." in path.parts or ":" in normalized:
             raise ValueError("Obsidian directory must be Vault-relative")
         return path.as_posix()
+
+    @classmethod
+    def _relative_file(cls, value: str) -> str:
+        normalized = cls._relative_directory(value)
+        if not normalized or PurePosixPath(normalized).suffix.casefold() not in _SUPPORTED_SUFFIXES:
+            raise ValueError("Obsidian item must be a supported Vault-relative file")
+        return normalized
 
     @staticmethod
     def _within(path: Path, root: Path) -> bool:

@@ -17,6 +17,7 @@ import type {
   ProjectKnowledgeOverview,
   ObsidianConnectorHealth,
   ObsidianSource,
+  ObsidianVaultItemContent,
   ObsidianVaultItem,
   MediaGenerationJob,
   ModelCatalogPage,
@@ -97,7 +98,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   documents: Pick<CoreClient["documents"], "import" | "list" | "search" | "delete">;
   memory: Pick<CoreClient["memory"], "search" | "forget">;
   knowledge: Pick<CoreClient["knowledge"], "overview" | "listItems" | "graph">;
-  obsidian: Pick<CoreClient["obsidian"], "health" | "createSource" | "listSources" | "listItems" | "sync">;
+  obsidian: Pick<CoreClient["obsidian"], "health" | "createSource" | "listSources" | "listItems" | "readItem" | "sync">;
   voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
   systemActions: Pick<CoreClient["systemActions"], "execute">;
   events: Pick<CoreClient["events"], "sourceId" | "state" | "list" | "subscribe">;
@@ -202,6 +203,7 @@ export interface WorkspaceModel {
   selectProjectFolder(): Promise<string | null>;
   connectObsidianVault(vaultPath: string): Promise<void>;
   syncObsidianSource(source: ObsidianSource): Promise<void>;
+  readObsidianItem(item: ObsidianVaultItem): Promise<ObsidianVaultItemContent>;
   createChatConversation(): Promise<void>;
   createPetChatConversation(): Promise<void>;
   createProjectConversation(project: Project): Promise<void>;

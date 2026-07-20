@@ -1357,6 +1357,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/obsidian/sources/{source_id}/items/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Obsidian Source Item */
+        post: operations["obsidian.sources.items.read"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/obsidian/sources/{source_id}/sync": {
         parameters: {
             query?: never;
@@ -5603,6 +5620,24 @@ export interface components {
             scanned_count: number;
             source: components["schemas"]["ObsidianSourceModel"];
         };
+        /** ObsidianVaultItemContentModel */
+        ObsidianVaultItemContentModel: {
+            /** Content */
+            content: string;
+            /** Content Hash */
+            content_hash: string;
+            /** Kind */
+            kind: string;
+            /** Relative Path */
+            relative_path: string;
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /** Title */
+            title: string;
+        };
         /** ObsidianVaultItemModel */
         ObsidianVaultItemModel: {
             /** Byte Length */
@@ -5634,6 +5669,20 @@ export interface components {
             items: components["schemas"]["ObsidianVaultItemModel"][];
             /** Source Revision */
             source_revision: number;
+        };
+        /** ObsidianVaultItemReadInput */
+        ObsidianVaultItemReadInput: {
+            /** Expected Content Hash */
+            expected_content_hash: string;
+            /** Expected Source Revision */
+            expected_source_revision: number;
+            /** Relative Path */
+            relative_path: string;
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
         };
         /** OpenSettingsAction */
         OpenSettingsAction: {
@@ -10764,6 +10813,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ObsidianVaultItemPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "obsidian.sources.items.read": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObsidianVaultItemReadInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObsidianVaultItemContentModel"];
                 };
             };
             /** @description Validation Error */

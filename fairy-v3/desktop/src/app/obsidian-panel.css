@@ -20,9 +20,22 @@
 .obsidian-list, .obsidian-link-list, .obsidian-sync { padding: 10px 14px; }
 .obsidian-list button { width: 100%; min-height: 48px; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 7px 9px; border: 0; border-bottom: 1px solid #303331; color: #cbd4d0; background: transparent; text-align: left; cursor: pointer; }
 .obsidian-list button:hover { background: #202321; }
+.obsidian-list button:disabled { opacity: 0.55; cursor: progress; }
 .obsidian-list button span { min-width: 0; display: grid; gap: 3px; }
 .obsidian-list strong, .obsidian-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .obsidian-list small { color: #818b86; font-size: 10px; }
+.obsidian-note-error { margin: 4px 0 10px; padding: 9px 10px; border-left: 2px solid #db766e; color: #efaaa4; background: #2b1c1b; font-size: 11px; }
+.obsidian-note-reader { max-width: 760px; margin: 0 auto; padding: 14px 20px 36px; color: #cbd5d0; font-size: 13px; line-height: 1.65; }
+.obsidian-note-reader > header { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 9px; padding-bottom: 12px; border-bottom: 1px solid #343735; }
+.obsidian-note-reader > header button { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid #48514d; color: #dce7e2; background: #242826; cursor: pointer; }
+.obsidian-note-reader h3 { margin: 0; overflow: hidden; color: #eef6f2; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.obsidian-note-reader small { display: block; overflow: hidden; color: #84908a; font: 10px/1.4 "Cascadia Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.obsidian-note-reader h1, .obsidian-note-reader h2 { margin: 22px 0 8px; color: #eff6f3; }
+.obsidian-note-reader h1 { font-size: 22px; }
+.obsidian-note-reader h2 { font-size: 17px; }
+.obsidian-note-reader code { color: #c8e9e3; font-family: "Cascadia Mono", monospace; }
+.obsidian-note-reader pre { max-width: 100%; overflow: auto; padding: 12px; border: 1px solid #343735; background: #101211; }
+.obsidian-note-reader blockquote { margin-inline: 0; padding-left: 12px; border-left: 2px solid #d7ad63; color: #aeb8b3; }
 .obsidian-link-list div { display: grid; grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 36px; border-bottom: 1px solid #303331; color: #bcc7c2; font-size: 12px; }
 .obsidian-link-list div span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .obsidian-link-list svg { color: #d7ad63; }

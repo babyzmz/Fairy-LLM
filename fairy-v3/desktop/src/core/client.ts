@@ -38,6 +38,7 @@ import type {
   KnowledgeItemListInput,
   ObsidianSourceCreateInput,
   ObsidianSourceSyncInput,
+  ObsidianVaultItemReadInput,
   ModelSelectionUpdateInput,
   McpServerAcceptInput,
   McpServerConfigureInput,
@@ -247,6 +248,8 @@ export class CoreClient {
       this.transport.call("obsidian.sources.list", { project_id: projectId }),
     listItems: (sourceId: string) =>
       this.transport.call("obsidian.sources.items.list", { source_id: sourceId }),
+    readItem: (input: ObsidianVaultItemReadInput) =>
+      this.transport.call("obsidian.sources.items.read", input),
     sync: (input: ObsidianSourceSyncInput) =>
       this.transport.call("obsidian.sync.start", input),
   };
