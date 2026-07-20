@@ -1,10 +1,11 @@
-import { Eye, Files, GalleryVerticalEnd } from "lucide-react";
+import { Eye, Files, GalleryVerticalEnd, Network } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { WorkspaceModel } from "./workspaceModel";
 import { PreviewPanel } from "./PreviewPanel";
 import { WorkspaceFilesPanel } from "./WorkspaceFilesPanel";
 import { WorkspaceOutputsPanel } from "./WorkspaceOutputsPanel";
+import { ObsidianPanel } from "./ObsidianPanel";
 import "./workspace-inspector.css";
 
 export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
@@ -12,7 +13,9 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
   const previewReady = model.preview?.preview.status === "ready";
   const hasOutputs = model.mediaJobs.length > 0;
   const hasActiveOutput = model.mediaJobs.some((job) => !["completed", "failed", "cancelled", "interrupted"].includes(job.status));
-  const [tab, setTab] = useState<"preview" | "files" | "outputs">(previewReady ? "preview" : "files");
+  const [tab, setTab] = useState<"preview" | "files" | "outputs" | "obsidian">(
+    previewReady ? "preview" : "files",
+  );
   const scopeKey = [
     model.workspaceTask?.conversation_id ?? "no-conversation",
     model.workspaceTask?.id ?? "no-task",
@@ -27,7 +30,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
     else if (hasFiles) setTab("files");
   }, [hasActiveOutput, hasFiles, hasOutputs, previewReady, model.workspaceTask?.id]);
 
-  if (model.workspaceTask === null && !hasFiles && !hasOutputs) return null;
+  if (model.workspaceTask === null && !hasFiles && !hasOutputs && model.selectedProject === null) return null;
 
   return (
     <aside className="workspace-inspector" aria-label="Workspace inspector">
@@ -42,6 +45,9 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
         <button type="button" role="tab" aria-selected={tab === "outputs"} onClick={() => setTab("outputs")}>
           <GalleryVerticalEnd size={14} /> Outputs
           {hasOutputs ? <span>{model.mediaJobs.length}</span> : null}
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "obsidian"} onClick={() => setTab("obsidian")}>
+          <Network size={14} /> Obsidian
         </button>
       </div>
       <div className="workspace-inspector-content">
@@ -84,7 +90,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
             onDelete={model.deleteWorkspaceFile}
             onExport={model.exportWorkspace}
           />
-        ) : (
+        ) : tab === "outputs" ? (
           <WorkspaceOutputsPanel
             scopeKey={scopeKey}
             jobs={model.mediaJobs}
@@ -92,6 +98,8 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
             onOpenStream={model.openWorkspaceFileStream}
             onCancel={model.cancelMediaJob}
           />
+        ) : (
+          <ObsidianPanel model={model} onOpenFiles={() => setTab("files")} />
         )}
       </div>
     </aside>

@@ -357,6 +357,36 @@ describe("WorkspaceShell", () => {
     expect(model.selectConversation).toHaveBeenCalledWith(thread.id);
   });
 
+  it("opens project knowledge from the top-level Obsidian inspector tab", () => {
+    const project = projectFixture();
+    const thread = projectConversationFixture(project);
+    const model = {
+      ...workspaceModel(),
+      projects: [project],
+      selectedProject: project,
+      selectedConversation: thread,
+      projectConversations: [thread],
+      workspaceTask: workspaceTask(),
+      workspaceFiles: [{
+        path: "docs/architecture.md",
+        byte_length: 2048,
+        content_hash: "a".repeat(64),
+        kind: "text",
+        language: "markdown",
+      }],
+    };
+    render(<WorkspaceShell model={model} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Obsidian" }));
+    const knowledge = screen.getByLabelText("Obsidian project knowledge");
+    expect(knowledge).toHaveTextContent(project.name);
+    expect(knowledge).toHaveTextContent("Fairy index ready");
+    fireEvent.click(within(knowledge).getByRole("button", { name: "Graph" }));
+    expect(within(knowledge).getByLabelText(/Project graph with/)).toBeVisible();
+    fireEvent.click(within(knowledge).getByRole("button", { name: "Sync" }));
+    expect(within(knowledge).getByText("Official Obsidian Vault")).toBeVisible();
+  });
+
   it("presents PROJECT_BUSY without exposing an internal error code", () => {
     const model = {
       ...workspaceModel(),
