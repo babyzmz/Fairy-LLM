@@ -150,6 +150,19 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     enabled: healthQuery.isSuccess && selectedProject !== null,
     retry: false,
   });
+  const obsidianSourcesQuery = useQuery({
+    queryKey: [...workspaceKey, "obsidian", "sources", selectedProject?.id],
+    queryFn: () => client.obsidian.listSources(requireId(selectedProject?.id)),
+    enabled: healthQuery.isSuccess && selectedProject !== null,
+    retry: false,
+  });
+  const primaryObsidianSource = obsidianSourcesQuery.data?.items.at(0) ?? null;
+  const obsidianItemsQuery = useQuery({
+    queryKey: [...workspaceKey, "obsidian", "items", primaryObsidianSource?.id],
+    queryFn: () => client.obsidian.listItems(requireId(primaryObsidianSource?.id)),
+    enabled: primaryObsidianSource !== null,
+    retry: false,
+  });
   const allConversations = sortHistoryItems(conversationsQuery.data?.items ?? []);
   const conversations = allConversations.filter((conversation) => conversation.project_id === selectedProject?.id);
   const projectConversations = allConversations.filter(
@@ -1017,6 +1030,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     knowledgeLoading:
       knowledgeOverviewQuery.isPending || knowledgeItemsQuery.isPending || knowledgeGraphQuery.isPending,
     obsidianHealth: obsidianHealthQuery.data ?? null,
+    obsidianSources: obsidianSourcesQuery.data?.items ?? [],
+    obsidianItems: obsidianItemsQuery.data?.items ?? [],
+    obsidianLoading: obsidianSourcesQuery.isPending || obsidianItemsQuery.isPending,
     mediaJobs: mediaJobsQuery.data?.items ?? [],
     assetSets: assetSetsQuery.data?.items ?? [],
     workspaceFilesLoading: workspaceFilesQuery.isPending && workspaceFilesQuery.isEnabled,
@@ -1061,6 +1077,29 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     createProject: actions.createProject,
     importProject: actions.importProject,
     selectProjectFolder,
+    connectObsidianVault: async (vaultPath) => {
+      if (selectedProject === null) throw new Error("Select a project before connecting a Vault");
+      await runAction(() => client.obsidian.createSource({
+        project_id: selectedProject.id,
+        display_name: `${selectedProject.name} Vault`,
+        vault_path: vaultPath,
+        allowed_directories: [],
+        managed_directory: "Fairy",
+        mode: "read_only",
+        idempotency_key: `obsidian:${selectedProject.id}:${vaultPath}`,
+      }));
+      await queryClient.invalidateQueries({ queryKey: [...workspaceKey, "obsidian"] });
+    },
+    syncObsidianSource: async (source) => {
+      await runAction(() => client.obsidian.sync({
+        source_id: source.id,
+        expected_revision: source.revision,
+      }));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [...workspaceKey, "obsidian"] }),
+        queryClient.invalidateQueries({ queryKey: [...workspaceKey, "knowledge"] }),
+      ]);
+    },
     createChatConversation: actions.createChatConversation,
     createPetChatConversation: actions.createPetChatConversation,
     createProjectConversation: actions.createProjectConversation,

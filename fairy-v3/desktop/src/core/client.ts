@@ -36,6 +36,8 @@ import type {
   MediaVideoStartInput,
   GameMemorySaveInput,
   KnowledgeItemListInput,
+  ObsidianSourceCreateInput,
+  ObsidianSourceSyncInput,
   ModelSelectionUpdateInput,
   McpServerAcceptInput,
   McpServerConfigureInput,
@@ -239,6 +241,14 @@ export class CoreClient {
 
   readonly obsidian = {
     health: () => this.transport.call("obsidian.health.get", {}),
+    createSource: (input: ObsidianSourceCreateInput) =>
+      this.transport.call("obsidian.sources.create", input),
+    listSources: (projectId: string) =>
+      this.transport.call("obsidian.sources.list", { project_id: projectId }),
+    listItems: (sourceId: string) =>
+      this.transport.call("obsidian.sources.items.list", { source_id: sourceId }),
+    sync: (input: ObsidianSourceSyncInput) =>
+      this.transport.call("obsidian.sync.start", input),
   };
 
   readonly conversations = {

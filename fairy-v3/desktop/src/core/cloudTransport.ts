@@ -48,6 +48,13 @@ const routes = {
   "knowledge.graph.get": (params) =>
     get(`/v1/projects/${pathParameter(params, "project_id")}/knowledge/graph`),
   "obsidian.health.get": () => get("/v1/obsidian/health"),
+  "obsidian.sources.create": (params) => post("/v1/obsidian/sources", params),
+  "obsidian.sources.list": (params) =>
+    getWithQuery("/v1/obsidian/sources", params, ["project_id"]),
+  "obsidian.sources.items.list": (params) =>
+    get(`/v1/obsidian/sources/${pathParameter(params, "source_id")}/items`),
+  "obsidian.sync.start": (params) =>
+    post(`/v1/obsidian/sources/${pathParameter(params, "source_id")}/sync`, params),
   "trash.items.list": (params) => getWithQuery("/v1/history/trash", params, ["limit", "cursor"]),
   "trash.items.restore": (params) =>
     post(

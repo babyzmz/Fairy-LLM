@@ -1322,6 +1322,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/obsidian/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Obsidian Sources */
+        get: operations["obsidian.sources.list"];
+        put?: never;
+        /** Create Obsidian Source */
+        post: operations["obsidian.sources.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/obsidian/sources/{source_id}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Obsidian Source Items */
+        get: operations["obsidian.sources.items.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/obsidian/sources/{source_id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sync Obsidian Source */
+        post: operations["obsidian.sync.start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/permissions": {
         parameters: {
             query?: never;
@@ -5452,6 +5504,136 @@ export interface components {
             public_summary: string;
             /** Status */
             status: string;
+        };
+        /** ObsidianSourceCreateInput */
+        ObsidianSourceCreateInput: {
+            /**
+             * Allowed Directories
+             * @default []
+             */
+            allowed_directories: string[];
+            /** Display Name */
+            display_name: string;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Managed Directory
+             * @default Fairy
+             */
+            managed_directory: string;
+            /** @default read_only */
+            mode: components["schemas"]["ObsidianSourceMode"];
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Vault Path */
+            vault_path: string;
+        };
+        /**
+         * ObsidianSourceMode
+         * @enum {string}
+         */
+        ObsidianSourceMode: "read_only" | "bidirectional";
+        /** ObsidianSourceModel */
+        ObsidianSourceModel: {
+            /** Allowed Directories */
+            allowed_directories: string[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Display Name */
+            display_name: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Item Count */
+            item_count: number;
+            /** Last Synced At */
+            last_synced_at: string | null;
+            /** Managed Directory */
+            managed_directory: string;
+            mode: components["schemas"]["ObsidianSourceMode"];
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Revision */
+            revision: number;
+            /** Status */
+            status: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Vault Display Path */
+            vault_display_path: string;
+        };
+        /** ObsidianSourcePageModel */
+        ObsidianSourcePageModel: {
+            /** Items */
+            items: components["schemas"]["ObsidianSourceModel"][];
+        };
+        /** ObsidianSourceSyncInput */
+        ObsidianSourceSyncInput: {
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+        };
+        /** ObsidianSyncResultModel */
+        ObsidianSyncResultModel: {
+            /** Changed Count */
+            changed_count: number;
+            /** Deleted Count */
+            deleted_count: number;
+            /** Failed Count */
+            failed_count: number;
+            /** Scanned Count */
+            scanned_count: number;
+            source: components["schemas"]["ObsidianSourceModel"];
+        };
+        /** ObsidianVaultItemModel */
+        ObsidianVaultItemModel: {
+            /** Byte Length */
+            byte_length: number;
+            /** Content Hash */
+            content_hash: string;
+            /** Kind */
+            kind: string;
+            /** Links */
+            links: string[];
+            /**
+             * Modified At
+             * Format: date-time
+             */
+            modified_at: string;
+            /** Relative Path */
+            relative_path: string;
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /** Title */
+            title: string;
+        };
+        /** ObsidianVaultItemPageModel */
+        ObsidianVaultItemPageModel: {
+            /** Items */
+            items: components["schemas"]["ObsidianVaultItemModel"][];
+            /** Source Revision */
+            source_revision: number;
         };
         /** OpenSettingsAction */
         OpenSettingsAction: {
@@ -10481,6 +10663,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ObsidianConnectorHealthModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "obsidian.sources.list": {
+        parameters: {
+            query: {
+                project_id: string;
+            };
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObsidianSourcePageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "obsidian.sources.create": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObsidianSourceCreateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObsidianSourceModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "obsidian.sources.items.list": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObsidianVaultItemPageModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "obsidian.sync.start": {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObsidianSourceSyncInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObsidianSyncResultModel"];
                 };
             };
             /** @description Validation Error */

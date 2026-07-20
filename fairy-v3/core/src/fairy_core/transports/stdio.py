@@ -22,6 +22,7 @@ from fairy_core.mcp.sdk import MappingCredentialResolver, OfficialMcpConnector
 from fairy_core.media.ports import MediaProvider
 from fairy_core.media.staging import MediaStagingStore
 from fairy_core.model_catalog.ports import ModelCatalogSource
+from fairy_core.obsidian import ObsidianConnector
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.data_directory_lock import DataDirectoryLock
 from fairy_core.persistence.sqlite import create_sqlite_core_engine
@@ -226,6 +227,10 @@ def build_local_service(
             mcp_application=mcp_application,
             model_catalog_source=model_catalog_source,
             media_provider=media_provider,
+            obsidian_connector=ObsidianConnector(
+                configured,
+                registry_path=data_dir / "obsidian-sources.json",
+            ),
             media_staging_store=(
                 media_staging_store
                 if media_staging_store is not None

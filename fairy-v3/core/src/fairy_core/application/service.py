@@ -49,6 +49,12 @@ from fairy_core.contracts.models import (
     VoiceSynthesizeInput,
     VoiceTranscribeInput,
 )
+from fairy_core.contracts.obsidian import (
+    ObsidianSourceCreateInput,
+    ObsidianSourceIdInput,
+    ObsidianSourceListInput,
+    ObsidianSourceSyncInput,
+)
 from fairy_core.contracts.voice_sessions import VoiceSessionIdInput, VoiceSessionStartInput
 from fairy_core.documents.application import DocumentApplication, DocumentToolExecutor
 from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
@@ -180,6 +186,7 @@ class CoreService(CoreServiceEndpointsMixin):
         media_provider: MediaProvider | None = None,
         media_staging_store: MediaStagingStore | None = None,
         workspace_provisioner: WorkspaceProvisioner | None = None,
+        obsidian_connector: ObsidianConnector | None = None,
         default_execution_target: str = "local",
         on_close: Callable[[], None] | None = None,
     ) -> None:
@@ -370,6 +377,7 @@ class CoreService(CoreServiceEndpointsMixin):
             ledger=self._assistant_ledger,
         )
         self._finalizer = finalize(self, on_close) if on_close is not None else None
+        selected_obsidian = obsidian_connector or ObsidianConnector()
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
             "approvals.decide": self._decide_approval,
             "approvals.list": self._list_approvals,
@@ -390,7 +398,19 @@ class CoreService(CoreServiceEndpointsMixin):
                 cancel_project_activity=self._cancel_project_activity,
             ),
             **knowledge_service_handlers(ProjectKnowledgeApplication(unit_of_work_factory)),
-            "obsidian.health.get": lambda _request: ObsidianConnector().health(),
+            "obsidian.health.get": lambda _request: selected_obsidian.health(),
+            "obsidian.sources.create": lambda request: selected_obsidian.create_source(
+                cast(ObsidianSourceCreateInput, request)
+            ),
+            "obsidian.sources.items.list": lambda request: selected_obsidian.list_items(
+                cast(ObsidianSourceIdInput, request).source_id
+            ),
+            "obsidian.sources.list": lambda request: selected_obsidian.list_sources(
+                cast(ObsidianSourceListInput, request)
+            ),
+            "obsidian.sync.start": lambda request: selected_obsidian.sync(
+                cast(ObsidianSourceSyncInput, request)
+            ),
             "documents.delete": self._delete_document,
             "documents.get": self._get_document,
             "documents.import": self._import_document,

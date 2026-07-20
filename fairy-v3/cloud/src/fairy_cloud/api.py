@@ -103,7 +103,16 @@ from fairy_core.contracts.models import (
     VersionModel,
     VersionPageModel,
 )
-from fairy_core.contracts.obsidian import ObsidianConnectorHealthModel
+from fairy_core.contracts.obsidian import (
+    ObsidianConnectorHealthModel,
+    ObsidianSourceCreateInput,
+    ObsidianSourceListInput,
+    ObsidianSourceModel,
+    ObsidianSourcePageModel,
+    ObsidianSourceSyncInput,
+    ObsidianSyncResultModel,
+    ObsidianVaultItemPageModel,
+)
 from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.contracts.turn_trace import TurnTraceModel
 from fairy_core.domain.errors import DomainError, IdempotencyConflictError, VersionConflictError
@@ -462,6 +471,47 @@ def create_cloud_app(
     )
     def get_obsidian_health() -> dict[str, Any]:
         return invoke("obsidian.health.get", {})
+
+    @protected.post(
+        "/obsidian/sources",
+        operation_id="obsidian.sources.create",
+        response_model=ObsidianSourceModel,
+    )
+    def create_obsidian_source(request: ObsidianSourceCreateInput) -> dict[str, Any]:
+        return invoke("obsidian.sources.create", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/obsidian/sources",
+        operation_id="obsidian.sources.list",
+        response_model=ObsidianSourcePageModel,
+    )
+    def list_obsidian_sources(project_id: UUID) -> dict[str, Any]:
+        request = ObsidianSourceListInput(project_id=project_id)
+        return invoke("obsidian.sources.list", request.model_dump(mode="json"))
+
+    @protected.get(
+        "/obsidian/sources/{source_id}/items",
+        operation_id="obsidian.sources.items.list",
+        response_model=ObsidianVaultItemPageModel,
+    )
+    def list_obsidian_source_items(source_id: UUID) -> dict[str, Any]:
+        return invoke("obsidian.sources.items.list", {"source_id": str(source_id)})
+
+    @protected.post(
+        "/obsidian/sources/{source_id}/sync",
+        operation_id="obsidian.sync.start",
+        response_model=ObsidianSyncResultModel,
+    )
+    def sync_obsidian_source(
+        source_id: UUID,
+        request: ObsidianSourceSyncInput,
+    ) -> dict[str, Any]:
+        if request.source_id != source_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "SCOPE_MISMATCH", "message": "source id mismatch"},
+            )
+        return invoke("obsidian.sync.start", request.model_dump(mode="json"))
 
     @protected.post(
         "/documents/import",

@@ -66,6 +66,13 @@ export type KnowledgeItemListInput = NonNullable<operations["knowledge.items.lis
 };
 export type ProjectKnowledgeOverview = Schemas["ProjectKnowledgeOverviewModel"];
 export type ObsidianConnectorHealth = Schemas["ObsidianConnectorHealthModel"];
+export type ObsidianSource = Schemas["ObsidianSourceModel"];
+export type ObsidianSourceCreateInput = Schemas["ObsidianSourceCreateInput"];
+export type ObsidianSourcePage = Schemas["ObsidianSourcePageModel"];
+export type ObsidianSourceSyncInput = Schemas["ObsidianSourceSyncInput"];
+export type ObsidianSyncResult = Schemas["ObsidianSyncResultModel"];
+export type ObsidianVaultItem = Schemas["ObsidianVaultItemModel"];
+export type ObsidianVaultItemPage = Schemas["ObsidianVaultItemPageModel"];
 export type MemoryClaim = Schemas["MemoryClaimModel"];
 export type MemoryClaimContext = Schemas["MemoryClaimContextModel"];
 export type MemoryClaimPage = Schemas["MemoryClaimPageModel"];
@@ -298,6 +305,13 @@ export interface CoreMethodMap {
     result: ProjectKnowledgeOverview;
   };
   "obsidian.health.get": { params: EmptyParams; result: ObsidianConnectorHealth };
+  "obsidian.sources.create": { params: ObsidianSourceCreateInput; result: ObsidianSource };
+  "obsidian.sources.list": { params: { project_id: string }; result: ObsidianSourcePage };
+  "obsidian.sources.items.list": {
+    params: { source_id: string };
+    result: ObsidianVaultItemPage;
+  };
+  "obsidian.sync.start": { params: ObsidianSourceSyncInput; result: ObsidianSyncResult };
   "tasks.archive": { params: TaskArchiveInput; result: Task };
   "tasks.create": { params: TaskCreateInput; result: TaskContext };
   "tasks.get": { params: { task_id: string }; result: Task };

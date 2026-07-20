@@ -34,6 +34,9 @@
 .obsidian-graph-legend span:nth-child(2)::before { background: #d7ad63; }
 .obsidian-graph-legend span:nth-child(3)::before { background: #8fa9ff; }
 .obsidian-sync section strong { color: #aeb8b3; font-size: 11px; white-space: nowrap; }
+.obsidian-sync section button { min-height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid #48514d; color: #dce7e2; background: #242826; cursor: pointer; }
+.obsidian-sync section button:disabled { opacity: 0.5; cursor: default; }
+.obsidian-source-meta { margin: 12px 0 0 32px !important; color: #83d9b2 !important; font-family: "Cascadia Mono", monospace; }
 .obsidian-sync-note { margin-top: 14px !important; padding-left: 32px; }
 .obsidian-sync-note code { color: #d7ad63; }
 .obsidian-empty { min-height: 100%; display: grid; place-content: center; justify-items: center; gap: 8px; padding: 24px; color: #8d9792; text-align: center; }

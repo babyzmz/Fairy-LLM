@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { KnowledgeItem, WorkspaceFile } from "../core/client";
+import type { WorkspaceFile } from "../core/client";
 import type { WorkspaceModel } from "./workspaceModel";
 import "./obsidian-panel.css";
 
@@ -23,6 +23,13 @@ interface GraphNode {
 interface GraphEdge {
   source: string;
   target: string;
+}
+
+interface NoteEntry {
+  id: string;
+  title: string;
+  relativePath: string;
+  byteLength: number;
 }
 
 const views: Array<{ id: ObsidianView; label: string }> = [
@@ -41,21 +48,37 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
     [model.projectConversations, project?.id],
   );
   const graph = useMemo(
-    () => model.knowledgeGraph === null
-      ? buildProjectGraph(project?.id ?? null, project?.name ?? "Project", conversations, model.workspaceFiles)
-      : {
+    () => {
+      const base = model.knowledgeGraph === null
+        ? buildProjectGraph(project?.id ?? null, project?.name ?? "Project", conversations, model.workspaceFiles)
+        : {
           nodes: model.knowledgeGraph.nodes.map((node) => ({
             id: node.id,
             label: node.title,
             kind: graphKind(node.kind),
           })),
           edges: model.knowledgeGraph.edges.map((edge) => ({ source: edge.source_id, target: edge.target_id })),
-        },
-    [conversations, model.knowledgeGraph, model.workspaceFiles, project?.id, project?.name],
+        };
+      return mergeVaultGraph(base, project?.id ?? null, model.obsidianItems);
+    },
+    [conversations, model.knowledgeGraph, model.obsidianItems, model.workspaceFiles, project?.id, project?.name],
   );
   const noteFiles = useMemo(
-    () => model.knowledgeItems.filter((item) => item.kind === "note"),
-    [model.knowledgeItems],
+    () => [
+      ...model.knowledgeItems.filter((item) => item.kind === "note").map((item) => ({
+        id: item.id,
+        title: item.title,
+        relativePath: item.relative_path ?? item.title,
+        byteLength: item.byte_length ?? 0,
+      })),
+      ...model.obsidianItems.map((item) => ({
+        id: `obsidian:${item.source_id}:${item.relative_path}`,
+        title: item.title,
+        relativePath: item.relative_path,
+        byteLength: item.byte_length,
+      })),
+    ],
+    [model.knowledgeItems, model.obsidianItems],
   );
 
   if (project === null) {
@@ -107,7 +130,7 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
         ) : view === "graph" ? (
           <ProjectGraph nodes={graph.nodes} edges={graph.edges} />
         ) : (
-          <SyncStatus workspaceGeneration={model.workspaceGeneration} health={model.obsidianHealth} />
+          <SyncStatus model={model} />
         )}
       </div>
     </section>
@@ -148,7 +171,7 @@ function Overview({
   );
 }
 
-function Notes({ files, onOpenFiles }: { files: KnowledgeItem[]; onOpenFiles(): void }) {
+function Notes({ files, onOpenFiles }: { files: NoteEntry[]; onOpenFiles(): void }) {
   if (files.length === 0) {
     return <EmptyState icon={<BookOpenText size={22} />} title="No managed notes" detail="Markdown notes created for this project will appear here." />;
   }
@@ -157,8 +180,8 @@ function Notes({ files, onOpenFiles }: { files: KnowledgeItem[]; onOpenFiles(): 
       {files.map((file) => (
         <button key={file.id} type="button" onClick={onOpenFiles}>
           <BookOpenText size={15} />
-          <span><strong>{file.title}</strong><small>{file.relative_path}</small></span>
-          <small>{formatBytes(file.byte_length ?? 0)}</small>
+          <span><strong>{file.title}</strong><small>{file.relativePath}</small></span>
+          <small>{formatBytes(file.byteLength)}</small>
         </button>
       ))}
     </div>
@@ -201,17 +224,30 @@ function ProjectGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[]
   );
 }
 
-function SyncStatus({
-  workspaceGeneration,
-  health,
-}: {
-  workspaceGeneration: number;
-  health: WorkspaceModel["obsidianHealth"];
-}) {
+function SyncStatus({ model }: { model: WorkspaceModel }) {
+  const source = model.obsidianSources.at(0) ?? null;
+  const connect = async () => {
+    const path = await model.selectProjectFolder();
+    if (path !== null) await model.connectObsidianVault(path);
+  };
   return (
     <div className="obsidian-sync">
-      <section><RefreshCw size={18} /><div><h3>Fairy project index</h3><p>Generation {workspaceGeneration || 0} is available for files, links, and graph projection.</p></div><strong>Ready</strong></section>
-      <section><Network size={18} /><div><h3>Official Obsidian Vault</h3><p>{health?.public_summary ?? "Checking the local Obsidian installation and official CLI."}</p></div><strong>{health?.status.replaceAll("_", " ") ?? "Checking"}</strong></section>
+      <section><RefreshCw size={18} /><div><h3>Fairy project index</h3><p>Generation {model.workspaceGeneration || 0} is available for files, links, and graph projection.</p></div><strong>Ready</strong></section>
+      <section>
+        <Network size={18} />
+        <div>
+          <h3>Official Obsidian Vault</h3>
+          <p>{source?.vault_display_path ?? model.obsidianHealth?.public_summary ?? "Checking the local Obsidian installation and official CLI."}</p>
+        </div>
+        {source === null ? (
+          <button type="button" disabled={model.isActing} onClick={() => void connect()}>Connect Vault</button>
+        ) : (
+          <button type="button" disabled={model.isActing} onClick={() => void model.syncObsidianSource(source)}>
+            <RefreshCw size={13} /> Sync
+          </button>
+        )}
+      </section>
+      {source !== null ? <p className="obsidian-source-meta">{source.item_count} items · {source.mode.replaceAll("_", " ")} · revision {source.revision}</p> : null}
       <p className="obsidian-sync-note">Ordinary Vault folders remain read-only. Fairy writes only inside the managed <code>Fairy/</code> directory after explicit authorization.</p>
     </div>
   );
@@ -295,4 +331,30 @@ function formatBytes(value: number) { return value < 1024 ? `${value} B` : `${(v
 function graphKind(kind: string): GraphNode["kind"] {
   if (kind === "project" || kind === "conversation" || kind === "folder") return kind;
   return "file";
+}
+
+function mergeVaultGraph(
+  graph: { nodes: GraphNode[]; edges: GraphEdge[] },
+  projectId: string | null,
+  items: WorkspaceModel["obsidianItems"],
+) {
+  if (projectId === null || items.length === 0) return graph;
+  const nodes = [...graph.nodes];
+  const edges = [...graph.edges];
+  const rootId = `project:${projectId}`;
+  const idsByTitle = new Map<string, string>();
+  for (const item of items) {
+    const id = `obsidian:${item.source_id}:${item.relative_path}`;
+    idsByTitle.set(item.title.toLocaleLowerCase(), id);
+    nodes.push({ id, label: item.title, kind: "file" });
+    edges.push({ source: rootId, target: id });
+  }
+  for (const item of items) {
+    const source = `obsidian:${item.source_id}:${item.relative_path}`;
+    for (const link of item.links) {
+      const target = idsByTitle.get(link.toLocaleLowerCase());
+      if (target !== undefined) edges.push({ source, target });
+    }
+  }
+  return { nodes, edges };
 }

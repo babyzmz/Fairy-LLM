@@ -843,6 +843,10 @@ function createClient(
         status: "not_installed",
         public_summary: "Install Obsidian 1.12.7 or newer to connect a Vault",
       }),
+      createSource: async () => ({}) as never,
+      listSources: async () => ({ items: [] }),
+      listItems: async () => ({ items: [], source_revision: 0 }),
+      sync: async () => ({}) as never,
     },
     assistant: {
       turns: {
