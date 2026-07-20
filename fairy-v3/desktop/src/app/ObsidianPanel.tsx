@@ -6,6 +6,9 @@ import {
   Link2,
   Network,
   RefreshCw,
+  RotateCcw,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -264,20 +267,57 @@ function Links({ graph }: { graph: { nodes: GraphNode[]; edges: GraphEdge[] } })
 
 function ProjectGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const positionsRef = useRef(new Map<string, { x: number; y: number }>());
+  const [zoom, setZoom] = useState(1);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = nodes.find((node) => node.id === selectedId) ?? null;
+  const related = selected === null ? [] : edges
+    .filter((edge) => edge.source === selected.id || edge.target === selected.id)
+    .map((edge) => nodes.find((node) => node.id === (edge.source === selected.id ? edge.target : edge.source)))
+    .filter((node): node is GraphNode => node !== undefined)
+    .slice(0, 12);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas === null) return;
     if (typeof ResizeObserver === "undefined") return;
-    const draw = () => drawGraph(canvas, nodes, edges);
+    const draw = () => { positionsRef.current = drawGraph(canvas, nodes, edges, zoom, selectedId); };
     draw();
     const observer = new ResizeObserver(draw);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [edges, nodes]);
+  }, [edges, nodes, selectedId, zoom]);
+  const selectAt = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - bounds.left;
+    const y = event.clientY - bounds.top;
+    let match: string | null = null;
+    let distance = 18;
+    for (const [id, position] of positionsRef.current) {
+      const candidate = Math.hypot(position.x - x, position.y - y);
+      if (candidate < distance) { match = id; distance = candidate; }
+    }
+    setSelectedId(match);
+  };
   return (
     <div className="obsidian-graph">
-      <canvas ref={canvasRef} aria-label={`Project graph with ${nodes.length} nodes and ${edges.length} links`} />
+      <canvas
+        ref={canvasRef}
+        aria-label={`Project graph with ${nodes.length} nodes and ${edges.length} links`}
+        onClick={selectAt}
+      />
+      <div className="obsidian-graph-tools" aria-label="Graph controls">
+        <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => setZoom((value) => Math.max(0.7, value - 0.15))}><ZoomOut size={14} /></button>
+        <button type="button" aria-label="Reset graph" title="Reset graph" onClick={() => { setZoom(1); setSelectedId(null); }}><RotateCcw size={14} /></button>
+        <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => setZoom((value) => Math.min(1.6, value + 0.15))}><ZoomIn size={14} /></button>
+      </div>
       <div className="obsidian-graph-legend"><span>Project</span><span>Chats</span><span>Folders</span><span>Files</span></div>
+      {selected === null ? null : (
+        <aside className="obsidian-graph-detail">
+          <small>{selected.kind}</small><strong>{selected.label}</strong>
+          <span>{related.length} visible relation{related.length === 1 ? "" : "s"}</span>
+          {related.map((node) => <button key={node.id} type="button" onClick={() => setSelectedId(node.id)}>{node.label}</button>)}
+        </aside>
+      )}
     </div>
   );
 }
@@ -345,7 +385,13 @@ function buildProjectGraph(
   return { nodes, edges };
 }
 
-function drawGraph(canvas: HTMLCanvasElement, nodes: GraphNode[], edges: GraphEdge[]) {
+function drawGraph(
+  canvas: HTMLCanvasElement,
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  zoom: number,
+  selectedId: string | null,
+) {
   const bounds = canvas.getBoundingClientRect();
   const width = Math.max(320, Math.floor(bounds.width));
   const height = Math.max(280, Math.floor(bounds.height));
@@ -353,11 +399,11 @@ function drawGraph(canvas: HTMLCanvasElement, nodes: GraphNode[], edges: GraphEd
   canvas.width = Math.floor(width * dpr);
   canvas.height = Math.floor(height * dpr);
   const context = canvas.getContext("2d");
-  if (context === null) return;
+  if (context === null) return new Map<string, { x: number; y: number }>();
   context.scale(dpr, dpr);
   context.clearRect(0, 0, width, height);
   const center = { x: width / 2, y: height / 2 };
-  const radius = Math.max(70, Math.min(width, height) * 0.37);
+  const radius = Math.max(70, Math.min(width, height) * 0.32 * zoom);
   const positions = new Map<string, { x: number; y: number }>();
   nodes.forEach((node, index) => {
     if (index === 0) positions.set(node.id, center);
@@ -368,11 +414,13 @@ function drawGraph(canvas: HTMLCanvasElement, nodes: GraphNode[], edges: GraphEd
     }
   });
   context.lineWidth = 1;
-  context.strokeStyle = "rgba(132, 151, 143, 0.28)";
   for (const edge of edges) {
     const source = positions.get(edge.source);
     const target = positions.get(edge.target);
     if (!source || !target) continue;
+    const highlighted = selectedId !== null && (edge.source === selectedId || edge.target === selectedId);
+    context.strokeStyle = highlighted ? "rgba(102, 221, 210, 0.8)" : "rgba(132, 151, 143, 0.24)";
+    context.lineWidth = highlighted ? 1.6 : 1;
     context.beginPath(); context.moveTo(source.x, source.y); context.lineTo(target.x, target.y); context.stroke();
   }
   const colors = { project: "#66ddd2", conversation: "#d7ad63", folder: "#8fa9ff", file: "#a6b0ab" };
@@ -380,12 +428,20 @@ function drawGraph(canvas: HTMLCanvasElement, nodes: GraphNode[], edges: GraphEd
     const position = positions.get(node.id);
     if (!position) continue;
     context.fillStyle = colors[node.kind];
-    context.beginPath(); context.arc(position.x, position.y, node.kind === "project" ? 7 : 4, 0, Math.PI * 2); context.fill();
+    const selected = node.id === selectedId;
+    context.beginPath(); context.arc(position.x, position.y, selected ? 8 : node.kind === "project" ? 7 : 4, 0, Math.PI * 2); context.fill();
+    if (selected || node.kind !== "file" || nodes.length <= 45) {
+      context.fillStyle = selected ? "#f4fffb" : "#aeb8b3";
+      context.font = `${selected ? 600 : 400} 10px system-ui`;
+      context.fillText(shortLabel(node.label), position.x + 8, position.y + 3, 120);
+    }
   }
+  return positions;
 }
 
 function basename(path: string) { return path.split("/").at(-1) ?? path; }
 function formatBytes(value: number) { return value < 1024 ? `${value} B` : `${(value / 1024).toFixed(1)} KB`; }
+function shortLabel(value: string) { return value.length > 22 ? `${value.slice(0, 21)}...` : value; }
 function graphKind(kind: string): GraphNode["kind"] {
   if (kind === "project" || kind === "conversation" || kind === "folder") return kind;
   return "file";
