@@ -94,8 +94,6 @@ function preferences(): DesktopPreferences {
     voice_volume_percent: 80,
     voice_rate_percent: 100,
     permission_cloud_profile: "standard",
-    memory_enabled: true,
-    memory_retention_days: 90,
     analytics_enabled: false,
     realtime_provider: "auto",
     realtime_voice_mode: "native",

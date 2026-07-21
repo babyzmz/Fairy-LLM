@@ -68,6 +68,23 @@ describe("SettingsApp", () => {
     expect(invoke.mock.calls.some(([command]) => command === "core_rpc")).toBe(false);
   });
 
+  it("updates durable Memory only through the Core revision fence", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+
+    await userEvent.click(screen.getByRole("button", { name: /Knowledge & privacy/ }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Use durable memory" }));
+
+    await vi.waitFor(() => expect(rpcRequest(invoke, "memory.settings.update")?.params)
+      .toEqual(expect.objectContaining({
+        enabled: false,
+        retention_days: 365,
+        expected_revision: 0,
+      })));
+    expect(invoke.mock.calls.some(([command]) => command === "desktop_preferences_update")).toBe(false);
+  });
+
   it("searches the one-level settings navigation", async () => {
     render(<SettingsApp client={new SettingsClient(settingsInvoke() as unknown as InvokeFunction)} />);
     await screen.findByRole("heading", { name: "General" });
@@ -508,6 +525,22 @@ function resultFor(method: CoreMethodName, params: Record<string, unknown>) {
     };
     case "permissions.get": return { profile: "standard", capability_overrides: {}, revision: 7, updated_at: "2026-07-12T00:00:00Z" };
     case "permissions.update": return { profile: params.profile, capability_overrides: params.capability_overrides ?? {}, revision: 8, updated_at: "2026-07-12T00:00:01Z" };
+    case "memory.settings.get": return {
+      enabled: true,
+      retention_days: 365,
+      export_to_obsidian: false,
+      sync_normalized_content: false,
+      revision: 0,
+      updated_at: "2026-07-12T00:00:00Z",
+    };
+    case "memory.settings.update": return {
+      enabled: params.enabled,
+      retention_days: params.retention_days,
+      export_to_obsidian: params.export_to_obsidian,
+      sync_normalized_content: params.sync_normalized_content,
+      revision: Number(params.expected_revision) + 1,
+      updated_at: "2026-07-12T00:00:01Z",
+    };
     case "capabilities.get": return manifest;
     case "extensions.catalog.list": return { items: [{
       extension_id: "design-taste-frontend",
@@ -628,7 +661,7 @@ function rpcRequest(invoke: ReturnType<typeof settingsInvoke>, method: string) {
 
 function defaultPreferences(): DesktopPreferences {
   return {
-    schema_version: 3,
+    schema_version: 7,
     revision: 0,
     language: "system",
     launch_at_startup: false,
@@ -642,8 +675,6 @@ function defaultPreferences(): DesktopPreferences {
     voice_volume_percent: 80,
     voice_rate_percent: 100,
     permission_cloud_profile: "standard",
-    memory_enabled: true,
-    memory_retention_days: 90,
     analytics_enabled: false,
     realtime_provider: "auto",
     realtime_voice_mode: "native",

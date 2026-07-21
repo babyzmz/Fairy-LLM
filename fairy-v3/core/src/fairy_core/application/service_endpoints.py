@@ -155,6 +155,7 @@ class CoreServiceEndpointsMixin:
                 idempotency_key=validated.idempotency_key,
             )
             unit_of_work.commit()
+        self._memory_retention.run_if_due(force=True)
         return changed
 
     def _get_memory_snapshot(self, request: BaseModel) -> Any:

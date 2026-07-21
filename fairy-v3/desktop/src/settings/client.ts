@@ -14,6 +14,10 @@ import type {
   ModelCatalogPage,
   ModelSelectionPreference,
   ModelSelectionUpdateInput,
+  MemoryProposalActionInput,
+  MemoryProposalPage,
+  MemorySettings,
+  MemorySettingsUpdateInput,
   OpenRouterConfigurationInput,
   OpenRouterConfigurationStatus,
   ProviderHealthPage,
@@ -70,8 +74,6 @@ export interface DesktopPreferences {
   voice_volume_percent: number;
   voice_rate_percent: number;
   permission_cloud_profile: "observe" | "standard" | "autonomous";
-  memory_enabled: boolean;
-  memory_retention_days: number;
   analytics_enabled: boolean;
   realtime_provider: "auto" | "gemini_live" | "glm_realtime_flash" | "glm_realtime_air";
   realtime_voice_mode: "native" | "fairy";
@@ -244,6 +246,22 @@ export class SettingsClient {
         this.call("trash.items.purge", input) as Promise<TrashMutationResult>,
       purgeAll: (input: TrashPurgeAllInput) =>
         this.call("trash.items.purge_all", input) as Promise<TrashPurgeResult>,
+    },
+  };
+
+  readonly memory = {
+    settings: {
+      get: () => this.call("memory.settings.get", {}) as Promise<MemorySettings>,
+      update: (input: MemorySettingsUpdateInput) =>
+        this.call("memory.settings.update", input) as Promise<MemorySettings>,
+    },
+    proposals: {
+      list: (taskId: string, limit = 100) =>
+        this.call("memory.proposals.list", { task_id: taskId, limit }) as Promise<MemoryProposalPage>,
+      accept: (input: MemoryProposalActionInput) =>
+        this.call("memory.proposals.accept", input),
+      reject: (input: MemoryProposalActionInput) =>
+        this.call("memory.proposals.reject", input),
     },
   };
 

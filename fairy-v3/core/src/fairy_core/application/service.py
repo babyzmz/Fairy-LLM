@@ -90,6 +90,7 @@ from fairy_core.media.staging import MediaStagingStore
 from fairy_core.media.tools import MediaToolExecutor
 from fairy_core.memory.application import MemoryApplication
 from fairy_core.memory.policy import MemoryPolicy
+from fairy_core.memory.retention import MemoryRetentionCoordinator
 from fairy_core.memory.tools import MemoryToolExecutor
 from fairy_core.model_catalog.ports import ModelCatalogSource
 from fairy_core.obsidian import ObsidianConnector
@@ -276,6 +277,7 @@ class CoreService(CoreServiceEndpointsMixin):
             memory_policy=MemoryPolicy(),
             scope_resolver=application.scope_for_task,
         )
+        self._memory_retention = MemoryRetentionCoordinator(unit_of_work_factory)
         self._assistant_ledger = AssistantLedgerApplication(
             unit_of_work_factory=unit_of_work_factory,
             scope_resolver=application.scope_for_task,
@@ -544,6 +546,7 @@ class CoreService(CoreServiceEndpointsMixin):
         *,
         verify_running_previews: bool = False,
     ) -> dict[str, int]:
+        self._memory_retention.run_if_due(force=True)
         result = recover_interrupted_work(
             assistant=self._assistant_ledger,
             runtime=self._runtime_application,
@@ -624,6 +627,7 @@ class CoreService(CoreServiceEndpointsMixin):
         return self._system_action_application.execute(cast(SystemActionRequest, request))
 
     def _create_assistant_turn(self, request: BaseModel) -> Any:
+        self._memory_retention.run_if_due()
         self._extension_service.refresh_registry()
         validated = cast(AssistantTurnCreateInput, request)
         attachments = build_image_attachments(

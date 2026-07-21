@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const PREFERENCES_FILE: &str = "preferences/desktop.json";
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,8 +74,6 @@ pub struct DesktopPreferences {
     pub voice_volume_percent: u8,
     pub voice_rate_percent: u8,
     pub permission_cloud_profile: String,
-    pub memory_enabled: bool,
-    pub memory_retention_days: u16,
     pub analytics_enabled: bool,
     #[serde(default)]
     pub realtime_provider: RealtimeProviderPreference,
@@ -136,8 +134,6 @@ impl Default for DesktopPreferences {
             voice_volume_percent: 80,
             voice_rate_percent: 100,
             permission_cloud_profile: "standard".to_owned(),
-            memory_enabled: true,
-            memory_retention_days: 90,
             analytics_enabled: false,
             realtime_provider: RealtimeProviderPreference::Auto,
             realtime_voice_mode: RealtimeVoicePreference::Native,
@@ -163,6 +159,18 @@ impl Default for DesktopPreferences {
             developer_mode: false,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LegacyMemorySettings {
+    pub enabled: bool,
+    pub retention_days: u16,
+}
+
+pub struct StartupDesktopPreferences {
+    pub preferences: DesktopPreferences,
+    pub legacy_memory: Option<LegacyMemorySettings>,
+    pub migration_required: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,32 +214,58 @@ impl DesktopPreferencesStore {
     }
 
     pub fn load(&self) -> Result<DesktopPreferences, DesktopPreferencesError> {
+        let startup = self.load_for_startup()?;
+        if startup.migration_required {
+            self.write_atomic(&startup.preferences)?;
+        }
+        Ok(startup.preferences)
+    }
+
+    pub fn load_for_startup(&self) -> Result<StartupDesktopPreferences, DesktopPreferencesError> {
         if !self.path.exists() {
-            return Ok(DesktopPreferences::default());
+            return Ok(StartupDesktopPreferences {
+                preferences: DesktopPreferences::default(),
+                legacy_memory: None,
+                migration_required: false,
+            });
         }
         let bytes = fs::read(&self.path)?;
-        let schema_version = serde_json::from_slice::<serde_json::Value>(&bytes)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("schema_version")
-                    .and_then(serde_json::Value::as_u64)
-            });
-        let legacy = matches!(schema_version, Some(1..=5));
+        let value = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+        let schema_version = value
+            .get("schema_version")
+            .and_then(serde_json::Value::as_u64);
+        let legacy = matches!(schema_version, Some(1..=6));
+        let legacy_memory = legacy_memory_settings(&value, legacy);
         let mut preferences = match serde_json::from_slice::<DesktopPreferences>(&bytes) {
             Ok(preferences) => preferences,
-            Err(_) if legacy => return Ok(DesktopPreferences::default()),
+            Err(_) if legacy => DesktopPreferences::default(),
             Err(error) => return Err(error.into()),
         };
         if legacy {
             preferences.schema_version = SCHEMA_VERSION;
-            if validate(&preferences).is_err() || self.write_atomic(&preferences).is_err() {
-                return Ok(DesktopPreferences::default());
+            if validate(&preferences).is_err() {
+                preferences = DesktopPreferences::default();
             }
-            return Ok(preferences);
+            return Ok(StartupDesktopPreferences {
+                preferences,
+                legacy_memory,
+                migration_required: true,
+            });
         }
         validate(&preferences)?;
-        Ok(preferences)
+        Ok(StartupDesktopPreferences {
+            preferences,
+            legacy_memory: None,
+            migration_required: false,
+        })
+    }
+
+    pub fn complete_startup_migration(
+        &self,
+        preferences: &DesktopPreferences,
+    ) -> Result<(), DesktopPreferencesError> {
+        validate(preferences)?;
+        self.write_atomic(preferences)
     }
 
     pub fn update(
@@ -326,11 +360,6 @@ fn validate(preferences: &DesktopPreferences) -> Result<(), DesktopPreferencesEr
             "voice rate must be between 50 and 200".to_owned(),
         ));
     }
-    if !(1..=3650).contains(&preferences.memory_retention_days) {
-        return Err(DesktopPreferencesError::Invalid(
-            "memory retention must be between 1 and 3650 days".to_owned(),
-        ));
-    }
     if !(5..=120).contains(&preferences.realtime_max_session_minutes) {
         return Err(DesktopPreferencesError::Invalid(
             "realtime session length must be between 5 and 120 minutes".to_owned(),
@@ -376,6 +405,24 @@ fn validate(preferences: &DesktopPreferences) -> Result<(), DesktopPreferencesEr
         ));
     }
     Ok(())
+}
+
+fn legacy_memory_settings(
+    value: &serde_json::Value,
+    legacy_schema: bool,
+) -> Option<LegacyMemorySettings> {
+    if !legacy_schema {
+        return None;
+    }
+    let enabled = value.get("memory_enabled")?.as_bool()?;
+    let retention_days = u16::try_from(value.get("memory_retention_days")?.as_u64()?).ok()?;
+    if !(1..=3_650).contains(&retention_days) {
+        return None;
+    }
+    Some(LegacyMemorySettings {
+        enabled,
+        retention_days,
+    })
 }
 
 const fn default_true() -> bool {
@@ -563,7 +610,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 6);
+        assert_eq!(migrated.schema_version, 7);
         assert!(!migrated.voice_auto_play_pet);
         assert!(!migrated.pet_always_on_top);
         assert!(migrated.pet_muted);
@@ -592,7 +639,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 6);
+        assert_eq!(migrated.schema_version, 7);
         assert_eq!(migrated.pet_target_fps, 60);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -616,7 +663,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 6);
+        assert_eq!(migrated.schema_version, 7);
         assert_eq!(migrated.pet_optics_mode, PetOpticsMode::Standard);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -640,8 +687,62 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 6);
+        assert_eq!(migrated.schema_version, 7);
         assert!(!migrated.trash_auto_purge_30_days);
         assert_eq!(store.load().expect("reload migrated"), migrated);
+    }
+
+    #[test]
+    fn version_six_memory_preferences_are_exposed_once_for_core_migration() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        let path = directory.path().join("preferences/desktop.json");
+        std::fs::create_dir_all(path.parent().expect("preferences parent"))
+            .expect("create preferences parent");
+        let mut legacy =
+            serde_json::to_value(DesktopPreferences::default()).expect("serialize defaults");
+        let object = legacy.as_object_mut().expect("preferences object");
+        object.insert("schema_version".to_owned(), serde_json::json!(6));
+        object.insert("memory_enabled".to_owned(), serde_json::json!(false));
+        object.insert("memory_retention_days".to_owned(), serde_json::json!(45));
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&legacy).expect("legacy bytes"),
+        )
+        .expect("write legacy preferences");
+
+        let startup = store.load_for_startup().expect("load startup preferences");
+        assert!(startup.migration_required);
+        assert_eq!(
+            startup.legacy_memory,
+            Some(super::LegacyMemorySettings {
+                enabled: false,
+                retention_days: 45,
+            })
+        );
+        assert_eq!(startup.preferences.schema_version, 7);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(
+                &std::fs::read(&path).expect("read pending migration")
+            )
+            .expect("parse pending migration")["schema_version"],
+            serde_json::json!(6)
+        );
+
+        store
+            .complete_startup_migration(&startup.preferences)
+            .expect("finalize migration");
+        let persisted = serde_json::from_slice::<serde_json::Value>(
+            &std::fs::read(&path).expect("read migrated preferences"),
+        )
+        .expect("parse migrated preferences");
+        assert_eq!(persisted["schema_version"], serde_json::json!(7));
+        assert!(persisted.get("memory_enabled").is_none());
+        assert!(persisted.get("memory_retention_days").is_none());
+        assert!(store
+            .load_for_startup()
+            .expect("reload startup preferences")
+            .legacy_memory
+            .is_none());
     }
 }

@@ -36,6 +36,7 @@ import type {
   ExtensionCatalogEntry,
   ModelCatalogPage,
   ModelSelectionPreference,
+  MemorySettings,
   McpServer,
   McpToolPolicyInput,
   Skill,
@@ -88,6 +89,7 @@ const categories: readonly {
 
 interface SettingsData {
   preferences: DesktopPreferences;
+  memorySettings: MemorySettings;
   openRouterConfigured: boolean;
   openRouterAccountId: string | null;
   realtimeCredentials: Record<"gemini" | "zhipu", boolean>;
@@ -115,9 +117,10 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [preferences, status, geminiStatus, zhipuStatus, modelCatalog, modelSelection, permissions, capabilities, catalog, skills, servers, tasks, voiceHealth, archived, initialTrash] =
+      const [preferences, memorySettings, status, geminiStatus, zhipuStatus, modelCatalog, modelSelection, permissions, capabilities, catalog, skills, servers, tasks, voiceHealth, archived, initialTrash] =
         await Promise.all([
           client.preferences.get(),
+          client.memory.settings.get(),
           client.providers.openRouterStatus(),
           client.providers.realtimeStatus("gemini").catch(() => ({ provider: "gemini" as const, configured: false })),
           client.providers.realtimeStatus("zhipu").catch(() => ({ provider: "zhipu" as const, configured: false })),
@@ -151,6 +154,7 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
       }
       setData({
         preferences,
+        memorySettings,
         openRouterConfigured: status.configured,
         openRouterAccountId: status.account_id,
         realtimeCredentials: { gemini: geminiStatus.configured, zhipu: zhipuStatus.configured },
@@ -210,6 +214,32 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
     [act, client.preferences, data],
   );
 
+  const updateMemorySettings = useCallback(
+    async (patch: Partial<Pick<MemorySettings, "enabled" | "retention_days" | "export_to_obsidian" | "sync_normalized_content">>) => {
+      if (data === null) return;
+      await act(async () => {
+        const next = { ...data.memorySettings, ...patch };
+        const saved = await client.memory.settings.update({
+          enabled: next.enabled,
+          retention_days: next.retention_days,
+          export_to_obsidian: next.export_to_obsidian,
+          sync_normalized_content: next.sync_normalized_content,
+          expected_revision: data.memorySettings.revision,
+          idempotency_key: [
+            "settings:memory",
+            data.memorySettings.revision,
+            Number(next.enabled),
+            next.retention_days,
+            Number(next.export_to_obsidian),
+            Number(next.sync_normalized_content),
+          ].join(":"),
+        });
+        setData((current) => current === null ? null : { ...current, memorySettings: saved });
+      });
+    },
+    [act, client.memory.settings, data],
+  );
+
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleCategories = useMemo(
     () => categories.filter((item) =>
@@ -260,6 +290,7 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
             act={act}
             reload={load}
             updatePreferences={updatePreferences}
+            updateMemorySettings={updateMemorySettings}
             updateData={setData}
           />
         )}
@@ -276,9 +307,10 @@ function SettingsCategory(props: {
   act(operation: () => Promise<void>): Promise<void>;
   reload(): Promise<void>;
   updatePreferences(patch: Partial<DesktopPreferences>): Promise<void>;
+  updateMemorySettings(patch: Partial<Pick<MemorySettings, "enabled" | "retention_days" | "export_to_obsidian" | "sync_normalized_content">>): Promise<void>;
   updateData: React.Dispatch<React.SetStateAction<SettingsData | null>>;
 }) {
-  const { id, data, busy, updatePreferences } = props;
+  const { id, data, busy, updatePreferences, updateMemorySettings } = props;
   switch (id) {
     case "general": return <Category title="General" subtitle="Desktop behavior">
       <SettingSelect icon={<Languages size={17} />} label="Language" value={data.preferences.language} disabled={busy} onChange={(value) => void updatePreferences({ language: value as DesktopPreferences["language"] })} options={[{ value: "system", label: "System default" }, { value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }]} />
@@ -331,8 +363,10 @@ function SettingsCategory(props: {
     case "permissions": return <PermissionsPanel {...props} />;
     case "extensions": return <ExtensionsPanel {...props} />;
     case "knowledge": return <Category title="Knowledge & privacy" subtitle="Memory and local data">
-      <SettingToggle label="Use durable memory" checked={data.preferences.memory_enabled} disabled={busy} onChange={(value) => void updatePreferences({ memory_enabled: value })} />
-      <SettingRange label="Memory retention" value={data.preferences.memory_retention_days} min={1} max={3650} suffix=" days" disabled={busy} onCommit={(value) => void updatePreferences({ memory_retention_days: value })} />
+      <SettingToggle label="Use durable memory" checked={data.memorySettings.enabled} disabled={busy} onChange={(value) => void updateMemorySettings({ enabled: value })} />
+      <SettingRange label="Memory retention" value={data.memorySettings.retention_days} min={1} max={3650} suffix=" days" disabled={busy} onCommit={(value) => void updateMemorySettings({ retention_days: value })} />
+      <SettingToggle label="Export confirmed memory to Obsidian" detail="Only confirmed Hermes claims can be projected into the Fairy-managed Vault directory" checked={data.memorySettings.export_to_obsidian} disabled={busy} onChange={(value) => void updateMemorySettings({ export_to_obsidian: value })} />
+      <SettingToggle label="Allow normalized knowledge sync" detail="Off by default; device paths and raw Vault files are never uploaded" checked={data.memorySettings.sync_normalized_content} disabled={busy} onChange={(value) => void updateMemorySettings({ sync_normalized_content: value })} />
       <SettingToggle label="Anonymous diagnostics" checked={data.preferences.analytics_enabled} disabled={busy} onChange={(value) => void updatePreferences({ analytics_enabled: value })} />
       <HealthRow icon={<Eye size={17} />} label="Credential storage" status="Protected by Windows DPAPI; secrets are never returned" tone="success" />
     </Category>;

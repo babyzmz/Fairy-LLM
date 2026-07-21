@@ -15,7 +15,7 @@ use tauri_plugin_dialog::{DialogExt, FilePath};
 
 use desktop_preferences::{
     DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore, DesktopPreferencesUpdate,
-    PetPreferencesUpdate,
+    LegacyMemorySettings, PetPreferencesUpdate,
 };
 use obsidian_path_registry::{ObsidianPathRegistry, ObsidianVaultSelection};
 use presence_coordinator::{
@@ -250,6 +250,11 @@ pub fn settings_method_allowed(method: &str) -> bool {
             | "models.catalog.refresh"
             | "models.selection.get"
             | "models.selection.update"
+            | "memory.proposals.accept"
+            | "memory.proposals.list"
+            | "memory.proposals.reject"
+            | "memory.settings.get"
+            | "memory.settings.update"
             | "projects.archived.delete"
             | "projects.archived.list"
             | "projects.archived.restore"
@@ -3992,6 +3997,57 @@ fn restart_core(state: &DesktopState) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+fn import_legacy_memory_settings(
+    bridge: &CoreBridge,
+    legacy: Option<LegacyMemorySettings>,
+) -> Result<(), String> {
+    let Some(legacy) = legacy else {
+        return Ok(());
+    };
+    let current = bridge
+        .call(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "memory.settings.get",
+            "params": {}
+        }))
+        .map_err(|error| error.to_string())?;
+    let current = json_rpc_result(&current)?;
+    let revision = current
+        .get("revision")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "Core Memory Settings revision is missing".to_owned())?;
+    if revision != 0 {
+        return Ok(());
+    }
+    let updated = bridge
+        .call(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "memory.settings.update",
+            "params": {
+                "enabled": legacy.enabled,
+                "retention_days": legacy.retention_days,
+                "export_to_obsidian": false,
+                "sync_normalized_content": false,
+                "expected_revision": 0,
+                "idempotency_key": "desktop-memory-settings-migration:v7"
+            }
+        }))
+        .map_err(|error| error.to_string())?;
+    json_rpc_result(&updated)?;
+    Ok(())
+}
+
+fn json_rpc_result(response: &Value) -> Result<&Value, String> {
+    if let Some(error) = response.get("error") {
+        return Err(format!("Core request failed: {error}"));
+    }
+    response
+        .get("result")
+        .ok_or_else(|| "Core response result is missing".to_owned())
+}
+
 pub fn resolve_desktop_data_dir(
     default_dir: PathBuf,
     override_dir: Option<OsString>,
@@ -4323,7 +4379,12 @@ pub fn run() {
             tauri::async_runtime::spawn_blocking(move || {
                 let _ = warming_voice.health();
             });
-            let preferences = DesktopPreferencesStore::new(&data_dir).load()?;
+            let preferences_store = DesktopPreferencesStore::new(&data_dir);
+            let startup_preferences = preferences_store.load_for_startup()?;
+            let preferences = startup_preferences.preferences;
+            let legacy_memory = startup_preferences.legacy_memory;
+            let preference_migration_required = startup_preferences.migration_required;
+            let migrated_preferences = preferences.clone();
             let presence = PresenceCoordinatorHandle::new(coordinator_config(&preferences));
             app.manage(DesktopState {
                 core: Arc::new(Mutex::new(None)),
@@ -4356,9 +4417,22 @@ pub fn run() {
             tauri::async_runtime::spawn_blocking(move || {
                 match CoreBridge::spawn_verified(launch) {
                     Ok(bridge) => {
+                        let memory_migration =
+                            import_legacy_memory_settings(&bridge, legacy_memory);
                         let Some(state) = core_app.try_state::<DesktopState>() else {
                             return;
                         };
+                        if let Err(error) = &memory_migration {
+                            eprintln!("deferred legacy Memory Settings migration: {error}");
+                        } else if preference_migration_required {
+                            if let Err(error) = DesktopPreferencesStore::new(&state.data_dir)
+                                .complete_startup_migration(&migrated_preferences)
+                            {
+                                eprintln!(
+                                    "failed to finalize desktop preference migration: {error}"
+                                );
+                            }
+                        }
                         let Ok(mut core) = state.core.lock() else {
                             return;
                         };

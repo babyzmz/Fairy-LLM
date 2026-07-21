@@ -38,6 +38,11 @@ fn settings_window_has_a_narrow_method_allow_list() {
     assert!(authorize_settings_window("main").is_err());
     assert!(settings_method_allowed("permissions.update"));
     assert!(settings_method_allowed("mcp.servers.configure"));
+    assert!(settings_method_allowed("memory.settings.get"));
+    assert!(settings_method_allowed("memory.settings.update"));
+    assert!(settings_method_allowed("memory.proposals.list"));
+    assert!(settings_method_allowed("memory.proposals.accept"));
+    assert!(settings_method_allowed("memory.proposals.reject"));
     assert!(settings_method_allowed("projects.archived.list"));
     assert!(settings_method_allowed("projects.archived.restore"));
     assert!(settings_method_allowed("projects.archived.delete"));

@@ -19,6 +19,8 @@ from fairy_core.knowledge.ports import KnowledgeRepository
 from fairy_core.knowledge.repository import SqlAlchemyKnowledgeRepository
 from fairy_core.mcp.repository import McpServerRepository, SqlAlchemyMcpServerRepository
 from fairy_core.memory.ports import MemoryRepository
+from fairy_core.memory.retention_ports import MemoryRetentionRepository
+from fairy_core.memory.retention_sqlalchemy import SqlAlchemyMemoryRetentionRepository
 from fairy_core.memory.retrieval_ports import (
     MemoryProjectionWriter,
     MemorySearchIndex,
@@ -55,6 +57,7 @@ class CoreUnitOfWork(Protocol):
     execution_settings: ExecutionSettingsRepository
     mcp_servers: McpServerRepository
     memory: MemoryRepository
+    memory_retention: MemoryRetentionRepository
     memory_settings: MemorySettingsRepository
     snapshots: MemorySnapshotRepository
     memory_search: MemorySearchIndex
@@ -120,6 +123,10 @@ class SqlAlchemyUnitOfWork:
                 tenant_id=self._tenant_id,
             )
             self.memory = SqlAlchemyMemoryRepository(connection, tenant_id=self._tenant_id)
+            self.memory_retention = SqlAlchemyMemoryRetentionRepository(
+                connection,
+                tenant_id=self._tenant_id,
+            )
             self.memory_settings = SqlAlchemyMemorySettingsRepository(
                 connection,
                 tenant_id=self._tenant_id,
