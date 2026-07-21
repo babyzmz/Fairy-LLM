@@ -39,6 +39,26 @@ test("minimum desktop window renders the durable workspace without overflow", as
   expect(layout.contextBottom).toBeLessThanOrEqual(layout.composerTop);
 });
 
+test("Preview Browser opens the scoped Runtime and renders a controlled snapshot", async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 760 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Browser", exact: true }).click();
+  await page.getByRole("button", { name: /Open the current Runtime/ }).click();
+
+  await expect(page.getByLabel("Controlled browser")).toBeVisible();
+  await expect(page.getByAltText("Current controlled browser page")).toBeVisible();
+  const calls = await page.evaluate(() => window.__FAIRY_FIXTURE_CALLS__);
+  expect(calls).toContainEqual(expect.objectContaining({
+    method: "browser.sessions.start",
+    params: expect.objectContaining({
+      conversation_id: "0198f4de-0114-7000-8000-000000000002",
+      task_id: "0198f4de-0114-7000-8000-000000000003",
+      initial_url: PREVIEW_URL,
+    }),
+  }));
+});
+
 test("narrow workspace remains usable and reduced motion disables repeated HUD motion", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 640, height: 700 });

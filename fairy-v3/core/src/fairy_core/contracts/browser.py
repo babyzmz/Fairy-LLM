@@ -96,6 +96,7 @@ class BrowserSessionIdInput(ContractModel):
 class BrowserSessionListInput(ContractModel):
     conversation_id: UUID | None = None
     task_id: UUID | None = None
+    exact_task_scope: bool = False
     include_terminal: bool = False
 
 

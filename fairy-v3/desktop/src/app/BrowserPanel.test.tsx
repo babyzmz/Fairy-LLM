@@ -22,6 +22,17 @@ describe("BrowserPanel", () => {
     expect(navigateBrowser).toHaveBeenCalledWith("https://example.org/");
   });
 
+  it("captures snapshots only while the Browser surface is mounted", () => {
+    const setBrowserSurfaceActive = vi.fn();
+    const view = render(
+      <BrowserPanel model={browserModel({ setBrowserSurfaceActive })} runtimeUrl={null} />,
+    );
+
+    expect(setBrowserSurfaceActive).toHaveBeenCalledWith(true);
+    view.unmount();
+    expect(setBrowserSurfaceActive).toHaveBeenLastCalledWith(false);
+  });
+
   it("maps screenshot clicks through the snapshot viewport and revision", () => {
     const executeBrowserAction = vi.fn(async () => undefined);
     vi.spyOn(HTMLImageElement.prototype, "getBoundingClientRect").mockReturnValue({
@@ -48,6 +59,29 @@ describe("BrowserPanel", () => {
       y: 450,
       expected_page_revision: 4,
     });
+  });
+
+  it("ignores screenshot clicks in object-fit letterboxing", () => {
+    const executeBrowserAction = vi.fn(async () => undefined);
+    vi.spyOn(HTMLImageElement.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 10,
+      top: 20,
+      width: 500,
+      height: 250,
+      right: 510,
+      bottom: 270,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    });
+    render(<BrowserPanel model={browserModel({ executeBrowserAction })} runtimeUrl={null} />);
+
+    fireEvent.click(screen.getByAltText("Current controlled browser page"), {
+      clientX: 20,
+      clientY: 145,
+    });
+
+    expect(executeBrowserAction).not.toHaveBeenCalled();
   });
 
   it("starts the controlled browser from the active Runtime", () => {
@@ -79,6 +113,35 @@ describe("BrowserPanel", () => {
     expect(selectBrowserTab).toHaveBeenCalledWith("019f666f-f8b4-7000-8000-000000000003");
     expect(closeBrowserTab).toHaveBeenCalledWith("019f666f-f8b4-7000-8000-000000000003");
     expect(openBrowserTab).toHaveBeenCalledWith();
+  });
+
+  it("shows an inline validation error instead of ignoring an invalid address", () => {
+    const navigateBrowser = vi.fn(async () => undefined);
+    render(<BrowserPanel model={browserModel({ navigateBrowser })} runtimeUrl={null} />);
+
+    fireEvent.change(screen.getByLabelText("Browser address"), { target: { value: "file:///secret" } });
+    fireEvent.submit(screen.getByLabelText("Browser address").closest("form")!);
+
+    expect(navigateBrowser).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("HTTP or HTTPS");
+  });
+
+  it("does not render a stale screenshot for an interrupted session", () => {
+    const model = browserModel();
+    const startBrowser = vi.fn(async () => undefined);
+    model.browserSession = {
+      ...model.browserSession!,
+      status: "interrupted",
+      public_error: "Browser Worker stopped",
+    };
+    model.browserSnapshot = null;
+    model.startBrowser = startBrowser;
+    render(<BrowserPanel model={model} runtimeUrl={null} />);
+
+    expect(screen.queryByAltText("Current controlled browser page")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Resume browser" }));
+    expect(startBrowser).toHaveBeenCalledWith();
+    expect(screen.getByText("Browser session interrupted")).toBeInTheDocument();
   });
 });
 
@@ -131,6 +194,7 @@ function browserModel(overrides: Partial<WorkspaceModel> = {}): WorkspaceModel {
     closeBrowserTab: vi.fn(async () => undefined),
     executeBrowserAction: vi.fn(async () => undefined),
     refreshBrowser: vi.fn(async () => undefined),
+    setBrowserSurfaceActive: vi.fn(),
     ...overrides,
   } as WorkspaceModel;
 }

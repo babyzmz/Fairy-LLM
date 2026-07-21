@@ -854,6 +854,7 @@ function workspaceModel(): WorkspaceModel {
     closeBrowserTab: vi.fn(async () => undefined),
     executeBrowserAction: vi.fn(async () => undefined),
     refreshBrowser: vi.fn(async () => undefined),
+    setBrowserSurfaceActive: vi.fn(),
     reviewTask: vi.fn(async () => undefined),
     acceptVersion: vi.fn(async () => undefined),
     discardVersion: vi.fn(async () => undefined),

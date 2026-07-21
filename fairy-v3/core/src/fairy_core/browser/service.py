@@ -51,6 +51,7 @@ class BrowserService:
         self._lock = RLock()
         self._sessions: dict[UUID, BrowserSessionModel] = {}
         self._idempotency: dict[str, UUID] = {}
+        self._worker_generation = self._current_worker_generation()
         self._load_interrupted_state()
 
     @property
@@ -78,8 +79,13 @@ class BrowserService:
                 diagnostic="Fairy Browser Worker is not configured",
             )
         try:
-            return BrowserWorkerHealthModel.model_validate(self._worker.call("browser.health", {}))
+            health = BrowserWorkerHealthModel.model_validate(
+                self._worker.call("browser.health", {})
+            )
+            self._synchronize_worker_generation()
+            return health
         except Exception as error:
+            self._synchronize_worker_generation()
             return BrowserWorkerHealthModel(
                 available=False,
                 error_code="WORKER_INTERRUPTED",
@@ -126,6 +132,7 @@ class BrowserService:
             return self._fail(session_id, error)
 
     def get(self, session_id: UUID) -> BrowserSessionModel:
+        self._synchronize_worker_generation()
         with self._lock:
             session = self._sessions.get(session_id)
         if session is None:
@@ -133,6 +140,7 @@ class BrowserService:
         return session
 
     def list(self, request: BrowserSessionListInput) -> BrowserSessionPageModel:
+        self._synchronize_worker_generation()
         terminal = {BrowserSessionStatus.STOPPED, BrowserSessionStatus.FAILED}
         with self._lock:
             items = tuple(
@@ -142,7 +150,11 @@ class BrowserService:
                     request.conversation_id is None
                     or session.conversation_id == request.conversation_id
                 )
-                and (request.task_id is None or session.task_id == request.task_id)
+                and (
+                    session.task_id == request.task_id
+                    if request.exact_task_scope
+                    else request.task_id is None or session.task_id == request.task_id
+                )
                 and (request.include_terminal or session.status not in terminal)
             )
         return BrowserSessionPageModel(
@@ -164,64 +176,130 @@ class BrowserService:
         session = self.get(session_id)
         if session.status is BrowserSessionStatus.ACTIVE:
             return session
+        if session.status not in {
+            BrowserSessionStatus.INTERRUPTED,
+            BrowserSessionStatus.SUSPENDED,
+        }:
+            raise ValueError("Only an interrupted or suspended Browser session can be resumed")
+        original_tabs = session.tabs
+        initial_url = original_tabs[0].url if original_tabs else "about:blank"
         request = BrowserSessionStartInput(
             project_id=session.project_id,
             conversation_id=session.conversation_id,
             task_id=session.task_id,
             execution_target=session.execution_target,
             profile_kind=session.profile_kind,
-            initial_url=session.tabs[0].url if session.tabs else "about:blank",
+            initial_url=initial_url,
             idempotency_key=f"resume:{session.id}:{session.revision}",
         )
-        return self.start(request)
+        resumed = self.start(request)
+        restored_tab_ids = [resumed.active_tab_id]
+        for tab in original_tabs[1:]:
+            resumed = self.open_tab(BrowserTabOpenInput(session_id=resumed.id, url=tab.url))
+            restored_tab_ids.append(resumed.active_tab_id)
+        if session.active_tab_id is not None:
+            active_index = next(
+                (
+                    index
+                    for index, tab in enumerate(original_tabs)
+                    if tab.id == session.active_tab_id
+                ),
+                0,
+            )
+            restored_id = restored_tab_ids[active_index] if restored_tab_ids else None
+            if restored_id is not None and resumed.active_tab_id != restored_id:
+                resumed = self.select_tab(
+                    BrowserTabIdInput(session_id=resumed.id, tab_id=restored_id)
+                )
+        return resumed
 
     def open_tab(self, request: BrowserTabOpenInput) -> BrowserSessionModel:
-        result = self._required_worker().call(
-            "browser.tabs.open",
-            {"session_id": str(request.session_id), "url": _validated_url(request.url)},
-        )
-        return self._replace_from_worker(request.session_id, result)
+        try:
+            result = self._required_worker().call(
+                "browser.tabs.open",
+                {"session_id": str(request.session_id), "url": _validated_url(request.url)},
+            )
+            return self._replace_from_worker(request.session_id, result)
+        except Exception as error:
+            self._interrupt_on_worker_failure(request.session_id, error)
+            raise
 
     def select_tab(self, request: BrowserTabIdInput) -> BrowserSessionModel:
-        result = self._required_worker().call(
-            "browser.tabs.select",
-            {"session_id": str(request.session_id), "tab_id": str(request.tab_id)},
-        )
-        return self._replace_from_worker(request.session_id, result)
+        try:
+            result = self._required_worker().call(
+                "browser.tabs.select",
+                {"session_id": str(request.session_id), "tab_id": str(request.tab_id)},
+            )
+            return self._replace_from_worker(request.session_id, result)
+        except Exception as error:
+            self._interrupt_on_worker_failure(request.session_id, error)
+            raise
 
     def close_tab(self, request: BrowserTabIdInput) -> BrowserSessionModel:
-        result = self._required_worker().call(
-            "browser.tabs.close",
-            {"session_id": str(request.session_id), "tab_id": str(request.tab_id)},
-        )
-        return self._replace_from_worker(request.session_id, result)
+        try:
+            result = self._required_worker().call(
+                "browser.tabs.close",
+                {"session_id": str(request.session_id), "tab_id": str(request.tab_id)},
+            )
+            return self._replace_from_worker(request.session_id, result)
+        except Exception as error:
+            self._interrupt_on_worker_failure(request.session_id, error)
+            raise
 
     def execute(self, request: BrowserActionInput) -> BrowserActionResultModel:
-        params = request.model_dump(mode="json")
-        if request.kind.value == "navigate":
-            params["value"] = _validated_url(request.value or "")
-        result = self._required_worker().call("browser.actions.execute", params)
-        session = self._replace_from_worker(request.session_id, result["session"])
-        tab = BrowserTabModel.model_validate(result["tab"])
-        return BrowserActionResultModel(
-            session=session,
-            tab=tab,
-            public_summary=str(result.get("public_summary", "Browser action completed")),
-            replayed=bool(result.get("replayed", False)),
-        )
+        try:
+            params = request.model_dump(mode="json")
+            if request.kind.value == "navigate":
+                params["value"] = _validated_url(request.value or "")
+            result = self._required_worker().call("browser.actions.execute", params)
+            session = self._replace_from_worker(request.session_id, result["session"])
+            tab = BrowserTabModel.model_validate(result["tab"])
+            if tab.session_id != request.session_id or tab.id != request.tab_id:
+                raise ValueError("Browser Worker returned an out-of-scope action tab")
+            session_tab = next((item for item in session.tabs if item.id == tab.id), None)
+            if session_tab is None:
+                raise ValueError("Browser Worker action tab is absent from its session")
+            if session_tab != tab:
+                raise ValueError("Browser Worker returned inconsistent action tab state")
+            return BrowserActionResultModel(
+                session=session,
+                tab=tab,
+                public_summary=str(result.get("public_summary", "Browser action completed")),
+                replayed=bool(result.get("replayed", False)),
+            )
+        except Exception as error:
+            self._interrupt_on_worker_failure(request.session_id, error)
+            raise
 
     def snapshot(self, request: BrowserSnapshotInput) -> BrowserSnapshotModel:
-        result = self._required_worker().call(
-            "browser.snapshots.get", request.model_dump(mode="json")
-        )
-        return BrowserSnapshotModel.model_validate(result)
+        try:
+            result = self._required_worker().call(
+                "browser.snapshots.get", request.model_dump(mode="json")
+            )
+            snapshot = BrowserSnapshotModel.model_validate(result)
+            if snapshot.session_id != request.session_id or snapshot.tab_id != request.tab_id:
+                raise ValueError("Browser Worker returned an out-of-scope snapshot")
+            self._merge_snapshot(snapshot)
+            return snapshot
+        except Exception as error:
+            self._interrupt_on_worker_failure(request.session_id, error)
+            raise
 
     def session_for_scope(self, scope: ScopeContract) -> BrowserSessionModel:
         matches = self.list(
-            BrowserSessionListInput(conversation_id=scope.conversation_id, task_id=scope.task_id)
+            BrowserSessionListInput(
+                conversation_id=scope.conversation_id,
+                task_id=scope.task_id,
+                exact_task_scope=True,
+            )
         ).items
         if matches:
-            return matches[0]
+            session = matches[0]
+            if session.status is not BrowserSessionStatus.ACTIVE:
+                raise ToolExecutionUnavailableError(
+                    "Browser session was interrupted; resume it in Preview before continuing"
+                )
+            return session
         return self.start(
             BrowserSessionStartInput(
                 project_id=scope.project_id,
@@ -237,12 +315,17 @@ class BrowserService:
         with self._lock:
             previous = self._sessions[session_id]
             tabs = tuple(BrowserTabModel.model_validate(item) for item in payload.get("tabs", ()))
+            if any(tab.session_id != session_id for tab in tabs):
+                raise ValueError("Browser Worker returned a tab from another session")
+            active_tab_id = UUID(payload["active_tab_id"]) if payload.get("active_tab_id") else None
+            if active_tab_id is not None and not any(tab.id == active_tab_id for tab in tabs):
+                raise ValueError("Browser Worker returned an unknown active tab")
+            if any(tab.active != (tab.id == active_tab_id) for tab in tabs):
+                raise ValueError("Browser Worker returned inconsistent active tab state")
             session = previous.model_copy(
                 update={
                     "status": BrowserSessionStatus(payload.get("status", "active")),
-                    "active_tab_id": UUID(payload["active_tab_id"])
-                    if payload.get("active_tab_id")
-                    else None,
+                    "active_tab_id": active_tab_id,
                     "tabs": tabs,
                     "revision": previous.revision + 1,
                     "updated_at": datetime.now(UTC),
@@ -253,6 +336,38 @@ class BrowserService:
             self._sessions[session_id] = session
             self._save()
             return session
+
+    def _interrupt_on_worker_failure(self, session_id: UUID, error: Exception) -> None:
+        error_code = getattr(error, "error_code", None)
+        if error_code in {None, "WORKER_INTERRUPTED"}:
+            self._fail(session_id, error)
+
+    def _merge_snapshot(self, snapshot: BrowserSnapshotModel) -> None:
+        with self._lock:
+            previous = self._sessions[snapshot.session_id]
+            current = next((tab for tab in previous.tabs if tab.id == snapshot.tab_id), None)
+            if current is None:
+                raise ValueError("Browser snapshot tab is absent from its session")
+            if snapshot.page_revision < current.revision:
+                raise ValueError("Browser Worker attempted to roll back a page revision")
+            updated = current.model_copy(
+                update={
+                    "title": snapshot.title,
+                    "url": snapshot.url,
+                    "revision": snapshot.page_revision,
+                }
+            )
+            if updated == current:
+                return
+            tabs = tuple(updated if tab.id == updated.id else tab for tab in previous.tabs)
+            self._sessions[previous.id] = previous.model_copy(
+                update={
+                    "tabs": tabs,
+                    "revision": previous.revision + 1,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+            self._save()
 
     def _fail(self, session_id: UUID, error: Exception) -> BrowserSessionModel:
         with self._lock:
@@ -273,7 +388,39 @@ class BrowserService:
     def _required_worker(self) -> BrowserWorker:
         if self._worker is None:
             raise ToolExecutionUnavailableError("Fairy Browser Worker is unavailable")
+        self._synchronize_worker_generation()
         return self._worker
+
+    def _current_worker_generation(self) -> int:
+        generation = getattr(self._worker, "generation", 0)
+        return generation if isinstance(generation, int) else 0
+
+    def _synchronize_worker_generation(self) -> None:
+        current = self._current_worker_generation()
+        now = datetime.now(UTC)
+        changed = False
+        with self._lock:
+            if current <= self._worker_generation:
+                return
+            self._worker_generation = current
+            for session_id, session in tuple(self._sessions.items()):
+                if session.status not in {
+                    BrowserSessionStatus.ACTIVE,
+                    BrowserSessionStatus.STARTING,
+                }:
+                    continue
+                self._sessions[session_id] = session.model_copy(
+                    update={
+                        "status": BrowserSessionStatus.INTERRUPTED,
+                        "revision": session.revision + 1,
+                        "updated_at": now,
+                        "error_code": "WORKER_INTERRUPTED",
+                        "public_error": "Browser Worker restarted; resume this session explicitly",
+                    }
+                )
+                changed = True
+            if changed:
+                self._save()
 
     def _load_interrupted_state(self) -> None:
         try:
@@ -367,6 +514,7 @@ class BrowserToolExecutor:
                 else None,
                 value=arguments.get("value") if isinstance(arguments.get("value"), str) else None,
                 delta_y=float(arguments.get("delta_y", 0)),
+                expected_page_revision=self._active_tab_revision(session, tab_id),
                 idempotency_key=f"assistant:{scope.task_id}:{definition.name}:{uuid4()}",
             )
         )
@@ -377,6 +525,13 @@ class BrowserToolExecutor:
             ),
             artifact_ids=(),
         )
+
+    @staticmethod
+    def _active_tab_revision(session: BrowserSessionModel, tab_id: UUID) -> int:
+        tab = next((item for item in session.tabs if item.id == tab_id), None)
+        if tab is None:
+            raise ToolExecutionUnavailableError("Browser session active tab is unavailable")
+        return tab.revision
 
     def close(self) -> None:
         close = getattr(self._delegate, "close", None)

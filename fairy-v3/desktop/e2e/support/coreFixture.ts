@@ -1430,6 +1430,35 @@ async function installCoreFixture(page: Page) {
         else scratchConversation = value as typeof scratchConversation;
         return { ...value };
       };
+      const browserSessionId = "0198f4de-0114-7000-8000-000000000030";
+      const browserTabId = "0198f4de-0114-7000-8000-000000000031";
+      let browserActive = false;
+      let browserUrl = "about:blank";
+      let browserRevision = 1;
+      const browserSession = (status: "active" | "stopped" = "active") => ({
+        id: browserSessionId,
+        project_id: id.project,
+        conversation_id: id.conversation,
+        task_id: id.task,
+        execution_target: "local",
+        profile_kind: "persistent",
+        status,
+        active_tab_id: status === "active" ? browserTabId : null,
+        tabs: status === "active" ? [{
+          id: browserTabId,
+          session_id: browserSessionId,
+          title: "Atlas preview",
+          url: browserUrl,
+          active: true,
+          loading: false,
+          revision: browserRevision,
+        }] : [],
+        revision: browserRevision,
+        created_at: timestamp,
+        updated_at: timestamp,
+        error_code: null,
+        public_error: null,
+      });
 
       const tauriWindow = window as unknown as {
         __TAURI_INTERNALS__: {
@@ -1637,6 +1666,61 @@ async function installCoreFixture(page: Page) {
           }
           if (request.method === "tasks.create") {
             await new Promise((resolve) => window.setTimeout(resolve, 180));
+          }
+          if (request.method === "browser.health") {
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                available: true,
+                browser_name: "Microsoft Edge",
+                browser_version: "fixture",
+                error_code: null,
+                diagnostic: null,
+              },
+            };
+          }
+          if (request.method === "browser.sessions.list") {
+            const matchesScope = request.params.conversation_id === id.conversation
+              && request.params.task_id === id.task;
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: { items: browserActive && matchesScope ? [browserSession()] : [] },
+            };
+          }
+          if (request.method === "browser.sessions.start") {
+            browserActive = true;
+            browserUrl = String(request.params.initial_url ?? "about:blank");
+            browserRevision += 1;
+            return { jsonrpc: "2.0", id: request.id, result: browserSession() };
+          }
+          if (request.method === "browser.sessions.stop") {
+            browserActive = false;
+            browserRevision += 1;
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: browserSession("stopped"),
+            };
+          }
+          if (request.method === "browser.snapshots.get") {
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                session_id: browserSessionId,
+                tab_id: browserTabId,
+                page_revision: browserRevision,
+                url: browserUrl,
+                title: "Atlas preview",
+                aria_snapshot: "- document:\n  - heading: Atlas preview",
+                viewport_width: 1365,
+                viewport_height: 768,
+                screenshot_data_url: `data:image/png;base64,${capturePngBase64}`,
+                captured_at: timestamp,
+              },
+            };
           }
           if (request.method === "models.selection.get") {
             return { jsonrpc: "2.0", id: request.id, result: modelSelection };

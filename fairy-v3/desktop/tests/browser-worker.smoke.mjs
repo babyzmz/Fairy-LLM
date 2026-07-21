@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -34,12 +34,41 @@ function call(method, params = {}) {
   });
 }
 
-const server = createServer((_request, response) => {
+let protectedRequests = 0;
+const server = createServer((request, response) => {
+  if (request.url === "/protected") {
+    protectedRequests += 1;
+    response.writeHead(200, { "content-type": "text/plain" });
+    response.end("local secret");
+    return;
+  }
+  if (request.url === "/download") {
+    response.writeHead(200, {
+      "content-type": "application/octet-stream",
+      "content-disposition": "attachment; filename=blocked.txt",
+    });
+    response.end("must not persist");
+    return;
+  }
+  if (request.url === "/dynamic") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end(`<!doctype html><title>Dynamic page</title><main>
+      <button id="stable">Stable action</button>
+      <script>setTimeout(() => document.body.append(" late update"), 250)</script>
+    </main>`);
+    return;
+  }
   response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-  response.end("<!doctype html><title>Fairy Browser Smoke</title><main><h1>Browser ready</h1><button>Test</button></main>");
+  response.end(`<!doctype html><title>Fairy Browser Smoke</title><main>
+    <h1>Browser ready</h1>
+    <a id="popup" href="/popup" target="_blank">Open popup</a>
+    <a id="download" href="/download" download>Download</a>
+  </main>`);
 });
 
 let sessionId;
+let persistentSessionId;
+let secondPersistentSessionId;
 try {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -68,6 +97,105 @@ try {
   assert.match(snapshot.screenshot_data_url, /^data:image\/jpeg;base64,/);
   assert.equal(snapshot.viewport_width, 1365);
 
+  persistentSessionId = crypto.randomUUID();
+  secondPersistentSessionId = crypto.randomUUID();
+  const firstPersistent = await call("browser.sessions.start", {
+    session_id: persistentSessionId,
+    profile_kind: "persistent",
+    profile_root: profileRoot,
+    initial_url: url,
+  });
+  const secondPersistent = await call("browser.sessions.start", {
+    session_id: secondPersistentSessionId,
+    profile_kind: "persistent",
+    profile_root: profileRoot,
+    initial_url: url,
+  });
+  assert.equal(firstPersistent.status, "active");
+  assert.equal(secondPersistent.status, "active");
+  assert.equal(firstPersistent.tabs.length, 1);
+  assert.equal(secondPersistent.tabs.length, 1);
+
+  const popupResult = await call("browser.actions.execute", {
+    session_id: sessionId,
+    tab_id: tabId,
+    kind: "click",
+    selector: "#popup",
+    expected_page_revision: snapshot.page_revision,
+    idempotency_key: "open-popup",
+  });
+  assert.equal(popupResult.session.tabs.length, 2);
+
+  await call("browser.actions.execute", {
+    session_id: sessionId,
+    tab_id: tabId,
+    kind: "click",
+    selector: "#download",
+    expected_page_revision: popupResult.tab.revision,
+    idempotency_key: "blocked-download",
+  });
+  const profileFiles = await readdir(profileRoot, { recursive: true });
+  assert.equal(profileFiles.some((entry) => String(entry).endsWith("blocked.txt")), false);
+
+  const dynamicSession = await call("browser.tabs.open", {
+    session_id: sessionId,
+    url: `${url}dynamic`,
+  });
+  const dynamicTabId = dynamicSession.active_tab_id;
+  const dynamicSnapshot = await call("browser.snapshots.get", {
+    session_id: sessionId,
+    tab_id: dynamicTabId,
+    include_screenshot: false,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  await assert.rejects(
+    call("browser.actions.execute", {
+      session_id: sessionId,
+      tab_id: dynamicTabId,
+      kind: "click",
+      selector: "#stable",
+      expected_page_revision: dynamicSnapshot.page_revision,
+      idempotency_key: "stale-dynamic-page",
+    }),
+    /Page changed/,
+  );
+
+  const localTarget = `${url}protected`;
+  const crossScopeDocument = `<!doctype html><main id="result">waiting</main><script>
+    fetch(${JSON.stringify(localTarget)})
+      .then(() => document.querySelector("#result").textContent = "allowed")
+      .catch(() => document.querySelector("#result").textContent = "blocked")
+  </script>`;
+  const crossScopeSession = await call("browser.tabs.open", {
+    session_id: sessionId,
+    url: `data:text/html,${encodeURIComponent(crossScopeDocument)}`,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const crossScopeSnapshot = await call("browser.snapshots.get", {
+    session_id: sessionId,
+    tab_id: crossScopeSession.active_tab_id,
+    include_screenshot: false,
+  });
+  assert.match(crossScopeSnapshot.aria_snapshot, /blocked/);
+  assert.equal(protectedRequests, 0);
+
+  const firstReload = await call("browser.actions.execute", {
+    session_id: persistentSessionId,
+    tab_id: firstPersistent.active_tab_id,
+    kind: "reload",
+    expected_page_revision: firstPersistent.tabs[0].revision,
+    idempotency_key: "same-key-different-session",
+  });
+  const secondReload = await call("browser.actions.execute", {
+    session_id: secondPersistentSessionId,
+    tab_id: secondPersistent.active_tab_id,
+    kind: "reload",
+    expected_page_revision: secondPersistent.tabs[0].revision,
+    idempotency_key: "same-key-different-session",
+  });
+  assert.equal(firstReload.replayed, false);
+  assert.equal(secondReload.replayed, false);
+
   await assert.rejects(
     call("browser.actions.execute", {
       session_id: sessionId,
@@ -81,6 +209,8 @@ try {
   process.stdout.write("Fairy Browser Worker smoke passed\n");
 } finally {
   if (sessionId) await call("browser.sessions.stop", { session_id: sessionId }).catch(() => undefined);
+  if (persistentSessionId) await call("browser.sessions.stop", { session_id: persistentSessionId }).catch(() => undefined);
+  if (secondPersistentSessionId) await call("browser.sessions.stop", { session_id: secondPersistentSessionId }).catch(() => undefined);
   worker.stdin.end();
   await Promise.race([once(worker, "exit"), new Promise((resolve) => setTimeout(resolve, 5_000))]);
   if (worker.exitCode === null) worker.kill();

@@ -5,7 +5,8 @@ import os
 import subprocess
 import threading
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, TextIO
 
@@ -39,6 +40,8 @@ class WorkerRpcError(RuntimeError):
 
 class WorkerTransport(Protocol):
     def call(self, method: str, params: dict[str, object]) -> dict[str, object]: ...
+
+    def close(self) -> None: ...
 
 
 class RustSystemActionWorker:
@@ -187,6 +190,49 @@ class SubprocessWorkerTransport:
     def _interrupted_message(self) -> str:
         detail = self._stderr[-1] if self._stderr else "no worker diagnostics"
         return f"worker interrupted: {detail}"
+
+
+class RestartingWorkerTransport:
+    """Recreate a failed worker without replaying state-changing calls."""
+
+    def __init__(self, factory: Callable[[], WorkerTransport]) -> None:
+        self._factory = factory
+        self._transport = factory()
+        self._lock = threading.RLock()
+        self._generation = 0
+
+    @property
+    def generation(self) -> int:
+        with self._lock:
+            return self._generation
+
+    def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
+        with self._lock:
+            try:
+                return self._transport.call(method, params)
+            except WorkerRpcError as error:
+                if error.error_code != "WORKER_INTERRUPTED":
+                    raise
+                self._restart(error)
+                if method == "browser.health":
+                    return self._transport.call(method, params)
+                raise
+
+    def close(self) -> None:
+        with self._lock:
+            self._transport.close()
+
+    def _restart(self, original_error: WorkerRpcError) -> None:
+        previous = self._transport
+        with suppress(Exception):
+            previous.close()
+        self._generation += 1
+        try:
+            self._transport = self._factory()
+        except Exception as restart_error:
+            raise WorkerRpcError(
+                f"{original_error}; worker restart failed: {restart_error}"
+            ) from original_error
 
 
 def _worker_environment(overrides: Mapping[str, str]) -> dict[str, str]:

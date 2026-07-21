@@ -296,6 +296,7 @@ export interface WorkspaceModel {
   closeBrowserTab(tabId: string): Promise<void>;
   executeBrowserAction(input: Omit<BrowserActionInput, "session_id" | "tab_id" | "idempotency_key">): Promise<void>;
   refreshBrowser(): Promise<void>;
+  setBrowserSurfaceActive(active: boolean): void;
   reviewTask(): Promise<void>;
   acceptVersion(): Promise<void>;
   discardVersion(): Promise<void>;

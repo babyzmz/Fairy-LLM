@@ -48,6 +48,7 @@ from fairy_core.voice import VoiceRegistry
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
 from fairy_core.workspace.rust_worker import RustWorkspaceProvisioner
 from fairy_core.workspace.worker_transport import (
+    RestartingWorkerTransport,
     RustSystemActionWorker,
     SubprocessWorkerTransport,
 )
@@ -218,13 +219,15 @@ def build_local_service(
             browser_worker_args = tuple(raw_browser_args)
         browser_transport = None
         if browser_worker_program:
-            browser_transport = SubprocessWorkerTransport(
-                program=browser_worker_program,
-                args=browser_worker_args,
-                environment={"FAIRY_BROWSER_DATA_DIR": str(data_dir / "browser")},
-                current_directory=(
-                    Path(browser_worker_args[0]).parent if browser_worker_args else None
-                ),
+            browser_transport = RestartingWorkerTransport(
+                lambda: SubprocessWorkerTransport(
+                    program=browser_worker_program,
+                    args=browser_worker_args,
+                    environment={"FAIRY_BROWSER_DATA_DIR": str(data_dir / "browser")},
+                    current_directory=(
+                        Path(browser_worker_args[0]).parent if browser_worker_args else None
+                    ),
+                )
             )
             resources.callback(browser_transport.close)
         browser_service = BrowserService(

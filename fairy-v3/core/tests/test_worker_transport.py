@@ -5,6 +5,7 @@ import sys
 import pytest
 
 from fairy_core.workspace.worker_transport import (
+    RestartingWorkerTransport,
     RustSystemActionWorker,
     SubprocessWorkerTransport,
     WorkerRpcError,
@@ -19,6 +20,15 @@ class RecordingTransport:
     def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
         self.calls.append((method, params))
         return self.result
+
+    def close(self) -> None:
+        return None
+
+
+class InterruptingTransport(RecordingTransport):
+    def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
+        self.calls.append((method, params))
+        raise WorkerRpcError("worker stopped")
 
 
 def test_subprocess_transport_keeps_one_worker_and_matches_response_ids() -> None:
@@ -100,6 +110,43 @@ for line in sys.stdin:
         transport.call("workspace.write_text", {})
 
     assert captured.value.error_code == "PATH_OUT_OF_SCOPE"
+    transport.close()
+
+
+def test_restarting_transport_recovers_health_without_replaying_writes() -> None:
+    interrupted = InterruptingTransport({})
+    healthy = RecordingTransport({"available": True})
+    transports = iter((interrupted, healthy))
+    transport = RestartingWorkerTransport(lambda: next(transports))
+
+    with pytest.raises(WorkerRpcError, match="worker stopped"):
+        transport.call("browser.actions.execute", {"idempotency_key": "write-once"})
+
+    assert healthy.calls == []
+    assert transport.generation == 1
+    assert transport.call("browser.health", {}) == {"available": True}
+    assert healthy.calls == [("browser.health", {})]
+    transport.close()
+
+
+def test_restarting_transport_does_not_restart_for_typed_policy_failures() -> None:
+    class PolicyFailureTransport(RecordingTransport):
+        def call(self, method: str, params: dict[str, object]) -> dict[str, object]:
+            raise WorkerRpcError("blocked", error_code="PATH_OUT_OF_SCOPE")
+
+    created = 0
+
+    def factory() -> RecordingTransport:
+        nonlocal created
+        created += 1
+        return PolicyFailureTransport({})
+
+    transport = RestartingWorkerTransport(factory)
+
+    with pytest.raises(WorkerRpcError, match="blocked"):
+        transport.call("browser.actions.execute", {})
+
+    assert created == 1
     transport.close()
 
 

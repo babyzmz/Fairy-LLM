@@ -325,7 +325,12 @@ export interface CoreMethodMap {
   "browser.sessions.start": { params: BrowserSessionStartInput; result: BrowserSession };
   "browser.sessions.get": { params: { session_id: string }; result: BrowserSession };
   "browser.sessions.list": {
-    params: { conversation_id?: string | null; task_id?: string | null; include_terminal?: boolean };
+    params: {
+      conversation_id?: string | null;
+      task_id?: string | null;
+      exact_task_scope?: boolean;
+      include_terminal?: boolean;
+    };
     result: BrowserSessionPage;
   };
   "browser.sessions.stop": { params: { session_id: string }; result: BrowserSession };

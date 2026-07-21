@@ -242,7 +242,7 @@ export class CoreClient {
         this.transport.call("browser.sessions.start", input),
       get: (sessionId: string) =>
         this.transport.call("browser.sessions.get", { session_id: sessionId }),
-      list: (input: { conversation_id?: string | null; task_id?: string | null; include_terminal?: boolean } = {}) =>
+      list: (input: { conversation_id?: string | null; task_id?: string | null; exact_task_scope?: boolean; include_terminal?: boolean } = {}) =>
         this.transport.call("browser.sessions.list", input),
       stop: (sessionId: string) =>
         this.transport.call("browser.sessions.stop", { session_id: sessionId }),

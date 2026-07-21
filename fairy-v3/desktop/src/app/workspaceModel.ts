@@ -1180,6 +1180,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     closeBrowserTab: actions.closeBrowserTab,
     executeBrowserAction: actions.executeBrowserAction,
     refreshBrowser: actions.refreshBrowser,
+    setBrowserSurfaceActive: actions.setBrowserSurfaceActive,
     reviewTask: actions.reviewTask,
     acceptVersion: actions.acceptVersion,
     discardVersion: actions.discardVersion,

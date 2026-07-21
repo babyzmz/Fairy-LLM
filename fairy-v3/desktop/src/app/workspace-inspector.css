@@ -222,6 +222,23 @@
   background: #1a1d1b;
 }
 
+.browser-toolbar-stack {
+  min-width: 0;
+  border-bottom: 1px solid #353736;
+  background: #1a1d1b;
+}
+
+.browser-toolbar-stack .browser-toolbar {
+  border-bottom: 0;
+}
+
+.browser-address-error {
+  margin: 0;
+  padding: 0 10px 6px 42px;
+  color: #e69a92;
+  font-size: 11px;
+}
+
 .browser-nav-actions {
   display: flex;
   gap: 3px;

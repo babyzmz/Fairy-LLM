@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { WorkspaceClient, WorkspaceModel } from "./workspaceTypes";
 import { errorMessage, firstError, requireId, workspaceKey } from "./workspaceModelUtils";
@@ -25,6 +25,7 @@ type BrowserActions = Pick<
   | "closeBrowserTab"
   | "executeBrowserAction"
   | "refreshBrowser"
+  | "setBrowserSurfaceActive"
 >;
 
 export function useWorkspaceBrowser({
@@ -35,6 +36,10 @@ export function useWorkspaceBrowser({
   taskId,
   runAction,
 }: WorkspaceBrowserOptions) {
+  const [surfaceActive, setSurfaceActive] = useState(false);
+  const setBrowserSurfaceActive = useCallback((active: boolean) => {
+    setSurfaceActive(active);
+  }, []);
   const healthQuery = useQuery({
     queryKey: [...workspaceKey, "browser-health"],
     queryFn: () => client.browser.health(),
@@ -43,8 +48,12 @@ export function useWorkspaceBrowser({
     refetchOnWindowFocus: false,
   });
   const sessionsQuery = useQuery({
-    queryKey: [...workspaceKey, "browser-sessions", conversationId],
-    queryFn: () => client.browser.sessions.list({ conversation_id: conversationId }),
+    queryKey: [...workspaceKey, "browser-sessions", conversationId, taskId],
+    queryFn: () => client.browser.sessions.list({
+      conversation_id: conversationId,
+      task_id: taskId,
+      exact_task_scope: true,
+    }),
     enabled: enabled && conversationId !== null,
     retry: false,
   });
@@ -53,10 +62,17 @@ export function useWorkspaceBrowser({
   const snapshotQuery = useQuery({
     queryKey: [...workspaceKey, "browser-snapshot", session?.id, activeTab?.id, activeTab?.revision],
     queryFn: () => client.browser.snapshots.get(requireId(session?.id), requireId(activeTab?.id)),
-    enabled: session?.status === "active" && activeTab !== null,
+    enabled: surfaceActive && session?.status === "active" && activeTab !== null,
     retry: false,
     refetchInterval: session?.status === "active" ? 750 : false,
   });
+  const refetchHealth = healthQuery.refetch;
+  const refetchSessions = sessionsQuery.refetch;
+  useEffect(() => {
+    if (snapshotQuery.errorUpdatedAt === 0) return;
+    void refetchHealth();
+    void refetchSessions();
+  }, [refetchHealth, refetchSessions, snapshotQuery.errorUpdatedAt]);
   const queryError = firstError(healthQuery.error, sessionsQuery.error, snapshotQuery.error);
 
   const actions = useMemo<BrowserActions>(() => {
@@ -131,21 +147,26 @@ export function useWorkspaceBrowser({
           ...input,
           session_id: session.id,
           tab_id: activeTab.id,
-          expected_page_revision: input.expected_page_revision ?? activeTab.revision,
+          expected_page_revision: input.expected_page_revision
+            ?? snapshotQuery.data?.page_revision
+            ?? activeTab.revision,
           idempotency_key: `desktop:browser:${input.kind}:${crypto.randomUUID()}`,
         }));
       },
       async refreshBrowser() {
         await snapshotQuery.refetch();
       },
+      setBrowserSurfaceActive,
     };
-  }, [activeTab, client.browser, conversationId, projectId, runAction, session, snapshotQuery, taskId]);
+  }, [activeTab, client.browser, conversationId, projectId, runAction, session, setBrowserSurfaceActive, snapshotQuery, taskId]);
 
   return {
     health: healthQuery.data ?? null,
     session,
-    snapshot: snapshotQuery.data ?? null,
-    loading: healthQuery.isPending || sessionsQuery.isPending || snapshotQuery.isPending,
+    snapshot: surfaceActive && session?.status === "active" ? snapshotQuery.data ?? null : null,
+    loading: healthQuery.isPending
+      || sessionsQuery.isPending
+      || (surfaceActive && session?.status === "active" && snapshotQuery.isFetching),
     error: queryError === null ? null : errorMessage(queryError),
     actions,
   };
