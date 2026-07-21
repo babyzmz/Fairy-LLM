@@ -142,6 +142,8 @@ describe("Liquid Glass material", () => {
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("if (bridgeMorph >= 0.001)");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("sceneSdf");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("thicknessField");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("float clearInterior");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("edgeProfile *= clearInterior");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("surfaceNormal");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("curvatureApprox");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("bottomLip");
@@ -155,6 +157,7 @@ describe("Liquid Glass material", () => {
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("chromaMask");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("primaryTransmission");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("replacementMaterial");
+    expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("maximumGlassAlpha = 0.50");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("BackdropAdaptation");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("caustic");
     expect(LIQUID_GLASS_FRAGMENT_SHADER).toContain("keyHighlight");

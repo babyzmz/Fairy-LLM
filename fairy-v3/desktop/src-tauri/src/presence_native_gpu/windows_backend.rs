@@ -477,12 +477,14 @@ impl NativeRenderLoop {
                 let renderer = NativeCompositionRenderer::new(
                     device,
                     context,
-                    config,
-                    monitor_frame,
-                    display_refresh_rate_hz,
-                    surface_hwnd,
-                    presentation,
-                    hdr_capture,
+                    NativeCompositionRendererInput {
+                        config,
+                        monitor_frame,
+                        display_refresh_rate_hz,
+                        surface_hwnd,
+                        presentation,
+                        hdr_capture,
+                    },
                 );
                 let mut renderer = match renderer {
                     Ok(renderer) => renderer,
@@ -1877,17 +1879,29 @@ struct PresenceConstants {
     constants_padding: [f32; 3],
 }
 
+struct NativeCompositionRendererInput {
+    config: NativeGpuConfig,
+    monitor_frame: PhysicalFrame,
+    display_refresh_rate_hz: u16,
+    surface_hwnd: Arc<AtomicIsize>,
+    presentation: Arc<RwLock<NativeGpuPresentation>>,
+    hdr_capture: bool,
+}
+
 impl NativeCompositionRenderer {
     fn new(
         device: ID3D11Device,
         context: ID3D11DeviceContext,
-        config: NativeGpuConfig,
-        monitor_frame: PhysicalFrame,
-        display_refresh_rate_hz: u16,
-        surface_hwnd: Arc<AtomicIsize>,
-        presentation: Arc<RwLock<NativeGpuPresentation>>,
-        hdr_capture: bool,
+        input: NativeCompositionRendererInput,
     ) -> Result<Self, String> {
+        let NativeCompositionRendererInput {
+            config,
+            monitor_frame,
+            display_refresh_rate_hz,
+            surface_hwnd,
+            presentation,
+            hdr_capture,
+        } = input;
         let surface = NativeCompositionSurface::new(config, surface_hwnd)?;
         let swap_chain = create_swap_chain(&device, config.render_frame)?;
         let render_targets = vec![None; SWAP_CHAIN_BUFFER_COUNT as usize];
@@ -2278,7 +2292,7 @@ fn create_constant_buffer_with_size(
     byte_width: usize,
     stage: &str,
 ) -> Result<ID3D11Buffer, String> {
-    if byte_width == 0 || byte_width % 16 != 0 {
+    if byte_width == 0 || !byte_width.is_multiple_of(16) {
         return Err(format!(
             "PRESENCE_NATIVE_GPU_CONSTANT_BUFFER_SIZE_INVALID: stage={stage}; bytes={byte_width}"
         ));

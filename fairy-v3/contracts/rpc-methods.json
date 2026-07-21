@@ -1,0 +1,1001 @@
+{
+  "methods": [
+    {
+      "name": "annotations.list",
+      "request_model": "AnnotationListInput",
+      "response_model": "AnnotationResultModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "annotations.update",
+      "request_model": "AnnotationUpdateInput",
+      "response_model": "AnnotationDocumentModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "approvals.decide",
+      "request_model": "ApprovalDecisionInput",
+      "response_model": "ApprovalDecisionResultModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "approvals.list",
+      "request_model": "ApprovalListInput",
+      "response_model": "ApprovalPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "artifacts.list",
+      "request_model": "ArtifactListInput",
+      "response_model": "ArtifactPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "artifacts.read",
+      "request_model": "ArtifactIdInput",
+      "response_model": "ArtifactModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "asset_sets.create",
+      "request_model": "AssetSetCreateInput",
+      "response_model": "AssetSetModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "asset_sets.list",
+      "request_model": "WorkspaceVersionInput",
+      "response_model": "AssetSetPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "assistant.turns.cancel",
+      "request_model": "AssistantTurnCancelInput",
+      "response_model": "AssistantTurnModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "assistant.turns.create",
+      "request_model": "AssistantTurnCreateInput",
+      "response_model": "AssistantTurnModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "assistant.turns.get",
+      "request_model": "AssistantTurnIdInput",
+      "response_model": "AssistantTurnModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "assistant.turns.retry",
+      "request_model": "AssistantTurnRetryInput",
+      "response_model": "AssistantTurnModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "assistant.turns.run",
+      "request_model": "AssistantTurnRunInput",
+      "response_model": "AssistantTurnModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "assistant.turns.start",
+      "request_model": "AssistantTurnStartInput",
+      "response_model": "AssistantTurnModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "assistant.turns.trace.list",
+      "request_model": "AssistantTurnIdInput",
+      "response_model": "TurnTraceModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "capabilities.get",
+      "request_model": "CapabilityRequest",
+      "response_model": "CapabilityManifestModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "changesets.propose",
+      "request_model": "ChangesetProposal",
+      "response_model": "PendingChangesetModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "conversations.create",
+      "request_model": "ConversationCreate",
+      "response_model": "ConversationModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "conversations.delete",
+      "request_model": "ConversationDeleteInput",
+      "response_model": "ConversationModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "conversations.get",
+      "request_model": "ConversationIdInput",
+      "response_model": "ConversationModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "conversations.list",
+      "request_model": "ConversationListInput",
+      "response_model": "ConversationPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "conversations.move_to_project",
+      "request_model": "ConversationMoveToProjectInput",
+      "response_model": "ConversationMoveResultModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "conversations.update",
+      "request_model": "ConversationUpdateInput",
+      "response_model": "ConversationModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "documents.delete",
+      "request_model": "DocumentDeleteInput",
+      "response_model": "DocumentContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "documents.get",
+      "request_model": "DocumentIdInput",
+      "response_model": "DocumentContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "documents.import",
+      "request_model": "DocumentImportInput",
+      "response_model": "DocumentContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "documents.list",
+      "request_model": "DocumentListInput",
+      "response_model": "DocumentPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "documents.search",
+      "request_model": "DocumentSearchInput",
+      "response_model": "DocumentSearchPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "edit_recipes.apply",
+      "request_model": "EditRecipeApplyInput",
+      "response_model": "EditRecipeModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "edit_recipes.create",
+      "request_model": "EditRecipeCreateInput",
+      "response_model": "EditRecipeModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "edit_recipes.discard",
+      "request_model": "EditRecipeIdInput",
+      "response_model": "EditRecipeModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "edit_recipes.update",
+      "request_model": "EditRecipeUpdateInput",
+      "response_model": "EditRecipeModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "events.list",
+      "request_model": "EventListInput",
+      "response_model": "EventPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "events.state",
+      "request_model": "EmptyInput",
+      "response_model": "EventStreamStateModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "events.subscribe",
+      "request_model": "EventSubscribeInput",
+      "response_model": "EventPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "execution_plans.create",
+      "request_model": "ExecutionPlanCreateInput",
+      "response_model": "ExecutionPlanContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "execution_plans.get",
+      "request_model": "ExecutionPlanIdInput",
+      "response_model": "ExecutionPlanContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "extensions.catalog.list",
+      "request_model": "EmptyInput",
+      "response_model": "ExtensionCatalogPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "file_sets.get",
+      "request_model": "FileSetGetInput",
+      "response_model": "FileSetModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "file_sets.resolve",
+      "request_model": "FileSetResolveInput",
+      "response_model": "FileSetModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "files.cancel",
+      "request_model": "FileRenderJobCancelInput",
+      "response_model": "FilePresentationResultModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "files.compare",
+      "request_model": "FileCompareInput",
+      "response_model": "FileCompareResultModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "files.open_stream",
+      "request_model": "WorkspaceFileStreamInput",
+      "response_model": "FileReadSessionModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "files.present",
+      "request_model": "FilePresentInput",
+      "response_model": "FilePresentationResultModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "files.probe",
+      "request_model": "WorkspaceFileReadInput",
+      "response_model": "FileDescriptorModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "harness.manifests.get",
+      "request_model": "HarnessManifestGetInput",
+      "response_model": "HarnessContextManifestModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "health",
+      "request_model": "EmptyInput",
+      "response_model": "HealthModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "knowledge.collections.list",
+      "request_model": "KnowledgeProjectInput",
+      "response_model": "KnowledgeCollectionPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "knowledge.graph.get",
+      "request_model": "KnowledgeProjectInput",
+      "response_model": "KnowledgeGraphModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "knowledge.items.list",
+      "request_model": "KnowledgeItemListInput",
+      "response_model": "KnowledgeItemPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "knowledge.links",
+      "request_model": "KnowledgeRevisionReadInput",
+      "response_model": "KnowledgeLinkPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "knowledge.projects.overview",
+      "request_model": "KnowledgeProjectInput",
+      "response_model": "ProjectKnowledgeOverviewModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "knowledge.read",
+      "request_model": "KnowledgeRevisionReadInput",
+      "response_model": "KnowledgeRevisionModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "knowledge.search",
+      "request_model": "KnowledgeSearchInput",
+      "response_model": "KnowledgeRevisionPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "knowledge.snapshots.get",
+      "request_model": "KnowledgeSnapshotGetInput",
+      "response_model": "KnowledgeSnapshotModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "knowledge.sources.list",
+      "request_model": "KnowledgeProjectInput",
+      "response_model": "KnowledgeSourcePageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "knowledge.sync.cancel",
+      "request_model": "KnowledgeSyncRunInput",
+      "response_model": "KnowledgeSyncRunModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "knowledge.sync.get",
+      "request_model": "KnowledgeSyncRunInput",
+      "response_model": "KnowledgeSyncRunModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "knowledge.sync.start",
+      "request_model": "KnowledgeSyncStartInput",
+      "response_model": "KnowledgeSyncRunModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "mcp.presets.install",
+      "request_model": "McpPresetInstallInput",
+      "response_model": "McpServerModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "mcp.servers.accept",
+      "request_model": "McpServerAcceptInput",
+      "response_model": "McpServerModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "mcp.servers.configure",
+      "request_model": "McpServerConfigureInput",
+      "response_model": "McpServerModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "mcp.servers.delete",
+      "request_model": "McpServerDeleteInput",
+      "response_model": "McpServerDeleteResult",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "mcp.servers.discover",
+      "request_model": "McpServerDiscoverInput",
+      "response_model": "McpServerModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "mcp.servers.list",
+      "request_model": "EmptyInput",
+      "response_model": "McpServerPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "mcp.servers.set_enabled",
+      "request_model": "McpServerSetEnabledInput",
+      "response_model": "McpServerModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "media.audio.generate",
+      "request_model": "MediaAudioGenerateInput",
+      "response_model": "MediaGenerationJobModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "media.images.generate",
+      "request_model": "MediaImageGenerateInput",
+      "response_model": "MediaGenerationJobModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "media.jobs.list",
+      "request_model": "MediaJobListInput",
+      "response_model": "MediaGenerationJobPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "media.videos.cancel",
+      "request_model": "MediaVideoCancelInput",
+      "response_model": "MediaGenerationJobModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "media.videos.get",
+      "request_model": "MediaVideoJobInput",
+      "response_model": "MediaGenerationJobModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "media.videos.start",
+      "request_model": "MediaVideoStartInput",
+      "response_model": "MediaGenerationJobModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.claims.get",
+      "request_model": "MemoryClaimGetInput",
+      "response_model": "MemoryClaimContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.claims.list",
+      "request_model": "MemoryClaimQuery",
+      "response_model": "MemoryClaimPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.claims.promote",
+      "request_model": "MemoryClaimPromoteInput",
+      "response_model": "MemoryClaimContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.claims.resolve_conflict",
+      "request_model": "MemoryClaimResolveInput",
+      "response_model": "MemoryClaimContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.claims.supersede",
+      "request_model": "MemoryClaimSupersedeInput",
+      "response_model": "MemoryClaimContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.forget",
+      "request_model": "MemoryForgetInput",
+      "response_model": "MemoryTombstoneModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.observations.create",
+      "request_model": "MemoryObserveInput",
+      "response_model": "MemoryObservationModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.observations.list",
+      "request_model": "MemoryObservationQuery",
+      "response_model": "MemoryObservationPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.projection.health",
+      "request_model": "MemoryProjectionHealthInput",
+      "response_model": "MemoryProjectionHealthModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.proposals.accept",
+      "request_model": "MemoryProposalActionInput",
+      "response_model": "MemoryProposalModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.proposals.list",
+      "request_model": "MemoryProposalListInput",
+      "response_model": "MemoryProposalPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.proposals.reject",
+      "request_model": "MemoryProposalActionInput",
+      "response_model": "MemoryProposalModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.search",
+      "request_model": "MemorySearchInput",
+      "response_model": "MemorySearchPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.settings.get",
+      "request_model": "EmptyInput",
+      "response_model": "MemorySettingsModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.settings.update",
+      "request_model": "MemorySettingsUpdateInput",
+      "response_model": "MemorySettingsModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "memory.snapshots.get",
+      "request_model": "MemorySnapshotGetInput",
+      "response_model": "MemorySnapshotModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "messages.list",
+      "request_model": "MessageListInput",
+      "response_model": "MessagePageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "models.catalog.list",
+      "request_model": "ModelCatalogListInput",
+      "response_model": "ModelCatalogPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "models.catalog.refresh",
+      "request_model": "ModelCatalogRefreshInput",
+      "response_model": "ModelCatalogPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "models.selection.get",
+      "request_model": "ModelSelectionGetInput",
+      "response_model": "ModelSelectionPreferenceModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "models.selection.update",
+      "request_model": "ModelSelectionUpdateInput",
+      "response_model": "ModelSelectionPreferenceModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "obsidian.health.get",
+      "request_model": "EmptyInput",
+      "response_model": "ObsidianConnectorHealthModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "obsidian.sources.create",
+      "request_model": "ObsidianSourceCreateInput",
+      "response_model": "ObsidianSourceModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "obsidian.sources.items.list",
+      "request_model": "ObsidianSourceIdInput",
+      "response_model": "ObsidianVaultItemPageModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "obsidian.sources.items.read",
+      "request_model": "ObsidianVaultItemReadInput",
+      "response_model": "ObsidianVaultItemContentModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "obsidian.sources.list",
+      "request_model": "ObsidianSourceListInput",
+      "response_model": "ObsidianSourcePageModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "obsidian.sync.start",
+      "request_model": "ObsidianSourceSyncInput",
+      "response_model": "ObsidianSyncResultModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "permissions.get",
+      "request_model": "EmptyInput",
+      "response_model": "ExecutionSettingsModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "permissions.update",
+      "request_model": "ExecutionSettingsUpdateInput",
+      "response_model": "ExecutionSettingsModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "previews.get",
+      "request_model": "PreviewIdInput",
+      "response_model": "PreviewContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "previews.resolve",
+      "request_model": "PreviewResolveInput",
+      "response_model": "PreviewResolutionModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "previews.start",
+      "request_model": "PreviewStartInput",
+      "response_model": "PreviewContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "previews.stop",
+      "request_model": "PreviewStopInput",
+      "response_model": "PreviewModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "projects.archive",
+      "request_model": "ProjectArchiveInput",
+      "response_model": "ProjectModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "projects.archived.delete",
+      "request_model": "ProjectDeleteInput",
+      "response_model": "ProjectModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "projects.archived.list",
+      "request_model": "ProjectArchivedListInput",
+      "response_model": "ProjectArchivedPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "projects.archived.restore",
+      "request_model": "ProjectArchiveInput",
+      "response_model": "ProjectModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "projects.create",
+      "request_model": "ProjectCreate",
+      "response_model": "ProjectContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "projects.delete",
+      "request_model": "ProjectDeleteInput",
+      "response_model": "ProjectModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "projects.get",
+      "request_model": "ProjectIdInput",
+      "response_model": "ProjectModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "projects.import",
+      "request_model": "ProjectImport",
+      "response_model": "ProjectContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "projects.list",
+      "request_model": "ProjectListInput",
+      "response_model": "ProjectPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "projects.update_metadata",
+      "request_model": "ProjectMetadataUpdateInput",
+      "response_model": "ProjectModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "providers.health",
+      "request_model": "ProviderHealthInput",
+      "response_model": "ProviderHealthPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "providers.list",
+      "request_model": "EmptyInput",
+      "response_model": "ProviderProfilePageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "realtime.memories.delete",
+      "request_model": "GameMemoryIdInput",
+      "response_model": "GameMemoryDeleteResult",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "realtime.memories.list",
+      "request_model": "GameMemoryListInput",
+      "response_model": "GameMemoryPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "realtime.memories.save",
+      "request_model": "GameMemorySaveInput",
+      "response_model": "GameMemoryDigestModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "realtime.sessions.get",
+      "request_model": "RealtimeSessionIdInput",
+      "response_model": "RealtimeSessionModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "realtime.sessions.list",
+      "request_model": "RealtimeSessionListInput",
+      "response_model": "RealtimeSessionPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "realtime.sessions.report",
+      "request_model": "RealtimeSessionReportInput",
+      "response_model": "RealtimeSessionModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "realtime.sessions.start",
+      "request_model": "RealtimeSessionStartInput",
+      "response_model": "RealtimeSessionModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "realtime.sessions.stop",
+      "request_model": "RealtimeSessionStopInput",
+      "response_model": "RealtimeSessionModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "renderer_packs.health",
+      "request_model": "EmptyInput",
+      "response_model": "RendererPackPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "renderer_packs.install",
+      "request_model": "RendererPackInstallInput",
+      "response_model": "RendererPackModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "renderer_packs.list",
+      "request_model": "EmptyInput",
+      "response_model": "RendererPackPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "renderer_packs.remove",
+      "request_model": "RendererPackRemoveInput",
+      "response_model": "RendererPackRemoveResultModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "renderer_packs.update",
+      "request_model": "RendererPackInstallInput",
+      "response_model": "RendererPackModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "runtimes.get",
+      "request_model": "RuntimeIdInput",
+      "response_model": "RuntimeModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "runtimes.health",
+      "request_model": "RuntimeHealthInput",
+      "response_model": "RuntimeHealthModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "selections.create",
+      "request_model": "SelectionCreateInput",
+      "response_model": "SelectionReferenceModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "skills.create",
+      "request_model": "SkillCreateInput",
+      "response_model": "SkillPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "skills.import.inspect",
+      "request_model": "SkillImportInspectInput",
+      "response_model": "SkillImportInspectionModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "skills.import.install",
+      "request_model": "SkillImportInstallInput",
+      "response_model": "SkillPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "skills.install",
+      "request_model": "SkillInstallInput",
+      "response_model": "SkillPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "skills.list",
+      "request_model": "EmptyInput",
+      "response_model": "SkillPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "skills.remove",
+      "request_model": "SkillRemoveInput",
+      "response_model": "SkillRemoveResult",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "skills.set_enabled",
+      "request_model": "SkillSetEnabledInput",
+      "response_model": "SkillPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "skills.update",
+      "request_model": "SkillUpdateInput",
+      "response_model": "SkillPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "system.actions.execute",
+      "request_model": "SystemActionRequest",
+      "response_model": "SystemActionExecution",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "tasks.archive",
+      "request_model": "TaskArchiveInput",
+      "response_model": "TaskModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "tasks.create",
+      "request_model": "TaskCreate",
+      "response_model": "TaskContextModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "tasks.get",
+      "request_model": "TaskIdInput",
+      "response_model": "TaskModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "tasks.list",
+      "request_model": "TaskListInput",
+      "response_model": "TaskPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "tasks.review",
+      "request_model": "TaskIdInput",
+      "response_model": "CheckpointModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "tasks.update_metadata",
+      "request_model": "TaskMetadataUpdateInput",
+      "response_model": "TaskModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "trash.items.list",
+      "request_model": "TrashListInput",
+      "response_model": "TrashItemPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "trash.items.purge",
+      "request_model": "TrashItemActionInput",
+      "response_model": "TrashMutationResultModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "trash.items.purge_all",
+      "request_model": "TrashPurgeAllInput",
+      "response_model": "TrashPurgeResultModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "trash.items.restore",
+      "request_model": "TrashItemActionInput",
+      "response_model": "TrashMutationResultModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "versions.accept",
+      "request_model": "VersionAcceptInput",
+      "response_model": "ProjectModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "versions.discard",
+      "request_model": "TaskIdInput",
+      "response_model": "TaskModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "versions.get",
+      "request_model": "VersionIdInput",
+      "response_model": "VersionModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "versions.list",
+      "request_model": "VersionListInput",
+      "response_model": "VersionPageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "voice.sessions.cancel",
+      "request_model": "VoiceSessionIdInput",
+      "response_model": "VoiceSessionModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "voice.sessions.get",
+      "request_model": "VoiceSessionIdInput",
+      "response_model": "VoiceSessionModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "voice.sessions.start",
+      "request_model": "VoiceSessionStartInput",
+      "response_model": "VoiceSessionModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "voice.synthesize",
+      "request_model": "VoiceSynthesizeInput",
+      "response_model": "VoiceAudioModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "voice.transcribe",
+      "request_model": "VoiceTranscribeInput",
+      "response_model": "VoiceTranscriptModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "workspaces.export",
+      "request_model": "WorkspaceExportInput",
+      "response_model": "WorkspaceExportModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "workspaces.files.list",
+      "request_model": "WorkspaceVersionInput",
+      "response_model": "WorkspaceFilePageModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "workspaces.files.mutate",
+      "request_model": "WorkspaceFileMutateInput",
+      "response_model": "WorkspaceFileMutationResultModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "workspaces.files.read",
+      "request_model": "WorkspaceFileReadInput",
+      "response_model": "WorkspaceFileContentModel",
+      "transport": "local_and_cloud"
+    },
+    {
+      "name": "workspaces.get",
+      "request_model": "WorkspaceIdInput",
+      "response_model": "WorkspaceModel",
+      "transport": "local_and_cloud"
+    }
+  ],
+  "schema_version": 1
+}

@@ -9,7 +9,7 @@ from enum import StrEnum
 from threading import RLock
 from types import MappingProxyType
 
-from fairy_core.commanding import registry_projection, tool_schemas
+from fairy_core.commanding import registry_projection
 from fairy_core.commanding.types import PermissionProfile
 
 
@@ -323,224 +323,12 @@ def _information_definitions(
     return build_information_definitions(profiles)
 
 
-def _system_action_definitions(
-    profiles: frozenset[PermissionProfile],
-) -> list[ToolDefinition]:
-    shared = {
-        "effect": SideEffect.EXECUTE,
-        "risk": RiskLevel.MEDIUM,
-        "approval": ApprovalPolicy.PROFILE,
-        "profiles": profiles,
-        "executor": "rust_system_actions",
-    }
-    return [
-        _tool(
-            "system.open_url",
-            shared["effect"],
-            shared["risk"],
-            shared["approval"],
-            shared["profiles"],
-            shared["executor"],
-            idempotent=True,
-            description="Open one validated HTTPS URL with the operating system.",
-            input_schema={
-                "type": "object",
-                "properties": {"url": {"type": "string", "minLength": 1, "maxLength": 2_048}},
-                "required": ["url"],
-                "additionalProperties": False,
-            },
-        ),
-        _tool(
-            "system.reveal_path",
-            shared["effect"],
-            shared["risk"],
-            shared["approval"],
-            shared["profiles"],
-            shared["executor"],
-            idempotent=True,
-            description="Reveal one existing path inside the Task-bound managed Version.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "relative_path": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 1_024,
-                    }
-                },
-                "required": ["relative_path"],
-                "additionalProperties": False,
-            },
-        ),
-        _tool(
-            "system.copy_text",
-            shared["effect"],
-            shared["risk"],
-            shared["approval"],
-            shared["profiles"],
-            shared["executor"],
-            idempotent=True,
-            description="Copy bounded text to the operating-system clipboard.",
-            input_schema={
-                "type": "object",
-                "properties": {"text": {"type": "string", "minLength": 1, "maxLength": 32_768}},
-                "required": ["text"],
-                "additionalProperties": False,
-            },
-        ),
-        _tool(
-            "system.notify",
-            shared["effect"],
-            shared["risk"],
-            shared["approval"],
-            shared["profiles"],
-            shared["executor"],
-            idempotent=True,
-            description="Show a bounded informational or warning notification.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "minLength": 1, "maxLength": 80},
-                    "body": {"type": "string", "minLength": 1, "maxLength": 240},
-                    "level": {"type": "string", "enum": ["info", "warning"]},
-                },
-                "required": ["title", "body"],
-                "additionalProperties": False,
-            },
-        ),
-        _tool(
-            "system.open_settings",
-            shared["effect"],
-            shared["risk"],
-            shared["approval"],
-            shared["profiles"],
-            shared["executor"],
-            idempotent=True,
-            description="Open one fixed operating-system Settings page.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "page": {
-                        "type": "string",
-                        "enum": ["display", "microphone", "notifications", "sound"],
-                    }
-                },
-                "required": ["page"],
-                "additionalProperties": False,
-            },
-        ),
-    ]
-
-
-def _project_definitions(
-    all_profiles: frozenset[PermissionProfile],
-    active_profiles: frozenset[PermissionProfile],
-) -> list[ToolDefinition]:
-    return [
-        _tool(
-            "execution.plan",
-            SideEffect.WRITE,
-            RiskLevel.LOW,
-            ApprovalPolicy.NEVER,
-            active_profiles,
-            "project_tools",
-            idempotent=True,
-            description=(
-                "Create the immutable file, dependency, entrypoint, and validation plan "
-                "before modifying a Workspace."
-            ),
-            input_schema=tool_schemas.execution_plan_tool_schema(),
-        ),
-        _tool(
-            "project.read",
-            SideEffect.READ,
-            RiskLevel.LOW,
-            ApprovalPolicy.NEVER,
-            all_profiles,
-            "project_tools",
-            idempotent=True,
-            description="Read bounded UTF-8 source from the Task-bound managed Version.",
-            input_schema=tool_schemas.project_read_tool_schema(),
-        ),
-        _tool(
-            "artifact.list",
-            SideEffect.READ,
-            RiskLevel.LOW,
-            ApprovalPolicy.NEVER,
-            all_profiles,
-            "project_tools",
-            idempotent=True,
-            description="List user-visible Artifacts owned by the current Task.",
-            input_schema={"type": "object", "additionalProperties": False},
-        ),
-        _tool(
-            "artifact.read",
-            SideEffect.READ,
-            RiskLevel.LOW,
-            ApprovalPolicy.NEVER,
-            all_profiles,
-            "project_tools",
-            idempotent=True,
-            description="Read one bounded Artifact owned by the current Task Scope.",
-            input_schema=tool_schemas.artifact_read_tool_schema(),
-        ),
-        _tool(
-            "preview.status",
-            SideEffect.READ,
-            RiskLevel.LOW,
-            ApprovalPolicy.NEVER,
-            all_profiles,
-            "project_tools",
-            idempotent=True,
-            description=(
-                "Read the latest durable Runtime and Preview status after planned Workspace "
-                "changes have been applied. This does not create files or replace execution.plan."
-            ),
-            input_schema={"type": "object", "additionalProperties": False},
-        ),
-        _tool(
-            "edit.propose_changeset",
-            SideEffect.WRITE,
-            RiskLevel.LOW,
-            ApprovalPolicy.NEVER,
-            active_profiles,
-            "project_tools",
-            idempotent=True,
-            description="Create a governed Changeset proposal without applying project files.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "files": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": 25,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "path": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 1_024,
-                                },
-                                "content": {"type": "string", "maxLength": 2_097_152},
-                            },
-                            "required": ["path", "content"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "reason": {"type": "string", "minLength": 1, "maxLength": 10_000},
-                },
-                "required": ["files", "reason"],
-                "additionalProperties": False,
-            },
-        ),
-    ]
-
-
 def build_default_registry() -> ToolRegistry:
     from fairy_core.commanding.media_definitions import media_generation_definitions
     from fairy_core.commanding.model_definitions import model_generation_definitions
+    from fairy_core.commanding.project_definitions import project_definitions
     from fairy_core.commanding.slash_commands import default_slash_commands
+    from fairy_core.commanding.system_action_definitions import system_action_definitions
 
     all_profiles = frozenset(PermissionProfile)
     active_profiles = frozenset({PermissionProfile.STANDARD, PermissionProfile.AUTONOMOUS})
@@ -652,7 +440,7 @@ def build_default_registry() -> ToolRegistry:
             idempotent=True,
             model_visible=False,
         ),
-        *_project_definitions(all_profiles, active_profiles),
+        *project_definitions(all_profiles, active_profiles),
         _tool(
             "web.search",
             SideEffect.READ,
@@ -796,7 +584,7 @@ def build_default_registry() -> ToolRegistry:
                 "additionalProperties": False,
             },
         ),
-        *_system_action_definitions(active_profiles),
+        *system_action_definitions(active_profiles),
         *_information_definitions(all_profiles),
         _tool(
             "memory.observe",

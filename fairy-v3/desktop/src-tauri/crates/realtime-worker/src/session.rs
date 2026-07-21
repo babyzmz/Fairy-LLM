@@ -59,6 +59,16 @@ struct ActiveSession {
     latest_frame: LatestFrame,
 }
 
+struct StartRequest {
+    session_id: String,
+    provider: ProviderKind,
+    voice_mode: String,
+    source_id: Option<u64>,
+    screen_enabled: bool,
+    game_audio_enabled: bool,
+    credential: String,
+}
+
 #[derive(Default)]
 pub struct RealtimeWorker {
     active: Option<ActiveSession>,
@@ -85,7 +95,7 @@ impl RealtimeWorker {
                 screen_enabled,
                 game_audio_enabled,
                 credential,
-            } => self.start(
+            } => self.start(StartRequest {
                 session_id,
                 provider,
                 voice_mode,
@@ -93,7 +103,7 @@ impl RealtimeWorker {
                 screen_enabled,
                 game_audio_enabled,
                 credential,
-            ),
+            }),
             HostCommand::Stop { session_id } => self.stop(&session_id),
             HostCommand::UpdateUsage {
                 session_id,
@@ -151,16 +161,16 @@ impl RealtimeWorker {
             .ok_or(SessionError::ScopeMismatch)
     }
 
-    fn start(
-        &mut self,
-        session_id: String,
-        provider: ProviderKind,
-        voice_mode: String,
-        source_id: Option<u64>,
-        screen_enabled: bool,
-        game_audio_enabled: bool,
-        credential: String,
-    ) -> Result<Vec<WorkerEvent>, SessionError> {
+    fn start(&mut self, request: StartRequest) -> Result<Vec<WorkerEvent>, SessionError> {
+        let StartRequest {
+            session_id,
+            provider,
+            voice_mode,
+            source_id,
+            screen_enabled,
+            game_audio_enabled,
+            credential,
+        } = request;
         if self.active.is_some()
             || session_id.is_empty()
             || credential.trim().is_empty()

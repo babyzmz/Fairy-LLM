@@ -617,6 +617,14 @@ async function installCoreFixture(page: Page) {
         revision: 0,
         updated_at: "2026-07-11T00:00:00Z",
       };
+      let memorySettings = {
+        enabled: true,
+        retention_days: 90,
+        export_to_obsidian: false,
+        sync_normalized_content: false,
+        revision: 0,
+        updated_at: "2026-07-11T00:00:00Z",
+      };
       const modelCatalogFixture = () => ({
         account: {
           account_id: "openrouter-default",
@@ -1090,6 +1098,15 @@ async function installCoreFixture(page: Page) {
             },
           ],
         },
+        "knowledge.sources.list": { items: [] },
+        "memory.proposals.list": { items: [] },
+        "obsidian.health.get": {
+          desktop_installed: true,
+          cli_available: true,
+          minimum_installer_version: "1.12.7",
+          status: "ready",
+          public_summary: "Obsidian Desktop and CLI are ready",
+        },
         "providers.list": {
           items: [
             {
@@ -1423,9 +1440,18 @@ async function installCoreFixture(page: Page) {
           transformCallback(callback: (payload: unknown) => void): number;
           unregisterCallback(callbackId: number): void;
         };
+        __TAURI_EVENT_PLUGIN_INTERNALS__: {
+          unregisterListener(event: string, eventId: number): void;
+        };
       };
       let callbackId = 0;
       const callbacks = new Map<number, (payload: unknown) => void>();
+      const eventListeners = new Map<string, number[]>();
+      tauriWindow.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+        unregisterListener(_event, eventId) {
+          callbacks.delete(eventId);
+        },
+      };
       tauriWindow.__TAURI_INTERNALS__ = {
         transformCallback(callback) {
           callbackId += 1;
@@ -1436,6 +1462,26 @@ async function installCoreFixture(page: Page) {
           callbacks.delete(id);
         },
         async invoke(command, args) {
+          if (command === "plugin:event|listen") {
+            const event = String(args.event);
+            const handler = Number(args.handler);
+            eventListeners.set(event, [
+              ...(eventListeners.get(event) ?? []),
+              handler,
+            ]);
+            return handler;
+          }
+          if (command === "plugin:event|unlisten") {
+            const event = String(args.event);
+            const eventId = Number(args.eventId);
+            eventListeners.set(
+              event,
+              (eventListeners.get(event) ?? []).filter((id) => id !== eventId),
+            );
+            callbacks.delete(eventId);
+            return null;
+          }
+          if (command === "plugin:event|emit") return null;
           if (command === "list_capture_surfaces") {
             fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
               method: "capture.list",
@@ -1606,6 +1652,26 @@ async function installCoreFixture(page: Page) {
               updated_at: "2026-07-11T00:00:01Z",
             };
             return { jsonrpc: "2.0", id: request.id, result: modelSelection };
+          }
+          if (request.method === "memory.settings.get") {
+            return { jsonrpc: "2.0", id: request.id, result: memorySettings };
+          }
+          if (request.method === "memory.settings.update") {
+            requireRevision(
+              memorySettings.revision,
+              request.params.expected_revision,
+            );
+            memorySettings = {
+              enabled: Boolean(request.params.enabled),
+              retention_days: Number(request.params.retention_days),
+              export_to_obsidian: Boolean(request.params.export_to_obsidian),
+              sync_normalized_content: Boolean(
+                request.params.sync_normalized_content,
+              ),
+              revision: memorySettings.revision + 1,
+              updated_at: "2026-07-11T00:00:01Z",
+            };
+            return { jsonrpc: "2.0", id: request.id, result: memorySettings };
           }
           if (request.method === "projects.get") {
             if (request.params.project_id !== project.id)

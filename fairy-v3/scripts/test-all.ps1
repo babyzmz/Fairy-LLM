@@ -254,7 +254,9 @@ Invoke-Step "Performance: Core ready <= 3s and initial renderer gzip <= 800 KiB"
 )
 $ContractPaths = @(
     (Join-Path $Root "contracts/openapi.json"),
-    (Join-Path $Root "desktop/src/core/generated/api.d.ts")
+    (Join-Path $Root "contracts/rpc-methods.json"),
+    (Join-Path $Root "desktop/src/core/generated/api.d.ts"),
+    (Join-Path $Root "desktop/src/core/generated/rpcMethods.ts")
 )
 $ContractHashes = @{}
 foreach ($ContractPath in $ContractPaths) {

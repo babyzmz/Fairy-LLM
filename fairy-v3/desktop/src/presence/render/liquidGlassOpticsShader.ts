@@ -29,6 +29,12 @@ export const LIQUID_GLASS_OPTICS_GLSL = `
     float interiorDepth = max(-distanceField, 0.0);
     float edgeWidth = max(1.0, 48.0 * uDpr * uSizeScale);
     float edgeProfile = 1.0 - smoothstep(0.0, edgeWidth, interiorDepth);
+    float clearInterior = 1.0 - smoothstep(
+      18.0 * uDpr * uSizeScale,
+      25.0 * uDpr * uSizeScale,
+      interiorDepth
+    );
+    edgeProfile *= clearInterior;
     float centerThinness = 0.065;
     float edgeBulge = pow(edgeProfile, 1.65) * 0.84;
 

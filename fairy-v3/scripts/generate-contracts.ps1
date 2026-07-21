@@ -16,9 +16,15 @@ if ($null -ne $uvCommand) {
 }
 
 $exportScript = Join-Path $root "cloud\scripts\export_openapi.py"
+$rpcExportScript = Join-Path $root "cloud\scripts\export_rpc_manifest.py"
 $openApiPath = Join-Path $root "contracts\openapi.json"
+$rpcManifestPath = Join-Path $root "contracts\rpc-methods.json"
+$rpcTypescriptPath = Join-Path $root "desktop\src\core\generated\rpcMethods.ts"
 if (-not [string]::IsNullOrWhiteSpace($uv)) {
     & $uv run --project (Join-Path $root "cloud") python $exportScript $openApiPath
+    if ($LASTEXITCODE -eq 0) {
+        & $uv run --project (Join-Path $root "cloud") python $rpcExportScript $rpcManifestPath $rpcTypescriptPath
+    }
 } else {
     $cloudPython = Join-Path $root "cloud\.venv\Scripts\python.exe"
     if (-not (Test-Path -LiteralPath $cloudPython)) {
@@ -26,6 +32,9 @@ if (-not [string]::IsNullOrWhiteSpace($uv)) {
     }
     Write-Host "uv not found; using the existing locked Cloud virtual environment"
     & $cloudPython $exportScript $openApiPath
+    if ($LASTEXITCODE -eq 0) {
+        & $cloudPython $rpcExportScript $rpcManifestPath $rpcTypescriptPath
+    }
 }
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE

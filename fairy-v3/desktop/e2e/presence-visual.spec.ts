@@ -286,11 +286,12 @@ async function publishRenderSettings(
 
 async function publishInputPresentation(page: Page, capsuleVisible: boolean) {
   await page.evaluate((visible) => {
-    const channel = new BroadcastChannel("fairy.presence.input-presentation.v3");
+    const channel = new BroadcastChannel("fairy.presence.input-presentation.v4");
     const message = {
       kind: "input-presentation.snapshot",
       presentation: {
-        schema_version: 3,
+        schema_version: 4,
+        session_id: 1,
         sequence: 1,
         layout: visible ? "compact" : "core",
         capsule_visible: visible,
@@ -517,7 +518,7 @@ function spectralExtremes(image: PNG, bounds: PixelBounds) {
     for (let x = bounds.left; x <= bounds.right; x += 1) {
       const index = (y * image.width + x) * 4;
       const alpha = image.data[index + 3];
-      if (alpha < 20 || alpha > 100) continue;
+      if (alpha < 20 || alpha > 120) continue;
       const red = image.data[index];
       const blue = image.data[index + 2];
       warm = Math.max(warm, red - blue);

@@ -207,7 +207,7 @@ test("pet input reuses one streaming turn and keeps voice and approval isolated"
   await context.close();
 });
 
-test("hover input stays passive until the 520ms interaction gate", async ({
+test("hover input stays passive until the interaction gate and follows native drag state", async ({
   browser,
 }, testInfo) => {
   const context = await browser.newContext({ viewport: { width: 280, height: 260 } });
@@ -254,9 +254,17 @@ test("hover input stays passive until the 520ms interaction gate", async ({
   );
   await page.mouse.down();
   await page.waitForTimeout(340);
+  await publishInteraction(
+    page,
+    interactionSnapshot("right", 120, "repositioning", 860, 33, 860),
+  );
   await expect(surface).toHaveAttribute("data-moving", "true");
   await page.mouse.move((bounds?.x ?? 0) + 24, (bounds?.y ?? 0) + 14);
   await page.mouse.up();
+  await publishInteraction(
+    page,
+    interactionSnapshot("right", 120, "interactive", 900, 34, 900),
+  );
   await expect(surface).toHaveAttribute("data-moving", "false");
   expect(await overflow(page)).toEqual({ horizontal: 0, vertical: 0 });
   await page.screenshot({
@@ -699,11 +707,12 @@ async function advanceInteraction(
 
 async function publishInputPresentation(page: Page, capsuleVisible: boolean) {
   await page.evaluate((visible) => {
-    const channel = new BroadcastChannel("fairy.presence.input-presentation.v3");
+    const channel = new BroadcastChannel("fairy.presence.input-presentation.v4");
     const message = {
       kind: "input-presentation.snapshot",
       presentation: {
-        schema_version: 3,
+        schema_version: 4,
+        session_id: 1,
         sequence: 1,
         layout: visible ? "compact" : "core",
         capsule_visible: visible,

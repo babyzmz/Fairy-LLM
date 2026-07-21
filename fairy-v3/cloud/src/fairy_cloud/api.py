@@ -36,31 +36,6 @@ from fairy_core.contracts.models import (
     ExecutionSettingsModel,
     ExecutionSettingsUpdateInput,
     HealthModel,
-    MemoryClaimContextModel,
-    MemoryClaimGetInput,
-    MemoryClaimPageModel,
-    MemoryClaimPromoteInput,
-    MemoryClaimQuery,
-    MemoryClaimResolveInput,
-    MemoryClaimSupersedeInput,
-    MemoryForgetInput,
-    MemoryObservationModel,
-    MemoryObservationPageModel,
-    MemoryObservationQuery,
-    MemoryObserveInput,
-    MemoryProjectionHealthInput,
-    MemoryProjectionHealthModel,
-    MemoryProposalActionInput,
-    MemoryProposalListInput,
-    MemoryProposalModel,
-    MemoryProposalPageModel,
-    MemorySearchInput,
-    MemorySearchPageModel,
-    MemorySettingsModel,
-    MemorySettingsUpdateInput,
-    MemorySnapshotGetInput,
-    MemorySnapshotModel,
-    MemoryTombstoneModel,
     MessageListInput,
     PendingChangesetModel,
     PreviewContextModel,
@@ -94,7 +69,6 @@ from fairy_core.contracts.models import (
 from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.contracts.turn_trace import TurnTraceModel
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
-from fairy_core.memory.models import MemoryNamespace
 from fairy_core.system_actions.models import SystemActionExecution, SystemActionRequest
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -115,6 +89,7 @@ from fairy_cloud.http_errors import (
 from fairy_cloud.knowledge_routes import install_knowledge_routes
 from fairy_cloud.mcp.routes import install_extension_routes
 from fairy_cloud.media_routes import install_media_routes
+from fairy_cloud.memory_routes import install_memory_routes
 from fairy_cloud.model_routes import install_model_routes
 from fairy_cloud.planning_routes import install_planning_routes
 from fairy_cloud.realtime_routes import install_realtime_routes
@@ -775,191 +750,7 @@ def create_cloud_app(
         invoke=invoke,
         guard=require_idempotency_match,
     )
-
-    @protected.post(
-        "/memory/observations",
-        operation_id="memory.observations.create",
-        response_model=MemoryObservationModel,
-    )
-    def create_memory_observation(request: MemoryObserveInput) -> dict[str, Any]:
-        return invoke("memory.observations.create", request.model_dump(mode="json"))
-
-    @protected.get(
-        "/memory/observations",
-        operation_id="memory.observations.list",
-        response_model=MemoryObservationPageModel,
-    )
-    def list_memory_observations(
-        task_id: UUID,
-        namespace: MemoryNamespace,
-    ) -> dict[str, Any]:
-        request = MemoryObservationQuery(task_id=task_id, namespace=namespace)
-        return invoke("memory.observations.list", request.model_dump(mode="json"))
-
-    @protected.post(
-        "/memory/claims/promote",
-        operation_id="memory.claims.promote",
-        response_model=MemoryClaimContextModel,
-    )
-    def promote_memory_claim(request: MemoryClaimPromoteInput) -> dict[str, Any]:
-        return invoke("memory.claims.promote", request.model_dump(mode="json"))
-
-    @protected.get(
-        "/memory/claims",
-        operation_id="memory.claims.list",
-        response_model=MemoryClaimPageModel,
-    )
-    def list_memory_claims(
-        task_id: UUID,
-        namespace: MemoryNamespace,
-    ) -> dict[str, Any]:
-        request = MemoryClaimQuery(task_id=task_id, namespace=namespace)
-        return invoke("memory.claims.list", request.model_dump(mode="json"))
-
-    @protected.get(
-        "/memory/claims/{claim_id}",
-        operation_id="memory.claims.get",
-        response_model=MemoryClaimContextModel,
-    )
-    def get_memory_claim(claim_id: UUID, task_id: UUID) -> dict[str, Any]:
-        request = MemoryClaimGetInput(task_id=task_id, claim_id=claim_id)
-        return invoke("memory.claims.get", request.model_dump(mode="json"))
-
-    @protected.post(
-        "/memory/claims/{claim_id}/supersede",
-        operation_id="memory.claims.supersede",
-        response_model=MemoryClaimContextModel,
-    )
-    def supersede_memory_claim(
-        claim_id: UUID,
-        request: MemoryClaimSupersedeInput,
-    ) -> dict[str, Any]:
-        if request.claim_id != claim_id:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "SCOPE_MISMATCH", "message": "claim id mismatch"},
-            )
-        return invoke("memory.claims.supersede", request.model_dump(mode="json"))
-
-    @protected.post(
-        "/memory/claims/{claim_id}/resolve-conflict",
-        operation_id="memory.claims.resolve_conflict",
-        response_model=MemoryClaimContextModel,
-    )
-    def resolve_memory_conflict(
-        claim_id: UUID,
-        request: MemoryClaimResolveInput,
-    ) -> dict[str, Any]:
-        if request.claim_id != claim_id:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "SCOPE_MISMATCH", "message": "claim id mismatch"},
-            )
-        return invoke(
-            "memory.claims.resolve_conflict",
-            request.model_dump(mode="json"),
-        )
-
-    @protected.post(
-        "/memory/forget",
-        operation_id="memory.forget",
-        response_model=MemoryTombstoneModel,
-    )
-    def forget_memory(request: MemoryForgetInput) -> dict[str, Any]:
-        return invoke("memory.forget", request.model_dump(mode="json"))
-
-    @protected.get(
-        "/memory/search",
-        operation_id="memory.search",
-        response_model=MemorySearchPageModel,
-    )
-    def search_memory(
-        request: Annotated[MemorySearchInput, Query()],
-    ) -> dict[str, Any]:
-        return invoke("memory.search", request.model_dump(mode="json"))
-
-    @protected.get(
-        "/memory/snapshots/{snapshot_id}",
-        operation_id="memory.snapshots.get",
-        response_model=MemorySnapshotModel,
-    )
-    def get_memory_snapshot(
-        snapshot_id: UUID,
-        request: Annotated[MemoryProjectionHealthInput, Query()],
-    ) -> dict[str, Any]:
-        payload = MemorySnapshotGetInput(
-            task_id=request.task_id,
-            snapshot_id=snapshot_id,
-        )
-        return invoke("memory.snapshots.get", payload.model_dump(mode="json"))
-
-    @protected.get(
-        "/memory/projection/health",
-        operation_id="memory.projection.health",
-        response_model=MemoryProjectionHealthModel,
-    )
-    def get_memory_projection_health(
-        request: Annotated[MemoryProjectionHealthInput, Query()],
-    ) -> dict[str, Any]:
-        return invoke("memory.projection.health", request.model_dump(mode="json"))
-
-    @protected.get(
-        "/memory/settings",
-        operation_id="memory.settings.get",
-        response_model=MemorySettingsModel,
-    )
-    def get_memory_settings() -> dict[str, Any]:
-        return invoke("memory.settings.get", {})
-
-    @protected.put(
-        "/memory/settings",
-        operation_id="memory.settings.update",
-        response_model=MemorySettingsModel,
-    )
-    def update_memory_settings(request: MemorySettingsUpdateInput) -> dict[str, Any]:
-        return invoke("memory.settings.update", request.model_dump(mode="json"))
-
-    @protected.get(
-        "/memory/proposals",
-        operation_id="memory.proposals.list",
-        response_model=MemoryProposalPageModel,
-    )
-    def list_memory_proposals(
-        request: Annotated[MemoryProposalListInput, Query()],
-    ) -> dict[str, Any]:
-        return invoke("memory.proposals.list", request.model_dump(mode="json"))
-
-    @protected.post(
-        "/memory/proposals/{observation_id}/accept",
-        operation_id="memory.proposals.accept",
-        response_model=MemoryProposalModel,
-    )
-    def accept_memory_proposal(
-        observation_id: UUID,
-        request: MemoryProposalActionInput,
-    ) -> dict[str, Any]:
-        if request.observation_id != observation_id:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "SCOPE_MISMATCH", "message": "observation id mismatch"},
-            )
-        return invoke("memory.proposals.accept", request.model_dump(mode="json"))
-
-    @protected.post(
-        "/memory/proposals/{observation_id}/reject",
-        operation_id="memory.proposals.reject",
-        response_model=MemoryProposalModel,
-    )
-    def reject_memory_proposal(
-        observation_id: UUID,
-        request: MemoryProposalActionInput,
-    ) -> dict[str, Any]:
-        if request.observation_id != observation_id:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "SCOPE_MISMATCH", "message": "observation id mismatch"},
-            )
-        return invoke("memory.proposals.reject", request.model_dump(mode="json"))
+    install_memory_routes(protected, invoke=invoke)
 
     @protected.post("/sync/projects", operation_id="sync.projects.register")
     async def register_synced_project(

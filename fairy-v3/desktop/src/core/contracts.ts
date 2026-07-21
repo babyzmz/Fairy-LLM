@@ -1,4 +1,6 @@
 import type { components, operations } from "./generated/api";
+import { LOCAL_ONLY_CORE_METHODS } from "./generated/rpcMethods";
+export { CORE_METHOD_TRANSPORT, LOCAL_ONLY_CORE_METHODS } from "./generated/rpcMethods";
 import type {
   KnowledgeSyncRun,
   KnowledgeSyncRunInput,
@@ -655,18 +657,6 @@ export interface CoreMethodMap {
 }
 
 export type CoreMethodName = keyof CoreMethodMap;
-
-export const LOCAL_ONLY_CORE_METHODS = [
-  "knowledge.sync.cancel",
-  "knowledge.sync.get",
-  "knowledge.sync.start",
-  "obsidian.health.get",
-  "obsidian.sources.create",
-  "obsidian.sources.items.list",
-  "obsidian.sources.items.read",
-  "obsidian.sources.list",
-  "obsidian.sync.start",
-] as const satisfies readonly CoreMethodName[];
 
 export type LocalOnlyCoreMethod = (typeof LOCAL_ONLY_CORE_METHODS)[number];
 export type CloudCoreMethod = Exclude<CoreMethodName, LocalOnlyCoreMethod>;

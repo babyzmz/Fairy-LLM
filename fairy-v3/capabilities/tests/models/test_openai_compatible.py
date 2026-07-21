@@ -609,16 +609,12 @@ class _TrackingStream(httpx.SyncByteStream):
 
 
 def test_stream_reads_streaming_error_before_safe_classification() -> None:
-    body = _TrackingStream(
-        (b'{"error":{"message":"upstream-secret-detail"}}',)
-    )
+    body = _TrackingStream((b'{"error":{"message":"upstream-secret-detail"}}',))
     provider = OpenAICompatibleProvider(
         profile=_profile(),
         secret=SecretValue.from_text("fixture-secret"),
         client=httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _request: httpx.Response(429, stream=body)
-            )
+            transport=httpx.MockTransport(lambda _request: httpx.Response(429, stream=body))
         ),
     )
 

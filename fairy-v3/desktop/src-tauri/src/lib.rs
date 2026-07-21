@@ -1020,14 +1020,14 @@ fn apply_persisted_preferences(
     state: &DesktopState,
     next: &DesktopPreferences,
 ) {
-    state.presence.set_preferences(coordinator_config(&next));
+    state.presence.set_preferences(coordinator_config(next));
     if let Err(error) = apply_pet_window_preferences(app, next) {
         eprintln!("failed to apply persisted pet window preferences: {error}");
     }
     if let Err(error) = app.emit("desktop-preferences-changed", next) {
         eprintln!("failed to publish persisted desktop preferences: {error}");
     }
-    sync_tray_preferences(app, &next);
+    sync_tray_preferences(app, next);
 }
 
 #[cfg(target_os = "windows")]

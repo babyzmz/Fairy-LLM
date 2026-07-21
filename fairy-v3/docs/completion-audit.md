@@ -2,6 +2,7 @@
 
 - Baseline audit date: 2026-07-14
 - Liquid Glass amendments: 2026-07-17 and 2026-07-19
+- Audit repair amendment: 2026-07-21
 - Product root: `fairy-v3/`
 - Source baseline: the approved Fairy V3 architecture plan and the supplied
   Mojoclaw/Mojocore architecture reference
@@ -13,6 +14,30 @@ successfully. `Environment-blocked` means the implementation and tests exist,
 but a required external runtime was absent during this audit. A skipped or
 deselected test is never counted as proof. No accepted row is `Missing` or
 `Contradicted`.
+
+## 2026-07-21 Audit Repair Amendment
+
+This amendment supersedes current-status claims below where they imply that the
+July 14 environment evidence was rerun for the present source tree. The repair
+establishes device-local Obsidian path authority, immutable Knowledge revisions
+and Task snapshots, Harness manifests, Core-owned Memory settings and retention,
+cancellable Realtime startup, full-duplex voice barge-in, multi-Source Knowledge
+UI isolation, an explicit RPC transport manifest, and smaller public module
+boundaries.
+
+The current automated source gates are proven: Core (777), Capabilities (118),
+Cloud unit/contract (121 with one PostgreSQL-DSN test skipped and integration
+tests deselected), Desktop Vitest (357), Desktop Playwright (58), Rust workspace,
+Ruff, TypeScript, Clippy, Alembic offline upgrade/downgrade, generated contract
+drift, and the Vite production build passed. The Playwright performance gate ran
+separately with one worker and passed.
+
+The following are **not** current proof: Docker/PostgreSQL integration (Docker
+daemon unavailable), a live Obsidian test Vault, live GLM Realtime, and an
+interactive Tauri multi-screen/Presence regression. Historical evidence remains
+recorded below, but these gates must be rerun before a new release is certified.
+No Python static type checker is configured in this repository; Ruff is lint and
+format evidence, not Python type-checking evidence.
 
 ## 2026-07-17 Liquid Glass Amendment
 
@@ -48,9 +73,11 @@ without CPU readback or pixel IPC. No release or Docker build was performed.
 
 ## Acceptance Summary
 
-Fairy V3 is functionally source-complete against the approved plan. Local,
-contract, migration, Rust, renderer, production-browser, Docker Compose, and
-real WSL2 FairySandbox gates are proven. The native CosyVoice/TensorRT worker
+Fairy V3 implements the approved V3 architecture and the 2026-07-21 audit repair
+at source and automated-contract level. This is not a fresh production-release
+certification: the current environment-backed gates listed in the amendment
+remain outstanding. The July 14 baseline proved Docker Compose and real WSL2
+FairySandbox against that historical source state. The native CosyVoice/TensorRT worker
 also passes its real RTX 5060 Ti performance gate: first-frame p95 is 423.6ms,
 prefetched gap is 0ms, and cancellation response is 15.2ms. The companion is
 now a dual-window Liquid Glass surface with a WebGL2/GLSL production renderer,

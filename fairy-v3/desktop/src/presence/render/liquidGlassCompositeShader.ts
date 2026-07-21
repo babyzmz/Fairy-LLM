@@ -125,7 +125,7 @@ export const LIQUID_GLASS_COMPOSITE_GLSL = `
     float spectralPolarity = dot(rimNormal, normalize(vec2(-0.76, 0.65)));
     float warmDispersion = max(spectralPolarity, 0.0) * chromaMask;
     float coolDispersion = max(-spectralPolarity, 0.0) * chromaMask;
-    glassColor += vec3(0.10, 0.006, -0.045) * warmDispersion;
+    glassColor += vec3(0.18, 0.006, -0.075) * warmDispersion;
     glassColor += vec3(-0.03, 0.006, 0.065) * coolDispersion;
 
     vec2 internalRefraction = screenNormal * refractionDistance * 0.16;
@@ -173,6 +173,7 @@ export const LIQUID_GLASS_COMPOSITE_GLSL = `
       abs(refractionDistance)
     );
     float replacementMaterial = max(pow(edgeLens, 1.2), displacedReplacement);
+    const float maximumGlassAlpha = 0.50;
     float glassAlpha = clamp(
       centerAlpha
         + replacementMaterial * 0.93 * uRimStrength
@@ -182,7 +183,7 @@ export const LIQUID_GLASS_COMPOSITE_GLSL = `
         + counterHighlight * 0.07
         + causticLight * 0.16,
       0.0,
-      0.94
+      maximumGlassAlpha
     ) * coverage;
     float speechPulse = uSpeechLevel * (0.5 + 0.5 * sin(uTime * 10.0));
     float atmosphereLayerAlpha = clamp(

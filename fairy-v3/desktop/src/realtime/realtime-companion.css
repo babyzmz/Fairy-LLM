@@ -1,4 +1,4 @@
-.realtime-launch { position: fixed; z-index: 45; right: 18px; top: 78px; height: 36px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border: 1px solid #3b4b48; background: #151a19; color: #dce9e5; box-shadow: 0 8px 20px #0007; }
+.realtime-launch { position: fixed; z-index: 20; right: 18px; top: 78px; height: 36px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border: 1px solid #3b4b48; background: #151a19; color: #dce9e5; box-shadow: 0 8px 20px #0007; }
 .realtime-launch:hover { border-color: #6ac6bd; }
 .realtime-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 18px; background: #050706b8; }
 .realtime-panel { width: min(560px, 100%); max-height: calc(100vh - 36px); overflow: auto; background: #141817; border: 1px solid #3b4643; box-shadow: 0 24px 70px #000b; color: #eef5f2; }

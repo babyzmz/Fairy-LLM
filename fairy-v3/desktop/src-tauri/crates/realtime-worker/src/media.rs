@@ -102,7 +102,7 @@ impl MicrophoneCapture {
         let config: StreamConfig = supported.into();
         let sample_rate = config.sample_rate.0;
         let channels = usize::from(config.channels);
-        if channels == 0 || sample_rate < 8_000 || sample_rate > 192_000 {
+        if channels == 0 || !(8_000..=192_000).contains(&sample_rate) {
             return Err(MediaError::AudioFormatUnsupported);
         }
         let (sender, receiver) = mpsc::sync_channel(AUDIO_QUEUE_DEPTH);
@@ -528,6 +528,28 @@ fn encode_frame(mut image: RgbaImage, sequence: u64) -> Result<VideoFrame, Media
 }
 
 #[cfg(test)]
+pub fn mix_pcm16(target: &mut [i16], source: &[i16], gain: f32) {
+    for (target_sample, source_sample) in target.iter_mut().zip(source) {
+        let mixed = f32::from(*target_sample) + f32::from(*source_sample) * gain;
+        *target_sample = mixed
+            .round()
+            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
+    }
+}
+
+pub fn mix_pcm16_queue(target: &mut [i16], source: &mut VecDeque<i16>, gain: f32) {
+    for target_sample in target {
+        let Some(source_sample) = source.pop_front() else {
+            break;
+        };
+        let mixed = f32::from(*target_sample) + f32::from(source_sample) * gain;
+        *target_sample = mixed
+            .round()
+            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -568,27 +590,5 @@ mod tests {
         mix_pcm16_queue(&mut microphone, &mut queued, 0.35);
         assert_eq!(microphone, [i16::MAX, i16::MIN, 450, 200]);
         assert!(queued.is_empty());
-    }
-}
-
-#[cfg(test)]
-pub fn mix_pcm16(target: &mut [i16], source: &[i16], gain: f32) {
-    for (target_sample, source_sample) in target.iter_mut().zip(source) {
-        let mixed = f32::from(*target_sample) + f32::from(*source_sample) * gain;
-        *target_sample = mixed
-            .round()
-            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
-    }
-}
-
-pub fn mix_pcm16_queue(target: &mut [i16], source: &mut VecDeque<i16>, gain: f32) {
-    for target_sample in target {
-        let Some(source_sample) = source.pop_front() else {
-            break;
-        };
-        let mixed = f32::from(*target_sample) + f32::from(source_sample) * gain;
-        *target_sample = mixed
-            .round()
-            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
     }
 }

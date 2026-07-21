@@ -552,8 +552,10 @@ mod tests {
     fn desktop_preferences_accept_only_the_supported_pet_frame_rates() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let store = DesktopPreferencesStore::new(directory.path());
-        let mut preferences = DesktopPreferences::default();
-        preferences.pet_target_fps = 300;
+        let mut preferences = DesktopPreferences {
+            pet_target_fps: 300,
+            ..DesktopPreferences::default()
+        };
         let saved = store
             .update(DesktopPreferencesUpdate {
                 expected_revision: 0,
