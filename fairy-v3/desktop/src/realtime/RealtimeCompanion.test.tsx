@@ -1,5 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CoreClient, RealtimeWorkerStatus } from "../core/client";
 import type { RealtimeSession } from "../core/contracts";
@@ -11,7 +11,9 @@ import {
 } from "./RealtimeCompanion";
 
 const invoke = vi.fn();
+const voiceMocks = vi.hoisted(() => ({ startRealtimeVoice: vi.fn() }));
 let eventListener: ((event: { payload: Record<string, unknown> }) => void) | null = null;
+let realtimeVoiceMode: "native" | "fairy" = "native";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -21,7 +23,7 @@ vi.mock("@tauri-apps/api/event", () => ({
   }),
 }));
 vi.mock("../voice/nativeVoice", () => ({
-  startRealtimeVoice: vi.fn(async () => ({ finished: Promise.resolve() })),
+  startRealtimeVoice: voiceMocks.startRealtimeVoice,
 }));
 
 const session = (status: RealtimeSession["status"], revision: number): RealtimeSession => ({
@@ -58,15 +60,24 @@ const workerStatus = (running: boolean): RealtimeWorkerStatus => ({
 });
 
 describe("RealtimeCompanion", () => {
+  afterEach(() => cleanup());
+
   beforeEach(() => {
     eventListener = null;
     invoke.mockReset();
+    voiceMocks.startRealtimeVoice.mockReset();
+    voiceMocks.startRealtimeVoice.mockResolvedValue({
+      readyForNext: Promise.resolve(),
+      finished: Promise.resolve(),
+      stop: vi.fn(),
+    });
+    realtimeVoiceMode = "native";
     localStorage.clear();
     localStorage.setItem("fairy.realtime.device-id", "test-device");
     invoke.mockImplementation(async (command: string) => {
       if (command === "desktop_preferences_get") return {
         realtime_provider: "auto",
-        realtime_voice_mode: "native",
+        realtime_voice_mode: realtimeVoiceMode,
         realtime_game_audio_default: false,
         realtime_memory_enabled: true,
         realtime_max_session_minutes: 30,
@@ -130,6 +141,201 @@ describe("RealtimeCompanion", () => {
       tool_call_count: 0,
     })));
     expect(JSON.stringify(report.mock.calls)).not.toContain("Boss at half health");
+  });
+
+  it("cancels a session that is still connecting without reporting completion", async () => {
+    const report = vi.fn();
+    const stop = vi.fn(async () => session("cancelled", 2));
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: vi.fn(async () => session("starting", 1)),
+        get: vi.fn(),
+        report,
+        stop,
+      },
+      memories: { save: vi.fn() },
+      worker: {
+        status: vi.fn(async () => workerStatus(false)),
+        start: vi.fn(async () => workerStatus(true)),
+        stop: vi.fn(async () => workerStatus(false)),
+        toolResult: vi.fn(),
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} />);
+    fireEvent.click(screen.getByTitle("Game companion"));
+    await screen.findByRole("option", { name: "Test Game · 1280×720" });
+    const consents = screen.getAllByRole("checkbox");
+    fireEvent.click(consents[0]);
+    fireEvent.click(consents[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    await waitFor(() => expect(stop).toHaveBeenCalledWith(expect.objectContaining({
+      expected_revision: 1,
+    })));
+    await waitFor(() => expect(client.worker.stop).toHaveBeenCalledOnce());
+    expect(report).not.toHaveBeenCalled();
+    await act(async () => eventListener?.({ payload: {
+      type: "worker_interrupted", error_code: "WORKER_INTERRUPTED",
+    } }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("stops local capture and retries once when an active event wins the revision race", async () => {
+    const conflict = Object.assign(new Error("stale realtime revision"), {
+      errorCode: "VERSION_CONFLICT",
+    });
+    const stop = vi.fn()
+      .mockRejectedValueOnce(conflict)
+      .mockResolvedValueOnce(session("stopping", 4));
+    const get = vi.fn(async () => session("active", 3));
+    const report = vi.fn(async (input: { status: RealtimeSession["status"] }) =>
+      session(input.status, 5));
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: vi.fn(async () => session("starting", 1)),
+        get,
+        report,
+        stop,
+      },
+      memories: { save: vi.fn() },
+      worker: {
+        status: vi.fn(async () => workerStatus(false)),
+        start: vi.fn(async () => workerStatus(true)),
+        stop: vi.fn(async () => workerStatus(false)),
+        toolResult: vi.fn(),
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} />);
+    fireEvent.click(screen.getByTitle("Game companion"));
+    await screen.findByRole("option", { name: "Test Game · 1280×720" });
+    const consents = screen.getAllByRole("checkbox");
+    fireEvent.click(consents[0]);
+    fireEvent.click(consents[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(2));
+    expect(stop.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ expected_revision: 3 }));
+    expect(get).toHaveBeenCalledWith(session("active", 3).id);
+    expect(client.worker.stop).toHaveBeenCalledOnce();
+    await waitFor(() => expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      status: "completed",
+    })));
+  });
+
+  it("stops queued Fairy playback immediately on the shared barge-in event", async () => {
+    realtimeVoiceMode = "fairy";
+    let finishPlayback!: () => void;
+    const stopPlayback = vi.fn();
+    voiceMocks.startRealtimeVoice.mockResolvedValue({
+      readyForNext: Promise.resolve(),
+      finished: new Promise<void>((resolve) => { finishPlayback = resolve; }),
+      stop: stopPlayback,
+    });
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: vi.fn(async () => session("starting", 1)),
+        get: vi.fn(async () => session("active", 2)),
+        report: vi.fn(async () => session("active", 2)),
+        stop: vi.fn(),
+      },
+      memories: { save: vi.fn() },
+      worker: {
+        status: vi.fn(async () => workerStatus(false)),
+        start: vi.fn(async () => workerStatus(true)),
+        stop: vi.fn(),
+        toolResult: vi.fn(),
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} />);
+    fireEvent.click(screen.getByTitle("Game companion"));
+    await screen.findByRole("option", { name: "Test Game · 1280×720" });
+    const consents = screen.getAllByRole("checkbox");
+    fireEvent.click(consents[0]);
+    fireEvent.click(consents[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
+    await act(async () => eventListener?.({ payload: {
+      type: "session_state", session_id: session("active", 2).id, status: "active",
+    } }));
+    await act(async () => eventListener?.({ payload: {
+      type: "public_caption",
+      session_id: session("active", 2).id,
+      text: "Watch the next attack.",
+      stable: true,
+      speaker: "assistant",
+    } }));
+    await waitFor(() => expect(voiceMocks.startRealtimeVoice).toHaveBeenCalledOnce());
+    await act(async () => eventListener?.({ payload: {
+      type: "public_caption",
+      session_id: session("active", 2).id,
+      text: "This queued sentence must be discarded.",
+      stable: true,
+      speaker: "assistant",
+    } }));
+
+    await act(async () => eventListener?.({ payload: {
+      type: "barge_in", session_id: session("active", 2).id,
+    } }));
+
+    expect(stopPlayback).toHaveBeenCalledOnce();
+    expect(screen.getByText("Listening")).not.toBeNull();
+    await act(async () => {
+      finishPlayback();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(voiceMocks.startRealtimeVoice).toHaveBeenCalledOnce();
+  });
+
+  it("shows non-conflict persistence failures and reloads the authoritative session", async () => {
+    const persistenceError = Object.assign(new Error("Realtime state could not be saved."), {
+      errorCode: "CORE_WRITE_FAILED",
+    });
+    const get = vi.fn(async () => session("active", 2));
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: vi.fn(async () => session("starting", 1)),
+        get,
+        report: vi.fn(async () => { throw persistenceError; }),
+        stop: vi.fn(),
+      },
+      memories: { save: vi.fn() },
+      worker: {
+        status: vi.fn(async () => workerStatus(false)),
+        start: vi.fn(async () => workerStatus(true)),
+        stop: vi.fn(),
+        toolResult: vi.fn(),
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} />);
+    fireEvent.click(screen.getByTitle("Game companion"));
+    await screen.findByRole("option", { name: "Test Game · 1280×720" });
+    const consents = screen.getAllByRole("checkbox");
+    fireEvent.click(consents[0]);
+    fireEvent.click(consents[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
+
+    await act(async () => eventListener?.({ payload: {
+      type: "session_state", session_id: session("active", 2).id, status: "active",
+    } }));
+
+    expect(await screen.findByText("Realtime state could not be saved.")).not.toBeNull();
+    expect(get).toHaveBeenCalledWith(session("active", 2).id);
   });
 });
 

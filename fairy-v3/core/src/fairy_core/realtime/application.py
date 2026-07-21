@@ -62,9 +62,21 @@ class RealtimeApplication:
             current = unit_of_work.realtime.get_session(session_id)
             if current is None:
                 raise KeyError(f"realtime session not found: {session_id}")
+            if current.status in {
+                RealtimeSessionStatus.STOPPING,
+                RealtimeSessionStatus.COMPLETED,
+                RealtimeSessionStatus.FAILED,
+                RealtimeSessionStatus.CANCELLED,
+                RealtimeSessionStatus.INTERRUPTED,
+            }:
+                return current
             if current.revision != expected_revision:
                 raise VersionConflictError("realtime session revision changed")
-            stopped = current.transition_to(RealtimeSessionStatus.STOPPING)
+            stopped = current.transition_to(
+                RealtimeSessionStatus.CANCELLED
+                if current.status is RealtimeSessionStatus.STARTING
+                else RealtimeSessionStatus.STOPPING
+            )
             unit_of_work.realtime.update_session(stopped, expected_revision=expected_revision)
             unit_of_work.commit()
             return stopped

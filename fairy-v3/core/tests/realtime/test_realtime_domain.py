@@ -42,6 +42,13 @@ def test_session_state_machine_rejects_illegal_transition() -> None:
     assert completed.provider is RealtimeProvider.GLM_REALTIME_FLASH
 
 
+def test_starting_session_can_be_cancelled_before_provider_activation() -> None:
+    cancelled = _session().transition_to(RealtimeSessionStatus.CANCELLED)
+
+    assert cancelled.status is RealtimeSessionStatus.CANCELLED
+    assert cancelled.ended_at is not None
+
+
 def test_game_audio_requires_selected_window_consent() -> None:
     with pytest.raises(ValueError, match="selected game window"):
         RealtimeSession.create(

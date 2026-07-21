@@ -26,6 +26,7 @@
 .realtime-captions p { margin: 0; padding: 9px 0; border-bottom: 1px solid #222826; line-height: 1.5; }.realtime-captions span { color: #7f8b87; }
 .realtime-memory { border-top: 1px solid #303735; }.realtime-memory h3 { margin: 0; font-size: 15px; }
 .realtime-error { margin: 0 20px 20px; padding: 11px 12px; border-left: 2px solid #ef7369; background: #341c1a; color: #ffc4bd; font-size: 12px; }
+.realtime-warning { margin: 0 20px 20px; padding: 11px 12px; border-left: 2px solid #d5a94f; background: #2d2818; color: #f1d797; font-size: 12px; }
 @keyframes realtime-pulse { 50% { transform: scale(.72); opacity: .65; } }
 @media (prefers-reduced-motion: reduce) { .realtime-pulse { animation: none; } }
 @media (max-width: 720px) { .realtime-launch span { display: none; }.realtime-launch { right: 10px; top: 72px; width: 36px; padding: 0; justify-content: center; } }

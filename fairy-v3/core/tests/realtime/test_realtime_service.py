@@ -62,6 +62,11 @@ def test_realtime_session_and_game_memory_round_trip(tmp_path) -> None:
             "realtime.sessions.stop",
             {"session_id": started["id"], "expected_revision": active["revision"]},
         )
+        repeated_stop = service.invoke(
+            "realtime.sessions.stop",
+            {"session_id": started["id"], "expected_revision": active["revision"]},
+        )
+        assert repeated_stop == stopping
         completed = service.invoke(
             "realtime.sessions.report",
             {
@@ -75,6 +80,11 @@ def test_realtime_session_and_game_memory_round_trip(tmp_path) -> None:
             },
         )
         assert completed["ended_at"] is not None
+        terminal_stop = service.invoke(
+            "realtime.sessions.stop",
+            {"session_id": started["id"], "expected_revision": 1},
+        )
+        assert terminal_stop == completed
 
         memory = service.invoke(
             "realtime.memories.save",
@@ -94,6 +104,36 @@ def test_realtime_session_and_game_memory_round_trip(tmp_path) -> None:
             service.invoke("realtime.memories.delete", {"memory_id": memory["id"]})["deleted"]
             is True
         )
+    finally:
+        service.close()
+
+
+def test_starting_session_stop_is_cancelled_and_idempotent(tmp_path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        started = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-1",
+                "provider": "glm_realtime_flash",
+                "microphone_consent": True,
+                "screen_consent": True,
+                "idempotency_key": "session-cancel-starting",
+            },
+        )
+
+        cancelled = service.invoke(
+            "realtime.sessions.stop",
+            {"session_id": started["id"], "expected_revision": started["revision"]},
+        )
+        replayed = service.invoke(
+            "realtime.sessions.stop",
+            {"session_id": started["id"], "expected_revision": started["revision"]},
+        )
+
+        assert cancelled["status"] == "cancelled"
+        assert cancelled["ended_at"] is not None
+        assert replayed == cancelled
     finally:
         service.close()
 

@@ -16,6 +16,7 @@ use zeroize::Zeroizing;
 
 pub const REALTIME_WORKER_EVENT: &str = "fairy-realtime-event";
 const REALTIME_PROTOCOL: &str = "fairy-realtime-worker-v1";
+const WORKER_STOP_GRACE: Duration = Duration::from_millis(80);
 
 #[derive(Clone, Debug)]
 pub struct RealtimeWorkerLaunch {
@@ -107,6 +108,7 @@ struct WorkerProcess {
     input: Arc<Mutex<ChildStdin>>,
     session_id: Option<String>,
     expected_shutdown: Arc<AtomicBool>,
+    terminal: Arc<AtomicBool>,
 }
 
 pub struct RealtimeWorkerManager {
@@ -126,10 +128,7 @@ impl RealtimeWorkerManager {
 
     pub fn status(&self) -> RealtimeWorkerStatus {
         let mut guard = self.process.lock().expect("realtime worker lock poisoned");
-        if guard
-            .as_mut()
-            .is_some_and(|process| process.child.try_wait().ok().flatten().is_some())
-        {
+        if guard.as_mut().is_some_and(reap_finished_process) {
             *guard = None;
         }
         RealtimeWorkerStatus {
@@ -153,7 +152,7 @@ impl RealtimeWorkerManager {
             .lock()
             .map_err(|_| RealtimeWorkerError::Protocol)?;
         if let Some(process) = guard.as_mut() {
-            if process.child.try_wait()?.is_none() {
+            if !reap_finished_process(process) {
                 return Err(RealtimeWorkerError::Busy);
             }
             *guard = None;
@@ -209,7 +208,7 @@ impl RealtimeWorkerManager {
                 session_id: session_id.to_owned(),
             },
         );
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + WORKER_STOP_GRACE;
         while Instant::now() < deadline {
             if process.child.try_wait()?.is_some() {
                 return Ok(RealtimeWorkerStatus {
@@ -218,7 +217,7 @@ impl RealtimeWorkerManager {
                     usage: self.usage_snapshot(),
                 });
             }
-            thread::sleep(Duration::from_millis(20));
+            thread::sleep(Duration::from_millis(4));
         }
         let _ = process.child.kill();
         let _ = process.child.wait();
@@ -317,6 +316,8 @@ fn spawn_worker(
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
     let expected_shutdown = Arc::new(AtomicBool::new(false));
     let reader_expected_shutdown = Arc::clone(&expected_shutdown);
+    let terminal = Arc::new(AtomicBool::new(false));
+    let reader_terminal = Arc::clone(&terminal);
     thread::spawn(move || {
         let first = read_frame::<Value>(&mut reader);
         let ready = matches!(
@@ -332,6 +333,9 @@ fn spawn_worker(
         loop {
             match read_frame::<Value>(&mut reader) {
                 Ok(Some(value)) => {
+                    if is_terminal_worker_event(&value) {
+                        reader_terminal.store(true, Ordering::Release);
+                    }
                     if value.get("type").and_then(Value::as_str) == Some("usage") {
                         if let Ok(next) =
                             serde_json::from_value::<RealtimeWorkerUsage>(value.clone())
@@ -364,6 +368,7 @@ fn spawn_worker(
             input,
             session_id: None,
             expected_shutdown,
+            terminal,
         }),
         _ => {
             let _ = child.kill();
@@ -371,6 +376,29 @@ fn spawn_worker(
             Err(RealtimeWorkerError::Protocol)
         }
     }
+}
+
+fn reap_finished_process(process: &mut WorkerProcess) -> bool {
+    if process.child.try_wait().ok().flatten().is_some() {
+        return true;
+    }
+    if !process.terminal.load(Ordering::Acquire) {
+        return false;
+    }
+    process.expected_shutdown.store(true, Ordering::Release);
+    let _ = process.child.kill();
+    let _ = process.child.wait();
+    true
+}
+
+fn is_terminal_worker_event(value: &Value) -> bool {
+    value.get("type").and_then(Value::as_str) == Some("session_state")
+        && value
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| {
+                matches!(status, "completed" | "failed" | "cancelled" | "interrupted")
+            })
 }
 
 fn send_command(
@@ -442,5 +470,29 @@ mod tests {
 
         input.screen_enabled = true;
         assert!(validate_capture_scope(&input).is_ok());
+    }
+
+    #[test]
+    fn worker_stop_grace_stays_within_the_full_duplex_budget() {
+        assert!(WORKER_STOP_GRACE <= Duration::from_millis(80));
+    }
+
+    #[test]
+    fn only_terminal_session_events_mark_a_worker_for_reaping() {
+        assert!(is_terminal_worker_event(&serde_json::json!({
+            "type": "session_state",
+            "session_id": "session-1",
+            "status": "failed"
+        })));
+        assert!(!is_terminal_worker_event(&serde_json::json!({
+            "type": "session_state",
+            "session_id": "session-1",
+            "status": "active"
+        })));
+        assert!(!is_terminal_worker_event(&serde_json::json!({
+            "type": "presence",
+            "session_id": "session-1",
+            "state": "completed"
+        })));
     }
 }

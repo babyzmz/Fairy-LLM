@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -64,24 +65,31 @@ pub struct RealtimeRuntime {
     commands: mpsc::Sender<RuntimeCommand>,
     events: Option<mpsc::Receiver<WorkerEvent>>,
     worker: Option<thread::JoinHandle<()>>,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl RealtimeRuntime {
     pub fn spawn(launch: RuntimeLaunch) -> Self {
         let (command_sender, command_receiver) = mpsc::channel();
         let (event_sender, event_receiver) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
         let worker = thread::Builder::new()
             .name("fairy-realtime-session".to_owned())
-            .spawn(move || run_session(launch, command_receiver, event_sender))
+            .spawn(move || run_session(launch, command_receiver, event_sender, worker_cancelled))
             .ok();
         Self {
             commands: command_sender,
             events: Some(event_receiver),
             worker,
+            cancelled,
         }
     }
 
     pub fn command(&self, command: RuntimeCommand) -> bool {
+        if matches!(command, RuntimeCommand::Stop) {
+            self.cancelled.store(true, Ordering::Release);
+        }
         self.commands.send(command).is_ok()
     }
 
@@ -92,6 +100,7 @@ impl RealtimeRuntime {
 
 impl Drop for RealtimeRuntime {
     fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
         let _ = self.commands.send(RuntimeCommand::Stop);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -100,33 +109,79 @@ impl Drop for RealtimeRuntime {
 }
 
 fn run_session(
-    mut launch: RuntimeLaunch,
+    launch: RuntimeLaunch,
     commands: mpsc::Receiver<RuntimeCommand>,
     events: mpsc::Sender<WorkerEvent>,
+    cancelled: Arc<AtomicBool>,
 ) {
-    let session_id = launch.session_id.clone();
-    let native_audio = match launch.voice_mode.as_str() {
+    let RuntimeLaunch {
+        session_id,
+        provider: provider_kind,
+        credential,
+        system_instruction,
+        source_id,
+        screen_enabled,
+        game_audio_enabled,
+        voice_mode,
+    } = launch;
+    let native_audio = match voice_mode.as_str() {
         "native" => true,
         "fairy" => false,
         _ => {
             emit_failed(&events, &session_id, "REALTIME_VOICE_MODE_INVALID");
-            launch.credential.zeroize();
             return;
         }
     };
-    let mut provider = match ProviderSocket::connect(
-        launch.provider.clone(),
-        launch.credential,
-        launch.system_instruction,
-        launch.screen_enabled,
-        native_audio,
-    ) {
-        Ok(provider) => provider,
-        Err(error) => {
-            emit_failed(&events, &session_id, error.public_code());
+    let (provider_sender, provider_receiver) = mpsc::sync_channel(1);
+    let connect_cancelled = Arc::clone(&cancelled);
+    let connect_provider = provider_kind.clone();
+    if thread::Builder::new()
+        .name("fairy-realtime-connect".to_owned())
+        .spawn(move || {
+            let result = ProviderSocket::connect(
+                connect_provider,
+                credential,
+                system_instruction,
+                screen_enabled,
+                native_audio,
+            );
+            if !connect_cancelled.load(Ordering::Acquire) {
+                let _ = provider_sender.send(result);
+            }
+        })
+        .is_err()
+    {
+        emit_failed(&events, &session_id, "WORKER_INTERRUPTED");
+        return;
+    }
+    let provider_deadline = Instant::now() + Duration::from_secs(15);
+    let mut provider = loop {
+        if startup_cancel_requested(&commands, &cancelled) {
+            emit_cancelled(&events, &session_id);
             return;
         }
+        match provider_receiver.recv_timeout(Duration::from_millis(5)) {
+            Ok(Ok(provider)) => break provider,
+            Ok(Err(error)) => {
+                emit_failed(&events, &session_id, error.public_code());
+                return;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < provider_deadline => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                cancelled.store(true, Ordering::Release);
+                emit_failed(&events, &session_id, "REALTIME_PROVIDER_TIMEOUT");
+                return;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                emit_failed(&events, &session_id, "WORKER_INTERRUPTED");
+                return;
+            }
+        }
     };
+    if startup_cancel_requested(&commands, &cancelled) {
+        emit_cancelled(&events, &session_id);
+        return;
+    }
     let microphone = match MicrophoneCapture::start() {
         Ok(microphone) => microphone,
         Err(_) => {
@@ -134,11 +189,12 @@ fn run_session(
             return;
         }
     };
-    let mut game_audio = if launch.game_audio_enabled {
-        match launch
-            .source_id
-            .and_then(|source_id| ProcessLoopbackCapture::start(source_id).ok())
-        {
+    if startup_cancel_requested(&commands, &cancelled) {
+        emit_cancelled(&events, &session_id);
+        return;
+    }
+    let mut game_audio = if game_audio_enabled {
+        match source_id.and_then(|source_id| ProcessLoopbackCapture::start(source_id).ok()) {
             Some(capture) => Some(capture),
             None => {
                 emit_failed(&events, &session_id, "PROCESS_LOOPBACK_UNAVAILABLE");
@@ -148,6 +204,10 @@ fn run_session(
     } else {
         None
     };
+    if startup_cancel_requested(&commands, &cancelled) {
+        emit_cancelled(&events, &session_id);
+        return;
+    }
     let playback = if native_audio {
         match AudioPlayback::start() {
             Ok(playback) => Some(playback),
@@ -159,11 +219,12 @@ fn run_session(
     } else {
         None
     };
-    let video = if launch.screen_enabled {
-        match launch
-            .source_id
-            .and_then(|id| VideoCapture::start(id, 30).ok())
-        {
+    if startup_cancel_requested(&commands, &cancelled) {
+        emit_cancelled(&events, &session_id);
+        return;
+    }
+    let video = if screen_enabled {
+        match source_id.and_then(|id| VideoCapture::start(id, 30).ok()) {
             Some(video) => Some(video),
             None => {
                 emit_failed(&events, &session_id, "CAPTURE_SOURCE_UNAVAILABLE");
@@ -173,10 +234,14 @@ fn run_session(
     } else {
         None
     };
+    if startup_cancel_requested(&commands, &cancelled) {
+        emit_cancelled(&events, &session_id);
+        return;
+    }
     let _ = events.send(WorkerEvent::SessionState {
         session_id: session_id.clone(),
         status: "active",
-        provider: Some(launch.provider),
+        provider: Some(provider_kind),
         error_code: None,
     });
     let mut last_video_sent = Instant::now() - Duration::from_secs(1);
@@ -188,6 +253,9 @@ fn run_session(
     let mut interruption_count = 0_u64;
     let mut tool_call_count = 0_u64;
     loop {
+        if cancelled.load(Ordering::Acquire) {
+            break;
+        }
         match commands.try_recv() {
             Ok(RuntimeCommand::Stop) | Err(mpsc::TryRecvError::Disconnected) => break,
             Ok(RuntimeCommand::ToolResult {
@@ -285,6 +353,9 @@ fn run_session(
                     if let Some(playback) = playback.as_ref() {
                         playback.clear();
                     }
+                    let _ = events.send(WorkerEvent::BargeIn {
+                        session_id: session_id.clone(),
+                    });
                     let _ = events.send(WorkerEvent::Presence {
                         session_id: session_id.clone(),
                         state: "listening",
@@ -351,6 +422,25 @@ fn run_session(
     });
 }
 
+fn startup_cancel_requested(
+    commands: &mpsc::Receiver<RuntimeCommand>,
+    cancelled: &AtomicBool,
+) -> bool {
+    if cancelled.load(Ordering::Acquire) {
+        return true;
+    }
+    loop {
+        match commands.try_recv() {
+            Ok(RuntimeCommand::Stop) | Err(mpsc::TryRecvError::Disconnected) => {
+                cancelled.store(true, Ordering::Release);
+                return true;
+            }
+            Ok(RuntimeCommand::ToolResult { .. }) => {}
+            Err(mpsc::TryRecvError::Empty) => return false,
+        }
+    }
+}
+
 fn emit_usage(
     events: &mpsc::Sender<WorkerEvent>,
     session_id: &str,
@@ -377,4 +467,30 @@ fn emit_failed(events: &mpsc::Sender<WorkerEvent>, session_id: &str, error_code:
         provider: None,
         error_code: Some(error_code),
     });
+}
+
+fn emit_cancelled(events: &mpsc::Sender<WorkerEvent>, session_id: &str) {
+    let _ = events.send(WorkerEvent::SessionState {
+        session_id: session_id.to_owned(),
+        status: "cancelled",
+        provider: None,
+        error_code: None,
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_stop_is_observed_within_the_barge_in_budget() {
+        let (sender, receiver) = mpsc::channel();
+        let cancelled = AtomicBool::new(false);
+        sender.send(RuntimeCommand::Stop).expect("stop command");
+        let started = Instant::now();
+
+        assert!(startup_cancel_requested(&receiver, &cancelled));
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(cancelled.load(Ordering::Acquire));
+    }
 }

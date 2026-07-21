@@ -68,6 +68,9 @@ pub enum WorkerEvent {
         state: &'static str,
         level: Option<u8>,
     },
+    BargeIn {
+        session_id: String,
+    },
     ToolRequest {
         session_id: String,
         call_id: String,

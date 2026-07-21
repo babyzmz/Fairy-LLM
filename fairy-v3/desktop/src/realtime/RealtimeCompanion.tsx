@@ -12,7 +12,7 @@ import type {
   RealtimeWorkerProvider,
 } from "../core/client";
 import type { DesktopPreferences } from "../settings/client";
-import { startRealtimeVoice } from "../voice/nativeVoice";
+import { startRealtimeVoice, type NativeVoicePlayback } from "../voice/nativeVoice";
 import "./realtime-companion.css";
 
 interface CaptureSurface {
@@ -27,6 +27,7 @@ type WorkerEvent =
   | { type: "session_state"; session_id: string; status: string; error_code?: string | null }
   | { type: "public_caption"; session_id: string; text: string; stable: boolean; speaker: "user" | "assistant" }
   | { type: "presence"; session_id: string; state: string; level?: number | null }
+  | { type: "barge_in"; session_id: string }
   | { type: "tool_request"; session_id: string; call_id: string; tool_name: string; public_intent: string }
   | { type: "usage"; session_id: string; audio_input_ms: number; audio_output_ms: number; video_frame_count: number; interruption_count: number; tool_call_count: number }
   | { type: "worker_interrupted"; error_code: string }
@@ -90,15 +91,27 @@ export function RealtimeCompanion({
   const [draftCaption, setDraftCaption] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [voiceWarning, setVoiceWarning] = useState<string | null>(null);
   const [memory, setMemory] = useState<MemoryDraft | null>(null);
   const startedAt = useRef(0);
   const voiceQueue = useRef(Promise.resolve());
+  const voiceGeneration = useRef(0);
+  const activeVoice = useRef<NativeVoicePlayback | null>(null);
   const usage = useRef<RealtimeUsage>({ ...EMPTY_USAGE });
 
   const updateSession = useCallback((value: RealtimeSession | null) => {
     sessionRef.current = value;
     setSession(value);
   }, []);
+
+  const stopFairyVoice = useCallback(() => {
+    voiceGeneration.current += 1;
+    activeVoice.current?.stop();
+    activeVoice.current = null;
+    voiceQueue.current = Promise.resolve();
+  }, []);
+
+  useEffect(() => () => stopFairyVoice(), [stopFairyVoice]);
 
   useEffect(() => {
     onPresenceChange?.(presence);
@@ -133,17 +146,27 @@ export function RealtimeCompanion({
           ["starting", "active", "stopping"].includes(stale.status) &&
           workerStatus.session_id !== stale.id
         ) {
-          await client.sessions.report({
-            session_id: stale.id,
-            status: "interrupted",
-            expected_revision: stale.revision,
-            audio_input_ms: stale.audio_input_ms,
-            audio_output_ms: stale.audio_output_ms,
-            video_frame_count: stale.video_frame_count,
-            interruption_count: stale.interruption_count,
-            tool_call_count: stale.tool_call_count,
-            error_code: null,
-          }).catch(() => undefined);
+          try {
+            await client.sessions.report({
+              session_id: stale.id,
+              status: "interrupted",
+              expected_revision: stale.revision,
+              audio_input_ms: stale.audio_input_ms,
+              audio_output_ms: stale.audio_output_ms,
+              video_frame_count: stale.video_frame_count,
+              interruption_count: stale.interruption_count,
+              tool_call_count: stale.tool_call_count,
+              error_code: null,
+            });
+          } catch (caught) {
+            const latest = await client.sessions.get(stale.id);
+            if (
+              coreErrorCode(caught) !== "VERSION_CONFLICT"
+              || latest.revision === stale.revision
+            ) {
+              throw caught;
+            }
+          }
         }
       }
       const windows = captureSurfaces.filter((item) => item.kind === "window");
@@ -176,8 +199,19 @@ export function RealtimeCompanion({
         error_code: errorCode,
       });
       updateSession(updated);
-    } catch {
-      // A newer host event may already have advanced the revision.
+    } catch (caught) {
+      try {
+        const latest = await client.sessions.get(current.id);
+        updateSession(latest);
+        if (
+          coreErrorCode(caught) !== "VERSION_CONFLICT"
+          || latest.revision === current.revision
+        ) {
+          setError(messageOf(caught));
+        }
+      } catch (refreshError) {
+        setError(`${messageOf(caught)} ${messageOf(refreshError)}`.trim());
+      }
     }
   }, [client.sessions, updateSession]);
 
@@ -189,12 +223,14 @@ export function RealtimeCompanion({
       const payload = event.payload;
       const current = sessionRef.current;
       if (payload.type === "worker_interrupted") {
-        if (current !== null) void report("interrupted", payload.error_code);
+        if (current === null || isTerminal(current.status)) return;
+        void report("interrupted", payload.error_code);
         setPresence("error");
         setError(realtimeProviderErrorMessage(payload.error_code));
         return;
       }
       if (!("session_id" in payload) || payload.session_id !== current?.id) return;
+      if (isTerminal(current.status)) return;
       if (payload.type === "session_state") {
         setPresence(normalizePresence(payload.status));
         if (payload.status === "active") void report("active");
@@ -208,6 +244,9 @@ export function RealtimeCompanion({
         }
       } else if (payload.type === "presence") {
         setPresence(normalizePresence(payload.state));
+      } else if (payload.type === "barge_in") {
+        stopFairyVoice();
+        setPresence("listening");
       } else if (payload.type === "public_caption") {
         if (payload.stable) {
           setDraftCaption((draft) => {
@@ -222,11 +261,27 @@ export function RealtimeCompanion({
           payload.stable && payload.speaker === "assistant"
           && preferences?.realtime_voice_mode === "fairy"
         ) {
+          const generation = voiceGeneration.current;
           voiceQueue.current = voiceQueue.current
             .catch(() => undefined)
             .then(async () => {
-              const playback = await startRealtimeVoice(payload.text);
-              await playback.finished;
+              if (generation !== voiceGeneration.current) return;
+              try {
+                const playback = await startRealtimeVoice(payload.text);
+                if (generation !== voiceGeneration.current) {
+                  playback.stop();
+                  return;
+                }
+                activeVoice.current = playback;
+                await playback.finished;
+                setVoiceWarning(null);
+              } catch {
+                if (generation === voiceGeneration.current) {
+                  setVoiceWarning("Fairy voice playback stopped. The realtime session is still active.");
+                }
+              } finally {
+                if (generation === voiceGeneration.current) activeVoice.current = null;
+              }
             });
         }
       } else if (payload.type === "usage") {
@@ -250,7 +305,7 @@ export function RealtimeCompanion({
       disposed = true;
       unlisten?.();
     };
-  }, [client.worker, preferences?.realtime_voice_mode, report]);
+  }, [client.worker, preferences?.realtime_voice_mode, report, stopFairyVoice]);
 
   useEffect(() => {
     if (session?.status !== "active" || preferences === null) return;
@@ -266,6 +321,8 @@ export function RealtimeCompanion({
     ) return;
     setBusy(true);
     setError(null);
+    setVoiceWarning(null);
+    stopFairyVoice();
     setCaptions([]);
     setDraftCaption("");
     usage.current = { ...EMPTY_USAGE };
@@ -307,12 +364,48 @@ export function RealtimeCompanion({
     if (current === null || isTerminal(current.status)) return;
     setBusy(true);
     setError(null);
+    stopFairyVoice();
     try {
-      const stopping = current.status === "stopping"
-        ? current
-        : await client.sessions.stop({ session_id: current.id, expected_revision: current.revision });
+      const requestCoreStop = async () => {
+        try {
+          return await client.sessions.stop({
+            session_id: current.id,
+            expected_revision: current.revision,
+          });
+        } catch (caught) {
+          if (coreErrorCode(caught) !== "VERSION_CONFLICT") throw caught;
+          const latest = await client.sessions.get(current.id);
+          updateSession(latest);
+          if (latest.status === "stopping" || isTerminal(latest.status)) return latest;
+          return client.sessions.stop({
+            session_id: latest.id,
+            expected_revision: latest.revision,
+          });
+        }
+      };
+      const [coreStop, workerStop] = await Promise.allSettled([
+        requestCoreStop(),
+        client.worker.stop(current.id),
+      ]);
+      if (coreStop.status === "rejected") {
+        setError(messageOf(coreStop.reason));
+        try {
+          updateSession(await client.sessions.get(current.id));
+        } catch (refreshError) {
+          setError(`${messageOf(coreStop.reason)} ${messageOf(refreshError)}`.trim());
+        }
+        return;
+      }
+      const stopping = coreStop.value;
       updateSession(stopping);
-      const workerStatus = await client.worker.stop(current.id);
+      if (workerStop.status === "rejected") {
+        setError(messageOf(workerStop.reason));
+        if (stopping.status === "stopping") {
+          await report("interrupted", "WORKER_INTERRUPTED");
+        }
+        return;
+      }
+      const workerStatus = workerStop.value;
       usage.current = {
         audio_input_ms: workerStatus.audio_input_ms,
         audio_output_ms: workerStatus.audio_output_ms,
@@ -320,14 +413,12 @@ export function RealtimeCompanion({
         interruption_count: workerStatus.interruption_count,
         tool_call_count: workerStatus.tool_call_count,
       };
-      const completed = await client.sessions.report({
-        session_id: current.id,
-        status: "completed",
-        expected_revision: stopping.revision,
-        ...usage.current,
-        error_code: null,
-      });
-      updateSession(completed);
+      if (stopping.status !== "stopping") {
+        setPresence("completed");
+        return;
+      }
+      await report("completed");
+      if (sessionRef.current?.status !== "completed") return;
       setPresence("completed");
       const surface = surfaces.find((item) => item.source_id === sourceId);
       if (preferences?.realtime_memory_enabled) {
@@ -382,6 +473,7 @@ export function RealtimeCompanion({
             <button className="realtime-primary" type="button" disabled={busy || credentialReady !== true || !microphoneConsent || !screenConsent || sourceId === ""} onClick={() => void start()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Mic size={15} />} Start companion</button>
           </div> : <div className="realtime-live"><div className="realtime-live-status"><span className={`realtime-pulse ${presence}`} /><div><strong>{presenceLabel(presence)}</strong><small>{session.provider.replaceAll("_", " ")}</small></div><button type="button" disabled={busy} onClick={() => void stop()}><Square size={14} /> Stop</button></div><div className="realtime-captions" aria-live="polite">{captions.length === 0 && draftCaption === "" ? <span>Listening for the conversation and game context…</span> : <>{captions.map((text, index) => <p key={`${index}-${text.slice(0, 16)}`}>{text}</p>)}{draftCaption ? <p className="is-streaming">{draftCaption}</p> : null}</>}</div></div>}
           {memory ? <div className="realtime-memory"><h3>Save game progress</h3><label>Game<input value={memory.gameTitle} maxLength={160} onChange={(event) => setMemory({ ...memory, gameTitle: event.target.value })} /></label><label>Progress<textarea value={memory.progress} maxLength={800} onChange={(event) => setMemory({ ...memory, progress: event.target.value })} /></label><label>Next goal<input value={memory.nextGoal} maxLength={300} onChange={(event) => setMemory({ ...memory, nextGoal: event.target.value })} /></label><button type="button" disabled={busy || !memory.gameTitle.trim() || !memory.progress.trim()} onClick={() => void saveMemory()}><Save size={14} /> Save summary</button></div> : null}
+          {voiceWarning ? <div className="realtime-warning" role="status">{voiceWarning}</div> : null}
           {error ? <div className="realtime-error" role="alert">{error}</div> : null}
         </section>
       </div> : null}
@@ -460,6 +552,11 @@ function normalizePresence(value: string): RealtimePresenceState {
 
 function messageOf(value: unknown): string {
   return value instanceof Error ? value.message : String(value || "Realtime companion unavailable");
+}
+
+function coreErrorCode(value: unknown): string | null {
+  if (typeof value !== "object" || value === null || !("errorCode" in value)) return null;
+  return typeof value.errorCode === "string" ? value.errorCode : null;
 }
 
 export function mergeCaptionDelta(current: string, incoming: string): string {
