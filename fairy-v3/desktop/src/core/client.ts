@@ -1,5 +1,7 @@
 import type {
   ApprovalDecisionInput,
+  BrowserActionInput,
+  BrowserSessionStartInput,
   AssetSetCreateInput,
   ApprovalListInput,
   AssistantTurnCancelInput,
@@ -229,6 +231,43 @@ export class CoreClient {
         throw new Error("Project folder selection requires the Fairy desktop host");
       }
       return this.transport.selectProjectFolder();
+    },
+  };
+
+  readonly browser = {
+    health: () => this.transport.call("browser.health", {}),
+    profile: () => this.transport.call("browser.profile.get", {}),
+    sessions: {
+      start: (input: BrowserSessionStartInput) =>
+        this.transport.call("browser.sessions.start", input),
+      get: (sessionId: string) =>
+        this.transport.call("browser.sessions.get", { session_id: sessionId }),
+      list: (input: { conversation_id?: string | null; task_id?: string | null; include_terminal?: boolean } = {}) =>
+        this.transport.call("browser.sessions.list", input),
+      stop: (sessionId: string) =>
+        this.transport.call("browser.sessions.stop", { session_id: sessionId }),
+      resume: (sessionId: string) =>
+        this.transport.call("browser.sessions.resume", { session_id: sessionId }),
+    },
+    tabs: {
+      open: (sessionId: string, url = "about:blank") =>
+        this.transport.call("browser.tabs.open", { session_id: sessionId, url }),
+      select: (sessionId: string, tabId: string) =>
+        this.transport.call("browser.tabs.select", { session_id: sessionId, tab_id: tabId }),
+      close: (sessionId: string, tabId: string) =>
+        this.transport.call("browser.tabs.close", { session_id: sessionId, tab_id: tabId }),
+    },
+    actions: {
+      execute: (input: BrowserActionInput) =>
+        this.transport.call("browser.actions.execute", input),
+    },
+    snapshots: {
+      get: (sessionId: string, tabId: string, includeScreenshot = true) =>
+        this.transport.call("browser.snapshots.get", {
+          session_id: sessionId,
+          tab_id: tabId,
+          include_screenshot: includeScreenshot,
+        }),
     },
   };
 

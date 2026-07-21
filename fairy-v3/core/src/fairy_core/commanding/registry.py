@@ -324,6 +324,7 @@ def _information_definitions(
 
 
 def build_default_registry() -> ToolRegistry:
+    from fairy_core.commanding.browser_definitions import browser_definitions
     from fairy_core.commanding.media_definitions import media_generation_definitions
     from fairy_core.commanding.model_definitions import model_generation_definitions
     from fairy_core.commanding.project_definitions import project_definitions
@@ -336,6 +337,7 @@ def build_default_registry() -> ToolRegistry:
     definitions = [
         *model_generation_definitions(all_profiles),
         *media_generation_definitions(active_profiles),
+        *browser_definitions(active_profiles),
         _tool(
             "extensions.mcp.discover",
             SideEffect.READ,

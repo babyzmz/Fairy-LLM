@@ -2,6 +2,14 @@ import type { components, operations } from "./generated/api";
 import { LOCAL_ONLY_CORE_METHODS } from "./generated/rpcMethods";
 export { CORE_METHOD_TRANSPORT, LOCAL_ONLY_CORE_METHODS } from "./generated/rpcMethods";
 import type {
+  BrowserActionInput,
+  BrowserActionResult,
+  BrowserProfile,
+  BrowserSession,
+  BrowserSessionPage,
+  BrowserSessionStartInput,
+  BrowserSnapshot,
+  BrowserWorkerHealth,
   KnowledgeSyncRun,
   KnowledgeSyncRunInput,
   KnowledgeSyncStartInput,
@@ -18,6 +26,18 @@ import type {
 } from "./localContracts";
 
 export type {
+  BrowserActionInput,
+  BrowserActionKind,
+  BrowserActionResult,
+  BrowserProfile,
+  BrowserProfileKind,
+  BrowserSession,
+  BrowserSessionPage,
+  BrowserSessionStartInput,
+  BrowserSessionStatus,
+  BrowserSnapshot,
+  BrowserTab,
+  BrowserWorkerHealth,
   KnowledgeSyncRun,
   KnowledgeSyncRunInput,
   KnowledgeSyncStartInput,
@@ -300,6 +320,33 @@ type EmptyParams = Record<string, never>;
 
 export interface CoreMethodMap {
   health: { params: EmptyParams; result: Health };
+  "browser.health": { params: EmptyParams; result: BrowserWorkerHealth };
+  "browser.profile.get": { params: EmptyParams; result: BrowserProfile };
+  "browser.sessions.start": { params: BrowserSessionStartInput; result: BrowserSession };
+  "browser.sessions.get": { params: { session_id: string }; result: BrowserSession };
+  "browser.sessions.list": {
+    params: { conversation_id?: string | null; task_id?: string | null; include_terminal?: boolean };
+    result: BrowserSessionPage;
+  };
+  "browser.sessions.stop": { params: { session_id: string }; result: BrowserSession };
+  "browser.sessions.resume": { params: { session_id: string }; result: BrowserSession };
+  "browser.tabs.open": {
+    params: { session_id: string; url?: string };
+    result: BrowserSession;
+  };
+  "browser.tabs.select": {
+    params: { session_id: string; tab_id: string };
+    result: BrowserSession;
+  };
+  "browser.tabs.close": {
+    params: { session_id: string; tab_id: string };
+    result: BrowserSession;
+  };
+  "browser.actions.execute": { params: BrowserActionInput; result: BrowserActionResult };
+  "browser.snapshots.get": {
+    params: { session_id: string; tab_id: string; include_screenshot?: boolean };
+    result: BrowserSnapshot;
+  };
   "projects.create": { params: ProjectCreateInput; result: ProjectContext };
   "projects.import": { params: ProjectImportInput; result: ProjectContext };
   "projects.get": { params: { project_id: string }; result: Project };

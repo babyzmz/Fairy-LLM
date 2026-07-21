@@ -91,6 +91,78 @@
       "transport": "local_and_cloud"
     },
     {
+      "name": "browser.actions.execute",
+      "request_model": "BrowserActionInput",
+      "response_model": "BrowserActionResultModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "browser.health",
+      "request_model": "EmptyInput",
+      "response_model": "BrowserWorkerHealthModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "browser.profile.get",
+      "request_model": "EmptyInput",
+      "response_model": "BrowserProfileModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "browser.sessions.get",
+      "request_model": "BrowserSessionIdInput",
+      "response_model": "BrowserSessionModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "browser.sessions.list",
+      "request_model": "BrowserSessionListInput",
+      "response_model": "BrowserSessionPageModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "browser.sessions.resume",
+      "request_model": "BrowserSessionIdInput",
+      "response_model": "BrowserSessionModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "browser.sessions.start",
+      "request_model": "BrowserSessionStartInput",
+      "response_model": "BrowserSessionModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "browser.sessions.stop",
+      "request_model": "BrowserSessionIdInput",
+      "response_model": "BrowserSessionModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "browser.snapshots.get",
+      "request_model": "BrowserSnapshotInput",
+      "response_model": "BrowserSnapshotModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "browser.tabs.close",
+      "request_model": "BrowserTabIdInput",
+      "response_model": "BrowserSessionModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "browser.tabs.open",
+      "request_model": "BrowserTabOpenInput",
+      "response_model": "BrowserSessionModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "browser.tabs.select",
+      "request_model": "BrowserTabIdInput",
+      "response_model": "BrowserSessionModel",
+      "transport": "local_only"
+    },
+    {
       "name": "capabilities.get",
       "request_model": "CapabilityRequest",
       "response_model": "CapabilityManifestModel",

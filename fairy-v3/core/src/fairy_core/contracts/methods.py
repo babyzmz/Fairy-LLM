@@ -8,6 +8,21 @@ from types import MappingProxyType
 from pydantic import BaseModel, Field
 
 from fairy_core.contracts.approvals import ApprovalDecisionInput, ApprovalListInput
+from fairy_core.contracts.browser import (
+    BrowserActionInput,
+    BrowserActionResultModel,
+    BrowserProfileModel,
+    BrowserSessionIdInput,
+    BrowserSessionListInput,
+    BrowserSessionModel,
+    BrowserSessionPageModel,
+    BrowserSessionStartInput,
+    BrowserSnapshotInput,
+    BrowserSnapshotModel,
+    BrowserTabIdInput,
+    BrowserTabOpenInput,
+    BrowserWorkerHealthModel,
+)
 from fairy_core.contracts.capabilities import CapabilityManifestModel
 from fairy_core.contracts.extensions import (
     ExtensionCatalogPageModel,
@@ -329,6 +344,78 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "artifacts.read",
             ArtifactIdInput,
             ArtifactModel,
+        ),
+        "browser.actions.execute": CoreMethod(
+            "browser.actions.execute",
+            BrowserActionInput,
+            BrowserActionResultModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "browser.health": CoreMethod(
+            "browser.health",
+            EmptyInput,
+            BrowserWorkerHealthModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "browser.profile.get": CoreMethod(
+            "browser.profile.get",
+            EmptyInput,
+            BrowserProfileModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "browser.sessions.get": CoreMethod(
+            "browser.sessions.get",
+            BrowserSessionIdInput,
+            BrowserSessionModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "browser.sessions.list": CoreMethod(
+            "browser.sessions.list",
+            BrowserSessionListInput,
+            BrowserSessionPageModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "browser.sessions.resume": CoreMethod(
+            "browser.sessions.resume",
+            BrowserSessionIdInput,
+            BrowserSessionModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "browser.sessions.start": CoreMethod(
+            "browser.sessions.start",
+            BrowserSessionStartInput,
+            BrowserSessionModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "browser.sessions.stop": CoreMethod(
+            "browser.sessions.stop",
+            BrowserSessionIdInput,
+            BrowserSessionModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "browser.snapshots.get": CoreMethod(
+            "browser.snapshots.get",
+            BrowserSnapshotInput,
+            BrowserSnapshotModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "browser.tabs.close": CoreMethod(
+            "browser.tabs.close",
+            BrowserTabIdInput,
+            BrowserSessionModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "browser.tabs.open": CoreMethod(
+            "browser.tabs.open",
+            BrowserTabOpenInput,
+            BrowserSessionModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "browser.tabs.select": CoreMethod(
+            "browser.tabs.select",
+            BrowserTabIdInput,
+            BrowserSessionModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "assistant.turns.cancel": CoreMethod(
             "assistant.turns.cancel",

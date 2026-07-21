@@ -114,3 +114,114 @@ export interface KnowledgeSyncRun {
   started_at: string;
   completed_at: string | null;
 }
+
+export type BrowserProfileKind = "persistent" | "ephemeral";
+export type BrowserSessionStatus =
+  | "starting"
+  | "active"
+  | "suspended"
+  | "stopped"
+  | "interrupted"
+  | "failed";
+export type BrowserActionKind =
+  | "navigate"
+  | "click"
+  | "fill"
+  | "press"
+  | "select"
+  | "scroll"
+  | "wait"
+  | "reload"
+  | "go_back"
+  | "go_forward";
+
+export interface BrowserWorkerHealth {
+  available: boolean;
+  browser_name: string;
+  browser_version: string | null;
+  error_code: string | null;
+  diagnostic: string | null;
+}
+
+export interface BrowserProfile {
+  id: string;
+  kind: BrowserProfileKind;
+  configured: boolean;
+  local_only: boolean;
+  retention_days: number;
+}
+
+export interface BrowserTab {
+  id: string;
+  session_id: string;
+  title: string;
+  url: string;
+  active: boolean;
+  loading: boolean;
+  revision: number;
+}
+
+export interface BrowserSession {
+  id: string;
+  project_id: string | null;
+  conversation_id: string | null;
+  task_id: string | null;
+  execution_target: "local" | "cloud";
+  profile_kind: BrowserProfileKind;
+  status: BrowserSessionStatus;
+  active_tab_id: string | null;
+  tabs: BrowserTab[];
+  revision: number;
+  created_at: string;
+  updated_at: string;
+  error_code: string | null;
+  public_error: string | null;
+}
+
+export interface BrowserSessionStartInput {
+  project_id?: string | null;
+  conversation_id?: string | null;
+  task_id?: string | null;
+  execution_target?: "local" | "cloud";
+  profile_kind?: BrowserProfileKind;
+  initial_url?: string | null;
+  idempotency_key: string;
+}
+
+export interface BrowserSessionPage {
+  items: BrowserSession[];
+}
+
+export interface BrowserActionInput {
+  session_id: string;
+  tab_id: string;
+  kind: BrowserActionKind;
+  selector?: string | null;
+  value?: string | null;
+  x?: number | null;
+  y?: number | null;
+  delta_x?: number | null;
+  delta_y?: number | null;
+  expected_page_revision?: number | null;
+  idempotency_key: string;
+}
+
+export interface BrowserActionResult {
+  session: BrowserSession;
+  tab: BrowserTab;
+  public_summary: string;
+  replayed: boolean;
+}
+
+export interface BrowserSnapshot {
+  session_id: string;
+  tab_id: string;
+  page_revision: number;
+  url: string;
+  title: string;
+  aria_snapshot: string;
+  viewport_width: number;
+  viewport_height: number;
+  screenshot_data_url: string | null;
+  captured_at: string;
+}

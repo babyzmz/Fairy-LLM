@@ -33,6 +33,7 @@ from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.assistant.trace_service import TurnTraceService
 from fairy_core.assistant.turn_scheduler import AssistantTurnScheduler
 from fairy_core.assistant.turn_selection import resolve_turn_model_source
+from fairy_core.browser import BrowserService, BrowserToolExecutor, browser_service_handlers
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import (
@@ -193,6 +194,7 @@ class CoreService(CoreServiceEndpointsMixin):
         media_staging_store: MediaStagingStore | None = None,
         workspace_provisioner: WorkspaceProvisioner | None = None,
         obsidian_connector: ObsidianConnector | None = None,
+        browser_service: BrowserService | None = None,
         default_execution_target: str = "local",
         on_close: Callable[[], None] | None = None,
     ) -> None:
@@ -287,6 +289,7 @@ class CoreService(CoreServiceEndpointsMixin):
         self._turn_trace_service = TurnTraceService(unit_of_work_factory)
         self._turn_trace_runtime = TurnTraceRuntime(unit_of_work_factory)
         self._realtime_service = RealtimeService(unit_of_work_factory)
+        self._browser_service = browser_service
         self._execution_planning = application.execution_planning
         media = build_media_composition(
             unit_of_work_factory=unit_of_work_factory,
@@ -302,6 +305,11 @@ class CoreService(CoreServiceEndpointsMixin):
         self._media_scheduler = media.scheduler
         self._media_service = media.service
         effective_tool_executor = tool_executor
+        if self._browser_service is not None:
+            effective_tool_executor = BrowserToolExecutor(
+                service=self._browser_service,
+                delegate=effective_tool_executor,
+            )
         effective_tool_executor = KnowledgeToolExecutor(
             unit_of_work_factory=unit_of_work_factory,
             delegate=effective_tool_executor,
@@ -419,6 +427,7 @@ class CoreService(CoreServiceEndpointsMixin):
                 cancel_project_activity=self._cancel_project_activity,
             ),
             **knowledge_service_handlers(ProjectKnowledgeApplication(unit_of_work_factory)),
+            **browser_service_handlers(self._browser_service),
             "obsidian.health.get": lambda _request: selected_obsidian.health(),
             "obsidian.sources.create": lambda request: self._obsidian_knowledge.create_source(
                 cast(ObsidianSourceCreateInput, request)

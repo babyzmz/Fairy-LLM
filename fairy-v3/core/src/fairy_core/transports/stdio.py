@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from collections.abc import Iterable, Mapping
 from contextlib import ExitStack
@@ -12,6 +13,7 @@ from fairy_core.application.core import CoreApplication
 from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.service import CoreService
 from fairy_core.assistant.tools import ToolExecutor
+from fairy_core.browser import BrowserService
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import build_default_registry
 from fairy_core.commanding.settings import ExecutionPolicyResolver, SandboxHealthProvider
@@ -197,6 +199,39 @@ def build_local_service(
             scope_resolver=application.scope_for_task,
             execution_policy=execution_policy,
         )
+        browser_worker_program = configured.get("FAIRY_BROWSER_WORKER_PROGRAM", "").strip()
+        browser_worker_args: tuple[str, ...] = ()
+        if not browser_worker_program:
+            node_program = shutil.which("node", path=configured.get("PATH"))
+            development_worker = (
+                Path(__file__).resolve().parents[4] / "desktop" / "browser-worker.mjs"
+            )
+            if node_program and development_worker.is_file():
+                browser_worker_program = node_program
+                browser_worker_args = (str(development_worker),)
+        else:
+            raw_browser_args = json.loads(configured.get("FAIRY_BROWSER_WORKER_ARGS_JSON", "[]"))
+            if not isinstance(raw_browser_args, list) or not all(
+                isinstance(argument, str) for argument in raw_browser_args
+            ):
+                raise ValueError("FAIRY_BROWSER_WORKER_ARGS_JSON must be a JSON string array")
+            browser_worker_args = tuple(raw_browser_args)
+        browser_transport = None
+        if browser_worker_program:
+            browser_transport = SubprocessWorkerTransport(
+                program=browser_worker_program,
+                args=browser_worker_args,
+                environment={"FAIRY_BROWSER_DATA_DIR": str(data_dir / "browser")},
+                current_directory=(
+                    Path(browser_worker_args[0]).parent if browser_worker_args else None
+                ),
+            )
+            resources.callback(browser_transport.close)
+        browser_service = BrowserService(
+            worker=browser_transport,
+            state_path=data_dir / "browser" / "sessions.json",
+            profile_root=data_dir / "browser" / "profiles",
+        )
         service = CoreService(
             application,
             unit_of_work_factory=unit_of_work_factory,
@@ -232,6 +267,7 @@ def build_local_service(
                 registry_path=data_dir / "obsidian-sources.json",
                 path_registry_path=data_dir / "obsidian-paths.json",
             ),
+            browser_service=browser_service,
             media_staging_store=(
                 media_staging_store
                 if media_staging_store is not None

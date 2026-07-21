@@ -14,6 +14,7 @@
     "generate:contracts": "npm --prefix ../tools/contracts run generate",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:browser-worker": "node tests/browser-worker.smoke.mjs",
     "e2e": "playwright test --grep-invert @performance && playwright test --grep @performance --workers=1",
     "preview:e2e": "vite preview --host 127.0.0.1 --port 1431",
     "presence:platform": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/check-presence-platform.ps1",

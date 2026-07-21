@@ -592,6 +592,24 @@ function createClient(
 ): WorkspaceClient {
   return {
     desktop: { openSettings: async () => undefined },
+    browser: {
+      health: async () => ({ available: false, browser_name: "Microsoft Edge", browser_version: null, error_code: "CAPABILITY_NOT_AVAILABLE", diagnostic: null }),
+      profile: async () => ({ id: "fairy-default", kind: "persistent", configured: true, local_only: true, retention_days: 7 }),
+      sessions: {
+        start: async () => { throw new Error("not used"); },
+        get: async () => { throw new Error("not used"); },
+        list: async () => ({ items: [] }),
+        stop: async () => { throw new Error("not used"); },
+        resume: async () => { throw new Error("not used"); },
+      },
+      tabs: {
+        open: async () => { throw new Error("not used"); },
+        select: async () => { throw new Error("not used"); },
+        close: async () => { throw new Error("not used"); },
+      },
+      actions: { execute: async () => { throw new Error("not used"); } },
+      snapshots: { get: async () => { throw new Error("not used"); } },
+    },
     health,
     projects: {
       list: options.listProjects ?? (async () => ({ items: projects, next_cursor: null })),
