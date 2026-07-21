@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAssistantTurn } from "../chat/useAssistantTurn";
@@ -139,13 +139,14 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     enabled: healthQuery.isSuccess && selectedProject !== null,
     retry: false,
   });
+  const graphWatermark = knowledgeOverviewQuery.data?.watermark ?? "unresolved";
   const knowledgeItemsQuery = useQuery({
     queryKey: [
       ...workspaceKey,
       "knowledge",
       "items",
       selectedProject?.id,
-      knowledgeOverviewQuery.data?.watermark,
+      graphWatermark,
     ],
     queryFn: () => client.knowledge.listItems({ project_id: requireId(selectedProject?.id), limit: 500 }),
     enabled: healthQuery.isSuccess && selectedProject !== null,
@@ -157,7 +158,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       "knowledge",
       "graph",
       selectedProject?.id,
-      knowledgeOverviewQuery.data?.watermark,
+      graphWatermark,
     ],
     queryFn: () => client.knowledge.graph(requireId(selectedProject?.id)),
     enabled: healthQuery.isSuccess && selectedProject !== null,
@@ -169,13 +170,36 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     enabled: healthQuery.isSuccess && selectedProject !== null,
     retry: false,
   });
-  const primaryObsidianSource = obsidianSourcesQuery.data?.items.at(0) ?? null;
-  const obsidianItemsQuery = useQuery({
-    queryKey: [...workspaceKey, "obsidian", "items", primaryObsidianSource?.id],
-    queryFn: () => client.obsidian.listItems(requireId(primaryObsidianSource?.id)),
-    enabled: primaryObsidianSource !== null,
-    retry: false,
+  const obsidianSources = obsidianSourcesQuery.data?.items ?? [];
+  const obsidianItemQueries = useQueries({
+    queries: obsidianSources.map((source) => ({
+      queryKey: [
+        ...workspaceKey,
+        "obsidian",
+        "items",
+        selectedProject?.id,
+        source.id,
+        source.revision,
+      ],
+      queryFn: () => client.obsidian.listItems(source.id),
+      enabled: healthQuery.isSuccess && selectedProject !== null,
+      retry: false,
+    })),
   });
+  const obsidianItems = obsidianItemQueries.flatMap((query) => query.data?.items ?? []);
+  const obsidianSourceProjections = obsidianSources.map((source, index) => {
+    const query = obsidianItemQueries[index];
+    return {
+      sourceId: source.id,
+      sourceRevision: query?.data?.source_revision ?? null,
+      itemCount: query?.data?.items.length ?? 0,
+      loading: query?.isPending ?? false,
+      error: query?.error === null || query?.error === undefined ? null : errorMessage(query.error),
+    };
+  });
+  const obsidianError = obsidianSourcesQuery.error !== null
+    ? errorMessage(obsidianSourcesQuery.error)
+    : obsidianSourceProjections.find((projection) => projection.error !== null)?.error ?? null;
   const allConversations = sortHistoryItems(conversationsQuery.data?.items ?? []);
   const conversations = allConversations.filter((conversation) => conversation.project_id === selectedProject?.id);
   const projectConversations = allConversations.filter(
@@ -1042,10 +1066,18 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     knowledgeGraph: knowledgeGraphQuery.data ?? null,
     knowledgeLoading:
       knowledgeOverviewQuery.isPending || knowledgeItemsQuery.isPending || knowledgeGraphQuery.isPending,
+    knowledgeError: firstError(
+      knowledgeOverviewQuery.error,
+      knowledgeItemsQuery.error,
+      knowledgeGraphQuery.error,
+    )?.message ?? null,
     obsidianHealth: obsidianHealthQuery.data ?? null,
-    obsidianSources: obsidianSourcesQuery.data?.items ?? [],
-    obsidianItems: obsidianItemsQuery.data?.items ?? [],
-    obsidianLoading: obsidianSourcesQuery.isPending || obsidianItemsQuery.isPending,
+    obsidianSources,
+    obsidianItems,
+    obsidianSourceProjections,
+    obsidianLoading:
+      obsidianSourcesQuery.isPending || obsidianSourceProjections.some((projection) => projection.loading),
+    obsidianError,
     mediaJobs: mediaJobsQuery.data?.items ?? [],
     assetSets: assetSetsQuery.data?.items ?? [],
     workspaceFilesLoading: workspaceFilesQuery.isPending && workspaceFilesQuery.isEnabled,
@@ -1116,12 +1148,20 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         queryClient.invalidateQueries({ queryKey: [...workspaceKey, "knowledge"] }),
       ]);
     },
-    readObsidianItem: (item) => client.obsidian.readItem({
-      source_id: item.source_id,
-      relative_path: item.relative_path,
-      expected_source_revision: obsidianItemsQuery.data?.source_revision ?? 1,
-      expected_content_hash: item.content_hash,
-    }),
+    readObsidianItem: (item, signal) => {
+      const sourceRevision = obsidianSourceProjections.find(
+        (projection) => projection.sourceId === item.source_id,
+      )?.sourceRevision;
+      if (sourceRevision === null || sourceRevision === undefined) {
+        throw new Error("This Vault source has not finished loading");
+      }
+      return client.obsidian.readItem({
+        source_id: item.source_id,
+        relative_path: item.relative_path,
+        expected_source_revision: sourceRevision,
+        expected_content_hash: item.content_hash,
+      }, { signal });
+    },
     createChatConversation: actions.createChatConversation,
     createPetChatConversation: actions.createPetChatConversation,
     createProjectConversation: actions.createProjectConversation,

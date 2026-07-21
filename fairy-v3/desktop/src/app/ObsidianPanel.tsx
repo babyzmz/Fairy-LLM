@@ -28,7 +28,8 @@ type ObsidianView = "overview" | "notes" | "links" | "graph" | "sync";
 interface GraphNode {
   id: string;
   label: string;
-  kind: "project" | "conversation" | "folder" | "file";
+  kind: "project" | "conversation" | "folder" | "file" | "note" | "artifact" | "memory" | "task" | "source";
+  sourceId: string | null;
 }
 
 interface GraphEdge {
@@ -41,7 +42,16 @@ interface NoteEntry {
   title: string;
   relativePath: string;
   byteLength: number;
+  sourceId: string | null;
+  contentHash: string | null;
   vaultItem?: ObsidianVaultItem;
+}
+
+type SourceFilter = "all" | "workspace" | string;
+
+interface OpenNoteState {
+  scopeKey: string;
+  note: ObsidianVaultItemContent;
 }
 
 const views: Array<{ id: ObsidianView; label: string }> = [
@@ -54,13 +64,21 @@ const views: Array<{ id: ObsidianView; label: string }> = [
 
 export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; onOpenFiles(): void }) {
   const [view, setView] = useState<ObsidianView>("overview");
-  const [openNote, setOpenNote] = useState<ObsidianVaultItemContent | null>(null);
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [openNote, setOpenNote] = useState<OpenNoteState | null>(null);
   const [noteLoading, setNoteLoading] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
+  const noteRequestRef = useRef(0);
+  const noteAbortRef = useRef<AbortController | null>(null);
   const project = model.selectedProject;
+  const activeContextRef = useRef("");
   const conversations = useMemo(
     () => model.projectConversations.filter((item) => item.project_id === project?.id),
     [model.projectConversations, project?.id],
+  );
+  const visibleVaultItems = useMemo(
+    () => model.obsidianItems.filter((item) => sourceFilter === "all" || item.source_id === sourceFilter),
+    [model.obsidianItems, sourceFilter],
   );
   const graph = useMemo(
     () => {
@@ -71,46 +89,106 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
             id: node.id,
             label: node.title,
             kind: graphKind(node.kind),
+            sourceId: node.source_id ?? null,
           })),
           edges: model.knowledgeGraph.edges.map((edge) => ({ source: edge.source_id, target: edge.target_id })),
         };
-      return mergeVaultGraph(base, project?.id ?? null, model.obsidianItems);
+      const complete = model.knowledgeGraph === null
+        ? mergeVaultGraph(base, project?.id ?? null, visibleVaultItems)
+        : base;
+      return filterGraphBySource(complete, sourceFilter);
     },
-    [conversations, model.knowledgeGraph, model.obsidianItems, model.workspaceFiles, project?.id, project?.name],
+    [conversations, model.knowledgeGraph, model.workspaceFiles, project?.id, project?.name, sourceFilter, visibleVaultItems],
   );
   const noteFiles = useMemo(
-    () => [
-      ...model.knowledgeItems.filter((item) => item.kind === "note").map((item) => ({
+    () => {
+      const vaultKeys = new Set(model.obsidianItems.map((item) => `${item.relative_path}\0${item.content_hash}`));
+      const workspaceNotes = model.knowledgeItems
+        .filter((item) => item.kind === "note")
+        .filter((item) => !vaultKeys.has(`${item.relative_path ?? item.title}\0${item.content_hash ?? ""}`))
+        .map((item) => ({
         id: item.id,
         title: item.title,
         relativePath: item.relative_path ?? item.title,
         byteLength: item.byte_length ?? 0,
-      })),
-      ...model.obsidianItems.map((item) => ({
+        sourceId: null,
+        contentHash: item.content_hash ?? null,
+      }));
+      const vaultNotes = visibleVaultItems.map((item) => ({
         id: `obsidian:${item.source_id}:${item.relative_path}`,
         title: item.title,
         relativePath: item.relative_path,
         byteLength: item.byte_length,
+        sourceId: item.source_id,
+        contentHash: item.content_hash,
         vaultItem: item,
-      })),
-    ],
-    [model.knowledgeItems, model.obsidianItems],
+      }));
+      return [
+        ...(sourceFilter === "all" || sourceFilter === "workspace" ? workspaceNotes : []),
+        ...(sourceFilter === "workspace" ? [] : vaultNotes),
+      ];
+    },
+    [model.knowledgeItems, model.obsidianItems, sourceFilter, visibleVaultItems],
   );
+  const currentProjectId = project?.id ?? null;
+  const activeContextKey = `${currentProjectId ?? "none"}:${sourceFilter}`;
+  activeContextRef.current = activeContextKey;
+  useEffect(() => {
+    noteRequestRef.current += 1;
+    noteAbortRef.current?.abort();
+    noteAbortRef.current = null;
+    setOpenNote(null);
+    setNoteError(null);
+    setNoteLoading(false);
+  }, [currentProjectId, sourceFilter]);
+  useEffect(() => {
+    if (
+      sourceFilter !== "all" &&
+      sourceFilter !== "workspace" &&
+      !model.obsidianSources.some((source) => source.id === sourceFilter)
+    ) {
+      setSourceFilter("all");
+    }
+  }, [model.obsidianSources, sourceFilter]);
+  useEffect(() => {
+    if (openNote === null) return;
+    const stillCurrent = noteFiles.some((entry) => noteScopeKey(currentProjectId, entry) === openNote.scopeKey);
+    if (!stillCurrent) setOpenNote(null);
+  }, [currentProjectId, noteFiles, openNote]);
+  useEffect(() => () => noteAbortRef.current?.abort(), []);
   const showNote = async (entry: NoteEntry) => {
     if (entry.vaultItem === undefined) {
       onOpenFiles();
       return;
     }
+    const request = noteRequestRef.current + 1;
+    noteRequestRef.current = request;
+    noteAbortRef.current?.abort();
+    const controller = new AbortController();
+    noteAbortRef.current = controller;
+    const scopeKey = noteScopeKey(currentProjectId, entry);
     setNoteLoading(true);
     setNoteError(null);
     try {
-      setOpenNote(await model.readObsidianItem(entry.vaultItem));
+      const note = await model.readObsidianItem(entry.vaultItem, controller.signal);
+      if (
+        !controller.signal.aborted &&
+        noteRequestRef.current === request &&
+        activeContextRef.current === activeContextKey &&
+        noteScopeKey(currentProjectId, entry) === scopeKey
+      ) {
+        setOpenNote({ scopeKey, note });
+      }
     } catch (error) {
-      setNoteError(error instanceof Error ? error.message : "Unable to read this note");
+      if (!controller.signal.aborted && noteRequestRef.current === request) {
+        setNoteError(error instanceof Error ? error.message : "Unable to read this note");
+      }
     } finally {
-      setNoteLoading(false);
+      if (noteRequestRef.current === request) setNoteLoading(false);
     }
   };
+
+  const status = knowledgeStatus(model);
 
   if (project === null) {
     return (
@@ -129,8 +207,8 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
           <span>PROJECT KNOWLEDGE</span>
           <h2>{project.name}</h2>
         </div>
-        <div className="obsidian-health" data-state="indexed">
-          <CircleDot size={12} /> Fairy index ready
+        <div className="obsidian-health" data-state={status.tone}>
+          <CircleDot size={12} /> {status.label}
         </div>
       </header>
       <nav className="obsidian-subnav" aria-label="Obsidian views">
@@ -145,6 +223,13 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
           </button>
         ))}
       </nav>
+      {model.obsidianSources.length > 0 && ["notes", "links", "graph"].includes(view) ? (
+        <SourceFilterControl
+          sources={model.obsidianSources}
+          value={sourceFilter}
+          onChange={setSourceFilter}
+        />
+      ) : null}
       <div className="obsidian-body">
         {view === "overview" ? (
           <Overview
@@ -152,11 +237,13 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
             noteCount={model.knowledgeOverview?.note_count ?? noteFiles.length}
             conversationCount={model.knowledgeOverview?.conversation_count ?? conversations.length}
             linkCount={model.knowledgeOverview?.relation_count ?? graph.edges.length}
+            sourceCount={model.obsidianSources.length}
+            sourceSummary={status.detail}
             onOpenFiles={onOpenFiles}
           />
         ) : view === "notes" ? (
           openNote !== null ? (
-            <NoteReader note={openNote} onBack={() => setOpenNote(null)} />
+            <NoteReader note={openNote.note} onBack={() => setOpenNote(null)} />
           ) : (
             <Notes files={noteFiles} loading={noteLoading} error={noteError} onOpenNote={showNote} />
           )
@@ -177,12 +264,16 @@ function Overview({
   noteCount,
   conversationCount,
   linkCount,
+  sourceCount,
+  sourceSummary,
   onOpenFiles,
 }: {
   fileCount: number;
   noteCount: number;
   conversationCount: number;
   linkCount: number;
+  sourceCount: number;
+  sourceSummary: string;
   onOpenFiles(): void;
 }) {
   return (
@@ -200,9 +291,33 @@ function Overview({
       </section>
       <section>
         <BookOpenText size={18} />
-        <div><h3>Vault connection</h3><p>No official Obsidian Vault is connected yet. The project graph below is built from Fairy's current immutable file index.</p></div>
+        <div>
+          <h3>{sourceCount === 0 ? "Vault connection" : `${sourceCount} connected Vault${sourceCount === 1 ? "" : "s"}`}</h3>
+          <p>{sourceSummary}</p>
+        </div>
       </section>
     </div>
+  );
+}
+
+function SourceFilterControl({
+  sources,
+  value,
+  onChange,
+}: {
+  sources: WorkspaceModel["obsidianSources"];
+  value: SourceFilter;
+  onChange(value: SourceFilter): void;
+}) {
+  return (
+    <label className="obsidian-source-filter">
+      <span>Source</span>
+      <select aria-label="Filter knowledge source" value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="all">All sources</option>
+        <option value="workspace">Fairy workspace</option>
+        {sources.map((source) => <option key={source.id} value={source.id}>{source.display_name}</option>)}
+      </select>
+    </label>
   );
 }
 
@@ -328,7 +443,6 @@ function ProjectGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[]
 }
 
 function SyncStatus({ model }: { model: WorkspaceModel }) {
-  const source = model.obsidianSources.at(0) ?? null;
   const [selection, setSelection] = useState<ObsidianVaultSelection | null>(null);
   const [readScope, setReadScope] = useState<"selected_directories" | "whole_vault">(
     "selected_directories",
@@ -359,26 +473,57 @@ function SyncStatus({ model }: { model: WorkspaceModel }) {
       ? allowedDirectories.length > 0
       : wholeVaultConfirmed
   );
+  const indexStatus = model.knowledgeLoading
+    ? "Indexing"
+    : model.knowledgeError === null
+      ? "Ready"
+      : "Needs attention";
   return (
     <div className="obsidian-sync">
-      <section><RefreshCw size={18} /><div><h3>Fairy project index</h3><p>Generation {model.workspaceGeneration || 0} is available for files, links, and graph projection.</p></div><strong>Ready</strong></section>
+      <section>
+        <RefreshCw size={18} />
+        <div>
+          <h3>Fairy project index</h3>
+          <p>{model.knowledgeError ?? `Knowledge watermark ${shortDigest(model.knowledgeOverview?.watermark)} covers the current Workspace, chats, Sources, and accepted memory.`}</p>
+        </div>
+        <strong data-state={indexStatus === "Ready" ? "ready" : "attention"}>{indexStatus}</strong>
+      </section>
       <section>
         <Network size={18} />
         <div>
-          <h3>Official Obsidian Vault</h3>
-          <p>{source?.vault_display_path ?? model.obsidianHealth?.public_summary ?? "Checking the local Obsidian installation and official CLI."}</p>
+          <h3>Obsidian connector</h3>
+          <p>{model.obsidianHealth?.public_summary ?? "Connector health is unavailable while Fairy Core is offline."}</p>
         </div>
-        {source === null ? (
-          <button type="button" disabled={model.isActing} onClick={() => void chooseVault()}>
-            {selection === null ? "Choose Vault" : "Change Vault"}
-          </button>
-        ) : (
-          <button type="button" disabled={model.isActing} onClick={() => void model.syncObsidianSource(source)}>
-            <RefreshCw size={13} /> Sync
-          </button>
-        )}
+        <strong data-state={model.obsidianHealth?.cli_available ? "ready" : "attention"}>
+          {connectorStatus(model)}
+        </strong>
       </section>
-      {source === null && selection !== null ? (
+      {model.obsidianSources.map((source) => {
+        const projection = model.obsidianSourceProjections.find((item) => item.sourceId === source.id);
+        return (
+          <section key={source.id} className="obsidian-source-row">
+            <BookOpenText size={18} />
+            <div>
+              <h3>{source.display_name}</h3>
+              <p>{source.vault_display_path} · {projection?.itemCount ?? source.item_count} indexed item{(projection?.itemCount ?? source.item_count) === 1 ? "" : "s"}</p>
+              {projection?.error ? <small>{projection.error}</small> : null}
+            </div>
+            <div className="obsidian-source-actions">
+              <span data-state={source.status}>{sourceStatusLabel(source.status, projection?.loading ?? false)}</span>
+              <button type="button" disabled={model.isActing || projection?.loading} onClick={() => void model.syncObsidianSource(source)}>
+                <RefreshCw size={13} /> Sync
+              </button>
+            </div>
+          </section>
+        );
+      })}
+      {model.obsidianError === null ? null : <p className="obsidian-note-error" role="alert">{model.obsidianError}</p>}
+      <div className="obsidian-add-source">
+        <button type="button" disabled={model.isActing} onClick={() => void chooseVault()}>
+          {selection === null ? "Add Vault" : "Choose another Vault"}
+        </button>
+      </div>
+      {selection !== null ? (
         <form
           className="obsidian-scope-form"
           onSubmit={(event) => {
@@ -466,7 +611,6 @@ function SyncStatus({ model }: { model: WorkspaceModel }) {
           </footer>
         </form>
       ) : null}
-      {source !== null ? <p className="obsidian-source-meta">{source.item_count} items · {source.mode.replaceAll("_", " ")} · revision {source.revision}</p> : null}
       <p className="obsidian-sync-note">Ordinary Vault folders remain read-only. Fairy writes only inside the managed <code>Fairy/</code> directory after explicit authorization.</p>
     </div>
   );
@@ -484,11 +628,11 @@ function buildProjectGraph(
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
   if (projectId === null) return { nodes: [], edges: [] };
   const rootId = `project:${projectId}`;
-  const nodes: GraphNode[] = [{ id: rootId, label: projectName, kind: "project" }];
+  const nodes: GraphNode[] = [{ id: rootId, label: projectName, kind: "project", sourceId: null }];
   const edges: GraphEdge[] = [];
   for (const conversation of conversations) {
     const id = `conversation:${conversation.id}`;
-    nodes.push({ id, label: conversation.title, kind: "conversation" });
+    nodes.push({ id, label: conversation.title, kind: "conversation", sourceId: null });
     edges.push({ source: rootId, target: id });
   }
   const folders = new Set<string>();
@@ -497,10 +641,10 @@ function buildProjectGraph(
     const folder = segments.length > 1 ? segments.slice(0, -1).join("/") : "root";
     if (!folders.has(folder)) {
       folders.add(folder);
-      nodes.push({ id: `folder:${folder}`, label: folder, kind: "folder" });
+      nodes.push({ id: `folder:${folder}`, label: folder, kind: "folder", sourceId: null });
       edges.push({ source: rootId, target: `folder:${folder}` });
     }
-    nodes.push({ id: `file:${file.path}`, label: basename(file.path), kind: "file" });
+    nodes.push({ id: `file:${file.path}`, label: basename(file.path), kind: "file", sourceId: null });
     edges.push({ source: `folder:${folder}`, target: `file:${file.path}` });
   }
   return { nodes, edges };
@@ -530,7 +674,7 @@ function drawGraph(
     if (index === 0) positions.set(node.id, center);
     else {
       const angle = ((index - 1) / Math.max(1, nodes.length - 1)) * Math.PI * 2 - Math.PI / 2;
-      const band = node.kind === "file" ? radius : radius * 0.62;
+      const band = ["file", "note", "artifact"].includes(node.kind) ? radius : radius * 0.62;
       positions.set(node.id, { x: center.x + Math.cos(angle) * band, y: center.y + Math.sin(angle) * band });
     }
   });
@@ -544,14 +688,24 @@ function drawGraph(
     context.lineWidth = highlighted ? 1.6 : 1;
     context.beginPath(); context.moveTo(source.x, source.y); context.lineTo(target.x, target.y); context.stroke();
   }
-  const colors = { project: "#66ddd2", conversation: "#d7ad63", folder: "#8fa9ff", file: "#a6b0ab" };
+  const colors: Record<GraphNode["kind"], string> = {
+    project: "#66ddd2",
+    conversation: "#d7ad63",
+    folder: "#8fa9ff",
+    file: "#a6b0ab",
+    note: "#b5e2d0",
+    artifact: "#df9f72",
+    memory: "#b7a6e8",
+    task: "#dfc06e",
+    source: "#70cfc7",
+  };
   for (const node of nodes) {
     const position = positions.get(node.id);
     if (!position) continue;
     context.fillStyle = colors[node.kind];
     const selected = node.id === selectedId;
     context.beginPath(); context.arc(position.x, position.y, selected ? 8 : node.kind === "project" ? 7 : 4, 0, Math.PI * 2); context.fill();
-    if (selected || node.kind !== "file" || nodes.length <= 45) {
+    if (selected || !["file", "note", "artifact"].includes(node.kind) || nodes.length <= 45) {
       context.fillStyle = selected ? "#f4fffb" : "#aeb8b3";
       context.font = `${selected ? 600 : 400} 10px system-ui`;
       context.fillText(shortLabel(node.label), position.x + 8, position.y + 3, 120);
@@ -564,7 +718,10 @@ function basename(path: string) { return path.split("/").at(-1) ?? path; }
 function formatBytes(value: number) { return value < 1024 ? `${value} B` : `${(value / 1024).toFixed(1)} KB`; }
 function shortLabel(value: string) { return value.length > 22 ? `${value.slice(0, 21)}...` : value; }
 function graphKind(kind: string): GraphNode["kind"] {
-  if (kind === "project" || kind === "conversation" || kind === "folder") return kind;
+  if (kind === "obsidian") return "source";
+  if (["project", "conversation", "folder", "file", "note", "artifact", "memory", "task"].includes(kind)) {
+    return kind as GraphNode["kind"];
+  }
   return "file";
 }
 
@@ -581,7 +738,7 @@ function mergeVaultGraph(
   for (const item of items) {
     const id = `obsidian:${item.source_id}:${item.relative_path}`;
     idsByTitle.set(item.title.toLocaleLowerCase(), id);
-    nodes.push({ id, label: item.title, kind: "file" });
+    nodes.push({ id, label: item.title, kind: "note", sourceId: item.source_id });
     edges.push({ source: rootId, target: id });
   }
   for (const item of items) {
@@ -592,4 +749,61 @@ function mergeVaultGraph(
     }
   }
   return { nodes, edges };
+}
+
+function filterGraphBySource(
+  graph: { nodes: GraphNode[]; edges: GraphEdge[] },
+  sourceFilter: SourceFilter,
+) {
+  if (sourceFilter === "all") return graph;
+  const nodes = graph.nodes.filter((node) => (
+    sourceFilter === "workspace" ? node.sourceId === null : node.sourceId === null || node.sourceId === sourceFilter
+  ));
+  const visibleIds = new Set(nodes.map((node) => node.id));
+  return {
+    nodes,
+    edges: graph.edges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)),
+  };
+}
+
+function knowledgeStatus(model: WorkspaceModel): { label: string; detail: string; tone: string } {
+  if (model.state === "offline") {
+    return { label: "Core offline", detail: "Project knowledge is unavailable until Fairy Core reconnects.", tone: "error" };
+  }
+  if (model.knowledgeLoading || model.obsidianLoading) {
+    return { label: "Refreshing knowledge", detail: "Fairy is reading the current durable knowledge projection.", tone: "loading" };
+  }
+  if (model.knowledgeError !== null || model.obsidianError !== null) {
+    return { label: "Knowledge needs attention", detail: model.knowledgeError ?? model.obsidianError ?? "Knowledge refresh failed.", tone: "error" };
+  }
+  const health = model.knowledgeOverview?.obsidian_health ?? "not_connected";
+  if (health === "syncing") return { label: "Vault syncing", detail: "At least one authorized Source is synchronizing.", tone: "loading" };
+  if (health === "partial") return { label: "Partial knowledge", detail: "Some Vault items could not be indexed. Existing revisions remain available.", tone: "attention" };
+  if (health === "failed") return { label: "Vault sync failed", detail: "The last Source sync failed. Existing immutable revisions remain available.", tone: "error" };
+  if (health === "configured") return { label: "Vault ready to sync", detail: "A Vault is connected but has not completed its first synchronization.", tone: "attention" };
+  if (health === "ready") return { label: "Knowledge current", detail: "Authorized Vault revisions and Fairy project knowledge are current.", tone: "ready" };
+  return { label: "Fairy index ready", detail: "No Obsidian Vault is connected. The graph uses Fairy's current durable project index.", tone: "ready" };
+}
+
+function connectorStatus(model: WorkspaceModel): string {
+  if (model.obsidianHealth === null) return "Unavailable";
+  if (!model.obsidianHealth.desktop_installed) return "Not installed";
+  return model.obsidianHealth.cli_available ? "CLI ready" : "Read only";
+}
+
+function sourceStatusLabel(status: string, loading: boolean): string {
+  if (loading || status === "syncing") return "Syncing";
+  if (status === "ready") return "Current";
+  if (status === "partial") return "Partial";
+  if (status === "failed") return "Failed";
+  if (status === "disabled") return "Disabled";
+  return "Configured";
+}
+
+function noteScopeKey(projectId: string | null, entry: NoteEntry): string {
+  return [projectId ?? "none", entry.sourceId ?? "workspace", entry.contentHash ?? entry.id].join(":");
+}
+
+function shortDigest(value: string | null | undefined): string {
+  return value === null || value === undefined ? "not available" : value.slice(0, 12);
 }

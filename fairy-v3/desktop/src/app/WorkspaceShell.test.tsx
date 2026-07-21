@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceShell } from "./WorkspaceShell";
-import type { Conversation, Project, Task, Version, WorkspaceFile } from "../core/client";
+import type { Conversation, ObsidianSource, ObsidianVaultItemContent, Project, Task, Version, WorkspaceFile } from "../core/client";
 import type { WorkspaceModel } from "./workspaceModel";
 
 afterEach(() => {
@@ -360,6 +360,7 @@ describe("WorkspaceShell", () => {
   it("opens project knowledge from the top-level Obsidian inspector tab", () => {
     const project = projectFixture();
     const thread = projectConversationFixture(project);
+    const source = obsidianSourceFixture(project.id);
     const model = {
       ...workspaceModel(),
       projects: [project],
@@ -367,6 +368,14 @@ describe("WorkspaceShell", () => {
       selectedConversation: thread,
       projectConversations: [thread],
       workspaceTask: workspaceTask(),
+      obsidianSources: [source],
+      obsidianSourceProjections: [{
+        sourceId: source.id,
+        sourceRevision: source.revision,
+        itemCount: source.item_count,
+        loading: false,
+        error: null,
+      }],
       workspaceFiles: [{
         path: "docs/architecture.md",
         byte_length: 2048,
@@ -390,6 +399,7 @@ describe("WorkspaceShell", () => {
   it("reads an indexed Vault note inside the Obsidian tab", async () => {
     const project = projectFixture();
     const thread = projectConversationFixture(project);
+    const source = obsidianSourceFixture(project.id);
     const model = {
       ...workspaceModel(),
       projects: [project],
@@ -397,8 +407,16 @@ describe("WorkspaceShell", () => {
       selectedConversation: thread,
       projectConversations: [thread],
       workspaceTask: workspaceTask(),
+      obsidianSources: [source],
+      obsidianSourceProjections: [{
+        sourceId: source.id,
+        sourceRevision: source.revision,
+        itemCount: 1,
+        loading: false,
+        error: null,
+      }],
       obsidianItems: [{
-        source_id: "019f566f-f8b4-7000-8000-000000000141",
+        source_id: source.id,
         relative_path: "Notes/Architecture.md",
         title: "Architecture",
         kind: "markdown",
@@ -416,7 +434,100 @@ describe("WorkspaceShell", () => {
     fireEvent.click(within(knowledge).getByRole("button", { name: /Architecture/ }));
 
     expect(await within(knowledge).findByRole("heading", { name: "Test note" })).toBeVisible();
-    expect(model.readObsidianItem).toHaveBeenCalledWith(model.obsidianItems[0]);
+    expect(model.readObsidianItem).toHaveBeenCalledWith(model.obsidianItems[0], expect.any(AbortSignal));
+  });
+
+  it("filters multiple Vault sources and discards a late note after the project changes", async () => {
+    const firstProject = projectFixture();
+    const secondProject = {
+      ...projectFixture(),
+      id: "019f566f-f8b4-7000-8000-000000000151",
+      workspace_id: "019f566f-f8b4-7000-8000-000000000152",
+      name: "Second project",
+    };
+    const firstSource = obsidianSourceFixture(firstProject.id);
+    const secondSource = {
+      ...obsidianSourceFixture(firstProject.id),
+      id: "019f566f-f8b4-7000-8000-000000000153",
+      display_name: "Research Vault",
+    };
+    const firstItem = {
+      source_id: firstSource.id,
+      relative_path: "Notes/Architecture.md",
+      title: "Architecture",
+      kind: "markdown",
+      content_hash: "d".repeat(64),
+      byte_length: 96,
+      links: [],
+      modified_at: "2026-07-12T00:00:00Z",
+    };
+    const secondItem = {
+      ...firstItem,
+      source_id: secondSource.id,
+      relative_path: "Research/Evidence.md",
+      title: "Evidence",
+      content_hash: "e".repeat(64),
+    };
+    let resolveLate!: (value: ObsidianVaultItemContent) => void;
+    const readObsidianItem = vi.fn((_item: typeof firstItem, _signal?: AbortSignal) => new Promise<ObsidianVaultItemContent>((resolve) => {
+      resolveLate = resolve;
+    }));
+    const firstConversation = projectConversationFixture(firstProject);
+    const model = {
+      ...workspaceModel(),
+      projects: [firstProject, secondProject],
+      selectedProject: firstProject,
+      selectedConversation: firstConversation,
+      projectConversations: [firstConversation],
+      workspaceTask: workspaceTask(),
+      obsidianSources: [firstSource, secondSource],
+      obsidianItems: [firstItem, secondItem],
+      obsidianSourceProjections: [firstSource, secondSource].map((source) => ({
+        sourceId: source.id,
+        sourceRevision: source.revision,
+        itemCount: 1,
+        loading: false,
+        error: null,
+      })),
+      readObsidianItem,
+    };
+    const { rerender } = render(<WorkspaceShell model={model} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Obsidian" }));
+    const knowledge = screen.getByLabelText("Obsidian project knowledge");
+    fireEvent.click(within(knowledge).getByRole("button", { name: "Notes" }));
+    expect(within(knowledge).getByRole("button", { name: /Architecture/ })).toBeVisible();
+    expect(within(knowledge).getByRole("button", { name: /Evidence/ })).toBeVisible();
+    fireEvent.change(within(knowledge).getByRole("combobox", { name: "Filter knowledge source" }), {
+      target: { value: secondSource.id },
+    });
+    expect(within(knowledge).queryByRole("button", { name: /Architecture/ })).not.toBeInTheDocument();
+    expect(within(knowledge).getByRole("button", { name: /Evidence/ })).toBeVisible();
+
+    fireEvent.change(within(knowledge).getByRole("combobox", { name: "Filter knowledge source" }), {
+      target: { value: firstSource.id },
+    });
+    fireEvent.click(within(knowledge).getByRole("button", { name: /Architecture/ }));
+    const requestSignal = readObsidianItem.mock.calls[0][1] as AbortSignal;
+    rerender(<WorkspaceShell model={{
+      ...model,
+      selectedProject: secondProject,
+      obsidianSources: [],
+      obsidianItems: [],
+      obsidianSourceProjections: [],
+    }} />);
+
+    await waitFor(() => expect(requestSignal.aborted).toBe(true));
+    resolveLate({
+      source_id: firstSource.id,
+      relative_path: firstItem.relative_path,
+      title: "Late project note",
+      kind: "markdown",
+      content_hash: firstItem.content_hash,
+      content: "This content belongs to the previous project.",
+    });
+    await Promise.resolve();
+    expect(screen.queryByRole("heading", { name: "Late project note" })).not.toBeInTheDocument();
   });
 
   it("requires an explicit local Vault folder scope before connecting", async () => {
@@ -449,7 +560,7 @@ describe("WorkspaceShell", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Obsidian" }));
     const knowledge = screen.getByLabelText("Obsidian project knowledge");
     fireEvent.click(within(knowledge).getByRole("button", { name: "Sync" }));
-    fireEvent.click(within(knowledge).getByRole("button", { name: "Choose Vault" }));
+    fireEvent.click(within(knowledge).getByRole("button", { name: "Add Vault" }));
 
     expect(await within(knowledge).findByText("Project Vault")).toBeVisible();
     const submit = within(knowledge).getByRole("button", { name: "Confirm connection" });
@@ -581,10 +692,13 @@ function workspaceModel(): WorkspaceModel {
     knowledgeItems: [],
     knowledgeGraph: null,
     knowledgeLoading: false,
+    knowledgeError: null,
     obsidianHealth: null,
     obsidianSources: [],
     obsidianItems: [],
+    obsidianSourceProjections: [],
     obsidianLoading: false,
+    obsidianError: null,
     mediaJobs: [],
     assetSets: [],
     workspaceFilesLoading: false,
@@ -717,6 +831,25 @@ function workspaceModel(): WorkspaceModel {
     discardVersion: vi.fn(async () => undefined),
     retryWorkspace: vi.fn(async () => undefined),
     openSettings: vi.fn(async () => undefined),
+  };
+}
+
+function obsidianSourceFixture(projectId: string): ObsidianSource {
+  return {
+    id: "019f566f-f8b4-7000-8000-000000000141",
+    project_id: projectId,
+    display_name: "Official Obsidian Vault",
+    vault_display_path: "Project Vault",
+    read_scope: "selected_directories",
+    allowed_directories: ["Notes"],
+    managed_directory: "Fairy",
+    mode: "read_only",
+    status: "ready",
+    revision: 2,
+    item_count: 1,
+    last_synced_at: "2026-07-12T00:00:00Z",
+    created_at: "2026-07-12T00:00:00Z",
+    updated_at: "2026-07-12T00:00:00Z",
   };
 }
 

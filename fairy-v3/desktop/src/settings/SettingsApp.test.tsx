@@ -6,7 +6,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   CapabilityManifest,
   CoreMethodName,
+  KnowledgeSource,
+  MemoryProposal,
+  ObsidianConnectorHealth,
+  Project,
   ProjectArchivedItem,
+  Task,
   TrashItem,
 } from "../core/client";
 import type { InvokeFunction } from "../core/tauriTransport";
@@ -74,6 +79,7 @@ describe("SettingsApp", () => {
     await screen.findByRole("heading", { name: "General" });
 
     await userEvent.click(screen.getByRole("button", { name: /Knowledge & privacy/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Memory" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Use durable memory" }));
 
     await vi.waitFor(() => expect(rpcRequest(invoke, "memory.settings.update")?.params)
@@ -83,6 +89,46 @@ describe("SettingsApp", () => {
         expected_revision: 0,
       })));
     expect(invoke.mock.calls.some(([command]) => command === "desktop_preferences_update")).toBe(false);
+  });
+
+  it("aggregates project knowledge sources and confirms Memory proposals before writing", async () => {
+    const project = activeProjectFixture();
+    const task = activeTaskFixture(project);
+    const source = knowledgeSourceFixture(project);
+    const proposal = memoryProposalFixture(task);
+    const invoke = settingsInvoke({
+      projects: [project],
+      tasks: [task],
+      knowledgeSources: [source],
+      memoryProposals: [proposal],
+      obsidianHealth: {
+        desktop_installed: true,
+        cli_available: true,
+        minimum_installer_version: "1.12.7",
+        status: "ready",
+        public_summary: "Obsidian Desktop and CLI are ready",
+      },
+    });
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+    await screen.findByRole("heading", { name: "General" });
+
+    await userEvent.click(screen.getByRole("button", { name: /Knowledge & privacy/ }));
+    expect(screen.getByText("Product notes")).toBeVisible();
+    expect(screen.getByText(/Research Vault/)).toBeVisible();
+
+    await userEvent.click(screen.getByRole("tab", { name: /Proposals/ }));
+    expect(screen.getByText(proposal.content)).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Accept" }));
+    expect(rpcRequest(invoke, "memory.proposals.accept")).toBeUndefined();
+    expect(screen.getByRole("dialog")).toHaveTextContent("Existing claims are not silently overwritten");
+    await userEvent.click(screen.getByRole("button", { name: "Accept memory" }));
+
+    await vi.waitFor(() => expect(rpcRequest(invoke, "memory.proposals.accept")?.params).toEqual({
+      task_id: task.id,
+      observation_id: proposal.id,
+      user_confirmed: true,
+      idempotency_key: `settings:memory-proposal:accept:${proposal.id}:${proposal.source_cursor}`,
+    }));
   });
 
   it("searches the one-level settings navigation", async () => {
@@ -406,6 +452,77 @@ describe("SettingsApp", () => {
   });
 });
 
+function activeProjectFixture(): Project {
+  return {
+    ...archivedProjectPage.items[0].project,
+    name: "Research Vault",
+    archived_at: null,
+    metadata_revision: 1,
+  };
+}
+
+function activeTaskFixture(project: Project): Task {
+  return {
+    id: "019f566f-f8b4-7000-8000-000000000095",
+    project_id: project.id,
+    workspace_id: project.workspace_id,
+    conversation_id: "019f566f-f8b4-7000-8000-000000000096",
+    user_request: "Connect project knowledge",
+    operation_mode: "continue_current_chat_draft",
+    base_version_id: null,
+    execution_target: "local",
+    target_version_id: null,
+    memory_snapshot_id: null,
+    memory_snapshot_hash: null,
+    status: "ready",
+    display_title: "Connect project knowledge",
+    pinned_at: null,
+    metadata_revision: 0,
+    created_at: "2026-07-12T00:00:00Z",
+    updated_at: "2026-07-12T00:00:00Z",
+  };
+}
+
+function knowledgeSourceFixture(project: Project): KnowledgeSource {
+  return {
+    id: "019f566f-f8b4-7000-8000-000000000097",
+    project_id: project.id,
+    display_name: "Product notes",
+    display_path: "Notes / Product",
+    kind: "obsidian",
+    status: "ready",
+    revision: 3,
+    sync_cursor: 18,
+    transport_availability: "local_device_only",
+    created_at: "2026-07-12T00:00:00Z",
+    updated_at: "2026-07-12T00:01:00Z",
+  };
+}
+
+function memoryProposalFixture(task: Task): MemoryProposal {
+  return {
+    id: "019f566f-f8b4-7000-8000-000000000098",
+    task_id: task.id,
+    conversation_id: task.conversation_id,
+    project_id: task.project_id,
+    version_id: null,
+    content: "The project uses a product-first information architecture.",
+    content_hash: "b".repeat(64),
+    actor: "assistant",
+    authority: "model_suggestion",
+    confidence: 0.82,
+    proposed_namespace: "project_canonical",
+    scan_result: "clean",
+    scope_digest: "c".repeat(64),
+    sensitivity: "private",
+    source_cursor: 27,
+    source_event_id: "019f566f-f8b4-7000-8000-000000000099",
+    source_type: "model_suggestion",
+    status: "pending",
+    created_at: "2026-07-12T00:02:00Z",
+  };
+}
+
 const archivedProjectPage: { items: ProjectArchivedItem[]; next_cursor: null } = {
   items: [{
     project: {
@@ -464,6 +581,11 @@ function settingsInvoke(options: {
   archivedProjects?: ProjectArchivedItem[];
   trashItems?: TrashItem[];
   historyPageSize?: number;
+  projects?: Project[];
+  tasks?: Task[];
+  knowledgeSources?: KnowledgeSource[];
+  memoryProposals?: MemoryProposal[];
+  obsidianHealth?: ObsidianConnectorHealth;
 } = {}) {
   let preferences = defaultPreferences();
   let openRouterConfigured = true;
@@ -488,7 +610,17 @@ function settingsInvoke(options: {
         ? historyPage(options.archivedProjects ?? [], request.params, options.historyPageSize)
         : request.method === "trash.items.list"
           ? historyPage(options.trashItems ?? [], request.params, options.historyPageSize)
-          : resultFor(request.method, request.params);
+          : request.method === "projects.list"
+            ? historyPage(options.projects ?? [], request.params)
+            : request.method === "tasks.list"
+              ? historyPage(options.tasks ?? [], request.params)
+              : request.method === "knowledge.sources.list"
+                ? { items: (options.knowledgeSources ?? []).filter((source) => source.project_id === request.params.project_id) }
+                : request.method === "memory.proposals.list"
+                  ? { items: (options.memoryProposals ?? []).filter((proposal) => proposal.task_id === request.params.task_id) }
+                  : request.method === "obsidian.health.get"
+                    ? options.obsidianHealth ?? resultFor(request.method, request.params)
+                    : resultFor(request.method, request.params);
       return { jsonrpc: "2.0", id: request.id, result };
     }
     throw new Error(`Unexpected command: ${command}`);
@@ -603,6 +735,16 @@ function resultFor(method: CoreMethodName, params: Record<string, unknown>) {
     case "skills.list": return { items: [], next_cursor: null };
     case "mcp.servers.list": return { items: [], next_cursor: null };
     case "tasks.list": return { items: [], next_cursor: null };
+    case "projects.list": return { items: [], next_cursor: null };
+    case "knowledge.sources.list": return { items: [] };
+    case "memory.proposals.list": return { items: [] };
+    case "obsidian.health.get": return {
+      desktop_installed: true,
+      cli_available: true,
+      minimum_installer_version: "1.12.7",
+      status: "ready",
+      public_summary: "Obsidian Desktop and CLI are ready",
+    };
     case "projects.archived.list": return { items: [], next_cursor: null };
     case "trash.items.list": return { items: [], next_cursor: null };
     default: return {};

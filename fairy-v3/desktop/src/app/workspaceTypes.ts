@@ -53,6 +53,14 @@ import type { McpServerDraft } from "../settings/extensionTypes";
 export type WorkspaceMode = "project" | "chat";
 export type PermissionProfile = "observe" | "standard" | "autonomous";
 
+export interface ObsidianSourceProjection {
+  sourceId: string;
+  sourceRevision: number | null;
+  itemCount: number;
+  loading: boolean;
+  error: string | null;
+}
+
 export interface WorkspaceClient extends AssistantTurnClient {
   assistant: {
     turns: AssistantTurnClient["assistant"]["turns"] &
@@ -158,10 +166,13 @@ export interface WorkspaceModel {
   knowledgeItems: KnowledgeItem[];
   knowledgeGraph: KnowledgeGraph | null;
   knowledgeLoading: boolean;
+  knowledgeError: string | null;
   obsidianHealth: ObsidianConnectorHealth | null;
   obsidianSources: ObsidianSource[];
   obsidianItems: ObsidianVaultItem[];
+  obsidianSourceProjections: ObsidianSourceProjection[];
   obsidianLoading: boolean;
+  obsidianError: string | null;
   mediaJobs: MediaGenerationJob[];
   assetSets: AssetSet[];
   workspaceFilesLoading: boolean;
@@ -216,7 +227,7 @@ export interface WorkspaceModel {
     },
   ): Promise<void>;
   syncObsidianSource(source: ObsidianSource): Promise<void>;
-  readObsidianItem(item: ObsidianVaultItem): Promise<ObsidianVaultItemContent>;
+  readObsidianItem(item: ObsidianVaultItem, signal?: AbortSignal): Promise<ObsidianVaultItemContent>;
   createChatConversation(): Promise<void>;
   createPetChatConversation(): Promise<void>;
   createProjectConversation(project: Project): Promise<void>;

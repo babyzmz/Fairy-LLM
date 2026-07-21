@@ -5,6 +5,7 @@ import type {
   CoreMethodName,
   ExecutionSettings,
   ExtensionCatalogPage,
+  KnowledgeSourcePage,
   McpServerAcceptInput,
   McpServerConfigureInput,
   McpServerDeleteInput,
@@ -20,6 +21,7 @@ import type {
   MemorySettingsUpdateInput,
   OpenRouterConfigurationInput,
   OpenRouterConfigurationStatus,
+  ObsidianConnectorHealth,
   ProviderHealthPage,
   ProviderProfilePage,
   RealtimeCredentialProvider,
@@ -29,6 +31,7 @@ import type {
   ProjectArchivedListInput,
   ProjectArchivedPage,
   ProjectDeleteInput,
+  ProjectPage,
   SkillPage,
   SkillCreateInput,
   SkillImportInspectInput,
@@ -226,6 +229,19 @@ export class SettingsClient {
   readonly context = {
     latestTask: () =>
       this.call("tasks.list", { limit: 1 }) as Promise<TaskPage>,
+    projects: (cursor: string | null = null) =>
+      this.call("projects.list", { limit: 100, cursor }) as Promise<ProjectPage>,
+    tasks: (cursor: string | null = null) =>
+      this.call("tasks.list", { limit: 100, cursor }) as Promise<TaskPage>,
+  };
+
+  readonly knowledge = {
+    sources: (projectId: string) =>
+      this.call("knowledge.sources.list", { project_id: projectId }) as Promise<KnowledgeSourcePage>,
+  };
+
+  readonly obsidian = {
+    health: () => this.call("obsidian.health.get", {}) as Promise<ObsidianConnectorHealth>,
   };
 
   readonly projectManagement = {

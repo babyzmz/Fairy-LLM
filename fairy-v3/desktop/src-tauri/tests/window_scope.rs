@@ -43,6 +43,9 @@ fn settings_window_has_a_narrow_method_allow_list() {
     assert!(settings_method_allowed("memory.proposals.list"));
     assert!(settings_method_allowed("memory.proposals.accept"));
     assert!(settings_method_allowed("memory.proposals.reject"));
+    assert!(settings_method_allowed("knowledge.sources.list"));
+    assert!(settings_method_allowed("obsidian.health.get"));
+    assert!(settings_method_allowed("projects.list"));
     assert!(settings_method_allowed("projects.archived.list"));
     assert!(settings_method_allowed("projects.archived.restore"));
     assert!(settings_method_allowed("projects.archived.delete"));
@@ -51,7 +54,6 @@ fn settings_window_has_a_narrow_method_allow_list() {
     assert!(settings_method_allowed("trash.items.purge"));
     assert!(settings_method_allowed("trash.items.purge_all"));
     assert!(!settings_method_allowed("assistant.turns.start"));
-    assert!(!settings_method_allowed("projects.list"));
     assert!(!settings_method_allowed("projects.delete"));
     assert!(!settings_method_allowed("conversations.delete"));
     assert!(!settings_method_allowed("system.actions.execute"));

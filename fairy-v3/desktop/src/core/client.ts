@@ -290,8 +290,8 @@ export class CoreClient {
       this.transport.call("obsidian.sources.list", { project_id: projectId }),
     listItems: (sourceId: string) =>
       this.transport.call("obsidian.sources.items.list", { source_id: sourceId }),
-    readItem: (input: ObsidianVaultItemReadInput) =>
-      this.transport.call("obsidian.sources.items.read", input),
+    readItem: (input: ObsidianVaultItemReadInput, options: CoreCallOptions = {}) =>
+      this.transport.call("obsidian.sources.items.read", input, options),
     sync: (input: ObsidianSourceSyncInput) =>
       this.transport.call("obsidian.sync.start", input),
   };
