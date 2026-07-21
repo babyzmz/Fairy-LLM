@@ -316,6 +316,7 @@ class SqlAlchemyCommandLedger:
         actor: str,
         project_id: UUID | None = None,
         conversation_id: UUID | None = None,
+        task_id: UUID | None = None,
         version_id: UUID | None = None,
     ) -> EventEnvelope:
         event_id = new_id()
@@ -331,7 +332,7 @@ class SqlAlchemyCommandLedger:
                     device_id="core",
                     project_id=str(project_id) if project_id is not None else None,
                     conversation_id=(str(conversation_id) if conversation_id is not None else None),
-                    task_id=None,
+                    task_id=str(task_id) if task_id is not None else None,
                     version_id=str(version_id) if version_id is not None else None,
                     task_sequence=None,
                     schema_version=1,
@@ -349,7 +350,7 @@ class SqlAlchemyCommandLedger:
             run_id=None,
             project_id=project_id,
             conversation_id=conversation_id,
-            task_id=None,
+            task_id=task_id,
             version_id=version_id,
             task_sequence=None,
             event_type=event_type,

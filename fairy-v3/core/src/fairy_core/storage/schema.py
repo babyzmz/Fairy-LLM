@@ -3,7 +3,6 @@ from __future__ import annotations
 from sqlalchemy import (
     JSON,
     BigInteger,
-    Boolean,
     CheckConstraint,
     Column,
     ForeignKeyConstraint,
@@ -27,6 +26,7 @@ from fairy_core.storage.history_schema import (
     build_project_table,
 )
 from fairy_core.storage.index_schema import build_state_indexes
+from fairy_core.storage.mcp_server_schema import build_mcp_server_tables
 from fairy_core.storage.media_schema import build_media_schema
 from fairy_core.storage.media_work_schema import build_media_work_table
 from fairy_core.storage.memory_settings_schema import build_memory_settings_tables
@@ -86,69 +86,7 @@ model_catalogs, model_selections, model_selection_updates = build_model_catalog_
     state_metadata
 )
 
-mcp_servers = Table(
-    "core_mcp_servers",
-    state_metadata,
-    _tenant_id(),
-    Column("server_id", String(64), primary_key=True),
-    Column("display_name", String(200), nullable=False),
-    Column("transport", String(32), nullable=False),
-    Column("command", Text),
-    Column("arguments", JSON, nullable=False),
-    Column("endpoint", Text),
-    Column("credential_ref", String(288)),
-    Column("environment_refs", JSON, nullable=False),
-    Column("enabled", Boolean, nullable=False),
-    Column("status", String(32), nullable=False),
-    Column("accepted_schema_digest", String(64)),
-    Column("pending_schema_digest", String(64)),
-    Column("accepted_tools", JSON, nullable=False),
-    Column("pending_tools", JSON, nullable=False),
-    Column("policies", JSON, nullable=False),
-    Column("revision", BigInteger, nullable=False),
-    Column("last_error_code", String(128)),
-    Column("created_at", UTCDateTime(), nullable=False),
-    Column("updated_at", UTCDateTime(), nullable=False),
-    PrimaryKeyConstraint("tenant_id", "server_id", name="pk_core_mcp_servers"),
-    CheckConstraint(
-        "transport IN ('stdio', 'streamable_http')",
-        name="ck_core_mcp_servers_transport",
-    ),
-    CheckConstraint(
-        "status IN ('disabled', 'untrusted', 'review_required', 'ready', 'unavailable')",
-        name="ck_core_mcp_servers_status",
-    ),
-    CheckConstraint("revision >= 1", name="ck_core_mcp_servers_revision"),
-    CheckConstraint(
-        "(transport = 'stdio' AND command IS NOT NULL AND endpoint IS NULL) OR "
-        "(transport = 'streamable_http' AND command IS NULL AND endpoint IS NOT NULL)",
-        name="ck_core_mcp_servers_connection",
-    ),
-)
-mcp_server_updates = Table(
-    "core_mcp_server_updates",
-    state_metadata,
-    _tenant_id(),
-    Column("idempotency_key", String(512), primary_key=True),
-    Column("request_fingerprint", String(64), nullable=False),
-    Column("server_id", String(64), nullable=False),
-    Column("result_record", JSON),
-    Column("result_deleted", Boolean),
-    Column("result_error_code", String(128)),
-    Column("created_at", UTCDateTime(), nullable=False),
-    PrimaryKeyConstraint("tenant_id", "idempotency_key", name="pk_core_mcp_server_updates"),
-    CheckConstraint(
-        "length(request_fingerprint) = 64 AND request_fingerprint = lower(request_fingerprint)",
-        name="ck_core_mcp_server_updates_fingerprint",
-    ),
-    CheckConstraint(
-        "(result_record IS NULL AND result_deleted IS NULL AND result_error_code IS NULL) OR "
-        "(result_record IS NOT NULL AND result_deleted = false AND result_error_code IS NULL) OR "
-        "(result_record IS NULL AND result_deleted = true AND result_error_code IS NULL) OR "
-        "(result_record IS NULL AND result_deleted = false AND result_error_code IS NOT NULL)",
-        name="ck_core_mcp_server_updates_result",
-    ),
-)
+mcp_servers, mcp_server_updates = build_mcp_server_tables(state_metadata)
 conversations = Table(
     "core_conversations",
     state_metadata,
@@ -235,6 +173,10 @@ tasks = Table(
     Column("execution_target", String(32), nullable=False),
     Column("memory_snapshot_id", String(ID_LENGTH)),
     Column("memory_snapshot_hash", String(64)),
+    Column("knowledge_snapshot_id", String(ID_LENGTH)),
+    Column("knowledge_snapshot_hash", String(64)),
+    Column("harness_manifest_id", String(ID_LENGTH)),
+    Column("harness_manifest_hash", String(64)),
     Column("status", String(32), nullable=False),
     Column("display_title", String(200), nullable=False, server_default="Task"),
     Column("pinned_at", UTCDateTime()),
@@ -248,6 +190,18 @@ tasks = Table(
         "(memory_snapshot_id IS NULL AND memory_snapshot_hash IS NULL) OR "
         "(memory_snapshot_id IS NOT NULL AND memory_snapshot_hash IS NOT NULL)",
         name="ck_core_tasks_memory_snapshot_binding",
+    ),
+    CheckConstraint(
+        "(knowledge_snapshot_id IS NULL AND knowledge_snapshot_hash IS NULL) OR "
+        "(knowledge_snapshot_id IS NOT NULL AND length(knowledge_snapshot_hash) = 64 "
+        "AND knowledge_snapshot_hash = lower(knowledge_snapshot_hash))",
+        name="ck_core_tasks_knowledge_snapshot_binding",
+    ),
+    CheckConstraint(
+        "(harness_manifest_id IS NULL AND harness_manifest_hash IS NULL) OR "
+        "(harness_manifest_id IS NOT NULL AND length(harness_manifest_hash) = 64 "
+        "AND harness_manifest_hash = lower(harness_manifest_hash))",
+        name="ck_core_tasks_harness_manifest_binding",
     ),
     ForeignKeyConstraint(
         ["tenant_id", "project_id"],
@@ -386,6 +340,10 @@ assistant_turns = Table(
     Column("scope_digest", String(64), nullable=False),
     Column("memory_snapshot_id", String(ID_LENGTH), nullable=False),
     Column("memory_snapshot_hash", String(64), nullable=False),
+    Column("knowledge_snapshot_id", String(ID_LENGTH)),
+    Column("knowledge_snapshot_hash", String(64)),
+    Column("harness_manifest_id", String(ID_LENGTH)),
+    Column("harness_manifest_hash", String(64)),
     Column("idempotency_key", String(512), nullable=False),
     Column("model_selection", JSON),
     Column("routing_decision", JSON),
@@ -432,6 +390,18 @@ assistant_turns = Table(
     CheckConstraint(
         "length(memory_snapshot_hash) = 64 AND memory_snapshot_hash = lower(memory_snapshot_hash)",
         name="ck_core_assistant_turns_memory_snapshot_hash",
+    ),
+    CheckConstraint(
+        "(knowledge_snapshot_id IS NULL AND knowledge_snapshot_hash IS NULL) OR "
+        "(knowledge_snapshot_id IS NOT NULL AND length(knowledge_snapshot_hash) = 64 "
+        "AND knowledge_snapshot_hash = lower(knowledge_snapshot_hash))",
+        name="ck_core_assistant_turns_knowledge_snapshot_binding",
+    ),
+    CheckConstraint(
+        "(harness_manifest_id IS NULL AND harness_manifest_hash IS NULL) OR "
+        "(harness_manifest_id IS NOT NULL AND length(harness_manifest_hash) = 64 "
+        "AND harness_manifest_hash = lower(harness_manifest_hash))",
+        name="ck_core_assistant_turns_harness_manifest_binding",
     ),
     ForeignKeyConstraint(
         ["tenant_id", "conversation_id"],

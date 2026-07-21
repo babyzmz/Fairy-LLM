@@ -90,9 +90,10 @@ def test_realtime_session_and_game_memory_round_trip(tmp_path) -> None:
         )
         assert memory["accepted"] is True
         assert service.invoke("realtime.memories.list", {})["items"][0]["id"] == memory["id"]
-        assert service.invoke(
-            "realtime.memories.delete", {"memory_id": memory["id"]}
-        )["deleted"] is True
+        assert (
+            service.invoke("realtime.memories.delete", {"memory_id": memory["id"]})["deleted"]
+            is True
+        )
     finally:
         service.close()
 
@@ -133,8 +134,7 @@ def test_realtime_persistence_has_no_raw_context_columns(tmp_path) -> None:
             column["name"] for column in inspector.get_columns("core_realtime_sessions")
         }
         memory_columns = {
-            column["name"]
-            for column in inspector.get_columns("core_game_memory_observations")
+            column["name"] for column in inspector.get_columns("core_game_memory_observations")
         }
         forbidden = {
             "transcript",

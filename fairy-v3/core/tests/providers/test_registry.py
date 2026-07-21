@@ -159,9 +159,7 @@ def test_registry_can_retry_after_usage_without_a_substantive_response() -> None
         )
     )
 
-    assert [delta.text for delta in deltas if delta.kind is ModelDeltaKind.TEXT] == [
-        "Recovered"
-    ]
+    assert [delta.text for delta in deltas if delta.kind is ModelDeltaKind.TEXT] == ["Recovered"]
     assert primary.calls == 2
     assert fallback.calls == 1
 

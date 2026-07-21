@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
 import json
-import math
 from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
@@ -31,6 +29,24 @@ from fairy_core.contracts.common import (
     PermissionProfileModel as PermissionProfileModel,
 )
 from fairy_core.contracts.history_models import ConversationModel, ProjectModel
+from fairy_core.contracts.memory_snapshot_models import (
+    MemoryProjectionHealthModel as MemoryProjectionHealthModel,
+)
+from fairy_core.contracts.memory_snapshot_models import (
+    MemorySearchDocumentModel as MemorySearchDocumentModel,
+)
+from fairy_core.contracts.memory_snapshot_models import (
+    MemorySearchHitModel as MemorySearchHitModel,
+)
+from fairy_core.contracts.memory_snapshot_models import (
+    MemorySearchPageModel as MemorySearchPageModel,
+)
+from fairy_core.contracts.memory_snapshot_models import (
+    MemorySnapshotItemModel as MemorySnapshotItemModel,
+)
+from fairy_core.contracts.memory_snapshot_models import (
+    MemorySnapshotModel as MemorySnapshotModel,
+)
 from fairy_core.contracts.model_routing import (
     ModelSelectionSnapshotInput,
     ModelSelectionSnapshotModel,
@@ -63,12 +79,6 @@ from fairy_core.memory.models import (
     MemorySourceType,
     MemoryTargetKind,
     ObservationStatus,
-)
-from fairy_core.memory.retrieval_models import (
-    MemorySelectionReason,
-    MemorySnapshotStatus,
-    MemorySourceKind,
-    ProjectionState,
 )
 from fairy_core.perception import ImagePersistence
 from fairy_core.providers.models import (
@@ -409,6 +419,16 @@ class TaskModel(ContractModel):
     target_version_id: UUID | None
     memory_snapshot_id: UUID | None
     memory_snapshot_hash: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+    knowledge_snapshot_id: UUID | None = None
+    knowledge_snapshot_hash: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    harness_manifest_id: UUID | None = None
+    harness_manifest_hash: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     status: TaskStatus
     display_title: str
     pinned_at: datetime | None
@@ -421,6 +441,16 @@ class TaskModel(ContractModel):
         _validate_memory_snapshot_pair(
             self.memory_snapshot_id,
             self.memory_snapshot_hash,
+        )
+        _validate_binding_pair(
+            self.knowledge_snapshot_id,
+            self.knowledge_snapshot_hash,
+            "Knowledge Snapshot",
+        )
+        _validate_binding_pair(
+            self.harness_manifest_id,
+            self.harness_manifest_hash,
+            "Harness Manifest",
         )
         return self
 
@@ -549,6 +579,16 @@ class AssistantTurnModel(ContractModel):
     scope_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     memory_snapshot_id: UUID
     memory_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    knowledge_snapshot_id: UUID | None = None
+    knowledge_snapshot_hash: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    harness_manifest_id: UUID | None = None
+    harness_manifest_hash: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     idempotency_key: str = Field(min_length=1, max_length=512)
     model_selection: ModelSelectionSnapshotModel | None
     routing_decision: RoutingDecisionModel | None
@@ -561,6 +601,20 @@ class AssistantTurnModel(ContractModel):
     updated_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+
+    @model_validator(mode="after")
+    def require_harness_binding_pairs(self) -> AssistantTurnModel:
+        _validate_binding_pair(
+            self.knowledge_snapshot_id,
+            self.knowledge_snapshot_hash,
+            "Knowledge Snapshot",
+        )
+        _validate_binding_pair(
+            self.harness_manifest_id,
+            self.harness_manifest_hash,
+            "Harness Manifest",
+        )
+        return self
 
     @field_validator("usage")
     @classmethod
@@ -622,6 +676,11 @@ class ScopeContractModel(ContractModel):
     memory_write_scope: tuple[str, ...]
     memory_snapshot_id: UUID | None
     memory_snapshot_hash: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+    knowledge_snapshot_id: UUID | None = None
+    knowledge_snapshot_hash: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     scope_digest: str
 
     @model_validator(mode="after")
@@ -629,6 +688,11 @@ class ScopeContractModel(ContractModel):
         _validate_memory_snapshot_pair(
             self.memory_snapshot_id,
             self.memory_snapshot_hash,
+        )
+        _validate_binding_pair(
+            self.knowledge_snapshot_id,
+            self.knowledge_snapshot_hash,
+            "Knowledge Snapshot",
         )
         return self
 
@@ -1073,145 +1137,6 @@ class MemoryTombstoneModel(ContractModel):
     created_at: datetime
 
 
-class MemorySearchDocumentModel(ContractModel):
-    id: UUID
-    source_kind: MemorySourceKind
-    source_id: UUID
-    source_revision: int | None = Field(default=None, ge=1)
-    namespace: MemoryNamespace | None
-    project_id: UUID | None
-    conversation_id: UUID | None
-    task_id: UUID | None
-    version_id: UUID | None
-    language: str = Field(min_length=1, max_length=32)
-    normalized_text: str = Field(min_length=1, max_length=100_000)
-    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    source_cursor: int = Field(ge=1)
-    projection_generation: int = Field(ge=1)
-    updated_at: datetime
-
-    @model_validator(mode="after")
-    def require_consistent_source(self) -> MemorySearchDocumentModel:
-        expected_hash = hashlib.sha256(self.normalized_text.encode("utf-8")).hexdigest()
-        if self.content_hash != expected_hash:
-            raise ValueError("content_hash does not match normalized_text")
-        if self.source_kind is MemorySourceKind.CLAIM_REVISION and self.source_revision is None:
-            raise ValueError("Claim revision document requires source_revision")
-        if self.namespace is MemoryNamespace.PROJECT_CANONICAL and self.project_id is None:
-            raise ValueError("project_canonical document requires project_id")
-        if self.namespace is MemoryNamespace.CONVERSATION_DRAFT and self.conversation_id is None:
-            raise ValueError("conversation_draft document requires conversation_id")
-        return self
-
-
-class MemorySearchHitModel(ContractModel):
-    document: MemorySearchDocumentModel
-    lexical_score: float = Field(ge=0, le=1, allow_inf_nan=False)
-    exact_match: bool
-
-
-class MemorySearchPageModel(ContractModel):
-    items: tuple[MemorySearchHitModel, ...]
-
-
-class MemorySnapshotItemModel(ContractModel):
-    ordinal: int = Field(ge=0)
-    source_kind: MemorySourceKind
-    source_id: UUID
-    source_revision: int | None = Field(default=None, ge=1)
-    namespace: MemoryNamespace | None
-    selection_reason: MemorySelectionReason
-    authority: MemoryAuthority
-    score_components: dict[str, float]
-    rendered_text: str = Field(min_length=1, max_length=100_000)
-    rendered_text_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    token_count: int = Field(ge=1, le=3_000)
-
-    @field_validator("score_components")
-    @classmethod
-    def require_finite_score_components(
-        cls,
-        value: dict[str, float],
-    ) -> dict[str, float]:
-        for name, score in value.items():
-            if not name.strip() or not math.isfinite(score) or not 0 <= score <= 1:
-                raise ValueError("score components must be named, finite, and between 0 and 1")
-        return value
-
-    @model_validator(mode="after")
-    def require_rendered_text_hash(self) -> MemorySnapshotItemModel:
-        expected_hash = hashlib.sha256(self.rendered_text.encode("utf-8")).hexdigest()
-        if self.rendered_text_hash != expected_hash:
-            raise ValueError("rendered_text_hash does not match rendered_text")
-        return self
-
-
-class MemorySnapshotModel(ContractModel):
-    id: UUID
-    project_id: UUID | None
-    conversation_id: UUID
-    task_id: UUID
-    base_version_id: UUID | None
-    target_version_id: UUID | None
-    snapshot_version: int = Field(ge=1)
-    policy_version: str = Field(min_length=1, max_length=128)
-    source_watermark_cursor: int = Field(ge=0)
-    projection_generation: int = Field(ge=1)
-    projection_watermark_cursor: int = Field(ge=0)
-    projection_state: ProjectionState
-    status: MemorySnapshotStatus
-    degraded_reason: str | None = Field(default=None, min_length=1, max_length=128)
-    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    token_count: int = Field(ge=0, le=3_000)
-    items: tuple[MemorySnapshotItemModel, ...]
-    created_at: datetime
-
-    @model_validator(mode="after")
-    def require_consistent_manifest(self) -> MemorySnapshotModel:
-        if tuple(item.ordinal for item in self.items) != tuple(range(len(self.items))):
-            raise ValueError("Snapshot item ordinals must be contiguous from zero")
-        if self.token_count != sum(item.token_count for item in self.items):
-            raise ValueError("Snapshot token_count must equal item token counts")
-        if self.status is MemorySnapshotStatus.READY:
-            if self.projection_state is not ProjectionState.READY:
-                raise ValueError("READY Snapshot requires READY projection state")
-            if self.projection_watermark_cursor < self.source_watermark_cursor:
-                raise ValueError("READY Snapshot projection cannot trail source")
-            if self.degraded_reason is not None:
-                raise ValueError("READY Snapshot cannot have a degraded reason")
-        else:
-            if self.projection_state is ProjectionState.READY:
-                raise ValueError("DEGRADED Snapshot cannot report READY projection state")
-            if self.degraded_reason is None:
-                raise ValueError("DEGRADED Snapshot requires a degraded reason")
-        return self
-
-
-class MemoryProjectionHealthModel(ContractModel):
-    generation: int = Field(ge=1)
-    state: ProjectionState
-    source_watermark_cursor: int = Field(ge=0)
-    projected_watermark_cursor: int = Field(ge=0)
-    lag: int = Field(ge=0)
-    last_error_code: str | None = Field(default=None, min_length=1, max_length=128)
-    updated_at: datetime
-
-    @model_validator(mode="after")
-    def require_consistent_ready_state(self) -> MemoryProjectionHealthModel:
-        expected_lag = max(
-            0,
-            self.source_watermark_cursor - self.projected_watermark_cursor,
-        )
-        if self.lag != expected_lag:
-            raise ValueError("projection lag does not match its watermarks")
-        if self.state is ProjectionState.READY:
-            if self.projected_watermark_cursor < self.source_watermark_cursor:
-                raise ValueError("READY projection cannot trail source")
-            if self.last_error_code is not None:
-                raise ValueError("READY projection cannot carry an error code")
-        return self
-
-
 def _mutable_json(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {str(key): _mutable_json(item) for key, item in value.items()}
@@ -1221,5 +1146,13 @@ def _mutable_json(value: Any) -> Any:
 
 
 def _validate_memory_snapshot_pair(snapshot_id: UUID | None, snapshot_hash: str | None) -> None:
-    if (snapshot_id is None) != (snapshot_hash is None):
-        raise ValueError("memory Snapshot ID and hash must be both present")
+    _validate_binding_pair(snapshot_id, snapshot_hash, "memory Snapshot")
+
+
+def _validate_binding_pair(
+    identity: UUID | None,
+    content_hash: str | None,
+    label: str,
+) -> None:
+    if (identity is None) != (content_hash is None):
+        raise ValueError(f"{label} ID and hash must be both present")

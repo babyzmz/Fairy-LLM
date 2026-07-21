@@ -28,9 +28,7 @@ class SqlAlchemyRealtimeRepository:
     def add_session(self, session: RealtimeSession) -> RealtimeSession:
         try:
             self._connection.execute(
-                insert(realtime_sessions).values(
-                    **_session_values(self._tenant_id, session)
-                )
+                insert(realtime_sessions).values(**_session_values(self._tenant_id, session))
             )
         except IntegrityError as error:
             existing = self.get_session_by_idempotency_key(session.idempotency_key)
@@ -42,21 +40,29 @@ class SqlAlchemyRealtimeRepository:
         return session
 
     def get_session(self, session_id: UUID) -> RealtimeSession | None:
-        row = self._connection.execute(
-            select(realtime_sessions).where(
-                realtime_sessions.c.tenant_id == self._tenant_id,
-                realtime_sessions.c.id == str(session_id),
+        row = (
+            self._connection.execute(
+                select(realtime_sessions).where(
+                    realtime_sessions.c.tenant_id == self._tenant_id,
+                    realtime_sessions.c.id == str(session_id),
+                )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         return _session_from_row(row) if row is not None else None
 
     def get_session_by_idempotency_key(self, key: str) -> RealtimeSession | None:
-        row = self._connection.execute(
-            select(realtime_sessions).where(
-                realtime_sessions.c.tenant_id == self._tenant_id,
-                realtime_sessions.c.idempotency_key == key,
+        row = (
+            self._connection.execute(
+                select(realtime_sessions).where(
+                    realtime_sessions.c.tenant_id == self._tenant_id,
+                    realtime_sessions.c.idempotency_key == key,
+                )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         return _session_from_row(row) if row is not None else None
 
     def update_session(
@@ -66,11 +72,13 @@ class SqlAlchemyRealtimeRepository:
         values.pop("tenant_id")
         values.pop("id")
         changed = self._connection.execute(
-            update(realtime_sessions).where(
+            update(realtime_sessions)
+            .where(
                 realtime_sessions.c.tenant_id == self._tenant_id,
                 realtime_sessions.c.id == str(session.id),
                 realtime_sessions.c.revision == expected_revision,
-            ).values(**values)
+            )
+            .values(**values)
         )
         if changed.rowcount != 1:
             raise VersionConflictError("realtime session revision changed")
@@ -107,12 +115,16 @@ class SqlAlchemyRealtimeRepository:
         return memory
 
     def get_memory(self, memory_id: UUID) -> GameMemoryDigest | None:
-        row = self._connection.execute(
-            select(game_memory_observations).where(
-                game_memory_observations.c.tenant_id == self._tenant_id,
-                game_memory_observations.c.id == str(memory_id),
+        row = (
+            self._connection.execute(
+                select(game_memory_observations).where(
+                    game_memory_observations.c.tenant_id == self._tenant_id,
+                    game_memory_observations.c.id == str(memory_id),
+                )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         return _memory_from_row(row) if row is not None else None
 
     def list_memories(self, *, limit: int = 50) -> tuple[GameMemoryDigest, ...]:

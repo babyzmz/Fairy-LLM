@@ -195,8 +195,7 @@ def test_malformed_tool_request_retries_once_before_dispatch(tmp_path: Path) -> 
             "Tool request could not be validated"
         ]
         assert any(
-            message.role.value == "system"
-            and "malformed or truncated" in message.content
+            message.role.value == "system" and "malformed or truncated" in message.content
             for message in provider.requests[1].messages
         )
     finally:

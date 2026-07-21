@@ -191,10 +191,7 @@ class ProviderRegistry:
                         usage_cost=usage_cost,
                     ),
                 )
-                if (
-                    (substantive_emitted and attempt_validator is None)
-                    or not _retryable(category)
-                ):
+                if (substantive_emitted and attempt_validator is None) or not _retryable(category):
                     raise
         assert last_error is not None
         raise last_error

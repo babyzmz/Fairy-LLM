@@ -99,11 +99,11 @@ class AssistantTurnScheduler:
         with self._lock:
             if self._closed:
                 raise RuntimeError("Core service is closing")
-            if turn_id in self._active:
-                raise ValueError("Assistant Turn is already running")
             turn = self._ledger.get_turn(turn_id)
             if turn.status in _TERMINAL_TURN_STATUSES:
                 return turn
+            if turn_id in self._active:
+                raise ValueError("Assistant Turn is already running")
             self._ledger.enqueue_turn_work(turn_id)
             claim = self._ledger.claim_turn_work(
                 turn_id,

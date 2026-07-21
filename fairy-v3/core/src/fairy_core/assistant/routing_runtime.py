@@ -332,10 +332,7 @@ class AssistantRoutingMixin:
                     turn.id,
                     MessageRole.USER,
                 )
-                if (
-                    user_message is not None
-                    and user_message.visibility is MessageVisibility.USER
-                ):
+                if user_message is not None and user_message.visibility is MessageVisibility.USER:
                     append_message_created(
                         unit_of_work.commands,
                         run=run,
@@ -991,10 +988,7 @@ class AssistantRoutingMixin:
                     turn.id,
                     MessageRole.USER,
                 )
-                if (
-                    user_message is not None
-                    and user_message.visibility is MessageVisibility.USER
-                ):
+                if user_message is not None and user_message.visibility is MessageVisibility.USER:
                     append_message_created(
                         unit_of_work.commands,
                         run=running,

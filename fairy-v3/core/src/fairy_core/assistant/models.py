@@ -311,6 +311,10 @@ class AssistantTurn:
     scope_digest: str
     memory_snapshot_id: UUID
     memory_snapshot_hash: str
+    knowledge_snapshot_id: UUID | None
+    knowledge_snapshot_hash: str | None
+    harness_manifest_id: UUID | None
+    harness_manifest_hash: str | None
     idempotency_key: str
     model_selection: ModelSelectionSnapshot | None = None
     routing_decision: RoutingDecision | None = None
@@ -345,6 +349,15 @@ class AssistantTurn:
             or scope.memory_snapshot_hash != task.memory_snapshot_hash
         ):
             raise ValueError("Scope Memory Snapshot does not match the Task")
+        if task.knowledge_snapshot_id is None or task.knowledge_snapshot_hash is None:
+            raise ValueError("Task must bind a Knowledge Snapshot before creating a Turn")
+        if (
+            scope.knowledge_snapshot_id != task.knowledge_snapshot_id
+            or scope.knowledge_snapshot_hash != task.knowledge_snapshot_hash
+        ):
+            raise ValueError("Scope Knowledge Snapshot does not match the Task")
+        if task.harness_manifest_id is None or task.harness_manifest_hash is None:
+            raise ValueError("Task must bind a Harness Manifest before creating a Turn")
         normalized_profile = _required_text(profile_id, "profile_id", maximum=255)
         normalized_key = _required_text(idempotency_key, "idempotency_key", maximum=512)
         _require_digest(scope.scope_digest, "scope_digest")
@@ -356,6 +369,10 @@ class AssistantTurn:
             scope_digest=scope.scope_digest,
             memory_snapshot_id=task.memory_snapshot_id,
             memory_snapshot_hash=task.memory_snapshot_hash,
+            knowledge_snapshot_id=task.knowledge_snapshot_id,
+            knowledge_snapshot_hash=task.knowledge_snapshot_hash,
+            harness_manifest_id=task.harness_manifest_id,
+            harness_manifest_hash=task.harness_manifest_hash,
             idempotency_key=normalized_key,
             model_selection=model_selection,
         )
@@ -544,9 +561,7 @@ class ToolInvocation:
     ) -> None:
         """Replace a provisional result after its external approval is decided."""
         if self.status is not ToolInvocationStatus.COMPLETED:
-            raise InvalidTransitionError(
-                "only a completed Tool Invocation can revise its result"
-            )
+            raise InvalidTransitionError("only a completed Tool Invocation can revise its result")
         self.public_summary = _required_text(
             public_summary,
             "public_summary",

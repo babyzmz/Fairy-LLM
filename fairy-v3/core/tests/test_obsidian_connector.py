@@ -1,5 +1,9 @@
+import hashlib
 import json
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 
 import pytest
 from pydantic import ValidationError
@@ -15,7 +19,10 @@ from fairy_core.contracts.obsidian import (
 )
 from fairy_core.domain.errors import VersionConflictError
 from fairy_core.domain.ids import new_id
+from fairy_core.knowledge.models import KnowledgeSyncRun
 from fairy_core.obsidian import ObsidianConnector, ObsidianPathRegistry
+from fairy_core.persistence.sqlite import create_sqlite_core_engine
+from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.transports.stdio import build_local_service
 
 
@@ -183,7 +190,7 @@ def test_local_service_composes_obsidian_project_source(tmp_path: Path) -> None:
             {"source_id": source["id"], "expected_revision": source["revision"]},
         )
         items = service.invoke(
-        "obsidian.sources.items.list",
+            "obsidian.sources.items.list",
             {"source_id": source["id"]},
         )["items"]
 
@@ -205,8 +212,167 @@ def test_local_service_composes_obsidian_project_source(tmp_path: Path) -> None:
         architecture = next(item for item in items if item["title"] == "Architecture")
         assert architecture["links"] == ["Project Plan"]
         assert content["content"].startswith("# ")
+
+        (vault / "Architecture.md").write_text("# Architecture\nSecond revision.", encoding="utf-8")
+        started = service.invoke(
+            "knowledge.sync.start",
+            {
+                "source_id": source["id"],
+                "expected_revision": result["source"]["revision"],
+                "idempotency_key": "knowledge-sync:second-revision",
+            },
+        )
+        replay = service.invoke(
+            "knowledge.sync.start",
+            {
+                "source_id": source["id"],
+                "expected_revision": result["source"]["revision"],
+                "idempotency_key": "knowledge-sync:second-revision",
+            },
+        )
+        completed = _wait_for_sync(service, started["id"])
+
+        assert replay["id"] == started["id"]
+        assert completed["status"] == "completed"
+        assert completed["attempts"] == 1
+        assert completed["changed_count"] == 1
     finally:
         service.close()
+
+
+def test_durable_knowledge_sync_cancellation_fences_the_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "Note.md").write_text("# Note", encoding="utf-8")
+    entered = Event()
+    release = Event()
+    original_sync = ObsidianConnector.sync
+
+    def blocked_sync(connector, request):
+        entered.set()
+        assert release.wait(5)
+        return original_sync(connector, request)
+
+    monkeypatch.setattr(ObsidianConnector, "sync", blocked_sync)
+    data_dir = tmp_path / "data"
+    local_path_token = ObsidianPathRegistry(data_dir / "obsidian-paths.json").register(vault)
+    service = build_local_service(data_dir)
+    try:
+        project = service.invoke(
+            "projects.create",
+            {"name": "Cancellation project", "residency": "local_only"},
+        )["project"]
+        source = service.invoke(
+            "obsidian.sources.create",
+            {
+                "project_id": project["id"],
+                "display_name": "Cancellation Vault",
+                "local_path_token": local_path_token,
+                "read_scope": "whole_vault",
+                "allowed_directories": [],
+                "whole_vault_confirmed": True,
+                "managed_directory": "Fairy",
+                "mode": "read_only",
+                "idempotency_key": "source:cancellation-vault",
+            },
+        )
+        run = service.invoke(
+            "knowledge.sync.start",
+            {
+                "source_id": source["id"],
+                "expected_revision": source["revision"],
+                "idempotency_key": "knowledge-sync:cancel-me",
+            },
+        )
+        assert entered.wait(5)
+
+        cancelled = service.invoke("knowledge.sync.cancel", {"run_id": run["id"]})
+        release.set()
+        time.sleep(0.1)
+        persisted = service.invoke("knowledge.sync.get", {"run_id": run["id"]})
+
+        assert cancelled["status"] == "cancelled"
+        assert cancelled["cancellation_revision"] == 1
+        assert persisted == cancelled
+    finally:
+        release.set()
+        service.close()
+
+
+def test_interrupted_knowledge_sync_resumes_after_core_restart(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "Resume.md").write_text("# Resume", encoding="utf-8")
+    data_dir = tmp_path / "data"
+    local_path_token = ObsidianPathRegistry(data_dir / "obsidian-paths.json").register(vault)
+    service = build_local_service(data_dir)
+    try:
+        project = service.invoke(
+            "projects.create",
+            {"name": "Recovery project", "residency": "local_only"},
+        )["project"]
+        source_model = service.invoke(
+            "obsidian.sources.create",
+            {
+                "project_id": project["id"],
+                "display_name": "Recovery Vault",
+                "local_path_token": local_path_token,
+                "read_scope": "whole_vault",
+                "allowed_directories": [],
+                "whole_vault_confirmed": True,
+                "managed_directory": "Fairy",
+                "mode": "read_only",
+                "idempotency_key": "source:recovery-vault",
+            },
+        )
+    finally:
+        service.close()
+
+    engine = create_sqlite_core_engine(data_dir / "core.db")
+    unit_of_work_factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
+    fingerprint = hashlib.sha256(b"knowledge-sync:restart-recovery").hexdigest()
+    with unit_of_work_factory() as unit_of_work:
+        source = unit_of_work.knowledge.get_source(source_model["id"])
+        assert source is not None
+        run = unit_of_work.knowledge.enqueue_sync_run(
+            KnowledgeSyncRun.enqueue(
+                source_id=source.id,
+                project_id=source.project_id,
+                expected_source_revision=source.revision,
+                request_fingerprint=fingerprint,
+                source_cursor=source.sync_cursor,
+            )
+        )
+        claim = unit_of_work.knowledge.claim_next_sync_run(
+            worker_id="crashed-worker",
+            lease_until=datetime.now(UTC) + timedelta(seconds=30),
+        )
+        assert claim is not None
+        assert unit_of_work.knowledge.abandon_sync_run(claim)
+        unit_of_work.commit()
+    engine.dispose()
+
+    resumed_service = build_local_service(data_dir)
+    try:
+        completed = _wait_for_sync(resumed_service, str(run.id))
+        assert completed["status"] == "completed"
+        assert completed["attempts"] == 2
+        assert completed["scanned_count"] == 1
+    finally:
+        resumed_service.close()
+
+
+def _wait_for_sync(service, run_id: str) -> dict:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        run = service.invoke("knowledge.sync.get", {"run_id": run_id})
+        if run["status"] in {"completed", "failed", "cancelled"}:
+            return run
+        time.sleep(0.02)
+    raise AssertionError("Knowledge Sync did not finish")
 
 
 def test_selected_directory_scope_requires_an_explicit_directory() -> None:
@@ -251,15 +417,12 @@ def test_source_rejects_an_unavailable_local_path_token(tmp_path: Path) -> None:
 
 def test_obsidian_rpc_methods_are_device_local_only() -> None:
     obsidian_methods = {
-        name: method
-        for name, method in CORE_METHODS.items()
-        if name.startswith("obsidian.")
+        name: method for name, method in CORE_METHODS.items() if name.startswith("obsidian.")
     }
 
     assert obsidian_methods
     assert all(
-        method.transport is CoreMethodTransport.LOCAL_ONLY
-        for method in obsidian_methods.values()
+        method.transport is CoreMethodTransport.LOCAL_ONLY for method in obsidian_methods.values()
     )
 
 

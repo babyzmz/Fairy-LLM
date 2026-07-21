@@ -23,6 +23,8 @@ from fairy_core.domain.models import (
 )
 
 _SNAPSHOT_HASH = "a" * 64
+_KNOWLEDGE_HASH = "b" * 64
+_HARNESS_HASH = "c" * 64
 
 
 def _task() -> Task:
@@ -35,6 +37,8 @@ def _task() -> Task:
         execution_target="local",
     )
     task.bind_memory_snapshot(UUID(int=2), _SNAPSHOT_HASH)
+    task.bind_knowledge_snapshot(UUID(int=3), _KNOWLEDGE_HASH)
+    task.bind_harness_manifest(UUID(int=4), _HARNESS_HASH)
     return task
 
 
@@ -56,6 +60,8 @@ def _scope(task: Task) -> ScopeContract:
         memory_write_scope=("current_conversation_draft",),
         memory_snapshot_id=task.memory_snapshot_id,
         memory_snapshot_hash=task.memory_snapshot_hash,
+        knowledge_snapshot_id=task.knowledge_snapshot_id,
+        knowledge_snapshot_hash=task.knowledge_snapshot_hash,
     )
 
 
@@ -121,6 +127,10 @@ def test_turn_binds_core_scope_and_snapshot_and_rejects_scope_mismatch() -> None
     assert turn.scope_digest == scope.scope_digest
     assert turn.memory_snapshot_id == task.memory_snapshot_id
     assert turn.memory_snapshot_hash == task.memory_snapshot_hash
+    assert turn.knowledge_snapshot_id == task.knowledge_snapshot_id
+    assert turn.knowledge_snapshot_hash == task.knowledge_snapshot_hash
+    assert turn.harness_manifest_id == task.harness_manifest_id
+    assert turn.harness_manifest_hash == task.harness_manifest_hash
 
     other = _task()
     with pytest.raises(ValueError, match="Scope"):

@@ -112,9 +112,7 @@ class ProjectToolExecutor:
                 planned.model_copy(
                     update={
                         "path": normalized,
-                        "expected_hash": (
-                            indexed.content_hash if indexed is not None else None
-                        ),
+                        "expected_hash": (indexed.content_hash if indexed is not None else None),
                     }
                 )
             )
@@ -299,9 +297,7 @@ class ProjectToolExecutor:
                 if preview is not None
                 else None
             ),
-            "next_action": (
-                "execution.plan" if plan is None and preview is None else None
-            ),
+            "next_action": ("execution.plan" if plan is None and preview is None else None),
         }
         return ToolResult.create(
             public_summary=(

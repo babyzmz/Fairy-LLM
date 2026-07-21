@@ -327,6 +327,14 @@ class SqlAlchemyStateStore(
                     str(task.memory_snapshot_id) if task.memory_snapshot_id else None
                 ),
                 "memory_snapshot_hash": task.memory_snapshot_hash,
+                "knowledge_snapshot_id": (
+                    str(task.knowledge_snapshot_id) if task.knowledge_snapshot_id else None
+                ),
+                "knowledge_snapshot_hash": task.knowledge_snapshot_hash,
+                "harness_manifest_id": (
+                    str(task.harness_manifest_id) if task.harness_manifest_id else None
+                ),
+                "harness_manifest_hash": task.harness_manifest_hash,
                 "status": task.status.value,
                 "display_title": task.display_title,
                 "pinned_at": task.pinned_at,
@@ -747,6 +755,10 @@ class SqlAlchemyStateStore(
             target_version_id=_uuid(row["target_version_id"]),
             memory_snapshot_id=_uuid(row["memory_snapshot_id"]),
             memory_snapshot_hash=row["memory_snapshot_hash"],
+            knowledge_snapshot_id=_uuid(row["knowledge_snapshot_id"]),
+            knowledge_snapshot_hash=row["knowledge_snapshot_hash"],
+            harness_manifest_id=_uuid(row["harness_manifest_id"]),
+            harness_manifest_hash=row["harness_manifest_hash"],
             status=TaskStatus(row["status"]),
             display_title=row["display_title"],
             pinned_at=_optional_datetime(row["pinned_at"]),

@@ -46,6 +46,8 @@ from fairy_core.persistence.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from fairy_core.providers import ModelExecutionRole, ProviderErrorCategory
 
 _SNAPSHOT_HASH = "a" * 64
+_KNOWLEDGE_HASH = "b" * 64
+_HARNESS_HASH = "c" * 64
 
 
 def _seed_task(factory: SqlAlchemyUnitOfWorkFactory, *, label: str) -> tuple[Task, ScopeContract]:
@@ -64,6 +66,8 @@ def _seed_task(factory: SqlAlchemyUnitOfWorkFactory, *, label: str) -> tuple[Tas
         execution_target="local",
     )
     task.bind_memory_snapshot(UUID(int=100), _SNAPSHOT_HASH)
+    task.bind_knowledge_snapshot(UUID(int=101), _KNOWLEDGE_HASH)
+    task.bind_harness_manifest(UUID(int=102), _HARNESS_HASH)
     scope = ScopeContract.create(
         workspace_type=WorkspaceType.PROJECT_CHAT,
         project_id=project.id,
@@ -81,6 +85,8 @@ def _seed_task(factory: SqlAlchemyUnitOfWorkFactory, *, label: str) -> tuple[Tas
         memory_write_scope=("current_conversation_draft",),
         memory_snapshot_id=task.memory_snapshot_id,
         memory_snapshot_hash=task.memory_snapshot_hash,
+        knowledge_snapshot_id=task.knowledge_snapshot_id,
+        knowledge_snapshot_hash=task.knowledge_snapshot_hash,
     )
     with factory() as unit_of_work:
         unit_of_work.state.save_project(project)

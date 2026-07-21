@@ -34,6 +34,9 @@ _WORKSPACE_IDENTITY_REVISION = "20260713_workspace_identity"
 _RUNTIME_WORKSPACE_BINDING_REVISION = "20260713_runtime_workspace_binding"
 _RUNTIME_GRAPH_REVISION = "20260713_runtime_graph"
 _ASSISTANT_MODEL_ROUTING_REVISION = "20260715_assistant_model_routing"
+_KNOWLEDGE_HARNESS_BINDING_REVISION = "20260721_knowledge_harness_binding"
+_KNOWLEDGE_SYNC_LEASE_REVISION = "20260721_knowledge_sync_lease"
+_KNOWLEDGE_MANIFEST_TOOLS_REVISION = "20260721_knowledge_manifest_tools"
 
 
 def _datetime(value: str | None) -> datetime | None:
@@ -512,6 +515,150 @@ def migrate_task_snapshot_binding(engine: Engine) -> None:
             ),
             {
                 "revision": _SNAPSHOT_BINDING_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_knowledge_harness_binding(engine: Engine) -> None:
+    """Add nullable Knowledge Snapshot and Harness bindings to existing local data."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _KNOWLEDGE_HARNESS_BINDING_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        additions = {
+            "core_tasks": {
+                "knowledge_snapshot_id": "VARCHAR(36)",
+                "knowledge_snapshot_hash": "VARCHAR(64)",
+                "harness_manifest_id": "VARCHAR(36)",
+                "harness_manifest_hash": "VARCHAR(64)",
+            },
+            "core_assistant_turns": {
+                "knowledge_snapshot_id": "VARCHAR(36)",
+                "knowledge_snapshot_hash": "VARCHAR(64)",
+                "harness_manifest_id": "VARCHAR(36)",
+                "harness_manifest_hash": "VARCHAR(64)",
+            },
+        }
+        for table_name, columns_to_add in additions.items():
+            if table_name not in tables:
+                continue
+            columns = {column["name"] for column in inspect(connection).get_columns(table_name)}
+            for name, definition in columns_to_add.items():
+                if name not in columns:
+                    connection.exec_driver_sql(
+                        f'ALTER TABLE "{table_name}" ADD COLUMN "{name}" {definition}'
+                    )
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {
+                "revision": _KNOWLEDGE_HARNESS_BINDING_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_knowledge_sync_leases(engine: Engine) -> None:
+    """Add resumable, fenced Knowledge Sync fields to existing local databases."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _KNOWLEDGE_SYNC_LEASE_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        if "core_knowledge_sync_runs" in tables:
+            columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("core_knowledge_sync_runs")
+            }
+            additions = {
+                "expected_source_revision": "BIGINT NOT NULL DEFAULT 1",
+                "request_fingerprint": "VARCHAR(64)",
+                "lease_owner": "VARCHAR(255)",
+                "lease_until": "DATETIME",
+                "lease_fence": "BIGINT NOT NULL DEFAULT 0",
+                "attempts": "BIGINT NOT NULL DEFAULT 0",
+                "cancellation_revision": "BIGINT NOT NULL DEFAULT 0",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.exec_driver_sql(
+                        f'ALTER TABLE "core_knowledge_sync_runs" ADD COLUMN "{name}" {definition}'
+                    )
+            connection.exec_driver_sql(
+                "UPDATE core_knowledge_sync_runs "
+                "SET request_fingerprint = lower(replace(id, '-', '') || replace(id, '-', '')) "
+                "WHERE request_fingerprint IS NULL"
+            )
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_sync_runs_request "
+                "ON core_knowledge_sync_runs (tenant_id, request_fingerprint)"
+            )
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_knowledge_sync_runs_claim "
+                "ON core_knowledge_sync_runs "
+                "(tenant_id, status, lease_until, started_at)"
+            )
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {
+                "revision": _KNOWLEDGE_SYNC_LEASE_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_knowledge_manifest_tools(engine: Engine) -> None:
+    """Add immutable Tool Definition snapshots to existing local Harness rows."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _KNOWLEDGE_MANIFEST_TOOLS_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        if "core_harness_context_manifests" in tables:
+            columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("core_harness_context_manifests")
+            }
+            if "tool_definitions" not in columns:
+                connection.exec_driver_sql(
+                    "ALTER TABLE core_harness_context_manifests "
+                    "ADD COLUMN tool_definitions JSON NOT NULL DEFAULT '[]'"
+                )
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {
+                "revision": _KNOWLEDGE_MANIFEST_TOOLS_REVISION,
                 "applied_at": datetime.now(UTC).isoformat(),
             },
         )

@@ -42,9 +42,7 @@ class ScopeViolationError(DomainError):
     ) -> None:
         super().__init__(message)
         self.code = code
-        if model_detail is not None and (
-            not model_detail.strip() or len(model_detail) > 2_000
-        ):
+        if model_detail is not None and (not model_detail.strip() or len(model_detail) > 2_000):
             raise ValueError("model recovery detail is invalid")
         self.model_detail = model_detail
 

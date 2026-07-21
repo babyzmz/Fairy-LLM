@@ -391,6 +391,10 @@ class Task:
     target_version_id: UUID | None = None
     memory_snapshot_id: UUID | None = None
     memory_snapshot_hash: str | None = None
+    knowledge_snapshot_id: UUID | None = None
+    knowledge_snapshot_hash: str | None = None
+    harness_manifest_id: UUID | None = None
+    harness_manifest_hash: str | None = None
     status: TaskStatus = TaskStatus.CREATED
     display_title: str = ""
     pinned_at: datetime | None = None
@@ -405,11 +409,21 @@ class Task:
             self.display_title = self.user_request[:200]
         if (self.memory_snapshot_id is None) != (self.memory_snapshot_hash is None):
             raise ValueError("memory Snapshot ID and hash must be both present")
-        if (
-            self.memory_snapshot_hash is not None
-            and _SHA256_PATTERN.fullmatch(self.memory_snapshot_hash) is None
-        ):
-            raise ValueError("memory_snapshot_hash must be a lowercase SHA-256 hex digest")
+        self._validate_binding(
+            self.memory_snapshot_id,
+            self.memory_snapshot_hash,
+            "memory Snapshot",
+        )
+        self._validate_binding(
+            self.knowledge_snapshot_id,
+            self.knowledge_snapshot_hash,
+            "Knowledge Snapshot",
+        )
+        self._validate_binding(
+            self.harness_manifest_id,
+            self.harness_manifest_hash,
+            "Harness Manifest",
+        )
 
     @classmethod
     def create(
@@ -456,6 +470,44 @@ class Task:
         if self.memory_snapshot_id == snapshot_id and self.memory_snapshot_hash == content_hash:
             return
         raise InvalidTransitionError("memory Snapshot is already bound")
+
+    def bind_knowledge_snapshot(self, snapshot_id: UUID, content_hash: str) -> None:
+        if _SHA256_PATTERN.fullmatch(content_hash) is None:
+            raise ValueError("content_hash must be a lowercase SHA-256 hex digest")
+        if self.knowledge_snapshot_id is None and self.knowledge_snapshot_hash is None:
+            self.knowledge_snapshot_id = snapshot_id
+            self.knowledge_snapshot_hash = content_hash
+            self.updated_at = _now()
+            return
+        if (
+            self.knowledge_snapshot_id == snapshot_id
+            and self.knowledge_snapshot_hash == content_hash
+        ):
+            return
+        raise InvalidTransitionError("Knowledge Snapshot is already bound")
+
+    def bind_harness_manifest(self, manifest_id: UUID, content_hash: str) -> None:
+        if _SHA256_PATTERN.fullmatch(content_hash) is None:
+            raise ValueError("content_hash must be a lowercase SHA-256 hex digest")
+        if self.harness_manifest_id is None and self.harness_manifest_hash is None:
+            self.harness_manifest_id = manifest_id
+            self.harness_manifest_hash = content_hash
+            self.updated_at = _now()
+            return
+        if self.harness_manifest_id == manifest_id and self.harness_manifest_hash == content_hash:
+            return
+        raise InvalidTransitionError("Harness Manifest is already bound")
+
+    @staticmethod
+    def _validate_binding(
+        identity: UUID | None,
+        content_hash: str | None,
+        label: str,
+    ) -> None:
+        if (identity is None) != (content_hash is None):
+            raise ValueError(f"{label} ID and hash must be both present")
+        if content_hash is not None and _SHA256_PATTERN.fullmatch(content_hash) is None:
+            raise ValueError(f"{label} hash must be a lowercase SHA-256 hex digest")
 
     def transition_to(self, status: TaskStatus) -> None:
         if status not in _TASK_TRANSITIONS[self.status]:
@@ -549,6 +601,8 @@ class ScopeContract:
     memory_write_scope: tuple[str, ...]
     memory_snapshot_id: UUID | None
     memory_snapshot_hash: str | None
+    knowledge_snapshot_id: UUID | None
+    knowledge_snapshot_hash: str | None
     workspace_id: UUID
     scope_digest: str
 
@@ -572,6 +626,8 @@ class ScopeContract:
         memory_write_scope: tuple[str, ...],
         memory_snapshot_id: UUID | None = None,
         memory_snapshot_hash: str | None = None,
+        knowledge_snapshot_id: UUID | None = None,
+        knowledge_snapshot_hash: str | None = None,
         workspace_id: UUID | None = None,
     ) -> ScopeContract:
         if (memory_snapshot_id is None) != (memory_snapshot_hash is None):
@@ -581,6 +637,15 @@ class ScopeContract:
             and _SHA256_PATTERN.fullmatch(memory_snapshot_hash) is None
         ):
             raise ValueError("memory_snapshot_hash must be a lowercase SHA-256 hex digest")
+        if (knowledge_snapshot_id is None) != (knowledge_snapshot_hash is None):
+            raise ValueError(
+                "knowledge_snapshot_id and knowledge_snapshot_hash must be both present"
+            )
+        if (
+            knowledge_snapshot_hash is not None
+            and _SHA256_PATTERN.fullmatch(knowledge_snapshot_hash) is None
+        ):
+            raise ValueError("knowledge_snapshot_hash must be a lowercase SHA-256 hex digest")
         root = project_root.resolve(strict=False)
         allowed = tuple(path.resolve(strict=False) for path in allowed_write_paths)
         forbidden = tuple(path.resolve(strict=False) for path in forbidden_write_paths)
@@ -605,6 +670,10 @@ class ScopeContract:
                 str(memory_snapshot_id) if memory_snapshot_id is not None else None
             ),
             "memory_snapshot_hash": memory_snapshot_hash,
+            "knowledge_snapshot_id": (
+                str(knowledge_snapshot_id) if knowledge_snapshot_id is not None else None
+            ),
+            "knowledge_snapshot_hash": knowledge_snapshot_hash,
         }
         encoded = json.dumps(digest_payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
         return cls(
@@ -624,6 +693,8 @@ class ScopeContract:
             memory_write_scope=memory_write_scope,
             memory_snapshot_id=memory_snapshot_id,
             memory_snapshot_hash=memory_snapshot_hash,
+            knowledge_snapshot_id=knowledge_snapshot_id,
+            knowledge_snapshot_hash=knowledge_snapshot_hash,
             workspace_id=resolved_workspace_id,
             scope_digest=hashlib.sha256(encoded).hexdigest(),
         )

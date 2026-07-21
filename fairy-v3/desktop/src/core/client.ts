@@ -36,6 +36,7 @@ import type {
   MediaVideoStartInput,
   GameMemorySaveInput,
   KnowledgeItemListInput,
+  KnowledgeSyncStartInput,
   ObsidianSourceCreateInput,
   ObsidianSourceSyncInput,
   ObsidianVaultItemReadInput,
@@ -245,6 +246,34 @@ export class CoreClient {
       this.transport.call("knowledge.items.list", input),
     graph: (projectId: string) =>
       this.transport.call("knowledge.graph.get", { project_id: projectId }),
+    listSources: (projectId: string) =>
+      this.transport.call("knowledge.sources.list", { project_id: projectId }),
+    listCollections: (projectId: string) =>
+      this.transport.call("knowledge.collections.list", { project_id: projectId }),
+    getSnapshot: (taskId: string, snapshotId: string) =>
+      this.transport.call("knowledge.snapshots.get", {
+        task_id: taskId,
+        snapshot_id: snapshotId,
+      }),
+    getManifest: (taskId: string, manifestId: string) =>
+      this.transport.call("harness.manifests.get", {
+        task_id: taskId,
+        manifest_id: manifestId,
+      }),
+    search: (input: CoreMethodMap["knowledge.search"]["params"]) =>
+      this.transport.call("knowledge.search", input),
+    read: (input: CoreMethodMap["knowledge.read"]["params"]) =>
+      this.transport.call("knowledge.read", input),
+    links: (input: CoreMethodMap["knowledge.links"]["params"]) =>
+      this.transport.call("knowledge.links", input),
+    sync: {
+      start: (input: KnowledgeSyncStartInput) =>
+        this.transport.call("knowledge.sync.start", input),
+      get: (runId: string) =>
+        this.transport.call("knowledge.sync.get", { run_id: runId }),
+      cancel: (runId: string) =>
+        this.transport.call("knowledge.sync.cancel", { run_id: runId }),
+    },
   };
 
   readonly obsidian = {

@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260720_0038"]
+    assert scripts.get_heads() == ["20260721_0039"]
+    assert scripts.get_revision("20260721_0039").down_revision == "20260720_0038"
     assert scripts.get_revision("20260720_0037").down_revision == "20260717_0036"
     assert scripts.get_revision("20260712_0016").down_revision == "20260711_0015"
     assert scripts.get_revision("20260711_0015").down_revision == "20260711_0014"
@@ -84,6 +85,14 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "MEMORY_SEARCH_DOCUMENTS",
         "MEMORY_ACCESS_LOG",
         "MEMORY_PROJECTION_CHECKPOINTS",
+        "CORE_KNOWLEDGE_SOURCES",
+        "CORE_KNOWLEDGE_COLLECTIONS",
+        "CORE_KNOWLEDGE_ITEMS",
+        "CORE_KNOWLEDGE_REVISIONS",
+        "CORE_KNOWLEDGE_SYNC_RUNS",
+        "CORE_KNOWLEDGE_SNAPSHOTS",
+        "CORE_KNOWLEDGE_SNAPSHOT_ITEMS",
+        "CORE_HARNESS_CONTEXT_MANIFESTS",
     ):
         assert f"CREATE TABLE {table_name}" in ddl
     assert "ALTER TABLE DOMAIN_EVENTS ADD COLUMN TENANT_ID" in ddl
@@ -139,6 +148,14 @@ def test_offline_migration_contains_canonical_tenant_rls_and_fencing() -> None:
         "CORE_PROJECT_INDEXES",
         "EXECUTION_JOBS",
         "RUNTIME_LEASES",
+        "CORE_KNOWLEDGE_SOURCES",
+        "CORE_KNOWLEDGE_COLLECTIONS",
+        "CORE_KNOWLEDGE_ITEMS",
+        "CORE_KNOWLEDGE_REVISIONS",
+        "CORE_KNOWLEDGE_SYNC_RUNS",
+        "CORE_KNOWLEDGE_SNAPSHOTS",
+        "CORE_KNOWLEDGE_SNAPSHOT_ITEMS",
+        "CORE_HARNESS_CONTEXT_MANIFESTS",
     ):
         assert f'CREATE POLICY "TENANT_ISOLATION_{table_name}"' in ddl
     assert "RESULT_DELETED" in ddl
@@ -283,6 +300,29 @@ def test_memory_settings_migration_has_reversible_rls_ddl() -> None:
     assert 'DROP POLICY IF EXISTS "TENANT_ISOLATION_CORE_MEMORY_SETTING_UPDATES"' in ddl
     assert "DROP TABLE CORE_MEMORY_SETTING_UPDATES" in ddl
     assert "DROP TABLE CORE_MEMORY_SETTINGS" in ddl
+
+
+def test_knowledge_harness_migration_has_reversible_tenant_ddl() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260721_0039:20260720_0038", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    for table_name in (
+        "CORE_KNOWLEDGE_SOURCES",
+        "CORE_KNOWLEDGE_COLLECTIONS",
+        "CORE_KNOWLEDGE_ITEMS",
+        "CORE_KNOWLEDGE_REVISIONS",
+        "CORE_KNOWLEDGE_SYNC_RUNS",
+        "CORE_KNOWLEDGE_SNAPSHOTS",
+        "CORE_KNOWLEDGE_SNAPSHOT_ITEMS",
+        "CORE_HARNESS_CONTEXT_MANIFESTS",
+    ):
+        assert f'DROP POLICY IF EXISTS "TENANT_ISOLATION_{table_name}"' in ddl
+        assert f"DROP TABLE {table_name}" in ddl
+    assert "ALTER TABLE CORE_TASKS DROP COLUMN KNOWLEDGE_SNAPSHOT_ID" in ddl
+    assert "ALTER TABLE CORE_ASSISTANT_TURNS DROP COLUMN HARNESS_MANIFEST_ID" in ddl
 
 
 def test_generic_approval_migration_has_reversible_ddl() -> None:

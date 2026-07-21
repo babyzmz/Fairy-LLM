@@ -5,7 +5,6 @@ import { useAssistantTurn } from "../chat/useAssistantTurn";
 import { useTurnTraces } from "../chat/useTurnTraces";
 import type { EventEnvelope, McpToolPolicyInput, Task } from "../core/client";
 import { runEventDelivery } from "../core/eventStream";
-import { CoreRpcError } from "../core/tauriTransport";
 import type { McpServerDraft } from "../settings/extensionTypes";
 import {
   selectedProfileId as profileIdForSelection,
@@ -32,16 +31,21 @@ import {
   projectOverviewSelection,
   sortHistoryItems,
 } from "./workspaceHistoryActions";
+import {
+  appendEvent,
+  capabilityQueryKey,
+  coreStartupRetryDelay,
+  coreErrorCode,
+  errorMessage,
+  firstError,
+  permissionQueryKey,
+  requireId,
+  selectedItem,
+  shouldRetryCoreStartup,
+  terminalAssistantEvents,
+  workspaceKey,
+} from "./workspaceModelUtils";
 
-const workspaceKey = ["workspace"] as const;
-const permissionQueryKey = [...workspaceKey, "permissions"] as const;
-const capabilityQueryKey = [...workspaceKey, "capabilities"] as const;
-const coreStartupRetryLimit = 20;
-const terminalAssistantEvents = new Set([
-  "assistant.turn.completed",
-  "assistant.turn.cancelled",
-  "assistant.turn.failed",
-]);
 export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const queryClient = useQueryClient();
   const [mode, setMode] = usePersistedEnum<WorkspaceMode>("fairy.workspace.mode", "project", ["project", "chat"]);
@@ -66,11 +70,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const healthQuery = useQuery({
     queryKey: [...workspaceKey, "health"],
     queryFn: () => client.health(),
-    retry: (failureCount, error) =>
-      failureCount < coreStartupRetryLimit &&
-      error instanceof CoreRpcError &&
-      error.errorCode === "WORKER_INTERRUPTED",
-    retryDelay: (attemptIndex) => Math.min(250 * (attemptIndex + 1), 1_000),
+    retry: shouldRetryCoreStartup,
+    retryDelay: coreStartupRetryDelay,
     refetchOnWindowFocus: false,
   });
   const permissionsQuery = useQuery({
@@ -139,13 +140,25 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
   const knowledgeItemsQuery = useQuery({
-    queryKey: [...workspaceKey, "knowledge", "items", selectedProject?.id],
+    queryKey: [
+      ...workspaceKey,
+      "knowledge",
+      "items",
+      selectedProject?.id,
+      knowledgeOverviewQuery.data?.watermark,
+    ],
     queryFn: () => client.knowledge.listItems({ project_id: requireId(selectedProject?.id), limit: 500 }),
     enabled: healthQuery.isSuccess && selectedProject !== null,
     retry: false,
   });
   const knowledgeGraphQuery = useQuery({
-    queryKey: [...workspaceKey, "knowledge", "graph", selectedProject?.id],
+    queryKey: [
+      ...workspaceKey,
+      "knowledge",
+      "graph",
+      selectedProject?.id,
+      knowledgeOverviewQuery.data?.watermark,
+    ],
     queryFn: () => client.knowledge.graph(requireId(selectedProject?.id)),
     enabled: healthQuery.isSuccess && selectedProject !== null,
     retry: false,
@@ -1184,37 +1197,4 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     },
     openSettings: () => client.desktop.openSettings(),
   };
-}
-
-function selectedItem<T extends { id: string }>(items: T[], selectedId: string | null): T | null {
-  return items.find((item) => item.id === selectedId) ?? items.at(0) ?? null;
-}
-
-function requireId(value: string | null | undefined): string {
-  if (value === undefined || value === null) {
-    throw new Error("Workspace scope is unavailable");
-  }
-  return value;
-}
-
-function appendEvent(events: EventEnvelope[], incoming: EventEnvelope): EventEnvelope[] {
-  if (events.some((event) => event.id === incoming.id || event.cursor === incoming.cursor)) {
-    return events;
-  }
-  return [...events, incoming].sort((left, right) => left.cursor - right.cursor).slice(-500);
-}
-
-function firstError(...errors: (Error | null)[]): Error | null {
-  return errors.find((error) => error !== null) ?? null;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Workspace request failed";
-}
-
-function coreErrorCode(error: unknown): string | null {
-  if (typeof error !== "object" || error === null || !("errorCode" in error)) {
-    return null;
-  }
-  return typeof error.errorCode === "string" ? error.errorCode : null;
 }

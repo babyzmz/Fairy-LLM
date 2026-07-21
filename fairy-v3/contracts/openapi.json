@@ -857,6 +857,30 @@
             ],
             "title": "Error Code"
           },
+          "harness_manifest_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness Manifest Hash"
+          },
+          "harness_manifest_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness Manifest Id"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -867,6 +891,30 @@
             "minLength": 1,
             "title": "Idempotency Key",
             "type": "string"
+          },
+          "knowledge_snapshot_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Snapshot Hash"
+          },
+          "knowledge_snapshot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Snapshot Id"
           },
           "memory_snapshot_hash": {
             "pattern": "^[0-9a-f]{64}$",
@@ -4020,6 +4068,122 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HarnessContextManifestModel": {
+        "additionalProperties": false,
+        "properties": {
+          "budget": {
+            "additionalProperties": true,
+            "title": "Budget",
+            "type": "object"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "knowledge_snapshot_hash": {
+            "title": "Knowledge Snapshot Hash",
+            "type": "string"
+          },
+          "knowledge_snapshot_id": {
+            "format": "uuid",
+            "title": "Knowledge Snapshot Id",
+            "type": "string"
+          },
+          "mcp_capability_snapshot": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Mcp Capability Snapshot",
+            "type": "array"
+          },
+          "memory_snapshot_hash": {
+            "title": "Memory Snapshot Hash",
+            "type": "string"
+          },
+          "memory_snapshot_id": {
+            "format": "uuid",
+            "title": "Memory Snapshot Id",
+            "type": "string"
+          },
+          "model_selection": {
+            "additionalProperties": true,
+            "title": "Model Selection",
+            "type": "object"
+          },
+          "scope_digest": {
+            "title": "Scope Digest",
+            "type": "string"
+          },
+          "skill_package_digests": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skill Package Digests",
+            "type": "array"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "tool_registry_digest": {
+            "title": "Tool Registry Digest",
+            "type": "string"
+          },
+          "tool_registry_generation": {
+            "title": "Tool Registry Generation",
+            "type": "integer"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          },
+          "workspace_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Version Id"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "scope_digest",
+          "workspace_id",
+          "workspace_version_id",
+          "memory_snapshot_id",
+          "memory_snapshot_hash",
+          "knowledge_snapshot_id",
+          "knowledge_snapshot_hash",
+          "tool_registry_generation",
+          "tool_registry_digest",
+          "skill_package_digests",
+          "mcp_capability_snapshot",
+          "model_selection",
+          "budget",
+          "content_hash",
+          "created_at"
+        ],
+        "title": "HarnessContextManifestModel",
+        "type": "object"
+      },
       "HealthModel": {
         "additionalProperties": false,
         "properties": {
@@ -4209,6 +4373,90 @@
         "title": "ImportedMessageModel",
         "type": "object"
       },
+      "KnowledgeCollectionModel": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_directories": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Directories",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "managed_directory": {
+            "title": "Managed Directory",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "read_scope": {
+            "title": "Read Scope",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "scope_kind": {
+            "title": "Scope Kind",
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source_id",
+          "project_id",
+          "read_scope",
+          "allowed_directories",
+          "managed_directory",
+          "scope_kind",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "KnowledgeCollectionModel",
+        "type": "object"
+      },
+      "KnowledgeCollectionPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeCollectionModel"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "KnowledgeCollectionPageModel",
+        "type": "object"
+      },
       "KnowledgeGraphEdgeModel": {
         "additionalProperties": false,
         "properties": {
@@ -4274,12 +4522,17 @@
               }
             ],
             "title": "Source Version Id"
+          },
+          "watermark": {
+            "title": "Watermark",
+            "type": "string"
           }
         },
         "required": [
           "project_id",
           "source_version_id",
           "source_revision",
+          "watermark",
           "nodes",
           "edges"
         ],
@@ -4360,6 +4613,42 @@
           "revision": {
             "title": "Revision",
             "type": "integer"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Id"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
           },
           "title": {
             "title": "Title",
@@ -4467,13 +4756,47 @@
           "source_revision": {
             "title": "Source Revision",
             "type": "integer"
+          },
+          "watermark": {
+            "title": "Watermark",
+            "type": "string"
           }
         },
         "required": [
           "items",
-          "source_revision"
+          "source_revision",
+          "watermark"
         ],
         "title": "KnowledgeItemPageModel",
+        "type": "object"
+      },
+      "KnowledgeLinkPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "links": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "revision_id": {
+            "format": "uuid",
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "format": "uuid",
+            "title": "Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision_id",
+          "links",
+          "snapshot_id"
+        ],
+        "title": "KnowledgeLinkPageModel",
         "type": "object"
       },
       "KnowledgeNodeKind": {
@@ -4484,7 +4807,9 @@
           "file",
           "note",
           "artifact",
-          "memory"
+          "memory",
+          "task",
+          "obsidian"
         ],
         "title": "KnowledgeNodeKind",
         "type": "string"
@@ -4498,6 +4823,393 @@
           "discussed_in"
         ],
         "title": "KnowledgeRelationKind",
+        "type": "string"
+      },
+      "KnowledgeRevisionModel": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "frontmatter": {
+            "additionalProperties": true,
+            "title": "Frontmatter",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "links": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "provenance": {
+            "additionalProperties": true,
+            "title": "Provenance",
+            "type": "object"
+          },
+          "relative_path": {
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "revision_hash": {
+            "title": "Revision Hash",
+            "type": "string"
+          },
+          "source_cursor": {
+            "title": "Source Cursor",
+            "type": "integer"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "item_id",
+          "source_id",
+          "project_id",
+          "revision",
+          "relative_path",
+          "title",
+          "kind",
+          "content",
+          "content_hash",
+          "revision_hash",
+          "links",
+          "frontmatter",
+          "provenance",
+          "source_cursor",
+          "created_at"
+        ],
+        "title": "KnowledgeRevisionModel",
+        "type": "object"
+      },
+      "KnowledgeRevisionPageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeRevisionModel"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "snapshot_hash": {
+            "title": "Snapshot Hash",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "format": "uuid",
+            "title": "Snapshot Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "snapshot_id",
+          "snapshot_hash"
+        ],
+        "title": "KnowledgeRevisionPageModel",
+        "type": "object"
+      },
+      "KnowledgeSearchInput": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 20,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "query": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "format": "uuid",
+            "title": "Snapshot Id",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "snapshot_id",
+          "query"
+        ],
+        "title": "KnowledgeSearchInput",
+        "type": "object"
+      },
+      "KnowledgeSnapshotItemModel": {
+        "additionalProperties": false,
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "relative_path": {
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "revision_hash": {
+            "title": "Revision Hash",
+            "type": "string"
+          },
+          "revision_id": {
+            "format": "uuid",
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "source_id": {
+            "format": "uuid",
+            "title": "Source Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ordinal",
+          "item_id",
+          "revision_id",
+          "source_id",
+          "relative_path",
+          "title",
+          "content_hash",
+          "revision_hash"
+        ],
+        "title": "KnowledgeSnapshotItemModel",
+        "type": "object"
+      },
+      "KnowledgeSnapshotModel": {
+        "additionalProperties": false,
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "degraded_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degraded Reason"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeSnapshotItemModel"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "source_cursor": {
+            "title": "Source Cursor",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "conversation_id",
+          "task_id",
+          "source_cursor",
+          "status",
+          "degraded_reason",
+          "content_hash",
+          "items",
+          "created_at"
+        ],
+        "title": "KnowledgeSnapshotModel",
+        "type": "object"
+      },
+      "KnowledgeSourceModel": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "display_path": {
+            "title": "Display Path",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "sync_cursor": {
+            "title": "Sync Cursor",
+            "type": "integer"
+          },
+          "transport_availability": {
+            "$ref": "#/components/schemas/KnowledgeTransportAvailability",
+            "default": "local_device_only"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "kind",
+          "display_name",
+          "display_path",
+          "status",
+          "revision",
+          "sync_cursor",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "KnowledgeSourceModel",
+        "type": "object"
+      },
+      "KnowledgeSourcePageModel": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeSourceModel"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "KnowledgeSourcePageModel",
+        "type": "object"
+      },
+      "KnowledgeTransportAvailability": {
+        "enum": [
+          "local_device_only",
+          "normalized_content_only"
+        ],
+        "title": "KnowledgeTransportAvailability",
         "type": "string"
       },
       "ManagedDocumentModel": {
@@ -8665,12 +9377,17 @@
               }
             ],
             "title": "Source Version Id"
+          },
+          "watermark": {
+            "title": "Watermark",
+            "type": "string"
           }
         },
         "required": [
           "project_id",
           "source_version_id",
           "source_revision",
+          "watermark",
           "file_count",
           "note_count",
           "conversation_count",
@@ -10179,6 +10896,30 @@
             "title": "Forbidden Write Paths",
             "type": "array"
           },
+          "knowledge_snapshot_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Snapshot Hash"
+          },
+          "knowledge_snapshot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Snapshot Id"
+          },
           "memory_read_scope": {
             "items": {
               "type": "string"
@@ -11335,10 +12076,58 @@
           "execution_target": {
             "$ref": "#/components/schemas/ExecutionTarget"
           },
+          "harness_manifest_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness Manifest Hash"
+          },
+          "harness_manifest_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness Manifest Id"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "knowledge_snapshot_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Snapshot Hash"
+          },
+          "knowledge_snapshot_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Snapshot Id"
           },
           "memory_snapshot_hash": {
             "anyOf": [
@@ -16407,6 +17196,77 @@
         "summary": "Present File"
       }
     },
+    "/v1/harness/manifests/{manifest_id}": {
+      "get": {
+        "operationId": "harness.manifests.get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "manifest_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Manifest Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HarnessContextManifestModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Harness Manifest"
+      }
+    },
     "/v1/health": {
       "get": {
         "operationId": "health",
@@ -16944,6 +17804,300 @@
           }
         ],
         "summary": "Restore Trash Item"
+      }
+    },
+    "/v1/knowledge/revisions/{revision_id}": {
+      "get": {
+        "operationId": "knowledge.read",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "snapshot_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Snapshot Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeRevisionModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Knowledge Revision"
+      }
+    },
+    "/v1/knowledge/revisions/{revision_id}/links": {
+      "get": {
+        "operationId": "knowledge.links",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "revision_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Revision Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "snapshot_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Snapshot Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeLinkPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Knowledge Revision Links"
+      }
+    },
+    "/v1/knowledge/search": {
+      "post": {
+        "operationId": "knowledge.search",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeSearchInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeRevisionPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Knowledge"
+      }
+    },
+    "/v1/knowledge/snapshots/{snapshot_id}": {
+      "get": {
+        "operationId": "knowledge.snapshots.get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "snapshot_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Snapshot Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSnapshotModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Knowledge Snapshot"
       }
     },
     "/v1/mcp/presets/{catalog_id}": {
@@ -20183,6 +21337,67 @@
         "summary": "Get Project Knowledge"
       }
     },
+    "/v1/projects/{project_id}/knowledge/collections": {
+      "get": {
+        "operationId": "knowledge.collections.list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeCollectionPageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Project Knowledge Collections"
+      }
+    },
     "/v1/projects/{project_id}/knowledge/graph": {
       "get": {
         "operationId": "knowledge.graph.get",
@@ -20329,6 +21544,67 @@
           }
         ],
         "summary": "List Project Knowledge Items"
+      }
+    },
+    "/v1/projects/{project_id}/knowledge/sources": {
+      "get": {
+        "operationId": "knowledge.sources.list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSourcePageModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Project Knowledge Sources"
       }
     },
     "/v1/projects/{project_id}/metadata": {

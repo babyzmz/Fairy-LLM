@@ -197,20 +197,14 @@ class CoreServiceEndpointsMixin:
 
     def _list_memory_proposals(self, request: BaseModel) -> dict[str, Any]:
         return {
-            "items": self._memory_application.list_proposals(
-                cast(MemoryProposalListInput, request)
-            )
+            "items": self._memory_application.list_proposals(cast(MemoryProposalListInput, request))
         }
 
     def _accept_memory_proposal(self, request: BaseModel) -> Any:
-        return self._memory_application.accept_proposal(
-            cast(MemoryProposalActionInput, request)
-        )
+        return self._memory_application.accept_proposal(cast(MemoryProposalActionInput, request))
 
     def _reject_memory_proposal(self, request: BaseModel) -> Any:
-        return self._memory_application.reject_proposal(
-            cast(MemoryProposalActionInput, request)
-        )
+        return self._memory_application.reject_proposal(cast(MemoryProposalActionInput, request))
 
     def _create_task(self, request: BaseModel) -> Any:
         return self._application.create_task(cast(TaskCreate, request))

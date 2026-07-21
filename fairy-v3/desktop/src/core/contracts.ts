@@ -1,5 +1,8 @@
 import type { components, operations } from "./generated/api";
 import type {
+  KnowledgeSyncRun,
+  KnowledgeSyncRunInput,
+  KnowledgeSyncStartInput,
   ObsidianConnectorHealth,
   ObsidianSource,
   ObsidianSourceCreateInput,
@@ -13,6 +16,9 @@ import type {
 } from "./localContracts";
 
 export type {
+  KnowledgeSyncRun,
+  KnowledgeSyncRunInput,
+  KnowledgeSyncStartInput,
   ObsidianConnectorHealth,
   ObsidianReadScope,
   ObsidianSource,
@@ -91,6 +97,15 @@ export type KnowledgeItemPage = Schemas["KnowledgeItemPageModel"];
 export type KnowledgeItemListInput = NonNullable<operations["knowledge.items.list"]["parameters"]["query"]> & {
   project_id: string;
 };
+export type HarnessContextManifest = Schemas["HarnessContextManifestModel"];
+export type KnowledgeCollection = Schemas["KnowledgeCollectionModel"];
+export type KnowledgeCollectionPage = Schemas["KnowledgeCollectionPageModel"];
+export type KnowledgeLinkPage = Schemas["KnowledgeLinkPageModel"];
+export type KnowledgeRevision = Schemas["KnowledgeRevisionModel"];
+export type KnowledgeRevisionPage = Schemas["KnowledgeRevisionPageModel"];
+export type KnowledgeSnapshot = Schemas["KnowledgeSnapshotModel"];
+export type KnowledgeSource = Schemas["KnowledgeSourceModel"];
+export type KnowledgeSourcePage = Schemas["KnowledgeSourcePageModel"];
 export type ProjectKnowledgeOverview = Schemas["ProjectKnowledgeOverviewModel"];
 export type MemoryClaim = Schemas["MemoryClaimModel"];
 export type MemoryClaimContext = Schemas["MemoryClaimContextModel"];
@@ -323,6 +338,37 @@ export interface CoreMethodMap {
     params: { project_id: string };
     result: ProjectKnowledgeOverview;
   };
+  "knowledge.sources.list": {
+    params: { project_id: string };
+    result: KnowledgeSourcePage;
+  };
+  "knowledge.collections.list": {
+    params: { project_id: string };
+    result: KnowledgeCollectionPage;
+  };
+  "knowledge.snapshots.get": {
+    params: { task_id: string; snapshot_id: string };
+    result: KnowledgeSnapshot;
+  };
+  "harness.manifests.get": {
+    params: { task_id: string; manifest_id: string };
+    result: HarnessContextManifest;
+  };
+  "knowledge.search": {
+    params: { task_id: string; snapshot_id: string; query: string; limit?: number };
+    result: KnowledgeRevisionPage;
+  };
+  "knowledge.read": {
+    params: { task_id: string; snapshot_id: string; revision_id: string };
+    result: KnowledgeRevision;
+  };
+  "knowledge.links": {
+    params: { task_id: string; snapshot_id: string; revision_id: string };
+    result: KnowledgeLinkPage;
+  };
+  "knowledge.sync.start": { params: KnowledgeSyncStartInput; result: KnowledgeSyncRun };
+  "knowledge.sync.get": { params: KnowledgeSyncRunInput; result: KnowledgeSyncRun };
+  "knowledge.sync.cancel": { params: KnowledgeSyncRunInput; result: KnowledgeSyncRun };
   "obsidian.health.get": { params: EmptyParams; result: ObsidianConnectorHealth };
   "obsidian.sources.create": { params: ObsidianSourceCreateInput; result: ObsidianSource };
   "obsidian.sources.list": { params: { project_id: string }; result: ObsidianSourcePage };
@@ -611,6 +657,9 @@ export interface CoreMethodMap {
 export type CoreMethodName = keyof CoreMethodMap;
 
 export const LOCAL_ONLY_CORE_METHODS = [
+  "knowledge.sync.cancel",
+  "knowledge.sync.get",
+  "knowledge.sync.start",
   "obsidian.health.get",
   "obsidian.sources.create",
   "obsidian.sources.items.list",

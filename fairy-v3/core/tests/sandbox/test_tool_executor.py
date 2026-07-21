@@ -357,9 +357,7 @@ def test_sandbox_rejects_runtime_servers_before_starting_a_worker(tmp_path: Path
                     sequence=1,
                     tool_call_id="call-server",
                     tool_name="run.sandboxed",
-                    arguments_fragment=(
-                        '{"argv":["python3","-m","http.server","8080"],"cwd":"."}'
-                    ),
+                    arguments_fragment=('{"argv":["python3","-m","http.server","8080"],"cwd":"."}'),
                 ),
                 ModelDelta.done(
                     profile_id="scripted",

@@ -359,9 +359,7 @@ def manual_routing_decision(
         if allowed.category in {ModelCategory.CODE, ModelCategory.FREE_CODE}
         else RoutingTaskKind.GENERAL
     )
-    output_tokens = (
-        CODE_MAX_OUTPUT_TOKENS if task_kind is RoutingTaskKind.CODE else 4_096
-    )
+    output_tokens = CODE_MAX_OUTPUT_TOKENS if task_kind is RoutingTaskKind.CODE else 4_096
     estimate = estimate_text_cost(
         catalog,
         calls=((selection.model_id, output_tokens),),

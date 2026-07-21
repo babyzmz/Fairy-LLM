@@ -15,6 +15,8 @@ from fairy_core.commanding.sqlalchemy import SqlAlchemyCommandLedger
 from fairy_core.documents.ports import DocumentRepository, DocumentSearchIndex
 from fairy_core.documents.repository import SqlAlchemyDocumentRepository
 from fairy_core.documents.search import SqlAlchemyDocumentSearchIndex
+from fairy_core.knowledge.ports import KnowledgeRepository
+from fairy_core.knowledge.repository import SqlAlchemyKnowledgeRepository
 from fairy_core.mcp.repository import McpServerRepository, SqlAlchemyMcpServerRepository
 from fairy_core.memory.ports import MemoryRepository
 from fairy_core.memory.retrieval_ports import (
@@ -59,6 +61,7 @@ class CoreUnitOfWork(Protocol):
     memory_projections: MemoryProjectionWriter
     documents: DocumentRepository
     document_search: DocumentSearchIndex
+    knowledge: KnowledgeRepository
     workspaces: WorkspaceRepository
     project_indexes: ProjectIndexRepository
     presentations: PresentationRepository
@@ -138,6 +141,10 @@ class SqlAlchemyUnitOfWork:
                 tenant_id=self._tenant_id,
             )
             self.document_search = SqlAlchemyDocumentSearchIndex(
+                connection,
+                tenant_id=self._tenant_id,
+            )
+            self.knowledge = SqlAlchemyKnowledgeRepository(
                 connection,
                 tenant_id=self._tenant_id,
             )

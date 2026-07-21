@@ -17,12 +17,15 @@ from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus, Tu
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
 from fairy_core.assistant.work_queue import AssistantTurnWorkClaim
 from fairy_core.commanding.models import CommandRun, CommandStatus, EventVisibility
+from fairy_core.commanding.registry import ToolRegistry
+from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.domain.errors import (
     IdempotencyConflictError,
     InvalidTransitionError,
     VersionConflictError,
 )
 from fairy_core.domain.models import ScopeContract, Task
+from fairy_core.knowledge.harness import HarnessManifestBuilder, KnowledgeSnapshotBuilder
 from fairy_core.model_catalog.models import ModelSelectionSnapshot
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.storage.pagination import StatePage
@@ -37,9 +40,16 @@ class AssistantLedgerApplication:
         *,
         unit_of_work_factory: CoreUnitOfWorkFactory,
         scope_resolver: ScopeResolver,
+        registry: ToolRegistry | None = None,
+        execution_policy: ExecutionPolicyResolver | None = None,
     ) -> None:
         self._unit_of_work_factory = unit_of_work_factory
         self._scope_resolver = scope_resolver
+        self._knowledge_snapshots = KnowledgeSnapshotBuilder()
+        self._harness_manifests = HarnessManifestBuilder(
+            registry or ToolRegistry(),
+            execution_policy,
+        )
         self._trace = TurnTraceRuntime(unit_of_work_factory)
 
     def create_turn(
@@ -54,7 +64,6 @@ class AssistantLedgerApplication:
             task = unit_of_work.state.get_task(task_id)
             if task is None:
                 raise KeyError(f"task not found: {task_id}")
-            scope = self._scope_resolver(unit_of_work.state, task)
             if model_selection is not None:
                 current_selection = unit_of_work.model_catalog.get_selection()
                 if (
@@ -67,6 +76,7 @@ class AssistantLedgerApplication:
                     raise VersionConflictError("model selection changed before Turn creation")
             existing = unit_of_work.assistant.find_turn_by_idempotency_key(idempotency_key.strip())
             if existing is not None:
+                scope = self._scope_resolver(unit_of_work.state, task)
                 self._validate_replay(
                     existing,
                     task=task,
@@ -77,6 +87,12 @@ class AssistantLedgerApplication:
                 if self._ensure_trace(unit_of_work, existing, legacy=True):
                     unit_of_work.commit()
                 return existing
+            scope = self._bind_harness_context(
+                unit_of_work,
+                task=task,
+                profile_id=profile_id,
+                model_selection=model_selection,
+            )
             turn = AssistantTurn.create(
                 task=task,
                 scope=scope,
@@ -109,6 +125,78 @@ class AssistantLedgerApplication:
             unit_of_work.assistant.append_message(message)
             unit_of_work.commit()
         return turn
+
+    def _bind_harness_context(
+        self,
+        unit_of_work,
+        *,
+        task: Task,
+        profile_id: str,
+        model_selection: ModelSelectionSnapshot | None,
+    ) -> ScopeContract:
+        if task.knowledge_snapshot_id is None:
+            snapshot = self._knowledge_snapshots.build(unit_of_work, task=task)
+            task.bind_knowledge_snapshot(snapshot.id, snapshot.content_hash)
+            unit_of_work.state.save_task(task)
+            unit_of_work.commands.append_domain_event(
+                event_type="knowledge.snapshot.created",
+                visibility=EventVisibility.DEVELOPER,
+                message="Knowledge snapshot created",
+                payload={
+                    "snapshot_id": str(snapshot.id),
+                    "snapshot_hash": snapshot.content_hash,
+                    "item_count": len(snapshot.items),
+                    "source_cursor": snapshot.source_cursor,
+                    "status": snapshot.status.value,
+                },
+                actor="core",
+                project_id=task.project_id,
+                conversation_id=task.conversation_id,
+                task_id=task.id,
+            )
+        else:
+            snapshot = unit_of_work.knowledge.get_snapshot(
+                task.knowledge_snapshot_id,
+                task_id=task.id,
+            )
+            if snapshot is None or snapshot.content_hash != task.knowledge_snapshot_hash:
+                raise ValueError("Task-bound Knowledge Snapshot is unavailable")
+        scope = self._scope_resolver(unit_of_work.state, task)
+        if task.harness_manifest_id is None:
+            manifest = self._harness_manifests.build(
+                unit_of_work,
+                task=task,
+                scope=scope,
+                knowledge_snapshot=snapshot,
+                profile_id=profile_id,
+                model_selection=model_selection,
+            )
+            task.bind_harness_manifest(manifest.id, manifest.content_hash)
+            unit_of_work.state.save_task(task)
+            unit_of_work.commands.append_domain_event(
+                event_type="harness.manifest.created",
+                visibility=EventVisibility.DEVELOPER,
+                message="Harness context manifest created",
+                payload={
+                    "manifest_id": str(manifest.id),
+                    "manifest_hash": manifest.content_hash,
+                    "knowledge_snapshot_id": str(manifest.knowledge_snapshot_id),
+                    "memory_snapshot_id": str(manifest.memory_snapshot_id),
+                    "tool_registry_generation": manifest.tool_registry_generation,
+                },
+                actor="core",
+                project_id=task.project_id,
+                conversation_id=task.conversation_id,
+                task_id=task.id,
+            )
+        else:
+            manifest = unit_of_work.knowledge.get_manifest(
+                task.harness_manifest_id,
+                task_id=task.id,
+            )
+            if manifest is None or manifest.content_hash != task.harness_manifest_hash:
+                raise ValueError("Task-bound Harness Manifest is unavailable")
+        return self._scope_resolver(unit_of_work.state, task)
 
     def get_turn(self, turn_id: UUID) -> AssistantTurn:
         with self._unit_of_work_factory() as unit_of_work:
@@ -492,6 +580,10 @@ class AssistantLedgerApplication:
             or existing.scope_digest != scope.scope_digest
             or existing.memory_snapshot_id != task.memory_snapshot_id
             or existing.memory_snapshot_hash != task.memory_snapshot_hash
+            or existing.knowledge_snapshot_id != task.knowledge_snapshot_id
+            or existing.knowledge_snapshot_hash != task.knowledge_snapshot_hash
+            or existing.harness_manifest_id != task.harness_manifest_id
+            or existing.harness_manifest_hash != task.harness_manifest_hash
             or existing.model_selection != model_selection
         ):
             raise IdempotencyConflictError(

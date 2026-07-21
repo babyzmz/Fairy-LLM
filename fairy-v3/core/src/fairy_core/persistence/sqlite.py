@@ -10,6 +10,7 @@ from fairy_core.commanding.sqlite_migrations import (
     prepare_pre_tenant_schema,
 )
 from fairy_core.documents.sqlite_fts import initialize_document_sqlite_fts
+from fairy_core.knowledge.schema import knowledge_metadata
 from fairy_core.memory.schema import memory_metadata
 from fairy_core.memory.sqlite_fts import initialize_sqlite_fts
 from fairy_core.persistence.sqlite_split_migration import import_split_sqlite_databases
@@ -21,6 +22,9 @@ from fairy_core.storage.sqlite_migrations import (
     migrate_checkpoint_evidence,
     migrate_generic_approval,
     migrate_history_metadata,
+    migrate_knowledge_harness_binding,
+    migrate_knowledge_manifest_tools,
+    migrate_knowledge_sync_leases,
     migrate_mcp_request_results,
     migrate_pre_tenant_schema,
     migrate_project_lifecycle,
@@ -49,6 +53,7 @@ def create_sqlite_core_engine(
         migrate_runtime_graph(engine)
         initialize_document_sqlite_fts(engine)
         migrate_task_snapshot_binding(engine)
+        migrate_knowledge_harness_binding(engine)
         migrate_history_metadata(engine)
         migrate_project_lifecycle(engine)
         migrate_generic_approval(engine)
@@ -56,6 +61,9 @@ def create_sqlite_core_engine(
         migrate_mcp_request_results(engine)
         command_metadata.create_all(engine)
         memory_metadata.create_all(engine)
+        knowledge_metadata.create_all(engine)
+        migrate_knowledge_manifest_tools(engine)
+        migrate_knowledge_sync_leases(engine)
         initialize_sqlite_fts(engine)
         migrate_pre_tenant_schema(engine, tenant_id=tenant_id)
         migrate_pre_tenant_ledger(engine, tenant_id=tenant_id)

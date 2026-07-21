@@ -265,9 +265,7 @@ class GameMemoryDigest:
             played_at=played_at.astimezone(UTC),
             duration_seconds=duration_seconds,
             activities=normalized_activities,
-            progress_summary=_clean_text(
-                progress_summary, name="progress_summary", maximum=800
-            ),
+            progress_summary=_clean_text(progress_summary, name="progress_summary", maximum=800),
             next_goal=(
                 _clean_text(next_goal, name="next_goal", maximum=300)
                 if next_goal is not None

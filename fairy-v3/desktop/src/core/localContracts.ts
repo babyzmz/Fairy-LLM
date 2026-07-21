@@ -86,3 +86,31 @@ export interface ObsidianSyncResult {
   deleted_count: number;
   failed_count: number;
 }
+
+export interface KnowledgeSyncStartInput {
+  source_id: string;
+  expected_revision: number;
+  idempotency_key: string;
+}
+
+export interface KnowledgeSyncRunInput {
+  run_id: string;
+}
+
+export interface KnowledgeSyncRun {
+  id: string;
+  source_id: string;
+  project_id: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "interrupted";
+  expected_source_revision: number;
+  source_cursor: number;
+  scanned_count: number;
+  changed_count: number;
+  deleted_count: number;
+  failed_count: number;
+  error_code: string | null;
+  attempts: number;
+  cancellation_revision: number;
+  started_at: string;
+  completed_at: string | null;
+}

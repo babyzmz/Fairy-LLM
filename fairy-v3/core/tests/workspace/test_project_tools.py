@@ -309,11 +309,10 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
         assert [
             step["status"] for step in completed_plan["steps"] if step["kind"] == "implement"
         ] == ["completed"]
-        assert next(
-            step["status"]
-            for step in completed_plan["steps"]
-            if step["kind"] == "checkpoint"
-        ) == "pending"
+        assert (
+            next(step["status"] for step in completed_plan["steps"] if step["kind"] == "checkpoint")
+            == "pending"
+        )
 
         service.invoke("tasks.review", {"task_id": context["task"]["id"]})
         reviewed_plan = service.invoke(
@@ -321,10 +320,7 @@ def test_edit_tool_creates_a_changeset_approval_without_writing_files(tmp_path: 
             {"task_id": context["task"]["id"]},
         )
         assert reviewed_plan["plan"]["status"] == "completed"
-        assert all(
-            step["status"] in {"completed", "skipped"}
-            for step in reviewed_plan["steps"]
-        )
+        assert all(step["status"] in {"completed", "skipped"} for step in reviewed_plan["steps"])
     finally:
         service.close()
 
@@ -463,9 +459,7 @@ def test_scratch_edit_accepts_zero_hash_for_new_files_and_applies_complete_batch
             None,
         ]
         assert (root / "index.html").read_text(encoding="utf-8") == "<main>Fairy</main>"
-        assert (root / "styles.css").read_text(encoding="utf-8") == (
-            "main { color: teal; }"
-        )
+        assert (root / "styles.css").read_text(encoding="utf-8") == ("main { color: teal; }")
         assert (root / "main.js").read_text(encoding="utf-8") == (
             "document.body.dataset.ready = 'true';"
         )
@@ -636,9 +630,7 @@ def test_final_response_retries_when_plan_has_no_changeset(tmp_path: Path) -> No
             for step in trace["steps"]
         )
         root = Path(context["target_version"]["project_root"])
-        assert (root / "index.html").read_text(encoding="utf-8") == (
-            "<h1>Recovered</h1>"
-        )
+        assert (root / "index.html").read_text(encoding="utf-8") == ("<h1>Recovered</h1>")
     finally:
         service.close()
 
@@ -889,9 +881,7 @@ def test_preview_status_prepares_the_completed_static_workspace(tmp_path: Path) 
         assert '"status":"ready"' in preview_result
         assert preview["preview"]["status"] == "ready"
         assert execution_plan["plan"]["status"] == "completed"
-        assert "execution.plan" not in {
-            tool.name for tool in provider.requests[1].tools
-        }
+        assert "execution.plan" not in {tool.name for tool in provider.requests[1].tools}
         assert [tool.name for tool in provider.requests[3].tools] == ["direct_answer"]
     finally:
         service.close()

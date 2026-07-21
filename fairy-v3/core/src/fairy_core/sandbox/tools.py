@@ -233,11 +233,7 @@ def _starts_runtime_server(argv: tuple[str, ...]) -> bool:
     if executable in {"vite", "uvicorn", "gunicorn", "flask", "http-server", "serve"}:
         return True
     if executable in {"python", "python3", "py"}:
-        modules = {
-            lowered[index + 1]
-            for index, value in enumerate(lowered[:-1])
-            if value == "-m"
-        }
+        modules = {lowered[index + 1] for index, value in enumerate(lowered[:-1]) if value == "-m"}
         if modules & {"http.server", "uvicorn", "gunicorn", "flask"}:
             return True
     if executable in {"npm", "pnpm", "yarn", "bun"}:

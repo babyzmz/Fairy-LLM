@@ -148,9 +148,7 @@ def test_model_memory_suggestion_remains_pending_until_user_accepts(tmp_path: Pa
 
     assert suggestion.status.value == "pending"
     assert suggestion.authority.value == "model_suggestion"
-    assert memory.list_proposals(
-        MemoryProposalListInput(task_id=task.task.id)
-    ) == (suggestion,)
+    assert memory.list_proposals(MemoryProposalListInput(task_id=task.task.id)) == (suggestion,)
 
     accepted = memory.accept_proposal(
         MemoryProposalActionInput(

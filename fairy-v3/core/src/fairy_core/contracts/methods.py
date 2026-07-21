@@ -70,10 +70,24 @@ from fairy_core.contracts.history import (
     TrashPurgeResultModel,
 )
 from fairy_core.contracts.knowledge import (
+    HarnessContextManifestModel,
+    HarnessManifestGetInput,
+    KnowledgeCollectionPageModel,
     KnowledgeGraphModel,
     KnowledgeItemListInput,
     KnowledgeItemPageModel,
+    KnowledgeLinkPageModel,
     KnowledgeProjectInput,
+    KnowledgeRevisionModel,
+    KnowledgeRevisionPageModel,
+    KnowledgeRevisionReadInput,
+    KnowledgeSearchInput,
+    KnowledgeSnapshotGetInput,
+    KnowledgeSnapshotModel,
+    KnowledgeSourcePageModel,
+    KnowledgeSyncRunInput,
+    KnowledgeSyncRunModel,
+    KnowledgeSyncStartInput,
     ProjectKnowledgeOverviewModel,
 )
 from fairy_core.contracts.media import (
@@ -657,6 +671,59 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "knowledge.projects.overview",
             KnowledgeProjectInput,
             ProjectKnowledgeOverviewModel,
+        ),
+        "knowledge.sources.list": CoreMethod(
+            "knowledge.sources.list",
+            KnowledgeProjectInput,
+            KnowledgeSourcePageModel,
+        ),
+        "knowledge.collections.list": CoreMethod(
+            "knowledge.collections.list",
+            KnowledgeProjectInput,
+            KnowledgeCollectionPageModel,
+        ),
+        "knowledge.snapshots.get": CoreMethod(
+            "knowledge.snapshots.get",
+            KnowledgeSnapshotGetInput,
+            KnowledgeSnapshotModel,
+        ),
+        "harness.manifests.get": CoreMethod(
+            "harness.manifests.get",
+            HarnessManifestGetInput,
+            HarnessContextManifestModel,
+        ),
+        "knowledge.search": CoreMethod(
+            "knowledge.search",
+            KnowledgeSearchInput,
+            KnowledgeRevisionPageModel,
+        ),
+        "knowledge.read": CoreMethod(
+            "knowledge.read",
+            KnowledgeRevisionReadInput,
+            KnowledgeRevisionModel,
+        ),
+        "knowledge.links": CoreMethod(
+            "knowledge.links",
+            KnowledgeRevisionReadInput,
+            KnowledgeLinkPageModel,
+        ),
+        "knowledge.sync.start": CoreMethod(
+            "knowledge.sync.start",
+            KnowledgeSyncStartInput,
+            KnowledgeSyncRunModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "knowledge.sync.get": CoreMethod(
+            "knowledge.sync.get",
+            KnowledgeSyncRunInput,
+            KnowledgeSyncRunModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "knowledge.sync.cancel": CoreMethod(
+            "knowledge.sync.cancel",
+            KnowledgeSyncRunInput,
+            KnowledgeSyncRunModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "projects.create": CoreMethod(
             "projects.create",

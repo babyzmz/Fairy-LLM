@@ -178,6 +178,17 @@ describe("CloudCoreTransport", () => {
       status: 400,
       errorCode: "CAPABILITY_NOT_AVAILABLE",
     });
+    await expect(
+      transport.call("knowledge.sync.start", {
+        source_id: "0198f4de-0114-7000-8000-000000000001",
+        expected_revision: 1,
+        idempotency_key: "knowledge-sync:local-only",
+      }),
+    ).rejects.toMatchObject({
+      name: "CloudCoreError",
+      status: 400,
+      errorCode: "CAPABILITY_NOT_AVAILABLE",
+    });
     expect(fetcher).not.toHaveBeenCalled();
   });
 

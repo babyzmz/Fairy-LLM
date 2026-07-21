@@ -49,6 +49,35 @@ const routes = {
     getWithQuery(`/v1/projects/${pathParameter(params, "project_id")}/knowledge/items`, params, ["query", "limit"]),
   "knowledge.graph.get": (params) =>
     get(`/v1/projects/${pathParameter(params, "project_id")}/knowledge/graph`),
+  "knowledge.sources.list": (params) =>
+    get(`/v1/projects/${pathParameter(params, "project_id")}/knowledge/sources`),
+  "knowledge.collections.list": (params) =>
+    get(`/v1/projects/${pathParameter(params, "project_id")}/knowledge/collections`),
+  "knowledge.snapshots.get": (params) =>
+    getWithQuery(
+      `/v1/knowledge/snapshots/${pathParameter(params, "snapshot_id")}`,
+      params,
+      ["task_id"],
+    ),
+  "harness.manifests.get": (params) =>
+    getWithQuery(
+      `/v1/harness/manifests/${pathParameter(params, "manifest_id")}`,
+      params,
+      ["task_id"],
+    ),
+  "knowledge.search": (params) => post("/v1/knowledge/search", params),
+  "knowledge.read": (params) =>
+    getWithQuery(
+      `/v1/knowledge/revisions/${pathParameter(params, "revision_id")}`,
+      params,
+      ["task_id", "snapshot_id"],
+    ),
+  "knowledge.links": (params) =>
+    getWithQuery(
+      `/v1/knowledge/revisions/${pathParameter(params, "revision_id")}/links`,
+      params,
+      ["task_id", "snapshot_id"],
+    ),
   "trash.items.list": (params) => getWithQuery("/v1/history/trash", params, ["limit", "cursor"]),
   "trash.items.restore": (params) =>
     post(

@@ -66,6 +66,7 @@ class CommandLedger(Protocol):
         actor: str,
         project_id: UUID | None = None,
         conversation_id: UUID | None = None,
+        task_id: UUID | None = None,
         version_id: UUID | None = None,
     ) -> EventEnvelope: ...
 

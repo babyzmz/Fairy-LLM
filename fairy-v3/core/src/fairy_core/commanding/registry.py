@@ -316,147 +316,11 @@ def _tool(
 def _information_definitions(
     profiles: frozenset[PermissionProfile],
 ) -> list[ToolDefinition]:
-    shared = {
-        "effect": SideEffect.READ,
-        "risk": RiskLevel.LOW,
-        "approval": ApprovalPolicy.NEVER,
-        "profiles": profiles,
-        "executor": "information_tools",
-    }
-    return [
-        _tool(
-            "info.weather",
-            shared["effect"],
-            shared["risk"],
-            shared["approval"],
-            shared["profiles"],
-            shared["executor"],
-            idempotent=True,
-            description="Get current weather for an explicitly resolved location.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "minLength": 2, "maxLength": 500},
-                    "country_code": {"type": "string", "minLength": 2, "maxLength": 2},
-                    "candidate_index": {"type": "integer", "minimum": 1, "maximum": 5},
-                    "units": {"type": "string", "enum": ["metric", "imperial"]},
-                },
-                "required": ["location"],
-                "additionalProperties": False,
-            },
-        ),
-        _tool(
-            "info.news",
-            shared["effect"],
-            shared["risk"],
-            shared["approval"],
-            shared["profiles"],
-            shared["executor"],
-            idempotent=True,
-            description="Search current news sources with publication provenance.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "minLength": 1, "maxLength": 2_000},
-                    "count": {"type": "integer", "minimum": 1, "maximum": 10},
-                    "freshness": {"type": "string", "maxLength": 64},
-                },
-                "required": ["query"],
-                "additionalProperties": False,
-            },
-        ),
-        _tool(
-            "info.time",
-            shared["effect"],
-            shared["risk"],
-            shared["approval"],
-            shared["profiles"],
-            shared["executor"],
-            idempotent=True,
-            description="Convert the current instant to an IANA time zone.",
-            input_schema={
-                "type": "object",
-                "properties": {"timezone": {"type": "string", "minLength": 3, "maxLength": 255}},
-                "required": ["timezone"],
-                "additionalProperties": False,
-            },
-        ),
-        _tool(
-            "info.map",
-            shared["effect"],
-            shared["risk"],
-            shared["approval"],
-            shared["profiles"],
-            shared["executor"],
-            idempotent=True,
-            description="Generate an encoded OpenStreetMap search link.",
-            input_schema={
-                "type": "object",
-                "properties": {"query": {"type": "string", "minLength": 1, "maxLength": 1_000}},
-                "required": ["query"],
-                "additionalProperties": False,
-            },
-        ),
-        _tool(
-            "info.stock",
-            shared["effect"],
-            shared["risk"],
-            shared["approval"],
-            shared["profiles"],
-            shared["executor"],
-            idempotent=True,
-            description="Get a delayed or last-close stock quote.",
-            input_schema={
-                "type": "object",
-                "properties": {"symbol": {"type": "string", "minLength": 1, "maxLength": 16}},
-                "required": ["symbol"],
-                "additionalProperties": False,
-            },
-        ),
-        _tool(
-            "info.fx",
-            shared["effect"],
-            shared["risk"],
-            shared["approval"],
-            shared["profiles"],
-            shared["executor"],
-            idempotent=True,
-            description="Convert currencies using a dated central-bank reference rate.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "base": {"type": "string", "minLength": 3, "maxLength": 3},
-                    "quote": {"type": "string", "minLength": 3, "maxLength": 3},
-                    "amount": {"type": "number", "minimum": 0, "maximum": 1e15},
-                },
-                "required": ["base", "quote"],
-                "additionalProperties": False,
-            },
-        ),
-        _tool(
-            "info.crypto",
-            shared["effect"],
-            shared["risk"],
-            shared["approval"],
-            shared["profiles"],
-            shared["executor"],
-            idempotent=True,
-            description="Get a dated cryptocurrency close in the requested market currency.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "symbol": {"type": "string", "minLength": 1, "maxLength": 16},
-                    "market_currency": {
-                        "type": "string",
-                        "minLength": 3,
-                        "maxLength": 3,
-                    },
-                },
-                "required": ["symbol", "market_currency"],
-                "additionalProperties": False,
-            },
-        ),
-    ]
+    from fairy_core.commanding.information_definitions import (
+        build_information_definitions,
+    )
+
+    return build_information_definitions(profiles)
 
 
 def _system_action_definitions(
@@ -960,6 +824,63 @@ def build_default_registry() -> ToolRegistry:
                     "limit": {"type": "integer", "minimum": 1, "maximum": 20},
                 },
                 "required": ["query"],
+                "additionalProperties": False,
+            },
+        ),
+        _tool(
+            "knowledge.search",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "knowledge_application",
+            idempotent=True,
+            description="Search the immutable Knowledge Snapshot bound to the current Task.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 1, "maxLength": 10_000},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        ),
+        _tool(
+            "knowledge.read",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "knowledge_application",
+            idempotent=True,
+            description=(
+                "Read one immutable Knowledge Revision returned by task-bound knowledge search."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "revision_id": {"type": "string", "format": "uuid"},
+                },
+                "required": ["revision_id"],
+                "additionalProperties": False,
+            },
+        ),
+        _tool(
+            "knowledge.links",
+            SideEffect.READ,
+            RiskLevel.LOW,
+            ApprovalPolicy.NEVER,
+            all_profiles,
+            "knowledge_application",
+            idempotent=True,
+            description="List links captured in one task-bound immutable Knowledge Revision.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "revision_id": {"type": "string", "format": "uuid"},
+                },
+                "required": ["revision_id"],
                 "additionalProperties": False,
             },
         ),

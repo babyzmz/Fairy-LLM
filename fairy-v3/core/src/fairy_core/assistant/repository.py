@@ -123,6 +123,20 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
                     assistant_turns.c.scope_digest == turn.scope_digest,
                     assistant_turns.c.memory_snapshot_id == str(turn.memory_snapshot_id),
                     assistant_turns.c.memory_snapshot_hash == turn.memory_snapshot_hash,
+                    assistant_turns.c.knowledge_snapshot_id
+                    == (
+                        str(turn.knowledge_snapshot_id)
+                        if turn.knowledge_snapshot_id is not None
+                        else None
+                    ),
+                    assistant_turns.c.knowledge_snapshot_hash == turn.knowledge_snapshot_hash,
+                    assistant_turns.c.harness_manifest_id
+                    == (
+                        str(turn.harness_manifest_id)
+                        if turn.harness_manifest_id is not None
+                        else None
+                    ),
+                    assistant_turns.c.harness_manifest_hash == turn.harness_manifest_hash,
                     assistant_turns.c.idempotency_key == turn.idempotency_key,
                     assistant_turns.c.status == expected_status.value,
                     assistant_turns.c.cancellation_revision == expected_cancellation_revision,
@@ -821,6 +835,14 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             "scope_digest": turn.scope_digest,
             "memory_snapshot_id": str(turn.memory_snapshot_id),
             "memory_snapshot_hash": turn.memory_snapshot_hash,
+            "knowledge_snapshot_id": (
+                str(turn.knowledge_snapshot_id) if turn.knowledge_snapshot_id else None
+            ),
+            "knowledge_snapshot_hash": turn.knowledge_snapshot_hash,
+            "harness_manifest_id": (
+                str(turn.harness_manifest_id) if turn.harness_manifest_id else None
+            ),
+            "harness_manifest_hash": turn.harness_manifest_hash,
             "idempotency_key": turn.idempotency_key,
             "model_selection": _model_selection_record(turn.model_selection),
             "routing_decision": (
@@ -871,6 +893,18 @@ class SqlAlchemyAssistantRepository(TurnTraceRepositoryMixin, TurnWorkRepository
             scope_digest=row["scope_digest"],
             memory_snapshot_id=UUID(row["memory_snapshot_id"]),
             memory_snapshot_hash=row["memory_snapshot_hash"],
+            knowledge_snapshot_id=(
+                UUID(row["knowledge_snapshot_id"])
+                if row.get("knowledge_snapshot_id") is not None
+                else None
+            ),
+            knowledge_snapshot_hash=row.get("knowledge_snapshot_hash"),
+            harness_manifest_id=(
+                UUID(row["harness_manifest_id"])
+                if row.get("harness_manifest_id") is not None
+                else None
+            ),
+            harness_manifest_hash=row.get("harness_manifest_hash"),
             idempotency_key=row["idempotency_key"],
             model_selection=_model_selection_from_record(row.get("model_selection")),
             routing_decision=routing_decision_from_record(row.get("routing_decision")),

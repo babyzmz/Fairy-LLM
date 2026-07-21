@@ -131,9 +131,7 @@ class RealtimeApplication:
             return deleted
 
 
-def _resolve_provider(
-    selection: RealtimeProviderSelection, locale: str
-) -> RealtimeProvider:
+def _resolve_provider(selection: RealtimeProviderSelection, locale: str) -> RealtimeProvider:
     if selection is RealtimeProviderSelection.AUTO:
         return (
             RealtimeProvider.GLM_REALTIME_FLASH

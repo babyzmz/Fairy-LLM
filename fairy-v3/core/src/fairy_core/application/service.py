@@ -40,6 +40,7 @@ from fairy_core.commanding.settings import (
     SandboxHealthProvider,
 )
 from fairy_core.contracts.approvals import ApprovalDecisionInput
+from fairy_core.contracts.knowledge import KnowledgeSyncRunInput, KnowledgeSyncStartInput
 from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.contracts.models import (
     AssistantTurnCancelInput,
@@ -77,7 +78,10 @@ from fairy_core.execution.application import (
     ProjectExecutionToolExecutor,
 )
 from fairy_core.execution.plans import TaskStep, TaskStepKind, TaskStepStatus
-from fairy_core.knowledge import ProjectKnowledgeApplication
+from fairy_core.knowledge.application import ProjectKnowledgeApplication
+from fairy_core.knowledge.scheduler import KnowledgeSyncScheduler
+from fairy_core.knowledge.sync import ObsidianKnowledgeSync
+from fairy_core.knowledge.tools import KnowledgeToolExecutor
 from fairy_core.mcp.application import McpApplication
 from fairy_core.mcp.tools import McpToolExecutor
 from fairy_core.media.composition import build_media_composition
@@ -275,6 +279,8 @@ class CoreService(CoreServiceEndpointsMixin):
         self._assistant_ledger = AssistantLedgerApplication(
             unit_of_work_factory=unit_of_work_factory,
             scope_resolver=application.scope_for_task,
+            registry=registry,
+            execution_policy=self._execution_policy,
         )
         self._turn_trace_service = TurnTraceService(unit_of_work_factory)
         self._turn_trace_runtime = TurnTraceRuntime(unit_of_work_factory)
@@ -294,6 +300,10 @@ class CoreService(CoreServiceEndpointsMixin):
         self._media_scheduler = media.scheduler
         self._media_service = media.service
         effective_tool_executor = tool_executor
+        effective_tool_executor = KnowledgeToolExecutor(
+            unit_of_work_factory=unit_of_work_factory,
+            delegate=effective_tool_executor,
+        )
         effective_tool_executor = MemoryToolExecutor(
             application=self._memory_application,
             delegate=effective_tool_executor,
@@ -305,7 +315,7 @@ class CoreService(CoreServiceEndpointsMixin):
                     scope_resolver=application.scope_for_task,
                     fetch_port=research_fetch_port,
                 ),
-                delegate=tool_executor,
+                delegate=effective_tool_executor,
             )
         if (document_parser is None) != (document_blob_store is None):
             raise ValueError("document parser and blob store must be configured together")
@@ -379,6 +389,14 @@ class CoreService(CoreServiceEndpointsMixin):
         )
         self._finalizer = finalize(self, on_close) if on_close is not None else None
         selected_obsidian = obsidian_connector or ObsidianConnector()
+        self._obsidian_knowledge = ObsidianKnowledgeSync(
+            connector=selected_obsidian,
+            unit_of_work_factory=unit_of_work_factory,
+        )
+        self._knowledge_sync_scheduler = KnowledgeSyncScheduler(
+            application=self._obsidian_knowledge,
+            unit_of_work_factory=unit_of_work_factory,
+        )
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
             "approvals.decide": self._decide_approval,
             "approvals.list": self._list_approvals,
@@ -400,7 +418,7 @@ class CoreService(CoreServiceEndpointsMixin):
             ),
             **knowledge_service_handlers(ProjectKnowledgeApplication(unit_of_work_factory)),
             "obsidian.health.get": lambda _request: selected_obsidian.health(),
-            "obsidian.sources.create": lambda request: selected_obsidian.create_source(
+            "obsidian.sources.create": lambda request: self._obsidian_knowledge.create_source(
                 cast(ObsidianSourceCreateInput, request)
             ),
             "obsidian.sources.items.list": lambda request: selected_obsidian.list_items(
@@ -412,8 +430,15 @@ class CoreService(CoreServiceEndpointsMixin):
             "obsidian.sources.list": lambda request: selected_obsidian.list_sources(
                 cast(ObsidianSourceListInput, request)
             ),
-            "obsidian.sync.start": lambda request: selected_obsidian.sync(
-                cast(ObsidianSourceSyncInput, request)
+            "obsidian.sync.start": self._sync_obsidian_compatibility,
+            "knowledge.sync.start": lambda request: self._knowledge_sync_scheduler.start(
+                cast(KnowledgeSyncStartInput, request)
+            ),
+            "knowledge.sync.get": lambda request: self._knowledge_sync_scheduler.get(
+                cast(KnowledgeSyncRunInput, request).run_id
+            ),
+            "knowledge.sync.cancel": lambda request: self._knowledge_sync_scheduler.cancel(
+                cast(KnowledgeSyncRunInput, request).run_id
             ),
             "documents.delete": self._delete_document,
             "documents.get": self._get_document,
@@ -485,6 +510,7 @@ class CoreService(CoreServiceEndpointsMixin):
             raise RuntimeError("Core service handlers do not match the public method catalog")
 
     def close(self) -> None:
+        self._knowledge_sync_scheduler.close()
         self._assistant_scheduler.close()
         if self._media_scheduler is not None:
             self._media_scheduler.close()
@@ -498,6 +524,20 @@ class CoreService(CoreServiceEndpointsMixin):
         )
         if self._finalizer is not None:
             self._finalizer()
+
+    def _sync_obsidian_compatibility(
+        self,
+        request: BaseModel,
+    ) -> Any:
+        parsed = cast(ObsidianSourceSyncInput, request)
+        run = self._knowledge_sync_scheduler.run(
+            KnowledgeSyncStartInput(
+                source_id=parsed.source_id,
+                expected_revision=parsed.expected_revision,
+                idempotency_key=(f"obsidian-sync:{parsed.source_id}:{parsed.expected_revision}"),
+            )
+        )
+        return self._obsidian_knowledge.result(run)
 
     def recover_interrupted_work(
         self,
@@ -584,6 +624,7 @@ class CoreService(CoreServiceEndpointsMixin):
         return self._system_action_application.execute(cast(SystemActionRequest, request))
 
     def _create_assistant_turn(self, request: BaseModel) -> Any:
+        self._extension_service.refresh_registry()
         validated = cast(AssistantTurnCreateInput, request)
         attachments = build_image_attachments(
             validated.task_id,

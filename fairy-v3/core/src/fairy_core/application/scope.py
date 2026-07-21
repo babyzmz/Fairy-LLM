@@ -40,6 +40,8 @@ def build_task_scope(
         memory_write_scope=("current_conversation_draft",),
         memory_snapshot_id=task.memory_snapshot_id,
         memory_snapshot_hash=task.memory_snapshot_hash,
+        knowledge_snapshot_id=task.knowledge_snapshot_id,
+        knowledge_snapshot_hash=task.knowledge_snapshot_hash,
     )
 
 

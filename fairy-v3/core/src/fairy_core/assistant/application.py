@@ -101,10 +101,8 @@ class AssistantApplication(
         self._turns = AssistantTurnReader(unit_of_work_factory)
         self._context = AssistantContextBuilder(
             unit_of_work_factory=unit_of_work_factory,
-            registry=registry,
             scope_resolver=scope_resolver,
             image_attachments=image_attachments,
-            execution_policy=self._execution_policy,
         )
 
     def run_turn(

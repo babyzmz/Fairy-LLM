@@ -48,8 +48,7 @@ class AssistantTurnLifecycleMixin:
                         "artifact.list or preview.status as completion."
                     )
                 if any(
-                    invocation.tool_name == "edit.propose_changeset"
-                    for invocation in invocations
+                    invocation.tool_name == "edit.propose_changeset" for invocation in invocations
                 ):
                     return (
                         "A file Changeset was attempted without an Execution Plan. Create "
@@ -102,7 +101,6 @@ class AssistantTurnLifecycleMixin:
         if visible_files:
             detail += f" Required files: {visible_files}."
         return detail
-
 
     def _complete_turn(
         self,
@@ -379,8 +377,7 @@ class AssistantTurnLifecycleMixin:
             raise ValueError("completed scratch delivery has no Workspace Version")
         steps = unit_of_work.state.task_steps_for_plan(plan.id)
         if not steps or any(
-            step.status not in {TaskStepStatus.COMPLETED, TaskStepStatus.SKIPPED}
-            for step in steps
+            step.status not in {TaskStepStatus.COMPLETED, TaskStepStatus.SKIPPED} for step in steps
         ):
             raise ValueError("completed scratch delivery has unfinished execution steps")
         conversation = unit_of_work.state.get_conversation(task.conversation_id)
