@@ -26,6 +26,7 @@ import { equalOverrides, extensionUpdateKey, permissionUpdateKey, requireMcpServ
 import { createWorkspaceFileActions } from "./workspaceFileActions";
 import { previewStartIdempotencyKey } from "./workspacePreviewActions";
 import { useWorkspaceKnowledge } from "./workspaceKnowledgeModel";
+import { useWorkspaceBrowser } from "./workspaceBrowserModel";
 import {
   collectCursorPages,
   createWorkspaceHistoryActions,
@@ -276,6 +277,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     enabled: workspaceTask !== null,
     retry: false,
   });
+  const browserConversationId = workspaceTask?.conversation_id ??
+    (mode === "chat" ? selectedChatConversation?.id : selectedConversation?.id) ?? null;
   const workspaceFilesQuery = useQuery({
     queryKey: [
       ...workspaceKey,
@@ -436,6 +439,14 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     },
     [invalidateWorkspace],
   );
+  const workspaceBrowser = useWorkspaceBrowser({
+    client,
+    enabled: healthQuery.isSuccess,
+    conversationId: browserConversationId,
+    projectId: selectedProject?.id ?? null,
+    taskId: workspaceTask?.id ?? null,
+    runAction,
+  });
 
   const persistPermissions = useCallback(
     async (profile: PermissionProfile, capabilityOverrides: Record<string, boolean>): Promise<void> => {
@@ -757,6 +768,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           }),
         );
       },
+      ...workspaceBrowser.actions,
       async reviewTask() {
         if (selectedTask === null) throw new Error("Task is unavailable");
         await runAction(() => client.tasks.review(selectedTask.id));
@@ -887,6 +899,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       selectedWorkspaceQuery.data,
       selectedTask,
       workspaceTask,
+      workspaceBrowser.actions,
       queryClient,
       setChatConversationSelection,
       setConversationSelection,
@@ -992,6 +1005,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     selectedVersion,
     preview: previewQuery.data ?? null,
     runtimeHealth: runtimeHealthQuery.data ?? null,
+    browserHealth: workspaceBrowser.health,
+    browserSession: workspaceBrowser.session,
+    browserSnapshot: workspaceBrowser.snapshot,
+    browserLoading: workspaceBrowser.loading,
+    browserError: workspaceBrowser.error,
     workspaceFiles: workspaceFilesQuery.data?.items ?? [],
     workspaceGeneration: workspaceFilesQuery.data?.generation ?? 0,
     knowledgeOverview: workspaceKnowledge.knowledgeOverview,
@@ -1154,6 +1172,14 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     decideApproval: actions.decideApproval,
     startPreview: actions.startPreview,
     stopPreview: actions.stopPreview,
+    startBrowser: actions.startBrowser,
+    stopBrowser: actions.stopBrowser,
+    navigateBrowser: actions.navigateBrowser,
+    openBrowserTab: actions.openBrowserTab,
+    selectBrowserTab: actions.selectBrowserTab,
+    closeBrowserTab: actions.closeBrowserTab,
+    executeBrowserAction: actions.executeBrowserAction,
+    refreshBrowser: actions.refreshBrowser,
     reviewTask: actions.reviewTask,
     acceptVersion: actions.acceptVersion,
     discardVersion: actions.discardVersion,

@@ -1,0 +1,152 @@
+import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+
+import type { WorkspaceClient, WorkspaceModel } from "./workspaceTypes";
+import { errorMessage, firstError, requireId, workspaceKey } from "./workspaceModelUtils";
+
+type RunAction = <T>(operation: () => Promise<T>) => Promise<T>;
+
+interface WorkspaceBrowserOptions {
+  client: WorkspaceClient;
+  enabled: boolean;
+  conversationId: string | null;
+  projectId: string | null;
+  taskId: string | null;
+  runAction: RunAction;
+}
+
+type BrowserActions = Pick<
+  WorkspaceModel,
+  | "startBrowser"
+  | "stopBrowser"
+  | "navigateBrowser"
+  | "openBrowserTab"
+  | "selectBrowserTab"
+  | "closeBrowserTab"
+  | "executeBrowserAction"
+  | "refreshBrowser"
+>;
+
+export function useWorkspaceBrowser({
+  client,
+  enabled,
+  conversationId,
+  projectId,
+  taskId,
+  runAction,
+}: WorkspaceBrowserOptions) {
+  const healthQuery = useQuery({
+    queryKey: [...workspaceKey, "browser-health"],
+    queryFn: () => client.browser.health(),
+    enabled,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const sessionsQuery = useQuery({
+    queryKey: [...workspaceKey, "browser-sessions", conversationId],
+    queryFn: () => client.browser.sessions.list({ conversation_id: conversationId }),
+    enabled: enabled && conversationId !== null,
+    retry: false,
+  });
+  const session = sessionsQuery.data?.items.at(0) ?? null;
+  const activeTab = session?.tabs.find((tab) => tab.id === session.active_tab_id) ?? null;
+  const snapshotQuery = useQuery({
+    queryKey: [...workspaceKey, "browser-snapshot", session?.id, activeTab?.id, activeTab?.revision],
+    queryFn: () => client.browser.snapshots.get(requireId(session?.id), requireId(activeTab?.id)),
+    enabled: session?.status === "active" && activeTab !== null,
+    retry: false,
+    refetchInterval: session?.status === "active" ? 750 : false,
+  });
+  const queryError = firstError(healthQuery.error, sessionsQuery.error, snapshotQuery.error);
+
+  const actions = useMemo<BrowserActions>(() => {
+    const startNew = (initialUrl?: string) => {
+      if (conversationId === null) throw new Error("Conversation is unavailable");
+      return client.browser.sessions.start({
+        project_id: projectId,
+        conversation_id: conversationId,
+        task_id: taskId,
+        execution_target: "local",
+        profile_kind: "persistent",
+        initial_url: initialUrl ?? null,
+        idempotency_key: `desktop:browser:start:${crypto.randomUUID()}`,
+      });
+    };
+    const resume = () => {
+      if (session === null) throw new Error("Browser session is unavailable");
+      return client.browser.sessions.resume(session.id);
+    };
+    const navigateSession = async (targetSession: NonNullable<typeof session>, url: string) => {
+      const tab = targetSession.tabs.find((item) => item.id === targetSession.active_tab_id) ?? null;
+      if (tab === null) throw new Error("Browser session has no active tab");
+      await client.browser.actions.execute({
+        session_id: targetSession.id,
+        tab_id: tab.id,
+        kind: "navigate",
+        value: url,
+        expected_page_revision: tab.revision,
+        idempotency_key: `desktop:browser:navigate:${crypto.randomUUID()}`,
+      });
+    };
+    const needsResume = session?.status === "interrupted" || session?.status === "suspended";
+
+    return {
+      async startBrowser(initialUrl?: string) {
+        if (!needsResume) {
+          await runAction(() => startNew(initialUrl));
+          return;
+        }
+        const resumed = await runAction(resume);
+        if (initialUrl !== undefined) await runAction(() => navigateSession(resumed, initialUrl));
+      },
+      async stopBrowser() {
+        if (session !== null) await runAction(() => client.browser.sessions.stop(session.id));
+      },
+      async navigateBrowser(url: string) {
+        const targetSession = needsResume
+          ? await runAction(resume)
+          : session ?? await runAction(() => startNew(url));
+        if (session === null && !needsResume) return;
+        await runAction(() => navigateSession(targetSession, url));
+      },
+      async openBrowserTab(url = "about:blank") {
+        const targetSession = needsResume
+          ? await runAction(resume)
+          : session ?? await runAction(() => startNew(url));
+        if (session === null && !needsResume) return;
+        await runAction(() => client.browser.tabs.open(targetSession.id, url));
+      },
+      async selectBrowserTab(tabId: string) {
+        if (session === null || session.active_tab_id === tabId) return;
+        await runAction(() => client.browser.tabs.select(session.id, tabId));
+      },
+      async closeBrowserTab(tabId: string) {
+        if (session !== null) await runAction(() => client.browser.tabs.close(session.id, tabId));
+      },
+      async executeBrowserAction(input) {
+        if (session === null || activeTab === null || session.status !== "active") {
+          throw new Error("Browser session is unavailable");
+        }
+        await runAction(() => client.browser.actions.execute({
+          ...input,
+          session_id: session.id,
+          tab_id: activeTab.id,
+          expected_page_revision: input.expected_page_revision ?? activeTab.revision,
+          idempotency_key: `desktop:browser:${input.kind}:${crypto.randomUUID()}`,
+        }));
+      },
+      async refreshBrowser() {
+        await snapshotQuery.refetch();
+      },
+    };
+  }, [activeTab, client.browser, conversationId, projectId, runAction, session, snapshotQuery, taskId]);
+
+  return {
+    health: healthQuery.data ?? null,
+    session,
+    snapshot: snapshotQuery.data ?? null,
+    loading: healthQuery.isPending || sessionsQuery.isPending || snapshotQuery.isPending,
+    error: queryError === null ? null : errorMessage(queryError),
+    actions,
+  };
+}

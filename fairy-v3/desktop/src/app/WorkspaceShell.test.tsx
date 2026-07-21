@@ -26,6 +26,21 @@ describe("WorkspaceShell", () => {
     expect(screen.getByLabelText("Message Fairy")).toBeVisible();
   });
 
+  it("resizes the workspace inspector with the keyboard and persists the width", () => {
+    const model = workspaceModel();
+    model.selectedTask = workspaceTask();
+    model.workspaceTask = model.selectedTask;
+    const { container } = render(<WorkspaceShell model={model} />);
+    const shell = container.querySelector<HTMLElement>(".workspace-main")!;
+
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize workspace inspector" }), {
+      key: "Home",
+    });
+
+    expect(shell.style.getPropertyValue("--inspector-width")).toBe("360px");
+    expect(window.localStorage.getItem("fairy.workspace.inspector-width")).toBe("360");
+  });
+
   it("keeps an empty workspace inspector collapsed", () => {
     render(<WorkspaceShell model={workspaceModel()} />);
 
@@ -686,6 +701,11 @@ function workspaceModel(): WorkspaceModel {
     selectedVersion: null,
     preview: null,
     runtimeHealth: null,
+    browserHealth: null,
+    browserSession: null,
+    browserSnapshot: null,
+    browserLoading: false,
+    browserError: null,
     workspaceFiles: [],
     workspaceGeneration: 0,
     knowledgeOverview: null,
@@ -826,6 +846,14 @@ function workspaceModel(): WorkspaceModel {
     decideApproval: vi.fn(async () => undefined),
     startPreview: vi.fn(async () => undefined),
     stopPreview: vi.fn(async () => undefined),
+    startBrowser: vi.fn(async () => undefined),
+    stopBrowser: vi.fn(async () => undefined),
+    navigateBrowser: vi.fn(async () => undefined),
+    openBrowserTab: vi.fn(async () => undefined),
+    selectBrowserTab: vi.fn(async () => undefined),
+    closeBrowserTab: vi.fn(async () => undefined),
+    executeBrowserAction: vi.fn(async () => undefined),
+    refreshBrowser: vi.fn(async () => undefined),
     reviewTask: vi.fn(async () => undefined),
     acceptVersion: vi.fn(async () => undefined),
     discardVersion: vi.fn(async () => undefined),

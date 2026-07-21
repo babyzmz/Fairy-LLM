@@ -6,10 +6,11 @@
 }
 
 .unified-workspace-chat {
-  grid-template-columns: minmax(420px, 58%) minmax(360px, 42%);
+  grid-template-columns: minmax(420px, 1fr) minmax(360px, var(--inspector-width, 42%));
 }
 
 .workspace-inspector {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -17,6 +18,31 @@
   overflow: hidden;
   border-left: 1px solid #353736;
   background: #171918;
+}
+
+.workspace-inspector-resizer {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.workspace-inspector-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 3px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.workspace-inspector-resizer:hover::after,
+.workspace-inspector-resizer:active::after,
+.workspace-inspector-resizer:focus-visible::after {
+  background: #64d9d0;
 }
 
 .workspace-inspector-tabs {
@@ -73,6 +99,311 @@
 .workspace-inspector-content > * {
   width: 100%;
   height: 100%;
+}
+
+.preview-workspace {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 38px minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.preview-mode-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid #353736;
+  background: #151716;
+}
+
+.preview-mode-tabs button,
+.responsive-controls button {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  color: #9fa7a2;
+  background: transparent;
+  white-space: nowrap;
+}
+
+.preview-mode-tabs button[aria-pressed="true"],
+.responsive-controls button[aria-pressed="true"] {
+  border-color: #46514d;
+  color: #eef7f4;
+  background: #262a28;
+}
+
+.preview-mode-content,
+.browser-panel,
+.browser-surface,
+.responsive-preview,
+.responsive-stage,
+.preview-diagnostics {
+  min-width: 0;
+  min-height: 0;
+}
+
+.preview-mode-content {
+  overflow: hidden;
+}
+
+.preview-mode-content > * {
+  width: 100%;
+  height: 100%;
+}
+
+.browser-panel {
+  display: grid;
+  grid-template-rows: 42px auto minmax(0, 1fr) 26px;
+  overflow: hidden;
+  background: #111312;
+}
+
+.browser-tabs {
+  display: flex;
+  align-items: stretch;
+  min-height: 32px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-raised) 76%, transparent);
+}
+
+.browser-tab {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px;
+  align-items: center;
+  min-width: 124px;
+  max-width: 220px;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.browser-tab[data-active="true"] {
+  background: var(--surface-base);
+  box-shadow: inset 0 -2px var(--accent-primary);
+}
+
+.browser-tab button,
+.browser-new-tab {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.browser-tab button[role="tab"] {
+  overflow: hidden;
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.browser-tab button[role="tab"] span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-new-tab {
+  width: 32px;
+  flex: 0 0 32px;
+}
+
+.browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border-bottom: 1px solid #353736;
+  background: #1a1d1b;
+}
+
+.browser-nav-actions {
+  display: flex;
+  gap: 3px;
+}
+
+.browser-toolbar form {
+  min-width: 0;
+  flex: 1;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid #424643;
+  background: #111312;
+}
+
+.browser-toolbar form svg {
+  flex: 0 0 auto;
+  color: #8fa49b;
+}
+
+.browser-toolbar input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  color: #e8eeeb;
+  background: transparent;
+  font: 11px/1.2 "Cascadia Mono", monospace;
+}
+
+.browser-runtime-entry {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-bottom: 1px solid #3e4844;
+  color: #9fdcd2;
+  background: #1a2421;
+}
+
+.browser-surface {
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  background: #202321;
+}
+
+.browser-surface img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  cursor: default;
+  user-select: none;
+}
+
+.browser-empty {
+  max-width: 360px;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 22px;
+  color: #aeb7b2;
+  text-align: center;
+}
+
+.browser-empty-danger {
+  color: #e69a92;
+}
+
+.browser-empty span {
+  overflow-wrap: anywhere;
+  color: #808985;
+  font-size: 11px;
+}
+
+.browser-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 9px;
+  overflow: hidden;
+  border-top: 1px solid #303432;
+  color: #7f8984;
+  font: 10px/1 "Cascadia Mono", monospace;
+}
+
+.browser-status span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.responsive-preview {
+  display: grid;
+  grid-template-rows: 40px minmax(0, 1fr);
+  overflow: hidden;
+  background: #151716;
+}
+
+.responsive-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border-bottom: 1px solid #353736;
+}
+
+.responsive-controls span {
+  margin-left: auto;
+  color: #89928d;
+  font: 10px/1 "Cascadia Mono", monospace;
+}
+
+.responsive-stage {
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  overflow: auto;
+  color: #89928d;
+  background: #252826;
+}
+
+.responsive-stage iframe {
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid #5d6661;
+  background: #fff;
+}
+
+.preview-diagnostics {
+  display: grid;
+  grid-template-columns: minmax(220px, 34%) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.preview-diagnostics section {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 38px minmax(0, 1fr);
+  overflow: hidden;
+  border-right: 1px solid #353736;
+}
+
+.preview-diagnostics h3 {
+  margin: 0;
+  padding: 11px;
+  font-size: 11px;
+}
+
+.preview-diagnostics pre {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: #b9c8c1;
+  background: #101211;
+  font: 10px/1.5 "Cascadia Mono", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1100px) {
+  .unified-workspace-chat {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+
+  .workspace-inspector {
+    min-height: 520px;
+    border-top: 1px solid #353736;
+    border-left: 0;
+  }
+
+  .workspace-inspector-resizer {
+    display: none;
+  }
 }
 
 .workspace-files {

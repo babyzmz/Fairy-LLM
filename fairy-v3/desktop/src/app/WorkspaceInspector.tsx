@@ -1,8 +1,8 @@
 import { Eye, Files, GalleryVerticalEnd, Network } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useState } from "react";
 
 import type { WorkspaceModel } from "./workspaceModel";
-import { PreviewPanel } from "./PreviewPanel";
+import { PreviewWorkspace } from "./PreviewWorkspace";
 import { WorkspaceFilesPanel } from "./WorkspaceFilesPanel";
 import { WorkspaceOutputsPanel } from "./WorkspaceOutputsPanel";
 import { ObsidianPanel } from "./ObsidianPanel";
@@ -30,10 +30,27 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
     else if (hasFiles) setTab("files");
   }, [hasActiveOutput, hasFiles, hasOutputs, previewReady, model.workspaceTask?.id]);
 
+  useEffect(() => {
+    const parent = document.querySelector<HTMLElement>(".unified-workspace-chat, .workspace-main");
+    if (parent === null) return;
+    const saved = Number(localStorage.getItem("fairy.workspace.inspector-width"));
+    const width = Number.isFinite(saved) ? saved : Math.round(window.innerWidth * 0.42);
+    parent.style.setProperty("--inspector-width", `${clampInspectorWidth(width)}px`);
+  }, []);
+
   if (model.workspaceTask === null && !hasFiles && !hasOutputs && model.selectedProject === null) return null;
 
   return (
     <aside className="workspace-inspector" aria-label="Workspace inspector">
+      <div
+        className="workspace-inspector-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize workspace inspector"
+        tabIndex={0}
+        onKeyDown={resizeWithKeyboard}
+        onPointerDown={startResize}
+      />
       <div className="workspace-inspector-tabs" role="tablist" aria-label="Workspace view">
         <button type="button" role="tab" aria-selected={tab === "preview"} onClick={() => setTab("preview")}>
           <Eye size={14} /> Preview
@@ -52,20 +69,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
       </div>
       <div className="workspace-inspector-content">
         {tab === "preview" ? (
-          <PreviewPanel
-            task={model.workspaceTask}
-            context={model.preview}
-            runtimeHealth={model.runtimeHealth}
-            isActing={model.isActing}
-            developerMode={model.developerMode}
-            workspaceGeneration={model.workspaceGeneration}
-            showVersionActions={model.mode === "project"}
-            onStart={model.startPreview}
-            onStop={model.stopPreview}
-            onReview={model.reviewTask}
-            onAccept={model.acceptVersion}
-            onDiscard={model.discardVersion}
-          />
+          <PreviewWorkspace model={model} />
         ) : tab === "files" ? (
           <WorkspaceFilesPanel
             scopeKey={scopeKey}
@@ -104,4 +108,44 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
       </div>
     </aside>
   );
+}
+
+function startResize(event: ReactPointerEvent<HTMLDivElement>) {
+  event.currentTarget.setPointerCapture(event.pointerId);
+  const parent = event.currentTarget.closest<HTMLElement>(".unified-workspace-chat, .workspace-main");
+  if (parent === null) return;
+  const move = (pointer: PointerEvent) => {
+    const width = clampInspectorWidth(window.innerWidth - pointer.clientX);
+    parent.style.setProperty("--inspector-width", `${width}px`);
+    localStorage.setItem("fairy.workspace.inspector-width", String(width));
+  };
+  const finish = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", finish);
+    window.removeEventListener("pointercancel", finish);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", finish, { once: true });
+  window.addEventListener("pointercancel", finish, { once: true });
+}
+
+function resizeWithKeyboard(event: ReactKeyboardEvent<HTMLDivElement>) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const parent = event.currentTarget.closest<HTMLElement>(".unified-workspace-chat, .workspace-main");
+  if (parent === null) return;
+  event.preventDefault();
+  const current = Number.parseFloat(getComputedStyle(parent).getPropertyValue("--inspector-width"))
+    || Math.round(window.innerWidth * 0.42);
+  const next = event.key === "Home"
+    ? 360
+    : event.key === "End"
+      ? Math.round(window.innerWidth * 0.75)
+      : current + (event.key === "ArrowLeft" ? 24 : -24);
+  const width = clampInspectorWidth(next);
+  parent.style.setProperty("--inspector-width", `${width}px`);
+  localStorage.setItem("fairy.workspace.inspector-width", String(width));
+}
+
+function clampInspectorWidth(value: number): number {
+  return Math.max(360, Math.min(Math.round(window.innerWidth * 0.75), Math.round(value)));
 }

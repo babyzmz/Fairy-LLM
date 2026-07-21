@@ -2,6 +2,10 @@ import type { AssistantDraft, AssistantTurnClient, OptimisticUserMessage } from 
 import type { TurnTraceQueryState } from "../chat/useTurnTraces";
 import type {
   Approval,
+  BrowserActionInput,
+  BrowserSession,
+  BrowserSnapshot,
+  BrowserWorkerHealth,
   AssistantTurn,
   CapabilityManifest,
   Conversation,
@@ -88,6 +92,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   selections: Pick<CoreClient["selections"], "create">;
   runtimes: Pick<CoreClient["runtimes"], "health">;
   previews: Pick<CoreClient["previews"], "resolve" | "start" | "stop">;
+  browser: CoreClient["browser"];
   capabilities: Pick<CoreClient["capabilities"], "get">;
   permissions: Pick<CoreClient["permissions"], "get" | "update">;
   providers: Pick<
@@ -160,6 +165,11 @@ export interface WorkspaceModel {
   selectedVersion: Version | null;
   preview: PreviewContext | null;
   runtimeHealth: RuntimeHealth | null;
+  browserHealth: BrowserWorkerHealth | null;
+  browserSession: BrowserSession | null;
+  browserSnapshot: BrowserSnapshot | null;
+  browserLoading: boolean;
+  browserError: string | null;
   workspaceFiles: WorkspaceFile[];
   workspaceGeneration: number;
   knowledgeOverview: ProjectKnowledgeOverview | null;
@@ -278,6 +288,14 @@ export interface WorkspaceModel {
   decideApproval(approvalId: string, approved: boolean): Promise<void>;
   startPreview(): Promise<void>;
   stopPreview(): Promise<void>;
+  startBrowser(initialUrl?: string): Promise<void>;
+  stopBrowser(): Promise<void>;
+  navigateBrowser(url: string): Promise<void>;
+  openBrowserTab(url?: string): Promise<void>;
+  selectBrowserTab(tabId: string): Promise<void>;
+  closeBrowserTab(tabId: string): Promise<void>;
+  executeBrowserAction(input: Omit<BrowserActionInput, "session_id" | "tab_id" | "idempotency_key">): Promise<void>;
+  refreshBrowser(): Promise<void>;
   reviewTask(): Promise<void>;
   acceptVersion(): Promise<void>;
   discardVersion(): Promise<void>;
