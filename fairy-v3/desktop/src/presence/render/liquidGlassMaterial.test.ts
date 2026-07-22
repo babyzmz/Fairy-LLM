@@ -88,11 +88,11 @@ describe("Liquid Glass material", () => {
     expect(liquidShapeTargetForPhase("interactive")).toEqual({
       droplet: 0,
       bridge: 0,
-      capsule: 1,
+      capsule: 0,
     });
     expect(liquidShapeTargetForPhase("returning")).toEqual({
       droplet: 0,
-      bridge: 0,
+      bridge: 1,
       capsule: 0,
     });
   });
@@ -119,20 +119,26 @@ describe("Liquid Glass material", () => {
     });
   });
 
-  it("shows a stable capsule for manually opened input outside hover phases", () => {
+  it("keeps manually opened input outside the render shape", () => {
     const snapshot = renderSnapshot("right");
     snapshot.interaction!.phase = "idle";
     snapshot.input_capsule_visible = true;
     expect(liquidShapeTargetForSnapshot(snapshot)).toEqual({
       droplet: 0,
       bridge: 0,
-      capsule: 1,
+      capsule: 0,
     });
-    expect(liquidDirectionForSnapshot(snapshot)).toEqual({
-      x: expect.any(Number),
-      y: expect.any(Number),
+  });
+
+  it("keeps the bridge when input reveal has no render capsule", () => {
+    const snapshot = renderSnapshot("right");
+    snapshot.interaction!.phase = "input_reveal";
+    snapshot.input_capsule_visible = false;
+    expect(liquidShapeTargetForSnapshot(snapshot)).toEqual({
+      droplet: 0,
+      bridge: 1,
+      capsule: 0,
     });
-    expect(liquidDirectionForSnapshot(snapshot).y).toBeGreaterThan(0.8);
   });
 
   it("samples the latest desktop texture with boundary-continuous glass optics", () => {

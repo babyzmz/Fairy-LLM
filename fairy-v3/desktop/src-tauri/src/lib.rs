@@ -1844,16 +1844,27 @@ fn apply_pet_input_window_region(
     scale_factor: f64,
     direction: ExpansionDirection,
 ) -> Result<(), String> {
-    if matches!(layout, PetInputLayout::Hidden) {
-        return Ok(());
-    }
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::Graphics::Gdi::{
-        CombineRgn, CreateEllipticRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn, ERROR, HRGN,
-        RGN_OR,
+        CombineRgn, CreateEllipticRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject,
+        SetWindowRgn, ERROR, HRGN, RGN_OR,
     };
 
     let _dpi_scope = PerMonitorDpiScope::enter();
+    if matches!(layout, PetInputLayout::Hidden) {
+        let empty = unsafe { CreateRectRgn(0, 0, 0, 0) };
+        if empty.is_null() {
+            return Err("PET_INPUT_REGION_CREATE_FAILED".to_owned());
+        }
+        if unsafe { SetWindowRgn(handle as HWND, empty, 1) } == 0 {
+            unsafe { DeleteObject(empty) };
+            return Err(format!(
+                "PET_INPUT_REGION_APPLY_FAILED: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        return Ok(());
+    }
     let mut combined: HRGN = std::ptr::null_mut();
     for part in pet_input_region_parts(
         layout,
@@ -1932,6 +1943,16 @@ fn apply_pet_input_layout(
         return Err("PET_INPUT_PRESENTATION_REPOSITIONING".to_owned());
     }
     if matches!(layout, PetInputLayout::Hidden) {
+        #[cfg(target_os = "windows")]
+        apply_pet_input_window_region(
+            window.hwnd().map_err(|error| error.to_string())?.0 as isize,
+            layout,
+            0,
+            0,
+            0,
+            1.0,
+            ExpansionDirection::Right,
+        )?;
         *state
             .pet_input_geometry
             .lock()
@@ -4678,17 +4699,31 @@ mod native_window_group_tests {
     }
 
     #[test]
-    fn hidden_input_layout_requires_no_native_hit_region() {
+    fn hidden_input_layout_applies_an_empty_native_hit_region() {
+        let _dpi_scope = PerMonitorDpiScope::enter();
+        let input = create_test_window(PhysicalFrame {
+            x: 0,
+            y: 0,
+            width: 616,
+            height: 360,
+        });
         apply_pet_input_window_region(
-            0,
+            input.0 as isize,
             PetInputLayout::Hidden,
-            0,
-            0,
+            616,
+            360,
             0,
             1.0,
             ExpansionDirection::Right,
         )
-        .expect("hidden input layout should not create a native region");
+        .expect("hidden input layout should apply an empty native region");
+
+        let region = unsafe { CreateRectRgn(0, 0, 0, 0) };
+        assert!(!region.is_null());
+        assert_ne!(unsafe { GetWindowRgn(input.0, region) }, 0);
+        assert_eq!(unsafe { PtInRegion(region, 72, 188) }, 0);
+        assert_eq!(unsafe { PtInRegion(region, 2, 2) }, 0);
+        unsafe { DeleteObject(region) };
     }
 
     #[test]

@@ -571,7 +571,41 @@ export function PresenceInputApp({
           session_id: inputPresentationSessionId,
           revision,
         }, "failed");
-        void host.setInputInteractive(false).catch(() => undefined);
+        const recoveryRevision = revision + 1;
+        presentationRevision.current = recoveryRevision;
+        const safeMotion: FairyMotionSnapshot = {
+          ...presentedMotionSnapshot,
+          revision: presentedMotionSnapshot.revision + 1,
+          surface: "core",
+          content_visible: false,
+          surface_interactive: false,
+          capsule_visible: false,
+        };
+        const safePresentation: PresenceInputPresentation = {
+          schema_version: 4,
+          session_id: inputPresentationSessionId,
+          sequence: recoveryRevision,
+          layout: "core",
+          capsule_visible: false,
+          capsule_width: compactWidth,
+          motion: safeMotion,
+        };
+        latestInputPresentation.current = safePresentation;
+        inputPresentationChannel.publish(safePresentation);
+        void host.applyInputPresentation({
+          session_id: inputPresentationSessionId,
+          revision: recoveryRevision,
+          layout: "core",
+          interactive: false,
+          request_focus: false,
+        }).then((commit) => {
+          if (
+            commit.session_id === inputPresentationSessionId &&
+            commit.revision === recoveryRevision
+          ) {
+            writeInputPresentationDiagnostics(commit, "recovered");
+          }
+        }).catch(() => host.setInputInteractive(false).catch(() => undefined));
       });
   }, [
     capsuleVisible,
@@ -879,7 +913,7 @@ function layoutForSurface(surface: FairySurface): PetInputLayout {
 
 function writeInputPresentationDiagnostics(
   commit: { session_id: number; revision: number } | null,
-  status: "starting" | "pending" | "committed" | "failed",
+  status: "starting" | "pending" | "committed" | "failed" | "recovered",
 ): void {
   if (typeof document === "undefined") return;
   const targets = [

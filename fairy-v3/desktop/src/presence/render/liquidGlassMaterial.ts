@@ -34,10 +34,10 @@ const INPUT_REVEAL_SHAPE: LiquidShapeTarget = Object.freeze({
   bridge: 1,
   capsule: 1,
 });
-const INTERACTIVE_SHAPE: LiquidShapeTarget = Object.freeze({
+const RETURNING_SHAPE: LiquidShapeTarget = Object.freeze({
   droplet: 0,
-  bridge: 0,
-  capsule: 1,
+  bridge: 1,
+  capsule: 0,
 });
 
 export function liquidShapeTargetForPhase(
@@ -50,8 +50,8 @@ export function liquidShapeTargetForPhase(
       return BRIDGE_SHAPE;
     case "input_reveal":
       return INPUT_REVEAL_SHAPE;
-    case "interactive":
-      return INTERACTIVE_SHAPE;
+    case "returning":
+      return RETURNING_SHAPE;
     default:
       return HIDDEN_SHAPE;
   }
@@ -62,9 +62,9 @@ export function liquidShapeTargetForSnapshot(
 ): LiquidShapeTarget {
   const target = liquidShapeTargetForPhase(snapshot.interaction?.phase ?? null);
   if (!snapshot.input_capsule_visible) {
-    return target.capsule > 0 ? HIDDEN_SHAPE : target;
+    return target.capsule > 0 ? { ...target, capsule: 0 } : target;
   }
-  return target.capsule > 0 ? target : INTERACTIVE_SHAPE;
+  return target;
 }
 
 export function liquidDirectionForSnapshot(

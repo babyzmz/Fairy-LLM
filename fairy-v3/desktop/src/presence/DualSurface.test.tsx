@@ -24,6 +24,10 @@ import type {
   NativeRendererLifecycleSignal,
   NativeRendererLifecycleSource,
 } from "./transport/nativeRendererLifecycle";
+import type {
+  PresenceInputPresentation,
+  PresenceInputPresentationChannel,
+} from "./transport/inputPresentation";
 import {
   DEFAULT_PRESENCE_RENDER_SETTINGS,
   type PresenceRenderSettings,
@@ -493,6 +497,54 @@ describe("dual presence surfaces", () => {
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("expanded"));
     expect(screen.getByText("Streaming from the shared assistant turn")).toBeInTheDocument();
     expect(screen.queryByLabelText("Fairy companion")).not.toBeInTheDocument();
+  });
+
+  it("publishes a non-interactive core snapshot after native presentation failure", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    const published: PresenceInputPresentation[] = [];
+    const inputPresentationChannel: PresenceInputPresentationChannel = {
+      publish: vi.fn((presentation) => published.push(presentation)),
+      request: vi.fn(),
+      onPresentation: vi.fn(() => () => undefined),
+      onRequest: vi.fn(() => () => undefined),
+      close: vi.fn(),
+    };
+    vi.mocked(host.host.applyInputPresentation).mockImplementation(async (input) => {
+      if (input.layout === "compact") {
+        throw new Error("PET_INPUT_REGION_APPLY_FAILED");
+      }
+      return { session_id: input.session_id, revision: input.revision };
+    });
+
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        inputPresentationChannel={inputPresentationChannel}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    await waitFor(() => expect(host.host.applyInputPresentation).toHaveBeenCalled());
+    act(() => host.requestInput());
+    await waitFor(() => expect(host.host.applyInputPresentation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        layout: "core",
+        interactive: false,
+        request_focus: false,
+      }),
+    ));
+    expect(published.at(-1)).toEqual(expect.objectContaining({
+      layout: "core",
+      capsule_visible: false,
+      motion: expect.objectContaining({
+        surface: "core",
+        surface_interactive: false,
+        capsule_visible: false,
+      }),
+    }));
   });
 
   it("opens the companion menu from the core context target without a second input shell", async () => {

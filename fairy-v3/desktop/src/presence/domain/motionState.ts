@@ -163,10 +163,19 @@ function resolveFairyMotionTarget(facts: FairyMotionFacts): FairyMotionTarget {
       surface !== "input" ||
       facts.manual_input_open ||
       facts.input_interactive,
-    capsule_visible: surface !== "core",
+    capsule_visible: isLiquidTransitionPhase(facts.interaction?.phase),
     reduced_motion: facts.reduced_motion,
     do_not_disturb: facts.do_not_disturb,
   };
+}
+
+function isLiquidTransitionPhase(
+  phase: PresenceInteractionSnapshot["phase"] | undefined,
+): boolean {
+  return phase === "droplet" ||
+    phase === "stretching" ||
+    phase === "input_reveal" ||
+    phase === "returning";
 }
 
 function resolveSurface(facts: FairyMotionFacts, state: FairyState): FairySurface {

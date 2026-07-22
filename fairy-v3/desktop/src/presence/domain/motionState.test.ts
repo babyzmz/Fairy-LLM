@@ -23,7 +23,7 @@ describe("Fairy motion state", () => {
       state: "awaiting_confirmation",
       surface: "notice",
       activity: "approval",
-      capsule_visible: true,
+      capsule_visible: false,
     }));
   });
 
@@ -59,11 +59,20 @@ describe("Fairy motion state", () => {
     ["reply", { reply: { streaming: false } }],
     ["notice", { notice_tone: "info" as const }],
     ["submission", { submission_phase: "sending" as const }],
-  ])("keeps one liquid capsule behind the %s surface", (surface, overrides) => {
+  ])("keeps the stable %s DOM surface outside the liquid shape", (surface, overrides) => {
     expect(advance(overrides, 100)).toEqual(expect.objectContaining({
       surface,
-      capsule_visible: true,
+      capsule_visible: false,
     }));
+  });
+
+  it("uses liquid capsule geometry only during materialization and return", () => {
+    for (const phase of ["droplet", "stretching", "input_reveal", "returning"] as const) {
+      expect(advance({ interaction: interaction(phase), input_window_visible: true }, 100))
+        .toEqual(expect.objectContaining({ capsule_visible: true }));
+    }
+    expect(advance({ interaction: interaction("interactive"), input_window_visible: true }, 100))
+      .toEqual(expect.objectContaining({ capsule_visible: false }));
   });
 
   it("joins model, tool, response and voice into one deterministic chain", () => {
