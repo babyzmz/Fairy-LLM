@@ -356,14 +356,21 @@ describe("dual presence surfaces", () => {
               commands.push({ command, args });
               if (command === "pet_native_gpu_start") await nativeStartGate;
               return {
-                backend: "windows_host_backdrop_d3d11_composition",
-                optics_source: "host_backdrop_identity",
+                backend: "windows_dda_d3d11_composition",
+                optics_source: "desktop_duplication",
                 lifecycle: "running",
                 host_backdrop_composition: true,
-                backdrop_pixel_access: false,
-                continuous_displacement_supported: false,
+                backdrop_pixel_access: true,
+                continuous_displacement_supported: true,
                 pixel_ipc: false,
                 hdr_composition: false,
+                dda_exclusion: "applied",
+                source_format: "bgra8",
+                adapter_luid: "00000000:00000001",
+                source_frame_age_ms: 1,
+                capture_to_present_p95_ms: 2,
+                access_lost_count: 0,
+                monitor_handoff: "ready",
                 target_frame_rate: 144,
                 effective_frame_rate: 144,
                 display_refresh_rate_hz: 144,
@@ -387,7 +394,7 @@ describe("dual presence surfaces", () => {
                 output_device_name: "\\\\.\\DISPLAY1",
                 output_index: 0,
                 hdr_color_space: "0",
-                composition_stage: "host_backdrop_identity",
+                composition_stage: "desktop_duplication_ready",
                 composition_hresult: null,
                 started_at_ms: 1,
                 last_presented_at_ms: 2,
@@ -432,7 +439,7 @@ describe("dual presence surfaces", () => {
     expect(screen.queryByTestId("presence-renderer")).not.toBeInTheDocument();
     expect(rendererHealth.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
       actual_backend: "native_liquid_glass",
-      optics_source: "host_backdrop_identity",
+      optics_source: "desktop_duplication",
       status: "running",
     }));
     const start = commands.find((entry) => entry.command === "pet_native_gpu_start");

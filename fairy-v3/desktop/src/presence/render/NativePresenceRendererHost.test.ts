@@ -73,14 +73,21 @@ function healthyStatus(
   overrides: Partial<NativeGpuStatus> = {},
 ): NativeGpuStatus {
   return {
-    backend: "windows_host_backdrop_d3d11_composition",
-    optics_source: "host_backdrop_identity",
+    backend: "windows_dda_d3d11_composition",
+    optics_source: "desktop_duplication",
     lifecycle: "running",
     host_backdrop_composition: true,
-    backdrop_pixel_access: false,
-    continuous_displacement_supported: false,
+    backdrop_pixel_access: true,
+    continuous_displacement_supported: true,
     pixel_ipc: false,
     hdr_composition: false,
+    dda_exclusion: "applied",
+    source_format: "bgra8",
+    adapter_luid: "00000000:00000001",
+    source_frame_age_ms: 1,
+    capture_to_present_p95_ms: 2,
+    access_lost_count: 0,
+    monitor_handoff: "ready",
     target_frame_rate: 144,
     effective_frame_rate: 144,
     display_refresh_rate_hz: 144,
@@ -104,7 +111,7 @@ function healthyStatus(
     output_device_name: "\\\\.\\DISPLAY1",
     output_index: 0,
     hdr_color_space: "0",
-    composition_stage: "host_backdrop_identity",
+    composition_stage: "desktop_duplication_ready",
     composition_hresult: null,
     started_at_ms: 1,
     last_presented_at_ms: 2,
@@ -114,6 +121,25 @@ function healthyStatus(
     error_code: null,
     ...overrides,
   };
+}
+
+function identityFallbackStatus(
+  overrides: Partial<NativeGpuStatus> = {},
+): NativeGpuStatus {
+  return healthyStatus({
+    backend: "windows_host_backdrop_d3d11_composition",
+    optics_source: "host_backdrop_identity",
+    backdrop_pixel_access: false,
+    continuous_displacement_supported: false,
+    dda_exclusion: "not_requested",
+    source_format: null,
+    adapter_luid: null,
+    source_frame_age_ms: null,
+    capture_to_present_p95_ms: 0,
+    monitor_handoff: "idle",
+    composition_stage: "host_backdrop_identity_ready",
+    ...overrides,
+  });
 }
 
 afterEach(() => {
@@ -177,7 +203,7 @@ describe("NativePresenceRendererHost", () => {
     const host = new NativePresenceRendererHost({
       invokeCommand: async (command) => {
         commands.push(command);
-        return healthyStatus(claim);
+        return identityFallbackStatus(claim);
       },
       watchdogIntervalMs: 60_000,
       recoveryDelaysMs: [],
@@ -288,6 +314,13 @@ describe("NativePresenceRendererHost", () => {
       fallback_reason: "NATIVE_GPU_UPDATE_FAILED",
       monitor_refresh_hz: 0,
       effective_fps: 0,
+      dda_exclusion: "not_requested",
+      source_format: null,
+      adapter_luid: null,
+      source_frame_age_ms: null,
+      capture_to_present_p95_ms: 0,
+      access_lost_count: 0,
+      monitor_handoff: "idle",
     });
 
     await host.dispose();

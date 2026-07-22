@@ -25,6 +25,13 @@ const INITIAL_HEALTH: PresenceRendererHealth = {
   fallback_reason: null,
   monitor_refresh_hz: 0,
   effective_fps: 0,
+  dda_exclusion: "not_requested",
+  source_format: null,
+  adapter_luid: null,
+  source_frame_age_ms: null,
+  capture_to_present_p95_ms: 0,
+  access_lost_count: 0,
+  monitor_handoff: "idle",
 };
 
 export function PresenceRendererCanvas({

@@ -16,10 +16,17 @@ describe("renderer health host", () => {
       fallback_reason: "WEBGL_CONTEXT_LOST",
       monitor_refresh_hz: 0,
       effective_fps: 60,
+      dda_exclusion: "not_requested",
+      source_format: null,
+      adapter_luid: null,
+      source_frame_age_ms: null,
+      capture_to_present_p95_ms: 0,
+      access_lost_count: 0,
+      monitor_handoff: "idle",
     })).resolves.toBe("force_compatibility");
     expect(invoke).toHaveBeenCalledWith("pet_renderer_report_health", {
       report: {
-        schema_version: 2,
+        schema_version: 3,
         requested_mode: "liquid",
         mode: "liquid",
         actual_backend: "webgl_compatibility",
@@ -29,6 +36,13 @@ describe("renderer health host", () => {
         fallback_reason: "WEBGL_CONTEXT_LOST",
         monitor_refresh_hz: 0,
         effective_fps: 60,
+        dda_exclusion: "not_requested",
+        source_format: null,
+        adapter_luid: null,
+        source_frame_age_ms: null,
+        capture_to_present_p95_ms: 0,
+        access_lost_count: 0,
+        monitor_handoff: "idle",
       },
     });
     expect(JSON.stringify(invoke.mock.calls)).not.toContain("project_id");
@@ -48,6 +62,13 @@ describe("renderer health host", () => {
       fallback_reason: "CANVAS2D_UNAVAILABLE",
       monitor_refresh_hz: 0,
       effective_fps: 0,
+      dda_exclusion: "not_requested",
+      source_format: null,
+      adapter_luid: null,
+      source_frame_age_ms: null,
+      capture_to_present_p95_ms: 0,
+      access_lost_count: 0,
+      monitor_handoff: "idle",
     })).resolves.toBe("continue");
   });
 });

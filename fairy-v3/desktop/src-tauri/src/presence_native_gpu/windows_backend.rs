@@ -8,9 +8,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::{
-    NativeGpuBackend, NativeGpuConfig, NativeGpuError, NativeGpuExpansionDirection,
-    NativeGpuLifecycle, NativeGpuOpticsSource, NativeGpuPresentation, NativeGpuStatus,
-    NativeGpuVisualState,
+    DdaExclusionStatus, MonitorHandoffState, NativeGpuBackend, NativeGpuConfig, NativeGpuError,
+    NativeGpuExpansionDirection, NativeGpuLifecycle, NativeGpuOpticsSource, NativeGpuPresentation,
+    NativeGpuStatus, NativeGpuVisualState,
 };
 use crate::presence_coordinator::PhysicalFrame;
 use fairy_windows_capture_dda::{
@@ -145,25 +145,38 @@ impl WindowsNativeGpuSession {
             status.hdr_composition = hdr_capture;
             status.display_refresh_rate_hz = display_refresh_rate_hz;
             status.effective_frame_rate = effective_frame_rate;
-            // HostBackdrop is evaluated by the system compositor and never exposes its pixels
-            // to Fairy's D3D shader or an application-owned source frame loop.
-            status.host_backdrop_composition = false;
+            status.host_backdrop_composition = true;
             status.backdrop_pixel_access = false;
             status.continuous_displacement_supported = false;
+            status.monitor_handoff = MonitorHandoffState::Preparing;
         });
         let (device, context, mut dda_binding) = create_native_d3d_device(monitor_handle, &status)?;
         if dda_binding.is_some() {
+            let mut exclusion_applied = true;
             for raw_hwnd in [config.render_hwnd, config.input_hwnd] {
                 let hwnd = HWND(raw_hwnd as *mut c_void);
                 if let Err(error) = set_window_excluded_from_dda(hwnd, true) {
                     update_status(&status, |status| {
+                        status.dda_exclusion = DdaExclusionStatus::Failed;
                         status.fallback_reason =
                             Some(format!("PRESENCE_DDA_WINDOW_EXCLUSION_FAILED: {error}"));
                     });
+                    exclusion_applied = false;
                     dda_binding = None;
                     break;
                 }
             }
+            if exclusion_applied {
+                update_status(&status, |status| {
+                    status.dda_exclusion = DdaExclusionStatus::Applied;
+                });
+            }
+        } else {
+            update_status(&status, |status| {
+                if status.dda_exclusion != DdaExclusionStatus::Failed {
+                    status.dda_exclusion = DdaExclusionStatus::Unsupported;
+                }
+            });
         }
         let surface_hwnd = Arc::new(AtomicIsize::new(0));
         let presentation = Arc::new(RwLock::new(config.presentation));
@@ -189,9 +202,13 @@ impl WindowsNativeGpuSession {
             )
         })?;
         update_status(&status, |status| {
-            status.composition_stage = "host_backdrop_renderer_started".to_owned();
+            status.composition_stage =
+                if status.optics_source == NativeGpuOpticsSource::DesktopDuplication {
+                    "desktop_duplication_renderer_started".to_owned()
+                } else {
+                    "host_backdrop_renderer_started".to_owned()
+                };
             status.composition_hresult = None;
-            status.optics_source = NativeGpuOpticsSource::HostBackdropIdentity;
         });
         Ok(Self {
             control,
@@ -439,16 +456,31 @@ impl NativeRenderLoop {
                         return;
                     }
                 };
-                let desktop_source_ready = renderer.desktop_source.is_some();
+                let desktop_source_ready =
+                    renderer.desktop_source.is_some() && renderer.desktop_view.is_some();
                 update_status(&thread_status, |status| {
-                    status.backend = NativeGpuBackend::WindowsHostBackdropD3d11Composition;
+                    status.backend = if desktop_source_ready {
+                        NativeGpuBackend::WindowsDdaD3d11Composition
+                    } else {
+                        NativeGpuBackend::WindowsHostBackdropD3d11Composition
+                    };
+                    status.optics_source = if desktop_source_ready {
+                        NativeGpuOpticsSource::DesktopDuplication
+                    } else {
+                        NativeGpuOpticsSource::HostBackdropIdentity
+                    };
                     status.lifecycle = NativeGpuLifecycle::Running;
                     status.host_backdrop_composition = true;
                     status.backdrop_pixel_access = desktop_source_ready;
-                    status.continuous_displacement_supported = false;
+                    status.continuous_displacement_supported = desktop_source_ready;
                     status.pixel_ipc = false;
                     status.monitor_width = monitor_frame.width;
                     status.monitor_height = monitor_frame.height;
+                    status.monitor_handoff = if desktop_source_ready {
+                        MonitorHandoffState::Ready
+                    } else {
+                        MonitorHandoffState::Failed
+                    };
                     status.started_at_ms = now_ms();
                     status.error_code = None;
                 });
@@ -594,8 +626,25 @@ fn run_render_loop(
             next_deadline = now;
             update_status(status, |status| status.effective_frame_rate = frame_rate);
         }
-        if now < next_deadline {
+        let foreground_due = now >= next_deadline;
+        let desktop_updated = if foreground_due {
+            false
+        } else if renderer.has_desktop_source() {
+            let source_wait_budget_ms = if renderer.display_refresh_rate_hz > 0 {
+                (1_000 / u32::from(renderer.display_refresh_rate_hz)).clamp(1, 16)
+            } else {
+                8
+            };
+            let remaining_ms = next_deadline
+                .saturating_duration_since(now)
+                .as_millis()
+                .clamp(1, u128::from(source_wait_budget_ms)) as u32;
+            renderer.poll_desktop_texture(remaining_ms)
+        } else {
             wait_for_render_deadline(shared, control, next_deadline, frame_rate);
+            false
+        };
+        if !foreground_due && !desktop_updated {
             continue;
         }
         let present_started = Instant::now();
@@ -608,8 +657,10 @@ fn run_render_loop(
         }
         let presented = Instant::now();
         metrics.record(present_started, presented, status);
-        next_deadline =
-            advance_render_deadline(next_deadline, presented, render_interval(frame_rate));
+        if foreground_due {
+            next_deadline =
+                advance_render_deadline(next_deadline, presented, render_interval(frame_rate));
+        }
     }
     metrics.publish(status);
 }
@@ -1381,6 +1432,8 @@ struct NativeCompositionRenderer {
     desktop_view: Option<ID3D11ShaderResourceView>,
     desktop_sampler: ID3D11SamplerState,
     desktop_texture_generation: u64,
+    pending_capture_at: Option<Instant>,
+    capture_to_present_ms: VecDeque<f64>,
     status: Arc<Mutex<NativeGpuStatus>>,
 }
 
@@ -1954,9 +2007,26 @@ impl NativeCompositionRenderer {
             presentation,
             hdr_capture,
             status,
-            dda_binding,
+            mut dda_binding,
         } = input;
-        let surface = NativeCompositionSurface::new(config, surface_hwnd, dda_binding.is_some())?;
+        let surface = match NativeCompositionSurface::new(
+            config,
+            Arc::clone(&surface_hwnd),
+            dda_binding.is_some(),
+        ) {
+            Ok(surface) => surface,
+            Err(error)
+                if dda_binding.is_some() && error.contains("DDA_NATIVE_WINDOW_EXCLUSION") =>
+            {
+                update_status(&status, |status| {
+                    status.dda_exclusion = DdaExclusionStatus::Failed;
+                    status.fallback_reason = Some(error.clone());
+                });
+                dda_binding = None;
+                NativeCompositionSurface::new(config, surface_hwnd, false)?
+            }
+            Err(error) => return Err(error),
+        };
         let mut desktop_source = match dda_binding {
             Some(binding) => {
                 match initialize_desktop_texture_source(binding, device.clone(), context.clone()) {
@@ -1995,7 +2065,7 @@ impl NativeCompositionRenderer {
             },
             None => None,
         };
-        let input_swap_chain = if desktop_view.is_some() {
+        let mut input_swap_chain = if desktop_view.is_some() {
             Some(create_swap_chain(
                 &device,
                 native_input_surface_frame(config.render_frame),
@@ -2003,19 +2073,51 @@ impl NativeCompositionRenderer {
         } else {
             None
         };
-        let input_render_targets = if input_swap_chain.is_some() {
+        let mut input_render_targets = if input_swap_chain.is_some() {
             vec![None; SWAP_CHAIN_BUFFER_COUNT as usize]
         } else {
             Vec::new()
         };
+        let desktop_texture_active = desktop_source.is_some() && desktop_view.is_some();
         update_status(&status, |status| {
-            status.composition_stage = "host_backdrop_identity".to_owned();
+            status.composition_stage = if desktop_texture_active {
+                "desktop_duplication_ready".to_owned()
+            } else {
+                "host_backdrop_identity".to_owned()
+            };
             status.composition_hresult = None;
-            status.optics_source = NativeGpuOpticsSource::HostBackdropIdentity;
+            status.backend = if desktop_texture_active {
+                NativeGpuBackend::WindowsDdaD3d11Composition
+            } else {
+                NativeGpuBackend::WindowsHostBackdropD3d11Composition
+            };
+            status.optics_source = if desktop_texture_active {
+                NativeGpuOpticsSource::DesktopDuplication
+            } else {
+                NativeGpuOpticsSource::HostBackdropIdentity
+            };
             status.host_backdrop_composition = true;
-            status.backdrop_pixel_access = desktop_source.is_some();
-            status.continuous_displacement_supported = false;
-            status.fallback_reason = None;
+            status.backdrop_pixel_access = desktop_texture_active;
+            status.continuous_displacement_supported = desktop_texture_active;
+            status.source_format = desktop_source
+                .as_ref()
+                .and_then(DesktopTextureSource::last_frame)
+                .map(|frame| frame.source_format.name().to_owned());
+            status.adapter_luid = desktop_source
+                .as_ref()
+                .map(|source| source.binding().adapter_luid_string());
+            status.source_frame_age_ms = desktop_source
+                .as_ref()
+                .and_then(DesktopTextureSource::frame_age)
+                .map(|age| age.as_secs_f64() * 1_000.0);
+            status.access_lost_count = desktop_source
+                .as_ref()
+                .map_or(0, DesktopTextureSource::access_lost_count);
+            if desktop_texture_active {
+                status.dda_exclusion = DdaExclusionStatus::Applied;
+                status.monitor_handoff = MonitorHandoffState::Ready;
+                status.fallback_reason = None;
+            }
         });
         let swap_chain_base: IDXGISwapChain1 = swap_chain
             .cast()
@@ -2036,6 +2138,18 @@ impl NativeCompositionRenderer {
             config.render_frame,
             config.presentation,
         )?;
+        let input_dda_ready = composition
+            .input
+            .as_ref()
+            .is_some_and(|input| input.desktop.is_some());
+        if input_swap_chain.is_some() && !input_dda_ready {
+            input_swap_chain = None;
+            input_render_targets.clear();
+            update_status(&status, |status| {
+                status.fallback_reason =
+                    Some("PRESENCE_DDA_INPUT_COMPOSITION_UNAVAILABLE".to_owned());
+            });
+        }
         composition.set_desktop_texture_active(false, false)?;
         Ok(Self {
             surface,
@@ -2062,6 +2176,8 @@ impl NativeCompositionRenderer {
             desktop_view,
             desktop_sampler,
             desktop_texture_generation,
+            pending_capture_at: None,
+            capture_to_present_ms: VecDeque::with_capacity(METRIC_WINDOW),
             status,
         })
     }
@@ -2070,7 +2186,7 @@ impl NativeCompositionRenderer {
         if !unsafe { IsWindow(Some(self.surface.hwnd)) }.as_bool() {
             return Err("PRESENCE_NATIVE_GPU_SURFACE_INVALIDATED".to_owned());
         }
-        self.poll_desktop_texture();
+        self.poll_desktop_texture(0);
         let presentation = *self
             .presentation
             .read()
@@ -2229,6 +2345,23 @@ impl NativeCompositionRenderer {
         };
         self.composition
             .set_desktop_texture_active(desktop_texture_active, input_texture_active)?;
+        if let Some(captured_at) = self.pending_capture_at.take() {
+            push_metric(
+                &mut self.capture_to_present_ms,
+                captured_at.elapsed().as_secs_f64() * 1_000.0,
+            );
+        }
+        let capture_to_present_p95_ms =
+            percentile(&self.capture_to_present_ms, 0.95).unwrap_or(0.0);
+        let source_frame_age_ms = self
+            .desktop_source
+            .as_ref()
+            .and_then(DesktopTextureSource::frame_age)
+            .map(|age| age.as_secs_f64() * 1_000.0);
+        update_status(&self.status, |status| {
+            status.capture_to_present_p95_ms = capture_to_present_p95_ms;
+            status.source_frame_age_ms = source_frame_age_ms;
+        });
         self.surface.show()?;
         Ok(())
     }
@@ -2351,11 +2484,15 @@ impl NativeCompositionRenderer {
             .map_err(windows_error)
     }
 
-    fn poll_desktop_texture(&mut self) {
+    fn has_desktop_source(&self) -> bool {
+        self.desktop_source.is_some()
+    }
+
+    fn poll_desktop_texture(&mut self, timeout_ms: u32) -> bool {
         let Some(source) = self.desktop_source.as_mut() else {
-            return;
+            return false;
         };
-        let poll = source.poll(0);
+        let poll = source.poll(timeout_ms);
         let refreshed_texture = match &poll {
             Ok(DesktopTexturePoll::Updated(_))
                 if source.texture_generation() != self.desktop_texture_generation =>
@@ -2379,38 +2516,62 @@ impl NativeCompositionRenderer {
                             self.desktop_view = None;
                             self.desktop_source = None;
                             update_status(&self.status, |status| {
+                                status.backend =
+                                    NativeGpuBackend::WindowsHostBackdropD3d11Composition;
+                                status.optics_source = NativeGpuOpticsSource::HostBackdropIdentity;
                                 status.backdrop_pixel_access = false;
+                                status.continuous_displacement_supported = false;
                                 status.composition_stage = "host_backdrop_identity".to_owned();
+                                status.monitor_handoff = MonitorHandoffState::Failed;
                                 status.fallback_reason = Some(error);
                             });
-                            return;
+                            return false;
                         }
                     }
                 }
+                self.pending_capture_at = Some(frame.acquired_at);
+                let access_lost_count = source.access_lost_count();
+                let source_frame_age_ms = source.frame_age().map(|age| age.as_secs_f64() * 1_000.0);
                 update_status(&self.status, |status| {
+                    status.backend = NativeGpuBackend::WindowsDdaD3d11Composition;
+                    status.optics_source = NativeGpuOpticsSource::DesktopDuplication;
                     status.backdrop_pixel_access = true;
+                    status.continuous_displacement_supported = true;
                     status.composition_stage = "desktop_texture_updated".to_owned();
                     status.composition_hresult = None;
                     status.error_code = None;
                     status.fallback_reason = None;
+                    status.source_format = Some(frame.source_format.name().to_owned());
+                    status.source_frame_age_ms = source_frame_age_ms;
+                    status.access_lost_count = access_lost_count;
+                    status.monitor_handoff = MonitorHandoffState::Ready;
                     status.hdr_composition = frame.source_format
                         == fairy_windows_capture_dda::DuplicationFormat::Rgba16F;
                 });
+                true
             }
             Ok(DesktopTexturePoll::Recovering { attempt, .. }) => {
+                let access_lost_count = source.access_lost_count();
                 update_status(&self.status, |status| {
+                    status.access_lost_count = access_lost_count;
                     status.composition_stage = format!("desktop_texture_recovering_{attempt}");
                 });
+                false
             }
-            Ok(DesktopTexturePoll::NoFrame) => {}
+            Ok(DesktopTexturePoll::NoFrame) => false,
             Err(error) => {
                 self.desktop_view = None;
                 self.desktop_source = None;
                 update_status(&self.status, |status| {
+                    status.backend = NativeGpuBackend::WindowsHostBackdropD3d11Composition;
+                    status.optics_source = NativeGpuOpticsSource::HostBackdropIdentity;
                     status.backdrop_pixel_access = false;
+                    status.continuous_displacement_supported = false;
                     status.composition_stage = "host_backdrop_identity".to_owned();
+                    status.monitor_handoff = MonitorHandoffState::Failed;
                     status.fallback_reason = Some(format!("PRESENCE_DDA_RUNTIME_FAILED: {error}"));
                 });
+                false
             }
         }
     }
@@ -2500,6 +2661,7 @@ fn create_native_d3d_device(
                 update_status(status, |status| {
                     status.composition_stage = "desktop_output_device_created".to_owned();
                     status.adapter_name = Some(binding.adapter_name().to_owned());
+                    status.adapter_luid = Some(binding.adapter_luid_string());
                     status.adapter_index = Some(binding.adapter_index());
                     status.output_device_name = Some(binding.output_name().to_owned());
                     status.output_index = Some(binding.output_index());
@@ -3587,7 +3749,7 @@ mod tests {
             "create_desktop_texture_view",
             "PSSetShaderResources",
             "set_window_excluded_from_dda",
-            "source.poll(0)",
+            "source.poll(timeout_ms)",
             "host_backdrop_renderer_started",
             "host_backdrop_identity",
             "composition_hresult",

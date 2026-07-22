@@ -1158,7 +1158,13 @@ function rendererHealthLabel(health: PresenceRendererHealth): string {
       : ` · ${health.effective_fps} FPS`
     : "";
   if (health.actual_backend === "native_liquid_glass") {
-    return `Native Host Backdrop material · no pixel displacement${rate}`;
+    const latency = health.capture_to_present_p95_ms > 0
+      ? ` · ${health.capture_to_present_p95_ms.toFixed(1)} ms p95`
+      : "";
+    return `Native DDA Liquid Glass${rate}${latency}`;
+  }
+  if (health.actual_backend === "native_identity_fallback") {
+    return `Host Backdrop identity fallback · no refraction${rate}`;
   }
   if (health.actual_backend === "webgl_compatibility") {
     return `WebGL compatibility${rate}`;

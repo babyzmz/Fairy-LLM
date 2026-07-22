@@ -182,9 +182,8 @@ describe("SettingsApp", () => {
     await screen.findByRole("heading", { name: "General" });
     await userEvent.click(screen.getByRole("button", { name: /^Pet/ }));
     expect(screen.getByText(
-      "Native Host Backdrop material · no pixel displacement · 144 FPS on 144 Hz",
-    ))
-      .toBeVisible();
+      /Native DDA Liquid Glass.*144 FPS on 144 Hz.*3\.2 ms p95/,
+    )).toBeVisible();
 
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Renderer" }), "compatibility");
     await vi.waitFor(() => {
@@ -774,12 +773,19 @@ function nativeRendererHealth(): PresenceRendererHealth {
     requested_mode: "liquid",
     mode: "native",
     actual_backend: "native_liquid_glass",
-    optics_source: "host_backdrop_identity",
+    optics_source: "desktop_duplication",
     status: "running",
     error_code: null,
     fallback_reason: null,
     monitor_refresh_hz: 144,
     effective_fps: 144,
+    dda_exclusion: "applied",
+    source_format: "rgba16f",
+    adapter_luid: "00000000:00000001",
+    source_frame_age_ms: 1,
+    capture_to_present_p95_ms: 3.2,
+    access_lost_count: 0,
+    monitor_handoff: "ready",
   };
 }
 

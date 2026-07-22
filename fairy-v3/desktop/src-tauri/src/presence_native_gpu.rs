@@ -24,6 +24,7 @@ pub enum NativeGpuBackend {
     #[default]
     Unavailable,
     WindowsHostBackdropD3d11Composition,
+    WindowsDdaD3d11Composition,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
@@ -32,6 +33,27 @@ pub enum NativeGpuOpticsSource {
     #[default]
     None,
     HostBackdropIdentity,
+    DesktopDuplication,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DdaExclusionStatus {
+    #[default]
+    NotRequested,
+    Applied,
+    Failed,
+    Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitorHandoffState {
+    #[default]
+    Idle,
+    Preparing,
+    Ready,
+    Failed,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -249,6 +271,13 @@ pub struct NativeGpuStatus {
     pub continuous_displacement_supported: bool,
     pub pixel_ipc: bool,
     pub hdr_composition: bool,
+    pub dda_exclusion: DdaExclusionStatus,
+    pub source_format: Option<String>,
+    pub adapter_luid: Option<String>,
+    pub source_frame_age_ms: Option<f64>,
+    pub capture_to_present_p95_ms: f64,
+    pub access_lost_count: u32,
+    pub monitor_handoff: MonitorHandoffState,
     pub target_frame_rate: u16,
     pub effective_frame_rate: u16,
     pub display_refresh_rate_hz: u16,
@@ -292,6 +321,8 @@ impl NativeGpuStatus {
             backdrop_pixel_access: false,
             continuous_displacement_supported: false,
             pixel_ipc: false,
+            dda_exclusion: DdaExclusionStatus::NotRequested,
+            monitor_handoff: MonitorHandoffState::Idle,
             composition_stage: "idle".to_owned(),
             ..Self::default()
         }
@@ -307,6 +338,8 @@ impl NativeGpuStatus {
             backdrop_pixel_access: false,
             continuous_displacement_supported: false,
             pixel_ipc: false,
+            dda_exclusion: DdaExclusionStatus::NotRequested,
+            monitor_handoff: MonitorHandoffState::Preparing,
             target_frame_rate: config.target_frame_rate,
             surface_width: config.render_frame.width,
             surface_height: config.render_frame.height,

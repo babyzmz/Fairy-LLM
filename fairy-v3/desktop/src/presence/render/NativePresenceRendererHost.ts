@@ -10,10 +10,15 @@ import { liquidShapeTargetForSnapshot } from "./liquidGlassMaterial";
 import type { PresenceRendererMode } from "./rendererSupport";
 
 const nativeGpuStatusSchema = z.object({
-  backend: z.enum(["unavailable", "windows_host_backdrop_d3d11_composition"]),
+  backend: z.enum([
+    "unavailable",
+    "windows_host_backdrop_d3d11_composition",
+    "windows_dda_d3d11_composition",
+  ]),
   optics_source: z.enum([
     "none",
     "host_backdrop_identity",
+    "desktop_duplication",
   ]).default("host_backdrop_identity"),
   lifecycle: z.enum(["idle", "starting", "running", "stopping", "failed"]),
   host_backdrop_composition: z.boolean(),
@@ -21,6 +26,13 @@ const nativeGpuStatusSchema = z.object({
   continuous_displacement_supported: z.boolean(),
   pixel_ipc: z.boolean(),
   hdr_composition: z.boolean(),
+  dda_exclusion: z.enum(["not_requested", "applied", "failed", "unsupported"]),
+  source_format: z.enum(["bgra8", "rgb10a2", "rgba16f"]).nullable(),
+  adapter_luid: z.string().regex(/^[0-9A-F]{8}:[0-9A-F]{8}$/u).nullable(),
+  source_frame_age_ms: z.number().nonnegative().nullable(),
+  capture_to_present_p95_ms: z.number().nonnegative(),
+  access_lost_count: z.number().int().nonnegative(),
+  monitor_handoff: z.enum(["idle", "preparing", "ready", "failed"]),
   target_frame_rate: z.number().int().positive(),
   effective_frame_rate: z.number().int().nonnegative(),
   display_refresh_rate_hz: z.number().int().nonnegative(),
@@ -500,18 +512,39 @@ export class NativePresenceRendererHost {
   ): void {
     const nativeActive = status === "running" || status === "suspended";
     const fallback = ["context_lost", "fallback", "failed"].includes(status);
+    const ddaActive = nativeActive &&
+      this.lastStatus?.backend === "windows_dda_d3d11_composition" &&
+      this.lastStatus.optics_source === "desktop_duplication" &&
+      this.lastStatus.dda_exclusion === "applied";
+    const identityFallback = nativeActive && !ddaActive;
     this.options.onHealth?.({
       requested_mode: this.requestedMode,
       mode: "native",
-      actual_backend: nativeActive ? "native_liquid_glass" : "none",
+      actual_backend: ddaActive
+        ? "native_liquid_glass"
+        : identityFallback
+          ? "native_identity_fallback"
+          : "none",
       optics_source: nativeActive
         ? this.lastStatus?.optics_source ?? "host_backdrop_identity"
         : "none",
       status,
       error_code,
-      fallback_reason: fallback ? error_code : null,
+      fallback_reason: identityFallback
+        ? "NATIVE_DDA_UNAVAILABLE"
+        : fallback
+          ? error_code
+          : null,
       monitor_refresh_hz: this.lastStatus?.display_refresh_rate_hz ?? 0,
       effective_fps: this.lastStatus?.effective_frame_rate ?? 0,
+      dda_exclusion: this.lastStatus?.dda_exclusion ?? "not_requested",
+      source_format: this.lastStatus?.source_format ?? null,
+      adapter_luid: this.lastStatus?.adapter_luid ?? null,
+      source_frame_age_ms: this.lastStatus?.source_frame_age_ms ?? null,
+      capture_to_present_p95_ms:
+        this.lastStatus?.capture_to_present_p95_ms ?? 0,
+      access_lost_count: this.lastStatus?.access_lost_count ?? 0,
+      monitor_handoff: this.lastStatus?.monitor_handoff ?? "idle",
     });
   }
 
@@ -624,13 +657,22 @@ export function nativeVisualStateForSnapshot(
 
 function parseHealthyStatus(value: unknown): NativeGpuStatus {
   const status = nativeGpuStatusSchema.parse(value);
+  const ddaHealthy =
+    status.backend === "windows_dda_d3d11_composition" &&
+    status.optics_source === "desktop_duplication" &&
+    status.dda_exclusion === "applied" &&
+    status.backdrop_pixel_access &&
+    status.continuous_displacement_supported;
+  const identityFallback =
+    status.backend === "windows_host_backdrop_d3d11_composition" &&
+    status.optics_source === "host_backdrop_identity" &&
+    !status.backdrop_pixel_access &&
+    !status.continuous_displacement_supported;
   if (
     status.lifecycle !== "running" ||
-    status.optics_source !== "host_backdrop_identity" ||
     !status.host_backdrop_composition ||
-    status.backdrop_pixel_access ||
-    status.continuous_displacement_supported ||
-    status.pixel_ipc
+    status.pixel_ipc ||
+    (!ddaHealthy && !identityFallback)
   ) {
     throw new Error(status.error_code ?? "PRESENCE_NATIVE_GPU_UNHEALTHY");
   }

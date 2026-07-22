@@ -40,6 +40,7 @@ pub enum PresenceRendererErrorCode {
     NativeGpuUpdateFailed,
     NativeGpuRuntimeFailed,
     NativeGpuStopFailed,
+    NativeDdaUnavailable,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -55,6 +56,7 @@ pub enum PresenceRendererRequestedMode {
 pub enum PresenceActualRendererBackend {
     None,
     NativeLiquidGlass,
+    NativeIdentityFallback,
     WebglCompatibility,
     CanvasCompatibility,
 }
@@ -63,12 +65,13 @@ pub enum PresenceActualRendererBackend {
 #[serde(rename_all = "snake_case")]
 pub enum PresenceOpticsSource {
     None,
+    DesktopDuplication,
     HostBackdropIdentity,
     WebglTexture,
     Procedural,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PresenceRendererHealthReport {
     pub schema_version: u16,
@@ -81,11 +84,71 @@ pub struct PresenceRendererHealthReport {
     pub fallback_reason: Option<PresenceRendererErrorCode>,
     pub monitor_refresh_hz: u16,
     pub effective_fps: u16,
+    pub dda_exclusion: PresenceDdaExclusionStatus,
+    pub source_format: Option<PresenceDdaSourceFormat>,
+    pub adapter_luid: Option<String>,
+    pub source_frame_age_ms: Option<f64>,
+    pub capture_to_present_p95_ms: f64,
+    pub access_lost_count: u32,
+    pub monitor_handoff: PresenceMonitorHandoffState,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceDdaExclusionStatus {
+    NotRequested,
+    Applied,
+    Failed,
+    Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceDdaSourceFormat {
+    Bgra8,
+    Rgb10a2,
+    Rgba16f,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceMonitorHandoffState {
+    Idle,
+    Preparing,
+    Ready,
+    Failed,
 }
 
 impl PresenceRendererHealthReport {
-    pub fn is_valid(self) -> bool {
-        self.schema_version == 2
+    pub fn is_valid(&self) -> bool {
+        if self.schema_version != 3 {
+            return false;
+        }
+        match self.actual_backend {
+            PresenceActualRendererBackend::NativeLiquidGlass => {
+                self.mode == PresenceRendererMode::Native
+                    && self.optics_source == PresenceOpticsSource::DesktopDuplication
+                    && self.dda_exclusion == PresenceDdaExclusionStatus::Applied
+                    && self.source_format.is_some()
+                    && self.adapter_luid.is_some()
+            }
+            PresenceActualRendererBackend::NativeIdentityFallback => {
+                self.mode == PresenceRendererMode::Native
+                    && self.optics_source == PresenceOpticsSource::HostBackdropIdentity
+            }
+            PresenceActualRendererBackend::WebglCompatibility => {
+                self.mode == PresenceRendererMode::Liquid
+                    && matches!(
+                        self.optics_source,
+                        PresenceOpticsSource::WebglTexture | PresenceOpticsSource::Procedural
+                    )
+            }
+            PresenceActualRendererBackend::CanvasCompatibility => {
+                self.mode == PresenceRendererMode::Compatibility
+                    && self.optics_source == PresenceOpticsSource::Procedural
+            }
+            PresenceActualRendererBackend::None => self.optics_source == PresenceOpticsSource::None,
+        }
     }
 }
 
@@ -180,7 +243,7 @@ mod tests {
 
     fn failed(mode: PresenceRendererMode) -> PresenceRendererHealthReport {
         PresenceRendererHealthReport {
-            schema_version: 2,
+            schema_version: 3,
             requested_mode: PresenceRendererRequestedMode::Liquid,
             mode,
             actual_backend: PresenceActualRendererBackend::None,
@@ -190,6 +253,13 @@ mod tests {
             fallback_reason: None,
             monitor_refresh_hz: 0,
             effective_fps: 0,
+            dda_exclusion: PresenceDdaExclusionStatus::NotRequested,
+            source_format: None,
+            adapter_luid: None,
+            source_frame_age_ms: None,
+            capture_to_present_p95_ms: 0.0,
+            access_lost_count: 0,
+            monitor_handoff: PresenceMonitorHandoffState::Idle,
         }
     }
 
@@ -244,5 +314,20 @@ mod tests {
             supervisor.observe_at(failed(PresenceRendererMode::Native), INCIDENT_WINDOW_MS + 3,),
             PresenceRendererDirective::Continue
         );
+    }
+
+    #[test]
+    fn health_report_rejects_mismatched_native_optics_claims() {
+        let mut report = failed(PresenceRendererMode::Native);
+        report.status = PresenceRendererStatus::Running;
+        report.actual_backend = PresenceActualRendererBackend::NativeLiquidGlass;
+        report.optics_source = PresenceOpticsSource::HostBackdropIdentity;
+        report.dda_exclusion = PresenceDdaExclusionStatus::Applied;
+        report.source_format = Some(PresenceDdaSourceFormat::Bgra8);
+        report.adapter_luid = Some("00000000:00000001".to_owned());
+        assert!(!report.is_valid());
+
+        report.optics_source = PresenceOpticsSource::DesktopDuplication;
+        assert!(report.is_valid());
     }
 }

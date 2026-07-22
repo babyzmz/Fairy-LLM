@@ -205,6 +205,13 @@ export class PresenceRendererHost implements PresenceRenderer {
         this.snapshot.target_frame_rate,
         this.snapshot.frame_rate_limit,
       ),
+      dda_exclusion: "not_requested",
+      source_format: null,
+      adapter_luid: null,
+      source_frame_age_ms: null,
+      capture_to_present_p95_ms: 0,
+      access_lost_count: 0,
+      monitor_handoff: "idle",
     });
   }
 }

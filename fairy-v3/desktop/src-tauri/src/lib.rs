@@ -2250,7 +2250,7 @@ fn pet_renderer_report_health(
     *state
         .renderer_health
         .lock()
-        .map_err(|_| "Renderer health is unavailable".to_owned())? = Some(report);
+        .map_err(|_| "Renderer health is unavailable".to_owned())? = Some(report.clone());
     let renderer_ready = matches!(
         report.status,
         PresenceRendererStatus::Running | PresenceRendererStatus::Fallback
@@ -2297,7 +2297,7 @@ fn pet_renderer_get_health(
     state
         .renderer_health
         .lock()
-        .map(|health| *health)
+        .map(|health| health.clone())
         .map_err(|_| "Renderer health is unavailable".to_owned())
 }
 
