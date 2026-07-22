@@ -57,6 +57,14 @@ try {
       capsule_y: 220,
       capsule_half_width: 132,
     });
+    const sequencedRequest = async (overrides = {}) => {
+      const current = await invoke("pet_native_gpu_status");
+      return {
+        ...startRequest(),
+        ...overrides,
+        visual_sequence: Number(current.visual_sequence ?? 0) + 1,
+      };
+    };
     if (nextAction === "run") {
       let started = null;
       let startError = null;
@@ -98,17 +106,17 @@ try {
       const samples = [];
       for (const frameRateLimit of [15, 30, 60, 144, 300]) {
         await invoke("pet_native_gpu_update", {
-          request: {
-            ...startRequest(),
+          request: await sequencedRequest({
+            visual_state: "responding",
             frame_rate_limit: frameRateLimit,
-          },
+          }),
         });
         await sleep(300);
         const applied = await invoke("pet_native_gpu_update", {
-          request: {
-            ...startRequest(),
+          request: await sequencedRequest({
+            visual_state: "responding",
             frame_rate_limit: frameRateLimit,
-          },
+          }),
         });
 
         // Native status is intentionally time-batched. First wait until the render loop has
@@ -169,10 +177,10 @@ try {
             // contain the product-owned runtime limit. Reapply this diagnostic limit and wait for
             // its revision before starting a fresh session-local sample.
             const reapplied = await invoke("pet_native_gpu_update", {
-              request: {
-                ...startRequest(),
+              request: await sequencedRequest({
+                visual_state: "responding",
                 frame_rate_limit: frameRateLimit,
-              },
+              }),
             });
             const reapplyDeadline = performance.now() + 3_000;
             do {
@@ -205,6 +213,7 @@ try {
           frames_presented: framesPresented,
           elapsed_seconds: elapsedSeconds,
           observed_fps: framesPresented / elapsedSeconds,
+          display_refresh_rate_hz: after.display_refresh_rate_hz,
           presentation_revision: after.presentation_revision,
           lifecycle: after.lifecycle,
         });

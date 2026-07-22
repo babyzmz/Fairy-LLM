@@ -1,7 +1,8 @@
 use fairy_desktop_v3::presence_renderer_supervisor::{
-    PresenceActualRendererBackend, PresenceOpticsSource, PresenceRendererDirective,
-    PresenceRendererErrorCode, PresenceRendererHealthReport, PresenceRendererMode,
-    PresenceRendererRequestedMode, PresenceRendererStatus, PresenceRendererSupervisor,
+    PresenceActualRendererBackend, PresenceDdaExclusionStatus, PresenceMonitorHandoffState,
+    PresenceOpticsSource, PresenceRendererDirective, PresenceRendererErrorCode,
+    PresenceRendererHealthReport, PresenceRendererMode, PresenceRendererRequestedMode,
+    PresenceRendererStatus, PresenceRendererSupervisor,
 };
 
 fn report(
@@ -10,7 +11,7 @@ fn report(
     error_code: Option<PresenceRendererErrorCode>,
 ) -> PresenceRendererHealthReport {
     PresenceRendererHealthReport {
-        schema_version: 2,
+        schema_version: 3,
         requested_mode: PresenceRendererRequestedMode::Liquid,
         mode,
         actual_backend: PresenceActualRendererBackend::None,
@@ -20,6 +21,13 @@ fn report(
         fallback_reason: error_code,
         monitor_refresh_hz: 0,
         effective_fps: 0,
+        dda_exclusion: PresenceDdaExclusionStatus::NotRequested,
+        source_format: None,
+        adapter_luid: None,
+        source_frame_age_ms: None,
+        capture_to_present_p95_ms: 0.0,
+        access_lost_count: 0,
+        monitor_handoff: PresenceMonitorHandoffState::Idle,
     }
 }
 
@@ -32,7 +40,7 @@ fn repeated_context_loss_forces_compatibility_for_the_session() {
         Some(PresenceRendererErrorCode::WebglContextLost),
     );
     assert_eq!(
-        supervisor.observe_at(lost, 1_000),
+        supervisor.observe_at(lost.clone(), 1_000),
         PresenceRendererDirective::Continue
     );
     assert_eq!(
@@ -61,7 +69,7 @@ fn failures_outside_the_window_do_not_trip_the_context_circuit() {
         Some(PresenceRendererErrorCode::WebglContextLost),
     );
     assert_eq!(
-        supervisor.observe_at(lost, 1_000),
+        supervisor.observe_at(lost.clone(), 1_000),
         PresenceRendererDirective::Continue
     );
     assert_eq!(
@@ -79,11 +87,11 @@ fn three_hard_failures_disable_only_the_pet_session() {
         Some(PresenceRendererErrorCode::Canvas2dUnavailable),
     );
     assert_eq!(
-        supervisor.observe_at(failed, 10),
+        supervisor.observe_at(failed.clone(), 10),
         PresenceRendererDirective::Continue
     );
     assert_eq!(
-        supervisor.observe_at(failed, 20),
+        supervisor.observe_at(failed.clone(), 20),
         PresenceRendererDirective::Continue
     );
     assert_eq!(

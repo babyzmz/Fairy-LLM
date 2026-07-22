@@ -600,6 +600,7 @@ fn run_render_loop(
     let mut metrics = NativeRenderMetrics::new();
     let mut active_frame_rate = 0;
     let mut next_deadline = Instant::now();
+    let mut next_source_deadline = next_deadline;
     let mut applied_rebase_epoch = control.rebase_epoch.load(AtomicOrdering::Acquire);
     while !shared.stopping.load(AtomicOrdering::Acquire) && pump_native_messages() {
         let rebase_epoch = control.rebase_epoch.load(AtomicOrdering::Acquire);
@@ -610,6 +611,7 @@ fn run_render_loop(
             }
             applied_rebase_epoch = rebase_epoch;
             next_deadline = Instant::now();
+            next_source_deadline = next_deadline;
         }
         control.acknowledge_drag_mode();
         let drag_active = control.is_drag_active();
@@ -626,25 +628,40 @@ fn run_render_loop(
             next_deadline = now;
             update_status(status, |status| status.effective_frame_rate = frame_rate);
         }
-        let foreground_due = now >= next_deadline;
+        let source_active = renderer.has_desktop_source();
+        let source_frame_rate = desktop_source_frame_rate(renderer.display_refresh_rate_hz);
+        let source_interval = render_interval(source_frame_rate);
+        let mut foreground_due = now >= next_deadline;
+        let source_due = source_active && now >= next_source_deadline;
         let desktop_updated = if foreground_due {
-            false
-        } else if renderer.has_desktop_source() {
-            let source_wait_budget_ms = if renderer.display_refresh_rate_hz > 0 {
-                (1_000 / u32::from(renderer.display_refresh_rate_hz)).clamp(1, 16)
-            } else {
-                8
-            };
+            renderer.poll_desktop_texture(0)
+        } else if source_due {
+            let source_wait_budget_ms = source_interval.as_millis().clamp(1, 16) as u32;
             let remaining_ms = next_deadline
                 .saturating_duration_since(now)
                 .as_millis()
                 .clamp(1, u128::from(source_wait_budget_ms)) as u32;
             renderer.poll_desktop_texture(remaining_ms)
         } else {
-            wait_for_render_deadline(shared, control, next_deadline, frame_rate);
+            let wake_deadline = if source_active && next_source_deadline < next_deadline {
+                next_source_deadline
+            } else {
+                next_deadline
+            };
+            wait_for_render_deadline(
+                shared,
+                control,
+                wake_deadline,
+                frame_rate.max(source_frame_rate),
+            );
             false
         };
+        foreground_due |= Instant::now() >= next_deadline;
         if !foreground_due && !desktop_updated {
+            if source_due {
+                next_source_deadline =
+                    advance_render_deadline(next_source_deadline, Instant::now(), source_interval);
+            }
             continue;
         }
         let present_started = Instant::now();
@@ -661,8 +678,23 @@ fn run_render_loop(
             next_deadline =
                 advance_render_deadline(next_deadline, presented, render_interval(frame_rate));
         }
+        if source_active {
+            // A foreground presentation also includes the newest retained desktop texture.
+            // Advance the source clock on every present so DDA and animation wake-ups merge
+            // instead of summing beyond the monitor refresh rate.
+            next_source_deadline =
+                advance_render_deadline(next_source_deadline, presented, source_interval);
+        }
     }
     metrics.publish(status);
+}
+
+fn desktop_source_frame_rate(display_refresh_rate_hz: u16) -> u16 {
+    if display_refresh_rate_hz >= 24 {
+        display_refresh_rate_hz.min(500)
+    } else {
+        60
+    }
 }
 
 fn wait_for_render_deadline(
@@ -2186,7 +2218,6 @@ impl NativeCompositionRenderer {
         if !unsafe { IsWindow(Some(self.surface.hwnd)) }.as_bool() {
             return Err("PRESENCE_NATIVE_GPU_SURFACE_INVALIDATED".to_owned());
         }
-        self.poll_desktop_texture(0);
         let presentation = *self
             .presentation
             .read()
@@ -3677,6 +3708,29 @@ mod tests {
             advance_render_deadline(started, started + Duration::from_millis(100), interval);
         assert!(after_stall > started + Duration::from_millis(100));
         assert!(after_stall <= started + Duration::from_millis(100) + interval);
+    }
+
+    #[test]
+    fn desktop_updates_are_capped_to_the_display_clock() {
+        assert_eq!(desktop_source_frame_rate(0), 60);
+        assert_eq!(desktop_source_frame_rate(23), 60);
+        assert_eq!(desktop_source_frame_rate(60), 60);
+        assert_eq!(desktop_source_frame_rate(300), 300);
+        assert_eq!(desktop_source_frame_rate(1_000), 500);
+
+        let started = Instant::now();
+        let source_interval = render_interval(desktop_source_frame_rate(300));
+        let first_present = started + Duration::from_millis(1);
+        let next_source = advance_render_deadline(started, first_present, source_interval);
+        assert!(next_source > first_present);
+        assert!(next_source <= first_present + source_interval);
+
+        // A foreground frame uses the same source slot instead of adding another immediate
+        // presentation to the DDA cadence.
+        let foreground_present = next_source + Duration::from_millis(1);
+        let merged_source =
+            advance_render_deadline(next_source, foreground_present, source_interval);
+        assert!(merged_source > foreground_present);
     }
 
     #[test]

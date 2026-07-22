@@ -220,8 +220,15 @@ public sealed class FairyClickSentinel : IDisposable {
     const uint WM_DESTROY = 0x0002;
     const uint WM_LBUTTONUP = 0x0202;
     const uint INPUT_MOUSE = 0;
+    const uint MOUSEEVENTF_MOVE = 0x0001;
     const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
     const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
+    const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+    const int SM_XVIRTUALSCREEN = 76;
+    const int SM_YVIRTUALSCREEN = 77;
+    const int SM_CXVIRTUALSCREEN = 78;
+    const int SM_CYVIRTUALSCREEN = 79;
     const uint SWP_NOSIZE = 0x0001;
     const uint SWP_NOMOVE = 0x0002;
     const uint SWP_NOACTIVATE = 0x0010;
@@ -333,6 +340,8 @@ public sealed class FairyClickSentinel : IDisposable {
     static extern bool GetWindowRect(IntPtr window, out RECT rectangle);
     [DllImport("user32.dll", SetLastError = true)]
     static extern uint SendInput(uint inputCount, INPUT[] inputs, int inputSize);
+    [DllImport("user32.dll")]
+    static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll", SetLastError = true)]
     static extern bool SetWindowPos(
         IntPtr window,
@@ -401,19 +410,8 @@ public sealed class FairyClickSentinel : IDisposable {
                 );
             }
             for (var attempt = 0; attempt < 2; attempt++) {
-                if (!SetPhysicalCursorPos(screenX, screenY)) {
-                    throw new System.ComponentModel.Win32Exception(
-                        Marshal.GetLastWin32Error(),
-                        string.Format("SetPhysicalCursorPos failed at {0},{1}", screenX, screenY)
-                    );
-                }
-                Thread.Sleep(20);
-                POINT positioned;
-                // Per-monitor DPI virtualization and an active high-polling-rate pointer can
-                // quantize the physical cursor by a few pixels after placement. Eight pixels is
-                // still well inside the 48px sentinel and does not relax the pass-through hit
-                // test itself.
-                if (!GetPhysicalCursorPos(out positioned) ||
+                var positioned = PositionCursor(screenX, screenY);
+                if (
                     Math.Abs(positioned.X - screenX) > 8 ||
                     Math.Abs(positioned.Y - screenY) > 8) {
                     throw new InvalidOperationException(string.Format(
@@ -442,6 +440,49 @@ public sealed class FairyClickSentinel : IDisposable {
             if (restoreCursor) SetPhysicalCursorPos(original.X, original.Y);
             if (restoreClip) RestoreClipCursor(ref originalClip);
         }
+    }
+
+    static POINT PositionCursor(int screenX, int screenY) {
+        POINT positioned;
+        if (SetPhysicalCursorPos(screenX, screenY)) {
+            Thread.Sleep(20);
+            if (GetPhysicalCursorPos(out positioned) &&
+                Math.Abs(positioned.X - screenX) <= 8 &&
+                Math.Abs(positioned.Y - screenY) <= 8) {
+                return positioned;
+            }
+        }
+
+        // Remote Desktop and mixed-DPI input desktops can acknowledge SetPhysicalCursorPos
+        // while mapping it through a logical coordinate space. Absolute virtual-desktop input
+        // uses the documented 0..65535 range and avoids that virtualization path.
+        var virtualX = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        var virtualY = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        var virtualWidth = Math.Max(2, GetSystemMetrics(SM_CXVIRTUALSCREEN));
+        var virtualHeight = Math.Max(2, GetSystemMetrics(SM_CYVIRTUALSCREEN));
+        var absoluteX = (int)Math.Max(0, Math.Min(
+            65535,
+            ((long)screenX - virtualX) * 65535L / (virtualWidth - 1)
+        ));
+        var absoluteY = (int)Math.Max(0, Math.Min(
+            65535,
+            ((long)screenY - virtualY) * 65535L / (virtualHeight - 1)
+        ));
+        SendInputs(new[] {
+            MouseInput(
+                absoluteX,
+                absoluteY,
+                MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK
+            ),
+        });
+        Thread.Sleep(30);
+        if (!GetPhysicalCursorPos(out positioned)) {
+            throw new System.ComponentModel.Win32Exception(
+                Marshal.GetLastWin32Error(),
+                "GetPhysicalCursorPos failed after absolute cursor placement"
+            );
+        }
+        return positioned;
     }
 
     static INPUT MouseInput(int x, int y, uint flags) {
@@ -1177,11 +1218,16 @@ try {
         [System.Text.UTF8Encoding]::new($false)
     )
     if ($status.lifecycle -ne "running" -or
+        $status.backend -ne "windows_dda_d3d11_composition" -or
+        $status.optics_source -ne "desktop_duplication" -or
         -not $status.host_backdrop_composition -or
-        $status.optics_source -ne "host_backdrop_identity" -or
-        $status.backdrop_pixel_access -or
-        $status.continuous_displacement_supported -or
-        $status.pixel_ipc) {
+        -not $status.backdrop_pixel_access -or
+        -not $status.continuous_displacement_supported -or
+        $status.pixel_ipc -or
+        $status.dda_exclusion -ne "applied" -or
+        $status.monitor_handoff -ne "ready" -or
+        [string]::IsNullOrWhiteSpace([string]$status.source_format) -or
+        [string]::IsNullOrWhiteSpace([string]$status.adapter_luid)) {
         throw "Native GPU contract failed: $($status | ConvertTo-Json -Compress)"
     }
     if ([int]$status.target_frame_rate -ne $TargetFps) {
@@ -1213,6 +1259,19 @@ try {
     }
     if ([double]$status.present_p95_ms -gt $presentBudgetMs) {
         throw "Native GPU p95 latency gate failed: present=$($status.present_p95_ms)ms budget=$presentBudgetMs ms"
+    }
+    if ([int]$status.display_refresh_rate_hz -gt 0 -and
+        [double]$status.present_fps_avg -gt ([double]$status.display_refresh_rate_hz * 1.10 + 2.0)) {
+        throw "Native GPU presentation exceeded the display clock: present=$($status.present_fps_avg) display=$($status.display_refresh_rate_hz)"
+    }
+    $captureBudgetMs = if ([int]$status.display_refresh_rate_hz -gt 0) {
+        [Math]::Max(8.0, 1000.0 / [double]$status.display_refresh_rate_hz)
+    }
+    else {
+        16.7
+    }
+    if ([double]$status.capture_to_present_p95_ms -gt $captureBudgetMs) {
+        throw "DDA capture-to-present p95 gate failed: capture=$($status.capture_to_present_p95_ms)ms budget=$captureBudgetMs ms"
     }
     if ($VerifyLiveBackdrop) {
         Add-Type -AssemblyName System.Drawing
@@ -1325,11 +1384,12 @@ try {
         foreach ($sample in $cadenceResult.samples) {
             $limit = [int]$sample.frame_rate_limit
             $effective = [Math]::Max(1, [int]$sample.effective_frame_rate)
+            $displayRefresh = [Math]::Max(1, [double]$sample.display_refresh_rate_hz)
             $observed = [double]$sample.observed_fps
             if ($sample.lifecycle -ne "running" -or
                 $observed -lt ($effective * 0.80) -or
-                $observed -gt ($effective * 1.15 + 2.0)) {
-                throw "Native GPU cadence gate failed at ${limit} FPS (effective ${effective} FPS): $observed"
+                $observed -gt ($displayRefresh * 1.10 + 2.0)) {
+                throw "Native GPU cadence gate failed at ${limit} FPS (effective ${effective} FPS, display ${displayRefresh} Hz): $observed"
             }
         }
     }
@@ -1344,11 +1404,14 @@ try {
         }
         foreach ($run in $restartResult.runs) {
             if ($run.running.lifecycle -ne "running" -or
+                $run.running.backend -ne "windows_dda_d3d11_composition" -or
+                $run.running.optics_source -ne "desktop_duplication" -or
                 -not $run.running.host_backdrop_composition -or
-                $run.running.optics_source -ne "host_backdrop_identity" -or
-                $run.running.backdrop_pixel_access -or
-                $run.running.continuous_displacement_supported -or
+                -not $run.running.backdrop_pixel_access -or
+                -not $run.running.continuous_displacement_supported -or
                 $run.running.pixel_ipc -or
+                $run.running.dda_exclusion -ne "applied" -or
+                $run.running.monitor_handoff -ne "ready" -or
                 $run.stopped.lifecycle -ne "idle") {
                 throw "Native GPU restart contract failed: $($run | ConvertTo-Json -Compress)"
             }
