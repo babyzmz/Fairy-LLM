@@ -4178,6 +4178,10 @@ export interface components {
             model_selection: {
                 [key: string]: unknown;
             };
+            /** Persona Digest */
+            persona_digest: string;
+            /** Persona Version */
+            persona_version: string;
             /** Scope Digest */
             scope_digest: string;
             /** Skill Package Digests */

@@ -21,6 +21,8 @@ from fairy_core.storage.sqlite_migrations import (
     migrate_assistant_model_routing,
     migrate_checkpoint_evidence,
     migrate_generic_approval,
+    migrate_harness_persona,
+    migrate_harness_persona_instruction,
     migrate_history_metadata,
     migrate_knowledge_harness_binding,
     migrate_knowledge_manifest_tools,
@@ -65,6 +67,8 @@ def create_sqlite_core_engine(
         memory_metadata.create_all(engine)
         knowledge_metadata.create_all(engine)
         migrate_knowledge_manifest_tools(engine)
+        migrate_harness_persona(engine)
+        migrate_harness_persona_instruction(engine)
         migrate_knowledge_sync_leases(engine)
         initialize_sqlite_fts(engine)
         migrate_pre_tenant_schema(engine, tenant_id=tenant_id)

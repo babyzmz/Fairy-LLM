@@ -21,7 +21,10 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260721_0039"]
+    assert scripts.get_heads() == ["20260723_0042"]
+    assert scripts.get_revision("20260723_0042").down_revision == "20260723_0041"
+    assert scripts.get_revision("20260723_0041").down_revision == "20260722_0040"
+    assert scripts.get_revision("20260722_0040").down_revision == "20260721_0039"
     assert scripts.get_revision("20260721_0039").down_revision == "20260720_0038"
     assert scripts.get_revision("20260720_0037").down_revision == "20260717_0036"
     assert scripts.get_revision("20260712_0016").down_revision == "20260711_0015"
@@ -323,6 +326,18 @@ def test_knowledge_harness_migration_has_reversible_tenant_ddl() -> None:
         assert f"DROP TABLE {table_name}" in ddl
     assert "ALTER TABLE CORE_TASKS DROP COLUMN KNOWLEDGE_SNAPSHOT_ID" in ddl
     assert "ALTER TABLE CORE_ASSISTANT_TURNS DROP COLUMN HARNESS_MANIFEST_ID" in ddl
+
+
+def test_harness_persona_migrations_are_reversible() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.downgrade(config, "20260723_0042:20260722_0040", sql=True)
+
+    ddl = " ".join(output.getvalue().upper().split())
+    assert "DROP COLUMN PERSONA_INSTRUCTION" in ddl
+    assert "DROP COLUMN PERSONA_DIGEST" in ddl
+    assert "DROP COLUMN PERSONA_VERSION" in ddl
 
 
 def test_generic_approval_migration_has_reversible_ddl() -> None:

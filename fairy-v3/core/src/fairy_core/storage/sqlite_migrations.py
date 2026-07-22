@@ -38,6 +38,8 @@ _ASSISTANT_MODEL_ROUTING_REVISION = "20260715_assistant_model_routing"
 _KNOWLEDGE_HARNESS_BINDING_REVISION = "20260721_knowledge_harness_binding"
 _KNOWLEDGE_SYNC_LEASE_REVISION = "20260721_knowledge_sync_lease"
 _KNOWLEDGE_MANIFEST_TOOLS_REVISION = "20260721_knowledge_manifest_tools"
+_HARNESS_PERSONA_REVISION = "20260723_harness_persona"
+_HARNESS_PERSONA_INSTRUCTION_REVISION = "20260723_harness_persona_instruction"
 
 
 def _datetime(value: str | None) -> datetime | None:
@@ -712,6 +714,83 @@ def migrate_knowledge_manifest_tools(engine: Engine) -> None:
             ),
             {
                 "revision": _KNOWLEDGE_MANIFEST_TOOLS_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_harness_persona(engine: Engine) -> None:
+    """Bind new Harness Manifests to Persona while preserving legacy hashes."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _HARNESS_PERSONA_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        if "core_harness_context_manifests" in tables:
+            columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("core_harness_context_manifests")
+            }
+            additions = {
+                "persona_version": "VARCHAR(64) NOT NULL DEFAULT 'legacy'",
+                "persona_digest": f"VARCHAR(64) NOT NULL DEFAULT '{'0' * 64}'",
+            }
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.exec_driver_sql(
+                        f'ALTER TABLE "core_harness_context_manifests" '
+                        f'ADD COLUMN "{name}" {definition}'
+                    )
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {
+                "revision": _HARNESS_PERSONA_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_harness_persona_instruction(engine: Engine) -> None:
+    """Persist the private Persona instruction bound to each new Harness Manifest."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _HARNESS_PERSONA_INSTRUCTION_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        if "core_harness_context_manifests" in tables:
+            columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("core_harness_context_manifests")
+            }
+            if "persona_instruction" not in columns:
+                connection.exec_driver_sql(
+                    'ALTER TABLE "core_harness_context_manifests" '
+                    "ADD COLUMN \"persona_instruction\" TEXT NOT NULL DEFAULT ''"
+                )
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {
+                "revision": _HARNESS_PERSONA_INSTRUCTION_REVISION,
                 "applied_at": datetime.now(UTC).isoformat(),
             },
         )

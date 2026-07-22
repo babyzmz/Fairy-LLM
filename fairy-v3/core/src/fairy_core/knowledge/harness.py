@@ -17,6 +17,7 @@ from fairy_core.knowledge.repository import knowledge_request_fingerprint
 from fairy_core.knowledge.tool_snapshot import ToolDefinitionSnapshot
 from fairy_core.model_catalog.models import ModelSelectionSnapshot
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork
+from fairy_core.persona import load_default_persona_authority
 
 
 class KnowledgeSnapshotBuilder:
@@ -144,6 +145,7 @@ class HarnessManifestBuilder:
             if model_selection is not None
             else {"mode": "legacy_profile", "profile_id": profile_id}
         )
+        persona = load_default_persona_authority()
         manifest = HarnessContextManifest.create(
             task_id=task.id,
             scope_digest=scope.scope_digest,
@@ -165,6 +167,9 @@ class HarnessManifestBuilder:
                 "max_repairs": 3,
                 "max_duration_seconds": 1800,
             },
+            persona_version=persona.version,
+            persona_digest=persona.digest,
+            persona_instruction=persona.system_prompt,
         )
         return unit_of_work.knowledge.append_manifest(manifest)
 

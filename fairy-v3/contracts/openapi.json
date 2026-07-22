@@ -4120,6 +4120,14 @@
             "title": "Model Selection",
             "type": "object"
           },
+          "persona_digest": {
+            "title": "Persona Digest",
+            "type": "string"
+          },
+          "persona_version": {
+            "title": "Persona Version",
+            "type": "string"
+          },
           "scope_digest": {
             "title": "Scope Digest",
             "type": "string"
@@ -4178,6 +4186,8 @@
           "mcp_capability_snapshot",
           "model_selection",
           "budget",
+          "persona_version",
+          "persona_digest",
           "content_hash",
           "created_at"
         ],

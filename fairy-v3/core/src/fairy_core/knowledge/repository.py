@@ -1075,6 +1075,9 @@ class SqlAlchemyKnowledgeRepository:
             "mcp_capability_snapshot": list(manifest.mcp_capability_snapshot),
             "model_selection": dict(manifest.model_selection),
             "budget": dict(manifest.budget),
+            "persona_version": manifest.persona_version,
+            "persona_digest": manifest.persona_digest,
+            "persona_instruction": manifest.persona_instruction,
             "content_hash": manifest.content_hash,
             "created_at": manifest.created_at,
         }

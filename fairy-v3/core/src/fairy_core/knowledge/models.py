@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import re
@@ -520,6 +521,9 @@ class HarnessContextManifest:
     budget: Mapping[str, Any]
     content_hash: str
     created_at: datetime = field(default_factory=_now)
+    persona_version: str = "legacy"
+    persona_digest: str = "0" * 64
+    persona_instruction: str = ""
 
     def __post_init__(self) -> None:
         for name in (
@@ -527,9 +531,17 @@ class HarnessContextManifest:
             "memory_snapshot_hash",
             "knowledge_snapshot_hash",
             "tool_registry_digest",
+            "persona_digest",
             "content_hash",
         ):
             _digest(getattr(self, name), name)
+        _required(self.persona_version, "persona_version", 64)
+        if self.persona_instruction:
+            _required(self.persona_instruction, "persona_instruction", 32_000)
+        elif self.persona_version != "legacy":
+            # Manifests created before the private instruction snapshot was introduced
+            # remain readable and can use the compatibility path in Assistant Context.
+            pass
         if self.tool_registry_generation < 0:
             raise ValueError("Tool Registry generation cannot be negative")
         tool_names = tuple(snapshot.name for snapshot in self.tool_definitions)
@@ -609,7 +621,13 @@ def _manifest_payload(value: HarnessContextManifest | Mapping[str, Any]) -> dict
         return getattr(value, name) if isinstance(value, HarnessContextManifest) else value[name]
 
     workspace_version_id = field("workspace_version_id")
-    return {
+    manifest_fields = _manifest_fields(value)
+    persona_version = field("persona_version") if "persona_version" in manifest_fields else "legacy"
+    persona_digest = field("persona_digest") if "persona_digest" in manifest_fields else "0" * 64
+    persona_instruction = (
+        field("persona_instruction") if "persona_instruction" in manifest_fields else ""
+    )
+    payload = {
         "version": 1,
         "task_id": str(field("task_id")),
         "scope_digest": field("scope_digest"),
@@ -628,6 +646,20 @@ def _manifest_payload(value: HarnessContextManifest | Mapping[str, Any]) -> dict
         "model_selection": dict(field("model_selection")),
         "budget": dict(field("budget")),
     }
+    if persona_version != "legacy" or persona_digest != "0" * 64:
+        payload["version"] = 2
+        payload["persona_version"] = persona_version
+        payload["persona_digest"] = persona_digest
+    if persona_instruction:
+        payload["version"] = 3
+        payload["persona_instruction"] = persona_instruction
+    return payload
+
+
+def _manifest_fields(value: HarnessContextManifest | Mapping[str, Any]) -> frozenset[str]:
+    if isinstance(value, HarnessContextManifest):
+        return frozenset(field.name for field in dataclasses.fields(value))
+    return frozenset(value)
 
 
 def _hash(value: Any) -> str:

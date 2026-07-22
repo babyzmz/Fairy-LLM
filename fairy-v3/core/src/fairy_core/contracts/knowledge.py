@@ -257,6 +257,8 @@ class HarnessContextManifestModel(ContractModel):
     mcp_capability_snapshot: tuple[str, ...]
     model_selection: dict[str, Any]
     budget: dict[str, Any]
+    persona_version: str
+    persona_digest: str
     content_hash: str
     created_at: datetime
 

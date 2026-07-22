@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 
 from fairy_core.obsidian.path_registry import ObsidianPathRegistry
+from fairy_core.persona import load_default_persona_authority
 from fairy_core.providers import ProviderCapability
 from fairy_core.transports.stdio import build_local_service
 
@@ -79,6 +81,9 @@ def test_obsidian_revisions_bind_an_immutable_task_harness(tmp_path: Path) -> No
         assert len(search["items"]) == 1
         assert manifest["knowledge_snapshot_hash"] == snapshot["content_hash"]
         assert manifest["memory_snapshot_hash"] == first["turn"]["memory_snapshot_hash"]
+        authority = load_default_persona_authority()
+        assert manifest["persona_version"] == authority.version
+        assert manifest["persona_digest"] == authority.digest
         assert str(vault) not in json.dumps(
             {"snapshot": snapshot, "manifest": manifest, "search": search}
         )
@@ -257,6 +262,49 @@ def test_turn_context_uses_immutable_manifest_tools_after_registry_change(
         after_names = tuple(definition.name for definition in after.tool_definitions)
         assert "artifact.list" in before_names
         assert after_names == before_names
+    finally:
+        service.close()
+
+
+def test_turn_context_uses_bound_persona_after_authority_resource_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service = build_local_service(tmp_path / "data")
+    try:
+        conversation = service.invoke(
+            "conversations.create",
+            {"project_id": None, "workspace_type": "chat_scratch"},
+        )
+        context = _task_and_turn(service, conversation["id"], "persona-snapshot")
+        turn = service._assistant_ledger.get_turn(UUID(context["turn"]["id"]))
+        authority = load_default_persona_authority()
+        manifest = service.invoke(
+            "harness.manifests.get",
+            {
+                "task_id": context["task"]["id"],
+                "manifest_id": context["turn"]["harness_manifest_id"],
+            },
+        )
+        assert "persona_instruction" not in manifest
+
+        changed_authority = replace(
+            authority,
+            version="fairy-persona-test-next",
+            system_prompt="UPDATED PERSONA MUST NOT ENTER AN EXISTING TURN",
+            digest="f" * 64,
+        )
+        monkeypatch.setattr(
+            "fairy_core.assistant.context.load_default_persona_authority",
+            lambda: changed_authority,
+        )
+        built = service._assistant_application._context.build(
+            turn,
+            provider_capabilities=frozenset({ProviderCapability.TEXT}),
+        )
+
+        assert authority.system_prompt in built.messages[0].content
+        assert changed_authority.system_prompt not in built.messages[0].content
     finally:
         service.close()
 

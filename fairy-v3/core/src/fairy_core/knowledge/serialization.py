@@ -29,6 +29,9 @@ def manifest_from_row(row: Mapping[str, Any]) -> HarnessContextManifest:
         mcp_capability_snapshot=tuple(row["mcp_capability_snapshot"]),
         model_selection=dict(row["model_selection"]),
         budget=dict(row["budget"]),
+        persona_version=row["persona_version"],
+        persona_digest=row["persona_digest"],
+        persona_instruction=row.get("persona_instruction") or "",
         content_hash=row["content_hash"],
         created_at=row["created_at"],
     )
