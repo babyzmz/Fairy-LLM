@@ -6,6 +6,7 @@ import type {
   PresenceRenderSnapshot,
 } from "./presenceRenderer";
 import { liquidShapeTargetForSnapshot } from "./liquidGlassMaterial";
+import type { PresenceRendererMode } from "./rendererSupport";
 
 const nativeGpuStatusSchema = z.object({
   backend: z.enum(["unavailable", "windows_host_backdrop_d3d11_composition"]),
@@ -134,6 +135,8 @@ export class NativePresenceRendererHost {
   private sourceRebindScheduled = false;
   private suspensionRequested = false;
   private disposed = false;
+  private requestedMode: PresenceRendererMode = "auto";
+  private lastStatus: NativeGpuStatus | null = null;
 
   constructor(private readonly options: NativePresenceRendererHostOptions = {}) {
     this.invokeCommand = options.invokeCommand === undefined
@@ -248,6 +251,10 @@ export class NativePresenceRendererHost {
     return this.state;
   }
 
+  setRequestedMode(mode: PresenceRendererMode): void {
+    this.requestedMode = mode;
+  }
+
   private async startNow(snapshot: PresenceRenderSnapshot): Promise<boolean> {
     if (this.disposed || !this.desiredRunning || this.suspensionRequested) return false;
     if (this.invokeCommand === null) {
@@ -277,6 +284,7 @@ export class NativePresenceRendererHost {
           ...presentation,
         },
       }));
+      this.lastStatus = status;
       this.lastPresentationKey = presentationKey(presentation);
       this.startedTargetFrameRate = snapshot.target_frame_rate;
       this.startedSurfaceKey = nativeSurfaceKey(snapshot);
@@ -301,7 +309,7 @@ export class NativePresenceRendererHost {
     const key = presentationKey(presentation);
     if (key === this.lastPresentationKey) return;
     try {
-      parseHealthyStatus(await this.invokeCommand("pet_native_gpu_update", {
+      this.lastStatus = parseHealthyStatus(await this.invokeCommand("pet_native_gpu_update", {
         request: presentation,
       }));
       this.lastPresentationKey = key;
@@ -325,6 +333,7 @@ export class NativePresenceRendererHost {
     this.startedTargetFrameRate = null;
     this.startedSurfaceKey = null;
     this.sourceRebindScheduled = false;
+    this.lastStatus = null;
     if (!this.disposed) this.setState("idle");
     if (report) this.report("stopped", null);
   }
@@ -335,7 +344,9 @@ export class NativePresenceRendererHost {
       void this.enqueue(async () => {
         if (this.state !== "running" || this.invokeCommand === null) return;
         try {
-          parseHealthyStatus(await this.invokeCommand("pet_native_gpu_status"));
+          this.lastStatus = parseHealthyStatus(
+            await this.invokeCommand("pet_native_gpu_status"),
+          );
         } catch {
           await this.failRuntime("NATIVE_GPU_RUNTIME_FAILED");
         }
@@ -370,6 +381,7 @@ export class NativePresenceRendererHost {
     this.lastPresentationKey = "";
     this.startedTargetFrameRate = null;
     this.startedSurfaceKey = null;
+    this.lastStatus = null;
   }
 
   private scheduleSourceRebind(): void {
@@ -432,7 +444,7 @@ export class NativePresenceRendererHost {
   private async rebindNow(snapshot: PresenceRenderSnapshot): Promise<boolean> {
     if (this.invokeCommand === null || this.state !== "running") return false;
     const presentation = nativePresentationForSnapshot(snapshot);
-    parseHealthyStatus(await this.invokeCommand("pet_native_gpu_rebind", {
+    this.lastStatus = parseHealthyStatus(await this.invokeCommand("pet_native_gpu_rebind", {
       request: {
         target_frame_rate: snapshot.target_frame_rate,
         ...presentation,
@@ -473,7 +485,19 @@ export class NativePresenceRendererHost {
     status: PresenceRendererHealth["status"],
     error_code: PresenceRendererHealth["error_code"],
   ): void {
-    this.options.onHealth?.({ mode: "native", status, error_code });
+    const nativeActive = status === "running" || status === "suspended";
+    const fallback = ["context_lost", "fallback", "failed"].includes(status);
+    this.options.onHealth?.({
+      requested_mode: this.requestedMode,
+      mode: "native",
+      actual_backend: nativeActive ? "native_liquid_glass" : "none",
+      optics_source: nativeActive ? "host_backdrop" : "none",
+      status,
+      error_code,
+      fallback_reason: fallback ? error_code : null,
+      monitor_refresh_hz: this.lastStatus?.display_refresh_rate_hz ?? 0,
+      effective_fps: this.lastStatus?.effective_frame_rate ?? 0,
+    });
   }
 
   private setState(state: NativeRendererState): void {

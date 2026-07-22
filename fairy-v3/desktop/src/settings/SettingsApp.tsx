@@ -47,6 +47,10 @@ import type {
 import { ActionDialog } from "../ui/ActionDialog";
 import { startNativeVoiceTest } from "../voice/nativeVoice";
 import {
+  UNAVAILABLE_RENDERER_HEALTH,
+  type PresenceRendererHealth,
+} from "../presence/transport/rendererHealth";
+import {
   applyDesktopPreferences,
   type DesktopPreferences,
   type SettingsClient,
@@ -114,6 +118,7 @@ interface SettingsData extends KnowledgePrivacyData {
   servers: McpServer[];
   latestTaskId: string | null;
   voiceHealth: VoiceWorkerHealth;
+  rendererHealth: PresenceRendererHealth;
   archivedProjects: ProjectArchivedItem[];
   trashItems: TrashItem[];
   autoPurgeError: string | null;
@@ -129,7 +134,7 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [preferences, memorySettings, status, geminiStatus, zhipuStatus, modelCatalog, modelSelection, permissions, capabilities, catalog, skills, servers, tasks, voiceHealth, archived, initialTrash, knowledgePrivacy] =
+      const [preferences, memorySettings, status, geminiStatus, zhipuStatus, modelCatalog, modelSelection, permissions, capabilities, catalog, skills, servers, tasks, voiceHealth, rendererHealth, archived, initialTrash, knowledgePrivacy] =
         await Promise.all([
           client.preferences.get(),
           client.memory.settings.get(),
@@ -145,6 +150,7 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
           client.extensions.servers(),
           client.context.latestTask(),
           client.voice.health().catch(() => unavailableVoiceHealth()),
+          client.pet.rendererHealth().catch(() => null),
           listAllArchivedProjects(client),
           listAllTrashItems(client),
           loadKnowledgePrivacy(client),
@@ -180,6 +186,7 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
         servers: servers.items,
         latestTaskId: tasks.items.at(-1)?.id ?? null,
         voiceHealth,
+        rendererHealth: rendererHealth ?? UNAVAILABLE_RENDERER_HEALTH,
         archivedProjects: archived,
         trashItems: trash,
         autoPurgeError,
@@ -382,6 +389,12 @@ function SettingsCategory(props: {
       <SettingToggle label="Always on top" checked={data.preferences.pet_always_on_top} disabled={busy} onChange={(value) => void updatePreferences({ pet_always_on_top: value })} />
       <SettingToggle label="Mute pet" checked={data.preferences.pet_muted} disabled={busy} onChange={(value) => void updatePreferences({ pet_muted: value })} />
       <SettingSelect icon={<PawPrint size={17} />} label="Renderer" value={data.preferences.pet_renderer_mode} disabled={busy} onChange={(value) => void updatePreferences({ pet_renderer_mode: value as DesktopPreferences["pet_renderer_mode"] })} options={[{ value: "auto", label: "Automatic" }, { value: "liquid", label: "Liquid Glass" }, { value: "compatibility", label: "Compatibility" }]} />
+      <HealthRow
+        icon={<Gauge size={17} />}
+        label="Active renderer"
+        status={rendererHealthLabel(data.rendererHealth)}
+        tone={rendererHealthTone(data.rendererHealth)}
+      />
       <SettingSelect icon={<ShieldCheck size={17} />} label="Glass privacy" detail={data.preferences.pet_optics_mode === "standard" ? "No desktop capture; uses a procedural optical environment" : "GPU-acquires the active monitor while enabled; samples only the pet area and never saves or uploads pixels"} value={data.preferences.pet_optics_mode} disabled={busy || data.preferences.pet_renderer_mode === "compatibility"} onChange={(value) => void updatePreferences({ pet_optics_mode: value as DesktopPreferences["pet_optics_mode"] })} options={[{ value: "standard", label: "Standard privacy" }, { value: "enhanced", label: "Enhanced refraction" }]} />
       <SettingSelect icon={<Gauge size={17} />} label="Animation frame rate" value={String(data.preferences.pet_target_fps)} disabled={busy || !data.preferences.pet_motion_enabled} onChange={(value) => void updatePreferences({ pet_target_fps: Number(value) as DesktopPreferences["pet_target_fps"] })} options={[{ value: "60", label: "60 FPS" }, { value: "144", label: "144 FPS" }, { value: "300", label: "300 FPS" }]} />
       <SettingRange label="Size" value={data.preferences.pet_size_percent} min={75} max={150} step={5} suffix="%" disabled={busy} onCommit={(value) => void updatePreferences({ pet_size_percent: value })} />
@@ -1135,4 +1148,36 @@ function voiceHealthLabel(health: VoiceWorkerHealth): string {
   if (health.status === "warming") return "Warming model";
   if (health.status === "model_missing") return "Model not installed";
   return health.error_code ?? "Voice unavailable";
+}
+
+function rendererHealthLabel(health: PresenceRendererHealth): string {
+  const rate = health.effective_fps > 0
+    ? health.monitor_refresh_hz > 0
+      ? ` · ${health.effective_fps} FPS on ${health.monitor_refresh_hz} Hz`
+      : ` · ${health.effective_fps} FPS`
+    : "";
+  if (health.actual_backend === "native_liquid_glass") {
+    return `Native Liquid Glass · Host Backdrop${rate}`;
+  }
+  if (health.actual_backend === "webgl_compatibility") {
+    return `WebGL compatibility${rate}`;
+  }
+  if (health.actual_backend === "canvas_compatibility") {
+    return `Canvas compatibility${rate}`;
+  }
+  if (health.status === "initializing") return "Starting renderer";
+  return health.fallback_reason ?? health.error_code ?? "Renderer unavailable";
+}
+
+function rendererHealthTone(
+  health: PresenceRendererHealth,
+): "neutral" | "success" | "error" {
+  if (
+    health.actual_backend === "native_liquid_glass" &&
+    health.status === "running"
+  ) {
+    return "success";
+  }
+  if (health.status === "failed") return "error";
+  return "neutral";
 }

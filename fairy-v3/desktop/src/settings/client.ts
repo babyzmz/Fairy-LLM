@@ -50,6 +50,7 @@ import type {
   McpServerPage,
 } from "../core/client";
 import { CoreRpcError, type InvokeFunction } from "../core/tauriTransport";
+import type { PresenceRendererHealth } from "../presence/transport/rendererHealth";
 
 export type ThemePreference = "system" | "dark" | "light";
 export type PetRendererMode = "auto" | "liquid" | "compatibility";
@@ -284,6 +285,11 @@ export class SettingsClient {
   readonly voice = {
     health: () => this.invoke<VoiceWorkerHealth>("voice_worker_health"),
     installModel: () => this.invoke<VoiceModelInstallResult>("voice_model_install"),
+  };
+
+  readonly pet = {
+    rendererHealth: () =>
+      this.invoke<PresenceRendererHealth | null>("pet_renderer_get_health"),
   };
 
   constructor(private readonly invoke: InvokeFunction) {}

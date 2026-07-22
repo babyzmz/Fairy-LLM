@@ -2,7 +2,9 @@ import type { PresenceInteractionSnapshot } from "../domain/interaction";
 import type { FairyMotionSnapshot } from "../domain/motionState";
 import type { PresenceWorkState } from "../domain/projection";
 import type { FairyVisualState } from "./CompatibilityFairyCanvas";
-import type { PresenceRendererMode } from "./rendererSupport";
+import type { PresenceRendererHealth } from "../transport/rendererHealth";
+
+export type { PresenceRendererHealth } from "../transport/rendererHealth";
 
 export interface PresenceRenderSnapshot {
   interaction: PresenceInteractionSnapshot | null;
@@ -23,33 +25,6 @@ export interface PresenceRenderSnapshot {
   idle_for_ms: number;
   target_frame_rate: 60 | 144 | 300;
   frame_rate_limit: 15 | 30 | 60 | 144 | 300;
-}
-
-export type PresenceRendererStatus =
-  | "initializing"
-  | "running"
-  | "stopped"
-  | "suspended"
-  | "context_lost"
-  | "fallback"
-  | "failed"
-  | "disposed";
-
-export interface PresenceRendererHealth {
-  mode: "native" | Exclude<PresenceRendererMode, "auto">;
-  status: PresenceRendererStatus;
-  error_code:
-    | "WEBGL2_UNAVAILABLE"
-    | "WEBGL2_CONTEXT_ERROR"
-    | "WEBGL_CONTEXT_LOST"
-    | "SHADER_INITIALIZATION_FAILED"
-    | "CANVAS2D_UNAVAILABLE"
-    | "NATIVE_GPU_UNAVAILABLE"
-    | "NATIVE_GPU_START_FAILED"
-    | "NATIVE_GPU_UPDATE_FAILED"
-    | "NATIVE_GPU_RUNTIME_FAILED"
-    | "NATIVE_GPU_STOP_FAILED"
-    | null;
 }
 
 export interface PresenceRenderer {

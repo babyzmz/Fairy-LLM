@@ -135,6 +135,7 @@ export function PresenceRenderApp({
   const [forcedCompatibility, setForcedCompatibility] = useState(false);
   const [sessionDisabled, setSessionDisabled] = useState(false);
   const [nativeRendererState, setNativeRendererState] = useState<NativeRendererState>("idle");
+  const nativeRendererStateRef = useRef<NativeRendererState>("idle");
   const [experimentMode] = useState(resolvePresenceExperimentMode);
   const [targetFpsOverride] = useState(resolvePresenceTargetFpsOverride);
   const accessibility = usePresenceAccessibilityPreferences();
@@ -145,11 +146,23 @@ export function PresenceRenderApp({
       if (directive === "disable_pet") setSessionDisabled(true);
     });
   }, [rendererHealthHost]);
+  const handleNativeRendererState = useCallback((state: NativeRendererState) => {
+    nativeRendererStateRef.current = state;
+    setNativeRendererState(state);
+  }, []);
+  const handleCompatibilityRendererHealth = useCallback(
+    (health: PresenceRendererHealth) => {
+      if (!["running", "stopping"].includes(nativeRendererStateRef.current)) {
+        handleRendererHealth(health);
+      }
+    },
+    [handleRendererHealth],
+  );
   const [nativeRendererHost] = useState(() => (
     nativeRendererHostFactory ?? ((options) => new NativePresenceRendererHost(options))
   )({
     onHealth: handleRendererHealth,
-    onStateChange: setNativeRendererState,
+    onStateChange: handleNativeRendererState,
   }));
 
   useEffect(() => {
@@ -292,6 +305,10 @@ export function PresenceRenderApp({
   const nativeStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    nativeRendererHost.setRequestedMode(requestedMode);
+  }, [nativeRendererHost, requestedMode]);
+
+  useEffect(() => {
     let disposed = false;
     let stop: (() => void) | undefined;
     void nativeLifecycleSource.subscribe((signal) => {
@@ -359,9 +376,6 @@ export function PresenceRenderApp({
     };
   }, [nativeRendererHost]);
 
-  const fallbackSnapshot = renderSettings.optics_mode === "enhanced"
-    ? { ...renderSnapshot, optics_mode: "standard" as const }
-    : renderSnapshot;
   return (
     <main
       aria-hidden="true"
@@ -405,17 +419,12 @@ export function PresenceRenderApp({
       data-experiment-mode={experimentMode}
       data-testid="presence-render-surface"
     >
-      {!sessionDisabled && (
+      {!sessionDisabled && !fallbackOccluded && (
         <PresenceRendererCanvas
           requestedMode={requestedMode}
           experimentMode={experimentMode}
-          standbyHidden={fallbackOccluded}
-          onHealth={(health) => {
-            if (nativeRendererState !== "running" && nativeRendererState !== "starting") {
-              handleRendererHealth(health);
-            }
-          }}
-          snapshot={fallbackSnapshot}
+          onHealth={handleCompatibilityRendererHealth}
+          snapshot={renderSnapshot}
         />
       )}
     </main>
@@ -423,11 +432,11 @@ export function PresenceRenderApp({
 }
 
 export function nativeRendererOccludesFallback(
-  requested: boolean,
+  _requested: boolean,
   state: NativeRendererState,
 ): boolean {
   if (state === "fallback") return false;
-  return requested || state === "starting" || state === "running" || state === "stopping";
+  return state === "running" || state === "stopping";
 }
 
 function useRenderIdleDuration(active: boolean, now: () => number): number {

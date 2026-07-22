@@ -11,21 +11,25 @@ import type { PresenceRendererMode } from "./rendererSupport";
 interface PresenceRendererCanvasProps {
   requestedMode?: PresenceRendererMode;
   experimentMode?: PresenceExperimentMode;
-  standbyHidden?: boolean;
   snapshot: PresenceRenderSnapshot;
   onHealth?: (health: PresenceRendererHealth) => void;
 }
 
 const INITIAL_HEALTH: PresenceRendererHealth = {
+  requested_mode: "auto",
   mode: "compatibility",
+  actual_backend: "none",
+  optics_source: "none",
   status: "initializing",
   error_code: null,
+  fallback_reason: null,
+  monitor_refresh_hz: 0,
+  effective_fps: 0,
 };
 
 export function PresenceRendererCanvas({
   requestedMode = "auto",
   experimentMode = "normal",
-  standbyHidden = false,
   snapshot,
   onHealth,
 }: PresenceRendererCanvasProps) {
@@ -36,7 +40,10 @@ export function PresenceRendererCanvas({
   snapshotRef.current = snapshot;
   const onHealthRef = useRef(onHealth);
   onHealthRef.current = onHealth;
-  const [health, setHealth] = useState(INITIAL_HEALTH);
+  const [health, setHealth] = useState(() => ({
+    ...INITIAL_HEALTH,
+    requested_mode: requestedMode,
+  }));
 
   useLayoutEffect(() => {
     const webglCanvas = webglRef.current;
@@ -98,7 +105,6 @@ export function PresenceRendererCanvas({
       data-renderer={health.mode}
       data-renderer-health={health.status}
       data-experiment-mode={experimentMode}
-      data-standby-hidden={String(standbyHidden)}
       data-testid="presence-renderer"
     >
       <canvas

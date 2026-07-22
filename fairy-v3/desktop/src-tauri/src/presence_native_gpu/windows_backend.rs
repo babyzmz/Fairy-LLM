@@ -221,7 +221,7 @@ impl WindowsNativeGpuSession {
         loop {
             let status = self.status();
             match status.lifecycle {
-                NativeGpuLifecycle::Running if status.frames_presented > 0 => return Ok(status),
+                NativeGpuLifecycle::Running if status.frames_presented >= 2 => return Ok(status),
                 NativeGpuLifecycle::Failed => {
                     return Err(NativeGpuError::StartFailed(
                         status
@@ -3270,5 +3270,11 @@ mod tests {
             .expect("Present call");
         let show_call = present.find("self.surface.show()?").expect("show call");
         assert!(present_call < show_call);
+    }
+
+    #[test]
+    fn manager_handoff_waits_for_two_presented_frames() {
+        let backend = include_str!("windows_backend.rs");
+        assert!(backend.contains("status.frames_presented >= 2"));
     }
 }

@@ -1,6 +1,7 @@
 use fairy_desktop_v3::presence_renderer_supervisor::{
-    PresenceRendererDirective, PresenceRendererErrorCode, PresenceRendererHealthReport,
-    PresenceRendererMode, PresenceRendererStatus, PresenceRendererSupervisor,
+    PresenceActualRendererBackend, PresenceOpticsSource, PresenceRendererDirective,
+    PresenceRendererErrorCode, PresenceRendererHealthReport, PresenceRendererMode,
+    PresenceRendererRequestedMode, PresenceRendererStatus, PresenceRendererSupervisor,
 };
 
 fn report(
@@ -9,10 +10,16 @@ fn report(
     error_code: Option<PresenceRendererErrorCode>,
 ) -> PresenceRendererHealthReport {
     PresenceRendererHealthReport {
-        schema_version: 1,
+        schema_version: 2,
+        requested_mode: PresenceRendererRequestedMode::Liquid,
         mode,
+        actual_backend: PresenceActualRendererBackend::None,
+        optics_source: PresenceOpticsSource::None,
         status,
         error_code,
+        fallback_reason: error_code,
+        monitor_refresh_hz: 0,
+        effective_fps: 0,
     }
 }
 

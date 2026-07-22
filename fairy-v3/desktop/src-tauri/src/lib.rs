@@ -404,6 +404,7 @@ struct DesktopState {
     pet_input_geometry: Mutex<PetInputGeometry>,
     pet_input_presentation: Mutex<PetInputPresentationFence>,
     renderer_supervisor: Mutex<PresenceRendererSupervisor>,
+    renderer_health: Mutex<Option<PresenceRendererHealthReport>>,
     presence_startup: PresenceStartupGate,
     pet_placement_reconciled: AtomicBool,
     started_at: Instant,
@@ -2220,6 +2221,10 @@ fn pet_renderer_report_health(
     if !report.is_valid() {
         return Err("Unsupported renderer health schema".to_owned());
     }
+    *state
+        .renderer_health
+        .lock()
+        .map_err(|_| "Renderer health is unavailable".to_owned())? = Some(report);
     let renderer_ready = matches!(
         report.status,
         PresenceRendererStatus::Running | PresenceRendererStatus::Fallback
@@ -2251,6 +2256,23 @@ fn pet_renderer_report_health(
         hide_pet_windows(window.app_handle());
     }
     Ok(directive)
+}
+
+#[tauri::command]
+fn pet_renderer_get_health(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Option<PresenceRendererHealthReport>, String> {
+    if authorize_settings_window(window.label()).is_err()
+        && authorize_core_rpc_window(window.label()).is_err()
+    {
+        return Err("Window is not authorized".to_owned());
+    }
+    state
+        .renderer_health
+        .lock()
+        .map(|health| *health)
+        .map_err(|_| "Renderer health is unavailable".to_owned())
 }
 
 fn hide_pet_windows(app: &tauri::AppHandle) {
@@ -4430,6 +4452,7 @@ pub fn run() {
                 }),
                 pet_input_presentation: Mutex::new(PetInputPresentationFence::default()),
                 renderer_supervisor: Mutex::new(PresenceRendererSupervisor::default()),
+                renderer_health: Mutex::new(None),
                 presence_startup: PresenceStartupGate::default(),
                 pet_placement_reconciled: AtomicBool::new(false),
                 started_at: Instant::now(),
@@ -4495,6 +4518,7 @@ pub fn run() {
             pet_window_group_end_drag,
             pet_window_group_reset_position,
             pet_renderer_report_health,
+            pet_renderer_get_health,
             pet_render_settings_get,
             pet_native_gpu_start,
             pet_native_gpu_status,

@@ -80,7 +80,7 @@ function healthyStatus(
     effective_frame_rate: 144,
     display_refresh_rate_hz: 144,
     capture_frame_rate_limit: 144,
-    frames_presented: 1,
+    frames_presented: 2,
     capture_fps_avg: 144,
     frame_interval_p1_fps: 120,
     source_frames_received: 1,
@@ -158,7 +158,7 @@ describe("NativePresenceRendererHost", () => {
         frame_rate_limit: 144,
         shape_droplet: 0,
         shape_bridge: 0,
-        shape_capsule: 1,
+        shape_capsule: 0,
         returning: false,
       }),
     });
@@ -249,9 +249,15 @@ describe("NativePresenceRendererHost", () => {
     ]);
     expect(states).toContain("fallback");
     expect(health).toHaveBeenLastCalledWith({
+      requested_mode: "auto",
       mode: "native",
+      actual_backend: "none",
+      optics_source: "none",
       status: "failed",
       error_code: "NATIVE_GPU_UPDATE_FAILED",
+      fallback_reason: "NATIVE_GPU_UPDATE_FAILED",
+      monitor_refresh_hz: 0,
+      effective_fps: 0,
     });
 
     await host.dispose();
@@ -491,7 +497,7 @@ describe("native presentation projection", () => {
     }))).toBe("aware");
   });
 
-  it("keeps the stable capsule detached and reserves the bridge for transitions", () => {
+  it("keeps stable input off the render surface and reserves the bridge for transitions", () => {
     const stable = nativePresentationForSnapshot(snapshot({
       input_capsule_visible: true,
       interaction: interaction({ phase: "interactive" }),
@@ -499,7 +505,7 @@ describe("native presentation projection", () => {
     expect(stable).toEqual(expect.objectContaining({
       shape_droplet: 0,
       shape_bridge: 0,
-      shape_capsule: 1,
+      shape_capsule: 0,
       returning: false,
     }));
     const stretching = nativePresentationForSnapshot(snapshot({

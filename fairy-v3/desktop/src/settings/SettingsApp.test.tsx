@@ -15,6 +15,7 @@ import type {
   TrashItem,
 } from "../core/client";
 import type { InvokeFunction } from "../core/tauriTransport";
+import type { PresenceRendererHealth } from "../presence/transport/rendererHealth";
 import { SettingsApp } from "./SettingsApp";
 import { SettingsClient, type DesktopPreferences } from "./client";
 
@@ -176,10 +177,12 @@ describe("SettingsApp", () => {
   });
 
   it("persists the complete Liquid Glass pet settings through the same revision fence", async () => {
-    const invoke = settingsInvoke();
+    const invoke = settingsInvoke({ rendererHealth: nativeRendererHealth() });
     render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
     await screen.findByRole("heading", { name: "General" });
     await userEvent.click(screen.getByRole("button", { name: /^Pet/ }));
+    expect(screen.getByText("Native Liquid Glass · Host Backdrop · 144 FPS on 144 Hz"))
+      .toBeVisible();
 
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Renderer" }), "compatibility");
     await vi.waitFor(() => {
@@ -586,6 +589,7 @@ function settingsInvoke(options: {
   knowledgeSources?: KnowledgeSource[];
   memoryProposals?: MemoryProposal[];
   obsidianHealth?: ObsidianConnectorHealth;
+  rendererHealth?: PresenceRendererHealth | null;
 } = {}) {
   let preferences = defaultPreferences();
   let openRouterConfigured = true;
@@ -603,6 +607,9 @@ function settingsInvoke(options: {
     if (command === "provider_openrouter_delete") {
       openRouterConfigured = false;
       return { configured: false, account_id: null };
+    }
+    if (command === "pet_renderer_get_health") {
+      return options.rendererHealth ?? null;
     }
     if (command === "settings_rpc") {
       const request = args?.request as { id: number; method: CoreMethodName; params: Record<string, unknown> };
@@ -759,6 +766,20 @@ const modelSelection = {
   revision: 0,
   updated_at: "2026-07-12T00:00:00Z",
 };
+
+function nativeRendererHealth(): PresenceRendererHealth {
+  return {
+    requested_mode: "liquid",
+    mode: "native",
+    actual_backend: "native_liquid_glass",
+    optics_source: "host_backdrop",
+    status: "running",
+    error_code: null,
+    fallback_reason: null,
+    monitor_refresh_hz: 144,
+    effective_fps: 144,
+  };
+}
 
 const modelCatalog = {
   account: {

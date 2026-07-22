@@ -28,6 +28,7 @@ import type {
   PresenceInputPresentation,
   PresenceInputPresentationChannel,
 } from "./transport/inputPresentation";
+import type { PresenceRendererHealth } from "./transport/rendererHealth";
 import {
   DEFAULT_PRESENCE_RENDER_SETTINGS,
   type PresenceRenderSettings,
@@ -278,8 +279,8 @@ afterEach(() => {
 
 describe("dual presence surfaces", () => {
   it("never draws the compatibility identity while a native surface can be visible", () => {
-    expect(nativeRendererOccludesFallback(true, "idle")).toBe(true);
-    expect(nativeRendererOccludesFallback(true, "starting")).toBe(true);
+    expect(nativeRendererOccludesFallback(true, "idle")).toBe(false);
+    expect(nativeRendererOccludesFallback(true, "starting")).toBe(false);
     expect(nativeRendererOccludesFallback(true, "running")).toBe(true);
     expect(nativeRendererOccludesFallback(false, "stopping")).toBe(true);
     expect(nativeRendererOccludesFallback(true, "fallback")).toBe(false);
@@ -324,11 +325,18 @@ describe("dual presence surfaces", () => {
     );
   });
 
-  it("activates the zero-copy native surface under StrictMode while retaining the fallback", async () => {
+  it("keeps fallback through native startup and unloads it after native readiness", async () => {
     const harness = channelHarness();
     const coordinator = interactionHarness();
     const settings = renderSettingsHarness();
     const lifecycle = nativeLifecycleHarness();
+    const rendererHealth = vi.fn(async (_health: PresenceRendererHealth) =>
+      "continue" as const
+    );
+    let releaseNativeStart!: () => void;
+    const nativeStartGate = new Promise<void>((resolve) => {
+      releaseNativeStart = resolve;
+    });
     const commands: Array<{ command: string; args?: Record<string, unknown> }> = [];
     render(
       <StrictMode>
@@ -337,12 +345,13 @@ describe("dual presence surfaces", () => {
           interactionSource={coordinator.source}
           renderSettingsChannel={settings.channel}
           nativeLifecycleSource={lifecycle.source}
-          rendererHealthHost={{ report: vi.fn(async () => "continue" as const) }}
+          rendererHealthHost={{ report: rendererHealth }}
           nativeRendererHostFactory={(options) => new NativePresenceRendererHost({
             ...options,
             watchdogIntervalMs: 60_000,
             invokeCommand: async (command, args) => {
               commands.push({ command, args });
+              if (command === "pet_native_gpu_start") await nativeStartGate;
               return {
                 backend: "windows_host_backdrop_d3d11_composition",
                 lifecycle: "running",
@@ -353,7 +362,7 @@ describe("dual presence surfaces", () => {
                 effective_frame_rate: 144,
                 display_refresh_rate_hz: 144,
                 capture_frame_rate_limit: 144,
-                frames_presented: 1,
+                frames_presented: 2,
                 capture_fps_avg: 144,
                 frame_interval_p1_fps: 120,
                 source_frames_received: 1,
@@ -407,6 +416,12 @@ describe("dual presence surfaces", () => {
 
     act(() => coordinator.emit(interaction(1)));
 
+    await waitFor(() => {
+      expect(commands.some((entry) => entry.command === "pet_native_gpu_start")).toBe(true);
+    });
+    expect(screen.getByTestId("presence-renderer")).toBeInTheDocument();
+    act(() => releaseNativeStart());
+
     await waitFor(() => expect(screen.getByTestId("presence-render-surface")).toHaveAttribute(
       "data-native-renderer-state",
       "running",
@@ -415,7 +430,12 @@ describe("dual presence surfaces", () => {
       "data-native-renderer-requested",
       "true",
     );
-    expect(screen.getByTestId("presence-renderer")).toBeInTheDocument();
+    expect(screen.queryByTestId("presence-renderer")).not.toBeInTheDocument();
+    expect(rendererHealth.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      actual_backend: "native_liquid_glass",
+      optics_source: "host_backdrop",
+      status: "running",
+    }));
     const start = commands.find((entry) => entry.command === "pet_native_gpu_start");
     expect(start?.args).toEqual({
       request: expect.objectContaining({

@@ -182,6 +182,29 @@ export class PresenceRendererHost implements PresenceRenderer {
     status: PresenceRendererHealth["status"],
     error_code: PresenceRendererHealth["error_code"],
   ) {
-    this.options.onHealth({ mode, status, error_code });
+    const failed = status === "failed";
+    const fallback = ["context_lost", "fallback", "failed"].includes(status);
+    this.options.onHealth({
+      requested_mode: this.options.requestedMode,
+      mode,
+      actual_backend: failed
+        ? "none"
+        : mode === "liquid"
+          ? "webgl_compatibility"
+          : "canvas_compatibility",
+      optics_source: failed
+        ? "none"
+        : mode === "liquid" && this.snapshot.optics_mode === "enhanced"
+          ? "webgl_texture"
+          : "procedural",
+      status,
+      error_code,
+      fallback_reason: fallback ? error_code : null,
+      monitor_refresh_hz: 0,
+      effective_fps: Math.min(
+        this.snapshot.target_frame_rate,
+        this.snapshot.frame_rate_limit,
+      ),
+    });
   }
 }

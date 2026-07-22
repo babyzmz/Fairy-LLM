@@ -6,7 +6,7 @@ const INCIDENT_WINDOW_MS: u64 = 5 * 60 * 1_000;
 const CONTEXT_LOSS_LIMIT: usize = 2;
 const HARD_FAILURE_LIMIT: usize = 3;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PresenceRendererMode {
     Native,
@@ -14,7 +14,7 @@ pub enum PresenceRendererMode {
     Compatibility,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PresenceRendererStatus {
     Initializing,
@@ -27,7 +27,7 @@ pub enum PresenceRendererStatus {
     Disposed,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PresenceRendererErrorCode {
     Webgl2Unavailable,
@@ -42,18 +42,50 @@ pub enum PresenceRendererErrorCode {
     NativeGpuStopFailed,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceRendererRequestedMode {
+    Auto,
+    Liquid,
+    Compatibility,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceActualRendererBackend {
+    None,
+    NativeLiquidGlass,
+    WebglCompatibility,
+    CanvasCompatibility,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceOpticsSource {
+    None,
+    HostBackdrop,
+    WebglTexture,
+    Procedural,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PresenceRendererHealthReport {
     pub schema_version: u16,
+    pub requested_mode: PresenceRendererRequestedMode,
     pub mode: PresenceRendererMode,
+    pub actual_backend: PresenceActualRendererBackend,
+    pub optics_source: PresenceOpticsSource,
     pub status: PresenceRendererStatus,
     pub error_code: Option<PresenceRendererErrorCode>,
+    pub fallback_reason: Option<PresenceRendererErrorCode>,
+    pub monitor_refresh_hz: u16,
+    pub effective_fps: u16,
 }
 
 impl PresenceRendererHealthReport {
     pub fn is_valid(self) -> bool {
-        self.schema_version == 1
+        self.schema_version == 2
     }
 }
 
@@ -148,10 +180,16 @@ mod tests {
 
     fn failed(mode: PresenceRendererMode) -> PresenceRendererHealthReport {
         PresenceRendererHealthReport {
-            schema_version: 1,
+            schema_version: 2,
+            requested_mode: PresenceRendererRequestedMode::Liquid,
             mode,
+            actual_backend: PresenceActualRendererBackend::None,
+            optics_source: PresenceOpticsSource::None,
             status: PresenceRendererStatus::Failed,
             error_code: None,
+            fallback_reason: None,
+            monitor_refresh_hz: 0,
+            effective_fps: 0,
         }
     }
 
