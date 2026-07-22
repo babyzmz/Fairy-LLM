@@ -68,6 +68,19 @@ class WorkspaceApplication:
                 )
                 unit_of_work.project_indexes.replace_generation(index, expected_generation=0)
                 unit_of_work.commit()
+            elif self._project_indexer.requires_semantic_refresh(index):
+                refreshed = self._project_indexer.build(
+                    project_id=version.project_id,
+                    workspace_id=workspace.id,
+                    version_id=version.id,
+                    root=version.project_root,
+                    generation=index.generation + 1,
+                )
+                index = unit_of_work.project_indexes.replace_generation(
+                    refreshed,
+                    expected_generation=index.generation,
+                )
+                unit_of_work.commit()
             return index
 
     def read_file(

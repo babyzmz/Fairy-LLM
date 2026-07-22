@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 
@@ -119,21 +120,11 @@ def test_task_workspace_and_project_index_are_bound_once_and_deterministic(
         assert index.file("src/ui.ts").imports == ("react",)
         assert index.file("src/ui.ts").exports == ("App",)
         assert index.file("index.html").imports == ("src/ui.ts",)
+        assert index.file("index.html").summary["indexer_revision"] == "html-links-v1"
         assert index.file("pages/details.html").imports == ("src/theme.css", "src/ui.ts")
         assert index.file("src/lib.rs").imports == ("std",)
         assert index.file("src/lib.rs").exports == ("Runner", "launch")
         assert index.file("package.json").summary["name"] == "atlas"
-        listed_files = service.invoke(
-            "workspaces.files.list",
-            {"workspace_id": task["workspace_id"], "version_id": version["id"]},
-        )["items"]
-        listed_by_path = {item["path"]: item for item in listed_files}
-        assert listed_by_path["index.html"]["imports"] == ["src/ui.ts"]
-        assert listed_by_path["pages/details.html"]["imports"] == [
-            "src/theme.css",
-            "src/ui.ts",
-        ]
-
         rebuilt = ProjectIndexer().build(
             project_id=workspace.project_id,
             workspace_id=workspace.workspace_id,
@@ -152,6 +143,31 @@ def test_task_workspace_and_project_index_are_bound_once_and_deterministic(
         with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
             rolled_back = unit_of_work.project_indexes.get(version["id"])
         assert rolled_back is not None and rolled_back.generation == 1
+
+        legacy_files = tuple(
+            replace(item, imports=(), summary={}) if item.path.endswith(".html") else item
+            for item in index.files
+        )
+        legacy_index = replace(index, generation=index.generation + 1, files=legacy_files)
+        with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            unit_of_work.project_indexes.replace_generation(
+                legacy_index,
+                expected_generation=index.generation,
+            )
+            unit_of_work.commit()
+
+        listed_page = service.invoke(
+            "workspaces.files.list",
+            {"workspace_id": task["workspace_id"], "version_id": version["id"]},
+        )
+        listed_files = listed_page["items"]
+        listed_by_path = {item["path"]: item for item in listed_files}
+        assert listed_page["generation"] == legacy_index.generation + 1
+        assert listed_by_path["index.html"]["imports"] == ["src/ui.ts"]
+        assert listed_by_path["pages/details.html"]["imports"] == [
+            "src/theme.css",
+            "src/ui.ts",
+        ]
 
         engine = service._unit_of_work_factory._engine  # type: ignore[attr-defined]
         isolated_factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="other-tenant")

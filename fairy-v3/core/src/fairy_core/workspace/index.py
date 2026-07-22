@@ -17,6 +17,7 @@ from fairy_core.workspace.models import ProjectFile, ProjectIndex
 _MAX_FILES = 20_000
 _MAX_SEMANTIC_BYTES = 1_000_000
 _MAX_FILE_BYTES = 64_000_000
+_HTML_SEMANTICS_REVISION = "html-links-v1"
 _IGNORED_DIRECTORIES = frozenset(
     {
         ".git",
@@ -102,6 +103,14 @@ class ProjectIndexer:
             files=tuple(files),
         )
 
+    @staticmethod
+    def requires_semantic_refresh(index: ProjectIndex) -> bool:
+        return any(
+            Path(item.path).suffix.casefold() == ".html"
+            and item.summary.get("indexer_revision") != _HTML_SEMANTICS_REVISION
+            for item in index.files
+        )
+
     def _index_file(self, path: Path, relative: str) -> ProjectFile:
         size = path.stat(follow_symlinks=False).st_size
         if size > _MAX_FILE_BYTES:
@@ -175,7 +184,14 @@ class ProjectIndexer:
             imports, exports, symbols = _typescript_semantics(text)
             return "source", language, imports, exports, symbols, {}
         if suffix == ".html":
-            return "source", language, _html_references(relative, text), (), (), {}
+            return (
+                "source",
+                language,
+                _html_references(relative, text),
+                (),
+                (),
+                {"indexer_revision": _HTML_SEMANTICS_REVISION},
+            )
         if suffix == ".rs":
             imports, exports, symbols = _rust_semantics(text)
             return "source", language, imports, exports, symbols, {}
