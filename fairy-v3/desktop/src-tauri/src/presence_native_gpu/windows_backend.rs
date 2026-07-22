@@ -13,6 +13,10 @@ use super::{
     NativeGpuVisualState,
 };
 use crate::presence_coordinator::PhysicalFrame;
+use fairy_windows_capture_dda::{
+    create_device_for_output, set_window_excluded_from_dda, DesktopTexturePoll,
+    DesktopTextureSource, DisplayOutputBinding,
+};
 use windows::core::{w, Interface, PCSTR, PCWSTR};
 use windows::System::DispatcherQueueController;
 use windows::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -126,6 +130,7 @@ impl WindowsNativeGpuSession {
         let backdrop_monitor =
             inspect_host_backdrop_monitor(config.render_frame, config.presentation, &status)?;
         let monitor_frame = backdrop_monitor.monitor_frame;
+        let monitor_handle = backdrop_monitor.handle;
         let display_refresh_rate_hz = backdrop_monitor.display_refresh_rate_hz;
         let hdr_capture = backdrop_monitor.hdr_capture;
         let effective_frame_rate = effective_presentation_frame_rate(
@@ -144,7 +149,20 @@ impl WindowsNativeGpuSession {
             status.backdrop_pixel_access = false;
             status.continuous_displacement_supported = false;
         });
-        let (device, context) = create_native_d3d_device(&status)?;
+        let (device, context, mut dda_binding) = create_native_d3d_device(monitor_handle, &status)?;
+        if dda_binding.is_some() {
+            for raw_hwnd in [config.render_hwnd, config.input_hwnd] {
+                let hwnd = HWND(raw_hwnd as *mut c_void);
+                if let Err(error) = set_window_excluded_from_dda(hwnd, true) {
+                    update_status(&status, |status| {
+                        status.fallback_reason =
+                            Some(format!("PRESENCE_DDA_WINDOW_EXCLUSION_FAILED: {error}"));
+                    });
+                    dda_binding = None;
+                    break;
+                }
+            }
+        }
         let surface_hwnd = Arc::new(AtomicIsize::new(0));
         let presentation = Arc::new(RwLock::new(config.presentation));
         let render_control = Arc::new(NativeRenderControl::new());
@@ -159,6 +177,7 @@ impl WindowsNativeGpuSession {
             Arc::clone(&status),
             hdr_capture,
             Arc::clone(&render_control),
+            dda_binding,
         )
         .map_err(|error| {
             composition_source_failure(
@@ -365,6 +384,7 @@ impl NativeRenderLoop {
         status: Arc<Mutex<NativeGpuStatus>>,
         hdr_capture: bool,
         control: Arc<NativeRenderControl>,
+        dda_binding: Option<DisplayOutputBinding>,
     ) -> Result<Self, String> {
         let shared = Arc::new(NativeRenderShared {
             wake_lock: Mutex::new(()),
@@ -403,6 +423,7 @@ impl NativeRenderLoop {
                         presentation,
                         hdr_capture,
                         status: Arc::clone(&thread_status),
+                        dda_binding,
                     },
                 );
                 let mut renderer = match renderer {
@@ -416,11 +437,12 @@ impl NativeRenderLoop {
                         return;
                     }
                 };
+                let desktop_source_ready = renderer.desktop_source.is_some();
                 update_status(&thread_status, |status| {
                     status.backend = NativeGpuBackend::WindowsHostBackdropD3d11Composition;
                     status.lifecycle = NativeGpuLifecycle::Running;
                     status.host_backdrop_composition = true;
-                    status.backdrop_pixel_access = false;
+                    status.backdrop_pixel_access = desktop_source_ready;
                     status.continuous_displacement_supported = false;
                     status.pixel_ipc = false;
                     status.monitor_width = monitor_frame.width;
@@ -726,7 +748,11 @@ struct NativeCompositionSurface {
 }
 
 impl NativeCompositionSurface {
-    fn new(config: NativeGpuConfig, published_hwnd: Arc<AtomicIsize>) -> Result<Self, String> {
+    fn new(
+        config: NativeGpuConfig,
+        published_hwnd: Arc<AtomicIsize>,
+        exclude_from_dda: bool,
+    ) -> Result<Self, String> {
         register_native_surface_class()?;
         let module = unsafe { GetModuleHandleW(PCWSTR::null()) }
             .map_err(|error| windows_stage_error("WINDOW_MODULE", error))?;
@@ -767,6 +793,14 @@ impl NativeCompositionSurface {
         {
             let _ = unsafe { DestroyWindow(hwnd) };
             return Err(error);
+        }
+        if exclude_from_dda {
+            if let Err(error) = set_window_excluded_from_dda(hwnd, true) {
+                let _ = unsafe { DestroyWindow(hwnd) };
+                return Err(format!(
+                    "PRESENCE_DDA_NATIVE_WINDOW_EXCLUSION_FAILED: {error}"
+                ));
+            }
         }
         published_hwnd.store(hwnd.0 as isize, AtomicOrdering::Release);
         Ok(Self {
@@ -1258,6 +1292,8 @@ struct NativeCompositionRenderer {
     state_motion: NativeStateMotion,
     hdr_capture: bool,
     hdr_checked_at: Instant,
+    desktop_source: Option<DesktopTextureSource>,
+    status: Arc<Mutex<NativeGpuStatus>>,
 }
 
 struct NativeStateMotion {
@@ -1806,6 +1842,7 @@ struct NativeCompositionRendererInput {
     presentation: Arc<RwLock<NativeGpuPresentation>>,
     hdr_capture: bool,
     status: Arc<Mutex<NativeGpuStatus>>,
+    dda_binding: Option<DisplayOutputBinding>,
 }
 
 impl NativeCompositionRenderer {
@@ -1822,8 +1859,23 @@ impl NativeCompositionRenderer {
             presentation,
             hdr_capture,
             status,
+            dda_binding,
         } = input;
-        let surface = NativeCompositionSurface::new(config, surface_hwnd)?;
+        let surface = NativeCompositionSurface::new(config, surface_hwnd, dda_binding.is_some())?;
+        let desktop_source = match dda_binding {
+            Some(binding) => {
+                match initialize_desktop_texture_source(binding, device.clone(), context.clone()) {
+                    Ok(source) => Some(source),
+                    Err(error) => {
+                        update_status(&status, |status| {
+                            status.fallback_reason = Some(error);
+                        });
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
         let swap_chain = create_swap_chain(&device, config.render_frame)?;
         let render_targets = vec![None; SWAP_CHAIN_BUFFER_COUNT as usize];
         let (vertex_shader, pixel_shader) = create_shaders(&device)?;
@@ -1833,7 +1885,7 @@ impl NativeCompositionRenderer {
             status.composition_hresult = None;
             status.optics_source = NativeGpuOpticsSource::HostBackdropIdentity;
             status.host_backdrop_composition = true;
-            status.backdrop_pixel_access = false;
+            status.backdrop_pixel_access = desktop_source.is_some();
             status.continuous_displacement_supported = false;
             status.fallback_reason = None;
         });
@@ -1866,6 +1918,8 @@ impl NativeCompositionRenderer {
             state_motion: NativeStateMotion::new(config.presentation.visual_state, Instant::now()),
             hdr_capture,
             hdr_checked_at: Instant::now(),
+            desktop_source,
+            status,
         })
     }
 
@@ -1873,6 +1927,7 @@ impl NativeCompositionRenderer {
         if !unsafe { IsWindow(Some(self.surface.hwnd)) }.as_bool() {
             return Err("PRESENCE_NATIVE_GPU_SURFACE_INVALIDATED".to_owned());
         }
+        self.poll_desktop_texture();
         let presentation = *self
             .presentation
             .read()
@@ -1987,6 +2042,39 @@ impl NativeCompositionRenderer {
         Ok(())
     }
 
+    fn poll_desktop_texture(&mut self) {
+        let Some(source) = self.desktop_source.as_mut() else {
+            return;
+        };
+        match source.poll(0) {
+            Ok(DesktopTexturePoll::Updated(frame)) => {
+                update_status(&self.status, |status| {
+                    status.backdrop_pixel_access = true;
+                    status.composition_stage = "desktop_texture_updated".to_owned();
+                    status.composition_hresult = None;
+                    status.error_code = None;
+                    status.fallback_reason = None;
+                    status.hdr_composition = frame.source_format
+                        == fairy_windows_capture_dda::DuplicationFormat::Rgba16F;
+                });
+            }
+            Ok(DesktopTexturePoll::Recovering { attempt, .. }) => {
+                update_status(&self.status, |status| {
+                    status.composition_stage = format!("desktop_texture_recovering_{attempt}");
+                });
+            }
+            Ok(DesktopTexturePoll::NoFrame) => {}
+            Err(error) => {
+                self.desktop_source = None;
+                update_status(&self.status, |status| {
+                    status.backdrop_pixel_access = false;
+                    status.composition_stage = "host_backdrop_identity".to_owned();
+                    status.fallback_reason = Some(format!("PRESENCE_DDA_RUNTIME_FAILED: {error}"));
+                });
+            }
+        }
+    }
+
     fn rebase_after_drag(&mut self) -> Result<(), String> {
         self.surface.sync_to_tracking_window()?;
         Ok(())
@@ -2032,6 +2120,45 @@ fn diagnostic_solid_output() -> f32 {
 }
 
 fn create_native_d3d_device(
+    monitor: HMONITOR,
+    status: &Arc<Mutex<NativeGpuStatus>>,
+) -> Result<
+    (
+        ID3D11Device,
+        ID3D11DeviceContext,
+        Option<DisplayOutputBinding>,
+    ),
+    NativeGpuError,
+> {
+    update_status(status, |status| {
+        status.composition_stage = "binding_desktop_output".to_owned();
+    });
+    match DisplayOutputBinding::for_monitor(monitor) {
+        Ok(binding) => match create_device_for_output(&binding) {
+            Ok((device, context)) => {
+                update_status(status, |status| {
+                    status.composition_stage = "desktop_output_device_created".to_owned();
+                    status.adapter_name = Some(binding.adapter_name().to_owned());
+                    status.adapter_index = Some(binding.adapter_index());
+                    status.output_device_name = Some(binding.output_name().to_owned());
+                    status.output_index = Some(binding.output_index());
+                    status.composition_hresult = None;
+                });
+                return Ok((device, context, Some(binding)));
+            }
+            Err(error) => update_status(status, |status| {
+                status.fallback_reason = Some(format!("PRESENCE_DDA_DEVICE_FAILED: {error}"));
+            }),
+        },
+        Err(error) => update_status(status, |status| {
+            status.fallback_reason = Some(format!("PRESENCE_DDA_OUTPUT_FAILED: {error}"));
+        }),
+    }
+    let (device, context) = create_default_native_d3d_device(status)?;
+    Ok((device, context, None))
+}
+
+fn create_default_native_d3d_device(
     status: &Arc<Mutex<NativeGpuStatus>>,
 ) -> Result<(ID3D11Device, ID3D11DeviceContext), NativeGpuError> {
     update_status(status, |status| {
@@ -2086,6 +2213,27 @@ fn create_native_d3d_device(
         status.composition_hresult = None;
     });
     Ok((device, context))
+}
+
+fn initialize_desktop_texture_source(
+    binding: DisplayOutputBinding,
+    device: ID3D11Device,
+    context: ID3D11DeviceContext,
+) -> Result<DesktopTextureSource, String> {
+    let mut source = DesktopTextureSource::new_with_device_output(binding, device, context)
+        .map_err(|error| format!("PRESENCE_DDA_SOURCE_CREATE_FAILED: {error}"))?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        match source.poll(100) {
+            Ok(DesktopTexturePoll::Updated(_)) => return Ok(source),
+            Ok(DesktopTexturePoll::Recovering { retry_after, .. }) => {
+                thread::sleep(retry_after.min(Duration::from_millis(100)));
+            }
+            Ok(DesktopTexturePoll::NoFrame) => {}
+            Err(error) => return Err(format!("PRESENCE_DDA_SOURCE_START_FAILED: {error}")),
+        }
+    }
+    Err("PRESENCE_DDA_SOURCE_START_TIMEOUT".to_owned())
 }
 
 fn create_swap_chain(
@@ -2264,6 +2412,7 @@ fn create_constant_buffer_with_size(
 }
 
 struct HostBackdropMonitor {
+    handle: HMONITOR,
     monitor_frame: PhysicalFrame,
     display_refresh_rate_hz: u16,
     hdr_capture: bool,
@@ -2347,6 +2496,7 @@ fn inspect_host_backdrop_monitor(
         status.composition_hresult = None;
     });
     Ok(HostBackdropMonitor {
+        handle,
         monitor_frame,
         display_refresh_rate_hz,
         hdr_capture,
@@ -3001,13 +3151,16 @@ mod tests {
     }
 
     #[test]
-    fn production_optics_use_host_backdrop_without_a_second_desktop_source() {
+    fn production_prepares_one_gpu_only_desktop_source_with_identity_fallback() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         for required in [
             "CreateHostBackdropBrush()",
             "inspect_host_backdrop_monitor",
-            "D3D11CreateDevice(",
+            "create_device_for_output",
+            "DesktopTextureSource",
+            "set_window_excluded_from_dda",
+            "source.poll(0)",
             "host_backdrop_renderer_started",
             "host_backdrop_identity",
             "composition_hresult",
@@ -3018,7 +3171,6 @@ mod tests {
             );
         }
         for forbidden in [
-            "windows_capture",
             "GraphicsCaptureItem",
             "CreateForMonitor",
             "CreateForWindow",
@@ -3026,9 +3178,9 @@ mod tests {
             "fairy-wgc-source",
             "CompositionVisualSurface",
             "DesktopEdgeCapture",
-            "DuplicateOutput(",
             "CreateShaderResourceView(",
             "IDXGIOutputDuplication",
+            "D3D11_MAP_READ",
         ] {
             assert!(
                 !production.contains(forbidden),

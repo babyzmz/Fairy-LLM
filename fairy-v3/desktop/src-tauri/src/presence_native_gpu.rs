@@ -763,7 +763,7 @@ mod tests {
     }
 
     #[test]
-    fn native_shader_contract_forbids_cpu_readback_pixel_ipc_and_recursive_overlay_cleanup() {
+    fn native_shader_contract_allows_only_gpu_resident_dda_pixels() {
         let source = include_str!("presence_native_gpu/liquid_glass.hlsl");
         let backend = include_str!("presence_native_gpu/windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
@@ -820,6 +820,8 @@ mod tests {
             "CreateCompositionSurfaceForSwapChain(swap_chain)",
             ".update_lens(presentation, drag, render_frame)",
             "composition_stage = \"host_backdrop_identity\"",
+            "DesktopTextureSource",
+            "set_window_excluded_from_dda",
         ] {
             assert!(
                 production.contains(required),
@@ -827,18 +829,15 @@ mod tests {
             );
         }
         for forbidden in [
-            "windows_capture",
             "GraphicsCaptureItem",
             "CreateForMonitor",
             "NativeCaptureHandler",
-            "DuplicateOutput(",
             "sample_refracted_desktop",
-            "desktop_texture",
             "DisplacementMapEffect",
         ] {
             assert!(
                 !production.contains(forbidden),
-                "WGC returned to the production Presence path: {forbidden}"
+                "unsafe capture path returned to production Presence: {forbidden}"
             );
         }
         assert!(!source.contains("remove_previous_overlay"));

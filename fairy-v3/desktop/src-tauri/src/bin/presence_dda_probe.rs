@@ -9,8 +9,8 @@ mod windows_probe {
     use std::time::{Duration, Instant};
 
     use fairy_windows_capture_dda::{
-        create_device_for_output, set_window_excluded_from_dda, DisplayOutputBinding,
-        DuplicationFormat, DuplicationSession,
+        create_device_for_output, set_window_excluded_from_dda, DesktopTexturePoll,
+        DesktopTextureSource, DisplayOutputBinding, DuplicationFormat, DuplicationSession,
     };
     use serde::Serialize;
     use serde_json::{json, Value};
@@ -294,6 +294,30 @@ mod windows_probe {
             Duration::from_secs(2),
         )?;
 
+        let duplication_format = session.format().map(|format| format.name());
+        let duplication_rotation = session.description().Rotation.0;
+        drop(session);
+        set_window_excluded_from_dda(overlay.hwnd(), true)
+            .map_err(|error| format!("PROBE_DDA_SOURCE_EXCLUDE: {error}"))?;
+        trigger.move_by(2)?;
+        let mut texture_source =
+            DesktopTextureSource::new_with_device_output(binding.clone(), device, context)
+                .map_err(|error| format!("PROBE_TEXTURE_SOURCE_CREATE: {error}"))?;
+        let source_deadline = Instant::now() + Duration::from_secs(2);
+        let source_frame = loop {
+            if Instant::now() >= source_deadline {
+                return Err("PROBE_TEXTURE_SOURCE_TIMEOUT".to_owned());
+            }
+            match texture_source.poll(100) {
+                Ok(DesktopTexturePoll::Updated(frame)) => break frame,
+                Ok(DesktopTexturePoll::NoFrame) => {}
+                Ok(DesktopTexturePoll::Recovering { retry_after, .. }) => {
+                    thread::sleep(retry_after.min(Duration::from_millis(100)));
+                }
+                Err(error) => return Err(format!("PROBE_TEXTURE_SOURCE_POLL: {error}")),
+            }
+        };
+
         let passed = baseline.cyan_ratio >= 0.90
             && excluded.cyan_ratio >= 0.90
             && excluded.magenta_ratio <= 0.02
@@ -310,8 +334,8 @@ mod windows_probe {
                 "index": binding.output_index(),
                 "name": binding.output_name(),
                 "desktop": [desktop.left, desktop.top, desktop.right, desktop.bottom],
-                "format": session.format().map(|format| format.name()),
-                "rotation": session.description().Rotation.0,
+                "format": duplication_format,
+                "rotation": duplication_rotation,
             },
             "sample_rect": [sample_rect.left, sample_rect.top, sample_rect.right, sample_rect.bottom],
             "dda_exclusion": {
@@ -320,6 +344,15 @@ mod windows_probe {
                 "included_negative_control": included,
             },
             "ordinary_capture": ordinary,
+            "desktop_texture_source": {
+                "ready": texture_source.texture().is_some(),
+                "generation": texture_source.texture_generation(),
+                "source_format": source_frame.source_format.name(),
+                "dirty_rects": source_frame.dirty_rect_count,
+                "move_rects": source_frame.move_rect_count,
+                "copied_full_frame": source_frame.copied_full_frame,
+                "access_lost_count": texture_source.access_lost_count(),
+            },
             "pixels_persisted": false,
         }))
     }
