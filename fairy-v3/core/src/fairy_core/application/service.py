@@ -98,6 +98,7 @@ from fairy_core.presentation.packs import RendererPackInstaller
 from fairy_core.providers import ProviderRegistry
 from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
 from fairy_core.research.ports import FetchPort
+from fairy_core.runtime.pool_scheduler import PreviewIdleScheduler
 from fairy_core.runtime.review import RuntimeEvidenceStore, RuntimeReviewer
 from fairy_core.runtime.templates import (
     RuntimeAdapter,
@@ -404,6 +405,9 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             application=self._obsidian_knowledge,
             unit_of_work_factory=unit_of_work_factory,
         )
+        self._preview_idle_scheduler = (
+            PreviewIdleScheduler(runtime_application) if runtime_application is not None else None
+        )
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
             "approvals.decide": self._decide_approval,
             "approvals.list": self._list_approvals,
@@ -479,7 +483,15 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             "media.jobs.list": self._list_media_jobs,
             "messages.list": self._list_messages,
             **self._model_catalog_service.handlers,
-            **runtime_service_handlers(self._runtime, self._unit_of_work_factory),
+            **runtime_service_handlers(
+                self._runtime,
+                self._unit_of_work_factory,
+                on_activation=(
+                    self._preview_idle_scheduler.wake
+                    if self._preview_idle_scheduler is not None
+                    else None
+                ),
+            ),
             "permissions.get": self._get_permissions,
             "permissions.update": self._update_permissions,
             "providers.health": self._provider_health,
@@ -518,6 +530,8 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             raise RuntimeError("Core service handlers do not match the public method catalog")
 
     def close(self) -> None:
+        if self._preview_idle_scheduler is not None:
+            self._preview_idle_scheduler.close()
         self._knowledge_sync_scheduler.close()
         self._assistant_scheduler.close()
         if self._media_scheduler is not None:

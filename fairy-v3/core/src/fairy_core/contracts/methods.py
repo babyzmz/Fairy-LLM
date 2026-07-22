@@ -186,6 +186,8 @@ from fairy_core.contracts.models import (
     MemoryTombstoneModel,
     MessageListInput,
     PendingChangesetModel,
+    PreviewActivateInput,
+    PreviewActivationModel,
     PreviewContextModel,
     PreviewIdInput,
     PreviewModel,
@@ -862,6 +864,11 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
             "previews.get",
             PreviewIdInput,
             PreviewContextModel,
+        ),
+        "previews.activate": CoreMethod(
+            "previews.activate",
+            PreviewActivateInput,
+            PreviewActivationModel,
         ),
         "previews.resolve": CoreMethod(
             "previews.resolve",

@@ -7,11 +7,13 @@ from pydantic import BaseModel
 
 from fairy_core.application.runtime import RuntimeApplication
 from fairy_core.application.runtime_contracts import (
+    PreviewActivateRequest,
     PreviewResolveRequest,
     PreviewStartRequest,
     PreviewStopRequest,
 )
 from fairy_core.contracts.models import (
+    PreviewActivateInput,
     PreviewIdInput,
     PreviewResolveInput,
     PreviewStartInput,
@@ -25,6 +27,8 @@ from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 def runtime_service_handlers(
     runtime_provider: Callable[[], RuntimeApplication],
     unit_of_work_factory: CoreUnitOfWorkFactory,
+    *,
+    on_activation: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     def get_runtime(request: BaseModel) -> Any:
         runtime_id = cast(RuntimeIdInput, request).runtime_id
@@ -43,6 +47,15 @@ def runtime_service_handlers(
             PreviewStartRequest(**value.model_dump(mode="python"))
         )
 
+    def activate_preview(request: BaseModel) -> Any:
+        value = cast(PreviewActivateInput, request)
+        result = runtime_provider().activate_preview(
+            PreviewActivateRequest(**value.model_dump(mode="python"))
+        )
+        if on_activation is not None:
+            on_activation()
+        return result
+
     def get_preview(request: BaseModel) -> Any:
         return runtime_provider().get_preview(cast(PreviewIdInput, request).preview_id)
 
@@ -59,6 +72,7 @@ def runtime_service_handlers(
         )
 
     return {
+        "previews.activate": activate_preview,
         "previews.get": get_preview,
         "previews.resolve": resolve_preview,
         "previews.start": start_preview,

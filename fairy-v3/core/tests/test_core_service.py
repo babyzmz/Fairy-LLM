@@ -711,6 +711,39 @@ def _start_runtime_preview(service: CoreService, stack: RuntimeStack) -> dict[st
     )
 
 
+def test_core_service_activates_preview_idempotently(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    service = CoreService(
+        stack.core,
+        unit_of_work_factory=stack.factory,
+        registry=build_default_registry(),
+        runtime_application=stack.runtime,
+    )
+    task = stack.task.task
+    with stack.factory() as unit_of_work:
+        workspace = unit_of_work.state.get_workspace(task.workspace_id)
+    assert workspace is not None and task.target_version_id is not None
+    request = {
+        "task_id": str(task.id),
+        "workspace_id": str(task.workspace_id),
+        "version_id": str(task.target_version_id),
+        "expected_workspace_revision": workspace.revision,
+        "idempotency_key": "service:preview:activate",
+    }
+    try:
+        first = service.invoke("previews.activate", request)
+        second = service.invoke("previews.activate", request)
+    finally:
+        service.close()
+
+    assert first["outcome"] == second["outcome"] == "ready"
+    assert first["context"]["preview"]["id"] == second["context"]["preview"]["id"]
+    assert first["adapter"] == "static"
+    assert first["capacity"] == 3
+    assert first["active_count"] == 1
+    assert len(stack.executor.start_calls) == 1
+
+
 def test_core_service_exposes_runtime_preview_and_artifact_contracts(tmp_path: Path) -> None:
     stack = build_runtime_stack(tmp_path)
     service = CoreService(
@@ -951,6 +984,7 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "projects.import",
         "projects.list",
         "projects.update_metadata",
+        "previews.activate",
         "previews.get",
         "previews.resolve",
         "previews.start",

@@ -113,6 +113,7 @@ export const CORE_METHOD_TRANSPORT = {
   "obsidian.sync.start": "local_only",
   "permissions.get": "local_and_cloud",
   "permissions.update": "local_and_cloud",
+  "previews.activate": "local_and_cloud",
   "previews.get": "local_and_cloud",
   "previews.resolve": "local_and_cloud",
   "previews.start": "local_and_cloud",

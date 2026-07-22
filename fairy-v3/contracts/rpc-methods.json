@@ -679,6 +679,12 @@
       "transport": "local_and_cloud"
     },
     {
+      "name": "previews.activate",
+      "request_model": "PreviewActivateInput",
+      "response_model": "PreviewActivationModel",
+      "transport": "local_and_cloud"
+    },
+    {
       "name": "previews.get",
       "request_model": "PreviewIdInput",
       "response_model": "PreviewContextModel",

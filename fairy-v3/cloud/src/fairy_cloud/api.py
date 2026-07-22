@@ -38,6 +38,8 @@ from fairy_core.contracts.models import (
     HealthModel,
     MessageListInput,
     PendingChangesetModel,
+    PreviewActivateInput,
+    PreviewActivationModel,
     PreviewContextModel,
     PreviewModel,
     PreviewResolutionModel,
@@ -603,6 +605,21 @@ def create_cloud_app(
     )
     def get_runtime(runtime_id: UUID) -> dict[str, Any]:
         return invoke("runtimes.get", {"runtime_id": str(runtime_id)})
+
+    @protected.post(
+        "/previews/activate",
+        operation_id="previews.activate",
+        response_model=PreviewActivationModel,
+    )
+    def activate_preview(
+        request: PreviewActivateInput,
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=255),
+        ],
+    ) -> dict[str, Any]:
+        require_idempotency_match(request.idempotency_key, idempotency_key)
+        return invoke("previews.activate", request.model_dump(mode="json"))
 
     @protected.post(
         "/previews/start",

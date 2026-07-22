@@ -8879,6 +8879,130 @@
         "title": "PlannedFileInput",
         "type": "object"
       },
+      "PreviewActivateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_workspace_revision": {
+            "minimum": 0.0,
+            "title": "Expected Workspace Revision",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "task_id": {
+            "format": "uuid",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "workspace_id",
+          "version_id",
+          "expected_workspace_revision",
+          "idempotency_key"
+        ],
+        "title": "PreviewActivateInput",
+        "type": "object"
+      },
+      "PreviewActivationModel": {
+        "additionalProperties": false,
+        "properties": {
+          "active_count": {
+            "maximum": 16.0,
+            "minimum": 0.0,
+            "title": "Active Count",
+            "type": "integer"
+          },
+          "adapter": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adapter"
+          },
+          "capacity": {
+            "maximum": 16.0,
+            "minimum": 1.0,
+            "title": "Capacity",
+            "type": "integer"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PreviewContextModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evicted_preview_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evicted Preview Id"
+          },
+          "outcome": {
+            "enum": [
+              "ready",
+              "starting",
+              "waiting_for_slot",
+              "not_runnable",
+              "failed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "public_reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Reason"
+          }
+        },
+        "required": [
+          "outcome",
+          "context",
+          "capacity",
+          "active_count"
+        ],
+        "title": "PreviewActivationModel",
+        "type": "object"
+      },
       "PreviewContextModel": {
         "additionalProperties": false,
         "properties": {
@@ -8952,6 +9076,11 @@
             "maxLength": 512,
             "minLength": 1,
             "title": "Idempotency Key",
+            "type": "string"
+          },
+          "last_accessed_at": {
+            "format": "date-time",
+            "title": "Last Accessed At",
             "type": "string"
           },
           "project_id": {
@@ -9037,7 +9166,8 @@
           "idempotency_key",
           "revision",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "last_accessed_at"
         ],
         "title": "PreviewModel",
         "type": "object"
@@ -20560,6 +20690,78 @@
           }
         ],
         "summary": "Update Permissions"
+      }
+    },
+    "/v1/previews/activate": {
+      "post": {
+        "operationId": "previews.activate",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Fairy-Device-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Fairy-Device-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewActivateInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewActivationModel"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Activate Preview"
       }
     },
     "/v1/previews/resolve": {

@@ -600,6 +600,14 @@ async def test_rest_exposes_collection_runtime_preview_and_artifact_contracts(
         started.raise_for_status()
         preview = started.json()["preview"]
         runtime = started.json()["runtime"]
+        activated = await client.post(
+            "/v1/previews/activate",
+            headers={"Idempotency-Key": "http:preview:activate"},
+            json={
+                **preview_scope,
+                "idempotency_key": "http:preview:activate",
+            },
+        )
         fetched_runtime = await client.get(f"/v1/runtimes/{runtime['id']}")
         runtime_health = await client.get("/v1/runtimes/health", params={"task_id": task_id})
         fetched_preview = await client.get(f"/v1/previews/{preview['id']}")
@@ -631,6 +639,7 @@ async def test_rest_exposes_collection_runtime_preview_and_artifact_contracts(
         tasks,
         versions,
         approvals,
+        activated,
         fetched_runtime,
         runtime_health,
         fetched_preview,
@@ -648,6 +657,9 @@ async def test_rest_exposes_collection_runtime_preview_and_artifact_contracts(
     assert mismatched_idempotency.status_code == 409
     assert mismatched_idempotency.json()["detail"]["code"] == "SCOPE_MISMATCH"
     assert fetched_runtime.json()["id"] == runtime["id"]
+    assert activated.json()["outcome"] == "ready"
+    assert activated.json()["context"]["preview"]["id"] == preview["id"]
+    assert activated.json()["capacity"] == 3
     assert runtime_health.json()["executor"]["available"] is True
     assert fetched_preview.json()["preview"]["id"] == preview["id"]
     assert resolved_preview.json()["preview"]["id"] == preview["id"]

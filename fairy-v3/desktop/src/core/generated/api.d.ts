@@ -1408,6 +1408,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/previews/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate Preview */
+        post: operations["previews.activate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/previews/resolve": {
         parameters: {
             query?: never;
@@ -5920,6 +5937,47 @@ export interface components {
             /** Purpose */
             purpose: string;
         };
+        /** PreviewActivateInput */
+        PreviewActivateInput: {
+            /** Expected Workspace Revision */
+            expected_workspace_revision: number;
+            /** Idempotency Key */
+            idempotency_key: string;
+            /**
+             * Task Id
+             * Format: uuid
+             */
+            task_id: string;
+            /**
+             * Version Id
+             * Format: uuid
+             */
+            version_id: string;
+            /**
+             * Workspace Id
+             * Format: uuid
+             */
+            workspace_id: string;
+        };
+        /** PreviewActivationModel */
+        PreviewActivationModel: {
+            /** Active Count */
+            active_count: number;
+            /** Adapter */
+            adapter?: string | null;
+            /** Capacity */
+            capacity: number;
+            context: components["schemas"]["PreviewContextModel"] | null;
+            /** Evicted Preview Id */
+            evicted_preview_id?: string | null;
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "ready" | "starting" | "waiting_for_slot" | "not_runnable" | "failed";
+            /** Public Reason */
+            public_reason?: string | null;
+        };
         /** PreviewContextModel */
         PreviewContextModel: {
             preview: components["schemas"]["PreviewModel"];
@@ -5954,6 +6012,11 @@ export interface components {
             id: string;
             /** Idempotency Key */
             idempotency_key: string;
+            /**
+             * Last Accessed At
+             * Format: date-time
+             */
+            last_accessed_at: string;
             /** Project Id */
             project_id: string | null;
             /**
@@ -11125,6 +11188,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExecutionSettingsModel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "previews.activate": {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Fairy-Device-ID"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewActivateInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewActivationModel"];
                 };
             };
             /** @description Validation Error */

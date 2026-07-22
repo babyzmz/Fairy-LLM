@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from fairy_core.commanding.registry import build_default_registry
 from fairy_core.contracts.models import (
     ErrorCode,
     EventEnvelopeModel,
@@ -16,6 +17,8 @@ from fairy_core.contracts.models import (
     MemorySnapshotItemModel,
     MemorySnapshotModel,
     PermissionProfileModel,
+    PreviewActivateInput,
+    PreviewActivationModel,
     PreviewModel,
     PreviewStartInput,
     ProjectListInput,
@@ -180,6 +183,29 @@ def test_preview_contract_accepts_only_executor_owned_local_loopback_urls() -> N
                 "project_root": "C:/forged",
             }
         )
+
+
+def test_preview_activation_contract_is_bounded_and_not_model_visible() -> None:
+    request = PreviewActivateInput(
+        task_id=new_id(),
+        workspace_id=new_id(),
+        version_id=new_id(),
+        expected_workspace_revision=3,
+        idempotency_key="preview:activate",
+    )
+    result = PreviewActivationModel(
+        outcome="waiting_for_slot",
+        context=None,
+        adapter="vite",
+        capacity=3,
+        active_count=3,
+        public_reason="All Preview slots are currently protected.",
+    )
+
+    assert request.expected_workspace_revision == 3
+    assert result.capacity == result.active_count == 3
+    definition_names = {definition.name for definition in build_default_registry().definitions()}
+    assert "previews.activate" not in definition_names
 
 
 def test_memory_snapshot_contract_rejects_tampered_hashes_and_non_finite_scores() -> None:

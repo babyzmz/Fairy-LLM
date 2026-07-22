@@ -330,6 +330,13 @@ class RuntimeHealthInput(TaskIdInput):
     pass
 
 
+class PreviewActivateInput(TaskIdInput):
+    workspace_id: UUID
+    version_id: UUID
+    expected_workspace_revision: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=255)
+
+
 class PreviewStartInput(TaskIdInput):
     workspace_id: UUID
     version_id: UUID
@@ -673,6 +680,16 @@ class PreviewContextModel(ContractModel):
     task: TaskModel
     runtime: RuntimeModel
     preview: PreviewModel
+
+
+class PreviewActivationModel(ContractModel):
+    outcome: Literal["ready", "starting", "waiting_for_slot", "not_runnable", "failed"]
+    context: PreviewContextModel | None
+    adapter: str | None = Field(default=None, min_length=1, max_length=32)
+    capacity: int = Field(ge=1, le=16)
+    active_count: int = Field(ge=0, le=16)
+    evicted_preview_id: UUID | None = None
+    public_reason: str | None = Field(default=None, min_length=1, max_length=500)
 
 
 class PreviewResolutionModel(RootModel[PreviewContextModel | None]):
