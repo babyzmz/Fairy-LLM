@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/core-bridge", "crates/local-worker", "crates/realtime-worker"]
+members = [
+    "crates/core-bridge",
+    "crates/local-worker",
+    "crates/realtime-worker",
+    "crates/windows-capture-dda",
+]
 resolver = "2"
 
 [package]
