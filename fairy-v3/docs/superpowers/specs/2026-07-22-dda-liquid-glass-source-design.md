@@ -133,8 +133,10 @@ stops when the pet is hidden, disabled, suspended or the process exits.
 - A stationary Fairy reflects changing desktop content within one display frame.
 - Horizontal, vertical and cross-monitor movement produces no recursive image,
   old-frame trail, seam, flash or whole-window jump.
-- Center displacement stays below 0.75 physical pixels; edge displacement is
-  continuous and bounded to 4-8 physical pixels.
+- Center displacement stays below 0.75 physical pixels. The full core uses a
+  continuous 8-10.5 physical-pixel edge lens; thinner droplets and capsules
+  scale the same monotonic field proportionally to prevent source-coordinate
+  folding.
 - No repeated text, concentric magnification boundaries or foreground-ring
   dispersion is present.
 - GPU frame time p95 remains below 8 ms and capture-to-present p95 remains below
@@ -149,3 +151,4 @@ stops when the pet is hidden, disabled, suspended or the process exits.
 - https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity
 - https://github.com/NiiightmareXD/windows-capture/tree/2.0.0
 - https://github.com/Pondot/liquidDX11
+- https://developer.apple.com/videos/play/wwdc2025/219/

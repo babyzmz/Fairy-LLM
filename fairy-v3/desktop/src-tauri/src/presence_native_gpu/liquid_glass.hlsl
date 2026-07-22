@@ -1,7 +1,10 @@
 // The desktop texture comes from DXGI Desktop Duplication after every Presence HWND has been
 // excluded from DDA. Each output pixel samples one continuous optical field; there are no stacked
 // backdrop copies or concentric magnification layers. HostBackdrop remains an identity fallback.
-static const float EDGE_MATERIAL_DEPTH_PX = 30.0;
+static const float EDGE_MATERIAL_DEPTH_PX = 34.0;
+static const float EDGE_LENS_START = 0.40;
+static const float EDGE_REFRACTION_MAX_PX = 10.5;
+static const float EDGE_DISPERSION_MAX_PX = 1.8;
 
 Texture2D<float4> desktop_texture : register(t0);
 SamplerState desktop_sampler : register(s0);
@@ -247,13 +250,20 @@ float optical_radial_progress(float signed_distance, float2 position_px) {
     return saturate(1.0 + signed_distance / max(optical_radius(position_px), 1.0));
 }
 
+float smootherstep_range(float edge_start, float edge_end, float value) {
+    float progress = saturate((value - edge_start) / max(edge_end - edge_start, 0.0001));
+    return progress * progress * progress
+        * (progress * (progress * 6.0 - 15.0) + 10.0);
+}
+
 float continuous_refraction_px(float radial_progress) {
-    // The center stays identity. Three overlapping smooth ramps form one monotonic field rather
-    // than three independently sampled rings.
-    float inner = smoothstep(0.35, 0.52, radial_progress);
-    float middle = smoothstep(0.52, 0.76, radial_progress);
-    float outer = smoothstep(0.76, 1.0, radial_progress);
-    return 0.65 * inner + 3.15 * middle + 2.20 * outer;
+    // Preserve the center, then bend a wider shoulder into a pronounced outer lens. The C2 ramps
+    // overlap into one monotonic coordinate field; they are weights, not separately sampled rings.
+    float shoulder = smootherstep_range(EDGE_LENS_START, 0.64, radial_progress);
+    float body = smootherstep_range(0.56, 0.86, radial_progress);
+    float rim = smootherstep_range(0.74, 1.0, radial_progress);
+    float profile = 0.10 * shoulder + 0.48 * body + 0.42 * rim;
+    return EDGE_REFRACTION_MAX_PX * profile;
 }
 
 float3 sample_continuous_liquid_glass(
@@ -262,9 +272,20 @@ float3 sample_continuous_liquid_glass(
     float2 normal
 ) {
     float radial_progress = optical_radial_progress(signed_distance, local_px);
-    float displacement_px = continuous_refraction_px(radial_progress) * surface_scale;
+    float optical_depth_px = optical_radius(local_px);
+    float thin_shape_mix = saturate(
+        (optical_depth_px - 24.0 * surface_scale) / max(48.0 * surface_scale, 1.0)
+    );
+    // Thin droplets and capsules scale the same profile down to keep the source mapping monotonic.
+    float shape_refraction_scale = lerp(0.55, 1.0, thin_shape_mix);
+    float displacement_px = continuous_refraction_px(radial_progress)
+        * shape_refraction_scale
+        * surface_scale;
     float2 base_screen_px = surface_origin_px + local_px - normal * displacement_px;
-    float dispersion_px = smoothstep(0.82, 1.0, radial_progress) * 1.8 * surface_scale;
+    float dispersion_px = smootherstep_range(0.86, 1.0, radial_progress)
+        * EDGE_DISPERSION_MAX_PX
+        * shape_refraction_scale
+        * surface_scale;
     float3 center = sample_desktop(base_screen_px);
     float3 refracted = float3(
         sample_desktop(base_screen_px - normal * dispersion_px).r,

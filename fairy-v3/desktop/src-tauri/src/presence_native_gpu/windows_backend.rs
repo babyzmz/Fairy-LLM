@@ -3863,10 +3863,13 @@ mod tests {
             "SamplerState desktop_sampler",
             "sample_continuous_liquid_glass",
             "continuous_refraction_px",
-            "smoothstep(0.35, 0.52, radial_progress)",
-            "smoothstep(0.82, 1.0, radial_progress)",
+            "EDGE_LENS_START = 0.40",
+            "EDGE_REFRACTION_MAX_PX = 10.5",
+            "EDGE_DISPERSION_MAX_PX = 1.8",
+            "smootherstep_range",
+            "float shape_refraction_scale = lerp(0.55, 1.0, thin_shape_mix)",
             "edge_material_profile",
-            "EDGE_MATERIAL_DEPTH_PX = 30.0",
+            "EDGE_MATERIAL_DEPTH_PX = 34.0",
             "float edge_material = pow(saturate(edge_focus), 1.65)",
             "float center_alpha = reduced_transparency > 0.5",
         ] {
@@ -3889,6 +3892,38 @@ mod tests {
             );
         }
         assert!(!shader.contains("for ("));
+    }
+
+    #[test]
+    fn edge_lens_profile_is_strong_and_never_folds_source_coordinates() {
+        fn smootherstep_range(start: f64, end: f64, value: f64) -> f64 {
+            let progress = ((value - start) / (end - start)).clamp(0.0, 1.0);
+            progress.powi(3) * (progress * (progress * 6.0 - 15.0) + 10.0)
+        }
+
+        fn refraction(progress: f64) -> f64 {
+            let shoulder = smootherstep_range(0.40, 0.64, progress);
+            let body = smootherstep_range(0.56, 0.86, progress);
+            let rim = smootherstep_range(0.74, 1.0, progress);
+            10.5 * (0.10 * shoulder + 0.48 * body + 0.42 * rim)
+        }
+
+        assert!(refraction(0.40) <= f64::EPSILON);
+        assert!(refraction(0.52) <= 0.75);
+        assert!((refraction(1.0) - 10.5).abs() <= f64::EPSILON);
+
+        for (radius, shape_scale) in [(72.0, 1.0), (24.0, 0.55)] {
+            let mut previous_source_radius = 0.0;
+            for step in 1..=2_000 {
+                let progress = f64::from(step) / 2_000.0;
+                let source_radius = progress * radius - refraction(progress) * shape_scale;
+                assert!(
+                    source_radius >= previous_source_radius,
+                    "source coordinates folded at progress {progress} for radius {radius}"
+                );
+                previous_source_radius = source_radius;
+            }
+        }
     }
 
     #[test]
@@ -3985,7 +4020,7 @@ mod tests {
     fn material_shader_keeps_a_clear_center_below_the_identity_marks() {
         let shader = include_str!("liquid_glass.hlsl");
         for required in [
-            "EDGE_MATERIAL_DEPTH_PX = 30.0",
+            "EDGE_MATERIAL_DEPTH_PX = 34.0",
             "one continuous optical field",
             "sample_continuous_liquid_glass",
             "float desktop_alpha = shape_mask",
