@@ -1,4 +1,4 @@
-import type { EventEnvelope } from "../core/client";
+import type { EventEnvelope, Task } from "../core/client";
 import { CoreRpcError } from "../core/tauriTransport";
 
 export const workspaceKey = ["workspace"] as const;
@@ -27,6 +27,42 @@ export function selectedItem<T extends { id: string }>(
   selectedId: string | null,
 ): T | null {
   return items.find((item) => item.id === selectedId) ?? items.at(0) ?? null;
+}
+
+const activeWorkspaceTaskStatuses = new Set<Task["status"]>([
+  "created",
+  "resolving_scope",
+  "building_workspace",
+  "planning",
+  "awaiting_approval",
+  "executing",
+  "installing",
+  "previewing",
+  "reviewing",
+  "repairing",
+]);
+
+const restorablePreviewTaskStatuses = new Set<Task["status"]>([
+  "ready",
+  "accepted",
+]);
+
+export function selectWorkspaceTask(
+  tasks: Task[],
+  preferredTaskId: string | null,
+): Task | null {
+  const ordered = [...tasks].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+  const preferred = ordered.find((task) => task.id === preferredTaskId) ?? null;
+  if (preferred !== null && activeWorkspaceTaskStatuses.has(preferred.status)) return preferred;
+
+  const latest = ordered.at(0) ?? null;
+  if (latest !== null && activeWorkspaceTaskStatuses.has(latest.status)) return latest;
+
+  const restorable = ordered.find(
+    (task) =>
+      task.target_version_id !== null && restorablePreviewTaskStatuses.has(task.status),
+  );
+  return restorable ?? preferred ?? latest;
 }
 
 export function requireId(value: string | null | undefined): string {

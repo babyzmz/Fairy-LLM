@@ -44,6 +44,7 @@ import {
   permissionQueryKey,
   requireId,
   selectedItem,
+  selectWorkspaceTask,
   shouldRetryCoreStartup,
   terminalAssistantEvents,
   workspaceKey,
@@ -174,17 +175,22 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const tasks = allTasks.filter((task) => task.conversation_id === selectedConversation?.id);
   const requestedProjectTask = selectedItem(tasks, taskSelection);
   const chatTasks = allTasks.filter((task) => task.conversation_id === selectedChatConversation?.id);
-  const projectWorkspaceTask =
+  const latestProjectTask =
     tasks.find((task) => task.id === projectTurnTaskId) ??
     tasks.find((task) => task.id === selectedConversation?.active_task_id) ??
     [...tasks].sort((left, right) => right.updated_at.localeCompare(left.updated_at)).at(0) ??
     null;
-  const selectedTask = requestedProjectTask ?? projectWorkspaceTask;
+  const projectWorkspaceTask = selectWorkspaceTask(
+    tasks,
+    projectTurnTaskId ?? selectedConversation?.active_task_id ?? null,
+  );
+  const selectedTask = requestedProjectTask ?? latestProjectTask;
   const workspaceTask =
     mode === "chat"
-      ? (chatTasks.find((task) => task.id === chatTaskId) ??
-        [...chatTasks].sort((left, right) => right.updated_at.localeCompare(left.updated_at)).at(0) ??
-        null)
+      ? selectWorkspaceTask(
+        chatTasks,
+        chatTaskId ?? selectedChatConversation?.active_task_id ?? null,
+      )
       : projectWorkspaceTask;
   const messagesQuery = useQuery({
     queryKey: [...workspaceKey, "messages", selectedChatConversation?.id],
