@@ -28,6 +28,9 @@ export function PreviewWorkspace({ model }: { model: WorkspaceModel }) {
           <PreviewPanel
             task={model.workspaceTask}
             context={model.preview}
+            activation={model.previewActivation}
+            activationLoading={model.previewActivationLoading}
+            activationError={model.previewActivationError}
             runtimeHealth={model.runtimeHealth}
             isActing={model.isActing}
             developerMode={model.developerMode}

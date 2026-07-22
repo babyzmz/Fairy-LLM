@@ -196,6 +196,8 @@ export type ProjectImportInput = Schemas["ProjectImport"];
 export type ProjectListInput = NonNullable<operations["projects.list"]["parameters"]["query"]>;
 export type ProjectPage = Schemas["ProjectPageModel"];
 export type Preview = Schemas["PreviewModel"];
+export type PreviewActivateInput = Schemas["PreviewActivateInput"];
+export type PreviewActivation = Schemas["PreviewActivationModel"];
 export type PreviewContext = Schemas["PreviewContextModel"];
 export type PreviewResolveInput = operations["previews.resolve"]["parameters"]["query"];
 export type PreviewResolution = Schemas["PreviewResolutionModel"];
@@ -535,6 +537,7 @@ export interface CoreMethodMap {
     params: SystemActionRequest;
     result: SystemActionExecution;
   };
+  "previews.activate": { params: PreviewActivateInput; result: PreviewActivation };
   "previews.start": { params: PreviewStartInput; result: PreviewContext };
   "previews.get": { params: { preview_id: string }; result: PreviewContext };
   "previews.resolve": { params: PreviewResolveInput; result: PreviewResolution };

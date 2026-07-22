@@ -57,6 +57,7 @@ import type {
   ProjectImportInput,
   ProjectListInput,
   ProjectMetadataUpdateInput,
+  PreviewActivateInput,
   PreviewResolveInput,
   PreviewStartInput,
   PreviewStopInput,
@@ -531,6 +532,7 @@ export class CoreClient {
   };
 
   readonly previews = {
+    activate: (input: PreviewActivateInput) => this.transport.call("previews.activate", input),
     start: (input: PreviewStartInput) => this.transport.call("previews.start", input),
     get: (previewId: string) => this.transport.call("previews.get", { preview_id: previewId }),
     resolve: (input: PreviewResolveInput) => this.transport.call("previews.resolve", input),

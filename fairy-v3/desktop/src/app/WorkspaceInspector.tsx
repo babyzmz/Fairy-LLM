@@ -11,11 +11,13 @@ import "./workspace-inspector.css";
 export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
   const hasFiles = model.workspaceFiles.length > 0;
   const previewReady = model.preview?.preview.status === "ready";
+  const previewStarting = model.previewActivationLoading ||
+    ["ready", "starting", "waiting_for_slot"].includes(model.previewActivation?.outcome ?? "");
   const mediaJobs = useMemo(() => projectMediaJobs(model.mediaJobs), [model.mediaJobs]);
   const hasOutputs = mediaJobs.length > 0;
   const hasActiveOutput = mediaJobs.some((job) => !["completed", "failed", "cancelled", "interrupted"].includes(job.status));
   const [tab, setTab] = useState<"preview" | "files" | "outputs" | "obsidian">(
-    previewReady ? "preview" : "files",
+    previewReady || previewStarting ? "preview" : "files",
   );
   const scopeKey = [
     model.workspaceTask?.conversation_id ?? "no-conversation",
@@ -26,16 +28,16 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
 
   useEffect(() => {
     if (hasActiveOutput) setTab("outputs");
-    else if (previewReady) setTab("preview");
+    else if (previewReady || previewStarting) setTab("preview");
     else if (hasFiles) setTab("files");
     else setTab("preview");
   }, [scopeKey]);
 
   useEffect(() => {
     if (hasActiveOutput) setTab("outputs");
-    else if (previewReady) setTab("preview");
+    else if (previewReady || previewStarting) setTab("preview");
     else if (hasFiles) setTab("files");
-  }, [hasActiveOutput, hasFiles, previewReady, model.workspaceTask?.id]);
+  }, [hasActiveOutput, hasFiles, previewReady, previewStarting, model.workspaceTask?.id]);
 
   useEffect(() => {
     const parent = document.querySelector<HTMLElement>(".unified-workspace-chat, .workspace-main");

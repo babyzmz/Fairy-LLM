@@ -25,6 +25,7 @@ import {
 import { equalOverrides, extensionUpdateKey, permissionUpdateKey, requireMcpServer } from "./workspaceCommandKeys";
 import { createWorkspaceFileActions } from "./workspaceFileActions";
 import { previewStartIdempotencyKey } from "./workspacePreviewActions";
+import { usePreviewActivation } from "./usePreviewActivation";
 import { useWorkspaceKnowledge } from "./workspaceKnowledgeModel";
 import { useWorkspaceBrowser } from "./workspaceBrowserModel";
 import {
@@ -249,14 +250,15 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     enabled: workspaceTask !== null,
     retry: false,
   });
+  const previewQueryKey = [
+    ...workspaceKey,
+    "preview",
+    workspaceTask?.conversation_id,
+    workspaceTask?.id,
+    workspaceTask?.target_version_id,
+  ] as const;
   const previewQuery = useQuery({
-    queryKey: [
-      ...workspaceKey,
-      "preview",
-      workspaceTask?.conversation_id,
-      workspaceTask?.id,
-      workspaceTask?.target_version_id,
-    ],
+    queryKey: previewQueryKey,
     queryFn: () =>
       client.previews.resolve({
         task_id: requireId(workspaceTask?.id),
@@ -266,16 +268,29 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     enabled: workspaceTask !== null && workspaceTask.target_version_id !== null && selectedWorkspaceQuery.isSuccess,
     retry: false,
   });
+  const runtimeHealthQueryKey = [
+    ...workspaceKey,
+    "runtime-health",
+    workspaceTask?.conversation_id,
+    workspaceTask?.id,
+  ] as const;
   const runtimeHealthQuery = useQuery({
-    queryKey: [
-      ...workspaceKey,
-      "runtime-health",
-      workspaceTask?.conversation_id,
-      workspaceTask?.id,
-    ],
+    queryKey: runtimeHealthQueryKey,
     queryFn: () => client.runtimes.health(requireId(workspaceTask?.id)),
     enabled: workspaceTask !== null,
     retry: false,
+  });
+  const previewActivationState = usePreviewActivation({
+    client: client.previews,
+    enabled: healthQuery.isSuccess && selectedWorkspaceQuery.isSuccess,
+    task: workspaceTask,
+    workspace: selectedWorkspaceQuery.data ?? null,
+    onActivated(activation) {
+      if (activation.context !== null) {
+        queryClient.setQueryData(previewQueryKey, activation.context);
+      }
+      void queryClient.invalidateQueries({ queryKey: runtimeHealthQueryKey, exact: true });
+    },
   });
   const browserConversationId = workspaceTask?.conversation_id ??
     (mode === "chat" ? selectedChatConversation?.id : selectedConversation?.id) ?? null;
@@ -1003,7 +1018,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     selectedTask,
     workspaceTask,
     selectedVersion,
-    preview: previewQuery.data ?? null,
+    preview: previewActivationState.activation?.context ?? previewQuery.data ?? null,
+    previewActivation: previewActivationState.activation,
+    previewActivationLoading: previewActivationState.loading,
+    previewActivationError: previewActivationState.error,
     runtimeHealth: runtimeHealthQuery.data ?? null,
     browserHealth: workspaceBrowser.health,
     browserSession: workspaceBrowser.session,

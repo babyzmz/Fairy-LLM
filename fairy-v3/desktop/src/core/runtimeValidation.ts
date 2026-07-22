@@ -122,6 +122,7 @@ const previewSchema = z
     error_code: z.string().min(1).nullable(),
     idempotency_key: z.string().min(1),
     revision: z.number().int().nonnegative(),
+    last_accessed_at: timestampSchema,
     created_at: timestampSchema,
     updated_at: timestampSchema,
   })
@@ -167,6 +168,18 @@ const taskSchema = z
 
 const previewContextSchema = z
   .object({ task: taskSchema, runtime: runtimeSchema, preview: previewSchema })
+  .strict();
+
+const previewActivationSchema = z
+  .object({
+    outcome: z.enum(["ready", "starting", "waiting_for_slot", "not_runnable", "failed"]),
+    context: previewContextSchema.nullable(),
+    adapter: z.string().min(1).nullable(),
+    capacity: z.number().int().min(1).max(16),
+    active_count: z.number().int().nonnegative().max(16),
+    evicted_preview_id: z.uuid().nullable(),
+    public_reason: z.string().min(1).nullable(),
+  })
   .strict();
 
 const runtimeExecutorHealthSchema = z
@@ -227,6 +240,7 @@ const artifactSchema = z
 const runtimeResultSchemas: Partial<Record<CoreMethodName, z.ZodType<unknown>>> = {
   "runtimes.get": runtimeSchema,
   "runtimes.health": runtimeHealthSchema,
+  "previews.activate": previewActivationSchema,
   "previews.start": previewContextSchema,
   "previews.get": previewContextSchema,
   "previews.resolve": previewContextSchema.nullable(),

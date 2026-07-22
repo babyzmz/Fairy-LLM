@@ -201,6 +201,7 @@ const routes = {
   "runtimes.get": (params) => get(`/v1/runtimes/${pathParameter(params, "runtime_id")}`),
   "runtimes.health": (params) => getWithQuery("/v1/runtimes/health", params, ["task_id"]),
   "system.actions.execute": (params) => postWithIdempotency("/v1/system/actions", params),
+  "previews.activate": (params) => postWithIdempotency("/v1/previews/activate", params),
   "previews.start": (params) => postWithIdempotency("/v1/previews/start", params),
   "previews.get": (params) => get(`/v1/previews/${pathParameter(params, "preview_id")}`),
   "previews.resolve": (params) =>

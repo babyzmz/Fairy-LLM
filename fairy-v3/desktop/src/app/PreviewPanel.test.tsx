@@ -188,6 +188,37 @@ describe("PreviewPanel", () => {
     expect(discard).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Use this version" })).toBeDisabled();
   });
+
+  it("shows automatic runtime capacity while waiting for an available slot", () => {
+    render(
+      <PreviewPanel
+        task={{ ...task(), status: "ready" }}
+        context={null}
+        activation={{
+          outcome: "waiting_for_slot",
+          context: null,
+          adapter: "vite",
+          capacity: 3,
+          active_count: 3,
+          evicted_preview_id: null,
+          public_reason: "All Preview slots are currently protected.",
+        }}
+        activationLoading={false}
+        activationError={null}
+        runtimeHealth={null}
+        isActing={false}
+        onStart={vi.fn(async () => undefined)}
+        onStop={vi.fn(async () => undefined)}
+        onReview={vi.fn(async () => undefined)}
+        onAccept={vi.fn(async () => undefined)}
+        onDiscard={vi.fn(async () => undefined)}
+      />,
+    );
+
+    expect(screen.getByText("Waiting for a runtime slot")).toBeVisible();
+    expect(screen.getByText("Waiting · 3/3 active")).toBeVisible();
+    expect(screen.getByText("All Preview slots are currently protected.")).toBeVisible();
+  });
 });
 
 function renderPanel(context: PreviewContext, stop = vi.fn(async () => undefined)) {
@@ -270,6 +301,7 @@ function readyContext(): PreviewContext {
       error_code: null,
       idempotency_key: "preview:start",
       revision: 2,
+      last_accessed_at: timestamp,
       created_at: timestamp,
       updated_at: timestamp,
     },

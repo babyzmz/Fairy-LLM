@@ -30,6 +30,7 @@ import type {
   McpServer,
   McpToolPolicyInput,
   OpenRouterConfigurationStatus,
+  PreviewActivation,
   PreviewContext,
   Project,
   ProviderHealth,
@@ -91,7 +92,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
   annotations: Pick<CoreClient["annotations"], "list" | "update">;
   selections: Pick<CoreClient["selections"], "create">;
   runtimes: Pick<CoreClient["runtimes"], "health">;
-  previews: Pick<CoreClient["previews"], "resolve" | "start" | "stop">;
+  previews: Pick<CoreClient["previews"], "activate" | "resolve" | "start" | "stop">;
   browser: CoreClient["browser"];
   capabilities: Pick<CoreClient["capabilities"], "get">;
   permissions: Pick<CoreClient["permissions"], "get" | "update">;
@@ -164,6 +165,9 @@ export interface WorkspaceModel {
   workspaceTask: Task | null;
   selectedVersion: Version | null;
   preview: PreviewContext | null;
+  previewActivation: PreviewActivation | null;
+  previewActivationLoading: boolean;
+  previewActivationError: string | null;
   runtimeHealth: RuntimeHealth | null;
   browserHealth: BrowserWorkerHealth | null;
   browserSession: BrowserSession | null;

@@ -180,6 +180,13 @@ describe("CoreClient", () => {
       idempotency_key: "system-action-1",
       user_confirmed: true,
     });
+    await client.previews.activate({
+      task_id: id,
+      workspace_id: id,
+      version_id: id,
+      expected_workspace_revision: 0,
+      idempotency_key: "preview-activate-1",
+    });
     await client.previews.start({
       task_id: id,
       workspace_id: id,
@@ -392,6 +399,7 @@ describe("CoreClient", () => {
       "runtimes.get",
       "runtimes.health",
       "system.actions.execute",
+      "previews.activate",
       "previews.start",
       "previews.get",
       "previews.resolve",

@@ -11,11 +11,14 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-import type { PreviewContext, RuntimeHealth, Task } from "../core/client";
+import type { PreviewActivation, PreviewContext, RuntimeHealth, Task } from "../core/client";
 
 interface PreviewPanelProps {
   task: Task | null;
   context: PreviewContext | null;
+  activation?: PreviewActivation | null;
+  activationLoading?: boolean;
+  activationError?: string | null;
   runtimeHealth: RuntimeHealth | null;
   isActing: boolean;
   developerMode?: boolean;
@@ -31,6 +34,9 @@ interface PreviewPanelProps {
 export function PreviewPanel({
   task,
   context,
+  activation = null,
+  activationLoading = false,
+  activationError = null,
   runtimeHealth,
   isActing,
   developerMode = false,
@@ -65,9 +71,14 @@ export function PreviewPanel({
       aria-labelledby="preview-heading"
     >
       <div className="preview-toolbar">
-        <div>
+        <div className="preview-heading-group">
           <span className="eyebrow">{preview?.visibility ?? "TASK OUTPUT"}</span>
           <h2 id="preview-heading">Preview</h2>
+          <PreviewRuntimeSummary
+            activation={activation}
+            loading={activationLoading}
+            error={activationError}
+          />
         </div>
         <div className="preview-actions">
           {canStop ? (
@@ -99,6 +110,9 @@ export function PreviewPanel({
         {renderPreviewState({
           task,
           context,
+          activation,
+          activationLoading,
+          activationError,
           runtimeHealth,
           safeUrl,
           isActing,
@@ -204,6 +218,9 @@ export function PreviewPanel({
 interface PreviewStateInput {
   task: Task | null;
   context: PreviewContext | null;
+  activation: PreviewActivation | null;
+  activationLoading: boolean;
+  activationError: string | null;
   runtimeHealth: RuntimeHealth | null;
   safeUrl: string | null;
   isActing: boolean;
@@ -214,6 +231,9 @@ interface PreviewStateInput {
 function renderPreviewState({
   task,
   context,
+  activation,
+  activationLoading,
+  activationError,
   runtimeHealth,
   safeUrl,
   isActing,
@@ -224,15 +244,6 @@ function renderPreviewState({
   if (task === null) {
     return <PreviewNotice icon={<Code2 />} title="No task selected" detail="Preview unavailable" />;
   }
-  if (preview?.status === "starting") {
-    return (
-      <PreviewNotice
-        icon={<LoaderCircle className="spin" />}
-        title="Preparing preview"
-        detail="Runtime intent recorded"
-      />
-    );
-  }
   if (preview?.status === "ready" && safeUrl !== null) {
     return (
       <iframe
@@ -242,6 +253,53 @@ function renderPreviewState({
         title="Task preview"
         sandbox="allow-forms allow-scripts"
         referrerPolicy="no-referrer"
+      />
+    );
+  }
+  if (activationLoading) {
+    return (
+      <PreviewNotice
+        icon={<LoaderCircle className="spin" />}
+        title="Starting website"
+        detail="Selecting a trusted runtime"
+      />
+    );
+  }
+  if (activation?.outcome === "waiting_for_slot") {
+    return (
+      <PreviewNotice
+        icon={<LoaderCircle className="spin" />}
+        title="Waiting for a runtime slot"
+        detail={activation.public_reason ?? `${activation.active_count} of ${activation.capacity} slots are active`}
+        tone="warning"
+      />
+    );
+  }
+  if (activation?.outcome === "not_runnable") {
+    return (
+      <PreviewNotice
+        icon={<Code2 />}
+        title="No runnable website detected"
+        detail={activation.public_reason ?? "Files remain available in the Files tab"}
+      />
+    );
+  }
+  if (activation?.outcome === "failed" || activationError !== null) {
+    return (
+      <PreviewNotice
+        icon={<AlertCircle />}
+        title="Automatic preview failed"
+        detail={activation?.public_reason ?? activationError ?? "Preview runtime unavailable"}
+        tone="danger"
+      />
+    );
+  }
+  if (preview?.status === "starting") {
+    return (
+      <PreviewNotice
+        icon={<LoaderCircle className="spin" />}
+        title="Preparing preview"
+        detail="Runtime intent recorded"
       />
     );
   }
@@ -310,6 +368,50 @@ function renderPreviewState({
       </button>
     </div>
   );
+}
+
+function PreviewRuntimeSummary({
+  activation,
+  loading,
+  error,
+}: {
+  activation: PreviewActivation | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (loading) {
+    return <span className="preview-runtime-summary"><LoaderCircle className="spin" size={12} /> Starting</span>;
+  }
+  if (activation === null) {
+    return error === null ? null : <span className="preview-runtime-summary preview-runtime-summary-error">Unavailable</span>;
+  }
+  const label = activation.outcome === "waiting_for_slot"
+    ? "Waiting"
+    : activation.outcome === "not_runnable"
+      ? "No runtime"
+      : activation.outcome === "failed"
+        ? "Failed"
+      : runtimeAdapterLabel(activation.adapter ?? null);
+  return (
+    <span className={`preview-runtime-summary preview-runtime-summary-${activation.outcome}`}>
+      {label} · {activation.active_count}/{activation.capacity} active
+    </span>
+  );
+}
+
+function runtimeAdapterLabel(adapter: string | null): string {
+  if (adapter === null) return "Runtime";
+  const labels: Record<string, string> = {
+    static: "Static",
+    static_site: "Static",
+    vite: "Vite",
+    next: "Next.js",
+    astro: "Astro",
+    node_http: "Node",
+    python_asgi: "Python",
+    multi_service: "Multi-service",
+  };
+  return labels[adapter] ?? "Runtime";
 }
 
 function PreviewNotice({

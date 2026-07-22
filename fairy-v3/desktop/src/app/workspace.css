@@ -234,6 +234,37 @@ button:disabled {
   grid-template-rows: 60px minmax(0, 1fr);
 }
 
+.preview-heading-group {
+  min-width: 0;
+}
+
+.preview-heading-group h2 {
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.preview-runtime-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 250px;
+  overflow: hidden;
+  color: #93a39d;
+  font: 600 10px/1.2 "Cascadia Mono", monospace;
+  text-overflow: ellipsis;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.preview-runtime-summary-waiting_for_slot {
+  color: #d9b15f;
+}
+
+.preview-runtime-summary-failed,
+.preview-runtime-summary-error {
+  color: #e8857b;
+}
+
 .pane-header,
 .preview-toolbar,
 .version-decision-bar {

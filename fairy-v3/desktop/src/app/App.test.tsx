@@ -736,6 +736,9 @@ function createClient(
       }),
     },
     previews: {
+      activate: async () => {
+        throw new Error("not used");
+      },
       resolve: async () => null,
       start: async () => {
         throw new Error("not used");
