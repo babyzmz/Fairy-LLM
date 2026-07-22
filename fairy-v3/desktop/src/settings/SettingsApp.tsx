@@ -1157,10 +1157,7 @@ function rendererHealthLabel(health: PresenceRendererHealth): string {
       : ` · ${health.effective_fps} FPS`
     : "";
   if (health.actual_backend === "native_liquid_glass") {
-    const optics = health.optics_source === "host_backdrop_plus_monitor_edge"
-      ? "Live edge optics"
-      : "Host Backdrop only";
-    return `Native Liquid Glass · ${optics}${rate}`;
+    return `Native Host Backdrop material · no pixel displacement${rate}`;
   }
   if (health.actual_backend === "webgl_compatibility") {
     return `WebGL compatibility${rate}`;

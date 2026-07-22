@@ -32,7 +32,6 @@ pub enum NativeGpuOpticsSource {
     #[default]
     None,
     HostBackdrop,
-    HostBackdropPlusMonitorEdge,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -304,7 +303,9 @@ impl NativeGpuStatus {
             backend: NativeGpuBackend::WindowsHostBackdropD3d11Composition,
             optics_source: NativeGpuOpticsSource::HostBackdrop,
             lifecycle: NativeGpuLifecycle::Starting,
-            zero_copy_capture: true,
+            // Retained for transport compatibility. HostBackdrop is a compositor brush, not a
+            // capture source, so capture-specific diagnostics remain false or zero.
+            zero_copy_capture: false,
             pixel_ipc: false,
             target_frame_rate: config.target_frame_rate,
             surface_width: config.render_frame.width,
@@ -763,18 +764,14 @@ mod tests {
         }
         for required in [
             "scene_sdf",
-            "thickness_field",
             "rim_fresnel",
-            "outer_caustic",
+            "rim_caustic",
             "key_highlight",
             "fill_highlight",
             "shape_bridge",
             "return min(result, capsule)",
-            "EDGE_LENS_DEPTH_PX",
-            "edge_refraction_profile",
-            "sample_refracted_desktop",
-            "desktop_texture",
-            "inward_depth * 1.65 + outside_clearance",
+            "EDGE_MATERIAL_DEPTH_PX",
+            "edge_material_profile",
             "drag_center_shift",
             "state_flow",
             "center_alpha",
@@ -793,11 +790,8 @@ mod tests {
             "DWMWA_USE_HOSTBACKDROPBRUSH",
             "CreateHostBackdropBrush()",
             "CreateCompositionSurfaceForSwapChain(swap_chain)",
-            "DuplicateOutput(&dxgi_device)",
-            "CreateShaderResourceView(&texture",
-            "EDGE_CAPTURE_REBASE_FRAMES",
             ".update_lens(presentation, drag, render_frame)",
-            "capture_source_valid: f32::from(edge_capture_ready)",
+            "capture_source_stage = \"host_backdrop_identity\"",
         ] {
             assert!(
                 production.contains(required),
@@ -809,6 +803,10 @@ mod tests {
             "GraphicsCaptureItem",
             "CreateForMonitor",
             "NativeCaptureHandler",
+            "DuplicateOutput(",
+            "sample_refracted_desktop",
+            "desktop_texture",
+            "DisplacementMapEffect",
         ] {
             assert!(
                 !production.contains(forbidden),

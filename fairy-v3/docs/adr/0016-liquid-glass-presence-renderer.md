@@ -1,5 +1,9 @@
 # ADR 0016: Liquid Glass Presence Renderer
 
+> Production optical-source details are superseded by ADR 0020. This document
+> remains the historical decision for the two-window Presence architecture and
+> earlier WGC feasibility work.
+
 ## Decision
 
 Fairy keeps Tauri 2 and uses two bounded Liquid Glass implementations. Standard

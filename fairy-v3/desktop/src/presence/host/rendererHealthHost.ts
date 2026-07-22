@@ -16,7 +16,6 @@ const healthReportSchema = z.object({
   optics_source: z.enum([
     "none",
     "host_backdrop",
-    "host_backdrop_plus_monitor_edge",
     "webgl_texture",
     "procedural",
   ]),
@@ -40,7 +39,6 @@ const healthReportSchema = z.object({
     "NATIVE_GPU_START_FAILED",
     "NATIVE_GPU_UPDATE_FAILED",
     "NATIVE_GPU_RUNTIME_FAILED",
-    "NATIVE_GPU_EDGE_CAPTURE_UNAVAILABLE",
     "NATIVE_GPU_STOP_FAILED",
   ]).nullable(),
   fallback_reason: z.enum([
@@ -53,7 +51,6 @@ const healthReportSchema = z.object({
     "NATIVE_GPU_START_FAILED",
     "NATIVE_GPU_UPDATE_FAILED",
     "NATIVE_GPU_RUNTIME_FAILED",
-    "NATIVE_GPU_EDGE_CAPTURE_UNAVAILABLE",
     "NATIVE_GPU_STOP_FAILED",
   ]).nullable(),
   monitor_refresh_hz: z.number().int().nonnegative().max(1_000),

@@ -1,13 +1,8 @@
-// HostBackdropBrush supplies the identity center. The optional monitor texture is sampled once per
-// color channel only in the outer optical band, always from beyond Fairy's current silhouette.
-// This keeps the center geometrically stable and prevents the current Fairy frame from recursing.
-static const float EDGE_LENS_DEPTH_PX = 32.0;
-static const float EDGE_SAMPLE_CLEARANCE_PX = 12.0;
-static const float EDGE_MAX_REFRACTION_PX = 6.0;
-static const float EDGE_MAX_DISPERSION_PX = 2.0;
-
-Texture2D<float4> desktop_texture : register(t0);
-SamplerState desktop_sampler : register(s0);
+// Windows Composition exposes HostBackdrop as an identity backdrop sample. It does not expose a
+// per-pixel displacement field, and displacement-map effects are not supported by Composition. This
+// foreground shader therefore draws only material and Fairy identity light. It must never sample
+// a second desktop texture or claim to refract the backdrop.
+static const float EDGE_MATERIAL_DEPTH_PX = 30.0;
 
 cbuffer PresenceConstants : register(b0) {
     float2 output_size;
@@ -187,43 +182,11 @@ float2 surface_normal(float2 position_px) {
     return normalize(gradient + float2(0.0001, 0.0001));
 }
 
-float edge_refraction_profile(float signed_distance) {
+float edge_material_profile(float signed_distance) {
     float scale = max(surface_scale, 0.01);
     float inward_distance = max(-signed_distance, 0.0);
-    float rim = saturate(1.0 - inward_distance / max(EDGE_LENS_DEPTH_PX * scale, 1.0));
+    float rim = saturate(1.0 - inward_distance / max(EDGE_MATERIAL_DEPTH_PX * scale, 1.0));
     return rim * rim * (3.0 - 2.0 * rim);
-}
-
-float2 monitor_uv(float2 local_position_px) {
-    return saturate((source_origin_px + local_position_px) / max(capture_size, 1.0.xx));
-}
-
-float3 sample_refracted_desktop(
-    float2 local_position_px,
-    float2 normal,
-    float signed_distance,
-    float edge_profile
-) {
-    float scale = max(surface_scale, 0.01);
-    float inward_depth = max(-signed_distance, 0.0);
-    // The source point is outside the complete Fairy silhouette and its narrow shadow. Sampling
-    // there avoids feeding a previous Fairy frame back into the lens without hiding Fairy from
-    // recording or remote desktop capture.
-    float outside_clearance = (EDGE_SAMPLE_CLEARANCE_PX
-        + EDGE_MAX_REFRACTION_PX * edge_profile) * scale;
-    // A factor above one mirrors a narrow radial interval across the silhouette instead of
-    // collapsing the complete band onto one source ring. That preserves spatial detail and avoids
-    // the spoke-like streaks caused by many destination pixels sharing the same desktop sample.
-    float2 source_position = local_position_px
-        + normal * (inward_depth * 1.65 + outside_clearance);
-    float dispersion = EDGE_MAX_DISPERSION_PX
-        * scale
-        * smoothstep(0.72, 1.0, edge_profile);
-    float2 spectral_offset = normal * dispersion;
-    float red = desktop_texture.Sample(desktop_sampler, monitor_uv(source_position + spectral_offset)).r;
-    float green = desktop_texture.Sample(desktop_sampler, monitor_uv(source_position)).g;
-    float blue = desktop_texture.Sample(desktop_sampler, monitor_uv(source_position - spectral_offset)).b;
-    return float3(red, green, blue);
 }
 
 float state_energy_value() {
@@ -284,152 +247,100 @@ float4 ps_main(VertexOutput input) : SV_Target {
         return float4(0.0, 0.0, 0.0, outside_shadow);
     }
 
-    float thickness = thickness_field(signed_distance, local_px);
     float2 normal = surface_normal(local_px);
-    float edge_focus = edge_refraction_profile(signed_distance);
-    float capture_edge = capture_source_valid
-        * smoothstep(0.10, 0.92, edge_focus)
-        * (1.0 - drag_active);
-    float3 refracted_desktop = capture_edge > 0.001
-        ? sample_refracted_desktop(local_px, normal, signed_distance, edge_focus)
-        : 0.0.xxx;
-    float3 material_base = float3(0.76, 0.86, 0.92);
+    float edge_focus = edge_material_profile(signed_distance);
+    float3 material_base = float3(0.91, 0.96, 0.98);
 
-    float rim_fresnel = pow(edge_focus, 1.55);
+    float rim_fresnel = pow(edge_focus, 1.72);
     float silhouette = exp(-abs(signed_distance) / max(1.35 * scale, 0.75));
-    float inner_dark_line = exp(
-        -abs(signed_distance + 7.5 * scale) / max(1.7 * scale, 0.85)
-    );
-    float outer_caustic = exp(
-        -abs(signed_distance + 2.8 * scale) / max(1.6 * scale, 0.8)
-    );
-    float broad_caustic = exp(
-        -abs(signed_distance + 14.0 * scale) / max(5.5 * scale, 1.0)
+    float rim_caustic = exp(
+        -abs(signed_distance + 3.2 * scale) / max(2.2 * scale, 0.9)
     );
     float key_highlight = pow(
         saturate(dot(normalize(float2(-0.72, -0.69)), -normal)),
-        18.0
+        20.0
     ) * silhouette;
     float fill_highlight = pow(
         saturate(dot(normalize(float2(0.68, 0.73)), -normal)),
-        28.0
+        30.0
     ) * silhouette;
-    float bottom_lip = pow(saturate(normal.y), 7.0) * rim_fresnel;
 
     float state_energy = state_energy_value();
     float3 accent = state_accent_color();
-    float luminance = dot(material_base, float3(0.2126, 0.7152, 0.0722));
-    float material_tint = 0.014 * (0.18 + 0.82 * rim_fresnel);
-    if (increased_contrast > 0.5) material_tint = 0.0;
-    float3 color = lerp(material_base, float3(0.84, 0.94, 1.0), material_tint);
+    float3 color = material_base;
     if (reduced_transparency > 0.5) {
-        float accessibility_fill = luminance > 0.58 ? 0.08 : 0.94;
-        color = lerp(color, accessibility_fill.xxx, 0.20);
+        color = lerp(color, 0.94.xxx, 0.16);
     }
-    color += float3(1.0, 0.995, 0.98) * key_highlight * 0.72;
-    color += float3(0.72, 0.90, 1.0) * fill_highlight * 0.42;
-    color += float3(0.78, 0.95, 1.0) * outer_caustic * 0.24;
-    color += float3(0.66, 0.88, 1.0) * broad_caustic * 0.075;
-    color += float3(0.74, 0.91, 1.0) * rim_fresnel * silhouette * 0.28;
+    color += float3(1.0, 0.995, 0.98) * key_highlight * 0.58;
+    color += float3(0.78, 0.92, 1.0) * fill_highlight * 0.28;
+    color += float3(0.82, 0.96, 1.0) * rim_caustic * 0.12;
+    color += float3(0.82, 0.94, 1.0) * rim_fresnel * silhouette * 0.15;
     float state_travel = 0.5 + 0.5 * sin(
         dot(local_px - core_center_px(), normalize(float2(0.94, -0.34)))
             * 0.055 / scale
         - state_elapsed_seconds * (1.4 + state_energy * 8.0)
     );
     float state_flow = pow(saturate(state_travel), 10.0)
-        * broad_caustic
+        * rim_caustic
         * state_energy
         * (1.0 - reduced_motion);
-    color += accent * state_flow * 0.22;
+    color += accent * state_flow * 0.14;
     float drag_energy = drag_stretch * (1.0 - reduced_motion);
     float drag_light = pow(saturate(dot(-normal, normalize(drag_direction + 0.0001))), 12.0);
-    color += float3(0.82, 0.96, 1.0) * drag_light * silhouette * drag_energy * 0.24;
-    float spectral_polarity = dot(normal, normalize(float2(-0.76, 0.65)));
-    float warm_dispersion = saturate(spectral_polarity) * smoothstep(0.82, 1.0, edge_focus);
-    float cool_dispersion = saturate(-spectral_polarity) * smoothstep(0.82, 1.0, edge_focus);
-    color += float3(0.020, 0.004, -0.008) * warm_dispersion;
-    color += float3(-0.008, 0.004, 0.020) * cool_dispersion;
+    color += float3(0.84, 0.97, 1.0) * drag_light * silhouette * drag_energy * 0.18;
     if (increased_contrast > 0.5) {
-        float contrast_tone = luminance > 0.58 ? 0.01 : 0.99;
-        color = lerp(color, contrast_tone.xxx, saturate(silhouette * 0.24));
+        color = lerp(color, 1.0.xxx, saturate(silhouette * 0.34));
     }
-    color *= 1.0 - inner_dark_line * 0.18 - bottom_lip * 0.10;
 
     float core_radius = length(local_px - core_center_px()) / scale;
     float pulse = state_pulse_value();
     float voice_pulse = state_voice_mix;
     float notify_wave = notify_wave_value();
     float core_orb = exp(-(core_radius * core_radius) / 42.0);
-    float core_glow = exp(-(core_radius * core_radius) / 210.0);
     float atmosphere_outer = exp(-abs(core_radius - 36.0) / 1.25);
     float atmosphere_inner = exp(-abs(core_radius - 24.0) / 1.05);
     float atmosphere_alpha = (
         atmosphere_outer * (0.055 + state_energy * 0.045)
         + atmosphere_inner * (0.035 + state_energy * 0.035)
     ) * lerp(0.82, 1.0, pulse);
-    float notify_halo = exp(-abs(core_radius - 50.0) / 7.0) * notify_wave;
-    // Fairy's atmosphere rings and beacon are an independent foreground identity layer. Their
-    // color is calculated without the refracted material, so dispersion and caustics cannot be
-    // inherited by the marks even when the desktop underneath has high contrast.
+    // Fairy's two atmosphere rings and breathing beacon are an independent foreground identity
+    // layer. No broad center fill, glow, desktop sample, dispersion, or caustic is allowed here.
     float3 identity_color = float3(0.86, 0.96, 1.0);
     float beacon_emission = core_orb
         * (0.48 + state_energy * 0.42 + voice_pulse * 0.12)
         * lerp(0.74, 1.0, pulse);
-    float sparkle = particle_sparkles(local_px);
-    color += float3(0.82, 0.96, 1.0) * sparkle * 0.24;
 
     float shape_mask = saturate((1.5 * scale - signed_distance) / (2.5 * scale));
-    // HostBackdrop supplies the real desktop behind the complete core. Material opacity therefore
-    // remains low and only rises around the optical rim; it never replaces desktop pixels itself.
+    // HostBackdrop supplies the real desktop behind the complete core. The center contributes no
+    // material veil in the normal mode; only the outer material edge gains opacity.
     float center_alpha = reduced_transparency > 0.5
-        ? lerp(0.12, 0.18, material_opacity)
-        : lerp(0.012, 0.022, material_opacity);
-    float edge_alpha = lerp(0.16, 0.24, material_opacity);
-    float edge_material = pow(saturate(edge_focus), 1.20);
+        ? lerp(0.08, 0.13, material_opacity)
+        : 0.0;
+    float edge_alpha = lerp(0.08, 0.15, material_opacity);
+    float edge_material = pow(saturate(edge_focus), 1.65);
     float alpha = shape_mask * lerp(center_alpha, edge_alpha, edge_material);
     float optical_highlight_alpha = saturate(
-        key_highlight * 0.72
-        + fill_highlight * 0.38
-        + outer_caustic * 0.22
-        + silhouette * 0.12
+        key_highlight * 0.48
+        + fill_highlight * 0.24
+        + rim_caustic * 0.12
+        + silhouette * 0.07
     );
     alpha = max(alpha, shape_mask * optical_highlight_alpha);
     float atmosphere_layer_alpha = saturate(atmosphere_alpha * 1.55) * shape_mask;
-    float glow_layer_alpha = saturate(
-        core_glow * (0.045 + state_energy * 0.075)
-    ) * shape_mask;
-    float notify_layer_alpha = saturate(notify_halo * 0.12) * shape_mask;
     float beacon_layer_alpha = saturate(beacon_emission) * shape_mask;
     float identity_alpha = 1.0
         - (1.0 - atmosphere_layer_alpha)
-        * (1.0 - glow_layer_alpha)
-        * (1.0 - notify_layer_alpha)
         * (1.0 - beacon_layer_alpha);
     float material_alpha = alpha;
     float3 material_premultiplied = linear_to_srgb(saturate(color)) * material_alpha;
     float3 identity_premultiplied = linear_to_srgb(identity_color)
         * atmosphere_layer_alpha;
-    identity_premultiplied += linear_to_srgb(saturate(accent))
-        * glow_layer_alpha
-        * (1.0 - atmosphere_layer_alpha);
-    identity_premultiplied += linear_to_srgb(float3(1.0, 0.86, 0.56))
-        * notify_layer_alpha
-        * (1.0 - atmosphere_layer_alpha)
-        * (1.0 - glow_layer_alpha);
     identity_premultiplied += linear_to_srgb(float3(0.96, 0.985, 1.0))
         * beacon_layer_alpha
-        * (1.0 - atmosphere_layer_alpha)
-        * (1.0 - glow_layer_alpha)
-        * (1.0 - notify_layer_alpha);
-    float optical_alpha = shape_mask * capture_edge * 0.92;
-    float3 optical_premultiplied = refracted_desktop * optical_alpha;
-    float composed_material_alpha = material_alpha
-        + optical_alpha * (1.0 - material_alpha);
-    float3 composed_material = material_premultiplied
-        + optical_premultiplied * (1.0 - material_alpha);
+        * (1.0 - atmosphere_layer_alpha);
     float3 foreground_premultiplied = identity_premultiplied
-        + composed_material * (1.0 - identity_alpha);
+        + material_premultiplied * (1.0 - identity_alpha);
     float foreground_alpha = identity_alpha
-        + composed_material_alpha * (1.0 - identity_alpha);
+        + material_alpha * (1.0 - identity_alpha);
     return float4(foreground_premultiplied, foreground_alpha);
 }

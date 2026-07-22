@@ -13,7 +13,6 @@ const nativeGpuStatusSchema = z.object({
   optics_source: z.enum([
     "none",
     "host_backdrop",
-    "host_backdrop_plus_monitor_edge",
   ]).default("host_backdrop"),
   lifecycle: z.enum(["idle", "starting", "running", "stopping", "failed"]),
   zero_copy_capture: z.boolean(),
@@ -495,7 +494,6 @@ export class NativePresenceRendererHost {
   ): void {
     const nativeActive = status === "running" || status === "suspended";
     const fallback = ["context_lost", "fallback", "failed"].includes(status);
-    const partialFallback = nativeActive && this.lastStatus?.fallback_reason != null;
     this.options.onHealth?.({
       requested_mode: this.requestedMode,
       mode: "native",
@@ -505,9 +503,7 @@ export class NativePresenceRendererHost {
         : "none",
       status,
       error_code,
-      fallback_reason: partialFallback
-        ? "NATIVE_GPU_EDGE_CAPTURE_UNAVAILABLE"
-        : fallback ? error_code : null,
+      fallback_reason: fallback ? error_code : null,
       monitor_refresh_hz: this.lastStatus?.display_refresh_rate_hz ?? 0,
       effective_fps: this.lastStatus?.effective_frame_rate ?? 0,
     });
@@ -607,7 +603,7 @@ function parseHealthyStatus(value: unknown): NativeGpuStatus {
   const status = nativeGpuStatusSchema.parse(value);
   if (
     status.lifecycle !== "running" ||
-    !status.zero_copy_capture ||
+    status.optics_source !== "host_backdrop" ||
     status.pixel_ipc
   ) {
     throw new Error(status.error_code ?? "PRESENCE_NATIVE_GPU_UNHEALTHY");

@@ -20,7 +20,6 @@ export type PresenceRendererErrorCode =
   | "NATIVE_GPU_START_FAILED"
   | "NATIVE_GPU_UPDATE_FAILED"
   | "NATIVE_GPU_RUNTIME_FAILED"
-  | "NATIVE_GPU_EDGE_CAPTURE_UNAVAILABLE"
   | "NATIVE_GPU_STOP_FAILED";
 
 export type PresenceActualRendererBackend =
@@ -32,7 +31,6 @@ export type PresenceActualRendererBackend =
 export type PresenceOpticsSource =
   | "none"
   | "host_backdrop"
-  | "host_backdrop_plus_monitor_edge"
   | "webgl_texture"
   | "procedural";
 

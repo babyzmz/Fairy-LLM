@@ -24,10 +24,8 @@ use windows::Win32::Graphics::Direct3D::{
 };
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader,
-    ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D,
-    ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_SHADER_RESOURCE, D3D11_BUFFER_DESC,
-    D3D11_COMPARISON_NEVER, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-    D3D11_SAMPLER_DESC, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_TEXTURE_ADDRESS_CLAMP,
+    ID3D11RenderTargetView, ID3D11Texture2D, ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER,
+    D3D11_BUFFER_DESC, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
     D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
 };
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_HOSTBACKDROPBRUSH};
@@ -36,9 +34,8 @@ use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory1, IDXGIDevice, IDXGIFactory1, IDXGIFactory2, IDXGIOutput1, IDXGIOutput6,
-    IDXGIOutputDuplication, IDXGIResource, IDXGISwapChain1, IDXGISwapChain3, DXGI_ERROR_NOT_FOUND,
-    DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO, DXGI_PRESENT, DXGI_SCALING_STRETCH,
+    CreateDXGIFactory1, IDXGIDevice, IDXGIFactory1, IDXGIFactory2, IDXGIOutput6, IDXGISwapChain1,
+    IDXGISwapChain3, DXGI_ERROR_NOT_FOUND, DXGI_PRESENT, DXGI_SCALING_STRETCH,
     DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
 };
 use windows::Win32::Graphics::Gdi::{
@@ -75,7 +72,6 @@ use windows_numerics::{Vector2, Vector3};
 const SHADER_SOURCE: &str = include_str!("liquid_glass.hlsl");
 const SWAP_CHAIN_BUFFER_COUNT: u32 = 2;
 const LIQUID_CORE_RADIUS: f32 = 72.0;
-const EDGE_CAPTURE_REBASE_FRAMES: u64 = 2;
 const METRIC_WINDOW: usize = 600;
 const NATIVE_SURFACE_CLASS: PCWSTR = w!("FairyNativePresenceRendererClass");
 const TIMER_PERIOD_ONE_MILLISECOND: u32 = 1;
@@ -127,19 +123,20 @@ impl WindowsNativeGpuSession {
         status: Arc<Mutex<NativeGpuStatus>>,
     ) -> Result<Self, NativeGpuError> {
         let timer_resolution = TimerResolutionGuard::acquire();
-        let composition_source =
-            inspect_desktop_composition_source(config.render_frame, config.presentation, &status)?;
-        let monitor_frame = composition_source.monitor_frame;
-        let display_refresh_rate_hz = composition_source.display_refresh_rate_hz;
-        let hdr_capture = composition_source.hdr_capture;
+        let backdrop_monitor =
+            inspect_host_backdrop_monitor(config.render_frame, config.presentation, &status)?;
+        let monitor_frame = backdrop_monitor.monitor_frame;
+        let display_refresh_rate_hz = backdrop_monitor.display_refresh_rate_hz;
+        let hdr_capture = backdrop_monitor.hdr_capture;
         let effective_frame_rate =
             effective_render_frame_rate(config.target_frame_rate, display_refresh_rate_hz);
         update_status(&status, |status| {
             status.hdr_capture = hdr_capture;
             status.display_refresh_rate_hz = display_refresh_rate_hz;
-            // Legacy diagnostic field retained for schema compatibility. HostBackdrop does not
-            // run a capture loop, so its only meaningful limit is the foreground present rate.
-            status.capture_frame_rate_limit = effective_frame_rate;
+            status.effective_frame_rate = effective_frame_rate;
+            // Legacy capture diagnostics remain zero. HostBackdrop is evaluated by the system
+            // compositor and has no application-owned source frame loop.
+            status.capture_frame_rate_limit = 0;
         });
         let (device, context) = create_native_d3d_device(&status)?;
         let surface_hwnd = Arc::new(AtomicIsize::new(0));
@@ -406,9 +403,7 @@ impl NativeRenderLoop {
                 update_status(&thread_status, |status| {
                     status.backend = NativeGpuBackend::WindowsHostBackdropD3d11Composition;
                     status.lifecycle = NativeGpuLifecycle::Running;
-                    // HostBackdrop remains GPU-composed and never enters CPU memory or IPC. This
-                    // legacy flag now describes that zero-copy compositor path, not WGC.
-                    status.zero_copy_capture = true;
+                    status.zero_copy_capture = false;
                     status.pixel_ipc = false;
                     status.monitor_width = monitor_frame.width;
                     status.monitor_height = monitor_frame.height;
@@ -461,10 +456,7 @@ impl Drop for NativeRenderLoop {
 struct NativeRenderMetrics {
     started: Instant,
     last_presented: Option<Instant>,
-    last_source_frame: Option<Instant>,
-    last_source_generation: u64,
     frame_intervals_ms: VecDeque<f64>,
-    source_frame_intervals_ms: VecDeque<f64>,
     present_ms: VecDeque<f64>,
     frames_presented: u64,
     last_published: Instant,
@@ -475,10 +467,7 @@ impl NativeRenderMetrics {
         Self {
             started: Instant::now(),
             last_presented: None,
-            last_source_frame: None,
-            last_source_generation: 0,
             frame_intervals_ms: VecDeque::with_capacity(METRIC_WINDOW),
-            source_frame_intervals_ms: VecDeque::with_capacity(METRIC_WINDOW),
             present_ms: VecDeque::with_capacity(METRIC_WINDOW),
             frames_presented: 0,
             last_published: Instant::now(),
@@ -487,7 +476,6 @@ impl NativeRenderMetrics {
 
     fn record(
         &mut self,
-        source_generation: u64,
         present_started: Instant,
         presented: Instant,
         status: &Arc<Mutex<NativeGpuStatus>>,
@@ -502,15 +490,6 @@ impl NativeRenderMetrics {
             &mut self.present_ms,
             presented.duration_since(present_started).as_secs_f64() * 1_000.0,
         );
-        if source_generation > self.last_source_generation {
-            if let Some(last) = self.last_source_frame.replace(presented) {
-                push_metric(
-                    &mut self.source_frame_intervals_ms,
-                    presented.duration_since(last).as_secs_f64() * 1_000.0,
-                );
-            }
-            self.last_source_generation = source_generation;
-        }
         self.frames_presented = self.frames_presented.saturating_add(1);
         if self.frames_presented <= 3 || self.last_published.elapsed() >= Duration::from_millis(250)
         {
@@ -532,16 +511,9 @@ impl NativeRenderMetrics {
                 .filter(|interval| *interval > 0.0)
                 .map(|interval| 1_000.0 / interval)
                 .unwrap_or(0.0);
-            status.source_frames_received = self.last_source_generation;
-            status.source_capture_fps_avg = if elapsed > 0.0 {
-                self.last_source_generation as f64 / elapsed
-            } else {
-                0.0
-            };
-            status.source_frame_interval_p1_fps = percentile(&self.source_frame_intervals_ms, 0.99)
-                .filter(|interval| *interval > 0.0)
-                .map(|interval| 1_000.0 / interval)
-                .unwrap_or(0.0);
+            status.source_frames_received = 0;
+            status.source_capture_fps_avg = 0.0;
+            status.source_frame_interval_p1_fps = 0.0;
             status.callback_to_present_p95_ms = 0.0;
             status.present_p95_ms = percentile(&self.present_ms, 0.95).unwrap_or(0.0);
             status.last_presented_at_ms = now_ms();
@@ -589,15 +561,15 @@ fn run_render_loop(
             continue;
         }
         let present_started = Instant::now();
-        let source_generation = match renderer.present(metrics.started.elapsed(), drag_active) {
-            Ok(generation) => generation,
+        match renderer.present(metrics.started.elapsed(), drag_active) {
+            Ok(()) => {}
             Err(error) => {
                 fail_render_loop(status, error);
                 break;
             }
-        };
+        }
         let presented = Instant::now();
-        metrics.record(source_generation, present_started, presented, status);
+        metrics.record(present_started, presented, status);
         next_deadline =
             advance_render_deadline(next_deadline, presented, render_interval(frame_rate));
     }
@@ -1216,150 +1188,6 @@ impl HostBackdropComposition {
     }
 }
 
-struct DesktopEdgeCapture {
-    duplication: IDXGIOutputDuplication,
-    texture: Option<ID3D11Texture2D>,
-    view: Option<ID3D11ShaderResourceView>,
-    texture_size: (u32, u32),
-    generation: u64,
-    resume_after_generation: u64,
-    last_frame_at: Option<Instant>,
-}
-
-impl DesktopEdgeCapture {
-    fn new(device: &ID3D11Device, monitor: HMONITOR) -> Result<Self, String> {
-        let dxgi_device: IDXGIDevice = device
-            .cast()
-            .map_err(|error| windows_stage_error("EDGE_CAPTURE_DXGI_DEVICE", error))?;
-        let adapter = unsafe { dxgi_device.GetAdapter() }
-            .map_err(|error| windows_stage_error("EDGE_CAPTURE_ADAPTER", error))?;
-        let mut output_index = 0;
-        let output = loop {
-            let candidate = match unsafe { adapter.EnumOutputs(output_index) } {
-                Ok(output) => output,
-                Err(error) if error.code() == DXGI_ERROR_NOT_FOUND => {
-                    return Err("PRESENCE_NATIVE_GPU_EDGE_CAPTURE_OUTPUT_NOT_FOUND".to_owned());
-                }
-                Err(error) => {
-                    return Err(windows_stage_error("EDGE_CAPTURE_ENUM_OUTPUT", error));
-                }
-            };
-            output_index += 1;
-            let description = unsafe { candidate.GetDesc() }
-                .map_err(|error| windows_stage_error("EDGE_CAPTURE_OUTPUT_DESC", error))?;
-            if description.Monitor == monitor {
-                break candidate;
-            }
-        };
-        let output: IDXGIOutput1 = output
-            .cast()
-            .map_err(|error| windows_stage_error("EDGE_CAPTURE_OUTPUT1", error))?;
-        let duplication = unsafe { output.DuplicateOutput(&dxgi_device) }
-            .map_err(|error| windows_stage_error("EDGE_CAPTURE_DUPLICATE_OUTPUT", error))?;
-        Ok(Self {
-            duplication,
-            texture: None,
-            view: None,
-            texture_size: (0, 0),
-            generation: 0,
-            resume_after_generation: 1,
-            last_frame_at: None,
-        })
-    }
-
-    fn acquire_latest(
-        &mut self,
-        device: &ID3D11Device,
-        context: &ID3D11DeviceContext,
-    ) -> Result<bool, String> {
-        let mut frame_info = DXGI_OUTDUPL_FRAME_INFO::default();
-        let mut resource: Option<IDXGIResource> = None;
-        match unsafe {
-            self.duplication
-                .AcquireNextFrame(0, &mut frame_info, &mut resource)
-        } {
-            Err(error) if error.code() == DXGI_ERROR_WAIT_TIMEOUT => return Ok(false),
-            Err(error) => return Err(windows_stage_error("EDGE_CAPTURE_ACQUIRE", error)),
-            Ok(()) => {}
-        }
-
-        let copy_result = (|| {
-            if frame_info.LastPresentTime == 0 {
-                return Ok(false);
-            }
-            let source: ID3D11Texture2D = resource
-                .ok_or_else(|| "PRESENCE_NATIVE_GPU_EDGE_CAPTURE_RESOURCE_MISSING".to_owned())?
-                .cast()
-                .map_err(|error| windows_stage_error("EDGE_CAPTURE_TEXTURE", error))?;
-            let mut description = D3D11_TEXTURE2D_DESC::default();
-            unsafe { source.GetDesc(&mut description) };
-            self.ensure_texture(device, description)?;
-            let target = self
-                .texture
-                .as_ref()
-                .ok_or_else(|| "PRESENCE_NATIVE_GPU_EDGE_CAPTURE_TARGET_MISSING".to_owned())?;
-            unsafe { context.CopyResource(target, &source) };
-            self.generation = self.generation.saturating_add(1);
-            self.last_frame_at = Some(Instant::now());
-            Ok(true)
-        })();
-        let release_result = unsafe { self.duplication.ReleaseFrame() }
-            .map_err(|error| windows_stage_error("EDGE_CAPTURE_RELEASE", error));
-        match (copy_result, release_result) {
-            (Err(error), _) => Err(error),
-            (_, Err(error)) => Err(error),
-            (Ok(copied), Ok(())) => Ok(copied),
-        }
-    }
-
-    fn ensure_texture(
-        &mut self,
-        device: &ID3D11Device,
-        source: D3D11_TEXTURE2D_DESC,
-    ) -> Result<(), String> {
-        if self.texture_size == (source.Width, source.Height)
-            && self.texture.is_some()
-            && self.view.is_some()
-        {
-            return Ok(());
-        }
-        let description = D3D11_TEXTURE2D_DESC {
-            Width: source.Width,
-            Height: source.Height,
-            MipLevels: 1,
-            ArraySize: 1,
-            Format: source.Format,
-            SampleDesc: source.SampleDesc,
-            Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-            CPUAccessFlags: 0,
-            MiscFlags: 0,
-        };
-        let mut texture = None;
-        unsafe { device.CreateTexture2D(&description, None, Some(&mut texture)) }
-            .map_err(|error| windows_stage_error("EDGE_CAPTURE_TARGET_CREATE", error))?;
-        let texture = texture
-            .ok_or_else(|| "PRESENCE_NATIVE_GPU_EDGE_CAPTURE_TARGET_UNAVAILABLE".to_owned())?;
-        let mut view = None;
-        unsafe { device.CreateShaderResourceView(&texture, None, Some(&mut view)) }
-            .map_err(|error| windows_stage_error("EDGE_CAPTURE_VIEW_CREATE", error))?;
-        self.texture = Some(texture);
-        self.view = Some(
-            view.ok_or_else(|| "PRESENCE_NATIVE_GPU_EDGE_CAPTURE_VIEW_UNAVAILABLE".to_owned())?,
-        );
-        self.texture_size = (source.Width, source.Height);
-        Ok(())
-    }
-
-    fn rebase_after_drag(&mut self) {
-        self.resume_after_generation = self.generation.saturating_add(EDGE_CAPTURE_REBASE_FRAMES);
-    }
-
-    fn is_ready(&self, drag_active: bool) -> bool {
-        !drag_active && self.view.is_some() && self.generation >= self.resume_after_generation
-    }
-}
-
 struct NativeCompositionRenderer {
     surface: NativeCompositionSurface,
     device: ID3D11Device,
@@ -1370,8 +1198,6 @@ struct NativeCompositionRenderer {
     vertex_shader: ID3D11VertexShader,
     pixel_shader: ID3D11PixelShader,
     constants: ID3D11Buffer,
-    sampler: ID3D11SamplerState,
-    edge_capture: Option<DesktopEdgeCapture>,
     presentation: Arc<RwLock<NativeGpuPresentation>>,
     target_frame_rate: u16,
     display_refresh_rate_hz: u16,
@@ -1381,8 +1207,6 @@ struct NativeCompositionRenderer {
     state_motion: NativeStateMotion,
     hdr_capture: bool,
     hdr_checked_at: Instant,
-    status: Arc<Mutex<NativeGpuStatus>>,
-    reported_edge_ready: bool,
 }
 
 struct NativeStateMotion {
@@ -1957,29 +1781,12 @@ impl NativeCompositionRenderer {
         let render_targets = vec![None; SWAP_CHAIN_BUFFER_COUNT as usize];
         let (vertex_shader, pixel_shader) = create_shaders(&device)?;
         let constants = create_constant_buffer(&device)?;
-        let sampler = create_linear_sampler(&device)?;
-        let monitor = monitor_handle_for_presentation(config.render_frame, config.presentation)
-            .map_err(|error| error.to_string())?;
-        let edge_capture = match DesktopEdgeCapture::new(&device, monitor) {
-            Ok(capture) => {
-                update_status(&status, |status| {
-                    status.capture_source_stage = "desktop_edge_capture_ready".to_owned();
-                    status.capture_source_hresult = None;
-                    status.fallback_reason = None;
-                });
-                Some(capture)
-            }
-            Err(error) => {
-                update_status(&status, |status| {
-                    status.capture_source_stage = "host_backdrop_only".to_owned();
-                    status.capture_source_hresult = None;
-                    status.fallback_reason =
-                        Some("PRESENCE_NATIVE_GPU_EDGE_CAPTURE_UNAVAILABLE".to_owned());
-                });
-                let _ = error;
-                None
-            }
-        };
+        update_status(&status, |status| {
+            status.capture_source_stage = "host_backdrop_identity".to_owned();
+            status.capture_source_hresult = None;
+            status.optics_source = NativeGpuOpticsSource::HostBackdrop;
+            status.fallback_reason = None;
+        });
         let swap_chain_base: IDXGISwapChain1 = swap_chain
             .cast()
             .map_err(|error| windows_stage_error("HOST_BACKDROP_SWAPCHAIN_CAST", error))?;
@@ -2000,8 +1807,6 @@ impl NativeCompositionRenderer {
             vertex_shader,
             pixel_shader,
             constants,
-            sampler,
-            edge_capture,
             presentation,
             target_frame_rate: config.target_frame_rate,
             display_refresh_rate_hz,
@@ -2011,12 +1816,10 @@ impl NativeCompositionRenderer {
             state_motion: NativeStateMotion::new(config.presentation.visual_state, Instant::now()),
             hdr_capture,
             hdr_checked_at: Instant::now(),
-            status,
-            reported_edge_ready: false,
         })
     }
 
-    fn present(&mut self, elapsed: Duration, drag_active: bool) -> Result<u64, String> {
+    fn present(&mut self, elapsed: Duration, drag_active: bool) -> Result<(), String> {
         if !unsafe { IsWindow(Some(self.surface.hwnd)) }.as_bool() {
             return Err("PRESENCE_NATIVE_GPU_SURFACE_INVALIDATED".to_owned());
         }
@@ -2057,48 +1860,6 @@ impl NativeCompositionRenderer {
         );
         self.composition
             .update_lens(presentation, drag, render_frame)?;
-        let capture_error = self
-            .edge_capture
-            .as_mut()
-            .and_then(|capture| capture.acquire_latest(&self.device, &self.context).err());
-        if let Some(error) = capture_error {
-            update_status(&self.status, |status| {
-                status.capture_source_stage = "desktop_edge_capture_failed".to_owned();
-                status.capture_source_hresult = None;
-                status.optics_source = NativeGpuOpticsSource::HostBackdrop;
-                status.fallback_reason =
-                    Some("PRESENCE_NATIVE_GPU_EDGE_CAPTURE_UNAVAILABLE".to_owned());
-            });
-            let _ = error;
-            self.edge_capture = None;
-        }
-        let edge_capture_ready = self
-            .edge_capture
-            .as_ref()
-            .is_some_and(|capture| capture.is_ready(drag_active));
-        let capture_generation = self
-            .edge_capture
-            .as_ref()
-            .map_or(0, |capture| capture.generation);
-        let capture_view = edge_capture_ready
-            .then(|| self.edge_capture.as_ref()?.view.clone())
-            .flatten();
-        if edge_capture_ready != self.reported_edge_ready {
-            self.reported_edge_ready = edge_capture_ready;
-            update_status(&self.status, |status| {
-                status.optics_source = if edge_capture_ready {
-                    NativeGpuOpticsSource::HostBackdropPlusMonitorEdge
-                } else {
-                    NativeGpuOpticsSource::HostBackdrop
-                };
-                status.capture_source_stage = if edge_capture_ready {
-                    "desktop_edge_capture_active"
-                } else {
-                    "host_backdrop_only"
-                }
-                .to_owned();
-            });
-        }
         let constants = PresenceConstants {
             output_size: [render_frame.width as f32, render_frame.height as f32],
             capture_size: [
@@ -2135,10 +1896,9 @@ impl NativeCompositionRenderer {
             capsule_half_width: presentation.capsule_half_width,
             state_elapsed_seconds: state_sample.state_elapsed_seconds,
             drag_active: f32::from(drag_active),
-            // HostBackdrop remains the identity center. The monitor texture is restricted to the
-            // outer optical band and is disabled while dragging or waiting for fresh post-drag
-            // frames, preventing the previous Fairy position from feeding back into the lens.
-            capture_source_valid: f32::from(edge_capture_ready),
+            // Windows Composition does not expose HostBackdrop pixels to this shader. These
+            // reserved fields remain zero until the constant-buffer contract is versioned.
+            capture_source_valid: 0.0,
             state_energy: state_sample.style.energy,
             state_pulse: state_sample.style.pulse,
             state_notify_wave: state_sample.style.notify_wave,
@@ -2180,26 +1940,17 @@ impl NativeCompositionRenderer {
                 .VSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
             self.context
                 .PSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
-            self.context
-                .PSSetShaderResources(0, Some(&[capture_view.clone()]));
-            self.context
-                .PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
             self.context.Draw(3, 0);
-            self.context.PSSetShaderResources(0, Some(&[None]));
-            self.context.PSSetSamplers(0, Some(&[None]));
             self.context.OMSetRenderTargets(None, None);
         }
         let result = unsafe { self.swap_chain.Present(0, DXGI_PRESENT(0)) };
         result.ok().map_err(windows_error)?;
         self.surface.show()?;
-        Ok(capture_generation)
+        Ok(())
     }
 
     fn rebase_after_drag(&mut self) -> Result<(), String> {
         self.surface.sync_to_tracking_window()?;
-        if let Some(capture) = self.edge_capture.as_mut() {
-            capture.rebase_after_drag();
-        }
         Ok(())
     }
 
@@ -2472,26 +2223,7 @@ fn create_constant_buffer_with_size(
     buffer.ok_or_else(|| "PRESENCE_NATIVE_GPU_CONSTANT_BUFFER_UNAVAILABLE".to_owned())
 }
 
-fn create_linear_sampler(device: &ID3D11Device) -> Result<ID3D11SamplerState, String> {
-    let description = D3D11_SAMPLER_DESC {
-        Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-        AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
-        AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
-        AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
-        MipLODBias: 0.0,
-        MaxAnisotropy: 1,
-        ComparisonFunc: D3D11_COMPARISON_NEVER,
-        BorderColor: [0.0; 4],
-        MinLOD: 0.0,
-        MaxLOD: f32::MAX,
-    };
-    let mut sampler = None;
-    unsafe { device.CreateSamplerState(&description, Some(&mut sampler)) }
-        .map_err(|error| windows_stage_error("EDGE_CAPTURE_SAMPLER", error))?;
-    sampler.ok_or_else(|| "PRESENCE_NATIVE_GPU_EDGE_CAPTURE_SAMPLER_UNAVAILABLE".to_owned())
-}
-
-struct NativeDesktopCompositionSource {
+struct HostBackdropMonitor {
     monitor_frame: PhysicalFrame,
     display_refresh_rate_hz: u16,
     hdr_capture: bool,
@@ -2537,11 +2269,11 @@ impl Drop for CompositionWinRtMta {
     }
 }
 
-fn inspect_desktop_composition_source(
+fn inspect_host_backdrop_monitor(
     frame: PhysicalFrame,
     presentation: NativeGpuPresentation,
     status: &Arc<Mutex<NativeGpuStatus>>,
-) -> Result<NativeDesktopCompositionSource, NativeGpuError> {
+) -> Result<HostBackdropMonitor, NativeGpuError> {
     let handle = monitor_handle_for_presentation(frame, presentation)?;
     update_status(status, |status| {
         status.capture_source_stage = "monitor_selected".to_owned();
@@ -2577,7 +2309,7 @@ fn inspect_desktop_composition_source(
         status.capture_source_stage = "host_backdrop_monitor_validated".to_owned();
         status.capture_source_hresult = None;
     });
-    Ok(NativeDesktopCompositionSource {
+    Ok(HostBackdropMonitor {
         monitor_frame,
         display_refresh_rate_hz,
         hdr_capture,
@@ -3001,7 +2733,7 @@ mod tests {
     }
 
     #[test]
-    fn capture_source_tracks_the_fairy_core_instead_of_the_wide_surface_center() {
+    fn host_backdrop_monitor_tracks_the_fairy_core_instead_of_the_wide_surface_center() {
         let frame = PhysicalFrame {
             x: 1_383,
             y: 790,
@@ -3177,17 +2909,15 @@ mod tests {
     }
 
     #[test]
-    fn hybrid_optics_keep_host_backdrop_identity_and_use_one_monitor_edge_texture() {
+    fn production_optics_use_host_backdrop_without_a_second_desktop_source() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         for required in [
             "CreateHostBackdropBrush()",
-            "inspect_desktop_composition_source",
+            "inspect_host_backdrop_monitor",
             "D3D11CreateDevice(",
-            "DuplicateOutput(&dxgi_device)",
-            "CreateShaderResourceView(&texture",
-            "DesktopEdgeCapture",
             "host_backdrop_renderer_started",
+            "host_backdrop_identity",
             "capture_source_hresult",
         ] {
             assert!(
@@ -3203,6 +2933,10 @@ mod tests {
             "NativeCaptureHandler",
             "fairy-wgc-source",
             "CompositionVisualSurface",
+            "DesktopEdgeCapture",
+            "DuplicateOutput(",
+            "CreateShaderResourceView(",
+            "IDXGIOutputDuplication",
         ] {
             assert!(
                 !production.contains(forbidden),
@@ -3230,21 +2964,32 @@ mod tests {
     }
 
     #[test]
-    fn shader_uses_a_continuous_single_sample_edge_profile() {
+    fn shader_draws_one_continuous_material_edge_without_sampling_backdrop_pixels() {
         let shader = include_str!("liquid_glass.hlsl");
         for required in [
-            "edge_refraction_profile",
-            "smoothstep(0.10, 0.92, edge_focus)",
-            "sample_refracted_desktop",
-            "inward_depth * 1.65 + outside_clearance",
-            "EDGE_MAX_DISPERSION_PX = 2.0",
+            "edge_material_profile",
+            "EDGE_MATERIAL_DEPTH_PX = 30.0",
+            "float edge_material = pow(saturate(edge_focus), 1.65)",
+            "float center_alpha = reduced_transparency > 0.5",
         ] {
             assert!(
                 shader.contains(required),
                 "missing edge profile: {required}"
             );
         }
-        assert!(!shader.contains("HOST_BACKDROP_LENS_BAND_COUNT"));
+        for forbidden in [
+            "HOST_BACKDROP_LENS_BAND_COUNT",
+            "Texture2D",
+            "SamplerState",
+            "sample_refracted_desktop",
+            "DisplacementMapEffect",
+            "optical_premultiplied",
+        ] {
+            assert!(
+                !shader.contains(forbidden),
+                "unsupported optics returned: {forbidden}"
+            );
+        }
         assert!(!shader.contains("for ("));
     }
 
@@ -3278,16 +3023,15 @@ mod tests {
     }
 
     #[test]
-    fn edge_capture_never_hides_fairy_or_reuses_an_inside_sample() {
+    fn host_backdrop_path_never_starts_screen_capture_or_pixel_displacement() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         for required in [
             "DWMWA_USE_HOSTBACKDROPBRUSH",
             "CreateHostBackdropBrush()",
             "CreateCompositionSurfaceForSwapChain(swap_chain)",
-            "capture_source_valid: f32::from(edge_capture_ready)",
-            "EDGE_CAPTURE_REBASE_FRAMES",
-            "capture.rebase_after_drag()",
+            "capture_source_valid: 0.0",
+            "capture_source_stage = \"host_backdrop_identity\"",
         ] {
             assert!(
                 production.contains(required),
@@ -3302,6 +3046,9 @@ mod tests {
             "CreateForMonitor",
             "ColorFormat::",
             "set_window_capture_excluded(hwnd.0 as isize, true)",
+            "DuplicateOutput(",
+            "DesktopEdgeCapture",
+            "DisplacementMapEffect",
         ] {
             assert!(
                 !production.contains(forbidden),
@@ -3311,7 +3058,7 @@ mod tests {
     }
 
     #[test]
-    fn native_drag_keeps_host_backdrop_live_and_rebases_only_the_edge_texture() {
+    fn native_drag_keeps_host_backdrop_live_without_a_capture_rebase() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         let host = include_str!("../lib.rs");
@@ -3320,8 +3067,6 @@ mod tests {
             "let drag_active = control.is_drag_active()",
             ".update_lens(presentation, drag, render_frame)",
             "renderer.rebase_after_drag()",
-            "capture_source_valid: f32::from(edge_capture_ready)",
-            "self.resume_after_generation",
         ] {
             assert!(
                 production.contains(required),
@@ -3332,21 +3077,21 @@ mod tests {
         assert!(!production.contains("capture_source_staleness"));
         assert!(!production.contains("window_source_stale"));
         assert!(!production.contains("previous_overlay"));
+        assert!(!production.contains("resume_after_generation"));
         assert!(host.contains("state.native_gpu.set_drag_active(true)"));
         assert!(host.contains("set_drag_active(false)"));
     }
 
     #[test]
-    fn material_shader_keeps_identity_above_the_refracted_edge() {
+    fn material_shader_keeps_a_clear_center_below_the_identity_marks() {
         let shader = include_str!("liquid_glass.hlsl");
         for required in [
-            "EDGE_LENS_DEPTH_PX = 32.0",
-            "HostBackdropBrush supplies the identity center",
-            "Texture2D<float4> desktop_texture",
-            "float optical_alpha",
-            "float3 optical_premultiplied",
-            "float edge_alpha = lerp(0.16, 0.24, material_opacity)",
-            "float inner_dark_line",
+            "EDGE_MATERIAL_DEPTH_PX = 30.0",
+            "HostBackdrop as an identity backdrop sample",
+            "float center_alpha = reduced_transparency > 0.5",
+            ": 0.0;",
+            "float edge_alpha = lerp(0.08, 0.15, material_opacity)",
+            "float rim_caustic",
             "float key_highlight",
             "float fill_highlight",
             "float atmosphere_outer",
@@ -3357,7 +3102,7 @@ mod tests {
             "float identity_alpha = 1.0",
             "float3 identity_premultiplied",
             "float3 foreground_premultiplied = identity_premultiplied",
-            "composed_material * (1.0 - identity_alpha)",
+            "material_premultiplied * (1.0 - identity_alpha)",
         ] {
             assert!(
                 shader.contains(required),
@@ -3369,27 +3114,29 @@ mod tests {
         assert!(!shader.contains("edge_blur"));
         assert!(!shader.contains("previous_overlay"));
         assert!(!shader.contains("remove_previous_overlay"));
+        assert!(!shader.contains("inner_dark_line"));
+        assert!(!shader.contains("broad_caustic"));
+        assert!(!shader.contains("core_glow"));
+        assert!(!shader.contains("particle_sparkles(local_px)"));
+        assert!(!shader.contains("Texture2D"));
         assert!(!shader.contains("identity_color)) * identity_alpha"));
         assert!(!shader.contains("color += max(0.0.xxx, float3(0.86, 0.96, 1.0) - color)"));
     }
 
     #[test]
-    fn desktop_duplication_is_optional_and_never_blocks_host_backdrop_present() {
+    fn host_backdrop_present_has_no_optional_capture_side_loop() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
-        for required in [
-            "host_backdrop_only",
-            "desktop_edge_capture_failed",
-            "self.edge_capture = None",
-            "renderer.present(",
-        ] {
+        for required in ["host_backdrop_identity", "renderer.present("] {
             assert!(
                 production.contains(required),
-                "missing composite-monitor contract: {required}"
+                "missing HostBackdrop contract: {required}"
             );
         }
         assert!(!production.contains("on_frame_arrived"));
-        assert!(production.contains("CreateShaderResourceView(&texture"));
+        assert!(!production.contains("CreateShaderResourceView("));
+        assert!(!production.contains("AcquireNextFrame("));
+        assert!(!production.contains("CopyResource("));
     }
 
     #[test]
