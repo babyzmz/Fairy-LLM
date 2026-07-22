@@ -1242,6 +1242,7 @@ dependencies = [
  "fairy-core-bridge",
  "fairy-local-worker",
  "fairy-realtime-worker",
+ "fairy-windows-capture-dda",
  "image",
  "serde",
  "serde_json",

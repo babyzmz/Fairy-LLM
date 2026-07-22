@@ -4,8 +4,10 @@
 //! never maps captured pixels to CPU memory and requires the caller to select
 //! the monitor output and own the D3D11 device used by the renderer.
 
-use windows::core::Interface;
-use windows::Win32::Foundation::{HMODULE, LUID, RECT};
+use std::ffi::c_void;
+
+use windows::core::{s, w, Interface, BOOL};
+use windows::Win32::Foundation::{GetLastError, HMODULE, HWND, LUID, RECT};
 use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_10_1,
     D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
@@ -24,6 +26,19 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_OUTDUPL_DESC, DXGI_OUTDUPL_FRAME_INFO,
 };
 use windows::Win32::Graphics::Gdi::HMONITOR;
+use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+
+const WCA_EXCLUDED_FROM_DDA: i32 = 24;
+
+#[repr(C)]
+struct WindowCompositionAttributeData {
+    attribute: i32,
+    data: *mut c_void,
+    size: usize,
+}
+
+type SetWindowCompositionAttribute =
+    unsafe extern "system" fn(HWND, *mut WindowCompositionAttributeData) -> BOOL;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DdaError {
@@ -41,8 +56,33 @@ pub enum DdaError {
     ContextUnavailable,
     #[error("DDA_FEATURE_LEVEL_UNSUPPORTED")]
     FeatureLevelUnsupported,
+    #[error("DDA_EXCLUSION_API_UNAVAILABLE")]
+    ExclusionApiUnavailable,
+    #[error("DDA_EXCLUSION_FAILED: {0}")]
+    ExclusionFailed(u32),
     #[error("DDA_WINDOWS_ERROR: {0}")]
     Windows(#[from] windows::core::Error),
+}
+
+/// Excludes one HWND from DXGI Desktop Duplication while leaving ordinary
+/// screen capture behavior unchanged. This is intentionally separate from
+/// `SetWindowDisplayAffinity` and must be applied before the window is shown.
+pub fn set_window_excluded_from_dda(hwnd: HWND, excluded: bool) -> Result<(), DdaError> {
+    let module = unsafe { GetModuleHandleW(w!("user32.dll"))? };
+    let procedure = unsafe { GetProcAddress(module, s!("SetWindowCompositionAttribute")) }
+        .ok_or(DdaError::ExclusionApiUnavailable)?;
+    let set_attribute: SetWindowCompositionAttribute = unsafe { std::mem::transmute(procedure) };
+    let mut value = BOOL::from(excluded);
+    let mut data = WindowCompositionAttributeData {
+        attribute: WCA_EXCLUDED_FROM_DDA,
+        data: (&mut value as *mut BOOL).cast(),
+        size: std::mem::size_of::<BOOL>(),
+    };
+    if unsafe { set_attribute(hwnd, &mut data) }.as_bool() {
+        Ok(())
+    } else {
+        Err(DdaError::ExclusionFailed(unsafe { GetLastError().0 }))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
