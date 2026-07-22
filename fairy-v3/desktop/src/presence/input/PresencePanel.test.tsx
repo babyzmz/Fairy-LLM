@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PresenceView } from "../domain/projection";
 import {
+  compactInputHeightForText,
   compactInputWidthForText,
   PresencePanel,
   type PresencePanelActions,
@@ -57,7 +58,7 @@ describe("PresencePanel optical boundary", () => {
   });
 
   it("grows the compact surface with the message and keeps it bounded", () => {
-    const onCompactWidthChange = vi.fn();
+    const onCompactSizeChange = vi.fn();
     render(
       <PresencePanel
         actions={actions}
@@ -66,7 +67,7 @@ describe("PresencePanel optical boundary", () => {
         inputOpen
         menuOpen={false}
         muted={false}
-        onCompactWidthChange={onCompactWidthChange}
+        onCompactSizeChange={onCompactSizeChange}
         reply={null}
         submission={null}
         view={view}
@@ -76,9 +77,11 @@ describe("PresencePanel optical boundary", () => {
     fireEvent.change(screen.getByLabelText("Quick message to Fairy"), {
       target: { value: "这是一个足够长的消息，用来验证桌宠输入框会随内容增长" },
     });
-    expect(onCompactWidthChange).toHaveBeenLastCalledWith(420);
-    expect(compactInputWidthForText(0)).toBe(280);
+    expect(onCompactSizeChange).toHaveBeenLastCalledWith(360, 84);
+    expect(compactInputWidthForText(0)).toBe(220);
     expect(compactInputWidthForText(202)).toBe(308);
-    expect(compactInputWidthForText(2_000)).toBe(420);
+    expect(compactInputWidthForText(2_000)).toBe(360);
+    expect(compactInputHeightForText("", 0)).toBe(64);
+    expect(compactInputHeightForText("one\ntwo\nthree\nfour", 0)).toBe(104);
   });
 });

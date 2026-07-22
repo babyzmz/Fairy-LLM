@@ -67,9 +67,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::UI::Composition::Desktop::DesktopWindowTarget;
 use windows::UI::Composition::{
     CompositionBackdropBrush, CompositionEllipseGeometry, CompositionGeometricClip,
-    CompositionStretch, CompositionSurfaceBrush, Compositor, ContainerVisual, SpriteVisual,
+    CompositionRoundedRectangleGeometry, CompositionStretch, CompositionSurfaceBrush, Compositor,
+    ContainerVisual, SpriteVisual,
 };
-use windows_numerics::Vector2;
+use windows_numerics::{Vector2, Vector3};
 
 const SHADER_SOURCE: &str = include_str!("liquid_glass.hlsl");
 const SWAP_CHAIN_BUFFER_COUNT: u32 = 2;
@@ -888,6 +889,135 @@ unsafe extern "system" fn native_surface_window_proc(
     }
 }
 
+struct InputHostBackdropComposition {
+    _target: DesktopWindowTarget,
+    root: ContainerVisual,
+    backdrop: SpriteVisual,
+    _backdrop_brush: CompositionBackdropBrush,
+    geometry: CompositionRoundedRectangleGeometry,
+    _clip: CompositionGeometricClip,
+}
+
+impl InputHostBackdropComposition {
+    fn new(
+        compositor: &Compositor,
+        desktop_interop: &ICompositorDesktopInterop,
+        input_hwnd: HWND,
+        surface_scale: f32,
+        presentation: NativeGpuPresentation,
+    ) -> Result<Self, String> {
+        let host_backdrop_enabled = 1_i32;
+        unsafe {
+            DwmSetWindowAttribute(
+                input_hwnd,
+                DWMWA_USE_HOSTBACKDROPBRUSH,
+                (&host_backdrop_enabled as *const i32).cast(),
+                std::mem::size_of::<i32>() as u32,
+            )
+        }
+        .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_WINDOW_ATTRIBUTE", error))?;
+
+        // The input target is below the WebView child. The DOM paints only text, icons, and the
+        // foreground rim, so neither glyphs nor controls enter the backdrop sample.
+        let target = unsafe { desktop_interop.CreateDesktopWindowTarget(input_hwnd, false) }
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_TARGET", error))?;
+        let root = compositor
+            .CreateContainerVisual()
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_ROOT", error))?;
+        root.SetSize(Vector2 {
+            X: 616.0 * surface_scale,
+            Y: 360.0 * surface_scale,
+        })
+        .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_ROOT_SIZE", error))?;
+        target
+            .SetRoot(&root)
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_SET_ROOT", error))?;
+
+        let backdrop = compositor
+            .CreateSpriteVisual()
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_VISUAL", error))?;
+        let backdrop_brush = compositor
+            .CreateHostBackdropBrush()
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_BRUSH", error))?;
+        backdrop
+            .SetBrush(&backdrop_brush)
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_SET_BRUSH", error))?;
+        let geometry = compositor
+            .CreateRoundedRectangleGeometry()
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_GEOMETRY", error))?;
+        let clip = compositor
+            .CreateGeometricClipWithGeometry(&geometry)
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_CLIP", error))?;
+        backdrop
+            .SetClip(&clip)
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_SET_CLIP", error))?;
+        root.Children()
+            .and_then(|children| children.InsertAtBottom(&backdrop))
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_INSERT", error))?;
+
+        let mut input = Self {
+            _target: target,
+            root,
+            backdrop,
+            _backdrop_brush: backdrop_brush,
+            geometry,
+            _clip: clip,
+        };
+        input.update(surface_scale, presentation)?;
+        Ok(input)
+    }
+
+    fn update(
+        &mut self,
+        surface_scale: f32,
+        presentation: NativeGpuPresentation,
+    ) -> Result<(), String> {
+        let width =
+            (presentation.capsule_half_width * 2.0 + 16.0).clamp(220.0, 360.0) * surface_scale;
+        let height = presentation.input_surface_height.clamp(64.0, 104.0) * surface_scale;
+        let left = match presentation.expansion_direction {
+            NativeGpuExpansionDirection::Right => 8.0 * surface_scale,
+            NativeGpuExpansionDirection::Left => {
+                616.0 * surface_scale - width - 8.0 * surface_scale
+            }
+        };
+        let top = 352.0 * surface_scale - height;
+        let size = Vector2 {
+            X: width.max(1.0),
+            Y: height.max(1.0),
+        };
+        self.root
+            .SetSize(Vector2 {
+                X: 616.0 * surface_scale,
+                Y: 360.0 * surface_scale,
+            })
+            .and_then(|()| self.backdrop.SetSize(size))
+            .and_then(|()| {
+                self.backdrop.SetOffset(Vector3 {
+                    X: left,
+                    Y: top,
+                    Z: 0.0,
+                })
+            })
+            .and_then(|()| self.geometry.SetSize(size))
+            .and_then(|()| {
+                self.geometry.SetCornerRadius(Vector2 {
+                    X: height * 0.5,
+                    Y: height * 0.5,
+                })
+            })
+            .and_then(|()| {
+                self.backdrop
+                    .SetOpacity(if presentation.input_surface_visible {
+                        1.0
+                    } else {
+                        0.0
+                    })
+            })
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_UPDATE", error))
+    }
+}
+
 struct HostBackdropComposition {
     _dispatcher_queue: DispatcherQueueController,
     _compositor: Compositor,
@@ -899,11 +1029,13 @@ struct HostBackdropComposition {
     backdrop_clip: CompositionGeometricClip,
     _foreground_brush: CompositionSurfaceBrush,
     _foreground: SpriteVisual,
+    input: Option<InputHostBackdropComposition>,
 }
 
 impl HostBackdropComposition {
     fn new(
         hwnd: HWND,
+        input_hwnd: HWND,
         swap_chain: &IDXGISwapChain1,
         frame: PhysicalFrame,
         presentation: NativeGpuPresentation,
@@ -1003,6 +1135,19 @@ impl HostBackdropComposition {
             .InsertAtTop(&foreground)
             .map_err(|error| windows_stage_error("HOST_BACKDROP_INSERT_FOREGROUND", error))?;
 
+        let input = match InputHostBackdropComposition::new(
+            &compositor,
+            &desktop_interop,
+            input_hwnd,
+            frame.width as f32 / 640.0,
+            presentation,
+        ) {
+            Ok(input) => Some(input),
+            Err(error) => {
+                eprintln!("[presence-native-gpu] native input glass unavailable: {error}");
+                None
+            }
+        };
         let mut composition = Self {
             _dispatcher_queue: dispatcher_queue,
             _compositor: compositor,
@@ -1014,6 +1159,7 @@ impl HostBackdropComposition {
             backdrop_clip,
             _foreground_brush: foreground_brush,
             _foreground: foreground,
+            input,
         };
         composition.update_lens(presentation, NativeDragSample::default(), frame)?;
         Ok(composition)
@@ -1063,6 +1209,9 @@ impl HostBackdropComposition {
                 Y: frame.height as f32,
             })
             .map_err(|error| windows_stage_error("HOST_BACKDROP_UPDATE_SIZE", error))?;
+        if let Some(input) = self.input.as_mut() {
+            input.update(surface_scale, presentation)?;
+        }
         Ok(())
     }
 }
@@ -1836,6 +1985,7 @@ impl NativeCompositionRenderer {
             .map_err(|error| windows_stage_error("HOST_BACKDROP_SWAPCHAIN_CAST", error))?;
         let composition = HostBackdropComposition::new(
             surface.hwnd,
+            surface.input_hwnd,
             &swap_chain_base,
             config.render_frame,
             config.presentation,
@@ -3057,6 +3207,24 @@ mod tests {
             assert!(
                 !production.contains(forbidden),
                 "capture implementation returned: {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn input_glass_uses_a_separate_host_backdrop_target_under_the_dom_overlay() {
+        let backend = include_str!("windows_backend.rs");
+        let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
+        for required in [
+            "struct InputHostBackdropComposition",
+            "CreateDesktopWindowTarget(input_hwnd, false)",
+            "CreateRoundedRectangleGeometry()",
+            "presentation.input_surface_visible",
+            "presentation.input_surface_height.clamp(64.0, 104.0)",
+        ] {
+            assert!(
+                production.contains(required),
+                "native input glass contract is missing {required}"
             );
         }
     }

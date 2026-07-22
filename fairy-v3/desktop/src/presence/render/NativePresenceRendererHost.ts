@@ -90,6 +90,8 @@ export type NativeRendererState =
 
 export interface NativeGpuPresentationRequest {
   capsule_visible: boolean;
+  input_surface_visible: boolean;
+  input_surface_height: number;
   expansion_direction: "left" | "right";
   visual_state: NativeGpuVisualState;
   opacity: number;
@@ -531,7 +533,7 @@ export function nativePresentationForSnapshot(
   const placement = snapshot.interaction?.placement;
   const scale = clamp(placement?.scale_factor ?? 1, 0.5, 4);
   const direction = placement?.expansion_direction ?? "right";
-  const capsuleWidth = clamp(snapshot.input_capsule_width, 280, 420);
+  const capsuleWidth = clamp(snapshot.input_capsule_width, 220, 360);
   const coreX = placement === undefined
     ? direction === "left" ? 544 : 96
     : (placement.anchor.x - placement.render_frame.x) / scale;
@@ -540,6 +542,8 @@ export function nativePresentationForSnapshot(
     : (placement.anchor.y - placement.render_frame.y) / scale;
   return {
     capsule_visible: snapshot.input_capsule_visible,
+    input_surface_visible: snapshot.input_surface_visible,
+    input_surface_height: clamp(snapshot.input_capsule_height, 64, 104),
     expansion_direction: snapshot.interaction?.placement.expansion_direction ?? "right",
     visual_state: nativeVisualStateForSnapshot(snapshot),
     opacity: clamp(snapshot.opacity, 0.2, 1),

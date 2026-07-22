@@ -11,6 +11,8 @@ export interface PresenceRenderSnapshot {
   motion: FairyMotionSnapshot;
   input_capsule_visible: boolean;
   input_capsule_width: number;
+  input_capsule_height: number;
+  input_surface_visible: boolean;
   work_state: PresenceWorkState;
   speaking: boolean;
   voice_level: number;

@@ -492,7 +492,7 @@ describe("dual presence surfaces", () => {
     }));
     expect(screen.getByRole("button", { name: "Open Fairy quick input" })).toBeInTheDocument();
     act(() => host.requestInput());
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("compact", 280));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("compact", 220));
     const textarea = screen.getByLabelText("Quick message to Fairy");
     const inputField = screen.getByTestId("presence-input-field");
     expect(inputField).toContainElement(textarea);
@@ -599,7 +599,7 @@ describe("dual presence surfaces", () => {
     expect(screen.queryByRole("menu", { name: "Fairy menu" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open Fairy quick input" }));
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 280));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220));
     expect(screen.getByLabelText("Quick message to Fairy")).toBeInTheDocument();
   });
 
@@ -642,7 +642,7 @@ describe("dual presence surfaces", () => {
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
 
     act(() => coordinator.emit(interactionAt(20, "input_reveal", 300, 300)));
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 280));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220));
     await waitFor(() => expect(host.host.setInputInteractive).toHaveBeenLastCalledWith(false));
     const passiveCall = vi.mocked(host.host.setInputInteractive).mock.invocationCallOrder.at(-1);
     const layoutCall = vi.mocked(host.host.setInputLayout).mock.invocationCallOrder.at(-1);
@@ -919,7 +919,7 @@ describe("dual presence surfaces", () => {
     fireEvent.click(core);
 
     expect(host.host.beginGroupDrag).not.toHaveBeenCalled();
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 280));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220));
   });
 
   it("never starts a WebView drag session after a long press", async () => {
@@ -1150,7 +1150,7 @@ describe("dual presence surfaces", () => {
       .toHaveAttribute("data-moving", "false"));
     act(() => coordinator.emit(interactionAt(33, "input_reveal", 1_000, 1_000)));
     await waitFor(() =>
-      expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 280)
+      expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)
     );
   });
 });

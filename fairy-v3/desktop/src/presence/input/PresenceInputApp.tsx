@@ -60,6 +60,7 @@ import { useDeferredChannelClose } from "../transport/useDeferredChannelClose";
 import { presenceInputGate } from "./inputGate";
 import {
   PresencePanel,
+  PRESENCE_COMPACT_INPUT_MIN_HEIGHT,
   PRESENCE_COMPACT_INPUT_MIN_WIDTH,
   type PresenceSubmissionCard,
 } from "./PresencePanel";
@@ -142,7 +143,10 @@ export function PresenceInputApp({
   const [interactionReady, setInteractionReady] = useState(false);
   const [hoverSuppressed, setHoverSuppressed] = useState(false);
   const [focusRequest, setFocusRequest] = useState(0);
-  const [compactWidth, setCompactWidth] = useState(PRESENCE_COMPACT_INPUT_MIN_WIDTH);
+  const [compactSize, setCompactSize] = useState(() => ({
+    width: PRESENCE_COMPACT_INPUT_MIN_WIDTH,
+    height: PRESENCE_COMPACT_INPUT_MIN_HEIGHT,
+  }));
   const presentationQueue = useRef(Promise.resolve());
   const presentationRevision = useRef(0);
   const appliedFocusRequest = useRef(0);
@@ -152,8 +156,12 @@ export function PresenceInputApp({
   const suppressCoreActivationTimer = useRef<number | null>(null);
   const nativeDragWasActive = useRef(false);
   const menuFocusLossTimer = useRef<number | null>(null);
-  const updateCompactWidth = useCallback((width: number) => {
-    setCompactWidth((current) => current === width ? current : width);
+  const updateCompactSize = useCallback((width: number, height: number) => {
+    setCompactSize((current) =>
+      current.width === width && current.height === height
+        ? current
+        : { width, height },
+    );
   }, []);
 
   useEffect(
@@ -529,12 +537,13 @@ export function PresenceInputApp({
     const revision = presentationRevision.current + 1;
     presentationRevision.current = revision;
     const presentation: PresenceInputPresentation = {
-      schema_version: 4,
+      schema_version: 5,
       session_id: inputPresentationSessionId,
       sequence: revision,
       layout: layout === "hidden" ? "core" : layout,
       capsule_visible: capsuleVisible,
-      capsule_width: compactWidth,
+      capsule_width: compactSize.width,
+      capsule_height: compactSize.height,
       motion: presentedMotionSnapshot,
     };
     const requestFocus = surfaceInteractive && focusRequest > appliedFocusRequest.current;
@@ -542,7 +551,10 @@ export function PresenceInputApp({
       session_id: inputPresentationSessionId,
       revision,
       layout,
-      ...(layout === "compact" ? { compact_width: compactWidth } : {}),
+      ...(layout === "compact" ? {
+        compact_width: compactSize.width,
+        compact_height: compactSize.height,
+      } : {}),
       interactive: surfaceInteractive,
       request_focus: requestFocus,
     };
@@ -582,12 +594,13 @@ export function PresenceInputApp({
           capsule_visible: false,
         };
         const safePresentation: PresenceInputPresentation = {
-          schema_version: 4,
+          schema_version: 5,
           session_id: inputPresentationSessionId,
           sequence: recoveryRevision,
           layout: "core",
           capsule_visible: false,
-          capsule_width: compactWidth,
+          capsule_width: compactSize.width,
+          capsule_height: compactSize.height,
           motion: safeMotion,
         };
         latestInputPresentation.current = safePresentation;
@@ -609,7 +622,8 @@ export function PresenceInputApp({
       });
   }, [
     capsuleVisible,
-    compactWidth,
+    compactSize.height,
+    compactSize.width,
     focusRequest,
     host,
     inputPresentationChannel,
@@ -728,7 +742,8 @@ export function PresenceInputApp({
     <main
       className="presence-input-window"
       style={{
-        "--presence-compact-width": `${compactWidth}px`,
+        "--presence-compact-width": `${compactSize.width}px`,
+        "--presence-compact-height": `${compactSize.height}px`,
       } as CSSProperties}
       data-content-visible={String(contentVisible)}
       data-expansion-direction={
@@ -776,7 +791,7 @@ export function PresenceInputApp({
         type="button"
       />
       <PresencePanel
-        onCompactWidthChange={updateCompactWidth}
+        onCompactSizeChange={updateCompactSize}
         actions={{
           cancelTurn,
           closeReply: (replyId) => {

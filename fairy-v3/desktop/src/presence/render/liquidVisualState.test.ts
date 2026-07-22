@@ -21,6 +21,8 @@ function snapshot(
     interaction: null,
     input_capsule_visible: false,
     input_capsule_width: 280,
+    input_capsule_height: 64,
+    input_surface_visible: false,
     work_state: "idle",
     speaking: false,
     voice_level: 0,

@@ -16,6 +16,8 @@ function snapshot(
     interaction,
     input_capsule_visible: interaction?.phase === "interactive",
     input_capsule_width: 280,
+    input_capsule_height: 64,
+    input_surface_visible: interaction?.phase === "interactive",
     work_state: "idle",
     speaking: false,
     voice_level: 0,

@@ -20,6 +20,8 @@ function snapshot(
     interaction: null,
     input_capsule_visible: false,
     input_capsule_width: 280,
+    input_capsule_height: 64,
+    input_surface_visible: false,
     work_state: "idle",
     speaking: false,
     voice_level: 0,
@@ -550,7 +552,9 @@ describe("native presentation projection", () => {
   it("projects the physical core anchor and dynamic lower capsule into logical coordinates", () => {
     const projected = nativePresentationForSnapshot(snapshot({
       input_capsule_visible: true,
-      input_capsule_width: 420,
+      input_capsule_width: 360,
+      input_capsule_height: 84,
+      input_surface_visible: true,
       interaction: interaction({
         placement: {
           ...interaction().placement,
@@ -564,9 +568,11 @@ describe("native presentation projection", () => {
     expect(projected).toEqual(expect.objectContaining({
       core_x: 544,
       core_y: 88,
-      capsule_x: 406,
+      capsule_x: 436,
       capsule_y: 220,
-      capsule_half_width: 202,
+      capsule_half_width: 172,
+      input_surface_visible: true,
+      input_surface_height: 84,
     }));
   });
 

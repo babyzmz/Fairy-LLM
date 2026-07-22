@@ -19,12 +19,13 @@ describe("Presence input presentation channel", () => {
     channel.onPresentation(listener);
 
     const presentation: PresenceInputPresentation = {
-      schema_version: 4,
+      schema_version: 5,
       session_id: 7,
       sequence: 4,
       layout: "compact",
       capsule_visible: true,
       capsule_width: 320,
+      capsule_height: 84,
       motion: {
         ...DEFAULT_FAIRY_MOTION_SNAPSHOT,
         revision: 2,
@@ -54,12 +55,13 @@ describe("Presence input presentation channel", () => {
 
   it("accepts a newer native session even when its local sequence restarts", () => {
     const current: PresenceInputPresentation = {
-      schema_version: 4,
+      schema_version: 5,
       session_id: 7,
       sequence: 80,
       layout: "compact",
       capsule_visible: true,
       capsule_width: 320,
+      capsule_height: 64,
       motion: DEFAULT_FAIRY_MOTION_SNAPSHOT,
     };
 

@@ -284,6 +284,8 @@ export function PresenceRenderApp({
     motion: inputPresentation.motion,
     input_capsule_visible: inputPresentation.capsule_visible,
     input_capsule_width: inputPresentation.capsule_width,
+    input_capsule_height: inputPresentation.capsule_height,
+    input_surface_visible: inputPresentation.layout === "compact",
     reduced_motion: reducedMotion,
     reduced_transparency: accessibility.reduced_transparency,
     increased_contrast: accessibility.increased_contrast,

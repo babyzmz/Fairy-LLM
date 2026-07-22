@@ -71,6 +71,10 @@ pub struct NativeGpuPresentation {
     #[serde(default)]
     pub capsule_visible: bool,
     #[serde(default)]
+    pub input_surface_visible: bool,
+    #[serde(default = "default_input_surface_height")]
+    pub input_surface_height: f32,
+    #[serde(default)]
     pub expansion_direction: NativeGpuExpansionDirection,
     #[serde(default)]
     pub visual_state: NativeGpuVisualState,
@@ -112,6 +116,8 @@ impl Default for NativeGpuPresentation {
     fn default() -> Self {
         Self {
             capsule_visible: false,
+            input_surface_visible: false,
+            input_surface_height: default_input_surface_height(),
             expansion_direction: NativeGpuExpansionDirection::Right,
             visual_state: NativeGpuVisualState::Idle,
             opacity: default_opacity(),
@@ -151,6 +157,11 @@ impl NativeGpuPresentation {
         {
             return Err(NativeGpuError::InvalidShape);
         }
+        if !self.input_surface_height.is_finite()
+            || !(64.0..=104.0).contains(&self.input_surface_height)
+        {
+            return Err(NativeGpuError::InvalidGeometry);
+        }
         if !self.core_x.is_finite()
             || !(0.0..=640.0).contains(&self.core_x)
             || !self.core_y.is_finite()
@@ -186,6 +197,10 @@ impl Default for NativeGpuStartRequest {
 
 const fn default_opacity() -> f32 {
     0.92
+}
+
+const fn default_input_surface_height() -> f32 {
+    64.0
 }
 
 const fn default_particles_enabled() -> bool {

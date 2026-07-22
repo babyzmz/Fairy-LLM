@@ -26,11 +26,11 @@ describe("Liquid renderer coordinate spaces", () => {
       half_width: 132,
     });
     right.interaction!.placement.expansion_direction = "left";
-    right.input_capsule_width = 420;
+    right.input_capsule_width = 360;
     expect(liquidCapsuleGeometryForSnapshot(right, 640, 260, 1)).toEqual({
-      center_x: 406,
+      center_x: 436,
       center_y: 40,
-      half_width: 202,
+      half_width: 172,
     });
   });
 });
@@ -79,6 +79,8 @@ function snapshot(
     },
     input_capsule_visible: true,
     input_capsule_width: 280,
+    input_capsule_height: 64,
+    input_surface_visible: true,
     work_state: "idle",
     speaking: false,
     voice_level: 0,

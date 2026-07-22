@@ -73,12 +73,15 @@ interface PresencePanelProps {
   submission: PresenceSubmissionCard | null;
   view: PresenceView;
   visible: boolean;
-  onCompactWidthChange?(width: number): void;
+  onCompactSizeChange?(width: number, height: number): void;
 }
 
-export const PRESENCE_COMPACT_INPUT_MIN_WIDTH = 280;
-export const PRESENCE_COMPACT_INPUT_MAX_WIDTH = 420;
+export const PRESENCE_COMPACT_INPUT_MIN_WIDTH = 220;
+export const PRESENCE_COMPACT_INPUT_MAX_WIDTH = 360;
+export const PRESENCE_COMPACT_INPUT_MIN_HEIGHT = 64;
+export const PRESENCE_COMPACT_INPUT_MAX_HEIGHT = 104;
 const PRESENCE_COMPACT_INPUT_CHROME_WIDTH = 104;
+const PRESENCE_COMPACT_INPUT_LINE_HEIGHT = 20;
 
 export function PresencePanel({
   actions,
@@ -93,7 +96,7 @@ export function PresencePanel({
   submission,
   view,
   visible,
-  onCompactWidthChange,
+  onCompactSizeChange,
 }: PresencePanelProps) {
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -114,12 +117,13 @@ export function PresencePanel({
   }, [focusRequest, inputOpen, interactive]);
 
   useLayoutEffect(() => {
-    if (!inputOpen || onCompactWidthChange === undefined) return;
+    if (!inputOpen || onCompactSizeChange === undefined) return;
     const field = textarea.current;
     const content = longestLine(draft || field?.placeholder || "Message Fairy");
     const measured = measureInputText(content, field);
-    onCompactWidthChange(compactInputWidthForText(measured));
-  }, [draft, inputOpen, onCompactWidthChange]);
+    const width = compactInputWidthForText(measured);
+    onCompactSizeChange(width, compactInputHeightForText(draft, measured));
+  }, [draft, inputOpen, onCompactSizeChange]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -433,6 +437,20 @@ export function compactInputWidthForText(measuredTextWidth: number): number {
   return Math.min(
     PRESENCE_COMPACT_INPUT_MAX_WIDTH,
     Math.max(PRESENCE_COMPACT_INPUT_MIN_WIDTH, raw),
+  );
+}
+
+export function compactInputHeightForText(value: string, measuredTextWidth: number): number {
+  const explicitLines = Math.max(1, value.split(/\r?\n/u).length);
+  const availableTextWidth = Math.max(
+    1,
+    PRESENCE_COMPACT_INPUT_MAX_WIDTH - PRESENCE_COMPACT_INPUT_CHROME_WIDTH,
+  );
+  const wrappedLines = Math.max(1, Math.ceil(Math.max(0, measuredTextWidth) / availableTextWidth));
+  const lines = Math.min(3, Math.max(explicitLines, wrappedLines));
+  return Math.min(
+    PRESENCE_COMPACT_INPUT_MAX_HEIGHT,
+    PRESENCE_COMPACT_INPUT_MIN_HEIGHT + (lines - 1) * PRESENCE_COMPACT_INPUT_LINE_HEIGHT,
   );
 }
 

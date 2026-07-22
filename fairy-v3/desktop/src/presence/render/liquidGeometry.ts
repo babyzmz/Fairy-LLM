@@ -48,7 +48,7 @@ export function liquidCapsuleGeometryForSnapshot(
   devicePixelRatio: number,
 ): LiquidCapsuleGeometry {
   const dpr = Math.min(2, Math.max(0.5, devicePixelRatio));
-  const width = Math.min(420, Math.max(280, snapshot.input_capsule_width));
+  const width = Math.min(360, Math.max(220, snapshot.input_capsule_width));
   const left = snapshot.interaction?.placement.expansion_direction === "left"
     ? logicalWidth - CAPSULE_EDGE_INSET - width
     : CAPSULE_EDGE_INSET;

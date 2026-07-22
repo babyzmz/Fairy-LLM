@@ -1101,6 +1101,7 @@ pub(crate) fn begin_native_pet_drag(
             input_geometry: PetInputGeometry {
                 layout: PetInputLayout::Hidden,
                 compact_width_logical: PET_INPUT_COMPACT_WIDTH_LOGICAL,
+                compact_height_logical: 64.0,
             },
             monitors,
             native_windows,
@@ -1637,6 +1638,7 @@ enum PetInputLayout {
 struct PetInputGeometry {
     layout: PetInputLayout,
     compact_width_logical: f64,
+    compact_height_logical: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1651,6 +1653,7 @@ struct PetInputPresentationRequest {
     revision: u64,
     layout: PetInputLayout,
     compact_width: Option<f64>,
+    compact_height: Option<f64>,
     interactive: bool,
     request_focus: bool,
 }
@@ -1715,6 +1718,7 @@ fn pet_input_geometry_from_frame(frame: PhysicalFrame, scale_factor: f64) -> Pet
             PET_INPUT_COMPACT_MIN_WIDTH_LOGICAL,
             PET_INPUT_COMPACT_MAX_WIDTH_LOGICAL,
         ),
+        compact_height_logical: 64.0,
     }
 }
 
@@ -1764,6 +1768,7 @@ fn pet_input_region_parts(
     width: u32,
     height: u32,
     compact_content_width: u32,
+    compact_content_height: u32,
     scale_factor: f64,
     direction: ExpansionDirection,
 ) -> Vec<PetInputRegionPart> {
@@ -1812,10 +1817,15 @@ fn pet_input_region_parts(
             parts.push(PetInputRegionPart {
                 kind: PetInputRegionKind::RoundedRectangle,
                 left,
-                top: scaled(288.0).clamp(0, height),
+                top: height
+                    .saturating_sub(scaled(8.0))
+                    .saturating_sub(i32::try_from(compact_content_height).unwrap_or(i32::MAX))
+                    .clamp(0, height),
                 right,
-                bottom: scaled(352.0).clamp(0, height),
-                corner_diameter: scaled(64.0).max(1),
+                bottom: height.saturating_sub(scaled(8.0)).clamp(0, height),
+                corner_diameter: i32::try_from(compact_content_height)
+                    .unwrap_or(i32::MAX)
+                    .max(1),
             });
         }
         PetInputLayout::Expanded => {
@@ -1846,6 +1856,7 @@ fn apply_pet_input_window_region(
     width: u32,
     height: u32,
     compact_content_width: u32,
+    compact_content_height: u32,
     scale_factor: f64,
     direction: ExpansionDirection,
 ) -> Result<(), String> {
@@ -1876,6 +1887,7 @@ fn apply_pet_input_window_region(
         width,
         height,
         compact_content_width,
+        compact_content_height,
         scale_factor,
         direction,
     ) {
@@ -1932,6 +1944,7 @@ fn apply_pet_input_window_region(
     _width: u32,
     _height: u32,
     _compact_content_width: u32,
+    _compact_content_height: u32,
     _scale_factor: f64,
     _direction: ExpansionDirection,
 ) -> Result<(), String> {
@@ -1943,6 +1956,7 @@ fn apply_pet_input_layout(
     state: &DesktopState,
     layout: PetInputLayout,
     compact_width: Option<f64>,
+    compact_height: Option<f64>,
 ) -> Result<(), String> {
     if state.presence.is_repositioning() {
         return Err("PET_INPUT_PRESENTATION_REPOSITIONING".to_owned());
@@ -1955,6 +1969,7 @@ fn apply_pet_input_layout(
             0,
             0,
             0,
+            0,
             1.0,
             ExpansionDirection::Right,
         )?;
@@ -1964,6 +1979,7 @@ fn apply_pet_input_layout(
             .map_err(|_| "Pet input geometry lock is unavailable".to_owned())? = PetInputGeometry {
             layout,
             compact_width_logical: compact_width.unwrap_or(PET_INPUT_COMPACT_WIDTH_LOGICAL),
+            compact_height_logical: compact_height.unwrap_or(64.0),
         };
         window
             .set_ignore_cursor_events(true)
@@ -1990,11 +2006,13 @@ fn apply_pet_input_layout(
             PET_INPUT_COMPACT_MIN_WIDTH_LOGICAL,
             PET_INPUT_COMPACT_MAX_WIDTH_LOGICAL,
         );
+    let compact_surface_height = compact_height.unwrap_or(64.0).clamp(64.0, 104.0);
     let target_width = (PET_INPUT_EXPANDED_WIDTH_LOGICAL * scale).round() as u32;
     let target_height = (PET_INPUT_EXPANDED_HEIGHT_LOGICAL * scale).round() as u32;
     let compact_content_width = (compact_width * scale).round() as u32;
-    let compact_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale).round() as u32;
-    let anchored_frame = placement.input_frame(target_width, target_height, compact_height);
+    let compact_content_height = (compact_surface_height * scale).round() as u32;
+    let compact_frame_height = (PET_INPUT_COMPACT_HEIGHT_LOGICAL * scale).round() as u32;
+    let anchored_frame = placement.input_frame(target_width, target_height, compact_frame_height);
     let frame = PhysicalFrame {
         x: anchored_frame.x,
         y: anchored_frame.y,
@@ -2012,6 +2030,7 @@ fn apply_pet_input_layout(
         frame.width,
         frame.height,
         compact_content_width,
+        compact_content_height,
         scale,
         placement.expansion_direction,
     )?;
@@ -2022,6 +2041,7 @@ fn apply_pet_input_layout(
         .map_err(|_| "Pet input geometry lock is unavailable".to_owned())? = PetInputGeometry {
         layout,
         compact_width_logical: compact_width,
+        compact_height_logical: compact_surface_height,
     };
     #[cfg(target_os = "windows")]
     enforce_presence_window_shell_policy(input_handle, None)?;
@@ -2034,10 +2054,17 @@ async fn pet_input_set_layout(
     state: State<'_, DesktopState>,
     layout: PetInputLayout,
     compact_width: Option<f64>,
+    compact_height: Option<f64>,
 ) -> Result<(), String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
-    apply_pet_input_layout(&window, state.inner(), layout, compact_width)
+    apply_pet_input_layout(
+        &window,
+        state.inner(),
+        layout,
+        compact_width,
+        compact_height,
+    )
 }
 
 fn apply_pet_input_interactive(
@@ -2155,7 +2182,13 @@ async fn pet_input_presentation_apply(
     // Keep the full WebView click-through while its HWND position and exact HRGN are updated.
     // Renderer publication happens only after this transaction returns the same revision.
     apply_pet_input_interactive(&window, state.inner(), false)?;
-    apply_pet_input_layout(&window, state.inner(), input.layout, input.compact_width)?;
+    apply_pet_input_layout(
+        &window,
+        state.inner(),
+        input.layout,
+        input.compact_width,
+        input.compact_height,
+    )?;
     if interactive {
         apply_pet_input_interactive(&window, state.inner(), true)?;
     }
@@ -2790,6 +2823,9 @@ fn align_pet_input_to_native_presentation(
         (geometry.compact_width_logical * placement.scale_factor)
             .round()
             .max(0.0) as u32,
+        (geometry.compact_height_logical * placement.scale_factor)
+            .round()
+            .max(0.0) as u32,
         placement.scale_factor,
         placement.expansion_direction,
     )?;
@@ -2899,6 +2935,7 @@ fn move_pet_window_group_with_geometry(
         frame.width,
         frame.height,
         (geometry.compact_width_logical * scale).round().max(0.0) as u32,
+        (geometry.compact_height_logical * scale).round().max(0.0) as u32,
         scale,
         placement.expansion_direction,
     )
@@ -4459,6 +4496,7 @@ pub fn run() {
                 pet_input_geometry: Mutex::new(PetInputGeometry {
                     layout: PetInputLayout::Hidden,
                     compact_width_logical: PET_INPUT_COMPACT_WIDTH_LOGICAL,
+                    compact_height_logical: 64.0,
                 }),
                 pet_input_presentation: Mutex::new(PetInputPresentationFence::default()),
                 renderer_supervisor: Mutex::new(PresenceRendererSupervisor::default()),
@@ -4596,6 +4634,7 @@ mod pet_input_presentation_tests {
             revision: 1,
             layout: PetInputLayout::Hidden,
             compact_width: None,
+            compact_height: None,
             interactive: true,
             request_focus: false,
         };
@@ -4736,6 +4775,7 @@ mod native_window_group_tests {
             616,
             360,
             300,
+            64,
             1.0,
             ExpansionDirection::Right,
         )
@@ -4764,6 +4804,7 @@ mod native_window_group_tests {
             616,
             360,
             0,
+            64,
             1.0,
             ExpansionDirection::Right,
         )
@@ -4785,6 +4826,7 @@ mod native_window_group_tests {
             616,
             360,
             308,
+            64,
             1.0,
             ExpansionDirection::Right,
         );
@@ -4822,6 +4864,7 @@ mod native_window_group_tests {
             616,
             360,
             308,
+            64,
             1.0,
             ExpansionDirection::Right,
         )
@@ -4842,6 +4885,7 @@ mod native_window_group_tests {
             616,
             360,
             308,
+            64,
             1.0,
             ExpansionDirection::Left,
         );
@@ -4851,6 +4895,26 @@ mod native_window_group_tests {
         assert_eq!(parts[0].right, 616);
         assert_eq!(parts[1].left, 316);
         assert_eq!(parts[1].right, 608);
+    }
+
+    #[test]
+    fn compact_input_region_tracks_multiline_height_without_exposing_the_window() {
+        let parts = pet_input_region_parts(
+            PetInputLayout::Compact,
+            616,
+            360,
+            360,
+            104,
+            1.0,
+            ExpansionDirection::Right,
+        );
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[1].kind, PetInputRegionKind::RoundedRectangle);
+        assert_eq!(parts[1].left, 8);
+        assert_eq!(parts[1].top, 248);
+        assert_eq!(parts[1].right, 352);
+        assert_eq!(parts[1].bottom, 352);
+        assert_eq!(parts[1].corner_diameter, 104);
     }
 
     #[test]
@@ -4868,6 +4932,7 @@ mod native_window_group_tests {
             616,
             360,
             308,
+            64,
             1.0,
             ExpansionDirection::Right,
         )
@@ -4878,6 +4943,7 @@ mod native_window_group_tests {
             616,
             360,
             308,
+            64,
             1.0,
             ExpansionDirection::Left,
         )
@@ -4899,6 +4965,7 @@ mod native_window_group_tests {
             616,
             360,
             300,
+            64,
             1.0,
             ExpansionDirection::Right,
         );

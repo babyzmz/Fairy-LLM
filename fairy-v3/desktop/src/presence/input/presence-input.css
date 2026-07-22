@@ -96,16 +96,22 @@
 
 .presence-input-window[data-layout="compact"] .presence-input {
   position: absolute;
-  top: 288px;
+  top: calc(352px - var(--presence-compact-height, 64px));
   right: auto;
   left: 8px;
-  width: calc(var(--presence-compact-width, 280px) - 16px);
-  height: 64px;
+  width: calc(var(--presence-compact-width, 220px) - 16px);
+  height: var(--presence-compact-height, 64px);
   grid-template-columns: minmax(0, 1fr) 38px;
   align-items: center;
   gap: 7px;
   padding: 5px 7px;
-  background: transparent;
+  border: 1px solid rgb(226 247 255 / 32%);
+  border-radius: calc(var(--presence-compact-height, 64px) / 2);
+  background: rgb(12 19 22 / 14%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 24%),
+    inset 0 -1px 0 rgb(107 185 215 / 12%),
+    0 8px 20px rgb(0 0 0 / 22%);
 }
 
 .presence-input-window[data-expansion-direction="left"][data-layout="compact"] .presence-input {
@@ -115,20 +121,20 @@
 
 .presence-input-window[data-layout="compact"] .presence-input-field {
   width: 100%;
-  height: 52px;
+  height: calc(var(--presence-compact-height, 64px) - 12px);
   min-height: 52px;
   border-radius: 26px;
 }
 
 .presence-input-window[data-layout="compact"] .presence-input-field textarea {
   min-height: 52px;
-  max-height: 52px;
+  max-height: calc(var(--presence-compact-height, 64px) - 12px);
   padding: 15px 14px;
-  overflow: hidden;
+  overflow: auto;
   color: #f3f8f8;
   font-size: 13px;
   text-shadow: 0 1px 1px rgb(0 0 0 / 64%);
-  white-space: nowrap;
+  white-space: pre-wrap;
 }
 
 .presence-input-window[data-layout="compact"] .presence-input-field textarea::placeholder {
