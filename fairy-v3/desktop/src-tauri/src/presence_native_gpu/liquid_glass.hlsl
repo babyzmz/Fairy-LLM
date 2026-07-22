@@ -1,8 +1,10 @@
-// Windows Composition exposes HostBackdrop as an identity backdrop sample. It does not expose a
-// per-pixel displacement field, and displacement-map effects are not supported by Composition. This
-// foreground shader therefore draws only material and Fairy identity light. It must never sample
-// a second desktop texture or claim to refract the backdrop.
+// The desktop texture comes from DXGI Desktop Duplication after every Presence HWND has been
+// excluded from DDA. Each output pixel samples one continuous optical field; there are no stacked
+// backdrop copies or concentric magnification layers. HostBackdrop remains an identity fallback.
 static const float EDGE_MATERIAL_DEPTH_PX = 30.0;
+
+Texture2D<float4> desktop_texture : register(t0);
+SamplerState desktop_sampler : register(s0);
 
 cbuffer PresenceConstants : register(b0) {
     float2 output_size;
@@ -35,6 +37,13 @@ cbuffer PresenceConstants : register(b0) {
     float2 drag_direction;
     float drag_stretch;
     float drag_release;
+    float2 surface_origin_px;
+    float2 monitor_origin_px;
+    float2 monitor_size_px;
+    float desktop_texture_active;
+    float source_color_mode;
+    float source_rotation;
+    float3 desktop_padding;
 };
 
 struct VertexOutput {
@@ -54,6 +63,53 @@ float3 linear_to_srgb(float3 color) {
     float3 low = color * 12.92;
     float3 high = 1.055 * pow(max(color, 0.0), 1.0 / 2.4) - 0.055;
     return lerp(low, high, step(0.0031308, color));
+}
+
+float3 pq_to_linear(float3 encoded) {
+    static const float m1 = 0.1593017578125;
+    static const float m2 = 78.84375;
+    static const float c1 = 0.8359375;
+    static const float c2 = 18.8515625;
+    static const float c3 = 18.6875;
+    float3 powered = pow(saturate(encoded), 1.0 / m2);
+    float3 numerator = max(powered - c1, 0.0);
+    float3 denominator = max(c2 - c3 * powered, 0.00001);
+    return pow(numerator / denominator, 1.0 / m1);
+}
+
+float3 decode_desktop_color(float3 encoded) {
+    if (source_color_mode < 0.5) {
+        return saturate(encoded);
+    }
+    if (source_color_mode < 1.5) {
+        // RGB10A2 duplication surfaces use the output's PQ transfer function. Map absolute HDR
+        // luminance into a bounded SDR presentation without altering the sampled geometry.
+        float3 relative_luminance = pq_to_linear(encoded) * 100.0;
+        return linear_to_srgb(1.0 - exp(-relative_luminance));
+    }
+    // RGBA16F duplication surfaces are linear scRGB. Preserve SDR white while rolling off HDR.
+    float3 linear_color = max(encoded, 0.0);
+    linear_color = linear_color / (1.0 + max(linear_color - 1.0, 0.0) * 0.55);
+    return linear_to_srgb(saturate(linear_color));
+}
+
+float2 rotate_desktop_uv(float2 uv) {
+    if (source_rotation < 1.5) return uv;
+    if (source_rotation < 2.5) return float2(uv.y, 1.0 - uv.x);
+    if (source_rotation < 3.5) return 1.0 - uv;
+    return float2(1.0 - uv.y, uv.x);
+}
+
+float2 desktop_uv_from_screen(float2 screen_px) {
+    float2 monitor_extent = max(monitor_size_px, 1.0.xx);
+    float2 output_uv = (screen_px - monitor_origin_px) / monitor_extent;
+    return saturate(rotate_desktop_uv(output_uv));
+}
+
+float3 sample_desktop(float2 screen_px) {
+    return decode_desktop_color(
+        desktop_texture.SampleLevel(desktop_sampler, desktop_uv_from_screen(screen_px), 0.0).rgb
+    );
 }
 
 float circle_sdf(float2 position_px, float radius) {
@@ -179,6 +235,57 @@ float2 surface_normal(float2 position_px) {
     return normalize(gradient + float2(0.0001, 0.0001));
 }
 
+float optical_radius(float2 position_px) {
+    // The stable core has a 72 px optical depth. Transitional droplets and bridges are thinner;
+    // treating them as a second full lens would create the concentric copies this path replaces.
+    float scale = max(surface_scale, 0.01);
+    float core_membership = smoothstep(8.0 * scale, -8.0 * scale, core_sdf(position_px));
+    return lerp(24.0, 72.0, core_membership) * scale;
+}
+
+float optical_radial_progress(float signed_distance, float2 position_px) {
+    return saturate(1.0 + signed_distance / max(optical_radius(position_px), 1.0));
+}
+
+float continuous_refraction_px(float radial_progress) {
+    // The center stays identity. Three overlapping smooth ramps form one monotonic field rather
+    // than three independently sampled rings.
+    float inner = smoothstep(0.35, 0.52, radial_progress);
+    float middle = smoothstep(0.52, 0.76, radial_progress);
+    float outer = smoothstep(0.76, 1.0, radial_progress);
+    return 0.65 * inner + 3.15 * middle + 2.20 * outer;
+}
+
+float3 sample_continuous_liquid_glass(
+    float2 local_px,
+    float signed_distance,
+    float2 normal
+) {
+    float radial_progress = optical_radial_progress(signed_distance, local_px);
+    float displacement_px = continuous_refraction_px(radial_progress) * surface_scale;
+    float2 base_screen_px = surface_origin_px + local_px - normal * displacement_px;
+    float dispersion_px = smoothstep(0.82, 1.0, radial_progress) * 1.8 * surface_scale;
+    float3 center = sample_desktop(base_screen_px);
+    float3 refracted = float3(
+        sample_desktop(base_screen_px - normal * dispersion_px).r,
+        center.g,
+        sample_desktop(base_screen_px + normal * dispersion_px).b
+    );
+
+    // A sub-pixel four-tap Kawase kernel softens only the outermost caustic. Its contribution is
+    // deliberately bounded so text remains a single image instead of becoming a blurred copy.
+    float blur_mix = smoothstep(0.90, 1.0, radial_progress) * 0.045;
+    float2 tangent = float2(-normal.y, normal.x);
+    float kernel_radius = 0.45 * surface_scale;
+    float3 kawase = (
+        sample_desktop(base_screen_px + normal * kernel_radius)
+        + sample_desktop(base_screen_px - normal * kernel_radius)
+        + sample_desktop(base_screen_px + tangent * kernel_radius)
+        + sample_desktop(base_screen_px - tangent * kernel_radius)
+    ) * 0.25;
+    return lerp(refracted, kawase, blur_mix);
+}
+
 float edge_material_profile(float signed_distance) {
     float scale = max(surface_scale, 0.01);
     float inward_distance = max(-signed_distance, 0.0);
@@ -245,6 +352,10 @@ float4 ps_main(VertexOutput input) : SV_Target {
     }
 
     float2 normal = surface_normal(local_px);
+    float3 desktop_color = 0.0.xxx;
+    if (desktop_texture_active > 0.5) {
+        desktop_color = sample_continuous_liquid_glass(local_px, signed_distance, normal);
+    }
     float edge_focus = edge_material_profile(signed_distance);
     float3 material_base = float3(0.91, 0.96, 0.98);
 
@@ -308,8 +419,8 @@ float4 ps_main(VertexOutput input) : SV_Target {
         * lerp(0.74, 1.0, pulse);
 
     float shape_mask = saturate((1.5 * scale - signed_distance) / (2.5 * scale));
-    // HostBackdrop supplies the real desktop behind the complete core. The center contributes no
-    // material veil in the normal mode; only the outer material edge gains opacity.
+    // The center remains one identity desktop sample. Material opacity grows only toward the edge;
+    // this layer never replaces the sampled desktop with a dark or opaque center fill.
     float center_alpha = reduced_transparency > 0.5
         ? lerp(0.08, 0.13, material_opacity)
         : 0.0;
@@ -339,5 +450,10 @@ float4 ps_main(VertexOutput input) : SV_Target {
         + material_premultiplied * (1.0 - identity_alpha);
     float foreground_alpha = identity_alpha
         + material_alpha * (1.0 - identity_alpha);
-    return float4(foreground_premultiplied, foreground_alpha);
+    float desktop_alpha = shape_mask * saturate(desktop_texture_active);
+    float3 output_premultiplied = foreground_premultiplied
+        + desktop_color * desktop_alpha * (1.0 - foreground_alpha);
+    float output_alpha = foreground_alpha
+        + desktop_alpha * (1.0 - foreground_alpha);
+    return float4(output_premultiplied, output_alpha);
 }

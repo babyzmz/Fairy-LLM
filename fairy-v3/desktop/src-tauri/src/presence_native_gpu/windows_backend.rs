@@ -28,9 +28,11 @@ use windows::Win32::Graphics::Direct3D::{
 };
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader,
-    ID3D11RenderTargetView, ID3D11Texture2D, ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER,
-    D3D11_BUFFER_DESC, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
-    D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
+    ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D,
+    ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER, D3D11_BUFFER_DESC, D3D11_COMPARISON_NEVER,
+    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_SAMPLER_DESC,
+    D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_TEXTURE_ADDRESS_CLAMP, D3D11_USAGE_DEFAULT,
+    D3D11_VIEWPORT,
 };
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_HOSTBACKDROPBRUSH};
 use windows::Win32::Graphics::Dxgi::Common::{
@@ -951,15 +953,21 @@ struct InputHostBackdropComposition {
     root: ContainerVisual,
     backdrop: SpriteVisual,
     _backdrop_brush: CompositionBackdropBrush,
+    desktop: Option<SpriteVisual>,
+    _desktop_brush: Option<CompositionSurfaceBrush>,
     geometry: CompositionRoundedRectangleGeometry,
     _clip: CompositionGeometricClip,
+    desktop_texture_active: bool,
+    input_surface_visible: bool,
 }
 
 impl InputHostBackdropComposition {
     fn new(
         compositor: &Compositor,
         desktop_interop: &ICompositorDesktopInterop,
+        compositor_interop: &ICompositorInterop,
         input_hwnd: HWND,
+        desktop_swap_chain: Option<&IDXGISwapChain1>,
         surface_scale: f32,
         presentation: NativeGpuPresentation,
     ) -> Result<Self, String> {
@@ -1012,13 +1020,42 @@ impl InputHostBackdropComposition {
             .and_then(|children| children.InsertAtBottom(&backdrop))
             .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_INSERT", error))?;
 
+        let (desktop, desktop_brush) = if let Some(swap_chain) = desktop_swap_chain {
+            let surface =
+                unsafe { compositor_interop.CreateCompositionSurfaceForSwapChain(swap_chain) }
+                    .map_err(|error| windows_stage_error("INPUT_DDA_SWAPCHAIN_SURFACE", error))?;
+            let brush = compositor
+                .CreateSurfaceBrushWithSurface(&surface)
+                .map_err(|error| windows_stage_error("INPUT_DDA_SURFACE_BRUSH", error))?;
+            brush
+                .SetStretch(CompositionStretch::None)
+                .map_err(|error| windows_stage_error("INPUT_DDA_SURFACE_STRETCH", error))?;
+            let visual = compositor
+                .CreateSpriteVisual()
+                .map_err(|error| windows_stage_error("INPUT_DDA_VISUAL", error))?;
+            visual
+                .SetBrush(&brush)
+                .and_then(|()| visual.SetOpacity(0.0))
+                .map_err(|error| windows_stage_error("INPUT_DDA_VISUAL_SETUP", error))?;
+            root.Children()
+                .and_then(|children| children.InsertAtTop(&visual))
+                .map_err(|error| windows_stage_error("INPUT_DDA_VISUAL_INSERT", error))?;
+            (Some(visual), Some(brush))
+        } else {
+            (None, None)
+        };
+
         let mut input = Self {
             _target: target,
             root,
             backdrop,
             _backdrop_brush: backdrop_brush,
+            desktop,
+            _desktop_brush: desktop_brush,
             geometry,
             _clip: clip,
+            desktop_texture_active: false,
+            input_surface_visible: false,
         };
         input.update(surface_scale, presentation)?;
         Ok(input)
@@ -1043,6 +1080,7 @@ impl InputHostBackdropComposition {
             X: width.max(1.0),
             Y: height.max(1.0),
         };
+        self.input_surface_visible = presentation.input_surface_visible;
         self.root
             .SetSize(Vector2 {
                 X: 616.0 * surface_scale,
@@ -1063,15 +1101,43 @@ impl InputHostBackdropComposition {
                     Y: height * 0.5,
                 })
             })
-            .and_then(|()| {
-                self.backdrop
-                    .SetOpacity(if presentation.input_surface_visible {
-                        1.0
-                    } else {
-                        0.0
-                    })
-            })
-            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_UPDATE", error))
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_UPDATE", error))?;
+        if let Some(desktop) = self.desktop.as_ref() {
+            desktop
+                .SetSize(Vector2 {
+                    X: 616.0 * surface_scale,
+                    Y: 360.0 * surface_scale,
+                })
+                .map_err(|error| windows_stage_error("INPUT_DDA_VISUAL_SIZE", error))?;
+        }
+        self.update_source_visibility()
+    }
+
+    fn set_desktop_texture_active(&mut self, active: bool) -> Result<(), String> {
+        self.desktop_texture_active = active && self.desktop.is_some();
+        self.update_source_visibility()
+    }
+
+    fn update_source_visibility(&self) -> Result<(), String> {
+        self.backdrop
+            .SetOpacity(
+                if self.input_surface_visible && !self.desktop_texture_active {
+                    1.0
+                } else {
+                    0.0
+                },
+            )
+            .map_err(|error| windows_stage_error("INPUT_HOST_BACKDROP_OPACITY", error))?;
+        if let Some(desktop) = self.desktop.as_ref() {
+            desktop
+                .SetOpacity(if self.desktop_texture_active {
+                    1.0
+                } else {
+                    0.0
+                })
+                .map_err(|error| windows_stage_error("INPUT_DDA_VISUAL_OPACITY", error))?;
+        }
+        Ok(())
     }
 }
 
@@ -1094,6 +1160,7 @@ impl HostBackdropComposition {
         hwnd: HWND,
         input_hwnd: HWND,
         swap_chain: &IDXGISwapChain1,
+        input_swap_chain: Option<&IDXGISwapChain1>,
         frame: PhysicalFrame,
         presentation: NativeGpuPresentation,
     ) -> Result<Self, String> {
@@ -1195,7 +1262,9 @@ impl HostBackdropComposition {
         let input = match InputHostBackdropComposition::new(
             &compositor,
             &desktop_interop,
+            &compositor_interop,
             input_hwnd,
+            input_swap_chain,
             frame.width as f32 / 640.0,
             presentation,
         ) {
@@ -1271,6 +1340,20 @@ impl HostBackdropComposition {
         }
         Ok(())
     }
+
+    fn set_desktop_texture_active(
+        &mut self,
+        active: bool,
+        input_active: bool,
+    ) -> Result<(), String> {
+        self.backdrop
+            .SetOpacity(if active { 0.0 } else { 1.0 })
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_SOURCE_OPACITY", error))?;
+        if let Some(input) = self.input.as_mut() {
+            input.set_desktop_texture_active(input_active)?;
+        }
+        Ok(())
+    }
 }
 
 struct NativeCompositionRenderer {
@@ -1278,8 +1361,10 @@ struct NativeCompositionRenderer {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     swap_chain: IDXGISwapChain3,
+    input_swap_chain: Option<IDXGISwapChain3>,
     composition: HostBackdropComposition,
     render_targets: Vec<Option<SwapChainRenderTarget>>,
+    input_render_targets: Vec<Option<SwapChainRenderTarget>>,
     vertex_shader: ID3D11VertexShader,
     pixel_shader: ID3D11PixelShader,
     constants: ID3D11Buffer,
@@ -1293,6 +1378,9 @@ struct NativeCompositionRenderer {
     hdr_capture: bool,
     hdr_checked_at: Instant,
     desktop_source: Option<DesktopTextureSource>,
+    desktop_view: Option<ID3D11ShaderResourceView>,
+    desktop_sampler: ID3D11SamplerState,
+    desktop_texture_generation: u64,
     status: Arc<Mutex<NativeGpuStatus>>,
 }
 
@@ -1832,6 +1920,13 @@ struct PresenceConstants {
     drag_direction: [f32; 2],
     drag_stretch: f32,
     drag_release: f32,
+    surface_origin_px: [f32; 2],
+    monitor_origin_px: [f32; 2],
+    monitor_size_px: [f32; 2],
+    desktop_texture_active: f32,
+    source_color_mode: f32,
+    source_rotation: f32,
+    desktop_padding: [f32; 3],
 }
 
 struct NativeCompositionRendererInput {
@@ -1862,7 +1957,7 @@ impl NativeCompositionRenderer {
             dda_binding,
         } = input;
         let surface = NativeCompositionSurface::new(config, surface_hwnd, dda_binding.is_some())?;
-        let desktop_source = match dda_binding {
+        let mut desktop_source = match dda_binding {
             Some(binding) => {
                 match initialize_desktop_texture_source(binding, device.clone(), context.clone()) {
                     Ok(source) => Some(source),
@@ -1880,6 +1975,39 @@ impl NativeCompositionRenderer {
         let render_targets = vec![None; SWAP_CHAIN_BUFFER_COUNT as usize];
         let (vertex_shader, pixel_shader) = create_shaders(&device)?;
         let constants = create_constant_buffer(&device)?;
+        let desktop_sampler = create_desktop_sampler(&device)?;
+        let desktop_texture_generation = desktop_source
+            .as_ref()
+            .map_or(0, DesktopTextureSource::texture_generation);
+        let desktop_view = match desktop_source
+            .as_ref()
+            .and_then(DesktopTextureSource::texture)
+        {
+            Some(texture) => match create_desktop_texture_view(&device, texture) {
+                Ok(view) => Some(view),
+                Err(error) => {
+                    update_status(&status, |status| {
+                        status.fallback_reason = Some(error);
+                    });
+                    desktop_source = None;
+                    None
+                }
+            },
+            None => None,
+        };
+        let input_swap_chain = if desktop_view.is_some() {
+            Some(create_swap_chain(
+                &device,
+                native_input_surface_frame(config.render_frame),
+            )?)
+        } else {
+            None
+        };
+        let input_render_targets = if input_swap_chain.is_some() {
+            vec![None; SWAP_CHAIN_BUFFER_COUNT as usize]
+        } else {
+            Vec::new()
+        };
         update_status(&status, |status| {
             status.composition_stage = "host_backdrop_identity".to_owned();
             status.composition_hresult = None;
@@ -1892,20 +2020,32 @@ impl NativeCompositionRenderer {
         let swap_chain_base: IDXGISwapChain1 = swap_chain
             .cast()
             .map_err(|error| windows_stage_error("HOST_BACKDROP_SWAPCHAIN_CAST", error))?;
-        let composition = HostBackdropComposition::new(
+        let input_swap_chain_base = input_swap_chain
+            .as_ref()
+            .map(|swap_chain| {
+                swap_chain
+                    .cast::<IDXGISwapChain1>()
+                    .map_err(|error| windows_stage_error("INPUT_DDA_SWAPCHAIN_CAST", error))
+            })
+            .transpose()?;
+        let mut composition = HostBackdropComposition::new(
             surface.hwnd,
             surface.input_hwnd,
             &swap_chain_base,
+            input_swap_chain_base.as_ref(),
             config.render_frame,
             config.presentation,
         )?;
+        composition.set_desktop_texture_active(false, false)?;
         Ok(Self {
             surface,
             device,
             context,
             swap_chain,
+            input_swap_chain,
             composition,
             render_targets,
+            input_render_targets,
             vertex_shader,
             pixel_shader,
             constants,
@@ -1919,6 +2059,9 @@ impl NativeCompositionRenderer {
             hdr_capture,
             hdr_checked_at: Instant::now(),
             desktop_source,
+            desktop_view,
+            desktop_sampler,
+            desktop_texture_generation,
             status,
         })
     }
@@ -1965,6 +2108,20 @@ impl NativeCompositionRenderer {
         );
         self.composition
             .update_lens(presentation, drag, render_frame)?;
+        let desktop_texture_active = self.desktop_view.is_some() && self.desktop_source.is_some();
+        let source_color_mode = self
+            .desktop_source
+            .as_ref()
+            .and_then(DesktopTextureSource::last_frame)
+            .map_or(0.0, |frame| match frame.source_format {
+                fairy_windows_capture_dda::DuplicationFormat::Bgra8 => 0.0,
+                fairy_windows_capture_dda::DuplicationFormat::Rgb10A2 => 1.0,
+                fairy_windows_capture_dda::DuplicationFormat::Rgba16F => 2.0,
+            });
+        let source_rotation = self
+            .desktop_source
+            .as_ref()
+            .map_or(1.0, |source| source.rotation() as f32);
         let constants = PresenceConstants {
             output_size: [render_frame.width as f32, render_frame.height as f32],
             core_center_px: [
@@ -2002,6 +2159,16 @@ impl NativeCompositionRenderer {
             drag_direction: drag.direction,
             drag_stretch: drag.stretch,
             drag_release: drag.release,
+            surface_origin_px: [render_frame.x as f32, render_frame.y as f32],
+            monitor_origin_px: [self.monitor_frame.x as f32, self.monitor_frame.y as f32],
+            monitor_size_px: [
+                self.monitor_frame.width as f32,
+                self.monitor_frame.height as f32,
+            ],
+            desktop_texture_active: f32::from(desktop_texture_active),
+            source_color_mode,
+            source_rotation,
+            desktop_padding: [0.0; 3],
         };
         let render_target = self.current_render_target()?;
         unsafe {
@@ -2033,21 +2200,193 @@ impl NativeCompositionRenderer {
                 .VSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
             self.context
                 .PSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
+            self.context
+                .PSSetShaderResources(0, Some(&[self.desktop_view.as_ref().cloned()]));
+            self.context
+                .PSSetSamplers(0, Some(&[Some(self.desktop_sampler.clone())]));
             self.context.Draw(3, 0);
+            self.context.PSSetShaderResources(0, Some(&[None]));
             self.context.OMSetRenderTargets(None, None);
         }
         let result = unsafe { self.swap_chain.Present(0, DXGI_PRESENT(0)) };
         result.ok().map_err(windows_error)?;
+        let input_texture_active = if desktop_texture_active && self.input_swap_chain.is_some() {
+            match self.present_input_surface(presentation, source_color_mode, source_rotation) {
+                Ok(()) => true,
+                Err(error) => {
+                    self.input_swap_chain = None;
+                    self.input_render_targets.clear();
+                    update_status(&self.status, |status| {
+                        status.composition_stage = "desktop_texture_input_fallback".to_owned();
+                        status.fallback_reason =
+                            Some(format!("PRESENCE_DDA_INPUT_SURFACE_FAILED: {error}"));
+                    });
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        self.composition
+            .set_desktop_texture_active(desktop_texture_active, input_texture_active)?;
         self.surface.show()?;
         Ok(())
+    }
+
+    fn present_input_surface(
+        &mut self,
+        presentation: NativeGpuPresentation,
+        source_color_mode: f32,
+        source_rotation: f32,
+    ) -> Result<(), String> {
+        let input_frame = window_physical_frame(self.surface.input_hwnd)?;
+        let capacity = native_input_surface_frame(self.surface.frame);
+        let output_width = input_frame.width.min(capacity.width).max(1);
+        let output_height = input_frame.height.min(capacity.height).max(1);
+        let surface_scale = self.surface.frame.width as f32 / 640.0;
+        let capsule_width = ((presentation.capsule_half_width * 2.0 + 16.0).clamp(220.0, 360.0)
+            * surface_scale)
+            .min(output_width.saturating_sub(16) as f32)
+            .max(1.0);
+        let capsule_height = (presentation.input_surface_height.clamp(64.0, 104.0) * surface_scale)
+            .min(output_height.saturating_sub(8) as f32)
+            .max(1.0);
+        let capsule_left = match presentation.expansion_direction {
+            NativeGpuExpansionDirection::Right => 8.0 * surface_scale,
+            NativeGpuExpansionDirection::Left => {
+                output_width as f32 - capsule_width - 8.0 * surface_scale
+            }
+        }
+        .max(0.0);
+        let capsule_top = (output_height as f32 - capsule_height - 8.0 * surface_scale).max(0.0);
+        let constants = PresenceConstants {
+            output_size: [output_width as f32, output_height as f32],
+            core_center_px: [-10_000.0, -10_000.0],
+            capsule_center_px: [
+                capsule_left + capsule_width * 0.5,
+                capsule_top + capsule_height * 0.5,
+            ],
+            elapsed_seconds: 0.0,
+            surface_scale,
+            shape_droplet: 0.0,
+            shape_bridge: 0.0,
+            shape_capsule: f32::from(presentation.input_surface_visible),
+            expansion_direction: expansion_direction_value(presentation.expansion_direction),
+            visual_state: visual_state_value(presentation.visual_state),
+            material_opacity: presentation.opacity,
+            voice_level: 0.0,
+            reduced_motion: f32::from(presentation.reduced_motion),
+            reduced_transparency: f32::from(presentation.reduced_transparency),
+            increased_contrast: f32::from(presentation.increased_contrast),
+            particles_enabled: 0.0,
+            diagnostic_solid: 0.0,
+            capsule_half_width: capsule_width * 0.5 / surface_scale.max(0.01),
+            state_elapsed_seconds: 0.0,
+            drag_active: 0.0,
+            state_energy: 0.0,
+            state_pulse: 1.0,
+            state_notify_wave: 0.0,
+            state_voice_mix: 0.0,
+            state_register_padding: 0.0,
+            state_accent: [0.34, 0.74, 0.92],
+            state_transition_progress: 1.0,
+            drag_direction: [1.0, 0.0],
+            drag_stretch: 0.0,
+            drag_release: 0.0,
+            surface_origin_px: [input_frame.x as f32, input_frame.y as f32],
+            monitor_origin_px: [self.monitor_frame.x as f32, self.monitor_frame.y as f32],
+            monitor_size_px: [
+                self.monitor_frame.width as f32,
+                self.monitor_frame.height as f32,
+            ],
+            desktop_texture_active: 1.0,
+            source_color_mode,
+            source_rotation,
+            desktop_padding: [0.0; 3],
+        };
+        let render_target = self.current_input_render_target()?;
+        unsafe {
+            self.context.UpdateSubresource(
+                &self.constants,
+                0,
+                None,
+                (&constants as *const PresenceConstants).cast(),
+                0,
+                0,
+            );
+            self.context
+                .ClearRenderTargetView(&render_target.view, &[0.0; 4]);
+            self.context
+                .OMSetRenderTargets(Some(&[Some(render_target.view.clone())]), None);
+            self.context.RSSetViewports(Some(&[D3D11_VIEWPORT {
+                TopLeftX: 0.0,
+                TopLeftY: 0.0,
+                Width: output_width as f32,
+                Height: output_height as f32,
+                MinDepth: 0.0,
+                MaxDepth: 1.0,
+            }]));
+            self.context
+                .IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            self.context.VSSetShader(&self.vertex_shader, None);
+            self.context.PSSetShader(&self.pixel_shader, None);
+            self.context
+                .VSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
+            self.context
+                .PSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
+            self.context
+                .PSSetShaderResources(0, Some(&[self.desktop_view.as_ref().cloned()]));
+            self.context
+                .PSSetSamplers(0, Some(&[Some(self.desktop_sampler.clone())]));
+            self.context.Draw(3, 0);
+            self.context.PSSetShaderResources(0, Some(&[None]));
+            self.context.OMSetRenderTargets(None, None);
+        }
+        let swap_chain = self
+            .input_swap_chain
+            .as_ref()
+            .ok_or_else(|| "PRESENCE_DDA_INPUT_SWAPCHAIN_UNAVAILABLE".to_owned())?;
+        unsafe { swap_chain.Present(0, DXGI_PRESENT(0)) }
+            .ok()
+            .map_err(windows_error)
     }
 
     fn poll_desktop_texture(&mut self) {
         let Some(source) = self.desktop_source.as_mut() else {
             return;
         };
-        match source.poll(0) {
+        let poll = source.poll(0);
+        let refreshed_texture = match &poll {
+            Ok(DesktopTexturePoll::Updated(_))
+                if source.texture_generation() != self.desktop_texture_generation =>
+            {
+                source
+                    .texture()
+                    .cloned()
+                    .map(|texture| (source.texture_generation(), texture))
+            }
+            _ => None,
+        };
+        match poll {
             Ok(DesktopTexturePoll::Updated(frame)) => {
+                if let Some((generation, texture)) = refreshed_texture {
+                    match create_desktop_texture_view(&self.device, &texture) {
+                        Ok(view) => {
+                            self.desktop_view = Some(view);
+                            self.desktop_texture_generation = generation;
+                        }
+                        Err(error) => {
+                            self.desktop_view = None;
+                            self.desktop_source = None;
+                            update_status(&self.status, |status| {
+                                status.backdrop_pixel_access = false;
+                                status.composition_stage = "host_backdrop_identity".to_owned();
+                                status.fallback_reason = Some(error);
+                            });
+                            return;
+                        }
+                    }
+                }
                 update_status(&self.status, |status| {
                     status.backdrop_pixel_access = true;
                     status.composition_stage = "desktop_texture_updated".to_owned();
@@ -2065,6 +2404,7 @@ impl NativeCompositionRenderer {
             }
             Ok(DesktopTexturePoll::NoFrame) => {}
             Err(error) => {
+                self.desktop_view = None;
                 self.desktop_source = None;
                 update_status(&self.status, |status| {
                     status.backdrop_pixel_access = false;
@@ -2107,6 +2447,27 @@ impl NativeCompositionRenderer {
         let texture = current_swap_chain_texture(&self.swap_chain)?;
         let target = create_render_target(&self.device, texture, index as u32)?;
         self.render_targets[index] = Some(target.clone());
+        Ok(target)
+    }
+
+    fn current_input_render_target(&mut self) -> Result<SwapChainRenderTarget, String> {
+        let swap_chain = self
+            .input_swap_chain
+            .as_ref()
+            .ok_or_else(|| "PRESENCE_DDA_INPUT_SWAPCHAIN_UNAVAILABLE".to_owned())?;
+        let index = usize::try_from(unsafe { swap_chain.GetCurrentBackBufferIndex() })
+            .map_err(|_| "PRESENCE_DDA_INPUT_BACK_BUFFER_INDEX_INVALID".to_owned())?;
+        let slot = self
+            .input_render_targets
+            .get(index)
+            .ok_or_else(|| "PRESENCE_DDA_INPUT_BACK_BUFFER_INDEX_INVALID".to_owned())?;
+        if let Some(target) = slot {
+            return Ok(target.clone());
+        }
+
+        let texture = current_swap_chain_texture(swap_chain)?;
+        let target = create_render_target(&self.device, texture, index as u32)?;
+        self.input_render_targets[index] = Some(target.clone());
         Ok(target)
     }
 }
@@ -2234,6 +2595,35 @@ fn initialize_desktop_texture_source(
         }
     }
     Err("PRESENCE_DDA_SOURCE_START_TIMEOUT".to_owned())
+}
+
+fn native_input_surface_frame(render_frame: PhysicalFrame) -> PhysicalFrame {
+    let scale = (render_frame.width as f32 / 640.0).clamp(0.5, 4.0);
+    PhysicalFrame {
+        x: 0,
+        y: 0,
+        width: (616.0 * scale).round().max(1.0) as u32,
+        height: (360.0 * scale).round().max(1.0) as u32,
+    }
+}
+
+fn window_physical_frame(hwnd: HWND) -> Result<PhysicalFrame, String> {
+    let mut rectangle = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut rectangle) }
+        .map_err(|error| windows_stage_error("WINDOW_FRAME", error))?;
+    let width = u32::try_from(rectangle.right.saturating_sub(rectangle.left))
+        .map_err(|_| "PRESENCE_WINDOW_FRAME_INVALID".to_owned())?;
+    let height = u32::try_from(rectangle.bottom.saturating_sub(rectangle.top))
+        .map_err(|_| "PRESENCE_WINDOW_FRAME_INVALID".to_owned())?;
+    if width == 0 || height == 0 {
+        return Err("PRESENCE_WINDOW_FRAME_INVALID".to_owned());
+    }
+    Ok(PhysicalFrame {
+        x: rectangle.left,
+        y: rectangle.top,
+        width,
+        height,
+    })
 }
 
 fn create_swap_chain(
@@ -2381,6 +2771,41 @@ fn create_constant_buffer(device: &ID3D11Device) -> Result<ID3D11Buffer, String>
         std::mem::size_of::<PresenceConstants>(),
         "CONSTANT_BUFFER_CREATE",
     )
+}
+
+fn create_desktop_sampler(device: &ID3D11Device) -> Result<ID3D11SamplerState, String> {
+    let description = D3D11_SAMPLER_DESC {
+        Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+        AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
+        AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+        AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
+        MipLODBias: 0.0,
+        MaxAnisotropy: 1,
+        ComparisonFunc: D3D11_COMPARISON_NEVER,
+        BorderColor: [0.0; 4],
+        MinLOD: 0.0,
+        MaxLOD: f32::MAX,
+    };
+    let mut sampler = None;
+    unsafe {
+        device
+            .CreateSamplerState(&description, Some(&mut sampler))
+            .map_err(|error| windows_stage_error("DESKTOP_SAMPLER_CREATE", error))?;
+    }
+    sampler.ok_or_else(|| "PRESENCE_NATIVE_GPU_DESKTOP_SAMPLER_UNAVAILABLE".to_owned())
+}
+
+fn create_desktop_texture_view(
+    device: &ID3D11Device,
+    texture: &ID3D11Texture2D,
+) -> Result<ID3D11ShaderResourceView, String> {
+    let mut view = None;
+    unsafe {
+        device
+            .CreateShaderResourceView(texture, None, Some(&mut view))
+            .map_err(|error| windows_stage_error("DESKTOP_TEXTURE_VIEW_CREATE", error))?;
+    }
+    view.ok_or_else(|| "PRESENCE_NATIVE_GPU_DESKTOP_TEXTURE_VIEW_UNAVAILABLE".to_owned())
 }
 
 fn create_constant_buffer_with_size(
@@ -2856,7 +3281,7 @@ mod tests {
     #[test]
     fn constant_buffer_remains_aligned_for_d3d11() {
         assert_eq!(std::mem::size_of::<PresenceConstants>() % 16, 0);
-        assert_eq!(std::mem::size_of::<PresenceConstants>(), 144);
+        assert_eq!(std::mem::size_of::<PresenceConstants>(), 192);
     }
 
     #[test]
@@ -3159,6 +3584,8 @@ mod tests {
             "inspect_host_backdrop_monitor",
             "create_device_for_output",
             "DesktopTextureSource",
+            "create_desktop_texture_view",
+            "PSSetShaderResources",
             "set_window_excluded_from_dda",
             "source.poll(0)",
             "host_backdrop_renderer_started",
@@ -3178,7 +3605,6 @@ mod tests {
             "fairy-wgc-source",
             "CompositionVisualSurface",
             "DesktopEdgeCapture",
-            "CreateShaderResourceView(",
             "IDXGIOutputDuplication",
             "D3D11_MAP_READ",
         ] {
@@ -3190,13 +3616,16 @@ mod tests {
     }
 
     #[test]
-    fn input_glass_uses_a_separate_host_backdrop_target_under_the_dom_overlay() {
+    fn input_glass_uses_a_separate_dda_swapchain_under_the_dom_overlay() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         for required in [
             "struct InputHostBackdropComposition",
             "CreateDesktopWindowTarget(input_hwnd, false)",
             "CreateRoundedRectangleGeometry()",
+            "INPUT_DDA_SWAPCHAIN_SURFACE",
+            "present_input_surface",
+            "surface_origin_px: [input_frame.x as f32, input_frame.y as f32]",
             "presentation.input_surface_visible",
             "presentation.input_surface_height.clamp(64.0, 104.0)",
         ] {
@@ -3205,12 +3634,21 @@ mod tests {
                 "native input glass contract is missing {required}"
             );
         }
+        let shader = include_str!("liquid_glass.hlsl");
+        assert!(!shader.contains("Message Fairy"));
+        assert!(!shader.contains("input_text"));
     }
 
     #[test]
-    fn shader_draws_one_continuous_material_edge_without_sampling_backdrop_pixels() {
+    fn shader_samples_one_continuous_desktop_field_without_concentric_lenses() {
         let shader = include_str!("liquid_glass.hlsl");
         for required in [
+            "Texture2D<float4> desktop_texture",
+            "SamplerState desktop_sampler",
+            "sample_continuous_liquid_glass",
+            "continuous_refraction_px",
+            "smoothstep(0.35, 0.52, radial_progress)",
+            "smoothstep(0.82, 1.0, radial_progress)",
             "edge_material_profile",
             "EDGE_MATERIAL_DEPTH_PX = 30.0",
             "float edge_material = pow(saturate(edge_focus), 1.65)",
@@ -3223,9 +3661,9 @@ mod tests {
         }
         for forbidden in [
             "HOST_BACKDROP_LENS_BAND_COUNT",
-            "Texture2D",
-            "SamplerState",
-            "sample_refracted_desktop",
+            "core_warp",
+            "capsule_warp",
+            "center_scale",
             "DisplacementMapEffect",
             "optical_premultiplied",
         ] {
@@ -3332,7 +3770,9 @@ mod tests {
         let shader = include_str!("liquid_glass.hlsl");
         for required in [
             "EDGE_MATERIAL_DEPTH_PX = 30.0",
-            "HostBackdrop as an identity backdrop sample",
+            "one continuous optical field",
+            "sample_continuous_liquid_glass",
+            "float desktop_alpha = shape_mask",
             "float center_alpha = reduced_transparency > 0.5",
             ": 0.0;",
             "float edge_alpha = lerp(0.08, 0.15, material_opacity)",
@@ -3363,23 +3803,26 @@ mod tests {
         assert!(!shader.contains("broad_caustic"));
         assert!(!shader.contains("core_glow"));
         assert!(!shader.contains("particle_sparkles(local_px)"));
-        assert!(!shader.contains("Texture2D"));
         assert!(!shader.contains("identity_color)) * identity_alpha"));
         assert!(!shader.contains("color += max(0.0.xxx, float3(0.86, 0.96, 1.0) - color)"));
     }
 
     #[test]
-    fn host_backdrop_present_has_no_optional_capture_side_loop() {
+    fn production_present_binds_only_the_gpu_resident_desktop_texture() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
-        for required in ["host_backdrop_identity", "renderer.present("] {
+        for required in [
+            "host_backdrop_identity",
+            "renderer.present(",
+            "PSSetShaderResources",
+            "create_desktop_texture_view",
+        ] {
             assert!(
                 production.contains(required),
                 "missing HostBackdrop contract: {required}"
             );
         }
         assert!(!production.contains("on_frame_arrived"));
-        assert!(!production.contains("CreateShaderResourceView("));
         assert!(!production.contains("AcquireNextFrame("));
         assert!(!production.contains("CopyResource("));
     }

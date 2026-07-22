@@ -544,6 +544,10 @@ impl DesktopTextureSource {
         self.access_lost_count
     }
 
+    pub const fn rotation(&self) -> i32 {
+        self.session.description().Rotation.0
+    }
+
     pub fn frame_age(&self) -> Option<Duration> {
         self.last_frame
             .as_ref()
