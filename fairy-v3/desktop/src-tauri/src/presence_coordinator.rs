@@ -14,10 +14,7 @@ use crate::presence_runtime::{
 use crate::presence_window_policy::{
     input_follows_render, relation_for_phase, PresenceWindowRelation,
 };
-use crate::{
-    PET_INPUT_LABEL, PET_RENDER_LABEL, PRESENCE_INPUT_TOGGLE_REQUESTED_EVENT,
-    PRESENCE_MENU_REQUESTED_EVENT,
-};
+use crate::{PET_INPUT_LABEL, PET_RENDER_LABEL};
 
 pub const PRESENCE_INTERACTION_EVENT: &str = "presence-interaction-snapshot";
 pub const PET_CORE_ANCHOR_X_LOGICAL: f64 = 96.0;
@@ -40,9 +37,6 @@ const RUNTIME_POLICY_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const PROJECTION_RECOVERY_HEARTBEAT_MS: u64 = 30_000;
 const CURSOR_FAILURE_LIMIT: u8 = 3;
 const NATIVE_DRAG_HOLD_MS: u64 = 320;
-const NATIVE_DRAG_DISTANCE_PX: i32 = 6;
-const NATIVE_DOUBLE_CLICK_MS: u64 = 350;
-const NATIVE_DOUBLE_CLICK_DISTANCE_PX: i32 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PresenceCoordinatorConfig {
@@ -532,6 +526,7 @@ pub fn select_work_area(
 
 pub struct PresenceCoordinatorHandle {
     latest_placement: Arc<RwLock<Option<PresenceWindowPlacement>>>,
+    latest_interaction: Arc<RwLock<Option<PresenceInteractionSnapshot>>>,
     shutdown: Arc<AtomicBool>,
     started: AtomicBool,
     reduced_motion: Arc<AtomicBool>,
@@ -543,6 +538,7 @@ pub struct PresenceCoordinatorHandle {
 
 struct CoordinatorThreadState {
     latest_placement: Arc<RwLock<Option<PresenceWindowPlacement>>>,
+    latest_interaction: Arc<RwLock<Option<PresenceInteractionSnapshot>>>,
     shutdown: Arc<AtomicBool>,
     reduced_motion: Arc<AtomicBool>,
     hover_enabled: Arc<AtomicBool>,
@@ -560,10 +556,7 @@ struct NativePointerPress {
 #[derive(Default)]
 struct NativePointerController {
     primary_was_down: bool,
-    secondary_was_down: bool,
     primary_press: Option<NativePointerPress>,
-    secondary_press: Option<NativePointerPress>,
-    pending_click: Option<NativePointerPress>,
     dragging: bool,
 }
 
@@ -575,18 +568,9 @@ impl NativePointerController {
         point: Option<PhysicalPoint>,
         sampled_at_ms: u64,
     ) {
-        if self.pending_click.is_some_and(|click| {
-            sampled_at_ms.saturating_sub(click.sampled_at_ms) > NATIVE_DOUBLE_CLICK_MS
-        }) {
-            self.pending_click = None;
-            let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_INPUT_TOGGLE_REQUESTED_EVENT, ());
-        }
-
-        let (primary_down, secondary_down) = pointer_button_state();
+        let primary_down = primary_pointer_down();
         let primary_pressed = primary_down && !self.primary_was_down;
         let primary_released = !primary_down && self.primary_was_down;
-        let secondary_pressed = secondary_down && !self.secondary_was_down;
-        let secondary_released = !secondary_down && self.secondary_was_down;
 
         if primary_pressed {
             self.primary_press = point
@@ -598,12 +582,8 @@ impl NativePointerController {
         }
 
         if primary_down && !self.dragging {
-            if let (Some(press), Some(point)) = (self.primary_press, point) {
-                let held_long_enough =
-                    sampled_at_ms.saturating_sub(press.sampled_at_ms) >= NATIVE_DRAG_HOLD_MS;
-                let moved_far_enough =
-                    point_distance_exceeds(press.point, point, NATIVE_DRAG_DISTANCE_PX);
-                if held_long_enough || moved_far_enough {
+            if let Some(press) = self.primary_press {
+                if native_drag_hold_elapsed(press.sampled_at_ms, sampled_at_ms) {
                     if let Some(state) = app.try_state::<crate::DesktopState>() {
                         match crate::begin_native_pet_drag(
                             app,
@@ -613,7 +593,6 @@ impl NativePointerController {
                         ) {
                             Ok(()) => {
                                 self.dragging = true;
-                                self.pending_click = None;
                             }
                             Err(error) => eprintln!("failed to begin native pet drag: {error}"),
                         }
@@ -638,54 +617,16 @@ impl NativePointerController {
                     }
                 }
                 self.dragging = false;
-            } else if let (Some(press), Some(point)) = (self.primary_press.take(), point) {
-                if point_inside_native_core(point, placement)
-                    && !point_distance_exceeds(press.point, point, NATIVE_DOUBLE_CLICK_DISTANCE_PX)
-                {
-                    if self.pending_click.is_some_and(|click| {
-                        sampled_at_ms.saturating_sub(click.sampled_at_ms) <= NATIVE_DOUBLE_CLICK_MS
-                            && !point_distance_exceeds(
-                                click.point,
-                                point,
-                                NATIVE_DOUBLE_CLICK_DISTANCE_PX,
-                            )
-                    }) {
-                        self.pending_click = None;
-                        if let Err(error) = crate::show_main_window_from_presence(app) {
-                            eprintln!("failed to open Fairy from native pet: {error}");
-                        }
-                    } else {
-                        self.pending_click = Some(NativePointerPress {
-                            point,
-                            sampled_at_ms,
-                        });
-                    }
-                }
             }
             self.primary_press = None;
         }
 
-        if secondary_pressed {
-            self.secondary_press = point
-                .filter(|point| point_inside_native_core(*point, placement))
-                .map(|point| NativePointerPress {
-                    point,
-                    sampled_at_ms,
-                });
-        }
-        if secondary_released {
-            if let (Some(press), Some(point)) = (self.secondary_press.take(), point) {
-                if point_inside_native_core(point, placement)
-                    && !point_distance_exceeds(press.point, point, NATIVE_DOUBLE_CLICK_DISTANCE_PX)
-                {
-                    let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_MENU_REQUESTED_EVENT, ());
-                }
-            }
-        }
-
         self.primary_was_down = primary_down;
-        self.secondary_was_down = secondary_down;
     }
+}
+
+fn native_drag_hold_elapsed(pressed_at_ms: u64, sampled_at_ms: u64) -> bool {
+    sampled_at_ms.saturating_sub(pressed_at_ms) >= NATIVE_DRAG_HOLD_MS
 }
 
 fn point_inside_native_core(point: PhysicalPoint, placement: PresenceWindowPlacement) -> bool {
@@ -695,30 +636,22 @@ fn point_inside_native_core(point: PhysicalPoint, placement: PresenceWindowPlace
     dx.mul_add(dx, dy * dy) <= radius * radius
 }
 
-fn point_distance_exceeds(left: PhysicalPoint, right: PhysicalPoint, threshold: i32) -> bool {
-    let dx = i64::from(left.x) - i64::from(right.x);
-    let dy = i64::from(left.y) - i64::from(right.y);
-    dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy)) > i64::from(threshold).pow(2)
-}
-
 #[cfg(target_os = "windows")]
-fn pointer_button_state() -> (bool, bool) {
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON,
-    };
-    let pressed = |button| unsafe { (GetAsyncKeyState(button) as u16 & 0x8000) != 0 };
-    (pressed(VK_LBUTTON as i32), pressed(VK_RBUTTON as i32))
+fn primary_pointer_down() -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+    unsafe { (GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000) != 0 }
 }
 
 #[cfg(not(target_os = "windows"))]
-fn pointer_button_state() -> (bool, bool) {
-    (false, false)
+fn primary_pointer_down() -> bool {
+    false
 }
 
 impl PresenceCoordinatorHandle {
     pub fn new(config: PresenceCoordinatorConfig) -> Self {
         Self {
             latest_placement: Arc::new(RwLock::new(None)),
+            latest_interaction: Arc::new(RwLock::new(None)),
             shutdown: Arc::new(AtomicBool::new(false)),
             started: AtomicBool::new(false),
             reduced_motion: Arc::new(AtomicBool::new(config.reduced_motion)),
@@ -739,6 +672,7 @@ impl PresenceCoordinatorHandle {
         }
         let thread_state = CoordinatorThreadState {
             latest_placement: Arc::clone(&self.latest_placement),
+            latest_interaction: Arc::clone(&self.latest_interaction),
             shutdown: Arc::clone(&self.shutdown),
             reduced_motion: Arc::clone(&self.reduced_motion),
             hover_enabled: Arc::clone(&self.hover_enabled),
@@ -758,6 +692,10 @@ impl PresenceCoordinatorHandle {
 
     pub fn latest_placement(&self) -> Option<PresenceWindowPlacement> {
         self.latest_placement.read().ok().and_then(|value| *value)
+    }
+
+    pub fn latest_interaction(&self) -> Option<PresenceInteractionSnapshot> {
+        self.latest_interaction.read().ok().and_then(|value| *value)
     }
 
     pub fn set_reduced_motion(&self, reduced_motion: bool) {
@@ -801,6 +739,7 @@ impl Drop for PresenceCoordinatorHandle {
 fn run_coordinator(app: tauri::AppHandle, state: CoordinatorThreadState) {
     let CoordinatorThreadState {
         latest_placement,
+        latest_interaction,
         shutdown,
         reduced_motion,
         hover_enabled,
@@ -944,6 +883,9 @@ fn run_coordinator(app: tauri::AppHandle, state: CoordinatorThreadState) {
                 cursor: projected_cursor,
                 placement: current_placement,
             };
+            if let Ok(mut current) = latest_interaction.write() {
+                *current = Some(snapshot);
+            }
             let _ = app.emit_to(PET_RENDER_LABEL, PRESENCE_INTERACTION_EVENT, snapshot);
             let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_INTERACTION_EVENT, snapshot);
         }
@@ -1195,18 +1137,10 @@ mod native_pointer_tests {
     }
 
     #[test]
-    fn native_drag_threshold_uses_radial_distance() {
-        let origin = PhysicalPoint { x: 10, y: 10 };
-        assert!(!point_distance_exceeds(
-            origin,
-            PhysicalPoint { x: 14, y: 14 },
-            NATIVE_DRAG_DISTANCE_PX,
-        ));
-        assert!(point_distance_exceeds(
-            origin,
-            PhysicalPoint { x: 17, y: 10 },
-            NATIVE_DRAG_DISTANCE_PX,
-        ));
+    fn native_drag_requires_the_full_long_press_interval() {
+        assert!(!native_drag_hold_elapsed(1_000, 1_319));
+        assert!(native_drag_hold_elapsed(1_000, 1_320));
+        assert!(native_drag_hold_elapsed(1_000, 1_600));
     }
 
     #[test]

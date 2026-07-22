@@ -131,8 +131,6 @@ function petHost(): PetHost {
     }),
     onPreferences: vi.fn(async () => () => undefined),
     onInputRequested: vi.fn(async () => () => undefined),
-    onInputToggleRequested: vi.fn(async () => () => undefined),
-    onMenuRequested: vi.fn(async () => () => undefined),
     onNewChatRequested: vi.fn(async () => () => undefined),
     setExpanded: vi.fn(async () => undefined),
     setInputLayout: vi.fn(async () => undefined),

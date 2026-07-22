@@ -72,8 +72,6 @@ pub const PET_INPUT_LABEL: &str = "pet-input";
 const PET_INPUT_EXPANDED_CONTENT_HEIGHT_LOGICAL: f64 = 72.0;
 const PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT: &str = "presence-native-renderer-lifecycle";
 pub(crate) const PRESENCE_INPUT_REQUESTED_EVENT: &str = "presence-input-requested";
-pub(crate) const PRESENCE_INPUT_TOGGLE_REQUESTED_EVENT: &str = "presence-input-toggle-requested";
-pub(crate) const PRESENCE_MENU_REQUESTED_EVENT: &str = "presence-menu-requested";
 const TRAY_ASK_ID: &str = "fairy.tray.ask";
 const TRAY_NEW_CHAT_ID: &str = "fairy.tray.new_chat";
 const TRAY_AUTO_PLAY_ID: &str = "fairy.tray.auto_play";
@@ -1237,10 +1235,6 @@ pub(crate) fn end_native_pet_drag(
     result.and(resume_result)
 }
 
-pub(crate) fn show_main_window_from_presence(app: &tauri::AppHandle) -> Result<(), String> {
-    show_and_focus(&main_window(app)?)
-}
-
 #[tauri::command]
 async fn pet_window_group_begin_drag(
     window: WebviewWindow,
@@ -2137,6 +2131,17 @@ async fn pet_input_presentation_begin(
         .lock()
         .map_err(|_| "Pet input presentation lock is unavailable".to_owned())?;
     Ok(fence.begin())
+}
+
+#[tauri::command]
+fn pet_interaction_snapshot_get(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Option<presence_coordinator::PresenceInteractionSnapshot>, String> {
+    if !matches!(window.label(), PET_INPUT_LABEL | PET_RENDER_LABEL) {
+        return Err("Window is not authorized".to_owned());
+    }
+    Ok(state.presence.latest_interaction())
 }
 
 #[tauri::command]
@@ -4616,6 +4621,7 @@ pub fn run() {
             pet_input_request_focus,
             pet_input_presentation_begin,
             pet_input_presentation_apply,
+            pet_interaction_snapshot_get,
             pet_window_group_begin_drag,
             pet_window_group_move,
             pet_window_group_end_drag,

@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { isTauri } from "@tauri-apps/api/core";
 
 import type { DesktopPreferences } from "../../settings/client";
 import type { PresenceInteractionSnapshot } from "../domain/interaction";
@@ -88,6 +87,8 @@ const MAX_DISMISSED_NOTICES = 128;
 const COMPLETED_REPLY_VISIBLE_MS = 5_000;
 const TERMINAL_STATUS_VISIBLE_MS = 2_400;
 const PET_DRAG_CLICK_SUPPRESSION_MS = 450;
+const PET_DRAG_HOLD_MS = 320;
+const PET_DRAG_DISTANCE_PX = 6;
 const PRESENCE_SURFACE_EXIT_MS = 240;
 const PRESENCE_SURFACE_REDUCED_EXIT_MS = 80;
 const MENU_FOCUS_LOSS_MS = 600;
@@ -97,6 +98,14 @@ interface PresenceSubmissionState {
   text: string;
   phase: PresenceSubmissionCard["phase"];
   failure: PresenceSubmissionFailure | null;
+}
+
+interface CorePointerPress {
+  pointerId: number;
+  screenX: number;
+  screenY: number;
+  startedAt: number;
+  moved: boolean;
 }
 
 export function PresenceInputApp({
@@ -164,9 +173,10 @@ export function PresenceInputApp({
   const legacyPositionMigrationAttempted = useRef(false);
   const suppressCoreActivation = useRef(false);
   const suppressCoreActivationTimer = useRef<number | null>(null);
+  const corePress = useRef<CorePointerPress | null>(null);
+  const coreLongPressTimer = useRef<number | null>(null);
   const nativeDragWasActive = useRef(false);
   const menuFocusLossTimer = useRef<number | null>(null);
-  const nativePointerGestures = isTauri();
   const applyInputIntent = useCallback((action: PresenceInputIntentAction) => {
     const next = reducePresenceInputIntent(inputIntentRef.current, action);
     inputIntentRef.current = next;
@@ -187,6 +197,9 @@ export function PresenceInputApp({
     () => () => {
       if (suppressCoreActivationTimer.current !== null) {
         window.clearTimeout(suppressCoreActivationTimer.current);
+      }
+      if (coreLongPressTimer.current !== null) {
+        window.clearTimeout(coreLongPressTimer.current);
       }
       if (menuFocusLossTimer.current !== null) {
         window.clearTimeout(menuFocusLossTimer.current);
@@ -254,8 +267,6 @@ export function PresenceInputApp({
     let disposed = false;
     let stopPreferences: (() => void) | undefined;
     let stopInput: (() => void) | undefined;
-    let stopInputToggle: (() => void) | undefined;
-    let stopMenu: (() => void) | undefined;
     let stopNewChat: (() => void) | undefined;
     void host.getPreferences().then((value) => {
       if (!disposed) setPreferences(value);
@@ -275,31 +286,6 @@ export function PresenceInputApp({
       if (disposed) stop();
       else stopInput = stop;
     });
-    void host.onInputToggleRequested(() => {
-      if (disposed) return;
-      const opening = !inputIntentRef.current.pinned && !transientInputVisible.current;
-      setMenuOpen(false);
-      applyInputIntent({
-        type: "toggle",
-        transient_visible: transientInputVisible.current,
-      });
-      if (opening) {
-        setFocusRequest((value) => value + 1);
-      } else if (document.activeElement instanceof HTMLElement) {
-        document.activeElement.blur();
-      }
-    }).then((stop) => {
-      if (disposed) stop();
-      else stopInputToggle = stop;
-    });
-    void host.onMenuRequested(() => {
-      if (disposed) return;
-      applyInputIntent({ type: "close" });
-      setMenuOpen(true);
-    }).then((stop) => {
-      if (disposed) stop();
-      else stopMenu = stop;
-    });
     void host.onNewChatRequested(() => {
       if (disposed) return;
       channel.requestNewChat();
@@ -314,8 +300,6 @@ export function PresenceInputApp({
       disposed = true;
       stopPreferences?.();
       stopInput?.();
-      stopInputToggle?.();
-      stopMenu?.();
       stopNewChat?.();
     };
   }, [applyInputIntent, channel, host]);
@@ -756,6 +740,21 @@ export function PresenceInputApp({
 
   function captureCorePointer(event: ReactPointerEvent<HTMLButtonElement>) {
     if (event.button !== 0) return;
+    corePress.current = {
+      pointerId: event.pointerId,
+      screenX: event.screenX,
+      screenY: event.screenY,
+      startedAt: performance.now(),
+      moved: false,
+    };
+    if (coreLongPressTimer.current !== null) {
+      window.clearTimeout(coreLongPressTimer.current);
+    }
+    coreLongPressTimer.current = window.setTimeout(() => {
+      if (corePress.current?.pointerId !== event.pointerId) return;
+      suppressCoreActivation.current = true;
+      coreLongPressTimer.current = null;
+    }, PET_DRAG_HOLD_MS);
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch {
@@ -763,13 +762,41 @@ export function PresenceInputApp({
     }
   }
 
+  function trackCorePointer(event: ReactPointerEvent<HTMLButtonElement>) {
+    const press = corePress.current;
+    if (press === null || press.pointerId !== event.pointerId) return;
+    const deltaX = event.screenX - press.screenX;
+    const deltaY = event.screenY - press.screenY;
+    if (Math.hypot(deltaX, deltaY) < PET_DRAG_DISTANCE_PX) return;
+    press.moved = true;
+    suppressCoreActivation.current = true;
+  }
+
   function releaseCorePointer(event: ReactPointerEvent<HTMLButtonElement>) {
+    const press = corePress.current;
+    const shouldSuppress = press !== null && press.pointerId === event.pointerId && (
+      press.moved || performance.now() - press.startedAt >= PET_DRAG_HOLD_MS
+    );
+    corePress.current = null;
+    if (coreLongPressTimer.current !== null) {
+      window.clearTimeout(coreLongPressTimer.current);
+      coreLongPressTimer.current = null;
+    }
     try {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
     } catch {
       // Pointer capture is also released automatically when the pointer ends.
+    }
+    if (shouldSuppress) suppressCoreClickAfterDrag();
+  }
+
+  function cancelCorePointer(event: ReactPointerEvent<HTMLButtonElement>) {
+    const cancelledActivePress = corePress.current?.pointerId === event.pointerId;
+    releaseCorePointer(event);
+    if (cancelledActivePress && suppressCoreActivationTimer.current === null) {
+      suppressCoreClickAfterDrag();
     }
   }
 
@@ -857,23 +884,25 @@ export function PresenceInputApp({
       <button
         aria-label="Open Fairy quick input"
         className="presence-core-hit-target"
-        onClick={() => {
-          if (nativePointerGestures || suppressCoreActivation.current || moving) return;
+        onClick={(event) => {
+          if (event.detail > 1 || suppressCoreActivation.current || moving) return;
           activateCore();
         }}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
-          if (nativePointerGestures) return;
           openContextMenu();
         }}
         onDoubleClick={() => {
-          if (nativePointerGestures || suppressCoreActivation.current || moving) return;
+          if (suppressCoreActivation.current || moving) return;
+          applyInputIntent({ type: "close" });
+          setMenuOpen(false);
           channel.requestWorkspaceOpen();
           void host.openMain().catch(() => undefined);
         }}
-        onPointerCancel={releaseCorePointer}
+        onPointerCancel={cancelCorePointer}
         onPointerDown={captureCorePointer}
+        onPointerMove={trackCorePointer}
         onPointerUp={releaseCorePointer}
         tabIndex={-1}
         type="button"

@@ -1,4 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import {
@@ -41,10 +41,22 @@ export function createPresenceInteractionSource(): PresenceInteractionSource {
   }
   return {
     async subscribe(listener) {
-      return listen<unknown>(PRESENCE_INTERACTION_EVENT, (event) => {
-        const parsed = presenceInteractionSnapshotSchema.safeParse(event.payload);
-        if (parsed.success) listener(parsed.data);
+      let latestSequence = -1;
+      const deliver = (value: unknown) => {
+        const parsed = presenceInteractionSnapshotSchema.safeParse(value);
+        if (!parsed.success || parsed.data.sequence <= latestSequence) return;
+        latestSequence = parsed.data.sequence;
+        listener(parsed.data);
+      };
+      const unlisten = await listen<unknown>(PRESENCE_INTERACTION_EVENT, (event) => {
+        deliver(event.payload);
       });
+      try {
+        deliver(await invoke<unknown>("pet_interaction_snapshot_get"));
+      } catch {
+        // The live event remains authoritative when startup replay is unavailable.
+      }
+      return unlisten;
     },
   };
 }

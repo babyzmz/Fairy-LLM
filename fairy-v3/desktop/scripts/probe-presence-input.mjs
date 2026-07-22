@@ -8,14 +8,16 @@ const screenshotPrefix = args["screenshot-prefix"] ?? null;
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error("--port must be a valid TCP port");
 }
-if (!new Set(["close", "measure", "menu", "open"]).has(action)) {
-  throw new Error("--action must be close, measure, menu, or open");
+if (!new Set(["close", "measure", "menu", "open", "state"]).has(action)) {
+  throw new Error("--action must be close, measure, menu, open, or state");
 }
 
 const browser = await connectWithRetry(`http://127.0.0.1:${port}`, 30_000);
 try {
   const page = await findInputPage(browser, 30_000);
-  if (action === "menu") {
+  if (action === "state") {
+    process.stdout.write(`${JSON.stringify(await readInputState(page))}\n`);
+  } else if (action === "menu") {
     await waitForPresentationCommit(page, browser);
     await page.locator(".presence-core-hit-target").click({ button: "right", force: true });
     const menu = page.getByRole("menu", { name: "Fairy menu" });
@@ -33,9 +35,9 @@ try {
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => {
       const surface = document.querySelector('[data-testid="presence-input-surface"]');
-      return surface instanceof HTMLElement && surface.dataset.layout === "hidden";
+      return surface instanceof HTMLElement && surface.dataset.layout === "core";
     });
-    process.stdout.write(`${JSON.stringify({ input_open: false, layout: "hidden" })}\n`);
+    process.stdout.write(`${JSON.stringify({ input_open: false, layout: "core" })}\n`);
     } else if (action === "open") {
     if (screenshotPrefix !== null) {
       await page.waitForTimeout(350);
@@ -83,6 +85,20 @@ try {
   }
 } finally {
   await browser.close();
+}
+
+async function readInputState(page) {
+  return page.evaluate(() => {
+    const surface = document.querySelector('[data-testid="presence-input-surface"]');
+    return {
+      input_open: document.querySelector('[data-testid="presence-input-field"]') !== null,
+      layout: surface instanceof HTMLElement ? surface.dataset.layout ?? null : null,
+      interaction_phase:
+        surface instanceof HTMLElement ? surface.dataset.interactionPhase ?? null : null,
+      expansion_direction:
+        surface instanceof HTMLElement ? surface.dataset.expansionDirection ?? null : null,
+    };
+  });
 }
 
 async function ensureInputOpen(page) {

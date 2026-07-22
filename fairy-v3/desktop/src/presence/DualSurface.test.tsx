@@ -134,7 +134,6 @@ function preferences(): DesktopPreferences {
 
 function hostHarness() {
   let inputListener: (() => void) | null = null;
-  let inputToggleListener: (() => void) | null = null;
   const setInputLayout = vi.fn<PetHost["setInputLayout"]>(async () => undefined);
   const setInputInteractive = vi.fn<PetHost["setInputInteractive"]>(
     async () => undefined,
@@ -152,13 +151,6 @@ function hostHarness() {
         inputListener = null;
       };
     }),
-    onInputToggleRequested: vi.fn(async (listener) => {
-      inputToggleListener = listener;
-      return () => {
-        inputToggleListener = null;
-      };
-    }),
-    onMenuRequested: vi.fn(async () => () => undefined),
     onNewChatRequested: vi.fn(async () => () => undefined),
     setExpanded: vi.fn(async () => undefined),
     setInputLayout,
@@ -182,9 +174,6 @@ function hostHarness() {
     host,
     requestInput() {
       inputListener?.();
-    },
-    requestInputToggle() {
-      inputToggleListener?.();
     },
   };
 }
@@ -538,7 +527,7 @@ describe("dual presence surfaces", () => {
     expect(screen.queryByLabelText("Fairy companion")).not.toBeInTheDocument();
   });
 
-  it("toggles explicit quick input ownership on consecutive native core taps", async () => {
+  it("toggles explicit quick input ownership on consecutive core taps", async () => {
     const channel = channelHarness();
     const host = hostHarness();
     render(
@@ -550,10 +539,10 @@ describe("dual presence surfaces", () => {
       />,
     );
 
-    await waitFor(() => expect(host.host.onInputToggleRequested).toHaveBeenCalledOnce());
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+    const core = screen.getByRole("button", { name: "Open Fairy quick input" });
 
-    act(() => host.requestInputToggle());
+    fireEvent.click(core, { detail: 1 });
     await waitFor(() =>
       expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)
     );
@@ -562,17 +551,69 @@ describe("dual presence surfaces", () => {
       "compact",
     );
 
-    act(() => host.requestInputToggle());
+    fireEvent.click(core, { detail: 1 });
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
     expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
       "data-layout",
       "core",
     );
 
-    act(() => host.requestInputToggle());
+    fireEvent.click(core, { detail: 1 });
     await waitFor(() =>
       expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)
     );
+  });
+
+  it("opens the main window on double click without leaving quick input open", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+    const core = screen.getByRole("button", { name: "Open Fairy quick input" });
+    fireEvent.click(core, { detail: 1 });
+    fireEvent.click(core, { detail: 2 });
+    fireEvent.doubleClick(core, { detail: 2 });
+
+    await waitFor(() => expect(host.host.openMain).toHaveBeenCalledOnce());
+    expect(channel.channel.requestWorkspaceOpen).toHaveBeenCalledOnce();
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+  });
+
+  it("ignores a late WebView pointer cancellation after a completed core tap", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+    const core = screen.getByRole("button", { name: "Open Fairy quick input" });
+    fireEvent.pointerDown(core, { button: 0, pointerId: 21, screenX: 520, screenY: 420 });
+    fireEvent.pointerUp(core, { pointerId: 21, screenX: 520, screenY: 420 });
+    fireEvent.click(core, { detail: 1 });
+    await waitFor(() =>
+      expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)
+    );
+
+    fireEvent.pointerCancel(core, { pointerId: 21, screenX: 520, screenY: 420 });
+    fireEvent.pointerDown(core, { button: 0, pointerId: 22, screenX: 520, screenY: 420 });
+    fireEvent.pointerUp(core, { pointerId: 22, screenX: 520, screenY: 420 });
+    fireEvent.click(core, { detail: 1 });
+
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
   });
 
   it("keeps hover closed after a core tap until the pointer fully exits", async () => {
@@ -594,7 +635,9 @@ describe("dual presence surfaces", () => {
       expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)
     );
 
-    act(() => host.requestInputToggle());
+    fireEvent.click(screen.getByRole("button", { name: "Open Fairy quick input" }), {
+      detail: 1,
+    });
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
 
     act(() => coordinator.emit(interactionAt(41, "interactive", 520, 520)));
@@ -1086,13 +1129,14 @@ describe("dual presence surfaces", () => {
       screenX: 552,
       screenY: 431,
     });
-    fireEvent.pointerUp(window, {
+    fireEvent.pointerUp(core, {
       pointerId: 9,
       clientX: 22,
       clientY: 21,
       screenX: 552,
       screenY: 431,
     });
+    fireEvent.click(core, { detail: 1 });
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 80));
     });
@@ -1127,12 +1171,17 @@ describe("dual presence surfaces", () => {
     });
     expectNativeDragOnly(host.host);
 
-    fireEvent.pointerUp(window, {
+    fireEvent.pointerUp(core, {
       pointerId: 10,
       screenX: 548,
       screenY: 432,
     });
+    fireEvent.click(core, { detail: 1 });
     expectNativeDragOnly(host.host);
+    expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
+      "data-layout",
+      "core",
+    );
   });
 
   it("captures the pointer without creating a second drag RPC owner", async () => {

@@ -447,8 +447,8 @@ try {
         $process.Refresh()
         throw "A required native window disappeared during startup: main=$($null -ne $main), render=$($null -ne $render), input=$($null -ne $inputWindow), process_exited=$($process.HasExited)"
     }
-    if (-not $main.Visible -or -not $render.Visible -or $inputWindow.Visible) {
-        throw "Unexpected passive Fairy visibility: main=$($main.Visible), render=$($render.Visible), input=$($inputWindow.Visible)"
+    if (-not $main.Visible -or -not $render.Visible -or -not $inputWindow.Visible) {
+        throw "Idle Fairy must keep only its circular input proxy visible: main=$($main.Visible), render=$($render.Visible), input=$($inputWindow.Visible)"
     }
     $initialScale = [Math]::Max(0.5, $render.Width / 640.0)
     $expectedCoreExtent = [int][Math]::Round(144 * $initialScale)
@@ -492,12 +492,8 @@ try {
     $scale = [Math]::Max(0.5, $render.Width / 640.0)
     $candidateAnchors = @(
         [pscustomobject]@{
-            X = [int]$render.X + [int][Math]::Round(96 * $scale)
-            Y = [int]$render.Y + [int][Math]::Round(130 * $scale)
-        },
-        [pscustomobject]@{
-            X = [int]$render.X + [int]$render.Width - [int][Math]::Round(96 * $scale)
-            Y = [int]$render.Y + [int][Math]::Round(130 * $scale)
+            X = [int][Math]::Round([double]$readyProbe.final.placement.anchor_x)
+            Y = [int][Math]::Round([double]$readyProbe.final.placement.anchor_y)
         }
     )
     $activeAnchor = $null
@@ -537,8 +533,36 @@ try {
         Start-Sleep -Milliseconds 250
     }
     $rootAtCore = [FairyNativeProbe]::RootWindowAt($activeAnchor.X, $activeAnchor.Y)
-    if ($rootAtCore -eq $render.Handle) {
-        throw "pet-render intercepted pointer hit testing"
+    $inputWindow = Get-Window $process.Id "Fairy Presence Input"
+    if ($null -eq $inputWindow -or $rootAtCore -ne $inputWindow.Handle) {
+        throw "PRESENCE_CORE_HIT_MISMATCH: authoritative core anchor did not hit pet-input; root=$rootAtCore, input=$($inputWindow.Handle), render=$($render.Handle), anchor=[$($activeAnchor.X),$($activeAnchor.Y)]"
+    }
+    $inputProbeScript = Join-Path $root "desktop\scripts\probe-presence-input.mjs"
+    if ($cursorInjectionAvailable) {
+        [FairyNativeProbe]::LeftButtonDown()
+        Start-Sleep -Milliseconds 35
+        [FairyNativeProbe]::LeftButtonUp()
+        Start-Sleep -Milliseconds 250
+        $closedStateOutput = & node $inputProbeScript --port $port --action state
+        if ($LASTEXITCODE -ne 0) { throw "WebView2 could not verify the first native core click" }
+        $closedState = ($closedStateOutput -join "`n") | ConvertFrom-Json
+        if ($closedState.layout -ne "core" -or $closedState.input_open) {
+            throw "PRESENCE_SINGLE_CLICK_TOGGLE_FAILED: first click did not close transient input; state=$($closedState | ConvertTo-Json -Compress)"
+        }
+        $closedInputWindow = Get-Window $process.Id "Fairy Presence Input"
+        $closedRootAtCore = [FairyNativeProbe]::RootWindowAt($activeAnchor.X, $activeAnchor.Y)
+
+        [FairyNativeProbe]::LeftButtonDown()
+        Start-Sleep -Milliseconds 35
+        [FairyNativeProbe]::LeftButtonUp()
+        Start-Sleep -Milliseconds 250
+        $openedStateOutput = & node $inputProbeScript --port $port --action state
+        if ($LASTEXITCODE -ne 0) { throw "WebView2 could not verify the second native core click" }
+        $openedState = ($openedStateOutput -join "`n") | ConvertFrom-Json
+        if ($openedState.layout -ne "compact" -or -not $openedState.input_open) {
+            $closedFrame = if ($null -eq $closedInputWindow) { "missing" } else { "[$($closedInputWindow.X),$($closedInputWindow.Y),$($closedInputWindow.Width),$($closedInputWindow.Height)]" }
+            throw "PRESENCE_SINGLE_CLICK_TOGGLE_FAILED: second click did not pin quick input; state=$($openedState | ConvertTo-Json -Compress), closed_state=$($closedState | ConvertTo-Json -Compress), anchor=[$($activeAnchor.X),$($activeAnchor.Y)], input_frame=$closedFrame, root_at_anchor=$closedRootAtCore, input_hwnd=$($closedInputWindow.Handle)"
+        }
     }
     $activeLenses = @(Get-LensWindows $process.Id)
     if ($activeLenses.Count -gt 0) {
@@ -553,7 +577,6 @@ try {
     $inputDeltaY = $null
     $renderLifecycleIndependent = $null
     if ($VerifyRegressions) {
-        $inputProbeScript = Join-Path $root "desktop\scripts\probe-presence-input.mjs"
         $menuProbeOutput = & node $inputProbeScript --port $port --action menu
         if ($LASTEXITCODE -ne 0) { throw "WebView2 companion menu regression probe failed" }
         $menuProbe = ($menuProbeOutput -join "`n") | ConvertFrom-Json
@@ -592,7 +615,7 @@ try {
         }
         [FairyNativeProbe]::LeftButtonDown()
         try {
-            Start-Sleep -Milliseconds 80
+            Start-Sleep -Milliseconds 340
             foreach ($step in 1..6) {
                 $x = $dragStartX + [int][Math]::Round(-48 * ($step / 6.0))
                 $y = $dragStartY + [int][Math]::Round(-48 * ($step / 6.0))
@@ -647,10 +670,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "WebView2 could not close pet-input after native regression checks" }
     Start-Sleep -Milliseconds 500
     $inputWindow = Get-Window $process.Id "Fairy Presence Input"
-    if ($null -eq $inputWindow -or $inputWindow.Visible -or
+    if ($null -eq $inputWindow -or -not $inputWindow.Visible -or
         [Math]::Abs($inputWindow.Width - $expectedInputWidth) -gt 2 -or
         [Math]::Abs($inputWindow.Height - $expectedInputHeight) -gt 2) {
-        throw "pet-input did not return to its hidden fixed-allocation state"
+        throw "pet-input did not return to its circular fixed-allocation core state"
     }
 
     $probeOutput = & node $probeScript --port $port --expected-mode $ExpectedMode --duration-seconds 0
@@ -699,10 +722,10 @@ try {
         render_pass_through = $true
         hover_did_not_focus = $hoverDidNotFocus
         cursor_injection_available = $cursorInjectionAvailable
-        input_returned_to_hidden_state = $true
+        input_returned_to_core_state = $true
         topmost_group = $true
         tray_survived_main_close = $true
-        input_hidden_at_rest = $true
+        input_core_proxy_at_rest = $true
         legacy_magnifier_surfaces = 0
         input_device_pixel_ratio = if ($VerifyRegressions) { $inputProbe.device_pixel_ratio } else { $null }
         input_edge_delta_physical = if ($VerifyRegressions) { $inputProbe.edge_delta_physical } else { $null }
