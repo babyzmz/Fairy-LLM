@@ -14,6 +14,7 @@ description = "Windows-first desktop shell for Fairy V3"
 authors = ["Fairy"]
 edition = "2021"
 autobins = false
+default-run = "fairy"
 
 [[bin]]
 name = "fairy"
