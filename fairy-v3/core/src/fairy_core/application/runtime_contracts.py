@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from uuid import UUID
 
 from fairy_core.domain.execution import PreviewSession, RuntimeSession
@@ -14,6 +15,27 @@ class PreviewStartRequest:
     idempotency_key: str
     workspace_id: UUID | None = None
     version_id: UUID | None = None
+    expected_workspace_revision: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.idempotency_key.strip():
+            raise ValueError("idempotency_key is required")
+
+
+class PreviewActivationOutcome(StrEnum):
+    READY = "ready"
+    STARTING = "starting"
+    WAITING_FOR_SLOT = "waiting_for_slot"
+    NOT_RUNNABLE = "not_runnable"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewActivateRequest:
+    task_id: UUID
+    workspace_id: UUID
+    version_id: UUID
+    idempotency_key: str
     expected_workspace_revision: int | None = None
 
     def __post_init__(self) -> None:
@@ -49,6 +71,17 @@ class PreviewContext:
     task: Task
     runtime: RuntimeSession
     preview: PreviewSession
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewActivationResult:
+    outcome: PreviewActivationOutcome
+    context: PreviewContext | None
+    adapter: str | None
+    capacity: int
+    active_count: int
+    evicted_preview_id: UUID | None = None
+    public_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -15,7 +15,12 @@ from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import ExecutionPolicyResolver
 from fairy_core.domain.errors import InvalidTransitionError
-from fairy_core.domain.execution import PreviewSession, PreviewStatus, RuntimeSession
+from fairy_core.domain.execution import (
+    PreviewSession,
+    PreviewStatus,
+    PreviewVisibility,
+    RuntimeSession,
+)
 from fairy_core.domain.models import Conversation, Project, ScopeContract, Task
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
 from fairy_core.runtime.models import RuntimeExecutorError
@@ -329,6 +334,22 @@ class RuntimeApplicationSupport:
             if project is not None and project.active_preview_id == preview.id:
                 project.active_preview_id = None
                 state.save_project(project)
+
+    @staticmethod
+    def _set_active_preview(state: StateStore, preview: PreviewSession) -> None:
+        conversation = RuntimeApplicationSupport._require_conversation(
+            state,
+            preview.conversation_id,
+        )
+        conversation.active_preview_id = preview.id
+        state.save_conversation(conversation)
+        if (
+            preview.visibility is PreviewVisibility.PROJECT_ACTIVE
+            and preview.project_id is not None
+        ):
+            project = RuntimeApplicationSupport._require_project(state, preview.project_id)
+            project.active_preview_id = preview.id
+            state.save_project(project)
 
     def _start_worker_id(self, runtime_id: UUID) -> str:
         return f"runtime:{runtime_id}:{self._instance_id}"
