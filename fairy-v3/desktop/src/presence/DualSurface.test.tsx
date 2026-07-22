@@ -485,6 +485,11 @@ describe("dual presence surfaces", () => {
     );
 
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    expect(host.host.applyInputPresentation).toHaveBeenCalledWith(expect.objectContaining({
+      layout: "hidden",
+      interactive: false,
+      request_focus: false,
+    }));
     expect(screen.getByRole("button", { name: "Open Fairy quick input" })).toBeInTheDocument();
     act(() => host.requestInput());
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("compact", 280));

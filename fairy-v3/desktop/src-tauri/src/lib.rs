@@ -1655,6 +1655,10 @@ struct PetInputPresentationRequest {
     request_focus: bool,
 }
 
+fn pet_input_presentation_is_interactive(input: &PetInputPresentationRequest) -> bool {
+    input.interactive && !matches!(input.layout, PetInputLayout::Hidden)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 struct PetInputPresentationCommit {
     session_id: u64,
@@ -2130,9 +2134,15 @@ async fn pet_input_presentation_apply(
 ) -> Result<PetInputPresentationCommit, String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
-    if input.request_focus && !input.interactive {
+    if input.request_focus && (!input.interactive || matches!(input.layout, PetInputLayout::Hidden))
+    {
         return Err("PET_INPUT_PRESENTATION_FOCUS_REQUIRES_INTERACTION".to_owned());
     }
+
+    // Hidden WebView2 windows must remain both non-focusable and click-through. Re-enabling
+    // interaction after hide can make WebView2 show its full fixed allocation, which appears as
+    // an opaque strip and blocks the desktop outside Fairy's circular core.
+    let interactive = pet_input_presentation_is_interactive(&input);
 
     let mut fence = state
         .pet_input_presentation
@@ -2146,7 +2156,7 @@ async fn pet_input_presentation_apply(
     // Renderer publication happens only after this transaction returns the same revision.
     apply_pet_input_interactive(&window, state.inner(), false)?;
     apply_pet_input_layout(&window, state.inner(), input.layout, input.compact_width)?;
-    if input.interactive {
+    if interactive {
         apply_pet_input_interactive(&window, state.inner(), true)?;
     }
     if input.request_focus {
@@ -4574,7 +4584,24 @@ pub fn run() {
 
 #[cfg(test)]
 mod pet_input_presentation_tests {
-    use super::PetInputPresentationFence;
+    use super::{
+        pet_input_presentation_is_interactive, PetInputLayout, PetInputPresentationFence,
+        PetInputPresentationRequest,
+    };
+
+    #[test]
+    fn hidden_layout_never_reenables_the_webview_surface() {
+        let request = PetInputPresentationRequest {
+            session_id: 1,
+            revision: 1,
+            layout: PetInputLayout::Hidden,
+            compact_width: None,
+            interactive: true,
+            request_focus: false,
+        };
+
+        assert!(!pet_input_presentation_is_interactive(&request));
+    }
 
     #[test]
     fn new_session_fences_every_revision_from_the_previous_webview() {

@@ -480,7 +480,7 @@ export function PresenceInputApp({
   const retainingExitSurface =
     requestedLayout === "hidden" && layout !== "hidden";
   const contentVisible = requestedContentVisible;
-  const surfaceInteractive = (
+  const surfaceInteractive = layout !== "hidden" && (
     retainingExitSurface ? false : requestedSurfaceInteractive
   );
   const capsuleVisible =
