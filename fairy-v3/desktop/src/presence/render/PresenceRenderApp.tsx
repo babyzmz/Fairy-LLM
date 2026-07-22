@@ -299,6 +299,7 @@ export function PresenceRenderApp({
     particles_enabled:
       renderSettings.particles_enabled && experimentMode !== "no-particles",
     optics_mode: renderSettings.optics_mode,
+    activation_style: renderSettings.activation_style,
     idle_for_ms: idleForMs,
     target_frame_rate: targetFrameRate,
     frame_rate_limit: runtimePolicy.frame_rate_limit,

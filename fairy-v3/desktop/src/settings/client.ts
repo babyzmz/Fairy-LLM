@@ -55,6 +55,7 @@ import type { PresenceRendererHealth } from "../presence/transport/rendererHealt
 export type ThemePreference = "system" | "dark" | "light";
 export type PetRendererMode = "auto" | "liquid" | "compatibility";
 export type PetOpticsMode = "standard" | "enhanced";
+export type PetActivationStyle = "classic" | "fluid_response";
 export const DESKTOP_PREFERENCES_EVENT = "fairy-desktop-preferences";
 
 export interface PetAnchorPreference {
@@ -98,6 +99,7 @@ export interface DesktopPreferences {
   pet_remember_position: boolean;
   pet_renderer_mode: PetRendererMode;
   pet_optics_mode: PetOpticsMode;
+  pet_activation_style: PetActivationStyle;
   pet_target_fps: 60 | 144 | 300;
   pet_anchor: PetAnchorPreference | null;
   developer_mode: boolean;

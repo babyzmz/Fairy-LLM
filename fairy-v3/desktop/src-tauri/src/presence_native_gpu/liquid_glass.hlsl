@@ -19,7 +19,7 @@ cbuffer PresenceConstants : register(b0) {
     float shape_bridge;
     float shape_capsule;
     float expansion_direction;
-    float visual_state;
+    float activation_style;
     float material_opacity;
     float voice_level;
     float reduced_motion;
@@ -34,7 +34,7 @@ cbuffer PresenceConstants : register(b0) {
     float state_pulse;
     float state_notify_wave;
     float state_voice_mix;
-    float state_register_padding;
+    float state_activation;
     float3 state_accent;
     float state_transition_progress;
     float2 drag_direction;
@@ -256,6 +256,34 @@ float smootherstep_range(float edge_start, float edge_end, float value) {
         * (progress * (progress * 6.0 - 15.0) + 10.0);
 }
 
+float fluid_activation_value() {
+    return saturate(activation_style * state_activation);
+}
+
+float closed_harmonic(float angle, float density, float phase) {
+    float safe_density = max(density, 1.0);
+    float lower = floor(safe_density);
+    float blend = smoothstep(0.0, 1.0, frac(safe_density));
+    return lerp(
+        sin(angle * lower + phase),
+        sin(angle * (lower + 1.0) + phase),
+        blend
+    );
+}
+
+float fluid_surface_wave(float2 local_px, float radial_progress) {
+    float activation = fluid_activation_value();
+    if (activation <= 0.0001) return 0.0;
+    float scale = max(surface_scale, 0.01);
+    float2 core_delta = (local_px - core_center_px()) / scale;
+    float angle = atan2(core_delta.y, core_delta.x);
+    float time = reduced_motion > 0.5 ? 0.0 : state_elapsed_seconds;
+    float primary = closed_harmonic(angle, 3.35, -time * 1.05);
+    float counter = closed_harmonic(angle, 5.20, time * 0.62 + 1.7);
+    float edge_response = smootherstep_range(0.58, 0.96, radial_progress);
+    return (primary * 0.68 + counter * 0.32) * edge_response * activation;
+}
+
 float continuous_refraction_px(float radial_progress) {
     // Preserve the center, then bend a wider shoulder into a pronounced outer lens. The C2 ramps
     // overlap into one monotonic coordinate field; they are weights, not separately sampled rings.
@@ -281,11 +309,19 @@ float3 sample_continuous_liquid_glass(
     float displacement_px = continuous_refraction_px(radial_progress)
         * shape_refraction_scale
         * surface_scale;
-    float2 base_screen_px = surface_origin_px + local_px - normal * displacement_px;
+    float fluid_wave = fluid_surface_wave(local_px, radial_progress);
+    float activation = fluid_activation_value();
+    displacement_px *= 1.0 + activation * 0.06 + fluid_wave * 0.025;
+    float2 tangent = float2(-normal.y, normal.x);
+    float tangential_response_px = fluid_wave * 0.34 * surface_scale;
+    float2 base_screen_px = surface_origin_px + local_px
+        - normal * displacement_px
+        + tangent * tangential_response_px;
     float dispersion_px = smootherstep_range(0.86, 1.0, radial_progress)
         * EDGE_DISPERSION_MAX_PX
         * shape_refraction_scale
-        * surface_scale;
+        * surface_scale
+        * (1.0 + activation * 0.08);
     float3 center = sample_desktop(base_screen_px);
     float3 refracted = float3(
         sample_desktop(base_screen_px - normal * dispersion_px).r,
@@ -296,7 +332,6 @@ float3 sample_continuous_liquid_glass(
     // A sub-pixel four-tap Kawase kernel softens only the outermost caustic. Its contribution is
     // deliberately bounded so text remains a single image instead of becoming a blurred copy.
     float blur_mix = smoothstep(0.90, 1.0, radial_progress) * 0.045;
-    float2 tangent = float2(-normal.y, normal.x);
     float kernel_radius = 0.45 * surface_scale;
     float3 kawase = (
         sample_desktop(base_screen_px + normal * kernel_radius)

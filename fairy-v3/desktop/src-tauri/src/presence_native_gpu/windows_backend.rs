@@ -8,9 +8,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::{
-    DdaExclusionStatus, MonitorHandoffState, NativeGpuBackend, NativeGpuConfig, NativeGpuError,
-    NativeGpuExpansionDirection, NativeGpuLifecycle, NativeGpuOpticsSource, NativeGpuPresentation,
-    NativeGpuStatus, NativeGpuVisualState,
+    DdaExclusionStatus, MonitorHandoffState, NativeGpuActivationStyle, NativeGpuBackend,
+    NativeGpuConfig, NativeGpuError, NativeGpuExpansionDirection, NativeGpuLifecycle,
+    NativeGpuOpticsSource, NativeGpuPresentation, NativeGpuStatus, NativeGpuVisualState,
 };
 use crate::presence_coordinator::PhysicalFrame;
 use fairy_windows_capture_dda::{
@@ -1556,6 +1556,7 @@ impl NativeStateMotion {
 #[derive(Clone, Copy, Debug)]
 struct NativeVisualStyle {
     energy: f32,
+    activation: f32,
     accent: [f32; 3],
     pulse: f32,
     notify_wave: f32,
@@ -1566,6 +1567,7 @@ impl NativeVisualStyle {
     fn lerp(self, target: Self, progress: f32) -> Self {
         Self {
             energy: lerp(self.energy, target.energy, progress),
+            activation: lerp(self.activation, target.activation, progress),
             accent: [
                 lerp(self.accent[0], target.accent[0], progress),
                 lerp(self.accent[1], target.accent[1], progress),
@@ -1651,6 +1653,25 @@ fn native_visual_style(
         NativeGpuVisualState::Suspended | NativeGpuVisualState::Sleeping => [0.52, 0.60, 0.66],
         _ => [0.34, 0.78, 1.0],
     };
+    let activation = match state {
+        NativeGpuVisualState::Idle
+        | NativeGpuVisualState::Returning
+        | NativeGpuVisualState::Repositioning
+        | NativeGpuVisualState::Suspended
+        | NativeGpuVisualState::Sleeping => 0.0,
+        NativeGpuVisualState::Aware
+        | NativeGpuVisualState::Forming
+        | NativeGpuVisualState::Input
+        | NativeGpuVisualState::Options => 0.46,
+        NativeGpuVisualState::Submitting => 0.62,
+        NativeGpuVisualState::Thinking => 0.80,
+        NativeGpuVisualState::Tool => 0.92,
+        NativeGpuVisualState::Responding => 0.78,
+        NativeGpuVisualState::Speaking => 0.78 + voice_level.clamp(0.0, 1.0) * 0.22,
+        NativeGpuVisualState::Notify => 0.68,
+        NativeGpuVisualState::Approval => 0.72,
+        NativeGpuVisualState::Error => 0.62,
+    };
     let pulse = if reduced_motion {
         1.0
     } else {
@@ -1671,6 +1692,7 @@ fn native_visual_style(
     };
     NativeVisualStyle {
         energy,
+        activation,
         accent,
         pulse,
         notify_wave,
@@ -1999,7 +2021,7 @@ struct PresenceConstants {
     shape_bridge: f32,
     shape_capsule: f32,
     expansion_direction: f32,
-    visual_state: f32,
+    activation_style: f32,
     material_opacity: f32,
     voice_level: f32,
     reduced_motion: f32,
@@ -2014,7 +2036,7 @@ struct PresenceConstants {
     state_pulse: f32,
     state_notify_wave: f32,
     state_voice_mix: f32,
-    state_register_padding: f32,
+    state_activation: f32,
     state_accent: [f32; 3],
     state_transition_progress: f32,
     drag_direction: [f32; 2],
@@ -2300,7 +2322,7 @@ impl NativeCompositionRenderer {
             shape_bridge: shape.bridge,
             shape_capsule: shape.capsule,
             expansion_direction: expansion_direction_value(presentation.expansion_direction),
-            visual_state: visual_state_value(presentation.visual_state),
+            activation_style: activation_style_value(presentation.activation_style),
             material_opacity: presentation.opacity,
             voice_level: presentation.voice_level,
             reduced_motion: f32::from(presentation.reduced_motion),
@@ -2315,7 +2337,7 @@ impl NativeCompositionRenderer {
             state_pulse: state_sample.style.pulse,
             state_notify_wave: state_sample.style.notify_wave,
             state_voice_mix: state_sample.style.voice_mix,
-            state_register_padding: 0.0,
+            state_activation: state_sample.style.activation,
             state_accent: state_sample.style.accent,
             state_transition_progress: state_sample.transition_progress,
             drag_direction: drag.direction,
@@ -2451,7 +2473,7 @@ impl NativeCompositionRenderer {
             shape_bridge: 0.0,
             shape_capsule: f32::from(presentation.input_surface_visible),
             expansion_direction: expansion_direction_value(presentation.expansion_direction),
-            visual_state: visual_state_value(presentation.visual_state),
+            activation_style: activation_style_value(presentation.activation_style),
             material_opacity: presentation.opacity,
             voice_level: 0.0,
             reduced_motion: f32::from(presentation.reduced_motion),
@@ -2466,7 +2488,7 @@ impl NativeCompositionRenderer {
             state_pulse: 1.0,
             state_notify_wave: 0.0,
             state_voice_mix: 0.0,
-            state_register_padding: 0.0,
+            state_activation: 0.0,
             state_accent: [0.34, 0.74, 0.92],
             state_transition_progress: 1.0,
             drag_direction: [1.0, 0.0],
@@ -3366,25 +3388,10 @@ fn percentile(metrics: &VecDeque<f64>, percentile: f64) -> Option<f64> {
     values.get(index).copied()
 }
 
-fn visual_state_value(state: NativeGpuVisualState) -> f32 {
-    match state {
-        NativeGpuVisualState::Idle => 0.0,
-        NativeGpuVisualState::Aware => 1.0,
-        NativeGpuVisualState::Forming => 2.0,
-        NativeGpuVisualState::Input => 3.0,
-        NativeGpuVisualState::Options => 4.0,
-        NativeGpuVisualState::Submitting => 5.0,
-        NativeGpuVisualState::Thinking => 6.0,
-        NativeGpuVisualState::Tool => 7.0,
-        NativeGpuVisualState::Responding => 8.0,
-        NativeGpuVisualState::Speaking => 9.0,
-        NativeGpuVisualState::Notify => 10.0,
-        NativeGpuVisualState::Approval => 11.0,
-        NativeGpuVisualState::Error => 12.0,
-        NativeGpuVisualState::Returning => 13.0,
-        NativeGpuVisualState::Suspended => 14.0,
-        NativeGpuVisualState::Repositioning => 15.0,
-        NativeGpuVisualState::Sleeping => 16.0,
+fn activation_style_value(style: NativeGpuActivationStyle) -> f32 {
+    match style {
+        NativeGpuActivationStyle::Classic => 0.0,
+        NativeGpuActivationStyle::FluidResponse => 1.0,
     }
 }
 
@@ -3474,7 +3481,9 @@ mod tests {
     fn liquid_glass_shader_uses_continuous_visual_style_inputs() {
         let shader = include_str!("liquid_glass.hlsl");
         for required in [
+            "float activation_style;",
             "float state_energy;",
+            "float state_activation;",
             "float state_pulse;",
             "float state_notify_wave;",
             "float state_voice_mix;",
@@ -3484,6 +3493,48 @@ mod tests {
         }
         assert!(!shader.contains("visual_state =="));
         assert!(!shader.contains("visual_state !="));
+    }
+
+    #[test]
+    fn fluid_response_is_opt_in_and_idle_keeps_the_classic_identity_layer() {
+        let idle = native_visual_style(NativeGpuVisualState::Idle, 0.0, 0.0, 0.0, false);
+        let aware = native_visual_style(NativeGpuVisualState::Aware, 0.0, 0.0, 0.0, false);
+        let tool = native_visual_style(NativeGpuVisualState::Tool, 0.0, 0.0, 0.0, false);
+        let repositioning =
+            native_visual_style(NativeGpuVisualState::Repositioning, 0.0, 0.0, 0.0, false);
+
+        assert_eq!(
+            activation_style_value(NativeGpuActivationStyle::Classic),
+            0.0
+        );
+        assert_eq!(
+            activation_style_value(NativeGpuActivationStyle::FluidResponse),
+            1.0
+        );
+        assert_eq!(idle.activation, 0.0);
+        assert_eq!(repositioning.activation, 0.0);
+        assert!(aware.activation > 0.0);
+        assert!(tool.activation > aware.activation);
+    }
+
+    #[test]
+    fn fluid_response_only_modulates_the_edge_and_keeps_the_identity_pass_classic() {
+        let shader = include_str!("liquid_glass.hlsl");
+        let main = shader
+            .split_once("float4 ps_main")
+            .map_or(shader, |(_, body)| body);
+        let desktop = main
+            .find("sample_continuous_liquid_glass")
+            .expect("desktop refraction call");
+        let composite = main
+            .find("float3 output_premultiplied")
+            .expect("final premultiplied composite");
+
+        assert!(desktop < composite);
+        assert!(shader.contains("return saturate(activation_style * state_activation)"));
+        assert!(shader.contains("float fluid_surface_wave"));
+        assert!(!shader.contains("strand_line"));
+        assert!(!shader.contains("fluid_strands_identity"));
     }
 
     #[test]
@@ -3541,6 +3592,10 @@ mod tests {
 
         assert!(sleeping.energy < idle.energy);
         assert!(tool.energy > idle.energy);
+        assert_eq!(idle.activation, 0.0);
+        assert_eq!(sleeping.activation, 0.0);
+        assert!(tool.activation > 0.0);
+        assert!(speaking.activation > 0.0);
         assert_eq!(tool.accent, [0.96, 0.67, 0.24]);
         assert_eq!(speaking.accent, [0.34, 0.86, 0.72]);
         assert!((speaking.voice_mix - 0.8).abs() < 0.000_1);
@@ -3551,6 +3606,7 @@ mod tests {
 
     fn assert_visual_style_close(left: NativeVisualStyle, right: NativeVisualStyle) {
         assert!((left.energy - right.energy).abs() < 0.000_1);
+        assert!((left.activation - right.activation).abs() < 0.000_1);
         assert!((left.pulse - right.pulse).abs() < 0.000_1);
         assert!((left.notify_wave - right.notify_wave).abs() < 0.000_1);
         assert!((left.voice_mix - right.voice_mix).abs() < 0.000_1);

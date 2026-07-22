@@ -196,6 +196,10 @@ describe("SettingsApp", () => {
     );
     expect(await screen.findByText(/GPU-acquires the active monitor/)).toBeVisible();
     await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Material response" }),
+      "classic",
+    );
+    await userEvent.selectOptions(
       screen.getByRole("combobox", { name: "Animation frame rate" }),
       "300",
     );
@@ -214,6 +218,7 @@ describe("SettingsApp", () => {
       .map(([, args]) => (args as { input: { preferences: DesktopPreferences } }).input.preferences);
     expect(updates.some((preferences) => preferences.pet_renderer_mode === "compatibility")).toBe(true);
     expect(updates.some((preferences) => preferences.pet_optics_mode === "enhanced")).toBe(true);
+    expect(updates.some((preferences) => preferences.pet_activation_style === "classic")).toBe(true);
     expect(updates.some((preferences) => preferences.pet_target_fps === 300)).toBe(true);
     expect(updates.some((preferences) => preferences.pet_do_not_disturb)).toBe(true);
     expect(updates.at(-1)?.pet_remember_position).toBe(false);
@@ -866,6 +871,7 @@ function defaultPreferences(): DesktopPreferences {
     pet_remember_position: true,
     pet_renderer_mode: "auto",
     pet_optics_mode: "standard",
+    pet_activation_style: "fluid_response",
     pet_target_fps: 60,
     pet_anchor: null,
     developer_mode: false,

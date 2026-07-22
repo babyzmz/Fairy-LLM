@@ -35,6 +35,15 @@ pub enum PetOpticsMode {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum PetActivationStyle {
+    Classic,
+    #[default]
+    #[serde(alias = "fluid_strands")]
+    FluidResponse,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RealtimeProviderPreference {
     #[default]
     Auto,
@@ -110,6 +119,8 @@ pub struct DesktopPreferences {
     pub pet_renderer_mode: PetRendererMode,
     #[serde(default)]
     pub pet_optics_mode: PetOpticsMode,
+    #[serde(default)]
+    pub pet_activation_style: PetActivationStyle,
     #[serde(default = "default_pet_target_fps")]
     pub pet_target_fps: u16,
     #[serde(default)]
@@ -154,6 +165,7 @@ impl Default for DesktopPreferences {
             pet_remember_position: true,
             pet_renderer_mode: PetRendererMode::Auto,
             pet_optics_mode: PetOpticsMode::Standard,
+            pet_activation_style: PetActivationStyle::FluidResponse,
             pet_target_fps: default_pet_target_fps(),
             pet_anchor: None,
             developer_mode: false,
@@ -235,6 +247,10 @@ impl DesktopPreferencesStore {
             .get("schema_version")
             .and_then(serde_json::Value::as_u64);
         let legacy = matches!(schema_version, Some(1..=6));
+        let retired_activation_style = value
+            .get("pet_activation_style")
+            .and_then(serde_json::Value::as_str)
+            == Some("fluid_strands");
         let legacy_memory = legacy_memory_settings(&value, legacy);
         let mut preferences = match serde_json::from_slice::<DesktopPreferences>(&bytes) {
             Ok(preferences) => preferences,
@@ -256,7 +272,7 @@ impl DesktopPreferencesStore {
         Ok(StartupDesktopPreferences {
             preferences,
             legacy_memory: None,
-            migration_required: false,
+            migration_required: retired_activation_style,
         })
     }
 
@@ -485,7 +501,8 @@ fn replace_file(source: &Path, destination: &Path) -> Result<(), std::io::Error>
 mod tests {
     use super::{
         DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore,
-        DesktopPreferencesUpdate, PetAnchorPreference, PetOpticsMode, PetPreferencesUpdate,
+        DesktopPreferencesUpdate, PetActivationStyle, PetAnchorPreference, PetOpticsMode,
+        PetPreferencesUpdate,
     };
 
     #[test]
@@ -600,6 +617,7 @@ mod tests {
             "pet_remember_position",
             "pet_renderer_mode",
             "pet_optics_mode",
+            "pet_activation_style",
             "pet_target_fps",
             "pet_anchor",
         ] {
@@ -618,6 +636,10 @@ mod tests {
         assert!(migrated.pet_muted);
         assert_eq!(migrated.pet_size_percent, 100);
         assert_eq!(migrated.pet_renderer_mode, super::PetRendererMode::Auto);
+        assert_eq!(
+            migrated.pet_activation_style,
+            PetActivationStyle::FluidResponse
+        );
         assert_eq!(migrated.pet_target_fps, 60);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -668,6 +690,71 @@ mod tests {
         assert_eq!(migrated.schema_version, 7);
         assert_eq!(migrated.pet_optics_mode, PetOpticsMode::Standard);
         assert_eq!(store.load().expect("reload migrated"), migrated);
+    }
+
+    #[test]
+    fn existing_version_seven_preferences_default_to_fluid_response_with_classic_available() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        let path = directory.path().join("preferences/desktop.json");
+        std::fs::create_dir_all(path.parent().expect("preferences parent"))
+            .expect("create preferences parent");
+        let mut stored =
+            serde_json::to_value(DesktopPreferences::default()).expect("serialize defaults");
+        stored
+            .as_object_mut()
+            .expect("preferences object")
+            .remove("pet_activation_style");
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&stored).expect("stored bytes"),
+        )
+        .expect("write stored preferences");
+
+        let loaded = store.load().expect("load version seven preferences");
+        assert_eq!(
+            loaded.pet_activation_style,
+            PetActivationStyle::FluidResponse
+        );
+
+        let mut classic = loaded.clone();
+        classic.pet_activation_style = PetActivationStyle::Classic;
+        let saved = store
+            .update(DesktopPreferencesUpdate {
+                expected_revision: loaded.revision,
+                preferences: classic,
+            })
+            .expect("save classic fallback");
+        assert_eq!(saved.pet_activation_style, PetActivationStyle::Classic);
+    }
+
+    #[test]
+    fn retired_fluid_strands_preference_is_rewritten_without_restoring_strands() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = DesktopPreferencesStore::new(directory.path());
+        let path = directory.path().join("preferences/desktop.json");
+        std::fs::create_dir_all(path.parent().expect("preferences parent"))
+            .expect("create preferences parent");
+        let mut stored =
+            serde_json::to_value(DesktopPreferences::default()).expect("serialize defaults");
+        stored.as_object_mut().expect("preferences object").insert(
+            "pet_activation_style".to_owned(),
+            serde_json::json!("fluid_strands"),
+        );
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&stored).expect("stored bytes"),
+        )
+        .expect("write retired preferences");
+
+        let loaded = store.load().expect("migrate retired activation style");
+        assert_eq!(
+            loaded.pet_activation_style,
+            PetActivationStyle::FluidResponse
+        );
+        let rewritten = std::fs::read_to_string(path).expect("read rewritten preferences");
+        assert!(rewritten.contains("\"fluid_response\""));
+        assert!(!rewritten.contains("fluid_strands"));
     }
 
     #[test]

@@ -81,6 +81,14 @@ pub enum NativeGpuVisualState {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum NativeGpuActivationStyle {
+    Classic,
+    #[default]
+    FluidResponse,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum NativeGpuExpansionDirection {
     Left,
     #[default]
@@ -113,6 +121,8 @@ pub struct NativeGpuPresentation {
     pub increased_contrast: bool,
     #[serde(default = "default_particles_enabled")]
     pub particles_enabled: bool,
+    #[serde(default)]
+    pub activation_style: NativeGpuActivationStyle,
     #[serde(default = "default_frame_rate_limit")]
     pub frame_rate_limit: u16,
     #[serde(default)]
@@ -150,6 +160,7 @@ impl Default for NativeGpuPresentation {
             reduced_transparency: false,
             increased_contrast: false,
             particles_enabled: true,
+            activation_style: NativeGpuActivationStyle::FluidResponse,
             frame_rate_limit: default_frame_rate_limit(),
             shape_droplet: 0.0,
             shape_bridge: 0.0,

@@ -24,6 +24,7 @@ export interface PresenceRenderSnapshot {
   opacity: number;
   particles_enabled: boolean;
   optics_mode: "standard" | "enhanced";
+  activation_style?: "classic" | "fluid_response";
   idle_for_ms: number;
   target_frame_rate: 60 | 144 | 300;
   frame_rate_limit: 15 | 30 | 60 | 144 | 300;

@@ -89,6 +89,7 @@ struct PetRenderSettings {
     schema_version: u16,
     mode: desktop_preferences::PetRendererMode,
     optics_mode: desktop_preferences::PetOpticsMode,
+    activation_style: desktop_preferences::PetActivationStyle,
     size_scale: f32,
     opacity: f32,
     motion_enabled: bool,
@@ -99,9 +100,10 @@ struct PetRenderSettings {
 impl From<&DesktopPreferences> for PetRenderSettings {
     fn from(preferences: &DesktopPreferences) -> Self {
         Self {
-            schema_version: 3,
+            schema_version: 4,
             mode: preferences.pet_renderer_mode.clone(),
             optics_mode: preferences.pet_optics_mode,
+            activation_style: preferences.pet_activation_style,
             size_scale: f32::from(preferences.pet_size_percent) / 100.0,
             opacity: f32::from(preferences.pet_opacity_percent) / 100.0,
             motion_enabled: preferences.pet_motion_enabled,

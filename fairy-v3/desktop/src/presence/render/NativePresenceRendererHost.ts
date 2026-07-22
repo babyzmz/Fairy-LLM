@@ -108,6 +108,7 @@ export interface NativeGpuPresentationRequest {
   reduced_transparency: boolean;
   increased_contrast: boolean;
   particles_enabled: boolean;
+  activation_style: "classic" | "fluid_response";
   frame_rate_limit: NativeGpuFrameRateLimit;
   shape_droplet: number;
   shape_bridge: number;
@@ -587,6 +588,7 @@ export function nativePresentationForSnapshot(
     reduced_transparency: snapshot.reduced_transparency === true,
     increased_contrast: snapshot.increased_contrast === true,
     particles_enabled: snapshot.particles_enabled,
+    activation_style: snapshot.activation_style ?? "fluid_response",
     frame_rate_limit: nativeFrameRateLimit(snapshot),
     shape_droplet: shape.droplet,
     shape_bridge: shape.bridge,

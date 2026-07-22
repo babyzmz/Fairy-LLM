@@ -12,9 +12,10 @@ describe("presence render settings", () => {
     await expect(loadNativePresenceRenderSettings(async (command) => {
       expect(command).toBe("pet_render_settings_get");
       return {
-        schema_version: 3,
+        schema_version: 4,
         mode: "liquid",
         optics_mode: "enhanced",
+        activation_style: "fluid_response",
         size_scale: 1.05,
         opacity: 1,
         motion_enabled: true,
@@ -22,9 +23,10 @@ describe("presence render settings", () => {
         target_frame_rate: 300,
       };
     })).resolves.toEqual({
-      schema_version: 3,
+      schema_version: 4,
       mode: "liquid",
       optics_mode: "enhanced",
+      activation_style: "fluid_response",
       size_scale: 1.05,
       opacity: 1,
       motion_enabled: true,
@@ -35,9 +37,10 @@ describe("presence render settings", () => {
 
   it("rejects an expanded native settings payload", async () => {
     await expect(loadNativePresenceRenderSettings(async () => ({
-      schema_version: 3,
+      schema_version: 4,
       mode: "liquid",
       optics_mode: "enhanced",
+      activation_style: "fluid_response",
       size_scale: 1,
       opacity: 1,
       motion_enabled: true,
@@ -50,9 +53,10 @@ describe("presence render settings", () => {
   it("projects only bounded renderer fields from desktop preferences", () => {
     const projected = safeRenderSettingsFromPreferences(preferences());
     expect(projected).toEqual({
-      schema_version: 3,
+      schema_version: 4,
       mode: "liquid",
       optics_mode: "standard",
+      activation_style: "fluid_response",
       size_scale: 1.25,
       opacity: 0.84,
       motion_enabled: false,
@@ -121,6 +125,7 @@ function preferences(): DesktopPreferences {
     pet_remember_position: true,
     pet_renderer_mode: "liquid",
     pet_optics_mode: "standard",
+    pet_activation_style: "fluid_response",
     pet_target_fps: 300,
     pet_anchor: { monitor_id: "primary", x_ratio: 0.5, y_ratio: 0.5 },
     developer_mode: false,

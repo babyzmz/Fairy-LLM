@@ -202,6 +202,7 @@ function browserPreferences(): DesktopPreferences {
     pet_remember_position: true,
     pet_renderer_mode: "auto",
     pet_optics_mode: "standard",
+    pet_activation_style: "fluid_response",
     pet_target_fps: 60,
     pet_anchor: null,
     developer_mode: false,

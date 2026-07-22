@@ -181,6 +181,7 @@ describe("NativePresenceRendererHost", () => {
         voice_level: 0,
         reduced_motion: false,
         particles_enabled: true,
+        activation_style: "fluid_response",
         frame_rate_limit: 144,
         shape_droplet: 0,
         shape_bridge: 0,
@@ -584,6 +585,22 @@ describe("native presentation projection", () => {
       interaction: interaction({ phase: "returning" }),
     }));
     expect(returning.returning).toBe(true);
+  });
+
+  it("forwards the dedicated classic fallback without changing the renderer backend", () => {
+    const fluid = nativePresentationForSnapshot(snapshot({
+      activation_style: "fluid_response",
+    }));
+    const classic = nativePresentationForSnapshot(snapshot({
+      activation_style: "classic",
+    }));
+
+    expect(fluid.activation_style).toBe("fluid_response");
+    expect(classic.activation_style).toBe("classic");
+    expect(classic).toEqual({
+      ...fluid,
+      activation_style: "classic",
+    });
   });
 
   it("forwards accessibility modes to the native material without changing geometry", () => {
