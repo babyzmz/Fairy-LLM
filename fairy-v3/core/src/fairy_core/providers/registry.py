@@ -196,6 +196,18 @@ class ProviderRegistry:
         assert last_error is not None
         raise last_error
 
+    def stream_once(
+        self,
+        request: ModelRequest,
+        cancellation: CancellationToken,
+    ) -> Iterator[ModelDelta]:
+        """Run exactly one provider attempt without fallback or automatic retry."""
+
+        cancellation.raise_if_cancelled()
+        provider = self._require_provider(request.profile_id)
+        self._validate_request(provider, request)
+        yield from self._validated_stream(provider, request, cancellation)
+
     @staticmethod
     def _validated_stream(
         provider: ModelProvider,

@@ -863,6 +863,7 @@ def test_local_service_reports_unconfigured_runtime_fail_closed(tmp_path: Path) 
 
 def test_core_method_catalog_is_the_single_public_method_authority() -> None:
     assert set(CORE_METHODS) == {
+        "ambient.dialogue.evaluate",
         "approvals.decide",
         "approvals.list",
         "annotations.list",

@@ -238,6 +238,10 @@ from fairy_core.contracts.obsidian import (
     ObsidianVaultItemPageModel,
     ObsidianVaultItemReadInput,
 )
+from fairy_core.contracts.persona import (
+    AmbientDialogueDecisionModel,
+    AmbientDialogueEvaluateInput,
+)
 from fairy_core.contracts.planning import (
     ExecutionPlanContextModel,
     ExecutionPlanCreateInput,
@@ -327,6 +331,12 @@ class CoreMethod:
 
 CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
     {
+        "ambient.dialogue.evaluate": CoreMethod(
+            "ambient.dialogue.evaluate",
+            AmbientDialogueEvaluateInput,
+            AmbientDialogueDecisionModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
         "approvals.decide": CoreMethod(
             "approvals.decide",
             ApprovalDecisionInput,

@@ -1,6 +1,12 @@
 {
   "methods": [
     {
+      "name": "ambient.dialogue.evaluate",
+      "request_model": "AmbientDialogueEvaluateInput",
+      "response_model": "AmbientDialogueDecisionModel",
+      "transport": "local_only"
+    },
+    {
       "name": "annotations.list",
       "request_model": "AnnotationListInput",
       "response_model": "AnnotationResultModel",

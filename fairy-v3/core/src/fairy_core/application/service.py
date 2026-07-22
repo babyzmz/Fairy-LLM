@@ -8,6 +8,7 @@ from weakref import finalize
 
 from pydantic import BaseModel, ValidationError
 
+from fairy_core.application.ambient_dialogue_service import AmbientDialogueService
 from fairy_core.application.assistant_cancellation import AssistantCancellationMixin
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.extension_service import ExtensionService
@@ -35,6 +36,7 @@ from fairy_core.assistant.trace_service import TurnTraceService
 from fairy_core.assistant.turn_scheduler import AssistantTurnScheduler
 from fairy_core.assistant.turn_selection import resolve_turn_model_source
 from fairy_core.browser import BrowserService, BrowserToolExecutor, browser_service_handlers
+from fairy_core.commanding.local_device_bus import LocalDeviceCommandBus
 from fairy_core.commanding.policy import PolicyEngine
 from fairy_core.commanding.registry import ToolRegistry
 from fairy_core.commanding.settings import (
@@ -94,6 +96,12 @@ from fairy_core.model_catalog.ports import ModelCatalogSource
 from fairy_core.obsidian import ObsidianConnector
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
+from fairy_core.persona import (
+    AmbientDialogueGenerator,
+    FairyDialogueDirector,
+    load_default_dialogue_catalog,
+    load_default_persona_authority,
+)
 from fairy_core.presentation.packs import RendererPackInstaller
 from fairy_core.providers import ProviderRegistry
 from fairy_core.research.application import ResearchApplication, ResearchToolExecutor
@@ -278,6 +286,18 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             scope_resolver=application.scope_for_task,
         )
         self._memory_retention = MemoryRetentionCoordinator(unit_of_work_factory)
+        persona_authority = load_default_persona_authority()
+        self._ambient_dialogue = AmbientDialogueService(
+            FairyDialogueDirector(
+                catalog=load_default_dialogue_catalog(),
+                persona=persona_authority,
+            ),
+            AmbientDialogueGenerator(
+                providers=self._provider_registry,
+                command_bus=LocalDeviceCommandBus(registry),
+                persona=persona_authority,
+            ),
+        )
         self._assistant_ledger = AssistantLedgerApplication(
             unit_of_work_factory=unit_of_work_factory,
             scope_resolver=application.scope_for_task,
@@ -409,6 +429,7 @@ class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
             PreviewIdleScheduler(runtime_application) if runtime_application is not None else None
         )
         self._handlers: Mapping[str, Callable[[BaseModel], Any]] = {
+            "ambient.dialogue.evaluate": self._ambient_dialogue.evaluate,
             "approvals.decide": self._decide_approval,
             "approvals.list": self._list_approvals,
             "artifacts.list": self._list_artifacts,

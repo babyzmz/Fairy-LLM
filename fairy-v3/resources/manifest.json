@@ -1,4 +1,27 @@
 {
   "schema_version": 1,
-  "assets": []
+  "assets": [
+    {
+      "id": "fairy-persona-authority-v1",
+      "source_path": "authored/persona-authority.yaml",
+      "destination_path": "persona/persona-authority.yaml",
+      "sha256": "a88a119fcaf6626c02069f9a28b5d6d781443582f18dcbe9f591f2129267a334",
+      "byte_length": 4227,
+      "provenance_assertion": "Original Fairy V3 Persona specification authored for this repository.",
+      "license_assertion": "Project-owned original text; no verbatim third-party dialogue is included.",
+      "intended_use": "Immutable Persona Authority loaded by Fairy Core and bound to Harness Manifests.",
+      "validation_status": "approved"
+    },
+    {
+      "id": "fairy-dialogue-catalog-v1",
+      "source_path": "authored/dialogue-catalog.yaml",
+      "destination_path": "persona/dialogue-catalog.yaml",
+      "sha256": "651588e935e07f38beaa57fbce851052fe306cd7a8d1a7a1de909f744435f4f8",
+      "byte_length": 18763,
+      "provenance_assertion": "Original bilingual ambient dialogue authored and safety-reviewed for Fairy V3.",
+      "license_assertion": "Project-owned original text; the supplied reference dialogue was not copied.",
+      "intended_use": "Offline deterministic ambient dialogue catalog for Fairy Core.",
+      "validation_status": "approved"
+    }
+  ]
 }
