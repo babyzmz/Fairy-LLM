@@ -27,6 +27,7 @@ from fairy_core.storage.sqlite_migrations import (
     migrate_knowledge_sync_leases,
     migrate_mcp_request_results,
     migrate_pre_tenant_schema,
+    migrate_preview_runtime_pool,
     migrate_project_lifecycle,
     migrate_runtime_graph,
     migrate_runtime_workspace_binding,
@@ -51,6 +52,7 @@ def create_sqlite_core_engine(
         migrate_workspace_identity(engine)
         migrate_runtime_workspace_binding(engine)
         migrate_runtime_graph(engine)
+        migrate_preview_runtime_pool(engine)
         initialize_document_sqlite_fts(engine)
         migrate_task_snapshot_binding(engine)
         migrate_knowledge_harness_binding(engine)

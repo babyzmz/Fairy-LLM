@@ -77,6 +77,13 @@ def build_state_indexes(tables: Mapping[str, Table]) -> None:
         previews.c.created_at,
     )
     Index(
+        "ix_core_preview_sessions_tenant_active_access",
+        previews.c.tenant_id,
+        previews.c.status,
+        previews.c.last_accessed_at,
+        previews.c.id,
+    )
+    Index(
         "uq_core_preview_sessions_active_task",
         previews.c.tenant_id,
         previews.c.task_id,

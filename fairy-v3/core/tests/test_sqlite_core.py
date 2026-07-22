@@ -24,6 +24,7 @@ from fairy_core.storage.schema import state_metadata
 from fairy_core.storage.sqlalchemy import SqlAlchemyStateStore
 from fairy_core.storage.sqlite_engine import create_sqlite_engine
 from fairy_core.storage.sqlite_migrations import (
+    migrate_preview_runtime_pool,
     migrate_runtime_workspace_binding,
     migrate_workspace_identity,
 )
@@ -165,6 +166,42 @@ def test_runtime_workspace_binding_rebuilds_referenced_runtime(tmp_path: Path) -
         )
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar_one() == 1
         assert connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall() == []
+    engine.dispose()
+
+
+def test_preview_runtime_pool_migrates_existing_access_time(tmp_path: Path) -> None:
+    engine = create_sqlite_engine(tmp_path / "legacy-preview.db")
+    updated_at = "2026-07-20T10:30:00+00:00"
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE core_preview_sessions ("
+            "tenant_id VARCHAR(128) NOT NULL, id VARCHAR(36) NOT NULL, "
+            "status VARCHAR(32) NOT NULL, updated_at DATETIME NOT NULL, "
+            "PRIMARY KEY (tenant_id, id))"
+        )
+        connection.execute(
+            text(
+                "INSERT INTO core_preview_sessions "
+                "(tenant_id, id, status, updated_at) "
+                "VALUES ('local', 'preview-1', 'ready', :updated_at)"
+            ),
+            {"updated_at": updated_at},
+        )
+
+    migrate_preview_runtime_pool(engine)
+
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT last_accessed_at FROM core_preview_sessions "
+                    "WHERE tenant_id = 'local' AND id = 'preview-1'"
+                )
+            ).scalar_one()
+            == updated_at
+        )
+    indexes = {item["name"] for item in inspect(engine).get_indexes("core_preview_sessions")}
+    assert "ix_core_preview_sessions_tenant_active_access" in indexes
     engine.dispose()
 
 

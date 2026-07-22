@@ -125,6 +125,7 @@ def test_runtime_and_preview_bind_all_scope_ids(tmp_path: Path) -> None:
     assert runtime.health is RuntimeHealth.HEALTHY
     assert preview.status is PreviewStatus.READY
     assert preview.health is PreviewHealth.HEALTHY
+    assert preview.last_accessed_at == preview.created_at
 
     with pytest.raises(FrozenInstanceError):
         runtime.project_id = new_id()  # type: ignore[misc]

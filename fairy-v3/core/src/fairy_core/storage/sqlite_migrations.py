@@ -33,6 +33,7 @@ _PROJECT_LIFECYCLE_REVISION = "20260717_project_lifecycle"
 _WORKSPACE_IDENTITY_REVISION = "20260713_workspace_identity"
 _RUNTIME_WORKSPACE_BINDING_REVISION = "20260713_runtime_workspace_binding"
 _RUNTIME_GRAPH_REVISION = "20260713_runtime_graph"
+_PREVIEW_RUNTIME_POOL_REVISION = "20260722_preview_runtime_pool"
 _ASSISTANT_MODEL_ROUTING_REVISION = "20260715_assistant_model_routing"
 _KNOWLEDGE_HARNESS_BINDING_REVISION = "20260721_knowledge_harness_binding"
 _KNOWLEDGE_SYNC_LEASE_REVISION = "20260721_knowledge_sync_lease"
@@ -360,6 +361,58 @@ def migrate_runtime_graph(engine: Engine) -> None:
             ),
             {
                 "revision": _RUNTIME_GRAPH_REVISION,
+                "applied_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+
+def migrate_preview_runtime_pool(engine: Engine) -> None:
+    """Backfill durable Preview access metadata used by the local Runtime pool."""
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS core_local_migrations "
+            "(revision TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        if connection.execute(
+            text("SELECT 1 FROM core_local_migrations WHERE revision = :revision"),
+            {"revision": _PREVIEW_RUNTIME_POOL_REVISION},
+        ).first():
+            return
+        tables = set(inspect(connection).get_table_names())
+        if "core_preview_sessions" in tables:
+            columns = {
+                item["name"] for item in inspect(connection).get_columns("core_preview_sessions")
+            }
+            added_last_accessed_at = "last_accessed_at" not in columns
+            if added_last_accessed_at:
+                connection.exec_driver_sql(
+                    "ALTER TABLE core_preview_sessions ADD COLUMN "
+                    "last_accessed_at DATETIME NOT NULL "
+                    "DEFAULT '1970-01-01T00:00:00+00:00'"
+                )
+            if added_last_accessed_at:
+                connection.exec_driver_sql(
+                    "UPDATE core_preview_sessions SET last_accessed_at = updated_at"
+                )
+            else:
+                connection.exec_driver_sql(
+                    "UPDATE core_preview_sessions SET last_accessed_at = updated_at "
+                    "WHERE last_accessed_at IS NULL OR last_accessed_at < updated_at"
+                )
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_core_preview_sessions_tenant_active_access "
+                "ON core_preview_sessions "
+                "(tenant_id, status, last_accessed_at, id)"
+            )
+        connection.execute(
+            text(
+                "INSERT INTO core_local_migrations (revision, applied_at) "
+                "VALUES (:revision, :applied_at)"
+            ),
+            {
+                "revision": _PREVIEW_RUNTIME_POOL_REVISION,
                 "applied_at": datetime.now(UTC).isoformat(),
             },
         )

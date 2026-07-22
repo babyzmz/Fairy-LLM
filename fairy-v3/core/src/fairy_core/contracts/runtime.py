@@ -104,6 +104,7 @@ class PreviewModel(ContractModel):
     revision: int = Field(ge=0)
     created_at: datetime
     updated_at: datetime
+    last_accessed_at: datetime
 
     @model_validator(mode="after")
     def require_scoped_preview_url(self) -> PreviewModel:

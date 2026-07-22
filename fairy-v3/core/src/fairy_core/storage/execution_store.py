@@ -217,6 +217,25 @@ class ExecutionStateStoreMixin:
             )
         return [self._runtime_from_row(row) for row in rows]
 
+    def active_previews(self) -> list[PreviewSession]:
+        with self._session.read() as connection:
+            rows = (
+                connection.execute(
+                    select(preview_sessions)
+                    .where(
+                        preview_sessions.c.tenant_id == self._tenant_id,
+                        preview_sessions.c.status.not_in(_TERMINAL_PREVIEW_STATUSES),
+                    )
+                    .order_by(
+                        preview_sessions.c.last_accessed_at,
+                        preview_sessions.c.id,
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [self._preview_from_row(row) for row in rows]
+
     def append_preview(self, preview: PreviewSession) -> PreviewSession:
         existing = self.find_preview_by_idempotency_key(preview.idempotency_key)
         if existing is not None:
@@ -330,6 +349,29 @@ class ExecutionStateStoreMixin:
                 .all()
             )
         return [self._preview_from_row(row) for row in rows]
+
+    def touch_preview_access(
+        self,
+        preview_id: UUID,
+        *,
+        accessed_at: datetime,
+    ) -> PreviewSession:
+        if accessed_at.tzinfo is None or accessed_at.utcoffset() is None:
+            raise ValueError("Preview access time must be timezone-aware")
+        with self._session.write() as connection:
+            connection.execute(
+                update(preview_sessions)
+                .where(
+                    preview_sessions.c.tenant_id == self._tenant_id,
+                    preview_sessions.c.id == str(preview_id),
+                    preview_sessions.c.last_accessed_at < accessed_at,
+                )
+                .values(last_accessed_at=accessed_at)
+            )
+        preview = self.get_preview(preview_id)
+        if preview is None:
+            raise KeyError(f"Preview not found: {preview_id}")
+        return preview
 
     def append_artifact(self, artifact: Artifact) -> Artifact:
         existing = self.get_artifact(artifact.id)
@@ -515,6 +557,7 @@ class ExecutionStateStoreMixin:
             "revision": preview.revision,
             "created_at": preview.created_at,
             "updated_at": preview.updated_at,
+            "last_accessed_at": preview.last_accessed_at,
         }
 
     @staticmethod
@@ -605,6 +648,7 @@ class ExecutionStateStoreMixin:
             revision=int(row["revision"]),
             created_at=_datetime(row["created_at"]),
             updated_at=_datetime(row["updated_at"]),
+            last_accessed_at=_datetime(row["last_accessed_at"]),
         )
 
     @staticmethod

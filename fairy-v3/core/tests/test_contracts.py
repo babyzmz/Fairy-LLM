@@ -152,9 +152,12 @@ def test_preview_contract_accepts_only_executor_owned_local_loopback_urls() -> N
         "revision": 2,
         "created_at": datetime.now(UTC),
         "updated_at": datetime.now(UTC),
+        "last_accessed_at": datetime.now(UTC),
     }
 
-    assert PreviewModel.model_validate(payload).url == payload["url"]
+    preview = PreviewModel.model_validate(payload)
+    assert preview.url == payload["url"]
+    assert preview.last_accessed_at == payload["last_accessed_at"]
     for forged_url in (
         "http://localhost:43125/preview/",
         "http://127.0.0.2:43125/preview/",

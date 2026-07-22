@@ -786,6 +786,7 @@ preview_sessions = Table(
     Column("revision", BigInteger, nullable=False),
     Column("created_at", UTCDateTime(), nullable=False),
     Column("updated_at", UTCDateTime(), nullable=False),
+    Column("last_accessed_at", UTCDateTime(), nullable=False),
     PrimaryKeyConstraint("tenant_id", "id", name="pk_core_preview_sessions"),
     UniqueConstraint(
         "tenant_id",

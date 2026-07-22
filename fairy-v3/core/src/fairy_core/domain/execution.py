@@ -559,6 +559,7 @@ class PreviewSession:
     revision: int
     created_at: datetime
     updated_at: datetime
+    last_accessed_at: datetime
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "project_root", Path(self.project_root).resolve(strict=False))
@@ -574,6 +575,7 @@ class PreviewSession:
         if self.revision < 0:
             raise ValueError("revision cannot be negative")
         _validate_timestamps(self.created_at, self.updated_at)
+        _validate_timestamps(self.created_at, self.last_accessed_at)
         expected_health = {
             PreviewStatus.CREATED: PreviewHealth.UNKNOWN,
             PreviewStatus.STARTING: PreviewHealth.STARTING,
@@ -624,10 +626,12 @@ class PreviewSession:
             revision=0,
             created_at=now,
             updated_at=now,
+            last_accessed_at=now,
         )
 
     @classmethod
     def restore(cls, **values: Any) -> PreviewSession:
+        values.setdefault("last_accessed_at", values["updated_at"])
         return cls(**values)
 
     def begin_start(self) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -82,6 +83,35 @@ def test_static_preview_start_replay_stop_and_visible_events(tmp_path: Path) -> 
     assert stopped.status is PreviewStatus.STOPPED
     assert stop_replay.status is PreviewStatus.STOPPED
     assert len(stack.executor.stop_calls) == 1
+
+
+def test_preview_access_touch_is_monotonic_without_revision_churn(tmp_path: Path) -> None:
+    stack = build_runtime_stack(tmp_path)
+    context = stack.runtime.start_preview(
+        PreviewStartRequest(
+            task_id=stack.task.task.id,
+            idempotency_key="preview:access-touch",
+        )
+    )
+    accessed_at = context.preview.last_accessed_at + timedelta(minutes=1)
+    original_revision = context.preview.revision
+
+    with stack.factory() as unit_of_work:
+        touched = unit_of_work.state.touch_preview_access(
+            context.preview.id,
+            accessed_at=accessed_at,
+        )
+        unit_of_work.commit()
+    with stack.factory() as unit_of_work:
+        restored = unit_of_work.state.get_preview(context.preview.id)
+        active = unit_of_work.state.active_previews()
+
+    assert touched.last_accessed_at == accessed_at
+    assert touched.revision == original_revision
+    assert restored is not None
+    assert restored.last_accessed_at == accessed_at
+    assert restored.revision == original_revision
+    assert [preview.id for preview in active] == [context.preview.id]
 
 
 def test_scratch_preview_stays_candidate_until_the_assistant_turn_completes(
