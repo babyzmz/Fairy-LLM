@@ -104,7 +104,7 @@ export interface DesktopPreferences {
 }
 
 export interface VoiceWorkerHealth {
-  status: "ready" | "warming" | "model_missing" | "prompt_missing" | "cuda_unavailable" | "acceleration_unavailable" | "error" | "unavailable";
+  status: "idle" | "ready" | "warming" | "model_missing" | "prompt_missing" | "cuda_unavailable" | "acceleration_unavailable" | "error" | "unavailable";
   model_repository: string;
   model_installed: boolean;
   model_ready: boolean;

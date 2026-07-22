@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_FAIRY_MOTION_SNAPSHOT } from "../domain/motionState";
 import type { PresenceRenderSnapshot } from "./presenceRenderer";
 import {
+  rendererFrameRate,
   rendererFrameInterval,
   visualStateForSnapshot,
 } from "./presenceRenderer";
@@ -63,36 +64,55 @@ describe("presence renderer scheduling", () => {
     );
   });
 
-  it("uses a selected 144 FPS target while keeping idle and system caps authoritative", () => {
-    expect(rendererFrameInterval(snapshot({
+  it("uses a selected 144 FPS target only for active foreground animation", () => {
+    expect(rendererFrameRate(snapshot({
       target_frame_rate: 144,
       frame_rate_limit: 144,
-    }))).toBeCloseTo(1_000 / 144);
-    expect(rendererFrameInterval(snapshot({
+    }))).toBe(60);
+    expect(rendererFrameRate(snapshot({
+      target_frame_rate: 144,
+      frame_rate_limit: 144,
+      motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "thinking" },
+    }))).toBe(144);
+    expect(rendererFrameRate(snapshot({
       target_frame_rate: 144,
       frame_rate_limit: 60,
-    }))).toBeCloseTo(1_000 / 60);
-    expect(rendererFrameInterval(snapshot({
+      motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "thinking" },
+    }))).toBe(60);
+    expect(rendererFrameRate(snapshot({
       target_frame_rate: 144,
       frame_rate_limit: 144,
       idle_for_ms: 15_000,
-    }))).toBeCloseTo(1_000 / 30);
+      motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "thinking" },
+    }))).toBe(30);
   });
 
-  it("uses 300 FPS only while active and unconstrained", () => {
-    expect(rendererFrameInterval(snapshot({
+  it("uses 300 FPS only for active animation and otherwise caps idle work", () => {
+    expect(rendererFrameRate(snapshot({
       target_frame_rate: 300,
       frame_rate_limit: 300,
-    }))).toBeCloseTo(1_000 / 300);
-    expect(rendererFrameInterval(snapshot({
+    }))).toBe(60);
+    expect(rendererFrameRate(snapshot({
+      target_frame_rate: 300,
+      frame_rate_limit: 300,
+      motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "repositioning" },
+    }))).toBe(300);
+    expect(rendererFrameRate(snapshot({
       target_frame_rate: 300,
       frame_rate_limit: 144,
-    }))).toBeCloseTo(1_000 / 144);
-    expect(rendererFrameInterval(snapshot({
+      motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "speaking" },
+    }))).toBe(144);
+    expect(rendererFrameRate(snapshot({
       target_frame_rate: 300,
       frame_rate_limit: 300,
       idle_for_ms: 15_000,
-    }))).toBeCloseTo(1_000 / 30);
+      motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "thinking" },
+    }))).toBe(30);
+    expect(rendererFrameRate(snapshot({
+      target_frame_rate: 300,
+      frame_rate_limit: 300,
+      motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "sleeping" },
+    }))).toBe(15);
   });
 });
 

@@ -17,6 +17,23 @@ use thiserror::Error;
 const HANDSHAKE_PROTOCOL: &str = "fairy-voice-worker-v1";
 const MAX_HEADER_BYTES: usize = 32 * 1024;
 const STREAM_CHUNK_BYTES: usize = 16 * 1024;
+const VOICE_MODEL_REPOSITORY: &str = "FunAudioLLM/Fun-CosyVoice3-0.5B-2512";
+const VOICE_MODEL_DIRECTORY: &str = "Fun-CosyVoice3-0.5B-2512";
+const VOICE_MODEL_FILES: &[&str] = &[
+    "campplus.onnx",
+    "cosyvoice3.yaml",
+    "CosyVoice-BlankEN/config.json",
+    "CosyVoice-BlankEN/generation_config.json",
+    "CosyVoice-BlankEN/merges.txt",
+    "CosyVoice-BlankEN/model.safetensors",
+    "CosyVoice-BlankEN/tokenizer_config.json",
+    "CosyVoice-BlankEN/vocab.json",
+    "flow.decoder.estimator.fp32.onnx",
+    "flow.pt",
+    "hift.pt",
+    "llm.pt",
+    "speech_tokenizer_v3.onnx",
+];
 type WorkerResponse = (u16, HashMap<String, String>, BufReader<TcpStream>);
 
 #[derive(Clone, Debug)]
@@ -131,22 +148,16 @@ impl VoiceWorkerManager {
         }
     }
 
+    pub fn status(&self) -> Result<Value, VoiceWorkerError> {
+        match self.running_connection()? {
+            Some(connection) => request_health(&connection),
+            None => Ok(cold_voice_health(&self.launch)),
+        }
+    }
+
     pub fn health(&self) -> Result<Value, VoiceWorkerError> {
         let connection = self.connection()?;
-        let (status, _, mut reader) = send_request(
-            connection.address,
-            "GET",
-            "/v1/health",
-            &connection.bootstrap_token,
-            b"",
-            Duration::from_secs(5),
-        )?;
-        let mut body = Vec::new();
-        reader.read_to_end(&mut body)?;
-        if status != 200 {
-            return Err(VoiceWorkerError::Http(status));
-        }
-        Ok(serde_json::from_slice(&body)?)
+        request_health(&connection)
     }
 
     pub fn install_model(&self) -> Result<Value, VoiceWorkerError> {
@@ -335,6 +346,24 @@ impl VoiceWorkerManager {
         *guard = Some(process);
         Ok(connection)
     }
+
+    fn running_connection(&self) -> Result<Option<WorkerConnection>, VoiceWorkerError> {
+        let mut guard = self
+            .process
+            .lock()
+            .map_err(|_| VoiceWorkerError::Unavailable("worker lock is poisoned".to_owned()))?;
+        let Some(process) = guard.as_mut() else {
+            return Ok(None);
+        };
+        if process.child.try_wait()?.is_some() {
+            *guard = None;
+            return Ok(None);
+        }
+        Ok(Some(WorkerConnection {
+            address: process.address,
+            bootstrap_token: process.bootstrap_token.clone(),
+        }))
+    }
 }
 
 pub fn prepared_test_session() -> Result<PreparedVoiceSession, VoiceWorkerError> {
@@ -399,6 +428,53 @@ impl Drop for VoiceWorkerManager {
 struct WorkerConnection {
     address: SocketAddr,
     bootstrap_token: String,
+}
+
+fn request_health(connection: &WorkerConnection) -> Result<Value, VoiceWorkerError> {
+    let (status, _, mut reader) = send_request(
+        connection.address,
+        "GET",
+        "/v1/health",
+        &connection.bootstrap_token,
+        b"",
+        Duration::from_secs(5),
+    )?;
+    let mut body = Vec::new();
+    reader.read_to_end(&mut body)?;
+    if status != 200 {
+        return Err(VoiceWorkerError::Http(status));
+    }
+    Ok(serde_json::from_slice(&body)?)
+}
+
+fn cold_voice_health(launch: &VoiceWorkerLaunch) -> Value {
+    let model_dir = launch.data_dir.join("models").join(VOICE_MODEL_DIRECTORY);
+    let model_installed = VOICE_MODEL_FILES
+        .iter()
+        .all(|relative| model_dir.join(relative).is_file());
+    let prompt_ready = launch.assets_dir.join("fairy_clone_core.wav").is_file()
+        && launch.assets_dir.join("fairy_clone_core.txt").is_file();
+    let (status, error_code) = if !model_installed {
+        ("model_missing", Some("VOICE_MODEL_MISSING"))
+    } else if !prompt_ready {
+        ("prompt_missing", Some("VOICE_PROMPT_MISSING"))
+    } else {
+        ("idle", None)
+    };
+    json!({
+        "status": status,
+        "model_repository": VOICE_MODEL_REPOSITORY,
+        "model_installed": model_installed,
+        "model_ready": false,
+        "model_digest": Value::Null,
+        "prompt_ready": prompt_ready,
+        "cuda_available": false,
+        "tensorrt_available": false,
+        "backend": Value::Null,
+        "device_name": Value::Null,
+        "sample_rate": 24_000,
+        "error_code": error_code,
+    })
 }
 
 #[derive(Deserialize)]
@@ -685,9 +761,12 @@ pub fn bundled_voice_launch(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
-    use super::{bundled_voice_launch, fill_secure_random, worker_error_message};
+    use super::{
+        bundled_voice_launch, fill_secure_random, worker_error_message, VoiceWorkerLaunch,
+        VoiceWorkerManager,
+    };
 
     #[test]
     fn secure_random_fills_distinct_nonzero_tokens() {
@@ -729,5 +808,24 @@ mod tests {
             Path::new("C:/Program Files/Fairy/resources/runtime/voice-assets")
         );
         assert_eq!(launch.data_dir, Path::new("C:/FairyData/voice"));
+    }
+
+    #[test]
+    fn cold_status_never_starts_the_voice_worker() {
+        let root =
+            std::env::temp_dir().join(format!("fairy-voice-cold-status-{}", std::process::id()));
+        let manager = VoiceWorkerManager::new(VoiceWorkerLaunch {
+            program: PathBuf::from("missing-worker.exe"),
+            arguments: Vec::new(),
+            worker_python_path: root.join("worker"),
+            cosyvoice_root: root.join("cosyvoice"),
+            assets_dir: root.join("assets"),
+            data_dir: root.join("data"),
+            log_path: root.join("voice.log"),
+        });
+
+        let status = manager.status().expect("cold health");
+        assert_eq!(status["status"], "model_missing");
+        assert!(manager.process.lock().expect("worker lock").is_none());
     }
 }

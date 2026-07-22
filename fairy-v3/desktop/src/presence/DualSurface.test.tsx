@@ -444,7 +444,7 @@ describe("dual presence surfaces", () => {
     expect(start?.args).toEqual({
       request: expect.objectContaining({
         target_frame_rate: 144,
-        frame_rate_limit: 144,
+        frame_rate_limit: 60,
       }),
     });
     expect(JSON.stringify(start?.args)).not.toMatch(/rgba|pixel|data_url|backdrop/i);

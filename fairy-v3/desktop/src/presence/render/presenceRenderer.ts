@@ -63,8 +63,23 @@ export function visualStateForSnapshot(
 
 export function rendererFrameInterval(snapshot: PresenceRenderSnapshot): number {
   if (snapshot.reduced_motion) return Number.POSITIVE_INFINITY;
+  return 1_000 / rendererFrameRate(snapshot);
+}
+
+export function rendererFrameRate(snapshot: PresenceRenderSnapshot): number {
   const activityRate = snapshot.idle_for_ms >= 15_000
     ? 30
-    : snapshot.target_frame_rate;
-  return 1_000 / Math.min(snapshot.frame_rate_limit, activityRate);
+    : hasActiveForegroundAnimation(snapshot)
+      ? snapshot.target_frame_rate
+      : Math.min(snapshot.target_frame_rate, 60);
+  const sleepingRate = ["sleeping", "suspended"].includes(snapshot.motion.state)
+    ? 15
+    : activityRate;
+  return Math.min(snapshot.frame_rate_limit, sleepingRate);
+}
+
+export function hasActiveForegroundAnimation(snapshot: PresenceRenderSnapshot): boolean {
+  if (snapshot.interaction?.phase === "repositioning") return true;
+  if (snapshot.input_capsule_visible || snapshot.input_surface_visible) return true;
+  return !["idle", "sleeping", "suspended"].includes(snapshot.motion.state);
 }

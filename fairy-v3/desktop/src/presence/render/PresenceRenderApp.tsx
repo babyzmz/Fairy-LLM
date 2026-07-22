@@ -139,6 +139,7 @@ export function PresenceRenderApp({
   const [experimentMode] = useState(resolvePresenceExperimentMode);
   const [targetFpsOverride] = useState(resolvePresenceTargetFpsOverride);
   const accessibility = usePresenceAccessibilityPreferences();
+  const documentVisible = useDocumentVisible();
   const targetFrameRate = targetFpsOverride ?? renderSettings.target_frame_rate;
   const handleRendererHealth = useCallback((health: PresenceRendererHealth) => {
     void rendererHealthHost.report(health).then((directive) => {
@@ -336,6 +337,7 @@ export function PresenceRenderApp({
 
   const nativeRendererRequested =
     !sessionDisabled &&
+    documentVisible &&
     interactionReady &&
     interaction !== null &&
     requestedMode !== "compatibility" &&
@@ -410,6 +412,7 @@ export function PresenceRenderApp({
       data-power-saver={String(runtimePolicy.power_saver)}
       data-foreground-fullscreen={String(runtimePolicy.foreground_fullscreen)}
       data-session-disabled={String(sessionDisabled)}
+      data-document-visible={String(documentVisible)}
       data-native-renderer-requested={String(nativeRendererRequested)}
       data-native-renderer-state={nativeRendererState}
       data-fallback-occluded={String(fallbackOccluded)}
@@ -426,6 +429,16 @@ export function PresenceRenderApp({
       )}
     </main>
   );
+}
+
+function useDocumentVisible(): boolean {
+  const [visible, setVisible] = useState(() => !document.hidden);
+  useEffect(() => {
+    const update = () => setVisible(!document.hidden);
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
+  return visible;
 }
 
 export function nativeRendererOccludesFallback(

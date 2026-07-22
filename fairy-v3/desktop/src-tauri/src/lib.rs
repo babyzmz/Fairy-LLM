@@ -3762,7 +3762,7 @@ async fn voice_worker_health(
     authorize_voice_health_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
     let voice = Arc::clone(&state.voice);
-    tauri::async_runtime::spawn_blocking(move || voice.health())
+    tauri::async_runtime::spawn_blocking(move || voice.status())
         .await
         .map_err(|_| "VOICE_WORKER_INTERRUPTED".to_owned())?
         .map_err(|error| error.public_code().to_owned())
@@ -4493,10 +4493,6 @@ pub fn run() {
                 bundled_realtime_launch(&data_dir, &resource_dir)
             };
             let realtime = Arc::new(RealtimeWorkerManager::new(realtime_launch));
-            let warming_voice = Arc::clone(&voice);
-            tauri::async_runtime::spawn_blocking(move || {
-                let _ = warming_voice.health();
-            });
             let preferences_store = DesktopPreferencesStore::new(&data_dir);
             let startup_preferences = preferences_store.load_for_startup()?;
             let preferences = startup_preferences.preferences;

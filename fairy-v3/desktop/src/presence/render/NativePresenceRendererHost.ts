@@ -5,6 +5,7 @@ import type {
   PresenceRendererHealth,
   PresenceRenderSnapshot,
 } from "./presenceRenderer";
+import { hasActiveForegroundAnimation } from "./presenceRenderer";
 import { liquidShapeTargetForSnapshot } from "./liquidGlassMaterial";
 import type { PresenceRendererMode } from "./rendererSupport";
 
@@ -582,9 +583,25 @@ export function nativePresentationForSnapshot(
 export function nativeFrameRateLimit(
   snapshot: PresenceRenderSnapshot,
 ): NativeGpuFrameRateLimit {
+  if (snapshot.reduced_motion) {
+    return Math.min(
+      snapshot.target_frame_rate,
+      snapshot.frame_rate_limit,
+      15,
+    ) as NativeGpuFrameRateLimit;
+  }
+  const activityLimit = snapshot.idle_for_ms >= 15_000
+    ? 30
+    : hasActiveForegroundAnimation(snapshot)
+      ? snapshot.target_frame_rate
+      : Math.min(snapshot.target_frame_rate, 60);
+  const sleepingLimit = ["sleeping", "suspended"].includes(snapshot.motion.state)
+    ? 15
+    : activityLimit;
   return Math.min(
     snapshot.target_frame_rate,
     snapshot.frame_rate_limit,
+    sleepingLimit,
   ) as NativeGpuFrameRateLimit;
 }
 

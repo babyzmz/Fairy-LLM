@@ -10,8 +10,8 @@ pub struct PresenceRuntimePolicy {
     pub foreground_fullscreen: bool,
 }
 
-pub fn resolve_frame_rate_limit(power_saver: bool, _foreground_fullscreen: bool) -> u16 {
-    if power_saver {
+pub fn resolve_frame_rate_limit(power_saver: bool, foreground_fullscreen: bool) -> u16 {
+    if power_saver || foreground_fullscreen {
         15
     } else {
         300
@@ -98,9 +98,10 @@ mod tests {
     use super::resolve_frame_rate_limit;
 
     #[test]
-    fn fullscreen_content_keeps_live_optics_at_the_selected_refresh_rate() {
+    fn power_saver_and_fullscreen_content_limit_foreground_animation_work() {
         assert_eq!(resolve_frame_rate_limit(false, false), 300);
         assert_eq!(resolve_frame_rate_limit(true, false), 15);
-        assert_eq!(resolve_frame_rate_limit(false, true), 300);
+        assert_eq!(resolve_frame_rate_limit(false, true), 15);
+        assert_eq!(resolve_frame_rate_limit(true, true), 15);
     }
 }

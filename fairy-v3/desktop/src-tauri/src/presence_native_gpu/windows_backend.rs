@@ -128,8 +128,12 @@ impl WindowsNativeGpuSession {
         let monitor_frame = backdrop_monitor.monitor_frame;
         let display_refresh_rate_hz = backdrop_monitor.display_refresh_rate_hz;
         let hdr_capture = backdrop_monitor.hdr_capture;
-        let effective_frame_rate =
-            effective_render_frame_rate(config.target_frame_rate, display_refresh_rate_hz);
+        let effective_frame_rate = effective_presentation_frame_rate(
+            config.target_frame_rate,
+            display_refresh_rate_hz,
+            &config.presentation,
+            false,
+        );
         update_status(&status, |status| {
             status.hdr_capture = hdr_capture;
             status.display_refresh_rate_hz = display_refresh_rate_hz;
@@ -553,7 +557,7 @@ fn run_render_loop(
         }
         control.acknowledge_drag_mode();
         let drag_active = control.is_drag_active();
-        let frame_rate = match renderer.presentation_frame_rate() {
+        let frame_rate = match renderer.presentation_frame_rate(drag_active) {
             Ok(frame_rate) => frame_rate,
             Err(error) => {
                 fail_render_loop(status, error);
@@ -660,6 +664,43 @@ fn effective_render_frame_rate(requested: u16, display_refresh_rate_hz: u16) -> 
     } else {
         requested
     }
+}
+
+fn effective_presentation_frame_rate(
+    target_frame_rate: u16,
+    display_refresh_rate_hz: u16,
+    presentation: &NativeGpuPresentation,
+    drag_active: bool,
+) -> u16 {
+    let active_animation = drag_active || presentation_has_active_animation(presentation);
+    let state_limit = if presentation.reduced_motion {
+        15
+    } else {
+        match presentation.visual_state {
+            NativeGpuVisualState::Sleeping | NativeGpuVisualState::Suspended => 15,
+            NativeGpuVisualState::Idle if !active_animation => 60,
+            _ => target_frame_rate,
+        }
+    };
+    let mut requested = target_frame_rate
+        .min(presentation.frame_rate_limit)
+        .min(state_limit);
+    if requested == 300 && !(active_animation && display_refresh_rate_hz >= 240) {
+        requested = if active_animation { 144 } else { 60 };
+    }
+    effective_render_frame_rate(requested, display_refresh_rate_hz)
+}
+
+fn presentation_has_active_animation(presentation: &NativeGpuPresentation) -> bool {
+    !matches!(
+        presentation.visual_state,
+        NativeGpuVisualState::Idle
+            | NativeGpuVisualState::Sleeping
+            | NativeGpuVisualState::Suspended
+    ) || presentation.returning
+        || presentation.shape_droplet > 0.001
+        || presentation.shape_bridge > 0.001
+        || presentation.shape_capsule > 0.001
 }
 
 fn advance_render_deadline(
@@ -1964,14 +2005,16 @@ impl NativeCompositionRenderer {
         Ok(())
     }
 
-    fn presentation_frame_rate(&self) -> Result<u16, String> {
+    fn presentation_frame_rate(&self, drag_active: bool) -> Result<u16, String> {
         let presentation = self
             .presentation
             .read()
             .map_err(|_| "PRESENCE_NATIVE_GPU_PRESENTATION_LOCK_FAILED".to_owned())?;
-        Ok(effective_render_frame_rate(
-            self.target_frame_rate.min(presentation.frame_rate_limit),
+        Ok(effective_presentation_frame_rate(
+            self.target_frame_rate,
             self.display_refresh_rate_hz,
+            &presentation,
+            drag_active,
         ))
     }
 
@@ -2923,6 +2966,54 @@ mod tests {
         assert_eq!(render_spin_window(300), Duration::from_micros(60));
         assert_eq!(render_spin_window(144), Duration::from_micros(100));
         assert_eq!(render_spin_window(60), Duration::from_micros(200));
+    }
+
+    #[test]
+    fn three_hundred_fps_requires_a_240_hz_display_and_active_animation() {
+        let idle = NativeGpuPresentation {
+            frame_rate_limit: 300,
+            ..NativeGpuPresentation::default()
+        };
+        assert_eq!(
+            effective_presentation_frame_rate(300, 360, &idle, false),
+            60
+        );
+        assert_eq!(
+            effective_presentation_frame_rate(300, 360, &idle, true),
+            300
+        );
+
+        let active = NativeGpuPresentation {
+            visual_state: NativeGpuVisualState::Responding,
+            frame_rate_limit: 300,
+            ..NativeGpuPresentation::default()
+        };
+        assert_eq!(
+            effective_presentation_frame_rate(300, 360, &active, false),
+            300
+        );
+        assert_eq!(
+            effective_presentation_frame_rate(300, 240, &active, false),
+            240
+        );
+        assert_eq!(
+            effective_presentation_frame_rate(300, 144, &active, false),
+            144
+        );
+        assert_eq!(
+            effective_presentation_frame_rate(300, 0, &active, false),
+            144
+        );
+
+        let constrained = NativeGpuPresentation {
+            visual_state: NativeGpuVisualState::Responding,
+            frame_rate_limit: 15,
+            ..NativeGpuPresentation::default()
+        };
+        assert_eq!(
+            effective_presentation_frame_rate(300, 360, &constrained, false),
+            15
+        );
     }
 
     #[test]

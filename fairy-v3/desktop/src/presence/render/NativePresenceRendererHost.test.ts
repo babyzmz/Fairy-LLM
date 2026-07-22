@@ -210,7 +210,11 @@ describe("NativePresenceRendererHost", () => {
       }),
     });
 
-    await host.start(snapshot({ target_frame_rate: 300, frame_rate_limit: 300 }));
+    await host.start(snapshot({
+      target_frame_rate: 300,
+      frame_rate_limit: 300,
+      motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "responding" },
+    }));
     expect(calls.map((call) => call.command)).toEqual([
       "pet_native_gpu_start",
       "pet_native_gpu_update",
@@ -583,14 +587,15 @@ describe("native presentation projection", () => {
     }));
   });
 
-  it("keeps live optics at the selected rate unless the system applies a power cap", () => {
+  it("limits native foreground work by activity, idleness, accessibility, and power policy", () => {
     expect(nativeFrameRateLimit(snapshot({ target_frame_rate: 60 }))).toBe(60);
     expect(nativeFrameRateLimit(snapshot({
       target_frame_rate: 300,
       frame_rate_limit: 300,
+      motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "responding" },
     }))).toBe(300);
-    expect(nativeFrameRateLimit(snapshot({ idle_for_ms: 15_000 }))).toBe(144);
-    expect(nativeFrameRateLimit(snapshot({ reduced_motion: true }))).toBe(144);
+    expect(nativeFrameRateLimit(snapshot({ idle_for_ms: 15_000 }))).toBe(30);
+    expect(nativeFrameRateLimit(snapshot({ reduced_motion: true }))).toBe(15);
     expect(nativeFrameRateLimit(snapshot({ frame_rate_limit: 15 }))).toBe(15);
     expect(nativePresentationForSnapshot(snapshot({
       motion: { ...DEFAULT_FAIRY_MOTION_SNAPSHOT, state: "speaking" },

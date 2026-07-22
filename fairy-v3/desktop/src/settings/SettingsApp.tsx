@@ -354,11 +354,11 @@ function SettingsCategory(props: {
         icon={<Volume2 size={17} />}
         label="Fairy Voice Worker"
         status={voiceHealthLabel(data.voiceHealth)}
-        tone={data.voiceHealth.status === "ready" ? "success" : data.voiceHealth.status === "warming" ? "neutral" : "error"}
+        tone={data.voiceHealth.status === "ready" ? "success" : ["idle", "warming"].includes(data.voiceHealth.status) ? "neutral" : "error"}
       />
       <div className="settings-section-command">
-        <span>{data.voiceHealth.device_name ?? "A CUDA GPU is required"}</span>
-        {data.voiceHealth.status === "ready" ? (
+        <span>{data.voiceHealth.status === "idle" ? "Starts only when playback is requested" : data.voiceHealth.device_name ?? "A CUDA GPU is required"}</span>
+        {["idle", "ready"].includes(data.voiceHealth.status) ? (
           <button className="secondary-command" type="button" disabled={busy} onClick={() => void props.act(async () => {
             const playback = await startNativeVoiceTest();
             await playback.finished;
@@ -366,7 +366,7 @@ function SettingsCategory(props: {
             <Play size={14} /> Test Fairy voice
           </button>
         ) : data.voiceHealth.status === "warming" ? null : (
-          <button className="secondary-command" type="button" disabled={busy || !data.voiceHealth.cuda_available} onClick={() => void props.act(async () => {
+          <button className="secondary-command" type="button" disabled={busy} onClick={() => void props.act(async () => {
             await props.client.voice.installModel();
             await props.reload();
           })}>
@@ -1144,6 +1144,7 @@ function unavailableVoiceHealth(): VoiceWorkerHealth {
 }
 
 function voiceHealthLabel(health: VoiceWorkerHealth): string {
+  if (health.status === "idle") return "Stopped · starts on first playback";
   if (health.status === "ready") return `Ready at ${health.sample_rate / 1000} kHz`;
   if (health.status === "warming") return "Warming model";
   if (health.status === "model_missing") return "Model not installed";
