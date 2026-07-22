@@ -42,6 +42,11 @@ function Test-NativeExecutableStale([string]$BinaryPath) {
     )
     $inputs += Get-ChildItem -LiteralPath (Join-Path $manifestRoot "src") -Recurse -File |
         Where-Object Extension -in ".rs", ".hlsl"
+    $inputs += Get-ChildItem -LiteralPath (Join-Path $manifestRoot "crates") -Recurse -File |
+        Where-Object {
+            $_.Extension -in ".rs", ".hlsl" -or
+            $_.Name -in "Cargo.toml", "Cargo.lock", "build.rs"
+        }
     return ($inputs | Where-Object LastWriteTimeUtc -gt $binaryWrite | Select-Object -First 1) -ne $null
 }
 

@@ -61,6 +61,11 @@ mod windows_probe {
         g: 0,
         b: 255,
     };
+    const GREEN: Rgb = Rgb {
+        r: 24,
+        g: 240,
+        b: 72,
+    };
     const TRIGGER: Rgb = Rgb {
         r: 255,
         g: 220,
@@ -85,6 +90,7 @@ mod windows_probe {
         sha256: String,
         cyan_ratio: f64,
         magenta_ratio: f64,
+        green_ratio: f64,
         black_ratio: f64,
         mean_rgb: [f64; 3],
     }
@@ -150,6 +156,27 @@ mod windows_probe {
             }
             pump_messages();
             thread::sleep(Duration::from_millis(80));
+            Ok(())
+        }
+
+        fn set_color(&self, color: Rgb) -> Result<(), String> {
+            unsafe {
+                SetWindowLongPtrW(self.0, GWLP_USERDATA, color.colorref());
+                if !InvalidateRect(Some(self.0), None, true).as_bool() {
+                    return Err(format!(
+                        "PROBE_WINDOW_INVALIDATE: {}",
+                        windows::core::Error::from_thread()
+                    ));
+                }
+                if !UpdateWindow(self.0).as_bool() {
+                    return Err(format!(
+                        "PROBE_WINDOW_UPDATE: {}",
+                        windows::core::Error::from_thread()
+                    ));
+                }
+                DwmFlush().map_err(|error| format!("PROBE_DWM_FLUSH: {error}"))?;
+            }
+            pump_messages();
             Ok(())
         }
 
@@ -300,9 +327,12 @@ mod windows_probe {
         set_window_excluded_from_dda(overlay.hwnd(), true)
             .map_err(|error| format!("PROBE_DDA_SOURCE_EXCLUDE: {error}"))?;
         trigger.move_by(2)?;
-        let mut texture_source =
-            DesktopTextureSource::new_with_device_output(binding.clone(), device, context)
-                .map_err(|error| format!("PROBE_TEXTURE_SOURCE_CREATE: {error}"))?;
+        let mut texture_source = DesktopTextureSource::new_with_device_output(
+            binding.clone(),
+            device.clone(),
+            context.clone(),
+        )
+        .map_err(|error| format!("PROBE_TEXTURE_SOURCE_CREATE: {error}"))?;
         let source_deadline = Instant::now() + Duration::from_secs(2);
         let source_frame = loop {
             if Instant::now() >= source_deadline {
@@ -317,12 +347,22 @@ mod windows_probe {
                 Err(error) => return Err(format!("PROBE_TEXTURE_SOURCE_POLL: {error}")),
             }
         };
+        background.set_color(GREEN)?;
+        let stationary_dynamic = wait_for_texture_source_color(
+            &mut texture_source,
+            &device,
+            &context,
+            source_roi,
+            GREEN,
+            Duration::from_secs(2),
+        )?;
 
         let passed = baseline.cyan_ratio >= 0.90
             && excluded.cyan_ratio >= 0.90
             && excluded.magenta_ratio <= 0.02
             && ordinary.magenta_ratio >= 0.90
-            && included.magenta_ratio >= 0.90;
+            && included.magenta_ratio >= 0.90
+            && stationary_dynamic.green_ratio >= 0.90;
         Ok(json!({
             "passed": passed,
             "adapter": {
@@ -352,9 +392,50 @@ mod windows_probe {
                 "move_rects": source_frame.move_rect_count,
                 "copied_full_frame": source_frame.copied_full_frame,
                 "access_lost_count": texture_source.access_lost_count(),
+                "stationary_dynamic_background": stationary_dynamic,
             },
             "pixels_persisted": false,
         }))
+    }
+
+    fn wait_for_texture_source_color(
+        source: &mut DesktopTextureSource,
+        device: &ID3D11Device,
+        context: &ID3D11DeviceContext,
+        roi: RECT,
+        expected: Rgb,
+        timeout: Duration,
+    ) -> Result<PixelStats, String> {
+        let deadline = Instant::now() + timeout;
+        let mut latest = None;
+        while Instant::now() < deadline {
+            match source.poll(100) {
+                Ok(DesktopTexturePoll::Updated(_)) => {
+                    let texture = source
+                        .texture()
+                        .ok_or_else(|| "PROBE_TEXTURE_SOURCE_MISSING".to_owned())?;
+                    let (bytes, order) = read_texture_roi(device, context, texture, roi)?;
+                    let stats = pixel_stats(&bytes, order);
+                    let ratio = if expected.r == GREEN.r && expected.g == GREEN.g {
+                        stats.green_ratio
+                    } else if expected.r == MAGENTA.r && expected.g == MAGENTA.g {
+                        stats.magenta_ratio
+                    } else {
+                        stats.cyan_ratio
+                    };
+                    latest = Some(stats);
+                    if ratio >= 0.90 {
+                        return Ok(latest.expect("latest sample exists"));
+                    }
+                }
+                Ok(DesktopTexturePoll::NoFrame) => {}
+                Ok(DesktopTexturePoll::Recovering { retry_after, .. }) => {
+                    thread::sleep(retry_after.min(Duration::from_millis(100)));
+                }
+                Err(error) => return Err(format!("PROBE_TEXTURE_SOURCE_POLL: {error}")),
+            }
+        }
+        latest.ok_or_else(|| "PROBE_TEXTURE_SOURCE_DYNAMIC_TIMEOUT".to_owned())
     }
 
     fn wait_for_dda_color(
@@ -530,6 +611,7 @@ mod windows_probe {
     fn pixel_stats(bytes: &[u8], order: PixelOrder) -> PixelStats {
         let mut cyan = 0_u64;
         let mut magenta = 0_u64;
+        let mut green = 0_u64;
         let mut black = 0_u64;
         let mut sum = [0_u64; 3];
         let mut count = 0_u64;
@@ -546,6 +628,7 @@ mod windows_probe {
             sum[2] += u64::from(b);
             cyan += u64::from(color_matches(r, g, b, CYAN));
             magenta += u64::from(color_matches(r, g, b, MAGENTA));
+            green += u64::from(color_matches(r, g, b, GREEN));
             black += u64::from(r < 12 && g < 12 && b < 12);
         }
         let denominator = count.max(1) as f64;
@@ -553,6 +636,7 @@ mod windows_probe {
             sha256: format!("{:x}", Sha256::digest(bytes)),
             cyan_ratio: cyan as f64 / denominator,
             magenta_ratio: magenta as f64 / denominator,
+            green_ratio: green as f64 / denominator,
             black_ratio: black as f64 / denominator,
             mean_rgb: [
                 sum[0] as f64 / denominator,

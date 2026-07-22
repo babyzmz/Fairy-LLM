@@ -632,35 +632,36 @@ fn run_render_loop(
         let source_frame_rate = desktop_source_frame_rate(renderer.display_refresh_rate_hz);
         let source_interval = render_interval(source_frame_rate);
         let mut foreground_due = now >= next_deadline;
-        let source_due = source_active && now >= next_source_deadline;
         let desktop_updated = if foreground_due {
             renderer.poll_desktop_texture(0)
-        } else if source_due {
-            let source_wait_budget_ms = source_interval.as_millis().clamp(1, 16) as u32;
-            let remaining_ms = next_deadline
-                .saturating_duration_since(now)
-                .as_millis()
-                .clamp(1, u128::from(source_wait_budget_ms)) as u32;
-            renderer.poll_desktop_texture(remaining_ms)
+        } else if source_active {
+            // Wait for desktop changes during the otherwise idle part of the frame. Polling with
+            // a zero timeout only after the foreground deadline can starve Desktop Duplication
+            // when the foreground and monitor both run at 300 Hz: the high-priority render loop
+            // repeatedly arrives just before DWM publishes the next frame. AcquireNextFrame wakes
+            // early for real desktop changes and otherwise returns near the next render deadline.
+            let source_wait_deadline = next_source_deadline.min(next_deadline);
+            renderer.poll_desktop_texture(desktop_poll_timeout_ms(
+                now,
+                source_wait_deadline,
+                source_interval,
+            ))
         } else {
-            let wake_deadline = if source_active && next_source_deadline < next_deadline {
-                next_source_deadline
-            } else {
-                next_deadline
-            };
             wait_for_render_deadline(
                 shared,
                 control,
-                wake_deadline,
+                next_deadline,
                 frame_rate.max(source_frame_rate),
             );
             false
         };
-        foreground_due |= Instant::now() >= next_deadline;
+        let after_poll = Instant::now();
+        foreground_due |= after_poll >= next_deadline;
+        let source_due = source_active && after_poll >= next_source_deadline;
         if !foreground_due && !desktop_updated {
             if source_due {
                 next_source_deadline =
-                    advance_render_deadline(next_source_deadline, Instant::now(), source_interval);
+                    advance_render_deadline(next_source_deadline, after_poll, source_interval);
             }
             continue;
         }
@@ -674,16 +675,14 @@ fn run_render_loop(
         }
         let presented = Instant::now();
         metrics.record(present_started, presented, status);
-        if foreground_due {
-            next_deadline =
-                advance_render_deadline(next_deadline, presented, render_interval(frame_rate));
-        }
+        // Every swap-chain presentation contains both the latest desktop texture and the current
+        // foreground identity pass. Treat either wake source as satisfying both clocks so a DDA
+        // frame immediately before an animation deadline cannot cause a second redundant Present.
+        let (foreground_deadline, source_deadline) =
+            merged_present_deadlines(presented, render_interval(frame_rate), source_interval);
+        next_deadline = foreground_deadline;
         if source_active {
-            // A foreground presentation also includes the newest retained desktop texture.
-            // Advance the source clock on every present so DDA and animation wake-ups merge
-            // instead of summing beyond the monitor refresh rate.
-            next_source_deadline =
-                advance_render_deadline(next_source_deadline, presented, source_interval);
+            next_source_deadline = source_deadline;
         }
     }
     metrics.publish(status);
@@ -695,6 +694,22 @@ fn desktop_source_frame_rate(display_refresh_rate_hz: u16) -> u16 {
     } else {
         60
     }
+}
+
+fn desktop_poll_timeout_ms(now: Instant, deadline: Instant, source_interval: Duration) -> u32 {
+    let available = deadline.saturating_duration_since(now);
+    let budget = available
+        .min(source_interval)
+        .min(Duration::from_millis(16));
+    u32::try_from(budget.as_millis().max(1)).unwrap_or(16)
+}
+
+fn merged_present_deadlines(
+    presented: Instant,
+    foreground_interval: Duration,
+    source_interval: Duration,
+) -> (Instant, Instant) {
+    (presented + foreground_interval, presented + source_interval)
 }
 
 fn wait_for_render_deadline(
@@ -3725,12 +3740,40 @@ mod tests {
         assert!(next_source > first_present);
         assert!(next_source <= first_present + source_interval);
 
-        // A foreground frame uses the same source slot instead of adding another immediate
-        // presentation to the DDA cadence.
-        let foreground_present = next_source + Duration::from_millis(1);
-        let merged_source =
-            advance_render_deadline(next_source, foreground_present, source_interval);
-        assert!(merged_source > foreground_present);
+        // A source-driven frame also satisfies the foreground clock, so the two wake sources
+        // cannot sum to twice the display cadence.
+        let presented = next_source + Duration::from_millis(1);
+        let foreground_interval = render_interval(300);
+        let (next_foreground, merged_source) =
+            merged_present_deadlines(presented, foreground_interval, source_interval);
+        assert_eq!(next_foreground, presented + foreground_interval);
+        assert_eq!(merged_source, presented + source_interval);
+    }
+
+    #[test]
+    fn desktop_poll_waits_for_dwm_before_matching_high_refresh_deadlines() {
+        let now = Instant::now();
+        let high_refresh_interval = render_interval(300);
+        assert_eq!(
+            desktop_poll_timeout_ms(now, now + high_refresh_interval, high_refresh_interval),
+            3
+        );
+
+        // Sub-millisecond tails still yield to DWM instead of reverting to a zero-timeout spin.
+        assert_eq!(
+            desktop_poll_timeout_ms(now, now + Duration::from_micros(500), high_refresh_interval,),
+            1
+        );
+
+        // Low-refresh displays keep drag/control latency bounded.
+        assert_eq!(
+            desktop_poll_timeout_ms(
+                now,
+                now + Duration::from_millis(50),
+                Duration::from_millis(50),
+            ),
+            16
+        );
     }
 
     #[test]

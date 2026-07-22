@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use windows::core::{s, w, Interface, BOOL};
-use windows::Win32::Foundation::{GetLastError, HMODULE, HWND, LUID, RECT};
+use windows::Win32::Foundation::{GetLastError, E_ACCESSDENIED, HMODULE, HWND, LUID, RECT};
 use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_10_1,
     D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
@@ -86,6 +86,13 @@ pub enum DesktopTexturePoll {
     NoFrame,
     Recovering { attempt: u32, retry_after: Duration },
     Updated(DesktopTextureFrameMetadata),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DesktopFrameCopyPlan {
+    NoPixelUpdate,
+    FullFrame,
+    Rectangles,
 }
 
 /// Retains the current desktop image in a shader-readable GPU texture.
@@ -452,7 +459,9 @@ impl DesktopTextureSource {
                     self.retry_at = None;
                     self.force_full_copy = true;
                 }
-                Err(DdaError::AccessLost) => return self.schedule_recovery(),
+                Err(error) if recoverable_duplication_error(&error) => {
+                    return self.schedule_recovery()
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -460,9 +469,16 @@ impl DesktopTextureSource {
         let frame = match self.session.acquire_next_frame(timeout_ms) {
             Ok(frame) => frame,
             Err(DdaError::Timeout) => return Ok(DesktopTexturePoll::NoFrame),
-            Err(DdaError::AccessLost) => return self.schedule_recovery(),
+            Err(error) if recoverable_duplication_error(&error) => return self.schedule_recovery(),
             Err(error) => return Err(error),
         };
+        // LastPresentTime is zero for pointer-only updates. Dirty and move rectangles are not
+        // available until the metadata buffer is read below, so do not run the complete copy
+        // planner here or a valid single-frame desktop change would be discarded prematurely.
+        if frame.info().LastPresentTime == 0 {
+            drop(frame);
+            return Ok(DesktopTexturePoll::NoFrame);
+        }
         let description = *frame.texture_description();
         let source_format =
             DuplicationFormat::from_dxgi(description.Format).ok_or(DdaError::DeviceUnavailable)?;
@@ -487,30 +503,42 @@ impl DesktopTextureSource {
             .ok_or(DdaError::DeviceUnavailable)?;
         let retained_resource: ID3D11Resource = retained.cast()?;
         let source_resource: ID3D11Resource = frame.texture().cast()?;
-        let copied_full_frame = self.force_full_copy
-            || (frame.info().TotalMetadataBufferSize > 0
-                && dirty_rects.is_empty()
-                && move_rects.is_empty());
-        if copied_full_frame {
-            unsafe {
+        let copy_plan = desktop_frame_copy_plan(
+            self.force_full_copy,
+            frame.info().LastPresentTime,
+            frame.info().AccumulatedFrames,
+            dirty_rects.len(),
+            move_rects.len(),
+        );
+        if copy_plan == DesktopFrameCopyPlan::NoPixelUpdate {
+            drop(frame);
+            return Ok(DesktopTexturePoll::NoFrame);
+        }
+        let copied_full_frame = copy_plan == DesktopFrameCopyPlan::FullFrame;
+        match copy_plan {
+            DesktopFrameCopyPlan::FullFrame => unsafe {
                 self.context
                     .CopyResource(&retained_resource, &source_resource)
-            };
-        } else {
-            for rectangle in dirty_rects
-                .iter()
-                .copied()
-                .chain(move_rects.iter().map(|rectangle| rectangle.DestinationRect))
-            {
-                copy_current_rectangle(
-                    &self.context,
-                    &retained_resource,
-                    &source_resource,
-                    rectangle,
-                    description.Width,
-                    description.Height,
-                );
+            },
+            DesktopFrameCopyPlan::Rectangles => {
+                for rectangle in dirty_rects
+                    .iter()
+                    .copied()
+                    .chain(move_rects.iter().map(|rectangle| rectangle.DestinationRect))
+                {
+                    copy_current_rectangle(
+                        &self.context,
+                        &retained_resource,
+                        &source_resource,
+                        rectangle,
+                        description.Width,
+                        description.Height,
+                    );
+                }
             }
+            DesktopFrameCopyPlan::NoPixelUpdate => unreachable!(
+                "frames without changed desktop pixels are released before texture copying"
+            ),
         }
         self.force_full_copy = false;
         self.recovery_attempt = 0;
@@ -570,6 +598,32 @@ impl DesktopTextureSource {
             attempt: self.recovery_attempt,
             retry_after: delay,
         })
+    }
+}
+
+fn desktop_frame_copy_plan(
+    force_full_copy: bool,
+    last_present_time: i64,
+    accumulated_frames: u32,
+    dirty_rect_count: usize,
+    move_rect_count: usize,
+) -> DesktopFrameCopyPlan {
+    if last_present_time == 0 {
+        return DesktopFrameCopyPlan::NoPixelUpdate;
+    }
+    if force_full_copy || accumulated_frames > 1 || (dirty_rect_count == 0 && move_rect_count == 0)
+    {
+        DesktopFrameCopyPlan::FullFrame
+    } else {
+        DesktopFrameCopyPlan::Rectangles
+    }
+}
+
+fn recoverable_duplication_error(error: &DdaError) -> bool {
+    match error {
+        DdaError::AccessLost => true,
+        DdaError::Windows(error) => error.code() == E_ACCESSDENIED,
+        _ => false,
     }
 }
 
@@ -796,5 +850,46 @@ mod tests {
         assert_eq!(recovery_delay(2), Duration::from_millis(100));
         assert_eq!(recovery_delay(6), Duration::from_millis(1_600));
         assert_eq!(recovery_delay(99), Duration::from_millis(1_600));
+    }
+
+    #[test]
+    fn access_denied_during_desktop_switch_uses_the_same_bounded_recovery() {
+        assert!(recoverable_duplication_error(&DdaError::AccessLost));
+        assert!(recoverable_duplication_error(&DdaError::Windows(
+            windows::core::Error::from_hresult(E_ACCESSDENIED),
+        )));
+        assert!(!recoverable_duplication_error(&DdaError::DeviceUnavailable));
+    }
+
+    #[test]
+    fn pointer_only_frames_do_not_wake_the_compositor() {
+        assert_eq!(
+            desktop_frame_copy_plan(true, 0, 1, 0, 0),
+            DesktopFrameCopyPlan::NoPixelUpdate
+        );
+        assert_eq!(
+            desktop_frame_copy_plan(false, 0, 1, 4, 0),
+            DesktopFrameCopyPlan::NoPixelUpdate
+        );
+    }
+
+    #[test]
+    fn copy_plan_uses_dirty_pixels_and_full_copies_unannotated_presents() {
+        assert_eq!(
+            desktop_frame_copy_plan(true, 42, 1, 0, 0),
+            DesktopFrameCopyPlan::FullFrame
+        );
+        assert_eq!(
+            desktop_frame_copy_plan(false, 42, 1, 0, 0),
+            DesktopFrameCopyPlan::FullFrame
+        );
+        assert_eq!(
+            desktop_frame_copy_plan(false, 42, 2, 1, 0),
+            DesktopFrameCopyPlan::FullFrame
+        );
+        assert_eq!(
+            desktop_frame_copy_plan(false, 42, 1, 1, 0),
+            DesktopFrameCopyPlan::Rectangles
+        );
     }
 }
