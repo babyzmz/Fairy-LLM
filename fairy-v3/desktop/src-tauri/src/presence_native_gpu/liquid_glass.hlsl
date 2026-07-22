@@ -1,6 +1,13 @@
-// HostBackdropBrush owns the desktop pixels. This shader draws only Fairy's material and identity
-// layers, so it can never sample a previous Fairy frame or amplify capture quantization noise.
-static const float EDGE_LENS_DEPTH_PX = 48.0;
+// HostBackdropBrush supplies the identity center. The optional monitor texture is sampled once per
+// color channel only in the outer optical band, always from beyond Fairy's current silhouette.
+// This keeps the center geometrically stable and prevents the current Fairy frame from recursing.
+static const float EDGE_LENS_DEPTH_PX = 32.0;
+static const float EDGE_SAMPLE_CLEARANCE_PX = 12.0;
+static const float EDGE_MAX_REFRACTION_PX = 6.0;
+static const float EDGE_MAX_DISPERSION_PX = 2.0;
+
+Texture2D<float4> desktop_texture : register(t0);
+SamplerState desktop_sampler : register(s0);
 
 cbuffer PresenceConstants : register(b0) {
     float2 output_size;
@@ -187,6 +194,38 @@ float edge_refraction_profile(float signed_distance) {
     return rim * rim * (3.0 - 2.0 * rim);
 }
 
+float2 monitor_uv(float2 local_position_px) {
+    return saturate((source_origin_px + local_position_px) / max(capture_size, 1.0.xx));
+}
+
+float3 sample_refracted_desktop(
+    float2 local_position_px,
+    float2 normal,
+    float signed_distance,
+    float edge_profile
+) {
+    float scale = max(surface_scale, 0.01);
+    float inward_depth = max(-signed_distance, 0.0);
+    // The source point is outside the complete Fairy silhouette and its narrow shadow. Sampling
+    // there avoids feeding a previous Fairy frame back into the lens without hiding Fairy from
+    // recording or remote desktop capture.
+    float outside_clearance = (EDGE_SAMPLE_CLEARANCE_PX
+        + EDGE_MAX_REFRACTION_PX * edge_profile) * scale;
+    // A factor above one mirrors a narrow radial interval across the silhouette instead of
+    // collapsing the complete band onto one source ring. That preserves spatial detail and avoids
+    // the spoke-like streaks caused by many destination pixels sharing the same desktop sample.
+    float2 source_position = local_position_px
+        + normal * (inward_depth * 1.65 + outside_clearance);
+    float dispersion = EDGE_MAX_DISPERSION_PX
+        * scale
+        * smoothstep(0.72, 1.0, edge_profile);
+    float2 spectral_offset = normal * dispersion;
+    float red = desktop_texture.Sample(desktop_sampler, monitor_uv(source_position + spectral_offset)).r;
+    float green = desktop_texture.Sample(desktop_sampler, monitor_uv(source_position)).g;
+    float blue = desktop_texture.Sample(desktop_sampler, monitor_uv(source_position - spectral_offset)).b;
+    return float3(red, green, blue);
+}
+
 float state_energy_value() {
     return state_energy;
 }
@@ -248,6 +287,12 @@ float4 ps_main(VertexOutput input) : SV_Target {
     float thickness = thickness_field(signed_distance, local_px);
     float2 normal = surface_normal(local_px);
     float edge_focus = edge_refraction_profile(signed_distance);
+    float capture_edge = capture_source_valid
+        * smoothstep(0.10, 0.92, edge_focus)
+        * (1.0 - drag_active);
+    float3 refracted_desktop = capture_edge > 0.001
+        ? sample_refracted_desktop(local_px, normal, signed_distance, edge_focus)
+        : 0.0.xxx;
     float3 material_base = float3(0.76, 0.86, 0.92);
 
     float rim_fresnel = pow(edge_focus, 1.55);
@@ -376,8 +421,15 @@ float4 ps_main(VertexOutput input) : SV_Target {
         * (1.0 - atmosphere_layer_alpha)
         * (1.0 - glow_layer_alpha)
         * (1.0 - notify_layer_alpha);
+    float optical_alpha = shape_mask * capture_edge * 0.92;
+    float3 optical_premultiplied = refracted_desktop * optical_alpha;
+    float composed_material_alpha = material_alpha
+        + optical_alpha * (1.0 - material_alpha);
+    float3 composed_material = material_premultiplied
+        + optical_premultiplied * (1.0 - material_alpha);
     float3 foreground_premultiplied = identity_premultiplied
-        + material_premultiplied * (1.0 - identity_alpha);
-    float foreground_alpha = identity_alpha + material_alpha * (1.0 - identity_alpha);
+        + composed_material * (1.0 - identity_alpha);
+    float foreground_alpha = identity_alpha
+        + composed_material_alpha * (1.0 - identity_alpha);
     return float4(foreground_premultiplied, foreground_alpha);
 }

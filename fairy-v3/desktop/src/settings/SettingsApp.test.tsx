@@ -181,7 +181,7 @@ describe("SettingsApp", () => {
     render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
     await screen.findByRole("heading", { name: "General" });
     await userEvent.click(screen.getByRole("button", { name: /^Pet/ }));
-    expect(screen.getByText("Native Liquid Glass · Host Backdrop · 144 FPS on 144 Hz"))
+    expect(screen.getByText("Native Liquid Glass · Live edge optics · 144 FPS on 144 Hz"))
       .toBeVisible();
 
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Renderer" }), "compatibility");
@@ -772,7 +772,7 @@ function nativeRendererHealth(): PresenceRendererHealth {
     requested_mode: "liquid",
     mode: "native",
     actual_backend: "native_liquid_glass",
-    optics_source: "host_backdrop",
+    optics_source: "host_backdrop_plus_monitor_edge",
     status: "running",
     error_code: null,
     fallback_reason: null,

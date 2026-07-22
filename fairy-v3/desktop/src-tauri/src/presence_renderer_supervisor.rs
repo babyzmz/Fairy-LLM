@@ -39,6 +39,7 @@ pub enum PresenceRendererErrorCode {
     NativeGpuStartFailed,
     NativeGpuUpdateFailed,
     NativeGpuRuntimeFailed,
+    NativeGpuEdgeCaptureUnavailable,
     NativeGpuStopFailed,
 }
 
@@ -64,6 +65,7 @@ pub enum PresenceActualRendererBackend {
 pub enum PresenceOpticsSource {
     None,
     HostBackdrop,
+    HostBackdropPlusMonitorEdge,
     WebglTexture,
     Procedural,
 }

@@ -1,9 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::ffi::c_void;
-use std::sync::atomic::{
-    AtomicBool, AtomicI64, AtomicIsize, AtomicU64, Ordering as AtomicOrdering,
-};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use std::thread::{self, JoinHandle};
@@ -11,21 +9,26 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::{
     NativeGpuBackend, NativeGpuConfig, NativeGpuError, NativeGpuExpansionDirection,
-    NativeGpuLifecycle, NativeGpuPresentation, NativeGpuStatus, NativeGpuVisualState,
+    NativeGpuLifecycle, NativeGpuOpticsSource, NativeGpuPresentation, NativeGpuStatus,
+    NativeGpuVisualState,
 };
 use crate::presence_coordinator::PhysicalFrame;
 use windows::core::{w, Interface, PCSTR, PCWSTR};
-use windows::Graphics::Capture::GraphicsCaptureItem;
 use windows::System::DispatcherQueueController;
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
 use windows::Win32::Graphics::Direct3D::{
-    ID3DBlob, ID3DInclude, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+    ID3DBlob, ID3DInclude, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D_DRIVER_TYPE_HARDWARE,
+    D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_11_0,
+    D3D_FEATURE_LEVEL_11_1,
 };
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader, ID3D11RenderTargetView,
-    ID3D11Texture2D, ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER, D3D11_BUFFER_DESC,
-    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
+    D3D11CreateDevice, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext, ID3D11PixelShader,
+    ID3D11RenderTargetView, ID3D11SamplerState, ID3D11ShaderResourceView, ID3D11Texture2D,
+    ID3D11VertexShader, D3D11_BIND_CONSTANT_BUFFER, D3D11_BIND_SHADER_RESOURCE, D3D11_BUFFER_DESC,
+    D3D11_COMPARISON_NEVER, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+    D3D11_SAMPLER_DESC, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_TEXTURE_ADDRESS_CLAMP,
+    D3D11_USAGE_DEFAULT, D3D11_VIEWPORT,
 };
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_HOSTBACKDROPBRUSH};
 use windows::Win32::Graphics::Dxgi::Common::{
@@ -33,21 +36,21 @@ use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory1, IDXGIDevice, IDXGIFactory1, IDXGIFactory2, IDXGIOutput6, IDXGISwapChain1,
-    IDXGISwapChain3, DXGI_ERROR_NOT_FOUND, DXGI_PRESENT, DXGI_SCALING_STRETCH,
+    CreateDXGIFactory1, IDXGIDevice, IDXGIFactory1, IDXGIFactory2, IDXGIOutput1, IDXGIOutput6,
+    IDXGIOutputDuplication, IDXGIResource, IDXGISwapChain1, IDXGISwapChain3, DXGI_ERROR_NOT_FOUND,
+    DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO, DXGI_PRESENT, DXGI_SCALING_STRETCH,
     DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
 };
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    EnumDisplaySettingsW, GetMonitorInfoW, MonitorFromPoint, DEVMODEW, ENUM_CURRENT_SETTINGS,
+    HMONITOR, MONITORINFO, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::Com::{CoDecrementMTAUsage, CoIncrementMTAUsage, CO_MTA_USAGE_COOKIE};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 use windows::Win32::System::Threading::{
     GetCurrentThread, GetCurrentThreadId, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL,
 };
 use windows::Win32::System::WinRT::Composition::{ICompositorDesktopInterop, ICompositorInterop};
-use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 use windows::Win32::System::WinRT::{
     CreateDispatcherQueueController, DispatcherQueueOptions, RoInitialize, RoUninitialize,
     DQTAT_COM_NONE, DQTYPE_THREAD_CURRENT, RO_INIT_MULTITHREADED,
@@ -66,32 +69,17 @@ use windows::UI::Composition::{
     CompositionBackdropBrush, CompositionEllipseGeometry, CompositionGeometricClip,
     CompositionStretch, CompositionSurfaceBrush, Compositor, ContainerVisual, SpriteVisual,
 };
-use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
-use windows_capture::frame::Frame;
-use windows_capture::graphics_capture_api::InternalCaptureControl;
-use windows_capture::monitor::Monitor;
-use windows_capture::settings::{
-    ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
-    GraphicsCaptureItemType, MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
-};
-use windows_numerics::{Vector2, Vector3};
+use windows_numerics::Vector2;
 
 const SHADER_SOURCE: &str = include_str!("liquid_glass.hlsl");
 const SWAP_CHAIN_BUFFER_COUNT: u32 = 2;
-const HOST_BACKDROP_LENS_BANDS: &[(f32, f32)] = &[
-    (1.00, 1.075),
-    (0.88, 1.058),
-    (0.76, 1.042),
-    (0.64, 1.027),
-    (0.52, 1.014),
-    (0.40, 1.000),
-];
+const LIQUID_CORE_RADIUS: f32 = 72.0;
+const EDGE_CAPTURE_REBASE_FRAMES: u64 = 2;
 const METRIC_WINDOW: usize = 600;
 const NATIVE_SURFACE_CLASS: PCWSTR = w!("FairyNativePresenceRendererClass");
 const TIMER_PERIOD_ONE_MILLISECOND: u32 = 1;
 const TIMER_NO_ERROR: u32 = 0;
 static NATIVE_SURFACE_CLASS_REGISTERED: OnceLock<Result<(), String>> = OnceLock::new();
-static PERFORMANCE_FREQUENCY: OnceLock<Option<i64>> = OnceLock::new();
 
 #[link(name = "winmm")]
 unsafe extern "system" {
@@ -101,10 +89,8 @@ unsafe extern "system" {
     fn time_end_period(period_ms: u32) -> u32;
 }
 
-type NativeCaptureControl = CaptureControl<NativeCaptureHandler, String>;
-
 pub(super) struct WindowsNativeGpuSession {
-    control: NativeCaptureControl,
+    control: NativeRenderLoop,
     surface_hwnd: Arc<AtomicIsize>,
     presentation: Arc<RwLock<NativeGpuPresentation>>,
     render_control: Arc<NativeRenderControl>,
@@ -140,60 +126,47 @@ impl WindowsNativeGpuSession {
         status: Arc<Mutex<NativeGpuStatus>>,
     ) -> Result<Self, NativeGpuError> {
         let timer_resolution = TimerResolutionGuard::acquire();
-        let capture_source =
-            capture_desktop_source(config.render_frame, config.presentation, &status)?;
-        let monitor_frame = capture_source.monitor_frame;
-        let capture_geometry = capture_source.geometry;
-        let display_refresh_rate_hz = capture_source.display_refresh_rate_hz;
-        let hdr_capture = capture_source.hdr_capture;
-        let capture_started_stage = capture_geometry.started_stage();
-        let capture_frame_rate_limit =
-            capture_frame_rate_limit(config.target_frame_rate, display_refresh_rate_hz);
+        let composition_source =
+            inspect_desktop_composition_source(config.render_frame, config.presentation, &status)?;
+        let monitor_frame = composition_source.monitor_frame;
+        let display_refresh_rate_hz = composition_source.display_refresh_rate_hz;
+        let hdr_capture = composition_source.hdr_capture;
+        let effective_frame_rate =
+            effective_render_frame_rate(config.target_frame_rate, display_refresh_rate_hz);
         update_status(&status, |status| {
             status.hdr_capture = hdr_capture;
             status.display_refresh_rate_hz = display_refresh_rate_hz;
-            status.capture_frame_rate_limit = capture_frame_rate_limit;
+            // Legacy diagnostic field retained for schema compatibility. HostBackdrop does not
+            // run a capture loop, so its only meaningful limit is the foreground present rate.
+            status.capture_frame_rate_limit = effective_frame_rate;
         });
+        let (device, context) = create_native_d3d_device(&status)?;
         let surface_hwnd = Arc::new(AtomicIsize::new(0));
         let presentation = Arc::new(RwLock::new(config.presentation));
         let render_control = Arc::new(NativeRenderControl::new());
-        let flags = NativeCaptureFlags {
+        let control = NativeRenderLoop::start(
+            device,
+            context,
             config,
             monitor_frame,
             display_refresh_rate_hz,
+            Arc::clone(&surface_hwnd),
+            Arc::clone(&presentation),
+            Arc::clone(&status),
             hdr_capture,
-            status: Arc::clone(&status),
-            surface_hwnd: Arc::clone(&surface_hwnd),
-            presentation: Arc::clone(&presentation),
-            render_control: Arc::clone(&render_control),
-        };
-        // Capture and animation have independent cadence. A 60 FPS animation can still sample a
-        // fast desktop with low latency, while high-refresh modes never request frames beyond the
-        // selected monitor's physical refresh rate.
-        let minimum_interval = render_interval(capture_frame_rate_limit);
-        let settings = Settings::new(
-            capture_source.item,
-            CursorCaptureSettings::WithoutCursor,
-            DrawBorderSettings::WithoutBorder,
-            capture_geometry.secondary_window_settings(),
-            MinimumUpdateIntervalSettings::Custom(minimum_interval),
-            DirtyRegionSettings::Default,
-            // HostBackdropBrush owns desktop sampling. WGC is retained only for monitor health and
-            // render cadence, so an 8-bit frame avoids the former fp16 bandwidth cost without ever
-            // entering Fairy's shader or visible output.
-            ColorFormat::Bgra8,
-            flags,
-        );
-        let control = NativeCaptureHandler::start_free_threaded(settings).map_err(|error| {
-            capture_source_failure(
+            Arc::clone(&render_control),
+        )
+        .map_err(|error| {
+            composition_source_failure(
                 &status,
-                "capture_start",
-                format!("PRESENCE_NATIVE_GPU_CAPTURE_START_FAILED: {error}"),
+                "renderer_start",
+                format!("PRESENCE_NATIVE_GPU_RENDERER_START_FAILED: {error}"),
             )
         })?;
         update_status(&status, |status| {
-            status.capture_source_stage = capture_started_stage.to_owned();
+            status.capture_source_stage = "host_backdrop_renderer_started".to_owned();
             status.capture_source_hresult = None;
+            status.optics_source = NativeGpuOpticsSource::HostBackdrop;
         });
         Ok(Self {
             control,
@@ -235,11 +208,9 @@ impl WindowsNativeGpuSession {
         }
     }
 
-    pub(super) fn stop(self) -> Result<(), NativeGpuError> {
+    pub(super) fn stop(mut self) -> Result<(), NativeGpuError> {
         let raw_hwnd = self.surface_hwnd.load(AtomicOrdering::Acquire);
-        self.control
-            .stop()
-            .map_err(|error| NativeGpuError::StopFailed(error.to_string()))?;
+        self.control.stop_and_join();
         if raw_hwnd != 0 {
             let hwnd = HWND(raw_hwnd as *mut c_void);
             let deadline = Instant::now() + Duration::from_millis(750);
@@ -261,10 +232,6 @@ impl WindowsNativeGpuSession {
     }
 
     pub(super) fn prepare_visual_test(&self) -> Result<(), NativeGpuError> {
-        self.control
-            .halt_handle()
-            .store(true, std::sync::atomic::Ordering::Release);
-        std::thread::sleep(Duration::from_millis(50));
         let raw_hwnd = self.surface_hwnd.load(AtomicOrdering::Acquire);
         if raw_hwnd == 0 {
             return Err(NativeGpuError::NotRunning);
@@ -309,36 +276,8 @@ impl WindowsNativeGpuSession {
     }
 }
 
-#[derive(Clone)]
-struct NativeCaptureFlags {
-    config: NativeGpuConfig,
-    monitor_frame: PhysicalFrame,
-    display_refresh_rate_hz: u16,
-    hdr_capture: bool,
-    status: Arc<Mutex<NativeGpuStatus>>,
-    surface_hwnd: Arc<AtomicIsize>,
-    presentation: Arc<RwLock<NativeGpuPresentation>>,
-    render_control: Arc<NativeRenderControl>,
-}
-
-struct NativeCaptureHandler {
-    render_loop: NativeRenderLoop,
-    status: Arc<Mutex<NativeGpuStatus>>,
-}
-
-#[derive(Clone)]
-struct CapturedTexture {
-    texture: ID3D11Texture2D,
-    captured_at: Instant,
-    source_timestamp_100ns: Option<i64>,
-    generation: u64,
-}
-
 struct NativeRenderControl {
     drag_active: AtomicBool,
-    capture_generation: AtomicU64,
-    resume_after_generation: AtomicU64,
-    resume_after_timestamp_100ns: AtomicI64,
     rebase_epoch: AtomicU64,
     drag_request_epoch: AtomicU64,
     drag_ack_epoch: AtomicU64,
@@ -349,9 +288,6 @@ impl NativeRenderControl {
     fn new() -> Self {
         Self {
             drag_active: AtomicBool::new(false),
-            capture_generation: AtomicU64::new(0),
-            resume_after_generation: AtomicU64::new(0),
-            resume_after_timestamp_100ns: AtomicI64::new(0),
             rebase_epoch: AtomicU64::new(0),
             drag_request_epoch: AtomicU64::new(0),
             drag_ack_epoch: AtomicU64::new(0),
@@ -367,16 +303,6 @@ impl NativeRenderControl {
         if active {
             self.drag_active.store(true, AtomicOrdering::Release);
         } else {
-            self.resume_after_generation.store(
-                self.capture_generation
-                    .load(AtomicOrdering::Acquire)
-                    .saturating_add(1),
-                AtomicOrdering::Release,
-            );
-            self.resume_after_timestamp_100ns.store(
-                system_relative_time_100ns().unwrap_or(0),
-                AtomicOrdering::Release,
-            );
             self.rebase_epoch.fetch_add(1, AtomicOrdering::AcqRel);
             self.drag_active.store(false, AtomicOrdering::Release);
         }
@@ -399,32 +325,10 @@ impl NativeRenderControl {
     fn is_drag_active(&self) -> bool {
         self.drag_active.load(AtomicOrdering::Acquire)
     }
-
-    fn accepts(&self, frame: &CapturedTexture) -> bool {
-        self.is_drag_active()
-            || capture_is_after_resume(
-                frame.generation,
-                frame.source_timestamp_100ns,
-                self.resume_after_generation.load(AtomicOrdering::Acquire),
-                self.resume_after_timestamp_100ns
-                    .load(AtomicOrdering::Acquire),
-            )
-    }
-}
-
-fn capture_is_after_resume(
-    generation: u64,
-    timestamp_100ns: Option<i64>,
-    minimum_generation: u64,
-    minimum_timestamp_100ns: i64,
-) -> bool {
-    generation >= minimum_generation
-        && (minimum_timestamp_100ns <= 0
-            || timestamp_100ns.is_none_or(|timestamp| timestamp >= minimum_timestamp_100ns))
 }
 
 struct NativeRenderShared {
-    latest: Mutex<Option<CapturedTexture>>,
+    wake_lock: Mutex<()>,
     stopping: AtomicBool,
 }
 
@@ -449,7 +353,7 @@ impl NativeRenderLoop {
         control: Arc<NativeRenderControl>,
     ) -> Result<Self, String> {
         let shared = Arc::new(NativeRenderShared {
-            latest: Mutex::new(None),
+            wake_lock: Mutex::new(()),
             stopping: AtomicBool::new(false),
         });
         let thread_shared = Arc::clone(&shared);
@@ -461,7 +365,7 @@ impl NativeRenderLoop {
             .spawn(move || {
                 let _ =
                     unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL) };
-                let _winrt = match CaptureWinRtMta::acquire(&thread_status) {
+                let _winrt = match CompositionWinRtMta::acquire(&thread_status) {
                     Ok(guard) => guard,
                     Err(error) => {
                         let error =
@@ -484,6 +388,7 @@ impl NativeRenderLoop {
                         surface_hwnd,
                         presentation,
                         hdr_capture,
+                        status: Arc::clone(&thread_status),
                     },
                 );
                 let mut renderer = match renderer {
@@ -500,6 +405,8 @@ impl NativeRenderLoop {
                 update_status(&thread_status, |status| {
                     status.backend = NativeGpuBackend::WindowsHostBackdropD3d11Composition;
                     status.lifecycle = NativeGpuLifecycle::Running;
+                    // HostBackdrop remains GPU-composed and never enters CPU memory or IPC. This
+                    // legacy flag now describes that zero-copy compositor path, not WGC.
                     status.zero_copy_capture = true;
                     status.pixel_ipc = false;
                     status.monitor_width = monitor_frame.width;
@@ -535,33 +442,6 @@ impl NativeRenderLoop {
         }
     }
 
-    fn submit(
-        &self,
-        texture: &ID3D11Texture2D,
-        captured_at: Instant,
-        source_timestamp_100ns: Option<i64>,
-    ) -> Result<(), String> {
-        let mut latest = self
-            .shared
-            .latest
-            .lock()
-            .map_err(|_| "PRESENCE_NATIVE_GPU_CAPTURE_LOCK_FAILED".to_owned())?;
-        let generation = self
-            .control
-            .capture_generation
-            .fetch_add(1, AtomicOrdering::AcqRel)
-            .saturating_add(1);
-        *latest = Some(CapturedTexture {
-            texture: texture.clone(),
-            captured_at,
-            source_timestamp_100ns,
-            generation,
-        });
-        drop(latest);
-        self.control.wake.notify_one();
-        Ok(())
-    }
-
     fn stop_and_join(&mut self) {
         self.shared.stopping.store(true, AtomicOrdering::Release);
         self.control.wake.notify_all();
@@ -577,64 +457,13 @@ impl Drop for NativeRenderLoop {
     }
 }
 
-// windows-capture constructs and invokes this handler on one dedicated thread. The returned
-// control owns an Arc to it, but this module never exposes or locks that callback from another
-// thread; stop joins the capture thread before releasing the final COM references.
-unsafe impl Send for NativeCaptureHandler {}
-
-impl GraphicsCaptureApiHandler for NativeCaptureHandler {
-    type Flags = NativeCaptureFlags;
-    type Error = String;
-
-    fn new(context: Context<Self::Flags>) -> Result<Self, Self::Error> {
-        let render_loop = NativeRenderLoop::start(
-            context.device,
-            context.device_context,
-            context.flags.config,
-            context.flags.monitor_frame,
-            context.flags.display_refresh_rate_hz,
-            Arc::clone(&context.flags.surface_hwnd),
-            Arc::clone(&context.flags.presentation),
-            Arc::clone(&context.flags.status),
-            context.flags.hdr_capture,
-            Arc::clone(&context.flags.render_control),
-        )?;
-        Ok(Self {
-            render_loop,
-            status: context.flags.status,
-        })
-    }
-
-    fn on_frame_arrived(
-        &mut self,
-        frame: &mut Frame,
-        _capture_control: InternalCaptureControl,
-    ) -> Result<(), Self::Error> {
-        let source_timestamp_100ns = frame.timestamp().ok().map(|timestamp| timestamp.Duration);
-        self.render_loop.submit(
-            frame.as_raw_texture(),
-            Instant::now(),
-            source_timestamp_100ns,
-        )
-    }
-
-    fn on_closed(&mut self) -> Result<(), Self::Error> {
-        update_status(&self.status, |status| {
-            status.lifecycle = NativeGpuLifecycle::Failed;
-            status.error_code = Some("PRESENCE_NATIVE_GPU_CAPTURE_CLOSED".to_owned());
-        });
-        Ok(())
-    }
-}
-
 struct NativeRenderMetrics {
     started: Instant,
     last_presented: Option<Instant>,
     last_source_frame: Option<Instant>,
-    last_capture_generation: u64,
+    last_source_generation: u64,
     frame_intervals_ms: VecDeque<f64>,
     source_frame_intervals_ms: VecDeque<f64>,
-    callback_to_present_ms: VecDeque<f64>,
     present_ms: VecDeque<f64>,
     frames_presented: u64,
     last_published: Instant,
@@ -646,10 +475,9 @@ impl NativeRenderMetrics {
             started: Instant::now(),
             last_presented: None,
             last_source_frame: None,
-            last_capture_generation: 0,
+            last_source_generation: 0,
             frame_intervals_ms: VecDeque::with_capacity(METRIC_WINDOW),
             source_frame_intervals_ms: VecDeque::with_capacity(METRIC_WINDOW),
-            callback_to_present_ms: VecDeque::with_capacity(METRIC_WINDOW),
             present_ms: VecDeque::with_capacity(METRIC_WINDOW),
             frames_presented: 0,
             last_published: Instant::now(),
@@ -658,7 +486,7 @@ impl NativeRenderMetrics {
 
     fn record(
         &mut self,
-        frame: &CapturedTexture,
+        source_generation: u64,
         present_started: Instant,
         presented: Instant,
         status: &Arc<Mutex<NativeGpuStatus>>,
@@ -673,22 +501,14 @@ impl NativeRenderMetrics {
             &mut self.present_ms,
             presented.duration_since(present_started).as_secs_f64() * 1_000.0,
         );
-        if frame.generation != self.last_capture_generation {
-            if let Some(interval) = self
-                .last_source_frame
-                .and_then(|last| frame.captured_at.checked_duration_since(last))
-            {
+        if source_generation > self.last_source_generation {
+            if let Some(last) = self.last_source_frame.replace(presented) {
                 push_metric(
                     &mut self.source_frame_intervals_ms,
-                    interval.as_secs_f64() * 1_000.0,
+                    presented.duration_since(last).as_secs_f64() * 1_000.0,
                 );
             }
-            self.last_source_frame = Some(frame.captured_at);
-            push_metric(
-                &mut self.callback_to_present_ms,
-                presented.duration_since(frame.captured_at).as_secs_f64() * 1_000.0,
-            );
-            self.last_capture_generation = frame.generation;
+            self.last_source_generation = source_generation;
         }
         self.frames_presented = self.frames_presented.saturating_add(1);
         if self.frames_presented <= 3 || self.last_published.elapsed() >= Duration::from_millis(250)
@@ -711,9 +531,9 @@ impl NativeRenderMetrics {
                 .filter(|interval| *interval > 0.0)
                 .map(|interval| 1_000.0 / interval)
                 .unwrap_or(0.0);
-            status.source_frames_received = self.last_capture_generation;
+            status.source_frames_received = self.last_source_generation;
             status.source_capture_fps_avg = if elapsed > 0.0 {
-                self.last_capture_generation as f64 / elapsed
+                self.last_source_generation as f64 / elapsed
             } else {
                 0.0
             };
@@ -721,8 +541,7 @@ impl NativeRenderMetrics {
                 .filter(|interval| *interval > 0.0)
                 .map(|interval| 1_000.0 / interval)
                 .unwrap_or(0.0);
-            status.callback_to_present_p95_ms =
-                percentile(&self.callback_to_present_ms, 0.95).unwrap_or(0.0);
+            status.callback_to_present_p95_ms = 0.0;
             status.present_p95_ms = percentile(&self.present_ms, 0.95).unwrap_or(0.0);
             status.last_presented_at_ms = now_ms();
         });
@@ -768,35 +587,16 @@ fn run_render_loop(
             wait_for_render_deadline(shared, control, next_deadline, frame_rate);
             continue;
         }
-        let frame = match shared.latest.lock() {
-            Ok(latest) => latest.clone(),
-            Err(_) => {
-                fail_render_loop(status, "PRESENCE_NATIVE_GPU_CAPTURE_LOCK_FAILED".to_owned());
+        let present_started = Instant::now();
+        let source_generation = match renderer.present(metrics.started.elapsed(), drag_active) {
+            Ok(generation) => generation,
+            Err(error) => {
+                fail_render_loop(status, error);
                 break;
             }
         };
-        let Some(frame) = frame else {
-            wait_for_render_deadline(shared, control, now + Duration::from_millis(10), frame_rate);
-            continue;
-        };
-        if !control.accepts(&frame) {
-            wait_for_render_wake(shared, control, Duration::from_millis(4));
-            continue;
-        }
-        let present_started = Instant::now();
-        if let Err(error) = renderer.present(
-            &frame.texture,
-            frame.source_timestamp_100ns,
-            frame.generation,
-            metrics.started.elapsed(),
-            drag_active,
-            true,
-        ) {
-            fail_render_loop(status, error);
-            break;
-        }
         let presented = Instant::now();
-        metrics.record(&frame, present_started, presented, status);
+        metrics.record(source_generation, present_started, presented, status);
         next_deadline =
             advance_render_deadline(next_deadline, presented, render_interval(frame_rate));
     }
@@ -823,22 +623,11 @@ fn wait_for_render_deadline(
             std::hint::spin_loop();
             continue;
         }
-        let Ok(guard) = shared.latest.lock() else {
+        let Ok(guard) = shared.wake_lock.lock() else {
             return;
         };
         let _ = control.wake.wait_timeout(guard, remaining - spin_window);
     }
-}
-
-fn wait_for_render_wake(
-    shared: &NativeRenderShared,
-    control: &NativeRenderControl,
-    timeout: Duration,
-) {
-    let Ok(guard) = shared.latest.lock() else {
-        return;
-    };
-    let _ = control.wake.wait_timeout(guard, timeout);
 }
 
 fn pump_native_messages() -> bool {
@@ -888,11 +677,6 @@ fn effective_render_frame_rate(requested: u16, display_refresh_rate_hz: u16) -> 
     } else {
         requested
     }
-}
-
-fn capture_frame_rate_limit(requested: u16, display_refresh_rate_hz: u16) -> u16 {
-    let desired = if requested == 60 { 180 } else { requested };
-    effective_render_frame_rate(desired, display_refresh_rate_hz)
 }
 
 fn advance_render_deadline(
@@ -1104,22 +888,15 @@ unsafe extern "system" fn native_surface_window_proc(
     }
 }
 
-struct HostBackdropLensBand {
-    _container: ContainerVisual,
-    source: SpriteVisual,
-    geometry: CompositionEllipseGeometry,
-    clip: CompositionGeometricClip,
-    _brush: CompositionBackdropBrush,
-    radius_fraction: f32,
-    optical_scale: f32,
-}
-
 struct HostBackdropComposition {
     _dispatcher_queue: DispatcherQueueController,
     _compositor: Compositor,
     _target: DesktopWindowTarget,
     _root: ContainerVisual,
-    lens_bands: Vec<HostBackdropLensBand>,
+    backdrop: SpriteVisual,
+    _backdrop_brush: CompositionBackdropBrush,
+    backdrop_geometry: CompositionEllipseGeometry,
+    backdrop_clip: CompositionGeometricClip,
     _foreground_brush: CompositionSurfaceBrush,
     _foreground: SpriteVisual,
 }
@@ -1173,52 +950,33 @@ impl HostBackdropComposition {
             .Children()
             .map_err(|error| windows_stage_error("HOST_BACKDROP_ROOT_CHILDREN", error))?;
 
-        let mut lens_bands = Vec::with_capacity(HOST_BACKDROP_LENS_BANDS.len());
-        for &(radius_fraction, optical_scale) in HOST_BACKDROP_LENS_BANDS {
-            let container = compositor
-                .CreateContainerVisual()
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_LENS_CONTAINER", error))?;
-            container
-                .SetSize(output_size)
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_LENS_SIZE", error))?;
-            let geometry = compositor
-                .CreateEllipseGeometry()
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_LENS_GEOMETRY", error))?;
-            let clip = compositor
-                .CreateGeometricClipWithGeometry(&geometry)
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_LENS_CLIP", error))?;
-            container
-                .SetClip(&clip)
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_SET_CLIP", error))?;
-            let source = compositor
-                .CreateSpriteVisual()
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_LENS_VISUAL", error))?;
-            source
-                .SetSize(output_size)
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_LENS_VISUAL_SIZE", error))?;
-            let brush = compositor
-                .CreateHostBackdropBrush()
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_BRUSH", error))?;
-            source
-                .SetBrush(&brush)
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_SET_BRUSH", error))?;
-            container
-                .Children()
-                .and_then(|children| children.InsertAtTop(&source))
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_INSERT_SOURCE", error))?;
-            root_children
-                .InsertAtTop(&container)
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_INSERT_BAND", error))?;
-            lens_bands.push(HostBackdropLensBand {
-                _container: container,
-                source,
-                geometry,
-                clip,
-                _brush: brush,
-                radius_fraction,
-                optical_scale,
-            });
-        }
+        // Keep the center on the compositor's live HostBackdrop. Windows deliberately rejects
+        // transforms on backdrop brushes, so geometric edge optics are drawn from an independent
+        // monitor texture while this layer remains an identity sample with no recursive capture.
+        let backdrop = compositor
+            .CreateSpriteVisual()
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_SOURCE_VISUAL", error))?;
+        backdrop
+            .SetSize(output_size)
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_SOURCE_SIZE", error))?;
+        let backdrop_brush = compositor
+            .CreateHostBackdropBrush()
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_BRUSH", error))?;
+        backdrop
+            .SetBrush(&backdrop_brush)
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_SOURCE_BRUSH", error))?;
+        let backdrop_geometry = compositor
+            .CreateEllipseGeometry()
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_GEOMETRY", error))?;
+        let backdrop_clip = compositor
+            .CreateGeometricClipWithGeometry(&backdrop_geometry)
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_CLIP", error))?;
+        backdrop
+            .SetClip(&backdrop_clip)
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_SET_CLIP", error))?;
+        root_children
+            .InsertAtBottom(&backdrop)
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_INSERT_SOURCE", error))?;
 
         let compositor_interop: ICompositorInterop = compositor
             .cast()
@@ -1250,7 +1008,10 @@ impl HostBackdropComposition {
             _compositor: compositor,
             _target: target,
             _root: root,
-            lens_bands,
+            backdrop,
+            _backdrop_brush: backdrop_brush,
+            backdrop_geometry,
+            backdrop_clip,
             _foreground_brush: foreground_brush,
             _foreground: foreground,
         };
@@ -1282,37 +1043,171 @@ impl HostBackdropComposition {
         let deformation = drag.stretch * 0.055 + drag.release * 0.026;
         let rotation = direction[1].atan2(direction[0]);
 
-        for band in &self.lens_bands {
-            let radius = 72.0 * surface_scale * band.radius_fraction;
-            band.geometry
-                .SetCenter(center)
-                .and_then(|()| {
-                    band.geometry.SetRadius(Vector2 {
-                        X: radius * (1.0 + deformation),
-                        Y: radius * (1.0 - deformation * 0.45),
-                    })
+        let radius = LIQUID_CORE_RADIUS * surface_scale;
+        self.backdrop_geometry
+            .SetCenter(center)
+            .and_then(|()| {
+                self.backdrop_geometry.SetRadius(Vector2 {
+                    X: radius * (1.0 + deformation),
+                    Y: radius * (1.0 - deformation * 0.45),
                 })
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_UPDATE_GEOMETRY", error))?;
-            band.clip
-                .SetCenterPoint(center)
-                .and_then(|()| band.clip.SetRotationAngle(rotation))
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_UPDATE_CLIP", error))?;
-            band.source
-                .SetCenterPoint(Vector3 {
-                    X: center.X,
-                    Y: center.Y,
-                    Z: 0.0,
-                })
-                .and_then(|()| {
-                    band.source.SetScale(Vector3 {
-                        X: band.optical_scale,
-                        Y: band.optical_scale,
-                        Z: 1.0,
-                    })
-                })
-                .map_err(|error| windows_stage_error("HOST_BACKDROP_UPDATE_SCALE", error))?;
-        }
+            })
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_UPDATE_GEOMETRY", error))?;
+        self.backdrop_clip
+            .SetCenterPoint(center)
+            .and_then(|()| self.backdrop_clip.SetRotationAngle(rotation))
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_UPDATE_CLIP", error))?;
+        self.backdrop
+            .SetSize(Vector2 {
+                X: frame.width as f32,
+                Y: frame.height as f32,
+            })
+            .map_err(|error| windows_stage_error("HOST_BACKDROP_UPDATE_SIZE", error))?;
         Ok(())
+    }
+}
+
+struct DesktopEdgeCapture {
+    duplication: IDXGIOutputDuplication,
+    texture: Option<ID3D11Texture2D>,
+    view: Option<ID3D11ShaderResourceView>,
+    texture_size: (u32, u32),
+    generation: u64,
+    resume_after_generation: u64,
+    last_frame_at: Option<Instant>,
+}
+
+impl DesktopEdgeCapture {
+    fn new(device: &ID3D11Device, monitor: HMONITOR) -> Result<Self, String> {
+        let dxgi_device: IDXGIDevice = device
+            .cast()
+            .map_err(|error| windows_stage_error("EDGE_CAPTURE_DXGI_DEVICE", error))?;
+        let adapter = unsafe { dxgi_device.GetAdapter() }
+            .map_err(|error| windows_stage_error("EDGE_CAPTURE_ADAPTER", error))?;
+        let mut output_index = 0;
+        let output = loop {
+            let candidate = match unsafe { adapter.EnumOutputs(output_index) } {
+                Ok(output) => output,
+                Err(error) if error.code() == DXGI_ERROR_NOT_FOUND => {
+                    return Err("PRESENCE_NATIVE_GPU_EDGE_CAPTURE_OUTPUT_NOT_FOUND".to_owned());
+                }
+                Err(error) => {
+                    return Err(windows_stage_error("EDGE_CAPTURE_ENUM_OUTPUT", error));
+                }
+            };
+            output_index += 1;
+            let description = unsafe { candidate.GetDesc() }
+                .map_err(|error| windows_stage_error("EDGE_CAPTURE_OUTPUT_DESC", error))?;
+            if description.Monitor == monitor {
+                break candidate;
+            }
+        };
+        let output: IDXGIOutput1 = output
+            .cast()
+            .map_err(|error| windows_stage_error("EDGE_CAPTURE_OUTPUT1", error))?;
+        let duplication = unsafe { output.DuplicateOutput(&dxgi_device) }
+            .map_err(|error| windows_stage_error("EDGE_CAPTURE_DUPLICATE_OUTPUT", error))?;
+        Ok(Self {
+            duplication,
+            texture: None,
+            view: None,
+            texture_size: (0, 0),
+            generation: 0,
+            resume_after_generation: 1,
+            last_frame_at: None,
+        })
+    }
+
+    fn acquire_latest(
+        &mut self,
+        device: &ID3D11Device,
+        context: &ID3D11DeviceContext,
+    ) -> Result<bool, String> {
+        let mut frame_info = DXGI_OUTDUPL_FRAME_INFO::default();
+        let mut resource: Option<IDXGIResource> = None;
+        match unsafe {
+            self.duplication
+                .AcquireNextFrame(0, &mut frame_info, &mut resource)
+        } {
+            Err(error) if error.code() == DXGI_ERROR_WAIT_TIMEOUT => return Ok(false),
+            Err(error) => return Err(windows_stage_error("EDGE_CAPTURE_ACQUIRE", error)),
+            Ok(()) => {}
+        }
+
+        let copy_result = (|| {
+            if frame_info.LastPresentTime == 0 {
+                return Ok(false);
+            }
+            let source: ID3D11Texture2D = resource
+                .ok_or_else(|| "PRESENCE_NATIVE_GPU_EDGE_CAPTURE_RESOURCE_MISSING".to_owned())?
+                .cast()
+                .map_err(|error| windows_stage_error("EDGE_CAPTURE_TEXTURE", error))?;
+            let mut description = D3D11_TEXTURE2D_DESC::default();
+            unsafe { source.GetDesc(&mut description) };
+            self.ensure_texture(device, description)?;
+            let target = self
+                .texture
+                .as_ref()
+                .ok_or_else(|| "PRESENCE_NATIVE_GPU_EDGE_CAPTURE_TARGET_MISSING".to_owned())?;
+            unsafe { context.CopyResource(target, &source) };
+            self.generation = self.generation.saturating_add(1);
+            self.last_frame_at = Some(Instant::now());
+            Ok(true)
+        })();
+        let release_result = unsafe { self.duplication.ReleaseFrame() }
+            .map_err(|error| windows_stage_error("EDGE_CAPTURE_RELEASE", error));
+        match (copy_result, release_result) {
+            (Err(error), _) => Err(error),
+            (_, Err(error)) => Err(error),
+            (Ok(copied), Ok(())) => Ok(copied),
+        }
+    }
+
+    fn ensure_texture(
+        &mut self,
+        device: &ID3D11Device,
+        source: D3D11_TEXTURE2D_DESC,
+    ) -> Result<(), String> {
+        if self.texture_size == (source.Width, source.Height)
+            && self.texture.is_some()
+            && self.view.is_some()
+        {
+            return Ok(());
+        }
+        let description = D3D11_TEXTURE2D_DESC {
+            Width: source.Width,
+            Height: source.Height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: source.Format,
+            SampleDesc: source.SampleDesc,
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+        let mut texture = None;
+        unsafe { device.CreateTexture2D(&description, None, Some(&mut texture)) }
+            .map_err(|error| windows_stage_error("EDGE_CAPTURE_TARGET_CREATE", error))?;
+        let texture = texture
+            .ok_or_else(|| "PRESENCE_NATIVE_GPU_EDGE_CAPTURE_TARGET_UNAVAILABLE".to_owned())?;
+        let mut view = None;
+        unsafe { device.CreateShaderResourceView(&texture, None, Some(&mut view)) }
+            .map_err(|error| windows_stage_error("EDGE_CAPTURE_VIEW_CREATE", error))?;
+        self.texture = Some(texture);
+        self.view = Some(
+            view.ok_or_else(|| "PRESENCE_NATIVE_GPU_EDGE_CAPTURE_VIEW_UNAVAILABLE".to_owned())?,
+        );
+        self.texture_size = (source.Width, source.Height);
+        Ok(())
+    }
+
+    fn rebase_after_drag(&mut self) {
+        self.resume_after_generation = self.generation.saturating_add(EDGE_CAPTURE_REBASE_FRAMES);
+    }
+
+    fn is_ready(&self, drag_active: bool) -> bool {
+        !drag_active && self.view.is_some() && self.generation >= self.resume_after_generation
     }
 }
 
@@ -1326,6 +1221,8 @@ struct NativeCompositionRenderer {
     vertex_shader: ID3D11VertexShader,
     pixel_shader: ID3D11PixelShader,
     constants: ID3D11Buffer,
+    sampler: ID3D11SamplerState,
+    edge_capture: Option<DesktopEdgeCapture>,
     presentation: Arc<RwLock<NativeGpuPresentation>>,
     target_frame_rate: u16,
     display_refresh_rate_hz: u16,
@@ -1335,6 +1232,8 @@ struct NativeCompositionRenderer {
     state_motion: NativeStateMotion,
     hdr_capture: bool,
     hdr_checked_at: Instant,
+    status: Arc<Mutex<NativeGpuStatus>>,
+    reported_edge_ready: bool,
 }
 
 struct NativeStateMotion {
@@ -1886,6 +1785,7 @@ struct NativeCompositionRendererInput {
     surface_hwnd: Arc<AtomicIsize>,
     presentation: Arc<RwLock<NativeGpuPresentation>>,
     hdr_capture: bool,
+    status: Arc<Mutex<NativeGpuStatus>>,
 }
 
 impl NativeCompositionRenderer {
@@ -1901,12 +1801,36 @@ impl NativeCompositionRenderer {
             surface_hwnd,
             presentation,
             hdr_capture,
+            status,
         } = input;
         let surface = NativeCompositionSurface::new(config, surface_hwnd)?;
         let swap_chain = create_swap_chain(&device, config.render_frame)?;
         let render_targets = vec![None; SWAP_CHAIN_BUFFER_COUNT as usize];
         let (vertex_shader, pixel_shader) = create_shaders(&device)?;
         let constants = create_constant_buffer(&device)?;
+        let sampler = create_linear_sampler(&device)?;
+        let monitor = monitor_handle_for_presentation(config.render_frame, config.presentation)
+            .map_err(|error| error.to_string())?;
+        let edge_capture = match DesktopEdgeCapture::new(&device, monitor) {
+            Ok(capture) => {
+                update_status(&status, |status| {
+                    status.capture_source_stage = "desktop_edge_capture_ready".to_owned();
+                    status.capture_source_hresult = None;
+                    status.fallback_reason = None;
+                });
+                Some(capture)
+            }
+            Err(error) => {
+                update_status(&status, |status| {
+                    status.capture_source_stage = "host_backdrop_only".to_owned();
+                    status.capture_source_hresult = None;
+                    status.fallback_reason =
+                        Some("PRESENCE_NATIVE_GPU_EDGE_CAPTURE_UNAVAILABLE".to_owned());
+                });
+                let _ = error;
+                None
+            }
+        };
         let swap_chain_base: IDXGISwapChain1 = swap_chain
             .cast()
             .map_err(|error| windows_stage_error("HOST_BACKDROP_SWAPCHAIN_CAST", error))?;
@@ -1926,6 +1850,8 @@ impl NativeCompositionRenderer {
             vertex_shader,
             pixel_shader,
             constants,
+            sampler,
+            edge_capture,
             presentation,
             target_frame_rate: config.target_frame_rate,
             display_refresh_rate_hz,
@@ -1935,18 +1861,12 @@ impl NativeCompositionRenderer {
             state_motion: NativeStateMotion::new(config.presentation.visual_state, Instant::now()),
             hdr_capture,
             hdr_checked_at: Instant::now(),
+            status,
+            reported_edge_ready: false,
         })
     }
 
-    fn present(
-        &mut self,
-        texture: &ID3D11Texture2D,
-        _captured_at_100ns: Option<i64>,
-        _capture_generation: u64,
-        elapsed: Duration,
-        drag_active: bool,
-        _capture_source_valid: bool,
-    ) -> Result<(), String> {
+    fn present(&mut self, elapsed: Duration, drag_active: bool) -> Result<u64, String> {
         if !unsafe { IsWindow(Some(self.surface.hwnd)) }.as_bool() {
             return Err("PRESENCE_NATIVE_GPU_SURFACE_INVALIDATED".to_owned());
         }
@@ -1970,11 +1890,6 @@ impl NativeCompositionRenderer {
                 }
             }
         }
-        let mut texture_desc = D3D11_TEXTURE2D_DESC::default();
-        unsafe { texture.GetDesc(&mut texture_desc) };
-        if texture_desc.Width == 0 || texture_desc.Height == 0 {
-            return Err("PRESENCE_NATIVE_GPU_EMPTY_CAPTURE_TEXTURE".to_owned());
-        }
         let sampled_at = Instant::now();
         let shape = self.shape_motion.sample(presentation, sampled_at);
         let drag = self.drag_motion.sample(
@@ -1992,10 +1907,58 @@ impl NativeCompositionRenderer {
         );
         self.composition
             .update_lens(presentation, drag, render_frame)?;
+        let capture_error = self
+            .edge_capture
+            .as_mut()
+            .and_then(|capture| capture.acquire_latest(&self.device, &self.context).err());
+        if let Some(error) = capture_error {
+            update_status(&self.status, |status| {
+                status.capture_source_stage = "desktop_edge_capture_failed".to_owned();
+                status.capture_source_hresult = None;
+                status.optics_source = NativeGpuOpticsSource::HostBackdrop;
+                status.fallback_reason =
+                    Some("PRESENCE_NATIVE_GPU_EDGE_CAPTURE_UNAVAILABLE".to_owned());
+            });
+            let _ = error;
+            self.edge_capture = None;
+        }
+        let edge_capture_ready = self
+            .edge_capture
+            .as_ref()
+            .is_some_and(|capture| capture.is_ready(drag_active));
+        let capture_generation = self
+            .edge_capture
+            .as_ref()
+            .map_or(0, |capture| capture.generation);
+        let capture_view = edge_capture_ready
+            .then(|| self.edge_capture.as_ref()?.view.clone())
+            .flatten();
+        if edge_capture_ready != self.reported_edge_ready {
+            self.reported_edge_ready = edge_capture_ready;
+            update_status(&self.status, |status| {
+                status.optics_source = if edge_capture_ready {
+                    NativeGpuOpticsSource::HostBackdropPlusMonitorEdge
+                } else {
+                    NativeGpuOpticsSource::HostBackdrop
+                };
+                status.capture_source_stage = if edge_capture_ready {
+                    "desktop_edge_capture_active"
+                } else {
+                    "host_backdrop_only"
+                }
+                .to_owned();
+            });
+        }
         let constants = PresenceConstants {
             output_size: [render_frame.width as f32, render_frame.height as f32],
-            capture_size: [render_frame.width as f32, render_frame.height as f32],
-            source_origin_px: [0.0, 0.0],
+            capture_size: [
+                self.monitor_frame.width as f32,
+                self.monitor_frame.height as f32,
+            ],
+            source_origin_px: [
+                render_frame.x.saturating_sub(self.monitor_frame.x) as f32,
+                render_frame.y.saturating_sub(self.monitor_frame.y) as f32,
+            ],
             core_center_px: [
                 presentation.core_x * (render_frame.width as f32 / 640.0),
                 presentation.core_y * (render_frame.width as f32 / 640.0),
@@ -2022,9 +1985,10 @@ impl NativeCompositionRenderer {
             capsule_half_width: presentation.capsule_half_width,
             state_elapsed_seconds: state_sample.state_elapsed_seconds,
             drag_active: f32::from(drag_active),
-            // HostBackdropBrush samples below this HWND before Fairy is composed. The WGC frame is
-            // retained only as a cadence/source-health signal and must never be sampled here.
-            capture_source_valid: 0.0,
+            // HostBackdrop remains the identity center. The monitor texture is restricted to the
+            // outer optical band and is disabled while dragging or waiting for fresh post-drag
+            // frames, preventing the previous Fairy position from feeding back into the lens.
+            capture_source_valid: f32::from(edge_capture_ready),
             state_energy: state_sample.style.energy,
             state_pulse: state_sample.style.pulse,
             state_notify_wave: state_sample.style.notify_wave,
@@ -2066,19 +2030,26 @@ impl NativeCompositionRenderer {
                 .VSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
             self.context
                 .PSSetConstantBuffers(0, Some(&[Some(self.constants.clone())]));
-            self.context.PSSetShaderResources(0, Some(&[None]));
+            self.context
+                .PSSetShaderResources(0, Some(&[capture_view.clone()]));
+            self.context
+                .PSSetSamplers(0, Some(&[Some(self.sampler.clone())]));
             self.context.Draw(3, 0);
             self.context.PSSetShaderResources(0, Some(&[None]));
+            self.context.PSSetSamplers(0, Some(&[None]));
             self.context.OMSetRenderTargets(None, None);
         }
         let result = unsafe { self.swap_chain.Present(0, DXGI_PRESENT(0)) };
         result.ok().map_err(windows_error)?;
         self.surface.show()?;
-        Ok(())
+        Ok(capture_generation)
     }
 
     fn rebase_after_drag(&mut self) -> Result<(), String> {
         self.surface.sync_to_tracking_window()?;
+        if let Some(capture) = self.edge_capture.as_mut() {
+            capture.rebase_after_drag();
+        }
         Ok(())
     }
 
@@ -2117,6 +2088,63 @@ fn diagnostic_solid_output() -> f32 {
     } else {
         0.0
     }
+}
+
+fn create_native_d3d_device(
+    status: &Arc<Mutex<NativeGpuStatus>>,
+) -> Result<(ID3D11Device, ID3D11DeviceContext), NativeGpuError> {
+    update_status(status, |status| {
+        status.capture_source_stage = "creating_d3d11_device".to_owned();
+    });
+    let feature_levels = [
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0,
+    ];
+    let mut device = None;
+    let mut context = None;
+    let mut feature_level = D3D_FEATURE_LEVEL::default();
+    unsafe {
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            Some(&feature_levels),
+            D3D11_SDK_VERSION,
+            Some(&mut device),
+            Some(&mut feature_level),
+            Some(&mut context),
+        )
+    }
+    .map_err(|error| composition_source_windows_error(status, "D3D11_DEVICE", error))?;
+    if feature_level.0 < D3D_FEATURE_LEVEL_10_0.0 {
+        return Err(composition_source_failure(
+            status,
+            "d3d11_feature_level",
+            "PRESENCE_NATIVE_GPU_D3D11_FEATURE_LEVEL_UNSUPPORTED".to_owned(),
+        ));
+    }
+    let device = device.ok_or_else(|| {
+        composition_source_failure(
+            status,
+            "d3d11_device",
+            "PRESENCE_NATIVE_GPU_D3D11_DEVICE_UNAVAILABLE".to_owned(),
+        )
+    })?;
+    let context = context.ok_or_else(|| {
+        composition_source_failure(
+            status,
+            "d3d11_context",
+            "PRESENCE_NATIVE_GPU_D3D11_CONTEXT_UNAVAILABLE".to_owned(),
+        )
+    })?;
+    update_status(status, |status| {
+        status.capture_source_stage = "d3d11_device_created".to_owned();
+        status.capture_source_hresult = None;
+    });
+    Ok((device, context))
 }
 
 fn create_swap_chain(
@@ -2187,27 +2215,6 @@ fn create_render_target(
     Ok(SwapChainRenderTarget {
         view: target.ok_or_else(|| "PRESENCE_NATIVE_GPU_RENDER_TARGET_UNAVAILABLE".to_owned())?,
     })
-}
-
-fn system_relative_time_100ns() -> Option<i64> {
-    let mut counter = 0_i64;
-    unsafe { QueryPerformanceCounter(&mut counter).ok()? };
-    let frequency = PERFORMANCE_FREQUENCY
-        .get_or_init(|| {
-            let mut frequency = 0_i64;
-            unsafe { QueryPerformanceFrequency(&mut frequency).ok()? };
-            (frequency > 0).then_some(frequency)
-        })
-        .as_ref()
-        .copied()?;
-    if counter < 0 || frequency <= 0 {
-        return None;
-    }
-    let seconds = counter / frequency;
-    let remainder = counter % frequency;
-    seconds
-        .checked_mul(10_000_000)?
-        .checked_add(remainder.checked_mul(10_000_000)?.checked_div(frequency)?)
 }
 
 fn create_shaders(
@@ -2315,42 +2322,29 @@ fn create_constant_buffer_with_size(
     buffer.ok_or_else(|| "PRESENCE_NATIVE_GPU_CONSTANT_BUFFER_UNAVAILABLE".to_owned())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NativeCaptureGeometry {
-    Monitor,
+fn create_linear_sampler(device: &ID3D11Device) -> Result<ID3D11SamplerState, String> {
+    let description = D3D11_SAMPLER_DESC {
+        Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+        AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
+        AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+        AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
+        MipLODBias: 0.0,
+        MaxAnisotropy: 1,
+        ComparisonFunc: D3D11_COMPARISON_NEVER,
+        BorderColor: [0.0; 4],
+        MinLOD: 0.0,
+        MaxLOD: f32::MAX,
+    };
+    let mut sampler = None;
+    unsafe { device.CreateSamplerState(&description, Some(&mut sampler)) }
+        .map_err(|error| windows_stage_error("EDGE_CAPTURE_SAMPLER", error))?;
+    sampler.ok_or_else(|| "PRESENCE_NATIVE_GPU_EDGE_CAPTURE_SAMPLER_UNAVAILABLE".to_owned())
 }
 
-impl NativeCaptureGeometry {
-    fn started_stage(self) -> &'static str {
-        "monitor_capture_started"
-    }
-
-    fn secondary_window_settings(self) -> SecondaryWindowSettings {
-        SecondaryWindowSettings::Include
-    }
-}
-
-struct NativeDesktopCaptureSource {
-    item: SendableCaptureItem,
+struct NativeDesktopCompositionSource {
     monitor_frame: PhysicalFrame,
-    geometry: NativeCaptureGeometry,
     display_refresh_rate_hz: u16,
     hdr_capture: bool,
-}
-
-// `GraphicsCaptureItemType` is conservatively !Send because its public enum also contains an
-// unknown HWND guard. Fairy constructs only the agile monitor variant and validates the HMONITOR
-// on the capture thread before wrapping it.
-struct SendableCaptureItem(GraphicsCaptureItemType);
-
-unsafe impl Send for SendableCaptureItem {}
-
-impl TryInto<GraphicsCaptureItemType> for SendableCaptureItem {
-    type Error = std::convert::Infallible;
-
-    fn try_into(self) -> Result<GraphicsCaptureItemType, Self::Error> {
-        Ok(self.0)
-    }
 }
 
 struct DisplayOutputDiagnostics {
@@ -2362,25 +2356,29 @@ struct DisplayOutputDiagnostics {
     color_space: String,
 }
 
-struct CaptureWinRtMta {
+struct CompositionWinRtMta {
     cookie: CO_MTA_USAGE_COOKIE,
 }
 
-impl CaptureWinRtMta {
+impl CompositionWinRtMta {
     fn acquire(status: &Arc<Mutex<NativeGpuStatus>>) -> Result<Self, NativeGpuError> {
         let cookie = unsafe { CoIncrementMTAUsage() }
-            .map_err(|error| capture_source_windows_error(status, "MTA_USAGE", error))?;
+            .map_err(|error| composition_source_windows_error(status, "MTA_USAGE", error))?;
         if let Err(error) = unsafe { RoInitialize(RO_INIT_MULTITHREADED) } {
             unsafe {
                 let _ = CoDecrementMTAUsage(cookie);
             }
-            return Err(capture_source_windows_error(status, "WINRT_INIT", error));
+            return Err(composition_source_windows_error(
+                status,
+                "WINRT_INIT",
+                error,
+            ));
         }
         Ok(Self { cookie })
     }
 }
 
-impl Drop for CaptureWinRtMta {
+impl Drop for CompositionWinRtMta {
     fn drop(&mut self) {
         unsafe {
             RoUninitialize();
@@ -2389,68 +2387,19 @@ impl Drop for CaptureWinRtMta {
     }
 }
 
-fn capture_desktop_source(
+fn inspect_desktop_composition_source(
     frame: PhysicalFrame,
     presentation: NativeGpuPresentation,
     status: &Arc<Mutex<NativeGpuStatus>>,
-) -> Result<NativeDesktopCaptureSource, NativeGpuError> {
-    let thread_status = Arc::clone(status);
-    thread::Builder::new()
-        .name("fairy-wgc-source".to_owned())
-        .spawn(move || capture_desktop_source_on_mta(frame, presentation, &thread_status))
-        .map_err(|error| {
-            capture_source_failure(
-                status,
-                "source_thread",
-                format!("PRESENCE_NATIVE_GPU_SOURCE_THREAD_FAILED: {error}"),
-            )
-        })?
-        .join()
-        .map_err(|_| {
-            capture_source_failure(
-                status,
-                "source_thread",
-                "PRESENCE_NATIVE_GPU_SOURCE_THREAD_PANICKED".to_owned(),
-            )
-        })?
-}
-
-fn capture_desktop_source_on_mta(
-    frame: PhysicalFrame,
-    presentation: NativeGpuPresentation,
-    status: &Arc<Mutex<NativeGpuStatus>>,
-) -> Result<NativeDesktopCaptureSource, NativeGpuError> {
-    let _winrt = CaptureWinRtMta::acquire(status)?;
+) -> Result<NativeDesktopCompositionSource, NativeGpuError> {
     let handle = monitor_handle_for_presentation(frame, presentation)?;
     update_status(status, |status| {
         status.capture_source_stage = "monitor_selected".to_owned();
         status.monitor_handle = Some(format_monitor_handle(handle));
     });
-    let monitor = Monitor::enumerate()
-        .map_err(|error| {
-            capture_source_failure(
-                status,
-                "monitor_enumeration",
-                format!("PRESENCE_NATIVE_GPU_MONITOR_ENUMERATION_FAILED: {error}"),
-            )
-        })?
-        .into_iter()
-        .find(|monitor| monitor.as_raw_hmonitor() == handle.0)
-        .ok_or_else(|| {
-            capture_source_failure(
-                status,
-                "monitor_validation",
-                "PRESENCE_NATIVE_GPU_MONITOR_HANDLE_STALE".to_owned(),
-            )
-        })?;
-    let monitor_frame = monitor_frame(handle)?;
-    let display_refresh_rate_hz = monitor
-        .refresh_rate()
-        .ok()
-        .and_then(valid_display_refresh_rate)
-        .unwrap_or(0);
-    let monitor_device_name = monitor.device_name().ok();
-    let monitor_friendly_name = monitor.name().ok();
+    let monitor = monitor_diagnostics(handle)?;
+    let monitor_frame = monitor.frame;
+    let display_refresh_rate_hz = monitor.display_refresh_rate_hz;
     let output = display_output_diagnostics(handle).ok();
     let hdr_capture = output
         .as_ref()
@@ -2462,8 +2411,8 @@ fn capture_desktop_source_on_mta(
         status.monitor_width = monitor_frame.width;
         status.monitor_height = monitor_frame.height;
         status.display_refresh_rate_hz = display_refresh_rate_hz;
-        status.monitor_device_name = monitor_device_name;
-        status.monitor_friendly_name = monitor_friendly_name;
+        status.monitor_device_name = Some(monitor.device_name.clone());
+        status.monitor_friendly_name = None;
         status.adapter_name = output.as_ref().map(|value| value.adapter_name.clone());
         status.adapter_index = output.as_ref().map(|value| value.adapter_index);
         status.output_device_name = output
@@ -2472,51 +2421,72 @@ fn capture_desktop_source_on_mta(
         status.output_index = output.as_ref().map(|value| value.output_index);
         status.hdr_color_space = output.as_ref().map(|value| value.color_space.clone());
         status.hdr_capture = hdr_capture;
-    });
-
-    update_status(status, |status| {
-        status.capture_source_stage = "creating_interop_factory".to_owned();
-    });
-    let interop = windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
-        .map_err(|error| capture_source_windows_error(status, "INTEROP_FACTORY", error))?;
-
-    update_status(status, |status| {
-        status.capture_source_stage = "creating_monitor_capture_item".to_owned();
+        status.capture_item_width = 0;
+        status.capture_item_height = 0;
         status.capture_window_handle = None;
-    });
-    let item: GraphicsCaptureItem = unsafe { interop.CreateForMonitor(handle) }
-        .map_err(|error| capture_source_windows_error(status, "CREATE_FOR_MONITOR", error))?;
-    let (item_width, item_height) = capture_item_dimensions(&item)
-        .map_err(|error| capture_source_failure(status, "monitor_capture_item_size", error))?;
-    update_status(status, |status| {
-        status.capture_source_stage = "monitor_capture_item_created".to_owned();
+        status.capture_source_stage = "host_backdrop_monitor_validated".to_owned();
         status.capture_source_hresult = None;
-        status.capture_item_width = item_width;
-        status.capture_item_height = item_height;
-        status.capture_window_handle = None;
     });
-    Ok(NativeDesktopCaptureSource {
-        item: SendableCaptureItem(GraphicsCaptureItemType::Monitor((item, monitor))),
+    Ok(NativeDesktopCompositionSource {
         monitor_frame,
-        geometry: NativeCaptureGeometry::Monitor,
         display_refresh_rate_hz,
         hdr_capture,
     })
 }
 
-fn capture_item_dimensions(item: &GraphicsCaptureItem) -> Result<(u32, u32), String> {
-    let size = item
-        .Size()
-        .map_err(|error| format!("PRESENCE_NATIVE_GPU_CAPTURE_ITEM_SIZE_FAILED: {error}"))?;
-    let width = u32::try_from(size.Width)
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or_else(|| "PRESENCE_NATIVE_GPU_CAPTURE_ITEM_WIDTH_INVALID".to_owned())?;
-    let height = u32::try_from(size.Height)
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or_else(|| "PRESENCE_NATIVE_GPU_CAPTURE_ITEM_HEIGHT_INVALID".to_owned())?;
-    Ok((width, height))
+struct MonitorDiagnostics {
+    frame: PhysicalFrame,
+    device_name: String,
+    display_refresh_rate_hz: u16,
+}
+
+fn monitor_diagnostics(handle: HMONITOR) -> Result<MonitorDiagnostics, NativeGpuError> {
+    let mut info = MONITORINFOEXW::default();
+    info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+    if !unsafe { GetMonitorInfoW(handle, &mut info.monitorInfo) }.as_bool() {
+        return Err(NativeGpuError::StartFailed(
+            "PRESENCE_NATIVE_GPU_MONITOR_INFO_UNAVAILABLE".to_owned(),
+        ));
+    }
+    let width = u32::try_from(
+        info.monitorInfo
+            .rcMonitor
+            .right
+            .saturating_sub(info.monitorInfo.rcMonitor.left),
+    )
+    .map_err(|_| NativeGpuError::InvalidSurface)?;
+    let height = u32::try_from(
+        info.monitorInfo
+            .rcMonitor
+            .bottom
+            .saturating_sub(info.monitorInfo.rcMonitor.top),
+    )
+    .map_err(|_| NativeGpuError::InvalidSurface)?;
+    let mut display_mode = DEVMODEW {
+        dmSize: std::mem::size_of::<DEVMODEW>() as u16,
+        ..DEVMODEW::default()
+    };
+    let has_display_mode = unsafe {
+        EnumDisplaySettingsW(
+            PCWSTR(info.szDevice.as_ptr()),
+            ENUM_CURRENT_SETTINGS,
+            &mut display_mode,
+        )
+    }
+    .as_bool();
+    Ok(MonitorDiagnostics {
+        frame: PhysicalFrame {
+            x: info.monitorInfo.rcMonitor.left,
+            y: info.monitorInfo.rcMonitor.top,
+            width,
+            height,
+        },
+        device_name: utf16z(&info.szDevice),
+        display_refresh_rate_hz: has_display_mode
+            .then_some(display_mode.dmDisplayFrequency)
+            .and_then(valid_display_refresh_rate)
+            .unwrap_or(0),
+    })
 }
 
 fn set_surface_always_on_top(hwnd: HWND, always_on_top: bool) -> Result<(), String> {
@@ -2738,7 +2708,7 @@ fn windows_stage_error(stage: &str, error: windows::core::Error) -> String {
     format!("PRESENCE_NATIVE_GPU_{stage}_FAILED: {error}")
 }
 
-fn capture_source_failure(
+fn composition_source_failure(
     status: &Arc<Mutex<NativeGpuStatus>>,
     stage: &str,
     message: String,
@@ -2750,7 +2720,7 @@ fn capture_source_failure(
     NativeGpuError::StartFailed(message)
 }
 
-fn capture_source_windows_error(
+fn composition_source_windows_error(
     status: &Arc<Mutex<NativeGpuStatus>>,
     stage: &str,
     error: windows::core::Error,
@@ -3051,23 +3021,23 @@ mod tests {
         assert_eq!(effective_render_frame_rate(300, 360), 300);
         assert_eq!(effective_render_frame_rate(300, 240), 240);
         assert_eq!(effective_render_frame_rate(300, 0), 300);
-        assert_eq!(capture_frame_rate_limit(60, 300), 180);
-        assert_eq!(capture_frame_rate_limit(300, 240), 240);
         assert_eq!(render_spin_window(300), Duration::from_micros(60));
         assert_eq!(render_spin_window(144), Duration::from_micros(100));
         assert_eq!(render_spin_window(60), Duration::from_micros(200));
     }
 
     #[test]
-    fn capture_source_uses_the_monitor_composite_instead_of_a_single_window() {
+    fn hybrid_optics_keep_host_backdrop_identity_and_use_one_monitor_edge_texture() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         for required in [
-            "Monitor::enumerate()",
-            "IGraphicsCaptureItemInterop",
-            "interop.CreateForMonitor(handle)",
-            "GraphicsCaptureItemType::Monitor((item, monitor))",
-            "monitor_capture_started",
+            "CreateHostBackdropBrush()",
+            "inspect_desktop_composition_source",
+            "D3D11CreateDevice(",
+            "DuplicateOutput(&dxgi_device)",
+            "CreateShaderResourceView(&texture",
+            "DesktopEdgeCapture",
+            "host_backdrop_renderer_started",
             "capture_source_hresult",
         ] {
             assert!(
@@ -3075,19 +3045,39 @@ mod tests {
                 "missing source contract: {required}"
             );
         }
-        assert!(!production.contains("CreateForWindow"));
-        assert!(!production.contains("window_source_stale"));
-        assert!(!production.contains("capture_window_candidates"));
+        for forbidden in [
+            "windows_capture",
+            "GraphicsCaptureItem",
+            "CreateForMonitor",
+            "CreateForWindow",
+            "NativeCaptureHandler",
+            "fairy-wgc-source",
+            "CompositionVisualSurface",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "capture implementation returned: {forbidden}"
+            );
+        }
     }
 
     #[test]
-    fn monitor_capture_geometry_uses_the_full_composited_display() {
-        let geometry = NativeCaptureGeometry::Monitor;
-        assert_eq!(geometry.started_stage(), "monitor_capture_started");
-        assert_eq!(
-            geometry.secondary_window_settings(),
-            SecondaryWindowSettings::Include
-        );
+    fn shader_uses_a_continuous_single_sample_edge_profile() {
+        let shader = include_str!("liquid_glass.hlsl");
+        for required in [
+            "edge_refraction_profile",
+            "smoothstep(0.10, 0.92, edge_focus)",
+            "sample_refracted_desktop",
+            "inward_depth * 1.65 + outside_clearance",
+            "EDGE_MAX_DISPERSION_PX = 2.0",
+        ] {
+            assert!(
+                shader.contains(required),
+                "missing edge profile: {required}"
+            );
+        }
+        assert!(!shader.contains("HOST_BACKDROP_LENS_BAND_COUNT"));
+        assert!(!shader.contains("for ("));
     }
 
     #[test]
@@ -3120,15 +3110,16 @@ mod tests {
     }
 
     #[test]
-    fn host_backdrop_owns_desktop_sampling_without_recursive_capture() {
+    fn edge_capture_never_hides_fairy_or_reuses_an_inside_sample() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         for required in [
             "DWMWA_USE_HOSTBACKDROPBRUSH",
             "CreateHostBackdropBrush()",
             "CreateCompositionSurfaceForSwapChain(swap_chain)",
-            "capture_source_valid: 0.0",
-            "ColorFormat::Bgra8",
+            "capture_source_valid: f32::from(edge_capture_ready)",
+            "EDGE_CAPTURE_REBASE_FRAMES",
+            "capture.rebase_after_drag()",
         ] {
             assert!(
                 production.contains(required),
@@ -3140,7 +3131,9 @@ mod tests {
             "self.overlay_history",
             "sample_for_capture",
             "DwmFlush()",
-            "ColorFormat::Rgba16F",
+            "CreateForMonitor",
+            "ColorFormat::",
+            "set_window_capture_excluded(hwnd.0 as isize, true)",
         ] {
             assert!(
                 !production.contains(forbidden),
@@ -3150,15 +3143,7 @@ mod tests {
     }
 
     #[test]
-    fn drag_resume_rejects_pre_release_capture_frames() {
-        assert!(!capture_is_after_resume(41, Some(990_000), 42, 1_000_000));
-        assert!(!capture_is_after_resume(42, Some(990_000), 42, 1_000_000));
-        assert!(capture_is_after_resume(42, Some(1_000_000), 42, 1_000_000));
-        assert!(capture_is_after_resume(42, None, 42, 1_000_000));
-    }
-
-    #[test]
-    fn native_drag_updates_the_live_host_backdrop_lens_without_capture_rebase() {
+    fn native_drag_keeps_host_backdrop_live_and_rebases_only_the_edge_texture() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         let host = include_str!("../lib.rs");
@@ -3167,7 +3152,8 @@ mod tests {
             "let drag_active = control.is_drag_active()",
             ".update_lens(presentation, drag, render_frame)",
             "renderer.rebase_after_drag()",
-            "frame.source_timestamp_100ns",
+            "capture_source_valid: f32::from(edge_capture_ready)",
+            "self.resume_after_generation",
         ] {
             assert!(
                 production.contains(required),
@@ -3183,11 +3169,14 @@ mod tests {
     }
 
     #[test]
-    fn material_shader_keeps_identity_above_a_host_backdrop_lens() {
+    fn material_shader_keeps_identity_above_the_refracted_edge() {
         let shader = include_str!("liquid_glass.hlsl");
         for required in [
-            "EDGE_LENS_DEPTH_PX = 48.0",
-            "HostBackdropBrush owns the desktop pixels",
+            "EDGE_LENS_DEPTH_PX = 32.0",
+            "HostBackdropBrush supplies the identity center",
+            "Texture2D<float4> desktop_texture",
+            "float optical_alpha",
+            "float3 optical_premultiplied",
             "float edge_alpha = lerp(0.16, 0.24, material_opacity)",
             "float inner_dark_line",
             "float key_highlight",
@@ -3200,7 +3189,7 @@ mod tests {
             "float identity_alpha = 1.0",
             "float3 identity_premultiplied",
             "float3 foreground_premultiplied = identity_premultiplied",
-            "material_premultiplied * (1.0 - identity_alpha)",
+            "composed_material * (1.0 - identity_alpha)",
         ] {
             assert!(
                 shader.contains(required),
@@ -3210,30 +3199,29 @@ mod tests {
         assert!(!shader.contains("core_ring_outer"));
         assert!(!shader.contains("core_ring_inner"));
         assert!(!shader.contains("edge_blur"));
-        assert!(!shader.contains("desktop_texture"));
-        assert!(!shader.contains("sample_desktop_linear"));
+        assert!(!shader.contains("previous_overlay"));
+        assert!(!shader.contains("remove_previous_overlay"));
         assert!(!shader.contains("identity_color)) * identity_alpha"));
         assert!(!shader.contains("color += max(0.0.xxx, float3(0.86, 0.96, 1.0) - color)"));
     }
 
     #[test]
-    fn monitor_capture_is_health_and_cadence_only() {
+    fn desktop_duplication_is_optional_and_never_blocks_host_backdrop_present() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
         for required in [
-            "GraphicsCaptureItemType::Monitor((item, monitor))",
-            "NativeCaptureGeometry::Monitor",
-            "capture_source_valid: 0.0",
-            "WGC is retained only for monitor health",
+            "host_backdrop_only",
+            "desktop_edge_capture_failed",
+            "self.edge_capture = None",
+            "renderer.present(",
         ] {
             assert!(
                 production.contains(required),
                 "missing composite-monitor contract: {required}"
             );
         }
-        assert!(!production.contains("CreateForWindow"));
-        assert!(!production.contains("GetTopWindow"));
-        assert!(!production.contains("CreateShaderResourceView(texture"));
+        assert!(!production.contains("on_frame_arrived"));
+        assert!(production.contains("CreateShaderResourceView(&texture"));
     }
 
     #[test]

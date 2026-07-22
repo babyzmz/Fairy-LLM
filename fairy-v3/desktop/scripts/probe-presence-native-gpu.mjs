@@ -37,14 +37,20 @@ try {
     const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
     const startRequest = () => ({
       target_frame_rate: framesPerSecond,
-      capsule_visible: true,
+      capsule_visible: false,
       expansion_direction: "right",
-      visual_state: "aware",
+      visual_state: "idle",
       opacity: 0.92,
       voice_level: 0,
       reduced_motion: false,
+      reduced_transparency: false,
+      increased_contrast: false,
       particles_enabled: true,
       frame_rate_limit: framesPerSecond,
+      shape_droplet: 0,
+      shape_bridge: 0,
+      shape_capsule: 0,
+      returning: false,
       core_x: 96,
       core_y: 88,
       capsule_x: 164,
@@ -278,10 +284,10 @@ try {
     waitMs: Math.round(durationSeconds * 1_000),
     restartCycles: cycles,
   });
-  if (action === "cadence") {
-    // Cadence deliberately overrides the live presentation. Reload the renderer surface after
-    // collecting the result so the product-owned Presence projection immediately becomes
-    // authoritative again instead of leaving a diagnostic capsule visible on the desktop.
+  if (["run", "cadence", "rebind"].includes(action)) {
+    // Native diagnostics deliberately update the live session behind the renderer host's cached
+    // presentation key. Reload the renderer surface after collecting the result so the
+    // product-owned Presence projection becomes authoritative again.
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForTimeout(500);
   }

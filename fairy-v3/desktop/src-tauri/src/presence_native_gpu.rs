@@ -26,6 +26,15 @@ pub enum NativeGpuBackend {
     WindowsHostBackdropD3d11Composition,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeGpuOpticsSource {
+    #[default]
+    None,
+    HostBackdrop,
+    HostBackdropPlusMonitorEdge,
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NativeGpuVisualState {
@@ -170,10 +179,7 @@ impl Default for NativeGpuStartRequest {
     fn default() -> Self {
         Self {
             target_frame_rate: 60,
-            presentation: NativeGpuPresentation {
-                capsule_visible: true,
-                ..NativeGpuPresentation::default()
-            },
+            presentation: NativeGpuPresentation::default(),
         }
     }
 }
@@ -219,6 +225,7 @@ impl NativeGpuConfig {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct NativeGpuStatus {
     pub backend: NativeGpuBackend,
+    pub optics_source: NativeGpuOpticsSource,
     pub lifecycle: NativeGpuLifecycle,
     pub zero_copy_capture: bool,
     pub pixel_ipc: bool,
@@ -259,6 +266,7 @@ pub struct NativeGpuStatus {
     pub started_at_ms: Option<u64>,
     pub last_presented_at_ms: Option<u64>,
     pub presentation_revision: u64,
+    pub fallback_reason: Option<String>,
     pub error_code: Option<String>,
 }
 
@@ -266,6 +274,7 @@ impl NativeGpuStatus {
     fn unavailable() -> Self {
         Self {
             backend: NativeGpuBackend::Unavailable,
+            optics_source: NativeGpuOpticsSource::None,
             lifecycle: NativeGpuLifecycle::Idle,
             zero_copy_capture: false,
             pixel_ipc: false,
@@ -278,6 +287,7 @@ impl NativeGpuStatus {
     fn starting(config: NativeGpuConfig) -> Self {
         Self {
             backend: NativeGpuBackend::WindowsHostBackdropD3d11Composition,
+            optics_source: NativeGpuOpticsSource::HostBackdrop,
             lifecycle: NativeGpuLifecycle::Starting,
             zero_copy_capture: true,
             pixel_ipc: false,
@@ -624,6 +634,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_start_request_defaults_to_core_only() {
+        let request = NativeGpuStartRequest::default();
+        assert!(!request.presentation.capsule_visible);
+        assert_eq!(request.presentation.shape_droplet, 0.0);
+        assert_eq!(request.presentation.shape_bridge, 0.0);
+        assert_eq!(request.presentation.shape_capsule, 0.0);
+        assert!(!request.presentation.returning);
+    }
+
+    #[test]
+    fn native_probe_restores_product_projection_without_leaving_a_capsule() {
+        let probe = include_str!("../../scripts/probe-presence-native-gpu.mjs");
+        assert!(probe.contains("capsule_visible: false"));
+        assert!(probe.contains("shape_capsule: 0"));
+        assert!(probe.contains("[\"run\", \"cadence\", \"rebind\"].includes(action)"));
+        assert!(probe.contains("await page.reload({ waitUntil: \"domcontentloaded\" })"));
+        assert!(!probe.contains("capsule_visible: true"));
+    }
+
+    #[test]
     fn native_config_accepts_only_supported_deterministic_frame_rates() {
         let base = NativeGpuConfig {
             render_hwnd: 1,
@@ -689,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn native_shader_contract_forbids_cpu_readback_and_pixel_ipc() {
+    fn native_shader_contract_forbids_cpu_readback_pixel_ipc_and_recursive_overlay_cleanup() {
         let source = include_str!("presence_native_gpu/liquid_glass.hlsl");
         let backend = include_str!("presence_native_gpu/windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);
@@ -708,7 +738,6 @@ mod tests {
             "capsule_warp",
             "captured - overlay.rgb",
             "/ denominator",
-            "desktop_texture",
             "sample_desktop_linear",
             "previous_overlay",
             "CleanBackdropCache",
@@ -728,6 +757,9 @@ mod tests {
             "return min(result, capsule)",
             "EDGE_LENS_DEPTH_PX",
             "edge_refraction_profile",
+            "sample_refracted_desktop",
+            "desktop_texture",
+            "inward_depth * 1.65 + outside_clearance",
             "drag_center_shift",
             "state_flow",
             "center_alpha",
@@ -746,13 +778,26 @@ mod tests {
             "DWMWA_USE_HOSTBACKDROPBRUSH",
             "CreateHostBackdropBrush()",
             "CreateCompositionSurfaceForSwapChain(swap_chain)",
-            "HOST_BACKDROP_LENS_BANDS",
+            "DuplicateOutput(&dxgi_device)",
+            "CreateShaderResourceView(&texture",
+            "EDGE_CAPTURE_REBASE_FRAMES",
             ".update_lens(presentation, drag, render_frame)",
-            "capture_source_valid: 0.0",
+            "capture_source_valid: f32::from(edge_capture_ready)",
         ] {
             assert!(
                 production.contains(required),
                 "missing Host Backdrop contract token: {required}"
+            );
+        }
+        for forbidden in [
+            "windows_capture",
+            "GraphicsCaptureItem",
+            "CreateForMonitor",
+            "NativeCaptureHandler",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "WGC returned to the production Presence path: {forbidden}"
             );
         }
         assert!(!source.contains("remove_previous_overlay"));

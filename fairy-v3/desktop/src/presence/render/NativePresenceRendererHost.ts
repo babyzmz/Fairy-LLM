@@ -10,6 +10,11 @@ import type { PresenceRendererMode } from "./rendererSupport";
 
 const nativeGpuStatusSchema = z.object({
   backend: z.enum(["unavailable", "windows_host_backdrop_d3d11_composition"]),
+  optics_source: z.enum([
+    "none",
+    "host_backdrop",
+    "host_backdrop_plus_monitor_edge",
+  ]).default("host_backdrop"),
   lifecycle: z.enum(["idle", "starting", "running", "stopping", "failed"]),
   zero_copy_capture: z.boolean(),
   pixel_ipc: z.boolean(),
@@ -50,6 +55,7 @@ const nativeGpuStatusSchema = z.object({
   started_at_ms: z.number().int().nonnegative().nullable(),
   last_presented_at_ms: z.number().int().nonnegative().nullable(),
   presentation_revision: z.number().int().nonnegative(),
+  fallback_reason: z.string().max(128).nullable().default(null),
   error_code: z.string().nullable(),
 }).strict();
 
@@ -487,14 +493,19 @@ export class NativePresenceRendererHost {
   ): void {
     const nativeActive = status === "running" || status === "suspended";
     const fallback = ["context_lost", "fallback", "failed"].includes(status);
+    const partialFallback = nativeActive && this.lastStatus?.fallback_reason != null;
     this.options.onHealth?.({
       requested_mode: this.requestedMode,
       mode: "native",
       actual_backend: nativeActive ? "native_liquid_glass" : "none",
-      optics_source: nativeActive ? "host_backdrop" : "none",
+      optics_source: nativeActive
+        ? this.lastStatus?.optics_source ?? "host_backdrop"
+        : "none",
       status,
       error_code,
-      fallback_reason: fallback ? error_code : null,
+      fallback_reason: partialFallback
+        ? "NATIVE_GPU_EDGE_CAPTURE_UNAVAILABLE"
+        : fallback ? error_code : null,
       monitor_refresh_hz: this.lastStatus?.display_refresh_rate_hz ?? 0,
       effective_fps: this.lastStatus?.effective_frame_rate ?? 0,
     });

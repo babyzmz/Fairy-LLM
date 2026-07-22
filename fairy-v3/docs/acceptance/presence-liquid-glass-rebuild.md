@@ -16,6 +16,17 @@ optics and window lifecycle.
   between native and compatibility renderers.
 - Native optics use the desktop compositor backdrop. Compatibility rendering is
   visibly identified and is never presented as real desktop refraction.
+- Production optics do not start Windows Graphics Capture. HostBackdrop owns the
+  live identity center; a GPU-only DXGI Desktop Duplication texture is sampled
+  only for the narrow displaced edge. No pixels cross CPU memory or IPC.
+- The circular lens uses one continuous normalized radial field rather than
+  overlapping backdrop rings. Each edge pixel has one optical contribution,
+  preventing additive ghosting and visible concentric boundaries.
+- The inner 45 percent remains near identity (no more than 0.75 logical pixel of
+  displacement); refraction grows through the middle field and reaches 4-8
+  logical pixels only at the outer edge.
+- Atmosphere rings, particles, the breathing beacon, and all text are rendered
+  by the final foreground pass and never enter backdrop refraction.
 - The pet core and expanded input use one native hit-region model. Pixels outside
   the active circle, input, card, or menu pass through to the application below.
 
@@ -37,7 +48,9 @@ optics and window lifecycle.
   activation, fallback disposal, bounded health serialization, failure recovery,
   and settings labels.
 - Rust tests cover health schema validation, supervisor circuit breaking, empty
-  and circular hit regions, and the native two-frame start gate.
+  and circular hit regions, the native two-frame start gate, the continuous
+  optical profile, bounded center/edge displacement, and the absence of WGC in
+  the production Presence backend.
 - TypeScript and Rust formatting/type checks run at every staged commit.
 
 ## Native acceptance

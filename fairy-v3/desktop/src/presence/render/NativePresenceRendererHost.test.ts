@@ -72,6 +72,7 @@ function healthyStatus(
 ): NativeGpuStatus {
   return {
     backend: "windows_host_backdrop_d3d11_composition",
+    optics_source: "host_backdrop_plus_monitor_edge",
     lifecycle: "running",
     zero_copy_capture: true,
     pixel_ipc: false,
@@ -112,6 +113,7 @@ function healthyStatus(
     started_at_ms: 1,
     last_presented_at_ms: 2,
     presentation_revision: 0,
+    fallback_reason: null,
     error_code: null,
     ...overrides,
   };

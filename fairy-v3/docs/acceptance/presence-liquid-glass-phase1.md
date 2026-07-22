@@ -6,6 +6,13 @@ experiment modes.
 > Historical baseline: Phase 5 replaced the measured GDI/full-frame IPC route
 > on 2026-07-17 with WGC -> D3D11 -> DirectComposition. The table below remains
 > useful for the migration decision, but it is not current production evidence.
+>
+> Superseded again on 2026-07-22: Presence no longer starts WGC. DComp
+> `HostBackdropBrush` supplies the live, geometrically stable center. A GPU-only
+> DXGI Desktop Duplication texture supplies the narrow displaced edge, while an
+> independent D3D11 swap chain renders Fairy's material and identity foreground.
+> The WGC results below are retained as historical diagnostic evidence, not
+> current behavior.
 
 ## Test host
 

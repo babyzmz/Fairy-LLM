@@ -1157,7 +1157,10 @@ function rendererHealthLabel(health: PresenceRendererHealth): string {
       : ` · ${health.effective_fps} FPS`
     : "";
   if (health.actual_backend === "native_liquid_glass") {
-    return `Native Liquid Glass · Host Backdrop${rate}`;
+    const optics = health.optics_source === "host_backdrop_plus_monitor_edge"
+      ? "Live edge optics"
+      : "Host Backdrop only";
+    return `Native Liquid Glass · ${optics}${rate}`;
   }
   if (health.actual_backend === "webgl_compatibility") {
     return `WebGL compatibility${rate}`;
@@ -1174,7 +1177,8 @@ function rendererHealthTone(
 ): "neutral" | "success" | "error" {
   if (
     health.actual_backend === "native_liquid_glass" &&
-    health.status === "running"
+    health.status === "running" &&
+    health.fallback_reason === null
   ) {
     return "success";
   }
