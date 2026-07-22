@@ -134,6 +134,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const workspaceKnowledge = useWorkspaceKnowledge({
     client,
     enabled: healthQuery.isSuccess,
+    mode,
     projectId: selectedProject?.id ?? null,
   });
   const allConversations = sortHistoryItems(conversationsQuery.data?.items ?? []);
@@ -1093,7 +1094,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     selectProjectFolder,
     selectObsidianVault: () => client.obsidian.selectVault(),
     connectObsidianVault: async (selection, options) => {
-      if (selectedProject === null) throw new Error("Select a project before connecting a Vault");
+      if (mode !== "project" || selectedProject === null) {
+        throw new Error("Open a project before connecting a Vault");
+      }
       await runAction(() => client.obsidian.createSource({
         project_id: selectedProject.id,
         display_name: selection.display_name,
@@ -1108,6 +1111,13 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       await queryClient.invalidateQueries({ queryKey: [...workspaceKey, "obsidian"] });
     },
     syncObsidianSource: async (source) => {
+      if (
+        mode !== "project" ||
+        selectedProject === null ||
+        source.project_id !== selectedProject.id
+      ) {
+        throw new Error("This Vault source is outside the active project");
+      }
       await runAction(() => client.obsidian.sync({
         source_id: source.id,
         expected_revision: source.revision,
@@ -1118,6 +1128,15 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       ]);
     },
     readObsidianItem: (item, signal) => {
+      if (
+        mode !== "project" ||
+        selectedProject === null ||
+        !workspaceKnowledge.obsidianSources.some(
+          (source) => source.id === item.source_id && source.project_id === selectedProject.id,
+        )
+      ) {
+        throw new Error("This Vault item is outside the active project");
+      }
       const sourceRevision = workspaceKnowledge.obsidianSourceProjections.find(
         (projection) => projection.sourceId === item.source_id,
       )?.sourceRevision;

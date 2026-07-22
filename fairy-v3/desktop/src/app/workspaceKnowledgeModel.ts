@@ -1,6 +1,6 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 
-import type { WorkspaceClient } from "./workspaceTypes";
+import type { WorkspaceClient, WorkspaceMode } from "./workspaceTypes";
 import {
   errorMessage,
   firstError,
@@ -11,11 +11,13 @@ import {
 interface WorkspaceKnowledgeInput {
   client: WorkspaceClient;
   enabled: boolean;
+  mode: WorkspaceMode;
   projectId: string | null;
 }
 
-export function useWorkspaceKnowledge({ client, enabled, projectId }: WorkspaceKnowledgeInput) {
-  const projectEnabled = enabled && projectId !== null;
+export function useWorkspaceKnowledge({ client, enabled, mode, projectId }: WorkspaceKnowledgeInput) {
+  const scopedProjectId = mode === "project" ? projectId : null;
+  const projectEnabled = enabled && scopedProjectId !== null;
   const obsidianHealthQuery = useQuery({
     queryKey: [...workspaceKey, "obsidian", "health"],
     queryFn: () => client.obsidian.health(),
@@ -23,27 +25,27 @@ export function useWorkspaceKnowledge({ client, enabled, projectId }: WorkspaceK
     retry: false,
   });
   const knowledgeOverviewQuery = useQuery({
-    queryKey: [...workspaceKey, "knowledge", "overview", projectId],
-    queryFn: () => client.knowledge.overview(requireId(projectId)),
+    queryKey: [...workspaceKey, "knowledge", "overview", scopedProjectId],
+    queryFn: () => client.knowledge.overview(requireId(scopedProjectId)),
     enabled: projectEnabled,
     retry: false,
   });
   const graphWatermark = knowledgeOverviewQuery.data?.watermark ?? "unresolved";
   const knowledgeItemsQuery = useQuery({
-    queryKey: [...workspaceKey, "knowledge", "items", projectId, graphWatermark],
-    queryFn: () => client.knowledge.listItems({ project_id: requireId(projectId), limit: 500 }),
+    queryKey: [...workspaceKey, "knowledge", "items", scopedProjectId, graphWatermark],
+    queryFn: () => client.knowledge.listItems({ project_id: requireId(scopedProjectId), limit: 500 }),
     enabled: projectEnabled,
     retry: false,
   });
   const knowledgeGraphQuery = useQuery({
-    queryKey: [...workspaceKey, "knowledge", "graph", projectId, graphWatermark],
-    queryFn: () => client.knowledge.graph(requireId(projectId)),
+    queryKey: [...workspaceKey, "knowledge", "graph", scopedProjectId, graphWatermark],
+    queryFn: () => client.knowledge.graph(requireId(scopedProjectId)),
     enabled: projectEnabled,
     retry: false,
   });
   const obsidianSourcesQuery = useQuery({
-    queryKey: [...workspaceKey, "obsidian", "sources", projectId],
-    queryFn: () => client.obsidian.listSources(requireId(projectId)),
+    queryKey: [...workspaceKey, "obsidian", "sources", scopedProjectId],
+    queryFn: () => client.obsidian.listSources(requireId(scopedProjectId)),
     enabled: projectEnabled,
     retry: false,
   });
@@ -54,7 +56,7 @@ export function useWorkspaceKnowledge({ client, enabled, projectId }: WorkspaceK
         ...workspaceKey,
         "obsidian",
         "items",
-        projectId,
+        scopedProjectId,
         source.id,
         source.revision,
       ],
@@ -83,7 +85,9 @@ export function useWorkspaceKnowledge({ client, enabled, projectId }: WorkspaceK
     knowledgeItems: knowledgeItemsQuery.data?.items ?? [],
     knowledgeGraph: knowledgeGraphQuery.data ?? null,
     knowledgeLoading:
-      knowledgeOverviewQuery.isPending || knowledgeItemsQuery.isPending || knowledgeGraphQuery.isPending,
+      projectEnabled && (
+        knowledgeOverviewQuery.isPending || knowledgeItemsQuery.isPending || knowledgeGraphQuery.isPending
+      ),
     knowledgeError: firstError(
       knowledgeOverviewQuery.error,
       knowledgeItemsQuery.error,
@@ -94,7 +98,9 @@ export function useWorkspaceKnowledge({ client, enabled, projectId }: WorkspaceK
     obsidianItems,
     obsidianSourceProjections,
     obsidianLoading:
-      obsidianSourcesQuery.isPending || obsidianSourceProjections.some((projection) => projection.loading),
+      projectEnabled && (
+        obsidianSourcesQuery.isPending || obsidianSourceProjections.some((projection) => projection.loading)
+      ),
     obsidianError,
   };
 }

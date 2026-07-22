@@ -70,7 +70,7 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
   const [noteError, setNoteError] = useState<string | null>(null);
   const noteRequestRef = useRef(0);
   const noteAbortRef = useRef<AbortController | null>(null);
-  const project = model.selectedProject;
+  const project = model.mode === "project" ? model.selectedProject : null;
   const activeContextRef = useRef("");
   const conversations = useMemo(
     () => model.projectConversations.filter((item) => item.project_id === project?.id),
@@ -189,6 +189,16 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
   };
 
   const status = knowledgeStatus(model);
+
+  if (model.mode !== "project") {
+    return (
+      <section className="obsidian-empty" aria-label="Obsidian project knowledge">
+        <Network size={24} />
+        <h2>Project knowledge is isolated</h2>
+        <p>Ordinary chats cannot read a previously selected project's files, Vault sources, memory, or graph.</p>
+      </section>
+    );
+  }
 
   if (project === null) {
     return (
@@ -757,7 +767,9 @@ function filterGraphBySource(
 ) {
   if (sourceFilter === "all") return graph;
   const nodes = graph.nodes.filter((node) => (
-    sourceFilter === "workspace" ? node.sourceId === null : node.sourceId === null || node.sourceId === sourceFilter
+    sourceFilter === "workspace"
+      ? node.sourceId === null
+      : node.kind === "project" || node.sourceId === sourceFilter
   ));
   const visibleIds = new Set(nodes.map((node) => node.id));
   return {

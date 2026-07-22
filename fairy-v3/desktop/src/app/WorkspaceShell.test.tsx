@@ -411,6 +411,106 @@ describe("WorkspaceShell", () => {
     expect(within(knowledge).getByText("Official Obsidian Vault")).toBeVisible();
   });
 
+  it("does not expose a persisted project graph from an ordinary chat", () => {
+    const project = projectFixture();
+    const model = {
+      ...workspaceModel(),
+      mode: "chat" as const,
+      selectedProject: project,
+      selectedChatConversation: {
+        ...projectConversationFixture(project),
+        project_id: null,
+        workspace_type: "chat_scratch" as const,
+      },
+      workspaceTask: workspaceTask(),
+      knowledgeGraph: {
+        project_id: project.id,
+        source_version_id: null,
+        source_revision: 1,
+        watermark: "a".repeat(64),
+        nodes: [{
+          id: `project:${project.id}`,
+          project_id: project.id,
+          kind: "project" as const,
+          title: project.name,
+          relative_path: null,
+          content_hash: null,
+          byte_length: null,
+          language: null,
+          revision: 1,
+          conversation_id: null,
+          task_id: null,
+          source_id: null,
+          revision_id: null,
+        }, {
+          id: "file:core.db",
+          project_id: project.id,
+          kind: "file" as const,
+          title: "core.db",
+          relative_path: "core.db",
+          content_hash: "b".repeat(64),
+          byte_length: 4096,
+          language: null,
+          revision: 1,
+          conversation_id: null,
+          task_id: null,
+          source_id: null,
+          revision_id: null,
+        }],
+        edges: [],
+      },
+    };
+    render(<WorkspaceShell model={model} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Obsidian" }));
+    const knowledge = screen.getByLabelText("Obsidian project knowledge");
+    expect(within(knowledge).getByRole("heading", { name: "Project knowledge is isolated" })).toBeVisible();
+    expect(within(knowledge).queryByText("core.db")).not.toBeInTheDocument();
+    expect(knowledge).not.toHaveTextContent(project.name);
+  });
+
+  it("isolates a selected Vault source from workspace files in Graph", () => {
+    const project = projectFixture();
+    const thread = projectConversationFixture(project);
+    const source = obsidianSourceFixture(project.id);
+    const graph = {
+      project_id: project.id,
+      source_version_id: null,
+      source_revision: 2,
+      watermark: "c".repeat(64),
+      nodes: [
+        graphNode(`project:${project.id}`, project.id, "project", project.name, null),
+        graphNode("file:core.db", project.id, "file", "core.db", null),
+        graphNode(`knowledge-source:${source.id}`, project.id, "obsidian", source.display_name, source.id),
+        graphNode("knowledge-revision:note", project.id, "note", "Architecture", source.id),
+      ],
+      edges: [
+        { id: "edge-workspace", source_id: `project:${project.id}`, target_id: "file:core.db", relation: "contains" as const },
+        { id: "edge-source", source_id: `project:${project.id}`, target_id: `knowledge-source:${source.id}`, relation: "contains" as const },
+        { id: "edge-note", source_id: `knowledge-source:${source.id}`, target_id: "knowledge-revision:note", relation: "contains" as const },
+      ],
+    } satisfies NonNullable<WorkspaceModel["knowledgeGraph"]>;
+    const model = {
+      ...workspaceModel(),
+      selectedProject: project,
+      selectedConversation: thread,
+      projectConversations: [thread],
+      workspaceTask: workspaceTask(),
+      knowledgeGraph: graph,
+      obsidianSources: [source],
+    };
+    render(<WorkspaceShell model={model} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Obsidian" }));
+    const knowledge = screen.getByLabelText("Obsidian project knowledge");
+    fireEvent.click(within(knowledge).getByRole("button", { name: "Graph" }));
+    expect(within(knowledge).getByLabelText("Project graph with 4 nodes and 3 links")).toBeVisible();
+    fireEvent.change(within(knowledge).getByRole("combobox", { name: "Filter knowledge source" }), {
+      target: { value: source.id },
+    });
+    expect(within(knowledge).getByLabelText("Project graph with 3 nodes and 2 links")).toBeVisible();
+  });
+
   it("reads an indexed Vault note inside the Obsidian tab", async () => {
     const project = projectFixture();
     const thread = projectConversationFixture(project);
@@ -882,6 +982,30 @@ function obsidianSourceFixture(projectId: string): ObsidianSource {
     last_synced_at: "2026-07-12T00:00:00Z",
     created_at: "2026-07-12T00:00:00Z",
     updated_at: "2026-07-12T00:00:00Z",
+  };
+}
+
+function graphNode(
+  id: string,
+  projectId: string,
+  kind: NonNullable<WorkspaceModel["knowledgeGraph"]>["nodes"][number]["kind"],
+  title: string,
+  sourceId: string | null,
+): NonNullable<WorkspaceModel["knowledgeGraph"]>["nodes"][number] {
+  return {
+    id,
+    project_id: projectId,
+    kind,
+    title,
+    relative_path: null,
+    content_hash: null,
+    byte_length: null,
+    language: null,
+    revision: 1,
+    conversation_id: null,
+    task_id: null,
+    source_id: sourceId,
+    revision_id: null,
   };
 }
 
