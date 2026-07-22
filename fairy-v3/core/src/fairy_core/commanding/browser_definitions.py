@@ -10,7 +10,6 @@ from fairy_core.commanding.types import PermissionProfile
 
 
 def browser_definitions(profiles: frozenset[PermissionProfile]) -> tuple[ToolDefinition, ...]:
-    read_schema = {"type": "object", "additionalProperties": False}
     selector_schema = {
         "type": "object",
         "properties": {"selector": {"type": "string", "minLength": 1, "maxLength": 2048}},
@@ -51,8 +50,41 @@ def browser_definitions(profiles: frozenset[PermissionProfile]) -> tuple[ToolDef
             profiles=profiles,
             executor="browser_worker",
             idempotent=True,
-            description="Read a bounded accessibility snapshot of the current page.",
-            input_schema=read_schema,
+            description=(
+                "Read a bounded accessibility snapshot and optionally capture transient visual "
+                "evidence from the current page."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "include_screenshot": {"type": "boolean"},
+                    "capture_label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                    },
+                },
+                "additionalProperties": False,
+            },
+        ),
+        ToolDefinition(
+            name="browser.viewport",
+            side_effect=SideEffect.READ,
+            risk_level=RiskLevel.LOW,
+            approval_policy=ApprovalPolicy.NEVER,
+            profiles=profiles,
+            executor="browser_worker",
+            idempotent=True,
+            description="Set the scoped Browser viewport for responsive visual inspection.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "width": {"type": "integer", "minimum": 320, "maximum": 3840},
+                    "height": {"type": "integer", "minimum": 240, "maximum": 2160},
+                },
+                "required": ["width", "height"],
+                "additionalProperties": False,
+            },
         ),
         ToolDefinition(
             name="browser.click",

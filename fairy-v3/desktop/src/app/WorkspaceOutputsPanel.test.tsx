@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { MediaGenerationJob } from "../core/client";
-import { WorkspaceOutputsPanel } from "./WorkspaceOutputsPanel";
+import { projectMediaJobs, WorkspaceOutputsPanel } from "./WorkspaceOutputsPanel";
 
 describe("WorkspaceOutputsPanel", () => {
   it("shows image generation as a progress visualization instead of a fake result", () => {
@@ -38,6 +38,41 @@ describe("WorkspaceOutputsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onCancel).toHaveBeenCalledWith(video);
     expect(screen.getByText("Rendering frames")).toBeTruthy();
+  });
+
+  it("keeps a failed image output terminal and stops the diffusion animation", () => {
+    const { container } = render(
+      <WorkspaceOutputsPanel
+        scopeKey="task:1"
+        jobs={[job({ kind: "image", status: "failed", progress: 4, error_code: "PROVIDER_PROTOCOL_ERROR" })]}
+        loading={false}
+        onOpenStream={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelector(".diffusion-preview.active")).toBeNull();
+    expect(screen.getByText("Failed")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("PROVIDER_PROTOCOL_ERROR");
+    expect(screen.queryByLabelText("4% complete")).toBeNull();
+  });
+
+  it("collapses legacy duplicate media jobs from the same turn without deleting audit data", () => {
+    const turnId = "019f566f-f8b4-7000-8000-000000000090";
+    const first = job({
+      id: "019f566f-f8b4-7000-8000-000000000091",
+      turn_id: turnId,
+      status: "failed",
+      updated_at: "2026-07-16T12:01:00Z",
+    });
+    const latest = job({
+      id: "019f566f-f8b4-7000-8000-000000000092",
+      turn_id: turnId,
+      status: "failed",
+      updated_at: "2026-07-16T12:02:00Z",
+    });
+
+    expect(projectMediaJobs([first, latest])).toEqual([latest]);
   });
 
   it("opens only the verified completed Workspace file", async () => {

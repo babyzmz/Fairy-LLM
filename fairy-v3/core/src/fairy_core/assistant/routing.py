@@ -45,6 +45,7 @@ class RoutingTaskKind(StrEnum):
     GENERAL = "general"
     REASONING = "reasoning"
     CODE = "code"
+    BROWSER = "browser"
     IMAGE = "image"
     MUSIC = "music"
     VIDEO = "video"
@@ -155,7 +156,10 @@ def build_router_request(
                     "Set requires_workspace_changes=true only when the requested outcome must "
                     "create, modify, delete, rename, test, or run durable Workspace files. Code "
                     "questions, explanations, and reviews that do not request edits must be false; "
-                    "specialized image, music, and video generation must also be false."
+                    "specialized image, music, and video generation must also be false. Use "
+                    "browser for inspecting, clicking, scrolling, testing, or capturing an "
+                    "existing page or Preview; a screenshot is a browser capture, not generated "
+                    "media."
                 ),
             ),
             ModelMessage.create(
@@ -201,13 +205,18 @@ def auto_routing_decision(
     attachment_count: int,
     allow_free_fallback: bool,
 ) -> RoutingDecision:
-    task_kind = routed.task_kind
+    from fairy_core.assistant.intent_guard import guarded_task_kind
+
+    task_kind = guarded_task_kind(
+        user_request=user_request,
+        routed_kind=routed.task_kind,
+    )
     media_model_id = {
         RoutingTaskKind.IMAGE: IMAGE_MODEL_ID,
         RoutingTaskKind.MUSIC: MUSIC_MODEL_ID,
         RoutingTaskKind.VIDEO: VIDEO_MODEL_ID,
     }.get(task_kind)
-    if task_kind is RoutingTaskKind.CODE:
+    if task_kind in {RoutingTaskKind.CODE, RoutingTaskKind.BROWSER}:
         primary_model_id = KIMI_MODEL_ID
     elif task_kind is RoutingTaskKind.REASONING or (
         task_kind is RoutingTaskKind.GENERAL and routed.complexity is RoutingComplexity.HIGH
@@ -223,7 +232,11 @@ def auto_routing_decision(
         primary_model_id = KIMI_MODEL_ID
 
     preferred_model_id = primary_model_id
-    if attachment_count == 0 and not _catalog_model_usable(catalog, primary_model_id):
+    if (
+        attachment_count == 0
+        and task_kind is not RoutingTaskKind.BROWSER
+        and not _catalog_model_usable(catalog, primary_model_id)
+    ):
         candidates = {
             KIMI_MODEL_ID: (DEEPSEEK_MODEL_ID, GLM_MODEL_ID),
             GLM_MODEL_ID: (DEEPSEEK_MODEL_ID,),
@@ -240,7 +253,9 @@ def auto_routing_decision(
         )
 
     reviewer_model_id: str | None = None
-    if routed.needs_review or routed.complexity is RoutingComplexity.HIGH:
+    if task_kind is not RoutingTaskKind.BROWSER and (
+        routed.needs_review or routed.complexity is RoutingComplexity.HIGH
+    ):
         preferred_reviewer = DEEPSEEK_MODEL_ID if primary_model_id == GLM_MODEL_ID else GLM_MODEL_ID
         if _catalog_model_usable(catalog, preferred_reviewer):
             reviewer_model_id = preferred_reviewer
@@ -291,6 +306,14 @@ def auto_routing_decision(
         or paid_execution_count > 2
     )
     public_summary = routed.public_summary.strip()
+    if task_kind is RoutingTaskKind.BROWSER and routed.task_kind is not task_kind:
+        public_summary = "Inspect the current Preview with the scoped Browser."
+    elif task_kind is RoutingTaskKind.GENERAL and routed.task_kind in {
+        RoutingTaskKind.IMAGE,
+        RoutingTaskKind.MUSIC,
+        RoutingTaskKind.VIDEO,
+    }:
+        public_summary = "Handle the request without generating unrequested media."
     if primary_model_id != preferred_model_id:
         fallback_note = " A compatible available model was selected."
         public_summary = f"{public_summary[: 240 - len(fallback_note)]}{fallback_note}"
@@ -304,7 +327,9 @@ def auto_routing_decision(
         estimated_cost_usd=_decimal_text(estimate) if estimate is not None else None,
         cost_estimate_known=estimate is not None,
         approval_required=approval_required,
-        requires_workspace_changes=routed.requires_workspace_changes,
+        requires_workspace_changes=(
+            routed.requires_workspace_changes and task_kind is not RoutingTaskKind.BROWSER
+        ),
         public_summary=public_summary,
     )
 

@@ -19,7 +19,8 @@
 .workspace-output-empty { height:100%; display:grid; place-content:center; justify-items:center; gap:10px; color:#89928d; }
 .workspace-output-empty svg { width:28px; height:28px; }
 .diffusion-preview { --resolve:0; position:relative; width:100%; height:100%; overflow:hidden; background:radial-gradient(circle at 48% 42%,rgba(100,217,208,calc(.08 + var(--resolve)*.15)),transparent 54%),#111413; }
-.diffusion-preview i { position:absolute; border-radius:50%; background:rgba(210,247,241,calc(.18 + var(--resolve)*.7)); filter:blur(calc((1 - var(--resolve))*2px)); animation:diffusion-noise 1.4s ease-in-out infinite alternate; }
+.diffusion-preview i { position:absolute; border-radius:50%; background:rgba(210,247,241,calc(.18 + var(--resolve)*.7)); filter:blur(calc((1 - var(--resolve))*2px)); }
+.diffusion-preview.active i { animation:diffusion-noise 1.4s ease-in-out infinite alternate; }
 .diffusion-preview > span,.video-generation > span,.audio-generation > span { position:absolute; right:10px; bottom:8px; color:#c4ceca; font:10px/1 "Cascadia Mono",monospace; }
 .video-generation,.audio-generation { position:relative; width:100%; height:100%; display:grid; place-content:center; justify-items:center; gap:12px; color:#9fa9a4; background:linear-gradient(115deg,#111312 35%,#1f2522 48%,#111312 61%); background-size:260% 100%; }
 .video-generation.active { animation:output-scan 1.8s linear infinite; }

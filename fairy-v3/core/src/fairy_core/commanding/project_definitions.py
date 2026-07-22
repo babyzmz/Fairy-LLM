@@ -26,7 +26,9 @@ def project_definitions(
             idempotent=True,
             description=(
                 "Create the immutable file, dependency, entrypoint, and validation plan "
-                "before modifying a Workspace."
+                "before modifying a Workspace. Paths must be canonical Workspace-relative "
+                "paths. Validation commands must terminate; never include servers, watchers, "
+                "dev runtimes, or Preview startup commands."
             ),
             input_schema=tool_schemas.execution_plan_tool_schema(),
         ),
@@ -85,7 +87,11 @@ def project_definitions(
             active_profiles,
             "project_tools",
             idempotent=True,
-            description="Create a governed Changeset proposal without applying project files.",
+            description=(
+                "Submit one complete immutable file batch as a governed Changeset. Use canonical "
+                "Workspace-relative paths and complete file contents; never send comment-only, "
+                "TODO-only, empty-body, or other placeholder files."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -100,8 +106,19 @@ def project_definitions(
                                     "type": "string",
                                     "minLength": 1,
                                     "maxLength": 1_024,
+                                    "description": (
+                                        "Canonical Workspace-relative path without a leading ./ "
+                                        "or /workspace prefix."
+                                    ),
                                 },
-                                "content": {"type": "string", "maxLength": 2_097_152},
+                                "content": {
+                                    "type": "string",
+                                    "maxLength": 2_097_152,
+                                    "description": (
+                                        "Complete durable file content. Placeholder and "
+                                        "comment-only source is rejected."
+                                    ),
+                                },
                             },
                             "required": ["path", "content"],
                             "additionalProperties": False,

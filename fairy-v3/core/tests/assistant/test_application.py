@@ -147,8 +147,15 @@ def test_scratch_turn_persists_context_deltas_message_and_completion(
         assert all("content" not in event["payload"] for event in message_events)
         assert provider.requests[0].messages[-1].content == "Explain Fairy without tools"
         assert provider.requests[0].tools[0].name == "direct_answer"
+        assert "system.copy_text" not in {tool.name for tool in provider.requests[0].tools}
         assert provider.requests[0].max_output_tokens == 16_384
         assert task["memory_snapshot_id"] == created["memory_snapshot_id"]
+        context_events = [
+            event for event in events if event["event_type"] == "model.context.prepared"
+        ]
+        assert len(context_events) == 1
+        assert context_events[0]["payload"]["offered_tool_definitions"] >= 0
+        assert "tool_projected_characters" in context_events[0]["payload"]
     finally:
         service.close()
 

@@ -69,6 +69,7 @@ def _route_step_summary(decision: RoutingDecision) -> str:
         RoutingTaskKind.GENERAL: "General",
         RoutingTaskKind.REASONING: "Reasoning",
         RoutingTaskKind.CODE: "Code",
+        RoutingTaskKind.BROWSER: "Browser QA",
         RoutingTaskKind.IMAGE: "Image",
         RoutingTaskKind.MUSIC: "Music",
         RoutingTaskKind.VIDEO: "Video",
@@ -743,22 +744,30 @@ class AssistantRoutingMixin:
     def _review_source_messages(
         messages: tuple[ModelMessage, ...],
     ) -> tuple[ModelMessage, ...]:
-        sanitized: list[ModelMessage] = []
-        for message in messages:
-            if not message.images:
-                sanitized.append(message)
+        maximum_characters = 24_000
+        maximum_message_characters = 8_000
+        selected: list[ModelMessage] = []
+        remaining = maximum_characters
+        for message in reversed(messages):
+            if message.role not in {ModelRole.USER, ModelRole.ASSISTANT}:
                 continue
-            content = message.content or "The original request included image attachments."
-            sanitized.append(
-                ModelMessage.create(
-                    role=message.role,
-                    content=content,
-                    name=message.name,
-                    tool_call_id=message.tool_call_id,
-                    tool_calls=message.tool_calls,
-                )
+            if message.tool_calls:
+                continue
+            content = message.content or (
+                "The original request included image attachments." if message.images else ""
             )
-        return tuple(sanitized)
+            if not content:
+                continue
+            content = content[-maximum_message_characters:]
+            if len(content) > remaining and selected:
+                break
+            content = content[-max(1, remaining) :]
+            selected.append(ModelMessage.create(role=message.role, content=content))
+            remaining -= len(content)
+            if remaining <= 0:
+                break
+        selected.reverse()
+        return tuple(selected)
 
     def _reset_message_projection(
         self,

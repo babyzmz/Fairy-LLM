@@ -22,10 +22,11 @@ export function WorkspaceOutputsPanel({
   onOpenStream,
   onCancel,
 }: WorkspaceOutputsPanelProps) {
-  if (loading && jobs.length === 0) {
+  const projectedJobs = projectMediaJobs(jobs);
+  if (loading && projectedJobs.length === 0) {
     return <OutputEmpty icon={<LoaderCircle className="spin" />} title="Loading outputs" />;
   }
-  if (jobs.length === 0) {
+  if (projectedJobs.length === 0) {
     return <OutputEmpty icon={<ImageIcon />} title="Generated media will appear here" />;
   }
   return (
@@ -38,7 +39,7 @@ export function WorkspaceOutputsPanel({
         {loading ? <RefreshCw className="spin" size={15} aria-label="Refreshing outputs" /> : null}
       </header>
       <div className="workspace-output-grid">
-        {[...jobs].reverse().map((job) => (
+        {[...projectedJobs].reverse().map((job) => (
           <OutputCard
             key={`${scopeKey}:${job.id}:${job.revision}`}
             job={job}
@@ -49,6 +50,36 @@ export function WorkspaceOutputsPanel({
       </div>
     </section>
   );
+}
+
+export function projectMediaJobs(jobs: MediaGenerationJob[]): MediaGenerationJob[] {
+  const projected: MediaGenerationJob[] = [];
+  const keyedIndexes = new Map<string, number>();
+  for (const job of jobs) {
+    if (job.turn_id === null) {
+      projected.push(job);
+      continue;
+    }
+    const key = `${job.turn_id}:${job.kind}`;
+    const existingIndex = keyedIndexes.get(key);
+    if (existingIndex === undefined) {
+      keyedIndexes.set(key, projected.length);
+      projected.push(job);
+      continue;
+    }
+    const existing = projected[existingIndex];
+    if (outputPriority(job) > outputPriority(existing)
+      || (outputPriority(job) === outputPriority(existing) && job.updated_at > existing.updated_at)) {
+      projected[existingIndex] = job;
+    }
+  }
+  return projected;
+}
+
+function outputPriority(job: MediaGenerationJob): number {
+  if (job.status === "completed") return 3;
+  if (!terminalStatuses.has(job.status)) return 2;
+  return 1;
 }
 
 function OutputCard({

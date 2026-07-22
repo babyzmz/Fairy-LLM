@@ -565,6 +565,51 @@ describe("useAssistantTurn", () => {
     expect(result.current.isBusy).toBe(false);
     expect(startTurn).toHaveBeenCalledTimes(1);
   });
+
+  it("does not send a stale cancel after Core has already failed the turn", async () => {
+    const running = assistantTurn({ status: "running" });
+    const failed = assistantTurn({
+      status: "failed",
+      error_code: "PROVIDER_PROTOCOL_ERROR",
+      completed_at: "2026-07-11T00:00:04Z",
+    });
+    const cancelTurn = vi.fn(async () => assistantTurn({ status: "cancelled" }));
+    const client = assistantClient({
+      createTask: async () => ({ task: { id: taskId } }) as never,
+      createTurn: async () => assistantTurn(),
+      startTurn: async () => running,
+      getTurn: async () => failed,
+      cancelTurn,
+    });
+    const { result, rerender } = renderHook(
+      ({ events }: { events: EventEnvelope[] }) =>
+        useAssistantTurn({
+          client,
+          conversationId,
+          profileId: "openrouter-free",
+          operationMode: "answer",
+          events,
+        }),
+      { initialProps: { events: [] as EventEnvelope[] } },
+    );
+
+    await act(async () => result.current.send("Inspect this", []));
+    const cancelCapturedWhileRunning = result.current.cancel;
+    rerender({
+      events: [{
+        ...deltaEvent("failed-before-cancel", 40, turnId, 1, 0, ""),
+        event_type: "assistant.turn.failed",
+        payload: { turn_id: turnId, error_code: "PROVIDER_PROTOCOL_ERROR" },
+      }],
+    });
+    await waitFor(() => expect(result.current.turn).toEqual(failed));
+
+    await act(async () => cancelCapturedWhileRunning());
+
+    expect(cancelTurn).not.toHaveBeenCalled();
+    expect(result.current.turn).toEqual(failed);
+    expect(result.current.isBusy).toBe(false);
+  });
 });
 
 interface ClientOverrides {

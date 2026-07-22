@@ -90,16 +90,17 @@ def test_tool_candidates_receive_core_scope_and_repeated_arguments_are_rejected(
             if message.role.value == "assistant" and message.tool_calls
         ]
         assert len(assistant_protocol) == 1
-        assert [call.id for call in assistant_protocol[0].tool_calls] == [
-            "call-1",
-            "call-2",
+        assert [call.id for call in assistant_protocol[0].tool_calls] == ["call-1"]
+        events = service.invoke("events.subscribe", {"cursor": 0})["items"]
+        deduplicated = [
+            event for event in events if event["event_type"] == "model.tool_candidates.deduplicated"
         ]
+        assert deduplicated[-1]["payload"]["suppressed_count"] == 1
         tool_messages = [
             message for message in provider.requests[1].messages if message.role.value == "tool"
         ]
-        assert len(tool_messages) == 2
+        assert len(tool_messages) == 1
         assert "bounded evidence" in tool_messages[0].content
-        assert "duplicate" in tool_messages[1].content.lower()
         assert [step["kind"] for step in trace["steps"]] == [
             "model",
             "reasoning",

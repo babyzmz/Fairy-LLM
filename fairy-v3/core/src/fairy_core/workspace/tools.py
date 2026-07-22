@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import PurePosixPath
 from uuid import UUID
 
@@ -116,7 +117,16 @@ class ProjectToolExecutor:
                     }
                 )
             )
-        request = request.model_copy(update={"files": tuple(normalized_files)})
+        request = request.model_copy(
+            update={
+                "files": tuple(normalized_files),
+                "validation_commands": tuple(
+                    command
+                    for command in request.validation_commands
+                    if not _is_runtime_command(command)
+                ),
+            }
+        )
         context = self._application.execution_planning.create(
             request,
             initial_model_calls=1,
@@ -333,7 +343,7 @@ class ProjectToolExecutor:
             raise ValueError("files must be an array")
         files = tuple(
             FileMutation(
-                path=_required_string(item, "path"),
+                path=_relative_path(_required_string(item, "path")),
                 content=_required_string(item, "content", allow_empty=True),
             )
             for item in raw_files
@@ -341,6 +351,12 @@ class ProjectToolExecutor:
         )
         if len(files) != len(raw_files):
             raise ValueError("each Changeset file must be an object")
+        if len({file.path for file in files}) != len(files):
+            raise ScopeViolationError(
+                "Changeset contains duplicate canonical file paths",
+                code="SCOPE_MISMATCH",
+                model_detail="Submit each planned Workspace path exactly once per batch.",
+            )
         planned_files = {str(item["path"]): item for item in plan.manifest["files"]}
         planned_paths = set(planned_files)
         unplanned = sorted(file.path for file in files if file.path not in planned_paths)
@@ -358,6 +374,8 @@ class ProjectToolExecutor:
         for file in files:
             expected_hash = _expected_planned_hash(planned_files[file.path])
             indexed = indexed_files.get(file.path)
+            if indexed is None:
+                _reject_obvious_placeholder(file.path, file.content)
             if indexed is None and expected_hash is not None:
                 raise ScopeViolationError(
                     f"planned hash does not match absent file: {file.path}",
@@ -508,7 +526,10 @@ def _relative_path(value: str) -> str:
     path = PurePosixPath(normalized)
     if path.is_absolute() or ".." in path.parts or ":" in normalized:
         raise ScopeViolationError(f"path is outside the Task Workspace: {value}")
-    return path.as_posix()
+    canonical = path.as_posix()
+    if canonical in {"", "."}:
+        raise ScopeViolationError("path must identify a Task Workspace file")
+    return canonical
 
 
 def _matches_workspace(workspace: TaskWorkspace, path: str) -> bool:
@@ -603,6 +624,49 @@ def _inline_artifact_content(artifact: Artifact) -> str:
     raise ScopeViolationError(
         "Inline Artifact has no readable content", code="CAPABILITY_NOT_AVAILABLE"
     )
+
+
+def _reject_obvious_placeholder(path: str, content: str) -> None:
+    suffix = PurePosixPath(path).suffix.casefold()
+    if suffix in {".html", ".htm"}:
+        body = re.search(r"<body(?:\s[^>]*)?>(.*?)</body\s*>", content, re.I | re.S)
+        if body is not None and not _without_comments(body.group(1), html=True).strip():
+            raise ScopeViolationError(
+                f"generated HTML has an empty body: {path}",
+                code="SCOPE_MISMATCH",
+                model_detail="Submit the complete planned HTML file, not a placeholder.",
+            )
+        if body is None and not _without_comments(content, html=True).strip():
+            raise ScopeViolationError(
+                f"generated HTML is only comments or whitespace: {path}",
+                code="SCOPE_MISMATCH",
+            )
+    if suffix in {".css", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"} and not (
+        _without_comments(content, html=False).strip()
+    ):
+        raise ScopeViolationError(
+            f"generated source is only comments or whitespace: {path}",
+            code="SCOPE_MISMATCH",
+            model_detail="Submit complete source content for every planned file.",
+        )
+
+
+def _without_comments(content: str, *, html: bool) -> str:
+    if html:
+        return re.sub(r"<!--.*?-->", "", content, flags=re.S)
+    without_blocks = re.sub(r"/\*.*?\*/", "", content, flags=re.S)
+    return re.sub(r"(?m)^\s*//[^\r\n]*(?:\r?\n|$)", "", without_blocks)
+
+
+def _is_runtime_command(command: str) -> bool:
+    normalized = " ".join(command.casefold().split())
+    patterns = (
+        r"(?:^|\s)python(?:3)?(?:\.exe)?\s+-m\s+http\.server(?:\s|$)",
+        r"(?:^|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve)(?:\s|$)",
+        r"(?:^|\s)(?:next\s+dev|vite|uvicorn|gunicorn|flask\s+run|nodemon)(?:\s|$)",
+        r"(?:^|\s)--watch(?:\s|$)",
+    )
+    return any(re.search(pattern, normalized) is not None for pattern in patterns)
 
 
 __all__ = ["ProjectToolExecutor"]

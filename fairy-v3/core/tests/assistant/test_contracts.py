@@ -203,6 +203,43 @@ def test_active_turn_cancel_tolerates_concurrent_terminal_write(
         service.close()
 
 
+def test_cancel_after_failure_is_an_idempotent_terminal_noop(tmp_path: Path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        task = _scratch_task(service)
+        created = service.invoke(
+            "assistant.turns.create",
+            {
+                "task_id": task["id"],
+                "profile_id": "local-default",
+                "idempotency_key": "turn:failed-before-cancel",
+            },
+        )
+        turn_id = UUID(str(created["id"]))
+        with service._unit_of_work_factory() as unit_of_work:  # type: ignore[attr-defined]
+            turn = unit_of_work.assistant.get_turn(turn_id)
+            assert turn is not None
+            expected_status = turn.status
+            turn.fail(error_code="PROVIDER_PROTOCOL_ERROR")
+            unit_of_work.assistant.update_turn(
+                turn,
+                expected_status=expected_status,
+                expected_cancellation_revision=turn.cancellation_revision,
+            )
+            unit_of_work.commit()
+
+        result = service.invoke(
+            "assistant.turns.cancel",
+            {"turn_id": created["id"], "expected_cancellation_revision": 0},
+        )
+
+        assert result["status"] == "failed"
+        assert result["error_code"] == "PROVIDER_PROTOCOL_ERROR"
+        assert result["cancellation_revision"] == 0
+    finally:
+        service.close()
+
+
 def test_public_message_contract_rejects_internal_visibility() -> None:
     payload = {
         "id": "00000000-0000-0000-0000-000000000001",

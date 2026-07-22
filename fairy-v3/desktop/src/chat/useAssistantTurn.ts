@@ -280,14 +280,15 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
   );
 
   const cancel = useCallback(async () => {
-    if (turn === null || !busyRef.current) return;
+    const current = turnRef.current;
+    if (current === null || isTerminal(current) || !busyRef.current) return;
     ++operationRef.current;
     busyRef.current = false;
     setError(null);
     try {
       const cancelled = await options.client.assistant.turns.cancel({
-        turn_id: turn.id,
-        expected_cancellation_revision: turn.cancellation_revision,
+        turn_id: current.id,
+        expected_cancellation_revision: current.cancellation_revision,
       });
       commitTurn(cancelled);
     } catch (caught) {
@@ -297,7 +298,7 @@ export function useAssistantTurn(options: UseAssistantTurnOptions): AssistantTur
       setIsBusy(false);
       await settle();
     }
-  }, [commitTurn, options.client.assistant.turns, settle, turn]);
+  }, [commitTurn, options.client.assistant.turns, settle]);
 
   const resume = useCallback(async () => {
     if (turn === null || turn.status !== "waiting_for_tool" || busyRef.current) return;

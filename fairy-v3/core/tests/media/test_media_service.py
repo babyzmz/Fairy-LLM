@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import sqlite3
 from pathlib import Path
 from threading import Event, Thread, current_thread
 from time import monotonic, sleep
@@ -9,6 +12,7 @@ import pytest
 
 from fairy_core.application.errors import ApprovalRequiredError
 from fairy_core.domain.errors import IdempotencyConflictError
+from fairy_core.media.invariants import MediaJobFailedError
 from fairy_core.media.ports import (
     GeneratedMedia,
     ImageGenerationRequest,
@@ -22,6 +26,7 @@ from fairy_core.providers import (
     ModelDelta,
     ProviderCancelledError,
     ProviderCapability,
+    ProviderProtocolError,
     ProviderRegistry,
 )
 from fairy_core.transports.stdio import build_local_service
@@ -139,6 +144,32 @@ class BlockingImageMediaProvider(RecordingMediaProvider):
             sleep(0.01)
 
 
+class JpegImageMediaProvider(RecordingMediaProvider):
+    def generate_image(
+        self,
+        request: ImageGenerationRequest,
+        cancellation: CancellationToken,
+    ) -> GeneratedMedia:
+        cancellation.raise_if_cancelled()
+        self.image_requests.append(request)
+        return GeneratedMedia(
+            content=b"\xff\xd8\xfffairy-jpeg\xff\xd9",
+            media_type="image/jpeg",
+            usage_cost="0.04",
+        )
+
+
+class FailingImageMediaProvider(RecordingMediaProvider):
+    def generate_image(
+        self,
+        request: ImageGenerationRequest,
+        cancellation: CancellationToken,
+    ) -> GeneratedMedia:
+        cancellation.raise_if_cancelled()
+        self.image_requests.append(request)
+        raise ProviderProtocolError("image endpoint returned an unusable response")
+
+
 class LateCompletingVideoProvider(RecordingMediaProvider):
     def __init__(self) -> None:
         super().__init__()
@@ -186,6 +217,22 @@ def _scratch_task(service, request: str = "Generate media") -> dict[str, object]
             "idempotency_key": f"task:{conversation['id']}",
         },
     )["task"]
+
+
+def _manual_image_selection(service) -> dict[str, object]:
+    service.invoke("models.catalog.refresh", {})
+    current = service.invoke("models.selection.get", {})
+    return service.invoke(
+        "models.selection.update",
+        {
+            "mode": "manual",
+            "model_id": "google/gemini-3.1-flash-lite-image",
+            "allow_free_fallback": False,
+            "zero_data_retention": False,
+            "expected_revision": current["revision"],
+            "idempotency_key": "selection:image",
+        },
+    )
 
 
 def _wait_for_media_job(service, task_id: str, job_id: str, *, timeout: float = 3.0):
@@ -254,6 +301,121 @@ def test_image_generation_persists_workspace_artifact_events_and_replays(
     finally:
         service.close()
     assert provider.closed is True
+
+
+def test_default_image_path_adapts_to_the_provider_media_type(tmp_path: Path) -> None:
+    provider = JpegImageMediaProvider()
+    service = build_local_service(tmp_path / "data", media_provider=provider)
+    try:
+        task = _scratch_task(service)
+
+        created = service.invoke(
+            "media.images.generate",
+            {
+                "task_id": task["id"],
+                "prompt": "A translucent Fairy core",
+                "idempotency_key": "media:image:jpeg-default",
+            },
+        )
+        files = service.invoke(
+            "workspaces.files.list",
+            {
+                "workspace_id": task["workspace_id"],
+                "version_id": task["target_version_id"],
+            },
+        )["items"]
+
+        assert created["status"] == "completed"
+        assert str(created["output_path"]).endswith(".jpg")
+        assert [item["path"] for item in files] == [created["output_path"]]
+    finally:
+        service.close()
+
+
+def test_image_idempotency_accepts_the_pre_output_path_auto_fingerprint(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    provider = RecordingMediaProvider()
+    service = build_local_service(data_dir, media_provider=provider)
+    try:
+        task = _scratch_task(service)
+        request = {
+            "task_id": task["id"],
+            "prompt": "A translucent Fairy core",
+            "idempotency_key": "media:image:legacy-fingerprint",
+        }
+        created = service.invoke("media.images.generate", request)
+
+        with sqlite3.connect(data_dir / "core.db") as connection:
+            row = connection.execute(
+                """
+                SELECT scope_digest, kind, model_id, endpoint_kind, output_path, request_spec
+                FROM core_media_generation_jobs
+                WHERE tenant_id = 'local' AND id = ?
+                """,
+                (created["id"],),
+            ).fetchone()
+            assert row is not None
+            request_spec = json.loads(row[5])
+            request_spec.pop("output_path_auto")
+            payload = {
+                "scope_digest": row[0],
+                "kind": row[1],
+                "model_id": row[2],
+                "endpoint_kind": row[3],
+                "output_path": row[4],
+                "request_spec": request_spec,
+            }
+            encoded = json.dumps(
+                payload,
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("ascii")
+            legacy_fingerprint = hashlib.sha256(encoded).hexdigest()
+            connection.execute(
+                """
+                UPDATE core_media_generation_jobs
+                SET request_fingerprint = ?
+                WHERE tenant_id = 'local' AND id = ?
+                """,
+                (legacy_fingerprint, created["id"]),
+            )
+
+        replayed = service.invoke("media.images.generate", request)
+
+        assert replayed["id"] == created["id"]
+        assert len(provider.image_requests) == 1
+    finally:
+        service.close()
+
+
+def test_explicit_image_path_keeps_strict_media_type_validation(tmp_path: Path) -> None:
+    provider = JpegImageMediaProvider()
+    service = build_local_service(tmp_path / "data", media_provider=provider)
+    try:
+        task = _scratch_task(service)
+
+        with pytest.raises(MediaJobFailedError) as failure:
+            service.invoke(
+                "media.images.generate",
+                {
+                    "task_id": task["id"],
+                    "prompt": "A translucent Fairy core",
+                    "output_path": "generated/strict.png",
+                    "idempotency_key": "media:image:jpeg-strict",
+                },
+            )
+        assert failure.value.error_code == "PROVIDER_PROTOCOL_ERROR"
+
+        jobs = service.invoke("media.jobs.list", {"task_id": task["id"]})["items"]
+        assert len(jobs) == 1
+        assert jobs[0]["status"] == "failed"
+        assert jobs[0]["error_code"] == "PROVIDER_PROTOCOL_ERROR"
+    finally:
+        service.close()
 
 
 def test_video_worker_completes_without_client_poll(tmp_path: Path) -> None:
@@ -652,13 +814,175 @@ def test_manual_image_model_uses_deepseek_coordinator_and_one_assistant_message(
         ]
         assert len(media.image_requests) == 1
         assert len(coordinator.requests) == 2
-        assert all(
-            [tool.name for tool in request.tools] == ["media.images.generate"]
-            for request in coordinator.requests
-        )
+        assert [tool.name for tool in coordinator.requests[0].tools] == ["media.images.generate"]
+        assert coordinator.requests[1].tools == ()
         assert any(
             "routed to image generation" in message.content
             for message in coordinator.requests[0].messages
         )
+    finally:
+        service.close()
+
+
+def test_assistant_stops_after_the_first_media_provider_failure(tmp_path: Path) -> None:
+    profile_id = "openrouter-deepseek-v4-pro"
+    coordinator = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id=profile_id,
+                    sequence=1,
+                    tool_call_id="generate-once",
+                    tool_name="media.images.generate",
+                    arguments_fragment='{"prompt":"A Fairy core"}',
+                ),
+                ModelDelta.done(
+                    profile_id=profile_id,
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.tool_call(
+                    profile_id=profile_id,
+                    sequence=1,
+                    tool_call_id="must-not-run",
+                    tool_name="media.images.generate",
+                    arguments_fragment='{"prompt":"Retry the Fairy core"}',
+                ),
+                ModelDelta.done(
+                    profile_id=profile_id,
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+        ],
+        profile_id=profile_id,
+        model_id="deepseek/deepseek-v4-pro",
+        capabilities=frozenset(
+            {
+                ProviderCapability.TEXT,
+                ProviderCapability.TOOLS,
+                ProviderCapability.STRUCTURED_OUTPUT,
+            }
+        ),
+    )
+    media = FailingImageMediaProvider()
+    service = build_local_service(
+        tmp_path / "data",
+        provider_registry=ProviderRegistry((coordinator,)),
+        model_catalog_source=PricedCatalogSource(),
+        media_provider=media,
+    )
+    try:
+        selection = _manual_image_selection(service)
+        task = _scratch_task(service, "Generate one Fairy image")
+        turn = service.invoke(
+            "assistant.turns.create",
+            {
+                "task_id": task["id"],
+                "model_selection": {
+                    "mode": selection["mode"],
+                    "model_id": selection["model_id"],
+                    "revision": selection["revision"],
+                },
+                "idempotency_key": "turn:failed-image-once",
+            },
+        )
+
+        failed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        jobs = service.invoke("media.jobs.list", {"task_id": task["id"]})["items"]
+
+        assert failed["status"] == "failed"
+        assert failed["error_code"] == "PROVIDER_PROTOCOL_ERROR"
+        assert len(coordinator.requests) == 1
+        assert len(media.image_requests) == 1
+        assert len(jobs) == 1
+        assert jobs[0]["status"] == "failed"
+    finally:
+        service.close()
+
+
+def test_assistant_does_not_reexpose_media_tool_after_success(tmp_path: Path) -> None:
+    profile_id = "openrouter-deepseek-v4-pro"
+    coordinator = ScriptedProvider(
+        [
+            (
+                ModelDelta.tool_call(
+                    profile_id=profile_id,
+                    sequence=1,
+                    tool_call_id="first-image",
+                    tool_name="media.images.generate",
+                    arguments_fragment=(
+                        '{"prompt":"First Fairy core","output_path":"generated/first.png"}'
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id=profile_id,
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+            (
+                ModelDelta.tool_call(
+                    profile_id=profile_id,
+                    sequence=1,
+                    tool_call_id="second-image",
+                    tool_name="media.images.generate",
+                    arguments_fragment=(
+                        '{"prompt":"Second Fairy core","output_path":"generated/second.png"}'
+                    ),
+                ),
+                ModelDelta.done(
+                    profile_id=profile_id,
+                    sequence=2,
+                    finish_reason="tool_calls",
+                ),
+            ),
+        ],
+        profile_id=profile_id,
+        model_id="deepseek/deepseek-v4-pro",
+        capabilities=frozenset(
+            {
+                ProviderCapability.TEXT,
+                ProviderCapability.TOOLS,
+                ProviderCapability.STRUCTURED_OUTPUT,
+            }
+        ),
+    )
+    media = RecordingMediaProvider()
+    service = build_local_service(
+        tmp_path / "data",
+        provider_registry=ProviderRegistry((coordinator,)),
+        model_catalog_source=PricedCatalogSource(),
+        media_provider=media,
+    )
+    try:
+        selection = _manual_image_selection(service)
+        task = _scratch_task(service, "Generate exactly one Fairy image")
+        turn = service.invoke(
+            "assistant.turns.create",
+            {
+                "task_id": task["id"],
+                "model_selection": {
+                    "mode": selection["mode"],
+                    "model_id": selection["model_id"],
+                    "revision": selection["revision"],
+                },
+                "idempotency_key": "turn:one-image-limit",
+            },
+        )
+
+        failed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
+        jobs = service.invoke("media.jobs.list", {"task_id": task["id"]})["items"]
+
+        assert failed["status"] == "failed"
+        assert failed["error_code"] == "PROVIDER_PROTOCOL_ERROR"
+        assert len(coordinator.requests) == 2
+        assert [tool.name for tool in coordinator.requests[0].tools] == ["media.images.generate"]
+        assert coordinator.requests[1].tools == ()
+        assert len(media.image_requests) == 1
+        assert len(jobs) == 1
+        assert jobs[0]["status"] == "completed"
     finally:
         service.close()

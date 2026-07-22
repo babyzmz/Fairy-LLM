@@ -369,6 +369,12 @@ async function executeAction(params) {
     case "reload": await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
     case "go_back": await page.goBack({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
     case "go_forward": await page.goForward({ waitUntil: "domcontentloaded", timeout: 30_000 }); break;
+    case "viewport":
+      if (!Number.isInteger(params.width) || !Number.isInteger(params.height)) {
+        throw Object.assign(new Error("Browser viewport requires integer dimensions"), { code: "SCOPE_MISMATCH" });
+      }
+      await page.setViewportSize({ width: params.width, height: params.height });
+      break;
     default: throw Object.assign(new Error("Browser action is unsupported"), { code: "CAPABILITY_NOT_AVAILABLE" });
   }
   tab.revision += 1;
@@ -391,7 +397,7 @@ async function snapshot(params) {
   const page = tab.page;
   const state = await synchronizePageRevision(tab);
   const screenshot = params.include_screenshot
-    ? await page.screenshot({ type: "jpeg", quality: 78, animations: "disabled" })
+    ? await page.screenshot({ type: "png", animations: "disabled" })
     : null;
   return {
     session_id: session.id,
@@ -402,7 +408,7 @@ async function snapshot(params) {
     aria_snapshot: state.aria.slice(0, 200_000),
     viewport_width: page.viewportSize()?.width ?? 1365,
     viewport_height: page.viewportSize()?.height ?? 768,
-    screenshot_data_url: screenshot ? `data:image/jpeg;base64,${screenshot.toString("base64")}` : null,
+    screenshot_data_url: screenshot ? `data:image/png;base64,${screenshot.toString("base64")}` : null,
     captured_at: new Date().toISOString(),
   };
 }

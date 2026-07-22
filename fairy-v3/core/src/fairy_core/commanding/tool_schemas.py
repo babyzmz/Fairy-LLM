@@ -14,7 +14,14 @@ def execution_plan_tool_schema() -> dict[str, Any]:
                 "items": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "minLength": 1, "maxLength": 1_024},
+                        "path": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1_024,
+                            "description": (
+                                "Canonical Workspace-relative path without ./ or /workspace."
+                            ),
+                        },
                         "purpose": {"type": "string", "minLength": 1, "maxLength": 500},
                         "batch": {"type": "integer", "minimum": 1, "maximum": 200},
                         "expected_hash": {
@@ -39,6 +46,10 @@ def execution_plan_tool_schema() -> dict[str, Any]:
             "validation_commands": {
                 "type": "array",
                 "maxItems": 32,
+                "description": (
+                    "Finite validation commands only. Do not include servers, watchers, npm dev, "
+                    "Vite, http.server, or Preview startup."
+                ),
                 "items": {"type": "string", "maxLength": 1_024},
             },
         },

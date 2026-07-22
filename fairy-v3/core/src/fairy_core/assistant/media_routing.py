@@ -5,6 +5,7 @@ from fairy_core.assistant.routing import RoutingDecision
 from fairy_core.providers import (
     ModelMessage,
     ModelRole,
+    ProviderCapability,
     ProviderUnavailableError,
 )
 
@@ -12,9 +13,30 @@ from fairy_core.providers import (
 def constrain_context_for_media(
     context: AssistantContext,
     decision: RoutingDecision | None,
+    *,
+    output_completed: bool = False,
 ) -> AssistantContext:
     if decision is None or decision.media_tool_name is None:
         return context
+
+    if output_completed:
+        policy = ModelMessage.create(
+            role=ModelRole.SYSTEM,
+            content=(
+                "The planned media output is already durable. Do not call any tool or request "
+                "another media output. Return one concise final answer that refers to the "
+                "generated Workspace artifact."
+            ),
+        )
+        return AssistantContext(
+            messages=(context.messages[0], policy, *context.messages[1:]),
+            tools=(),
+            tool_definitions=(),
+            required_capabilities=(
+                context.required_capabilities - frozenset({ProviderCapability.TOOLS})
+            ),
+            diagnostics=context.diagnostics,
+        )
 
     tool_definitions = tuple(
         definition
@@ -41,6 +63,7 @@ def constrain_context_for_media(
         tools=tools,
         tool_definitions=tool_definitions,
         required_capabilities=context.required_capabilities,
+        diagnostics=context.diagnostics,
     )
 
 

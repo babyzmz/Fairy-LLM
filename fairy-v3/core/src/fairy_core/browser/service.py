@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import ipaddress
 import json
 import socket
@@ -31,6 +34,8 @@ from fairy_core.contracts.browser import (
     BrowserWorkerHealthModel,
 )
 from fairy_core.domain.models import ScopeContract
+from fairy_core.perception import MAX_IMAGE_BYTES, parse_png_dimensions
+from fairy_core.providers import ModelImage
 
 
 class BrowserWorker(Protocol):
@@ -493,15 +498,30 @@ class BrowserToolExecutor:
         if tab_id is None:
             raise ToolExecutionUnavailableError("Browser session has no active tab")
         if definition.name == "browser.snapshot":
+            include_screenshot = arguments.get("include_screenshot") is True
+            capture_label = arguments.get("capture_label")
             snapshot = self._service.snapshot(
-                BrowserSnapshotInput(session_id=session.id, tab_id=tab_id, include_screenshot=False)
+                BrowserSnapshotInput(
+                    session_id=session.id,
+                    tab_id=tab_id,
+                    include_screenshot=include_screenshot,
+                )
+            )
+            images = (_model_image_from_snapshot(scope, snapshot),) if include_screenshot else ()
+            summary = (
+                f"Captured {capture_label} Browser evidence"
+                if isinstance(capture_label, str)
+                else "Inspected the current web page"
             )
             return ToolResult.create(
-                public_summary="Inspected the current web page",
+                public_summary=summary,
                 model_content=(
-                    f"URL: {snapshot.url}\nTitle: {snapshot.title}\n{snapshot.aria_snapshot}"
+                    f"URL: {snapshot.url}\nTitle: {snapshot.title}\n"
+                    f"Viewport: {snapshot.viewport_width}x{snapshot.viewport_height}\n"
+                    f"{snapshot.aria_snapshot}"
                 ),
                 artifact_ids=(),
+                images=images,
             )
         kind = definition.name.removeprefix("browser.")
         result = self._service.execute(
@@ -513,9 +533,21 @@ class BrowserToolExecutor:
                 if isinstance(arguments.get("selector"), str)
                 else None,
                 value=arguments.get("value") if isinstance(arguments.get("value"), str) else None,
+                x=float(arguments["x"]) if isinstance(arguments.get("x"), (int, float)) else None,
+                y=float(arguments["y"]) if isinstance(arguments.get("y"), (int, float)) else None,
+                delta_x=float(arguments.get("delta_x", 0)),
                 delta_y=float(arguments.get("delta_y", 0)),
+                width=arguments.get("width") if isinstance(arguments.get("width"), int) else None,
+                height=arguments.get("height")
+                if isinstance(arguments.get("height"), int)
+                else None,
                 expected_page_revision=self._active_tab_revision(session, tab_id),
-                idempotency_key=f"assistant:{scope.task_id}:{definition.name}:{uuid4()}",
+                idempotency_key=_browser_action_key(
+                    scope=scope,
+                    tool_name=definition.name,
+                    page_revision=self._active_tab_revision(session, tab_id),
+                    arguments=arguments,
+                ),
             )
         )
         return ToolResult.create(
@@ -537,6 +569,55 @@ class BrowserToolExecutor:
         close = getattr(self._delegate, "close", None)
         if callable(close):
             close()
+
+
+def _browser_action_key(
+    *,
+    scope: ScopeContract,
+    tool_name: str,
+    page_revision: int,
+    arguments: dict[str, object],
+) -> str:
+    encoded = json.dumps(
+        arguments,
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    digest = hashlib.sha256(encoded).hexdigest()
+    return f"assistant:{scope.task_id}:{tool_name}:{page_revision}:{digest}"
+
+
+def _model_image_from_snapshot(
+    scope: ScopeContract,
+    snapshot: BrowserSnapshotModel,
+) -> ModelImage:
+    value = snapshot.screenshot_data_url
+    prefix = "data:image/png;base64,"
+    if not isinstance(value, str) or not value.startswith(prefix):
+        raise ToolExecutionUnavailableError("Browser did not return a PNG screenshot")
+    encoded = value[len(prefix) :]
+    if not encoded or len(encoded) > ((MAX_IMAGE_BYTES + 2) // 3) * 4 + 4:
+        raise ToolExecutionUnavailableError("Browser screenshot exceeds the byte limit")
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise ToolExecutionUnavailableError("Browser screenshot encoding is invalid") from error
+    width, height = parse_png_dimensions(content)
+    if (width, height) != (snapshot.viewport_width, snapshot.viewport_height):
+        raise ToolExecutionUnavailableError("Browser screenshot dimensions are inconsistent")
+    buffer = bytearray(content)
+    return ModelImage.create(
+        task_id=scope.task_id,
+        media_type="image/png",
+        data=memoryview(buffer),
+        content_hash=hashlib.sha256(content).hexdigest(),
+        width=width,
+        height=height,
+        label="untrusted_screen_content",
+        untrusted_data=True,
+    )
 
 
 def browser_service_handlers(service: BrowserService | None) -> Mapping[str, object]:

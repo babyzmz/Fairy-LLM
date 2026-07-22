@@ -15,6 +15,7 @@ from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus
 from fairy_core.assistant.turn_reader import require_task, require_turn
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.commanding.bus import CommandBus
+from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.execution import ChangesetStatus, PreviewStatus
 from fairy_core.domain.models import TaskStatus, VersionVisibility, WorkspaceType
 from fairy_core.execution.plans import ExecutionPlanStatus, TaskStepKind, TaskStepStatus
@@ -213,6 +214,20 @@ class AssistantTurnLifecycleMixin:
         return turn
 
     def _cancel_turn(
+        self,
+        turn_id: UUID,
+        run: CommandRun | None,
+    ) -> AssistantTurn:
+        try:
+            return self._cancel_turn_once(turn_id, run)
+        except InvalidTransitionError:
+            with self._unit_of_work_factory() as unit_of_work:
+                persisted = require_turn(unit_of_work, turn_id)
+            if persisted.status is not AssistantTurnStatus.CANCELLED:
+                raise
+            return self._cancel_turn_once(turn_id, run)
+
+    def _cancel_turn_once(
         self,
         turn_id: UUID,
         run: CommandRun | None,

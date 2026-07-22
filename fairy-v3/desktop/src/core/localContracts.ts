@@ -133,7 +133,8 @@ export type BrowserActionKind =
   | "wait"
   | "reload"
   | "go_back"
-  | "go_forward";
+  | "go_forward"
+  | "viewport";
 
 export interface BrowserWorkerHealth {
   available: boolean;
@@ -202,6 +203,8 @@ export interface BrowserActionInput {
   y?: number | null;
   delta_x?: number | null;
   delta_y?: number | null;
+  width?: number | null;
+  height?: number | null;
   expected_page_revision?: number | null;
   idempotency_key: string;
 }

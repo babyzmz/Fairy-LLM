@@ -11,7 +11,7 @@ from uuid import UUID
 from fairy_core.commanding.registry import ToolDefinition, ToolRegistry
 from fairy_core.commanding.types import PermissionProfile
 from fairy_core.domain.models import ScopeContract
-from fairy_core.providers import ModelTool
+from fairy_core.providers import ModelImage, ModelTool
 
 DIRECT_ANSWER_TOOL_NAME = "direct_answer"
 PUBLIC_INTENT_FIELD = "public_intent"
@@ -66,6 +66,7 @@ class ToolResult:
     model_content: str
     artifact_ids: tuple[UUID, ...]
     awaiting_approval: bool = False
+    images: tuple[ModelImage, ...] = ()
 
     @classmethod
     def create(
@@ -75,6 +76,7 @@ class ToolResult:
         model_content: str,
         artifact_ids: tuple[UUID, ...],
         awaiting_approval: bool = False,
+        images: tuple[ModelImage, ...] = (),
     ) -> ToolResult:
         summary = _bounded_text(
             public_summary,
@@ -91,6 +93,7 @@ class ToolResult:
             model_content=content,
             artifact_ids=tuple(artifact_ids),
             awaiting_approval=bool(awaiting_approval),
+            images=tuple(images),
         )
 
 

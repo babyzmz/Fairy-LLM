@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from base64 import b64encode
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -23,6 +24,13 @@ from fairy_core.contracts.common import ExecutionTarget
 from fairy_core.domain.models import OperationMode, ScopeContract, WorkspaceType
 from fairy_core.workspace.worker_transport import WorkerRpcError
 
+_ONE_PIXEL_PNG = b64encode(
+    bytes.fromhex(
+        "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c02"
+        "0000000b4944415478da6364f80f00010501012718e3660000000049454e44ae426082"
+    )
+).decode("ascii")
+
 
 class FakeBrowserWorker:
     def __init__(self) -> None:
@@ -43,6 +51,7 @@ class FakeBrowserWorker:
                 "diagnostic": None,
             }
         if method == "browser.snapshots.get":
+            include_screenshot = params.get("include_screenshot") is True
             return {
                 "session_id": session_id,
                 "tab_id": str(self.tab_id),
@@ -50,9 +59,11 @@ class FakeBrowserWorker:
                 "url": "about:blank",
                 "title": "New tab",
                 "aria_snapshot": "- document",
-                "viewport_width": 1365,
-                "viewport_height": 768,
-                "screenshot_data_url": None,
+                "viewport_width": 1 if include_screenshot else 1365,
+                "viewport_height": 1 if include_screenshot else 768,
+                "screenshot_data_url": (
+                    f"data:image/png;base64,{_ONE_PIXEL_PNG}" if include_screenshot else None
+                ),
                 "captured_at": datetime.now(UTC).isoformat(),
             }
         status = "stopped" if method == "browser.sessions.stop" else "active"
@@ -232,6 +243,35 @@ def test_agent_action_is_fenced_by_the_current_page_revision(tmp_path: Path) -> 
 
     action = next(params for method, params in worker.calls if method == "browser.actions.execute")
     assert action["expected_page_revision"] == 2
+
+
+def test_agent_can_set_viewport_and_receive_transient_visual_evidence(tmp_path: Path) -> None:
+    worker = FakeBrowserWorker()
+    browser = service(tmp_path, worker)
+    scope = _scope(tmp_path)
+    executor = BrowserToolExecutor(service=browser, delegate=None)
+
+    viewport = executor.execute(
+        build_default_registry().get("browser.viewport"),
+        scope,
+        {"width": 390, "height": 844},
+    )
+    snapshot = executor.execute(
+        build_default_registry().get("browser.snapshot"),
+        scope,
+        {"include_screenshot": True, "capture_label": "mobile"},
+    )
+
+    action = next(params for method, params in worker.calls if method == "browser.actions.execute")
+    assert action["kind"] == "viewport"
+    assert (action["width"], action["height"]) == (390, 844)
+    assert viewport.images == ()
+    assert snapshot.public_summary == "Captured mobile Browser evidence"
+    assert len(snapshot.images) == 1
+    image = snapshot.images[0]
+    assert image.media_type == "image/png"
+    assert (image.width, image.height) == (1, 1)
+    assert image.untrusted_data is True
 
 
 def test_resume_recreates_all_tabs_and_restores_the_active_tab(tmp_path: Path) -> None:

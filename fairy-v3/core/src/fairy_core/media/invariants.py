@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from pathlib import PurePosixPath
 from uuid import UUID
 
 from fairy_core.commanding import CommandRun, CommandStatus
@@ -27,6 +28,22 @@ from fairy_core.providers import (
     ProviderTimeoutError,
     ProviderUnavailableError,
 )
+
+
+class MediaOutputLimitError(RuntimeError):
+    error_code = "MEDIA_OUTPUT_LIMIT_REACHED"
+    model_detail = (
+        "The planned media output was already attempted in this Turn. Do not create another "
+        "media job; report the existing result or ask the user to start a new Turn."
+    )
+
+
+class MediaJobFailedError(RuntimeError):
+    model_detail = "Media generation failed. Do not request another output in this Turn."
+
+    def __init__(self, error_code: str) -> None:
+        super().__init__(error_code)
+        self.error_code = error_code
 
 
 def request_fingerprint(
@@ -54,6 +71,35 @@ def request_fingerprint(
         sort_keys=True,
     ).encode("ascii")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def compatible_request_fingerprints(
+    *,
+    scope: ScopeContract,
+    kind: MediaGenerationKind,
+    model_id: str,
+    endpoint_kind: ModelEndpointKind,
+    output_path: str,
+    request_spec: dict[str, object],
+    stored_spec: dict[str, object],
+) -> frozenset[str]:
+    specs = [request_spec, stored_spec]
+    if "output_path_auto" in request_spec:
+        for value in (request_spec, stored_spec):
+            legacy = dict(value)
+            legacy.pop("output_path_auto")
+            specs.append(legacy)
+    return frozenset(
+        request_fingerprint(
+            scope=scope,
+            kind=kind,
+            model_id=model_id,
+            endpoint_kind=endpoint_kind,
+            output_path=output_path,
+            request_spec=value,
+        )
+        for value in specs
+    )
 
 
 def default_output_path(kind: str, idempotency_key: str, suffix: str) -> str:
@@ -145,6 +191,10 @@ def video_status(status: MediaProviderVideoStatus) -> MediaGenerationStatus:
 
 
 def validate_media_output(job: MediaGenerationJob, generated: GeneratedMedia) -> None:
+    resolved_media_output_path(job, generated)
+
+
+def resolved_media_output_path(job: MediaGenerationJob, generated: GeneratedMedia) -> str:
     allowed = {
         MediaGenerationKind.IMAGE: {
             "image/png": (".png",),
@@ -158,8 +208,19 @@ def validate_media_output(job: MediaGenerationJob, generated: GeneratedMedia) ->
         },
     }[job.kind]
     suffixes = allowed.get(generated.media_type)
-    if suffixes is None or not job.output_path.casefold().endswith(suffixes):
-        raise ProviderProtocolError("generated media type does not match the output path")
+    if suffixes is None:
+        raise ProviderProtocolError("generated media type is unsupported")
+    if job.output_path.casefold().endswith(suffixes):
+        return job.output_path
+    output_path_auto = job.request_spec.get("output_path_auto") is True
+    if job.kind is MediaGenerationKind.IMAGE and output_path_auto:
+        preferred_suffix = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/webp": ".webp",
+        }[generated.media_type]
+        return str(PurePosixPath(job.output_path).with_suffix(preferred_suffix))
+    raise ProviderProtocolError("generated media type does not match the output path")
 
 
 def error_category(error: ProviderError) -> ProviderErrorCategory:
@@ -235,9 +296,12 @@ def boolean(value: object, name: str) -> bool:
 
 
 __all__ = [
+    "MediaJobFailedError",
+    "MediaOutputLimitError",
     "artifact_type",
     "boolean",
     "choice",
+    "compatible_request_fingerprints",
     "default_output_path",
     "error_category",
     "error_code",
@@ -248,6 +312,7 @@ __all__ = [
     "require_job",
     "require_preparable_run",
     "require_running",
+    "resolved_media_output_path",
     "seed",
     "stored_seed",
     "stored_zdr",

@@ -34,6 +34,7 @@ class BrowserActionKind(StrEnum):
     RELOAD = "reload"
     GO_BACK = "go_back"
     GO_FORWARD = "go_forward"
+    VIEWPORT = "viewport"
 
 
 class BrowserWorkerHealthModel(ContractModel):
@@ -120,6 +121,8 @@ class BrowserActionInput(BrowserTabIdInput):
     y: float | None = None
     delta_x: float | None = None
     delta_y: float | None = None
+    width: int | None = Field(default=None, ge=320, le=3840)
+    height: int | None = Field(default=None, ge=240, le=2160)
     expected_page_revision: int | None = Field(default=None, ge=0)
     idempotency_key: str = Field(min_length=1, max_length=255)
 

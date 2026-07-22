@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
 
+from fairy_core.assistant.candidates import (
+    ToolCandidate,
+    arguments_for_definition,
+    deduplicate_tool_candidates,
+)
 from fairy_core.assistant.tools import (
     ToolCandidateError,
     model_tools_for_definitions,
@@ -12,6 +18,7 @@ from fairy_core.assistant.tools import (
     validate_tool_arguments,
 )
 from fairy_core.commanding.registry import build_default_registry
+from fairy_core.providers import ModelDelta
 
 
 @pytest.mark.parametrize(
@@ -113,3 +120,87 @@ def test_model_tool_adds_public_intent_when_properties_are_omitted() -> None:
     tool = model_tools_for_definitions((definition,))[-1]
 
     assert tool.input_schema["properties"]["public_intent"]["maxLength"] == 240
+
+
+def test_workspace_tool_arguments_are_canonical_and_drop_runtime_commands() -> None:
+    definition = build_default_registry().get("execution.plan")
+    assert definition is not None
+    candidate = ToolCandidate(call_id="plan")
+    candidate.append(
+        ModelDelta.tool_call(
+            profile_id="scripted",
+            sequence=1,
+            tool_call_id="plan",
+            tool_name="execution.plan",
+            arguments_fragment=json.dumps(
+                {
+                    "files": [
+                        {
+                            "path": "./index.html",
+                            "purpose": "Create page",
+                            "batch": 1,
+                        }
+                    ],
+                    "validation_commands": [
+                        "npm test",
+                        "python3 -m http.server 8080",
+                        "npm run dev",
+                    ],
+                }
+            ),
+        )
+    )
+
+    arguments = arguments_for_definition(candidate, definition)
+
+    assert arguments["files"][0]["path"] == "index.html"
+    assert arguments["validation_commands"] == ["npm test"]
+
+
+def test_placeholder_changeset_is_rejected_before_command_dispatch() -> None:
+    definition = build_default_registry().get("edit.propose_changeset")
+    assert definition is not None
+    candidate = ToolCandidate(call_id="edit")
+    candidate.append(
+        ModelDelta.tool_call(
+            profile_id="scripted",
+            sequence=1,
+            tool_call_id="edit",
+            tool_name="edit.propose_changeset",
+            arguments_fragment=json.dumps(
+                {
+                    "files": [{"path": "./main.js", "content": "// TODO"}],
+                    "reason": "Create page",
+                }
+            ),
+        )
+    )
+
+    with pytest.raises(ToolCandidateError, match="only comments"):
+        arguments_for_definition(candidate, definition)
+
+
+def test_equivalent_tool_candidates_are_coalesced_before_execution() -> None:
+    definition = build_default_registry().get("artifact.list")
+    assert definition is not None
+    candidates: list[ToolCandidate] = []
+    for call_id in ("first", "second"):
+        candidate = ToolCandidate(call_id=call_id)
+        candidate.append(
+            ModelDelta.tool_call(
+                profile_id="scripted",
+                sequence=1,
+                tool_call_id=call_id,
+                tool_name="artifact.list",
+                arguments_fragment="{}",
+            )
+        )
+        candidates.append(candidate)
+
+    unique, suppressed = deduplicate_tool_candidates(
+        candidates,
+        {definition.name: definition},
+    )
+
+    assert [candidate.call_id for candidate in unique] == ["first"]
+    assert suppressed == 1

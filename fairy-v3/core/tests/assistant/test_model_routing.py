@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from fairy_core.assistant.routing import DEEPSEEK_MODEL_ID, GLM_MODEL_ID, KIMI_MODEL_ID
+from fairy_core.assistant.routing import (
+    DEEPSEEK_MODEL_ID,
+    GLM_MODEL_ID,
+    KIMI_MODEL_ID,
+    RoutingTaskKind,
+    auto_routing_decision,
+    parse_router_output,
+)
 from fairy_core.model_catalog.models import (
     MODEL_ALLOWLIST,
     ModelAvailability,
     ModelCatalogEntry,
+    ModelCatalogSnapshot,
     ModelEndpointKind,
     ModelPrice,
+    ProviderAccount,
     ProviderCredentialStatus,
 )
 from fairy_core.model_catalog.ports import ModelCatalogFetchResult
@@ -136,6 +145,167 @@ def _provider(
             }
         ),
     )
+
+
+def _catalog_snapshot(
+    *,
+    unavailable: frozenset[str] = frozenset(),
+) -> ModelCatalogSnapshot:
+    fetched = PricedCatalogSource(unavailable=unavailable).fetch()
+    return ModelCatalogSnapshot(
+        account=ProviderAccount(
+            account_id="openrouter-default",
+            provider_kind="openrouter",
+            display_name="OpenRouter",
+            credential_status=fetched.credential_status,
+        ),
+        entries=fetched.entries,
+        fetched_at=fetched.fetched_at,
+        expires_at=fetched.fetched_at + timedelta(hours=6),
+        revision=1,
+    )
+
+
+def test_browser_qa_intent_cannot_be_upgraded_to_paid_image_generation() -> None:
+    request = (
+        "\u4f7f\u7528 Browser \u68c0\u67e5\u521a\u751f\u6210\u7684\u7f51\u9875\uff0c"
+        "\u70b9\u51fb\u4e3b\u8981\u6309\u94ae\uff0c\u6eda\u52a8\u5230\u9875\u9762\u5e95\u90e8\uff0c"
+        "\u5206\u522b\u622a\u53d6\u684c\u9762\u548c\u79fb\u52a8\u7aef\u622a\u56fe\uff0c"
+        "\u5e76\u603b\u7ed3\u53d1\u73b0\u7684\u95ee\u9898\u3002"
+    )
+    routed = parse_router_output(
+        json.dumps(
+            {
+                "task_kind": "image",
+                "complexity": "high",
+                "needs_review": True,
+                "requires_workspace_changes": True,
+                "estimated_output_tokens": 1024,
+                "public_summary": "Generate screenshots as images.",
+            }
+        )
+    )
+
+    decision = auto_routing_decision(
+        routed=routed,
+        catalog=_catalog_snapshot(),
+        user_request=request,
+        attachment_count=0,
+        allow_free_fallback=False,
+    )
+
+    assert decision.task_kind is RoutingTaskKind.BROWSER
+    assert decision.primary_model_id == KIMI_MODEL_ID
+    assert decision.reviewer_model_id is None
+    assert decision.media_model_id is None
+    assert decision.requires_workspace_changes is False
+    assert decision.public_summary == "Inspect the current Preview with the scoped Browser."
+
+
+def test_explicit_image_generation_remains_a_media_route() -> None:
+    routed = parse_router_output(
+        json.dumps(
+            {
+                "task_kind": "image",
+                "complexity": "low",
+                "needs_review": False,
+                "requires_workspace_changes": False,
+                "estimated_output_tokens": 512,
+                "public_summary": "Generate the requested hero image.",
+            }
+        )
+    )
+
+    decision = auto_routing_decision(
+        routed=routed,
+        catalog=_catalog_snapshot(),
+        user_request=(
+            "\u4e3a\u5f53\u524d\u7f51\u9875\u751f\u6210\u4e00\u5f20\u65b0\u7684 Hero \u56fe\u7247"
+        ),
+        attachment_count=0,
+        allow_free_fallback=False,
+    )
+
+    assert decision.task_kind is RoutingTaskKind.IMAGE
+    assert decision.media_model_id == "google/gemini-3.1-flash-lite-image"
+
+
+def test_browser_route_does_not_downgrade_to_a_non_visual_model() -> None:
+    routed = parse_router_output(
+        json.dumps(
+            {
+                "task_kind": "browser",
+                "complexity": "medium",
+                "needs_review": False,
+                "requires_workspace_changes": False,
+                "estimated_output_tokens": 512,
+                "public_summary": "Inspect the Preview.",
+            }
+        )
+    )
+
+    decision = auto_routing_decision(
+        routed=routed,
+        catalog=_catalog_snapshot(unavailable=frozenset({KIMI_MODEL_ID})),
+        user_request="Use Browser to inspect and capture the current Preview.",
+        attachment_count=0,
+        allow_free_fallback=True,
+    )
+
+    assert decision.primary_model_id == KIMI_MODEL_ID
+
+
+def test_browser_qa_overrides_a_code_misroute_without_workspace_mutation() -> None:
+    routed = parse_router_output(
+        json.dumps(
+            {
+                "task_kind": "code",
+                "complexity": "medium",
+                "needs_review": True,
+                "requires_workspace_changes": True,
+                "estimated_output_tokens": 1024,
+                "public_summary": "Inspect the generated source.",
+            }
+        )
+    )
+
+    decision = auto_routing_decision(
+        routed=routed,
+        catalog=_catalog_snapshot(),
+        user_request="Use Browser to inspect, click, scroll, and capture the current Preview.",
+        attachment_count=0,
+        allow_free_fallback=False,
+    )
+
+    assert decision.task_kind is RoutingTaskKind.BROWSER
+    assert decision.requires_workspace_changes is False
+    assert decision.reviewer_model_id is None
+
+
+def test_browser_repair_request_remains_a_code_workspace_task() -> None:
+    routed = parse_router_output(
+        json.dumps(
+            {
+                "task_kind": "browser",
+                "complexity": "medium",
+                "needs_review": False,
+                "requires_workspace_changes": True,
+                "estimated_output_tokens": 1024,
+                "public_summary": "Inspect and repair the Preview.",
+            }
+        )
+    )
+
+    decision = auto_routing_decision(
+        routed=routed,
+        catalog=_catalog_snapshot(),
+        user_request="Use Browser to inspect the Preview, then fix the broken navigation.",
+        attachment_count=0,
+        allow_free_fallback=False,
+    )
+
+    assert decision.task_kind is RoutingTaskKind.CODE
+    assert decision.requires_workspace_changes is True
 
 
 def _task(service, request: str) -> dict[str, object]:

@@ -124,7 +124,7 @@ def test_rejected_tool_becomes_bounded_result_and_duplicate_decision_is_idempote
         tool_executor=executor,
     )
     try:
-        task = _scratch_task(service, "Ask before notifying")
+        task = _scratch_task(service, "Notify me when complete, but ask before sending it")
         turn = _turn(service, task, "turn:approval:reject")
         service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
         approval = service.invoke("approvals.list", {"task_id": task["id"]})["items"][0]
@@ -195,7 +195,10 @@ def test_approval_queued_before_prior_background_runner_exits_resumes_once(
 
     scheduler._finish = delayed_first_finish  # type: ignore[attr-defined,method-assign]
     try:
-        task = _scratch_task(service, "Approve while the first Runner is exiting")
+        task = _scratch_task(
+            service,
+            "Notify me after approval while the first Runner is exiting",
+        )
         turn = _turn(service, task, "turn:approval:runner-race")
         service.invoke("assistant.turns.start", {"turn_id": turn["id"]})
         assert first_finish_reached.wait(timeout=5)
@@ -225,7 +228,7 @@ def test_approved_turn_resumes_after_core_restart_and_expired_claim(
         provider_registry=ProviderRegistry((first_provider,)),
         tool_executor=RecordingToolExecutor(),
     )
-    task = _scratch_task(first_service, "Resume this approved action")
+    task = _scratch_task(first_service, "Resume this approved notification action")
     turn = _turn(first_service, task, "turn:approval:restart")
     first_service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
     approval = first_service.invoke("approvals.list", {"task_id": task["id"]})["items"][0]

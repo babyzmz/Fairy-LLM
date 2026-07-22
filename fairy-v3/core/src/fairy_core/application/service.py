@@ -8,6 +8,7 @@ from weakref import finalize
 
 from pydantic import BaseModel, ValidationError
 
+from fairy_core.application.assistant_cancellation import AssistantCancellationMixin
 from fairy_core.application.core import CoreApplication
 from fairy_core.application.extension_service import ExtensionService
 from fairy_core.application.history_service import history_service_handlers
@@ -26,7 +27,7 @@ from fairy_core.application.workspace_service import WorkspaceService
 from fairy_core.assistant.application import AssistantApplication
 from fairy_core.assistant.image_inputs import build_image_attachments
 from fairy_core.assistant.ledger import AssistantLedgerApplication
-from fairy_core.assistant.models import AssistantTurnStatus, ToolInvocationStatus
+from fairy_core.assistant.models import ToolInvocationStatus
 from fairy_core.assistant.tools import ToolExecutor
 from fairy_core.assistant.trace_models import TraceStepKind, TraceStepStatus
 from fairy_core.assistant.trace_runtime import TurnTraceRuntime
@@ -44,7 +45,6 @@ from fairy_core.contracts.approvals import ApprovalDecisionInput
 from fairy_core.contracts.knowledge import KnowledgeSyncRunInput, KnowledgeSyncStartInput
 from fairy_core.contracts.methods import CORE_METHODS
 from fairy_core.contracts.models import (
-    AssistantTurnCancelInput,
     AssistantTurnCreateInput,
     AssistantTurnIdInput,
     ProviderHealthInput,
@@ -61,10 +61,7 @@ from fairy_core.contracts.obsidian import (
 from fairy_core.contracts.voice_sessions import VoiceSessionIdInput, VoiceSessionStartInput
 from fairy_core.documents.application import DocumentApplication, DocumentToolExecutor
 from fairy_core.documents.ports import DocumentBlobStore, DocumentParser
-from fairy_core.domain.errors import (
-    InvalidTransitionError,
-    ProjectBusyError,
-)
+from fairy_core.domain.errors import InvalidTransitionError, ProjectBusyError
 from fairy_core.domain.execution import (
     Approval,
     ApprovalDecision,
@@ -163,7 +160,7 @@ class CoreResponseValidationError(RuntimeError):
         super().__init__(f"Core method returned an invalid response: {method}")
 
 
-class CoreService(CoreServiceEndpointsMixin):
+class CoreService(AssistantCancellationMixin, CoreServiceEndpointsMixin):
     """Transport-independent validation and application facade."""
 
     def __init__(
@@ -671,66 +668,6 @@ class CoreService(CoreServiceEndpointsMixin):
 
     def _get_assistant_turn(self, request: BaseModel) -> Any:
         return self._assistant_ledger.get_turn(cast(AssistantTurnIdInput, request).turn_id)
-
-    def _cancel_assistant_turn(self, request: BaseModel) -> Any:
-        validated = cast(AssistantTurnCancelInput, request)
-        return self._cancel_assistant_turn_by_id(
-            validated.turn_id,
-            expected_cancellation_revision=validated.expected_cancellation_revision,
-        )
-
-    def _cancel_assistant_turn_by_id(
-        self,
-        turn_id: UUID,
-        *,
-        expected_cancellation_revision: int,
-        strict_tool_cancellation: bool = False,
-    ) -> Any:
-        was_running = self._assistant_scheduler.cancel(turn_id)
-        if was_running or strict_tool_cancellation:
-            self._cancel_running_tool_command(
-                turn_id,
-                strict=strict_tool_cancellation,
-            )
-        try:
-            cancelled = self._assistant_ledger.cancel_turn(
-                turn_id=turn_id,
-                expected_cancellation_revision=expected_cancellation_revision,
-            )
-            self._image_attachments.release(turn_id)
-            return cancelled
-        except InvalidTransitionError:
-            if not was_running:
-                raise
-            persisted = self._assistant_ledger.get_turn(turn_id)
-            if persisted.status is not AssistantTurnStatus.CANCELLED:
-                raise
-            self._image_attachments.release(turn_id)
-            return persisted
-
-    def _cancel_running_tool_command(self, turn_id: UUID, *, strict: bool = False) -> None:
-        with self._unit_of_work_factory() as unit_of_work:
-            runs = tuple(
-                run
-                for invocation in unit_of_work.assistant.list_tool_invocations(turn_id)
-                if invocation.status is ToolInvocationStatus.RUNNING
-                and invocation.command_run_id is not None
-                if (run := unit_of_work.commands.get_run(invocation.command_run_id)) is not None
-            )
-        if not runs:
-            return
-        cancel_command = getattr(self._tool_executor, "cancel_command", None)
-        if not callable(cancel_command):
-            if strict:
-                raise ProjectBusyError("A running tool cannot be stopped safely")
-            return
-        for run in runs:
-            try:
-                cancel_command(run)
-            except Exception as error:
-                if strict:
-                    raise ProjectBusyError("A running tool could not be stopped") from error
-                continue
 
     def _cancel_project_activity(self, project_id: UUID) -> None:
         with self._unit_of_work_factory() as unit_of_work:

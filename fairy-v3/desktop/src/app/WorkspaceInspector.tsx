@@ -1,18 +1,19 @@
 import { Eye, Files, GalleryVerticalEnd, Network } from "lucide-react";
-import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useState } from "react";
 
 import type { WorkspaceModel } from "./workspaceModel";
 import { PreviewWorkspace } from "./PreviewWorkspace";
 import { WorkspaceFilesPanel } from "./WorkspaceFilesPanel";
-import { WorkspaceOutputsPanel } from "./WorkspaceOutputsPanel";
+import { projectMediaJobs, WorkspaceOutputsPanel } from "./WorkspaceOutputsPanel";
 import { ObsidianPanel } from "./ObsidianPanel";
 import "./workspace-inspector.css";
 
 export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
   const hasFiles = model.workspaceFiles.length > 0;
   const previewReady = model.preview?.preview.status === "ready";
-  const hasOutputs = model.mediaJobs.length > 0;
-  const hasActiveOutput = model.mediaJobs.some((job) => !["completed", "failed", "cancelled", "interrupted"].includes(job.status));
+  const mediaJobs = useMemo(() => projectMediaJobs(model.mediaJobs), [model.mediaJobs]);
+  const hasOutputs = mediaJobs.length > 0;
+  const hasActiveOutput = mediaJobs.some((job) => !["completed", "failed", "cancelled", "interrupted"].includes(job.status));
   const [tab, setTab] = useState<"preview" | "files" | "outputs" | "obsidian">(
     previewReady ? "preview" : "files",
   );
@@ -26,9 +27,15 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
   useEffect(() => {
     if (hasActiveOutput) setTab("outputs");
     else if (previewReady) setTab("preview");
-    else if (hasOutputs) setTab("outputs");
     else if (hasFiles) setTab("files");
-  }, [hasActiveOutput, hasFiles, hasOutputs, previewReady, model.workspaceTask?.id]);
+    else setTab("preview");
+  }, [scopeKey]);
+
+  useEffect(() => {
+    if (hasActiveOutput) setTab("outputs");
+    else if (previewReady) setTab("preview");
+    else if (hasFiles) setTab("files");
+  }, [hasActiveOutput, hasFiles, previewReady, model.workspaceTask?.id]);
 
   useEffect(() => {
     const parent = document.querySelector<HTMLElement>(".unified-workspace-chat, .workspace-main");
@@ -61,7 +68,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
         </button>
         <button type="button" role="tab" aria-selected={tab === "outputs"} onClick={() => setTab("outputs")}>
           <GalleryVerticalEnd size={14} /> Outputs
-          {hasOutputs ? <span>{model.mediaJobs.length}</span> : null}
+          {hasOutputs ? <span>{mediaJobs.length}</span> : null}
         </button>
         <button type="button" role="tab" aria-selected={tab === "obsidian"} onClick={() => setTab("obsidian")}>
           <Network size={14} /> Obsidian
@@ -97,7 +104,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
         ) : tab === "outputs" ? (
           <WorkspaceOutputsPanel
             scopeKey={scopeKey}
-            jobs={model.mediaJobs}
+            jobs={mediaJobs}
             loading={model.mediaJobsLoading}
             onOpenStream={model.openWorkspaceFileStream}
             onCancel={model.cancelMediaJob}

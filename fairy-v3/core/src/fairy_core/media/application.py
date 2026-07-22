@@ -102,6 +102,7 @@ class MediaApplication:
         seed: int | None,
         idempotency_key: str,
     ) -> MediaGenerationResult:
+        output_path_auto = output_path is None
         spec = {
             "prompt": media_invariants.prompt(prompt),
             "size": media_invariants.choice(size, {"1024x1024"}, "image size"),
@@ -111,6 +112,7 @@ class MediaApplication:
                 "image aspect ratio",
             ),
             "seed": media_invariants.seed(seed),
+            "output_path_auto": output_path_auto,
         }
         prepared = self._prepare_job(
             task_id=task_id,
@@ -619,17 +621,18 @@ class MediaApplication:
                 output_path=output_path,
                 request_spec=stored_spec,
             )
-            legacy_fingerprint = media_invariants.request_fingerprint(
+            compatible_fingerprints = media_invariants.compatible_request_fingerprints(
                 scope=scope,
                 kind=kind,
                 model_id=model_id,
                 endpoint_kind=endpoint_kind,
                 output_path=output_path,
                 request_spec=request_spec,
+                stored_spec=stored_spec,
             )
             existing = unit_of_work.state.find_media_job_by_idempotency_key(idempotency_key)
             if existing is not None:
-                if existing.request_fingerprint not in {fingerprint, legacy_fingerprint}:
+                if existing.request_fingerprint not in compatible_fingerprints:
                     raise IdempotencyConflictError("Media idempotency key was reused")
                 unit_of_work.state.enqueue_media_work(existing.id)
                 unit_of_work.commit()
@@ -643,6 +646,13 @@ class MediaApplication:
                         fallback=selection.zero_data_retention,
                     ),
                     max_workspace_bytes=workspace.max_bytes,
+                )
+            if turn is not None and any(
+                job.turn_id == turn.id and job.kind is kind
+                for job in unit_of_work.state.list_media_jobs(task.id)
+            ):
+                raise media_invariants.MediaOutputLimitError(
+                    "Assistant Turn already owns its planned media output"
                 )
             job = MediaGenerationJob.create(
                 project_id=scope.project_id,
@@ -926,7 +936,8 @@ class MediaApplication:
         prepared: _PreparedJob,
         generated: GeneratedMedia,
     ) -> MediaGenerationResult:
-        media_invariants.validate_media_output(prepared.job, generated)
+        output_path = media_invariants.resolved_media_output_path(prepared.job, generated)
+        prepared.job.output_path = output_path
         content_hash = hashlib.sha256(generated.content).hexdigest()
         staged = self._staging.stage(
             job_id=prepared.job.id,
@@ -950,7 +961,7 @@ class MediaApplication:
                 version_id=prepared.job.version_id,
                 mutation=AssetMutation(
                     operation="create",
-                    path=prepared.job.output_path,
+                    path=output_path,
                     source=staged,
                     expected_source_hash=content_hash,
                 ),
@@ -975,6 +986,7 @@ class MediaApplication:
                     previous_status = job.status
                     if job.is_terminal:
                         raise VersionConflictError("Media job became terminal during import")
+                    job.output_path = output_path
                     unit_of_work.project_indexes.replace_generation(
                         index,
                         expected_generation=expected_generation,
@@ -1109,7 +1121,9 @@ class MediaApplication:
         if not job.is_terminal:
             return None
         if job.status is not MediaGenerationStatus.COMPLETED:
-            raise RuntimeError(job.error_code or f"media job is {job.status.value}")
+            raise media_invariants.MediaJobFailedError(
+                job.error_code or f"MEDIA_{job.status.value.upper()}"
+            )
         with self._unit_of_work_factory() as unit_of_work:
             artifact = unit_of_work.state.get_artifact(job.artifact_id)
         if artifact is None:

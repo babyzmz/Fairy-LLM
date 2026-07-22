@@ -763,7 +763,7 @@ def test_generated_workspace_retries_a_code_dump_as_a_concise_summary(
         service.close()
 
 
-def test_preview_status_prepares_the_completed_static_workspace(tmp_path: Path) -> None:
+def test_completed_file_batch_hands_preview_finalization_back_to_core(tmp_path: Path) -> None:
     plan_arguments = json.dumps(
         {
             "files": [
@@ -814,20 +814,6 @@ def test_preview_status_prepares_the_completed_static_workspace(tmp_path: Path) 
                 ),
             ),
             (
-                ModelDelta.tool_call(
-                    profile_id="scripted",
-                    sequence=1,
-                    tool_call_id="call-preview-status",
-                    tool_name="preview.status",
-                    arguments_fragment="{}",
-                ),
-                ModelDelta.done(
-                    profile_id="scripted",
-                    sequence=2,
-                    finish_reason="tool_calls",
-                ),
-            ),
-            (
                 ModelDelta.text(
                     profile_id="scripted",
                     sequence=1,
@@ -859,11 +845,6 @@ def test_preview_status_prepares_the_completed_static_workspace(tmp_path: Path) 
         context, turn = _scratch_turn(service, key="preview-status-prepares")
 
         completed = service.invoke("assistant.turns.run", {"turn_id": turn["id"]})
-        preview_result = next(
-            message.content
-            for message in provider.requests[3].messages
-            if message.tool_call_id == "call-preview-status"
-        )
         preview = service.invoke(
             "previews.resolve",
             {
@@ -878,11 +859,11 @@ def test_preview_status_prepares_the_completed_static_workspace(tmp_path: Path) 
         )
 
         assert completed["status"] == "completed"
-        assert '"status":"ready"' in preview_result
         assert preview["preview"]["status"] == "ready"
         assert execution_plan["plan"]["status"] == "completed"
         assert "execution.plan" not in {tool.name for tool in provider.requests[1].tools}
-        assert [tool.name for tool in provider.requests[3].tools] == ["direct_answer"]
+        assert [tool.name for tool in provider.requests[2].tools] == ["direct_answer"]
+        assert "CORE FINALIZATION HANDOFF" in provider.requests[2].messages[0].content
     finally:
         service.close()
 

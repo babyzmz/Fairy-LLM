@@ -6559,7 +6559,7 @@ export interface components {
          * RoutingTaskKind
          * @enum {string}
          */
-        RoutingTaskKind: "general" | "reasoning" | "code" | "image" | "music" | "video";
+        RoutingTaskKind: "general" | "reasoning" | "code" | "browser" | "image" | "music" | "video";
         /** RuntimeExecutorHealthModel */
         RuntimeExecutorHealthModel: {
             /** Available */

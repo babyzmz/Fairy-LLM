@@ -5,9 +5,16 @@ from uuid import UUID
 
 from fairy_core.assistant.candidates import ToolCandidate
 from fairy_core.assistant.durable_context import durable_tool_context
-from fairy_core.assistant.models import Message, MessageRole, MessageVisibility
+from fairy_core.assistant.models import (
+    Message,
+    MessageRole,
+    MessageVisibility,
+    ToolInvocation,
+    ToolInvocationStatus,
+)
 from fairy_core.assistant.tools import tool_message_content
 from fairy_core.assistant.turn_reader import require_task, require_turn
+from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
 from fairy_core.domain.models import TaskStatus
 from fairy_core.providers import ModelMessage, ModelToolCall
 
@@ -96,3 +103,66 @@ class AssistantToolContextMixin:
         )
         unit_of_work.assistant.append_message(message)
         return message
+
+    def _cancel_running_tool(
+        self,
+        invocation: ToolInvocation,
+        run: CommandRun,
+    ) -> None:
+        with self._unit_of_work_factory() as unit_of_work:
+            self._cancel_running_tool_in_unit(unit_of_work, invocation, run)
+            unit_of_work.commit()
+
+    def _abandon_running_tool(self, run: CommandRun) -> None:
+        with self._unit_of_work_factory() as unit_of_work:
+            abandoned = unit_of_work.commands.abandon(
+                run.id,
+                lease_owner=run.lease_owner or "",
+                lease_fence=run.lease_fence,
+            )
+            if abandoned:
+                unit_of_work.commit()
+
+    def _cancel_running_tool_in_unit(
+        self,
+        unit_of_work,
+        invocation: ToolInvocation,
+        run: CommandRun,
+    ) -> None:
+        if invocation.status is ToolInvocationStatus.RUNNING:
+            expected_status = invocation.status
+            invocation.cancel()
+            unit_of_work.assistant.update_tool_invocation(
+                invocation,
+                expected_status=expected_status,
+            )
+        self._tool_trace.cancel_in_unit(unit_of_work, run=run)
+        persisted_run = unit_of_work.commands.get_run(run.id)
+        if persisted_run is not None and persisted_run.status is CommandStatus.RUNNING:
+            unit_of_work.commands.append_event(
+                run_id=run.id,
+                event_type="assistant.turn.cancelled",
+                visibility=EventVisibility.USER,
+                message="Assistant turn cancelled",
+                payload={"turn_id": str(invocation.turn_id)},
+                lease_owner=run.lease_owner,
+                lease_fence=run.lease_fence,
+            )
+            self._command_bus(unit_of_work.commands).cancel(
+                run.id,
+                lease_owner=run.lease_owner,
+                lease_fence=run.lease_fence,
+            )
+
+    def _resume_after_tools(self, turn_id: UUID) -> None:
+        with self._unit_of_work_factory() as unit_of_work:
+            turn = require_turn(unit_of_work, turn_id)
+            expected_status = turn.status
+            expected_revision = turn.cancellation_revision
+            turn.resume()
+            unit_of_work.assistant.update_turn(
+                turn,
+                expected_status=expected_status,
+                expected_cancellation_revision=expected_revision,
+            )
+            unit_of_work.commit()

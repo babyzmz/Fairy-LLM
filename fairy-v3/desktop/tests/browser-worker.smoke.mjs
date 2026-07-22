@@ -94,7 +94,7 @@ try {
     include_screenshot: true,
   });
   assert.match(snapshot.aria_snapshot, /Browser ready/);
-  assert.match(snapshot.screenshot_data_url, /^data:image\/jpeg;base64,/);
+  assert.match(snapshot.screenshot_data_url, /^data:image\/png;base64,/);
   assert.equal(snapshot.viewport_width, 1365);
 
   persistentSessionId = crypto.randomUUID();
