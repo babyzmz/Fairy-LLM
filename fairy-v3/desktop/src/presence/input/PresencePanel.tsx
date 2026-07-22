@@ -2,7 +2,6 @@ import {
   Check,
   CircleAlert,
   Gamepad2,
-  LoaderCircle,
   LogOut,
   MessageSquarePlus,
   MonitorUp,
@@ -74,6 +73,7 @@ interface PresencePanelProps {
   view: PresenceView;
   visible: boolean;
   onCompactSizeChange?(width: number, height: number): void;
+  onExpandedHeightChange?(height: number): void;
 }
 
 export const PRESENCE_COMPACT_INPUT_MIN_WIDTH = 220;
@@ -97,11 +97,13 @@ export function PresencePanel({
   view,
   visible,
   onCompactSizeChange,
+  onExpandedHeightChange,
 }: PresencePanelProps) {
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const composing = useRef(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const panel = useRef<HTMLElement>(null);
   const lastSubmission = useRef<{ text: string; submittedAt: number } | null>(null);
   const submitTimer = useRef<number | null>(null);
 
@@ -124,6 +126,26 @@ export function PresencePanel({
     const width = compactInputWidthForText(measured);
     onCompactSizeChange(width, compactInputHeightForText(draft, measured));
   }, [draft, inputOpen, onCompactSizeChange]);
+
+  useLayoutEffect(() => {
+    if (!visible || onExpandedHeightChange === undefined) return;
+    const content = Array.from(panel.current?.children ?? []).find(
+      (child): child is HTMLElement =>
+        child instanceof HTMLElement &&
+        (child.classList.contains("presence-card") ||
+          child.classList.contains("presence-menu")),
+    );
+    if (content === undefined) return;
+    const report = () => {
+      const height = Math.ceil(Math.max(content.offsetHeight, content.scrollHeight));
+      if (height > 0) onExpandedHeightChange(height);
+    };
+    report();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(report);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [menuOpen, onExpandedHeightChange, reply?.id, submission?.id, visible]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -152,43 +174,10 @@ export function PresencePanel({
       data-interactive={String(interactive)}
       data-visible={String(visible)}
       inert={!interactive}
+      ref={panel}
     >
       <AnimatePresence initial={false} mode="sync">
-      {!menuOpen && view.notice !== null ? (
-        <m.aside
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          className={`presence-card notice ${view.notice.tone}`}
-          exit={{ opacity: 0, y: -4, scale: 0.985 }}
-          initial={{ opacity: 0, y: 6, scale: 0.98 }}
-          key={`notice:${view.notice.id}`}
-          role="alert"
-          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-        >
-          <div>
-            <strong>{view.status_text}</strong>
-            <span>{view.notice.text}</span>
-          </div>
-          <button
-            aria-label="Dismiss notice"
-            onClick={actions.dismissNotice}
-            title="Dismiss"
-            type="button"
-          >
-            <X size={14} />
-          </button>
-          {view.work_state === "awaiting_confirmation" ? (
-            <button
-              className="presence-card-action"
-              onClick={actions.openReview}
-              type="button"
-            >
-              Review in Fairy
-            </button>
-          ) : null}
-        </m.aside>
-      ) : null}
-
-      {!menuOpen && view.notice === null && reply !== null ? (
+      {!menuOpen && reply !== null ? (
         <m.aside
           animate={{ opacity: 1, y: 0, scale: 1 }}
           className="presence-card reply"
@@ -243,7 +232,7 @@ export function PresencePanel({
         </m.aside>
       ) : null}
 
-      {!menuOpen && reply === null && view.notice === null && submission !== null ? (
+      {!menuOpen && reply === null && submission?.phase === "failed" ? (
         <m.aside
           animate={{ opacity: 1, y: 0, scale: 1 }}
           className={`presence-card submission ${submission.phase}`}
@@ -256,13 +245,7 @@ export function PresencePanel({
         >
           <div className="presence-card-copy">
             <strong>
-              {submission.phase === "failed" ? (
-                <CircleAlert aria-hidden="true" size={13} />
-              ) : submission.phase === "cancelled" ? (
-                <Check aria-hidden="true" size={13} />
-              ) : (
-                <LoaderCircle aria-hidden="true" className="submission-spinner" size={13} />
-              )}
+              <CircleAlert aria-hidden="true" size={13} />
               {submission.title}
             </strong>
             <span>{submission.detail}</span>

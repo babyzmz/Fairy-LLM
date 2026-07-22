@@ -635,6 +635,24 @@ describe("native presentation projection", () => {
     }));
   });
 
+  it("keeps the local core fixed when a global placement sample arrives late", () => {
+    const projected = nativePresentationForSnapshot(snapshot({
+      interaction: interaction({
+        placement: {
+          ...interaction().placement,
+          anchor: { x: -8_000, y: 4_000 },
+          render_frame: { x: 1_200, y: 700, width: 640, height: 260 },
+          expansion_direction: "left",
+        },
+      }),
+    }));
+
+    expect(projected).toEqual(expect.objectContaining({
+      core_x: 544,
+      core_y: 88,
+    }));
+  });
+
   it("limits native foreground work by activity, idleness, accessibility, and power policy", () => {
     expect(nativeFrameRateLimit(snapshot({ target_frame_rate: 60 }))).toBe(60);
     expect(nativeFrameRateLimit(snapshot({

@@ -179,25 +179,18 @@ function isLiquidTransitionPhase(
 }
 
 function resolveSurface(facts: FairyMotionFacts, state: FairyState): FairySurface {
-  if (state === "error" || state === "awaiting_confirmation") {
-    if (facts.notice_tone !== null) return "notice";
-    if (facts.submission_phase !== null) return "submission";
-    return "notice";
+  if (facts.submission_phase === "failed") return "submission";
+  if (
+    state === "submitting" ||
+    state === "thinking" ||
+    state === "notify" ||
+    state === "awaiting_confirmation" ||
+    state === "error"
+  ) {
+    return "core";
   }
-  if ((state === "speaking" || state === "responding") && facts.reply !== null) {
-    return "reply";
-  }
-  if ((state === "thinking" || state === "submitting") && facts.submission_phase !== null) {
-    return "submission";
-  }
-  if (state === "notify") {
-    if (facts.notice_tone !== null) return "notice";
-    if (facts.submission_phase !== null) return "submission";
-  }
-  if (["thinking", "responding", "speaking"].includes(state)) return "core";
-  if (facts.notice_tone !== null) return "notice";
   if (facts.reply !== null) return "reply";
-  if (facts.submission_phase !== null) return "submission";
+  if (state === "responding" || state === "speaking") return "core";
   if (facts.menu_open) return "options";
   if (facts.manual_input_open || facts.input_window_visible) return "input";
   return "core";

@@ -1221,4 +1221,27 @@ mod native_pointer_tests {
             NATIVE_DRAG_DISTANCE_PX,
         ));
     }
+
+    #[test]
+    fn native_drag_preserves_the_pointer_anchor_at_work_area_edges() {
+        let work_area = PhysicalFrame {
+            x: 0,
+            y: 0,
+            width: 1_920,
+            height: 1_040,
+        };
+        let anchor = PhysicalPoint { x: 1_918, y: 1_038 };
+        let placement = resolve_drag_presence_placement_for_anchor(
+            anchor,
+            (640, 260),
+            work_area,
+            1.0,
+            ExpansionDirection::Right,
+        );
+
+        assert_eq!(placement.anchor, anchor);
+        assert_eq!(placement.render_frame.x, anchor.x - 96);
+        assert_eq!(placement.render_frame.y, anchor.y - 88);
+        assert_eq!(placement.monitor_work_area, work_area);
+    }
 }

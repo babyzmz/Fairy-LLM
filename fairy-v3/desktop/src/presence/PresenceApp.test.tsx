@@ -204,13 +204,14 @@ describe("PresenceApp", () => {
     expect(port.startDragging).toHaveBeenCalledOnce();
   });
 
-  it("renders closable replies and dismissible approval notices", async () => {
+  it("renders replies while routing approvals through the Fairy core", async () => {
     const user = userEvent.setup();
     const harness = channelHarness();
+    const host = petHost();
     render(
       <PresenceApp
         channel={harness.channel}
-        host={petHost()}
+        host={host}
         now={() => NOW}
         storage={memoryStorage()}
         windowPort={windowPort()}
@@ -230,9 +231,11 @@ describe("PresenceApp", () => {
       status_text: "Waiting for your decision",
       notice: { id: "notice-4", tone: "critical", text: "An approval needs your decision" },
     })));
-    expect(screen.getByRole("alert")).toHaveTextContent("An approval needs your decision");
-    await user.click(screen.getByRole("button", { name: "Dismiss notice" }));
-    expect(screen.queryByText("An approval needs your decision")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByTestId("presence-surface")).toHaveAttribute("data-expanded", "false");
+    await user.click(screen.getByRole("button", { name: "Fairy companion" }));
+    expect(harness.channel.requestWorkspaceOpen).toHaveBeenCalledOnce();
+    expect(host.openMain).toHaveBeenCalledOnce();
   });
 
   it("does not submit while a Chinese IME composition is active", () => {

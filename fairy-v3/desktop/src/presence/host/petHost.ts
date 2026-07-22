@@ -43,6 +43,7 @@ export interface PetInputPresentationApply {
   layout: PetInputLayout;
   compact_width?: number;
   compact_height?: number;
+  expanded_content_height?: number;
   interactive: boolean;
   request_focus: boolean;
 }

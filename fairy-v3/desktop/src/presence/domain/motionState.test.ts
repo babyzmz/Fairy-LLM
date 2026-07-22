@@ -21,7 +21,7 @@ describe("Fairy motion state", () => {
     }, 200);
     expect(approval).toEqual(expect.objectContaining({
       state: "awaiting_confirmation",
-      surface: "notice",
+      surface: "core",
       activity: "approval",
       capsule_visible: false,
     }));
@@ -34,7 +34,7 @@ describe("Fairy motion state", () => {
       work_state: "awaiting_confirmation",
     }, 100)).toEqual(expect.objectContaining({
       state: "awaiting_confirmation",
-      surface: "notice",
+      surface: "core",
     }));
     expect(advance({
       menu_open: true,
@@ -49,19 +49,56 @@ describe("Fairy motion state", () => {
       work_state: "tool",
     }, 100)).toEqual(expect.objectContaining({
       state: "thinking",
-      surface: "submission",
+      surface: "core",
       activity: "tool",
+    }));
+  });
+
+  it("keeps a previous reply card behind a newly active work state", () => {
+    expect(advance({
+      reply: { streaming: false },
+      submission_phase: "accepted",
+      work_state: "analyzing",
+    }, 100)).toEqual(expect.objectContaining({
+      state: "thinking",
+      surface: "core",
+      activity: "model",
     }));
   });
 
   it.each([
     ["options", { menu_open: true }],
     ["reply", { reply: { streaming: false } }],
-    ["notice", { notice_tone: "info" as const }],
-    ["submission", { submission_phase: "sending" as const }],
+    ["submission", { submission_phase: "failed" as const }],
   ])("keeps the stable %s DOM surface outside the liquid shape", (surface, overrides) => {
     expect(advance(overrides, 100)).toEqual(expect.objectContaining({
       surface,
+      capsule_visible: false,
+    }));
+  });
+
+  it.each([
+    ["sending", { submission_phase: "sending" as const }, "submitting", "model"],
+    ["accepted", { submission_phase: "accepted" as const }, "submitting", "model"],
+    ["analysis", { work_state: "analyzing" as const }, "thinking", "model"],
+    ["tool", { work_state: "tool" as const }, "thinking", "tool"],
+    [
+      "approval",
+      { work_state: "awaiting_confirmation" as const },
+      "awaiting_confirmation",
+      "approval",
+    ],
+  ])("keeps %s on the core animation without creating a card", (
+    _name,
+    overrides,
+    state,
+    activity,
+  ) => {
+    expect(advance(overrides, 100)).toEqual(expect.objectContaining({
+      state,
+      surface: "core",
+      activity,
+      content_visible: false,
       capsule_visible: false,
     }));
   });

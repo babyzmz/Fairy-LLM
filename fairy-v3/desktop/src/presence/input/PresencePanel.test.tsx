@@ -84,4 +84,52 @@ describe("PresencePanel optical boundary", () => {
     expect(compactInputHeightForText("", 0)).toBe(64);
     expect(compactInputHeightForText("one\ntwo\nthree\nfour", 0)).toBe(104);
   });
+
+  it("renders only failed submissions as fallback cards", () => {
+    const { rerender } = render(
+      <PresencePanel
+        actions={actions}
+        alwaysOnTop
+        autoPlay={false}
+        inputOpen={false}
+        menuOpen={false}
+        muted={false}
+        reply={null}
+        submission={{
+          id: "submission-1",
+          phase: "sending",
+          title: "Sending to Fairy",
+          detail: "Starting a private scratch chat",
+          canCancel: true,
+          canRetry: false,
+        }}
+        view={view}
+        visible
+      />,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+
+    rerender(
+      <PresencePanel
+        actions={actions}
+        alwaysOnTop
+        autoPlay={false}
+        inputOpen={false}
+        menuOpen={false}
+        muted={false}
+        reply={null}
+        submission={{
+          id: "submission-1",
+          phase: "failed",
+          title: "Fairy could not send this",
+          detail: "Open Fairy to retry.",
+          canCancel: false,
+          canRetry: true,
+        }}
+        view={view}
+        visible
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Fairy could not send this");
+  });
 });

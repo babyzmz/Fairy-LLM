@@ -69,6 +69,7 @@ pub mod voice_worker;
 
 pub const PET_RENDER_LABEL: &str = "pet-render";
 pub const PET_INPUT_LABEL: &str = "pet-input";
+const PET_INPUT_EXPANDED_CONTENT_HEIGHT_LOGICAL: f64 = 72.0;
 const PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT: &str = "presence-native-renderer-lifecycle";
 pub(crate) const PRESENCE_INPUT_REQUESTED_EVENT: &str = "presence-input-requested";
 pub(crate) const PRESENCE_MENU_REQUESTED_EVENT: &str = "presence-menu-requested";
@@ -1437,15 +1438,7 @@ fn settle_pet_drag_placement(
     state: &DesktopState,
     session: &PetGroupDragSession,
 ) -> Result<PresenceWindowPlacement, String> {
-    let monitor = monitor_for_anchor(&session.monitors, session.current_placement.anchor)
-        .ok_or_else(|| "No monitor is available".to_owned())?;
-    let settled = resolve_presence_placement_for_anchor(
-        session.current_placement.anchor,
-        render_size_for_scale(monitor.scale_factor),
-        monitor.work_area,
-        monitor.scale_factor,
-        Some(session.current_placement.expansion_direction),
-    );
+    let settled = session.current_placement;
     move_pet_window_group_with_geometry(
         app,
         Some(session.native_windows),
@@ -1619,6 +1612,7 @@ struct PetInputGeometry {
     layout: PetInputLayout,
     compact_width_logical: f64,
     compact_height_logical: f64,
+    expanded_content_height_logical: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1628,6 +1622,7 @@ struct PetInputWindowRegion {
     height: u32,
     compact_content_width: u32,
     compact_content_height: u32,
+    expanded_content_height: u32,
     scale_factor: f64,
     direction: ExpansionDirection,
 }
@@ -1645,6 +1640,7 @@ struct PetInputPresentationRequest {
     layout: PetInputLayout,
     compact_width: Option<f64>,
     compact_height: Option<f64>,
+    expanded_content_height: Option<f64>,
     interactive: bool,
     request_focus: bool,
 }
@@ -1710,6 +1706,7 @@ fn pet_input_geometry_from_frame(frame: PhysicalFrame, scale_factor: f64) -> Pet
             PET_INPUT_COMPACT_MAX_WIDTH_LOGICAL,
         ),
         compact_height_logical: 64.0,
+        expanded_content_height_logical: PET_INPUT_EXPANDED_CONTENT_HEIGHT_LOGICAL,
     }
 }
 
@@ -1754,23 +1751,15 @@ struct PetInputRegionPart {
 }
 
 #[cfg(target_os = "windows")]
-fn pet_input_region_parts(
-    layout: PetInputLayout,
-    width: u32,
-    height: u32,
-    compact_content_width: u32,
-    compact_content_height: u32,
-    scale_factor: f64,
-    direction: ExpansionDirection,
-) -> Vec<PetInputRegionPart> {
-    let width = width.min(i32::MAX as u32) as i32;
-    let height = height.min(i32::MAX as u32) as i32;
-    let scale = scale_factor.clamp(0.5, 4.0);
+fn pet_input_region_parts(region: PetInputWindowRegion) -> Vec<PetInputRegionPart> {
+    let width = region.width.min(i32::MAX as u32) as i32;
+    let height = region.height.min(i32::MAX as u32) as i32;
+    let scale = region.scale_factor.clamp(0.5, 4.0);
     let scaled = |logical: f64| (logical * scale).round() as i32;
     let mut parts = Vec::with_capacity(2);
 
     if matches!(
-        layout,
+        region.layout,
         PetInputLayout::Core | PetInputLayout::Compact | PetInputLayout::Expanded
     ) {
         let core_extent = scaled(PET_CORE_EXTENT_LOGICAL)
@@ -1778,7 +1767,7 @@ fn pet_input_region_parts(
             .min(width)
             .min(height);
         let core_top = scaled(116.0).clamp(0, height.saturating_sub(core_extent));
-        let core_left = match direction {
+        let core_left = match region.direction {
             ExpansionDirection::Right => 0,
             ExpansionDirection::Left => width.saturating_sub(core_extent),
         };
@@ -1792,13 +1781,13 @@ fn pet_input_region_parts(
         });
     }
 
-    match layout {
+    match region.layout {
         PetInputLayout::Compact => {
-            let content_width = i32::try_from(compact_content_width)
+            let content_width = i32::try_from(region.compact_content_width)
                 .unwrap_or(i32::MAX)
                 .clamp(scaled(PET_INPUT_COMPACT_MIN_WIDTH_LOGICAL), width);
             let inset = scaled(8.0).clamp(0, content_width / 2);
-            let (left, right) = match direction {
+            let (left, right) = match region.direction {
                 ExpansionDirection::Right => (inset, content_width.saturating_sub(inset)),
                 ExpansionDirection::Left => (
                     width.saturating_sub(content_width).saturating_add(inset),
@@ -1810,28 +1799,35 @@ fn pet_input_region_parts(
                 left,
                 top: height
                     .saturating_sub(scaled(8.0))
-                    .saturating_sub(i32::try_from(compact_content_height).unwrap_or(i32::MAX))
+                    .saturating_sub(
+                        i32::try_from(region.compact_content_height).unwrap_or(i32::MAX),
+                    )
                     .clamp(0, height),
                 right,
                 bottom: height.saturating_sub(scaled(8.0)).clamp(0, height),
-                corner_diameter: i32::try_from(compact_content_height)
+                corner_diameter: i32::try_from(region.compact_content_height)
                     .unwrap_or(i32::MAX)
                     .max(1),
             });
         }
         PetInputLayout::Expanded => {
             let content_inset = scaled(8.0).clamp(0, width / 2);
-            let core_gutter = scaled(148.0).clamp(content_inset, width);
-            let (left, right) = match direction {
-                ExpansionDirection::Right => (core_gutter, width),
-                ExpansionDirection::Left => (0, width.saturating_sub(core_gutter)),
+            let core_gutter = scaled(156.0).clamp(content_inset, width);
+            let content_height = i32::try_from(region.expanded_content_height)
+                .unwrap_or(i32::MAX)
+                .clamp(scaled(56.0), height.saturating_sub(content_inset * 2));
+            let (left, right) = match region.direction {
+                ExpansionDirection::Right => (core_gutter, width.saturating_sub(content_inset)),
+                ExpansionDirection::Left => (content_inset, width.saturating_sub(core_gutter)),
             };
             parts.push(PetInputRegionPart {
                 kind: PetInputRegionKind::RoundedRectangle,
                 left,
-                top: 0,
+                top: height
+                    .saturating_sub(content_inset)
+                    .saturating_sub(content_height),
                 right,
-                bottom: height,
+                bottom: height.saturating_sub(content_inset),
                 corner_diameter: scaled(16.0).max(1),
             });
         }
@@ -1867,15 +1863,7 @@ fn apply_pet_input_window_region(
         return Ok(());
     }
     let mut combined: HRGN = std::ptr::null_mut();
-    for part in pet_input_region_parts(
-        region.layout,
-        region.width,
-        region.height,
-        region.compact_content_width,
-        region.compact_content_height,
-        region.scale_factor,
-        region.direction,
-    ) {
+    for part in pet_input_region_parts(region) {
         let region = unsafe {
             match part.kind {
                 PetInputRegionKind::Ellipse => {
@@ -1936,6 +1924,7 @@ fn apply_pet_input_layout(
     layout: PetInputLayout,
     compact_width: Option<f64>,
     compact_height: Option<f64>,
+    expanded_content_height: Option<f64>,
 ) -> Result<(), String> {
     if state.presence.is_repositioning() {
         return Err("PET_INPUT_PRESENTATION_REPOSITIONING".to_owned());
@@ -1950,6 +1939,7 @@ fn apply_pet_input_layout(
                 height: 0,
                 compact_content_width: 0,
                 compact_content_height: 0,
+                expanded_content_height: 0,
                 scale_factor: 1.0,
                 direction: ExpansionDirection::Right,
             },
@@ -1961,6 +1951,8 @@ fn apply_pet_input_layout(
             layout,
             compact_width_logical: compact_width.unwrap_or(PET_INPUT_COMPACT_WIDTH_LOGICAL),
             compact_height_logical: compact_height.unwrap_or(64.0),
+            expanded_content_height_logical: expanded_content_height
+                .unwrap_or(PET_INPUT_EXPANDED_CONTENT_HEIGHT_LOGICAL),
         };
         window
             .set_ignore_cursor_events(true)
@@ -1988,6 +1980,9 @@ fn apply_pet_input_layout(
             PET_INPUT_COMPACT_MAX_WIDTH_LOGICAL,
         );
     let compact_surface_height = compact_height.unwrap_or(64.0).clamp(64.0, 104.0);
+    let expanded_content_height = expanded_content_height
+        .unwrap_or(PET_INPUT_EXPANDED_CONTENT_HEIGHT_LOGICAL)
+        .clamp(56.0, 344.0);
     let target_width = (PET_INPUT_EXPANDED_WIDTH_LOGICAL * scale).round() as u32;
     let target_height = (PET_INPUT_EXPANDED_HEIGHT_LOGICAL * scale).round() as u32;
     let compact_content_width = (compact_width * scale).round() as u32;
@@ -2013,6 +2008,7 @@ fn apply_pet_input_layout(
             height: frame.height,
             compact_content_width,
             compact_content_height,
+            expanded_content_height: (expanded_content_height * scale).round() as u32,
             scale_factor: scale,
             direction: placement.expansion_direction,
         },
@@ -2025,6 +2021,7 @@ fn apply_pet_input_layout(
         layout,
         compact_width_logical: compact_width,
         compact_height_logical: compact_surface_height,
+        expanded_content_height_logical: expanded_content_height,
     };
     #[cfg(target_os = "windows")]
     enforce_presence_window_shell_policy(input_handle, None)?;
@@ -2038,6 +2035,7 @@ async fn pet_input_set_layout(
     layout: PetInputLayout,
     compact_width: Option<f64>,
     compact_height: Option<f64>,
+    expanded_content_height: Option<f64>,
 ) -> Result<(), String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
@@ -2047,6 +2045,7 @@ async fn pet_input_set_layout(
         layout,
         compact_width,
         compact_height,
+        expanded_content_height,
     )
 }
 
@@ -2054,13 +2053,14 @@ fn apply_pet_input_interactive(
     window: &WebviewWindow,
     state: &DesktopState,
     interactive: bool,
+    focusable: bool,
 ) -> Result<(), String> {
     if state.presence.is_repositioning() && !interactive {
         return Err("PET_INPUT_PRESENTATION_REPOSITIONING".to_owned());
     }
     let result = if interactive {
         window
-            .set_focusable(true)
+            .set_focusable(focusable)
             .map_err(|error| error.to_string())?;
         window
             .set_ignore_cursor_events(false)
@@ -2077,7 +2077,7 @@ fn apply_pet_input_interactive(
     #[cfg(target_os = "windows")]
     enforce_presence_window_shell_policy(
         window.hwnd().map_err(|error| error.to_string())?.0 as isize,
-        Some(interactive),
+        Some(interactive && focusable),
     )?;
     Ok(())
 }
@@ -2090,7 +2090,7 @@ async fn pet_input_set_interactive(
 ) -> Result<(), String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
-    apply_pet_input_interactive(&window, state.inner(), interactive)
+    apply_pet_input_interactive(&window, state.inner(), interactive, interactive)
 }
 
 fn apply_pet_input_focus(window: &WebviewWindow, state: &DesktopState) -> Result<(), String> {
@@ -2162,18 +2162,28 @@ async fn pet_input_presentation_apply(
         .validate(input.session_id, input.revision)
         .map_err(str::to_owned)?;
 
-    // Keep the full WebView click-through while its HWND position and exact HRGN are updated.
-    // Renderer publication happens only after this transaction returns the same revision.
-    apply_pet_input_interactive(&window, state.inner(), false)?;
+    // A visible interactive surface must never become click-through for a presentation update:
+    // that brief gap lets a held drag reach the application underneath Fairy. Non-interactive
+    // transitions are disabled before geometry changes; interactive transitions keep the old
+    // exact HRGN until the replacement region is committed.
+    if !interactive {
+        apply_pet_input_interactive(&window, state.inner(), false, false)?;
+    }
     apply_pet_input_layout(
         &window,
         state.inner(),
         input.layout,
         input.compact_width,
         input.compact_height,
+        input.expanded_content_height,
     )?;
     if interactive {
-        apply_pet_input_interactive(&window, state.inner(), true)?;
+        apply_pet_input_interactive(
+            &window,
+            state.inner(),
+            true,
+            !matches!(input.layout, PetInputLayout::Core),
+        )?;
     }
     if input.request_focus {
         apply_pet_input_focus(&window, state.inner())?;
@@ -2810,6 +2820,10 @@ fn align_pet_input_to_native_presentation(
             compact_content_height: (geometry.compact_height_logical * placement.scale_factor)
                 .round()
                 .max(0.0) as u32,
+            expanded_content_height: (geometry.expanded_content_height_logical
+                * placement.scale_factor)
+                .round()
+                .max(0.0) as u32,
             scale_factor: placement.scale_factor,
             direction: placement.expansion_direction,
         },
@@ -2906,6 +2920,9 @@ fn move_pet_window_group_during_drag(
                 compact_content_height: (input_geometry.compact_height_logical * scale)
                     .round()
                     .max(0.0) as u32,
+                expanded_content_height: (input_geometry.expanded_content_height_logical * scale)
+                    .round()
+                    .max(0.0) as u32,
                 scale_factor: scale,
                 direction: placement.expansion_direction,
             },
@@ -2970,6 +2987,9 @@ fn move_pet_window_group_with_geometry(
             compact_content_width: (geometry.compact_width_logical * scale).round().max(0.0) as u32,
             compact_content_height: (geometry.compact_height_logical * scale).round().max(0.0)
                 as u32,
+            expanded_content_height: (geometry.expanded_content_height_logical * scale)
+                .round()
+                .max(0.0) as u32,
             scale_factor: scale,
             direction: placement.expansion_direction,
         },
@@ -4528,6 +4548,7 @@ pub fn run() {
                     layout: PetInputLayout::Hidden,
                     compact_width_logical: PET_INPUT_COMPACT_WIDTH_LOGICAL,
                     compact_height_logical: 64.0,
+                    expanded_content_height_logical: PET_INPUT_EXPANDED_CONTENT_HEIGHT_LOGICAL,
                 }),
                 pet_input_presentation: Mutex::new(PetInputPresentationFence::default()),
                 renderer_supervisor: Mutex::new(PresenceRendererSupervisor::default()),
@@ -4666,11 +4687,28 @@ mod pet_input_presentation_tests {
             layout: PetInputLayout::Hidden,
             compact_width: None,
             compact_height: None,
+            expanded_content_height: None,
             interactive: true,
             request_focus: false,
         };
 
         assert!(!pet_input_presentation_is_interactive(&request));
+    }
+
+    #[test]
+    fn core_layout_keeps_the_circular_pointer_proxy_interactive() {
+        let request = PetInputPresentationRequest {
+            session_id: 1,
+            revision: 1,
+            layout: PetInputLayout::Core,
+            compact_width: None,
+            compact_height: None,
+            expanded_content_height: None,
+            interactive: true,
+            request_focus: false,
+        };
+
+        assert!(pet_input_presentation_is_interactive(&request));
     }
 
     #[test]
@@ -4808,6 +4846,7 @@ mod native_window_group_tests {
                 height: 360,
                 compact_content_width: 300,
                 compact_content_height: 64,
+                expanded_content_height: 72,
                 scale_factor: 1.0,
                 direction: ExpansionDirection::Right,
             },
@@ -4839,6 +4878,7 @@ mod native_window_group_tests {
                 height: 360,
                 compact_content_width: 0,
                 compact_content_height: 64,
+                expanded_content_height: 0,
                 scale_factor: 1.0,
                 direction: ExpansionDirection::Right,
             },
@@ -4856,15 +4896,16 @@ mod native_window_group_tests {
     #[test]
     fn compact_input_region_exposes_the_core_and_dynamic_capsule_only() {
         let _dpi_scope = PerMonitorDpiScope::enter();
-        let parts = pet_input_region_parts(
-            PetInputLayout::Compact,
-            616,
-            360,
-            308,
-            64,
-            1.0,
-            ExpansionDirection::Right,
-        );
+        let parts = pet_input_region_parts(PetInputWindowRegion {
+            layout: PetInputLayout::Compact,
+            width: 616,
+            height: 360,
+            compact_content_width: 308,
+            compact_content_height: 64,
+            expanded_content_height: 72,
+            scale_factor: 1.0,
+            direction: ExpansionDirection::Right,
+        });
         assert_eq!(
             parts,
             vec![
@@ -4901,6 +4942,7 @@ mod native_window_group_tests {
                 height: 360,
                 compact_content_width: 308,
                 compact_content_height: 64,
+                expanded_content_height: 72,
                 scale_factor: 1.0,
                 direction: ExpansionDirection::Right,
             },
@@ -4917,15 +4959,16 @@ mod native_window_group_tests {
 
     #[test]
     fn compact_input_region_moves_only_the_core_with_expansion_direction() {
-        let parts = pet_input_region_parts(
-            PetInputLayout::Compact,
-            616,
-            360,
-            308,
-            64,
-            1.0,
-            ExpansionDirection::Left,
-        );
+        let parts = pet_input_region_parts(PetInputWindowRegion {
+            layout: PetInputLayout::Compact,
+            width: 616,
+            height: 360,
+            compact_content_width: 308,
+            compact_content_height: 64,
+            expanded_content_height: 72,
+            scale_factor: 1.0,
+            direction: ExpansionDirection::Left,
+        });
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].kind, PetInputRegionKind::Ellipse);
         assert_eq!(parts[0].left, 472);
@@ -4936,15 +4979,16 @@ mod native_window_group_tests {
 
     #[test]
     fn compact_input_region_tracks_multiline_height_without_exposing_the_window() {
-        let parts = pet_input_region_parts(
-            PetInputLayout::Compact,
-            616,
-            360,
-            360,
-            104,
-            1.0,
-            ExpansionDirection::Right,
-        );
+        let parts = pet_input_region_parts(PetInputWindowRegion {
+            layout: PetInputLayout::Compact,
+            width: 616,
+            height: 360,
+            compact_content_width: 360,
+            compact_content_height: 104,
+            expanded_content_height: 72,
+            scale_factor: 1.0,
+            direction: ExpansionDirection::Right,
+        });
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[1].kind, PetInputRegionKind::RoundedRectangle);
         assert_eq!(parts[1].left, 8);
@@ -4971,6 +5015,7 @@ mod native_window_group_tests {
                 height: 360,
                 compact_content_width: 308,
                 compact_content_height: 64,
+                expanded_content_height: 72,
                 scale_factor: 1.0,
                 direction: ExpansionDirection::Right,
             },
@@ -4984,6 +5029,7 @@ mod native_window_group_tests {
                 height: 360,
                 compact_content_width: 308,
                 compact_content_height: 64,
+                expanded_content_height: 72,
                 scale_factor: 1.0,
                 direction: ExpansionDirection::Left,
             },
@@ -5001,15 +5047,16 @@ mod native_window_group_tests {
 
     #[test]
     fn expanded_input_region_keeps_the_core_and_menu_interactive() {
-        let parts = pet_input_region_parts(
-            PetInputLayout::Expanded,
-            616,
-            360,
-            300,
-            64,
-            1.0,
-            ExpansionDirection::Right,
-        );
+        let parts = pet_input_region_parts(PetInputWindowRegion {
+            layout: PetInputLayout::Expanded,
+            width: 616,
+            height: 360,
+            compact_content_width: 300,
+            compact_content_height: 64,
+            expanded_content_height: 72,
+            scale_factor: 1.0,
+            direction: ExpansionDirection::Right,
+        });
         assert_eq!(parts.len(), 2);
         assert_eq!(
             parts[0],
@@ -5023,8 +5070,40 @@ mod native_window_group_tests {
             }
         );
         assert_eq!(parts[1].kind, PetInputRegionKind::RoundedRectangle);
-        assert_eq!(parts[1].left, 148);
-        assert_eq!(parts[1].right, 616);
+        assert_eq!(parts[1].left, 156);
+        assert_eq!(parts[1].top, 280);
+        assert_eq!(parts[1].right, 608);
+        assert_eq!(parts[1].bottom, 352);
+
+        let _dpi_scope = PerMonitorDpiScope::enter();
+        let input = create_test_window(PhysicalFrame {
+            x: 0,
+            y: 0,
+            width: 616,
+            height: 360,
+        });
+        apply_pet_input_window_region(
+            input.0 as isize,
+            PetInputWindowRegion {
+                layout: PetInputLayout::Expanded,
+                width: 616,
+                height: 360,
+                compact_content_width: 300,
+                compact_content_height: 64,
+                expanded_content_height: 72,
+                scale_factor: 1.0,
+                direction: ExpansionDirection::Right,
+            },
+        )
+        .expect("expanded input region should apply");
+        let region = unsafe { CreateRectRgn(0, 0, 0, 0) };
+        assert!(!region.is_null());
+        assert_ne!(unsafe { GetWindowRgn(input.0, region) }, 0);
+        assert_ne!(unsafe { PtInRegion(region, 72, 188) }, 0);
+        assert_ne!(unsafe { PtInRegion(region, 300, 320) }, 0);
+        assert_eq!(unsafe { PtInRegion(region, 300, 100) }, 0);
+        assert_eq!(unsafe { PtInRegion(region, 300, 20) }, 0);
+        unsafe { DeleteObject(region) };
     }
 
     #[test]

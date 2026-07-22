@@ -565,16 +565,13 @@ export function nativePresentationForSnapshot(
   snapshot: PresenceRenderSnapshot,
 ): NativeGpuPresentationRequest {
   const shape = liquidShapeTargetForSnapshot(snapshot);
-  const placement = snapshot.interaction?.placement;
-  const scale = clamp(placement?.scale_factor ?? 1, 0.5, 4);
-  const direction = placement?.expansion_direction ?? "right";
+  const direction = snapshot.interaction?.placement.expansion_direction ?? "right";
   const capsuleWidth = clamp(snapshot.input_capsule_width, 220, 360);
-  const coreX = placement === undefined
-    ? direction === "left" ? 544 : 96
-    : (placement.anchor.x - placement.render_frame.x) / scale;
-  const coreY = placement === undefined
-    ? 88
-    : (placement.anchor.y - placement.render_frame.y) / scale;
+  // The core is a fixed local identity inside the 640x260 render surface. Global placement can
+  // arrive one coordinator sample late during startup or monitor handoff; deriving local geometry
+  // from it makes the first drag snap when Rust reconciles the native and input HWNDs.
+  const coreX = direction === "left" ? 544 : 96;
+  const coreY = 88;
   return {
     visual_sequence: 0,
     capsule_visible: snapshot.input_capsule_visible,

@@ -475,7 +475,7 @@ describe("dual presence surfaces", () => {
     expect(stopCount()).toBe(stopsBeforeDrag);
   });
 
-  it("keeps the idle input WebView hidden and expands only for input or projected cards", async () => {
+  it("keeps only a circular idle proxy and expands for input or projected cards", async () => {
     const channel = channelHarness();
     const host = hostHarness();
     render(
@@ -487,10 +487,10 @@ describe("dual presence surfaces", () => {
       />,
     );
 
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
     expect(host.host.applyInputPresentation).toHaveBeenCalledWith(expect.objectContaining({
-      layout: "hidden",
-      interactive: false,
+      layout: "core",
+      interactive: true,
       request_focus: false,
     }));
     expect(screen.getByRole("button", { name: "Open Fairy quick input" })).toBeInTheDocument();
@@ -587,7 +587,7 @@ describe("dual presence surfaces", () => {
       />,
     );
 
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
     fireEvent.contextMenu(screen.getByRole("button", { name: "Open Fairy quick input" }));
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("expanded"));
     expect(screen.getByRole("menu", { name: "Fairy menu" })).toBeInTheDocument();
@@ -595,10 +595,10 @@ describe("dual presence surfaces", () => {
 
     fireEvent.keyDown(window, { key: "Escape" });
     const surface = screen.getByTestId("presence-input-surface");
-    expect(surface).toHaveAttribute("data-layout", "expanded");
+    expect(surface).toHaveAttribute("data-layout", "core");
     expect(surface).toHaveAttribute("data-content-visible", "false");
-    expect(surface).toHaveAttribute("data-interactive", "false");
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
+    expect(surface).toHaveAttribute("data-interactive", "true");
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
     expect(screen.queryByRole("menu", { name: "Fairy menu" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open Fairy quick input" }));
@@ -617,7 +617,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
     fireEvent.contextMenu(screen.getByRole("button", { name: "Open Fairy quick input" }));
     expect(await screen.findByRole("menu", { name: "Fairy menu" })).toBeInTheDocument();
 
@@ -642,7 +642,7 @@ describe("dual presence surfaces", () => {
       />,
     );
     const surface = screen.getByTestId("presence-input-surface");
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
 
     act(() => coordinator.emit(interactionAt(20, "input_reveal", 300, 300)));
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220));
@@ -678,7 +678,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
     act(() => host.requestInput());
     const input = await screen.findByLabelText("Quick message to Fairy");
     fireEvent.change(input, { target: { value: "\u4f60\u597d Fairy" } });
@@ -708,14 +708,26 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
     act(() => host.requestInput());
     const input = await screen.findByLabelText("Quick message to Fairy");
     fireEvent.change(input, { target: { value: "Stream this reply" } });
     fireEvent.keyDown(input, { key: "Enter" });
     const submissionId = vi.mocked(channel.channel.requestChatSend).mock.calls[0]?.[1];
     expect(submissionId).toEqual(expect.any(String));
-    expect(screen.getByRole("status")).toHaveTextContent("Sending to Fairy");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
+      "data-motion-state",
+      "submitting",
+    );
+    expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
+      "data-motion-activity",
+      "model",
+    );
+    expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
+      "data-layout",
+      "core",
+    );
 
     act(() => channel.emitSubmission({
       submission_id: submissionId ?? "missing",
@@ -754,7 +766,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
     act(() => host.requestInput());
     const input = await screen.findByLabelText("Quick message to Fairy");
     fireEvent.change(input, { target: { value: "Retry safely" } });
@@ -785,7 +797,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
     vi.useFakeTimers();
     act(() => channel.emit(projection({
       reply: {
@@ -815,7 +827,7 @@ describe("dual presence surfaces", () => {
         storage={storage}
       />,
     );
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("core"));
     fireEvent.contextMenu(screen.getByRole("button", { name: "Open Fairy quick input" }));
     expect(await screen.findByRole("menu", { name: "Fairy menu" })).toBeInTheDocument();
     act(() => channel.emit(projection({
@@ -831,9 +843,12 @@ describe("dual presence surfaces", () => {
     await waitFor(() => {
       expect(screen.queryByRole("menu", { name: "Fairy menu" })).not.toBeInTheDocument();
     });
-    expect(screen.queryByRole("button", { name: /approve/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /reject/i })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Review in Fairy" }));
+    expect(screen.queryByRole("status")).toBeNull();
+    const surface = screen.getByTestId("presence-input-surface");
+    expect(surface).toHaveAttribute("data-layout", "core");
+    expect(surface).toHaveAttribute("data-motion-state", "awaiting_confirmation");
+    expect(surface).toHaveAttribute("data-motion-activity", "approval");
+    fireEvent.click(screen.getByRole("button", { name: "Open Fairy quick input" }));
     expect(channel.channel.requestWorkspaceOpen).toHaveBeenCalledOnce();
     expect(host.host.openMain).toHaveBeenCalledOnce();
   });
@@ -974,7 +989,7 @@ describe("dual presence surfaces", () => {
     });
     expectNativeDragOnly(host.host);
     expect(surface).toHaveAttribute("data-moving", "false");
-    expect(surface).toHaveAttribute("data-layout", "hidden");
+    expect(surface).toHaveAttribute("data-layout", "core");
   });
 
   it("does not let pointer movement create a second drag owner", async () => {
@@ -1011,7 +1026,7 @@ describe("dual presence surfaces", () => {
     expectNativeDragOnly(host.host);
   });
 
-  it("does not capture the pointer or poll native drag RPCs", async () => {
+  it("captures the pointer without creating a second drag RPC owner", async () => {
     const channel = channelHarness();
     const host = hostHarness();
     render(
@@ -1049,14 +1064,22 @@ describe("dual presence surfaces", () => {
       screenX: 520,
       screenY: 420,
     });
+    expect(core.setPointerCapture).toHaveBeenCalledWith(11);
+    expect(capturedPointers.has(11)).toBe(true);
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 340));
     });
     expect(surface).toHaveAttribute("data-moving", "false");
 
-    fireEvent.lostPointerCapture(core, { pointerId: 11 });
+    fireEvent.pointerUp(core, {
+      button: 0,
+      pointerId: 11,
+      screenX: 540,
+      screenY: 430,
+    });
     expectNativeDragOnly(host.host);
-    expect(releasePointerCapture).not.toHaveBeenCalled();
+    expect(releasePointerCapture).toHaveBeenCalledWith(11);
+    expect(capturedPointers.has(11)).toBe(false);
     expect(surface).toHaveAttribute("data-moving", "false");
   });
 
@@ -1136,7 +1159,7 @@ describe("dual presence surfaces", () => {
     act(() => coordinator.emit(interactionAt(31, "repositioning", 300, 300)));
     await waitFor(() => expect(screen.getByTestId("presence-input-surface"))
       .toHaveAttribute("data-moving", "true"));
-    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("hidden"));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
 
     act(() => coordinator.emit(interactionAt(32, "idle", 700, 700)));
     await waitFor(() => expect(screen.getByTestId("presence-input-surface"))

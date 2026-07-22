@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -147,6 +148,7 @@ export function PresenceInputApp({
     width: PRESENCE_COMPACT_INPUT_MIN_WIDTH,
     height: PRESENCE_COMPACT_INPUT_MIN_HEIGHT,
   }));
+  const [expandedContentHeight, setExpandedContentHeight] = useState(72);
   const presentationQueue = useRef(Promise.resolve());
   const presentationRevision = useRef(0);
   const appliedFocusRequest = useRef(0);
@@ -415,7 +417,7 @@ export function PresenceInputApp({
     dismissed_notice_ids: settings.dismissed_notice_ids,
   });
   const reply = view.reply?.id === closedReplyId ? null : view.reply;
-  const submissionCard = toSubmissionCard(submission, view);
+  const submissionCard = toSubmissionCard(submission);
   const menuBlocked =
     view.notice !== null ||
     reply !== null ||
@@ -555,6 +557,9 @@ export function PresenceInputApp({
         compact_width: compactSize.width,
         compact_height: compactSize.height,
       } : {}),
+      ...(layout === "expanded" ? {
+        expanded_content_height: expandedContentHeight,
+      } : {}),
       interactive: surfaceInteractive,
       request_focus: requestFocus,
     };
@@ -624,6 +629,7 @@ export function PresenceInputApp({
     capsuleVisible,
     compactSize.height,
     compactSize.width,
+    expandedContentHeight,
     focusRequest,
     host,
     inputPresentationChannel,
@@ -686,6 +692,38 @@ export function PresenceInputApp({
     setHoverSuppressed(false);
     setManualInputOpen(true);
     setFocusRequest((value) => value + 1);
+  }
+
+  function activateCore() {
+    if (
+      view.notice !== null ||
+      view.work_state === "awaiting_confirmation" ||
+      view.work_state === "error"
+    ) {
+      channel.requestWorkspaceOpen();
+      void host.openMain().catch(() => undefined);
+      return;
+    }
+    openQuickInput();
+  }
+
+  function captureCorePointer(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) return;
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // WebView2 can reject capture while the native surface is being recreated.
+    }
+  }
+
+  function releaseCorePointer(event: ReactPointerEvent<HTMLButtonElement>) {
+    try {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    } catch {
+      // Pointer capture is also released automatically when the pointer ends.
+    }
   }
 
   function openContextMenu() {
@@ -775,7 +813,7 @@ export function PresenceInputApp({
         className="presence-core-hit-target"
         onClick={() => {
           if (suppressCoreActivation.current || moving) return;
-          openQuickInput();
+          activateCore();
         }}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -787,11 +825,15 @@ export function PresenceInputApp({
           channel.requestWorkspaceOpen();
           void host.openMain().catch(() => undefined);
         }}
+        onPointerCancel={releaseCorePointer}
+        onPointerDown={captureCorePointer}
+        onPointerUp={releaseCorePointer}
         tabIndex={-1}
         type="button"
       />
       <PresencePanel
         onCompactSizeChange={updateCompactSize}
+        onExpandedHeightChange={setExpandedContentHeight}
         actions={{
           cancelTurn,
           closeReply: (replyId) => {
@@ -861,36 +903,17 @@ function applySubmissionUpdate(
 
 function toSubmissionCard(
   submission: PresenceSubmissionState | null,
-  view: { status_text: string; work_state: PresenceProjectionState["work_state"] },
 ): PresenceSubmissionCard | null {
-  if (submission === null) return null;
-  switch (submission.phase) {
-    case "sending":
-      return card(submission, "Sending to Fairy", "Starting a private scratch chat", true);
-    case "accepted":
-      return card(
-        submission,
-        ["analyzing", "tool", "streaming"].includes(view.work_state)
-          ? view.status_text
-          : "Fairy is working",
-        "You can continue in the main window",
-        true,
-      );
-    case "cancelling":
-      return card(submission, "Stopping", "Waiting for the active turn to stop", false);
-    case "cancelled":
-      return card(submission, "Stopped", "The active turn was cancelled", false);
-    case "failed":
-      return {
-        ...card(
-          submission,
-          failureTitle(submission.failure),
-          "Your message was not started",
-          false,
-        ),
-        canRetry: submission.text !== "",
-      };
-  }
+  if (submission?.phase !== "failed") return null;
+  return {
+    ...card(
+      submission,
+      failureTitle(submission.failure),
+      "Your message was not started",
+      false,
+    ),
+    canRetry: submission.text !== "",
+  };
 }
 
 function card(
@@ -920,9 +943,9 @@ function layoutForSurface(surface: FairySurface): PetInputLayout {
     case "input": return "compact";
     case "options":
     case "submission":
-    case "reply":
-    case "notice": return "expanded";
-    case "core": return "hidden";
+    case "reply": return "expanded";
+    case "notice": return "core";
+    case "core": return "core";
   }
 }
 

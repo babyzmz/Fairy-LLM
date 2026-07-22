@@ -165,7 +165,7 @@ export function PresenceApp({
     dismissed_notice_ids: settings.dismissed_notice_ids,
   });
   const reply = view.reply?.id === closedReplyId ? null : view.reply;
-  const expanded = inputOpen || menuOpen || reply !== null || view.notice !== null;
+  const expanded = inputOpen || menuOpen || reply !== null;
 
   useEffect(() => {
     void host.setExpanded(expanded);
@@ -203,6 +203,15 @@ export function PresenceApp({
   function handleCoreClick() {
     if (dragged.current) {
       dragged.current = false;
+      return;
+    }
+    if (
+      view.notice !== null ||
+      view.work_state === "awaiting_confirmation" ||
+      view.work_state === "error"
+    ) {
+      channel.requestWorkspaceOpen();
+      void host.openMain().catch(() => undefined);
       return;
     }
     if (clickTimer.current !== null) window.clearTimeout(clickTimer.current);
