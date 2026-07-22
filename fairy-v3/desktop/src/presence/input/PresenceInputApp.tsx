@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 
 import type { DesktopPreferences } from "../../settings/client";
 import type { PresenceInteractionSnapshot } from "../domain/interaction";
@@ -59,6 +60,11 @@ import {
 } from "../transport/renderSettings";
 import { useDeferredChannelClose } from "../transport/useDeferredChannelClose";
 import { presenceInputGate } from "./inputGate";
+import {
+  INITIAL_PRESENCE_INPUT_INTENT,
+  reducePresenceInputIntent,
+  type PresenceInputIntentAction,
+} from "./inputIntent";
 import {
   PresencePanel,
   PRESENCE_COMPACT_INPUT_MIN_HEIGHT,
@@ -135,14 +141,16 @@ export function PresenceInputApp({
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const [clock, setClock] = useState(() => now());
-  const [manualInputOpen, setManualInputOpen] = useState(false);
+  const [inputIntent, setInputIntent] = useState(INITIAL_PRESENCE_INPUT_INTENT);
+  const inputIntentRef = useRef(inputIntent);
+  inputIntentRef.current = inputIntent;
+  const transientInputVisible = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [closedReplyId, setClosedReplyId] = useState<string | null>(null);
   const [submission, setSubmission] = useState<PresenceSubmissionState | null>(null);
   const [replyInteraction, setReplyInteraction] = useState(0);
   const [interaction, setInteraction] = useState<PresenceInteractionSnapshot | null>(null);
   const [interactionReady, setInteractionReady] = useState(false);
-  const [hoverSuppressed, setHoverSuppressed] = useState(false);
   const [focusRequest, setFocusRequest] = useState(0);
   const [compactSize, setCompactSize] = useState(() => ({
     width: PRESENCE_COMPACT_INPUT_MIN_WIDTH,
@@ -158,6 +166,15 @@ export function PresenceInputApp({
   const suppressCoreActivationTimer = useRef<number | null>(null);
   const nativeDragWasActive = useRef(false);
   const menuFocusLossTimer = useRef<number | null>(null);
+  const nativePointerGestures = isTauri();
+  const applyInputIntent = useCallback((action: PresenceInputIntentAction) => {
+    const next = reducePresenceInputIntent(inputIntentRef.current, action);
+    inputIntentRef.current = next;
+    setInputIntent(next);
+    return next;
+  }, []);
+  const manualInputOpen = inputIntent.pinned;
+  const hoverSuppressed = inputIntent.hover_blocked_until_exit;
   const updateCompactSize = useCallback((width: number, height: number) => {
     setCompactSize((current) =>
       current.width === width && current.height === height
@@ -237,6 +254,7 @@ export function PresenceInputApp({
     let disposed = false;
     let stopPreferences: (() => void) | undefined;
     let stopInput: (() => void) | undefined;
+    let stopInputToggle: (() => void) | undefined;
     let stopMenu: (() => void) | undefined;
     let stopNewChat: (() => void) | undefined;
     void host.getPreferences().then((value) => {
@@ -251,17 +269,32 @@ export function PresenceInputApp({
     void host.onInputRequested(() => {
       if (disposed) return;
       setMenuOpen(false);
-      setHoverSuppressed(false);
-      setManualInputOpen(true);
+      applyInputIntent({ type: "open" });
       setFocusRequest((value) => value + 1);
     }).then((stop) => {
       if (disposed) stop();
       else stopInput = stop;
     });
+    void host.onInputToggleRequested(() => {
+      if (disposed) return;
+      const opening = !inputIntentRef.current.pinned && !transientInputVisible.current;
+      setMenuOpen(false);
+      applyInputIntent({
+        type: "toggle",
+        transient_visible: transientInputVisible.current,
+      });
+      if (opening) {
+        setFocusRequest((value) => value + 1);
+      } else if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    }).then((stop) => {
+      if (disposed) stop();
+      else stopInputToggle = stop;
+    });
     void host.onMenuRequested(() => {
       if (disposed) return;
-      setHoverSuppressed(false);
-      setManualInputOpen(false);
+      applyInputIntent({ type: "close" });
       setMenuOpen(true);
     }).then((stop) => {
       if (disposed) stop();
@@ -271,8 +304,7 @@ export function PresenceInputApp({
       if (disposed) return;
       channel.requestNewChat();
       setMenuOpen(false);
-      setHoverSuppressed(false);
-      setManualInputOpen(true);
+      applyInputIntent({ type: "open" });
       setFocusRequest((value) => value + 1);
     }).then((stop) => {
       if (disposed) stop();
@@ -282,10 +314,11 @@ export function PresenceInputApp({
       disposed = true;
       stopPreferences?.();
       stopInput?.();
+      stopInputToggle?.();
       stopMenu?.();
       stopNewChat?.();
     };
-  }, [channel, host]);
+  }, [applyInputIntent, channel, host]);
 
   useEffect(() => {
     if (preferences === null || legacyPositionMigrationAttempted.current) return;
@@ -360,9 +393,9 @@ export function PresenceInputApp({
 
   useEffect(() => {
     if (interaction?.phase === "idle") {
-      setHoverSuppressed(false);
+      applyInputIntent({ type: "pointer_exited" });
     }
-  }, [interaction?.phase]);
+  }, [applyInputIntent, interaction?.phase]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClock(now()), 30_000);
@@ -373,8 +406,7 @@ export function PresenceInputApp({
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      setManualInputOpen(false);
-      setHoverSuppressed(true);
+      applyInputIntent({ type: "close" });
       setMenuOpen(false);
       if (document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
@@ -382,7 +414,7 @@ export function PresenceInputApp({
     };
     window.addEventListener("keydown", handleEscape, true);
     return () => window.removeEventListener("keydown", handleEscape, true);
-  }, []);
+  }, [applyInputIntent]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -428,16 +460,19 @@ export function PresenceInputApp({
   useEffect(() => {
     if (menuOpen && menuBlocked) setMenuOpen(false);
   }, [menuBlocked, menuOpen]);
-  const hoverGate = presenceInputGate(interaction, hoverSuppressed);
+  const moving = interaction?.phase === "repositioning";
+  const hoverGate = presenceInputGate(interaction, hoverSuppressed || moving);
+  transientInputVisible.current = !manualInputOpen && hoverGate.window_visible;
   const reducedMotion =
     interaction?.reduced_motion === true ||
     preferences?.reduced_motion === true ||
     accessibility.reduced_motion;
-  const moving = interaction?.phase === "repositioning";
   useEffect(() => {
     if (moving) {
       nativeDragWasActive.current = true;
       suppressCoreActivation.current = true;
+      applyInputIntent({ type: "drag_started" });
+      setMenuOpen(false);
       if (suppressCoreActivationTimer.current !== null) {
         window.clearTimeout(suppressCoreActivationTimer.current);
         suppressCoreActivationTimer.current = null;
@@ -447,7 +482,7 @@ export function PresenceInputApp({
     if (!nativeDragWasActive.current) return;
     nativeDragWasActive.current = false;
     suppressCoreClickAfterDrag();
-  }, [moving]);
+  }, [applyInputIntent, moving]);
   const nextMotionSnapshot = advanceFairyMotionSnapshot(
     motionSnapshot.current,
     {
@@ -680,8 +715,7 @@ export function PresenceInputApp({
   const alwaysOnTop = preferences?.pet_always_on_top ?? true;
 
   function setInputOpen(open: boolean) {
-    setManualInputOpen(open);
-    setHoverSuppressed(!open);
+    applyInputIntent({ type: open ? "open" : "close" });
     if (!open && document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
@@ -689,9 +723,22 @@ export function PresenceInputApp({
 
   function openQuickInput() {
     setMenuOpen(false);
-    setHoverSuppressed(false);
-    setManualInputOpen(true);
+    applyInputIntent({ type: "open" });
     setFocusRequest((value) => value + 1);
+  }
+
+  function toggleQuickInput() {
+    const opening = !inputIntentRef.current.pinned && !transientInputVisible.current;
+    setMenuOpen(false);
+    applyInputIntent({
+      type: "toggle",
+      transient_visible: transientInputVisible.current,
+    });
+    if (opening) {
+      setFocusRequest((value) => value + 1);
+    } else if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
   }
 
   function activateCore() {
@@ -704,7 +751,7 @@ export function PresenceInputApp({
       void host.openMain().catch(() => undefined);
       return;
     }
-    openQuickInput();
+    toggleQuickInput();
   }
 
   function captureCorePointer(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -728,8 +775,7 @@ export function PresenceInputApp({
 
   function openContextMenu() {
     if (menuBlocked) return;
-    setManualInputOpen(false);
-    setHoverSuppressed(true);
+    applyInputIntent({ type: "close" });
     setMenuOpen(true);
   }
 
@@ -812,16 +858,17 @@ export function PresenceInputApp({
         aria-label="Open Fairy quick input"
         className="presence-core-hit-target"
         onClick={() => {
-          if (suppressCoreActivation.current || moving) return;
+          if (nativePointerGestures || suppressCoreActivation.current || moving) return;
           activateCore();
         }}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          if (nativePointerGestures) return;
           openContextMenu();
         }}
         onDoubleClick={() => {
-          if (suppressCoreActivation.current || moving) return;
+          if (nativePointerGestures || suppressCoreActivation.current || moving) return;
           channel.requestWorkspaceOpen();
           void host.openMain().catch(() => undefined);
         }}
@@ -834,6 +881,7 @@ export function PresenceInputApp({
       <PresencePanel
         onCompactSizeChange={updateCompactSize}
         onExpandedHeightChange={setExpandedContentHeight}
+        onInputEngaged={() => applyInputIntent({ type: "engage" })}
         actions={{
           cancelTurn,
           closeReply: (replyId) => {

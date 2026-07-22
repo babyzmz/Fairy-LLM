@@ -133,6 +133,7 @@ function preferences(): DesktopPreferences {
 
 function hostHarness() {
   let inputListener: (() => void) | null = null;
+  let inputToggleListener: (() => void) | null = null;
   const setInputLayout = vi.fn<PetHost["setInputLayout"]>(async () => undefined);
   const setInputInteractive = vi.fn<PetHost["setInputInteractive"]>(
     async () => undefined,
@@ -148,6 +149,12 @@ function hostHarness() {
       inputListener = listener;
       return () => {
         inputListener = null;
+      };
+    }),
+    onInputToggleRequested: vi.fn(async (listener) => {
+      inputToggleListener = listener;
+      return () => {
+        inputToggleListener = null;
       };
     }),
     onMenuRequested: vi.fn(async () => () => undefined),
@@ -174,6 +181,9 @@ function hostHarness() {
     host,
     requestInput() {
       inputListener?.();
+    },
+    requestInputToggle() {
+      inputToggleListener?.();
     },
   };
 }
@@ -525,6 +535,104 @@ describe("dual presence surfaces", () => {
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("expanded"));
     expect(screen.getByText("Streaming from the shared assistant turn")).toBeInTheDocument();
     expect(screen.queryByLabelText("Fairy companion")).not.toBeInTheDocument();
+  });
+
+  it("toggles explicit quick input ownership on consecutive native core taps", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    await waitFor(() => expect(host.host.onInputToggleRequested).toHaveBeenCalledOnce());
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+
+    act(() => host.requestInputToggle());
+    await waitFor(() =>
+      expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)
+    );
+    expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
+      "data-layout",
+      "compact",
+    );
+
+    act(() => host.requestInputToggle());
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+    expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
+      "data-layout",
+      "core",
+    );
+
+    act(() => host.requestInputToggle());
+    await waitFor(() =>
+      expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)
+    );
+  });
+
+  it("keeps hover closed after a core tap until the pointer fully exits", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    const coordinator = interactionHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        interactionSource={coordinator.source}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    act(() => coordinator.emit(interactionAt(40, "input_reveal", 430, 300)));
+    await waitFor(() =>
+      expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)
+    );
+
+    act(() => host.requestInputToggle());
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+
+    act(() => coordinator.emit(interactionAt(41, "interactive", 520, 520)));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+
+    act(() => coordinator.emit(interactionAt(42, "idle", 1_000, 1_000)));
+    act(() => coordinator.emit(interactionAt(43, "input_reveal", 1_430, 1_300)));
+    await waitFor(() =>
+      expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)
+    );
+  });
+
+  it("pins a transient hover input once the user starts interacting with it", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    const coordinator = interactionHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        interactionSource={coordinator.source}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    act(() => coordinator.emit(interactionAt(50, "interactive", 520, 520)));
+    const inputField = await screen.findByTestId("presence-input-field");
+    fireEvent.pointerDown(inputField);
+    act(() => coordinator.emit(interactionAt(51, "returning", 900, 900)));
+    act(() => coordinator.emit(interactionAt(52, "idle", 1_100, 1_100)));
+
+    await waitFor(() =>
+      expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)
+    );
+    expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
+      "data-layout",
+      "compact",
+    );
   });
 
   it("publishes a non-interactive core snapshot after native presentation failure", async () => {
@@ -1161,10 +1269,13 @@ describe("dual presence surfaces", () => {
       .toHaveAttribute("data-moving", "true"));
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
 
-    act(() => coordinator.emit(interactionAt(32, "idle", 700, 700)));
+    act(() => coordinator.emit(interactionAt(32, "input_reveal", 600, 500)));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+
+    act(() => coordinator.emit(interactionAt(33, "idle", 700, 700)));
     await waitFor(() => expect(screen.getByTestId("presence-input-surface"))
       .toHaveAttribute("data-moving", "false"));
-    act(() => coordinator.emit(interactionAt(33, "input_reveal", 1_000, 1_000)));
+    act(() => coordinator.emit(interactionAt(34, "input_reveal", 1_000, 1_000)));
     await waitFor(() =>
       expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)
     );

@@ -15,7 +15,7 @@ use crate::presence_window_policy::{
     input_follows_render, relation_for_phase, PresenceWindowRelation,
 };
 use crate::{
-    PET_INPUT_LABEL, PET_RENDER_LABEL, PRESENCE_INPUT_REQUESTED_EVENT,
+    PET_INPUT_LABEL, PET_RENDER_LABEL, PRESENCE_INPUT_TOGGLE_REQUESTED_EVENT,
     PRESENCE_MENU_REQUESTED_EVENT,
 };
 
@@ -579,7 +579,7 @@ impl NativePointerController {
             sampled_at_ms.saturating_sub(click.sampled_at_ms) > NATIVE_DOUBLE_CLICK_MS
         }) {
             self.pending_click = None;
-            let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_INPUT_REQUESTED_EVENT, ());
+            let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_INPUT_TOGGLE_REQUESTED_EVENT, ());
         }
 
         let (primary_down, secondary_down) = pointer_button_state();
@@ -908,10 +908,7 @@ fn run_coordinator(app: tauri::AppHandle, state: CoordinatorThreadState) {
         let hover_enabled = hover_enabled.load(Ordering::Acquire);
         let hover_dwell_ms = hover_dwell_ms.load(Ordering::Acquire);
         let repositioning = is_repositioning;
-        let (pointer_over_input, input_focused) = point.map_or_else(
-            || (false, input_focus_state(&app)),
-            |point| input_pointer_state(&app, point),
-        );
+        let pointer_over_input = point.is_some_and(|point| input_pointer_state(&app, point));
         let effective_cursor_band = configured_cursor_band(cursor, hover_enabled, hover_dwell_ms);
         let projected_cursor = CursorMetrics {
             band: effective_cursor_band,
@@ -923,7 +920,6 @@ fn run_coordinator(app: tauri::AppHandle, state: CoordinatorThreadState) {
             active_dwell_ms: cursor.dwell_ms,
             cursor_speed_px_s: cursor.speed_px_s,
             pointer_over_input,
-            input_focused,
             reduced_motion,
             suspended: false,
             repositioning,
@@ -969,22 +965,14 @@ fn unavailable_cursor(placement: PresenceWindowPlacement) -> CursorMetrics {
     }
 }
 
-fn input_focus_state(app: &tauri::AppHandle) -> bool {
-    app.get_webview_window(PET_INPUT_LABEL)
-        .is_some_and(|input| {
-            input.is_visible().unwrap_or(false) && input.is_focused().unwrap_or(false)
-        })
-}
-
-fn input_pointer_state(app: &tauri::AppHandle, point: PhysicalPoint) -> (bool, bool) {
+fn input_pointer_state(app: &tauri::AppHandle, point: PhysicalPoint) -> bool {
     let Some(input) = app.get_webview_window(PET_INPUT_LABEL) else {
-        return (false, false);
+        return false;
     };
     if !input.is_visible().unwrap_or(false) {
-        return (false, false);
+        return false;
     }
-    let focused = input.is_focused().unwrap_or(false);
-    let pointer_over = input
+    input
         .outer_position()
         .ok()
         .zip(input.outer_size().ok())
@@ -998,8 +986,7 @@ fn input_pointer_state(app: &tauri::AppHandle, point: PhysicalPoint) -> (bool, b
                 }
                 .contains(point)
             })
-        });
-    (pointer_over, focused)
+        })
 }
 
 #[cfg(target_os = "windows")]

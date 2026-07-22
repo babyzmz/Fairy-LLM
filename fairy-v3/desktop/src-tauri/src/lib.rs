@@ -72,6 +72,7 @@ pub const PET_INPUT_LABEL: &str = "pet-input";
 const PET_INPUT_EXPANDED_CONTENT_HEIGHT_LOGICAL: f64 = 72.0;
 const PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT: &str = "presence-native-renderer-lifecycle";
 pub(crate) const PRESENCE_INPUT_REQUESTED_EVENT: &str = "presence-input-requested";
+pub(crate) const PRESENCE_INPUT_TOGGLE_REQUESTED_EVENT: &str = "presence-input-toggle-requested";
 pub(crate) const PRESENCE_MENU_REQUESTED_EVENT: &str = "presence-menu-requested";
 const TRAY_ASK_ID: &str = "fairy.tray.ask";
 const TRAY_NEW_CHAT_ID: &str = "fairy.tray.new_chat";
@@ -3484,7 +3485,7 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent)
             if pet_session_disabled(app)
                 || app.get_webview_window(PET_INPUT_LABEL).is_none()
                 || app
-                    .emit_to(PET_INPUT_LABEL, "presence-input-requested", ())
+                    .emit_to(PET_INPUT_LABEL, PRESENCE_INPUT_REQUESTED_EVENT, ())
                     .is_err()
             {
                 let _ = main_window(app).and_then(|window| show_and_focus(&window));

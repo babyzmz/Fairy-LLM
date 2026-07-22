@@ -10,7 +10,6 @@ fn signal(sampled_at_ms: u64) -> PresenceInteractionSignal {
         active_dwell_ms: 0,
         cursor_speed_px_s: 80.0,
         pointer_over_input: false,
-        input_focused: false,
         reduced_motion: false,
         suspended: false,
         repositioning: false,
@@ -168,18 +167,18 @@ fn interactive_surface_waits_for_leave_grace_then_runs_full_return() {
 }
 
 #[test]
-fn focused_input_prevents_automatic_return() {
+fn pointer_over_input_prevents_automatic_return() {
     let mut machine = PresenceInteractionStateMachine::new(0);
     machine.advance(signal(0));
     machine.advance(signal(520));
-    let focused = PresenceInteractionSignal {
+    let pointer_over_input = PresenceInteractionSignal {
         sampled_at_ms: 5_000,
         cursor_band: CursorBand::Outside,
-        input_focused: true,
+        pointer_over_input: true,
         ..signal(0)
     };
     assert_eq!(
-        machine.advance(focused).phase,
+        machine.advance(pointer_over_input).phase,
         PresenceInteractionPhase::Interactive
     );
 }

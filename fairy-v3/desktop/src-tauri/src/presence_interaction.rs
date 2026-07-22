@@ -37,7 +37,6 @@ pub struct PresenceInteractionSignal {
     pub active_dwell_ms: u64,
     pub cursor_speed_px_s: f64,
     pub pointer_over_input: bool,
-    pub input_focused: bool,
     pub reduced_motion: bool,
     pub suspended: bool,
     pub repositioning: bool,
@@ -96,10 +95,7 @@ impl PresenceInteractionStateMachine {
         }
 
         if self.phase == PresenceInteractionPhase::Returning {
-            if signal.input_focused
-                || signal.pointer_over_input
-                || signal.cursor_band != CursorBand::Outside
-            {
+            if signal.pointer_over_input || signal.cursor_band != CursorBand::Outside {
                 self.reset_candidate();
                 self.transition(PresenceInteractionPhase::Aware, signal.sampled_at_ms);
             } else {
@@ -119,10 +115,7 @@ impl PresenceInteractionStateMachine {
             self.phase,
             PresenceInteractionPhase::InputReveal | PresenceInteractionPhase::Interactive
         ) {
-            if signal.input_focused
-                || signal.pointer_over_input
-                || signal.cursor_band != CursorBand::Outside
-            {
+            if signal.pointer_over_input || signal.cursor_band != CursorBand::Outside {
                 self.pointer_left_at_ms = None;
             } else {
                 let left_at = *self.pointer_left_at_ms.get_or_insert(signal.sampled_at_ms);

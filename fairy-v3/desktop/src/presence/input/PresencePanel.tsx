@@ -74,6 +74,7 @@ interface PresencePanelProps {
   visible: boolean;
   onCompactSizeChange?(width: number, height: number): void;
   onExpandedHeightChange?(height: number): void;
+  onInputEngaged?(): void;
 }
 
 export const PRESENCE_COMPACT_INPUT_MIN_WIDTH = 220;
@@ -98,6 +99,7 @@ export function PresencePanel({
   visible,
   onCompactSizeChange,
   onExpandedHeightChange,
+  onInputEngaged,
 }: PresencePanelProps) {
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -300,6 +302,7 @@ export function PresencePanel({
             data-optical-layer="transparent-overlay"
             data-testid="presence-input-field"
             onPointerDown={() => {
+              onInputEngaged?.();
               actions.requestInputFocus();
               textarea.current?.focus({ preventScroll: true });
             }}
@@ -308,6 +311,7 @@ export function PresencePanel({
               aria-label="Quick message to Fairy"
               ref={textarea}
               maxLength={4_000}
+              onFocus={onInputEngaged}
               onChange={(event) => setDraft(event.target.value)}
               onCompositionEnd={() => {
                 composing.current = false;

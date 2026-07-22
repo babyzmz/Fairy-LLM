@@ -19,6 +19,7 @@ export interface PetHost {
   updatePreferences(input: PetPreferencePatch): Promise<DesktopPreferences>;
   onPreferences(listener: (preferences: DesktopPreferences) => void): Promise<() => void>;
   onInputRequested(listener: () => void): Promise<() => void>;
+  onInputToggleRequested(listener: () => void): Promise<() => void>;
   onMenuRequested(listener: () => void): Promise<() => void>;
   onNewChatRequested(listener: () => void): Promise<() => void>;
   setExpanded(expanded: boolean): Promise<void>;
@@ -65,6 +66,9 @@ export function createDefaultPetHost(): PetHost {
     },
     async onInputRequested(listener) {
       return listen("presence-input-requested", listener);
+    },
+    async onInputToggleRequested(listener) {
+      return listen("presence-input-toggle-requested", listener);
     },
     async onMenuRequested(listener) {
       return listen("presence-menu-requested", listener);
@@ -121,6 +125,9 @@ function createBrowserPetHost(): PetHost {
       return () => listeners.delete(listener);
     },
     async onInputRequested() {
+      return () => undefined;
+    },
+    async onInputToggleRequested() {
       return () => undefined;
     },
     async onMenuRequested() {
