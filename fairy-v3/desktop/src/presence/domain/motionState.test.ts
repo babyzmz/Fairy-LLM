@@ -183,6 +183,7 @@ function facts(overrides: Partial<FairyMotionFacts> = {}): FairyMotionFacts {
     manual_input_open: false,
     menu_open: false,
     reply: null,
+    ambient_dialogue: false,
     notice_tone: null,
     submission_phase: null,
     work_state: "idle",

@@ -40,7 +40,7 @@ class MockAudioWorkletNode {
 vi.stubGlobal("AudioContext", MockAudioContext);
 vi.stubGlobal("AudioWorkletNode", MockAudioWorkletNode);
 
-import { startNativeVoice } from "./nativeVoice";
+import { startAmbientVoice, startNativeVoice } from "./nativeVoice";
 
 describe("native voice channel", () => {
   beforeEach(() => {
@@ -154,5 +154,35 @@ describe("native voice channel", () => {
       end_offset: 4,
       idempotency_key: "voice:error",
     })).rejects.toThrow("CORE_PROTOCOL_ERROR");
+  });
+
+  it("uses the isolated ambient commands and exact projected text", async () => {
+    mocks.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "desktop_preferences_get") {
+        return { voice_volume_percent: 80, voice_rate_percent: 100 };
+      }
+      if (command === "ambient_voice_start") {
+        const events = args?.events as MockChannel<Record<string, unknown>>;
+        events.onmessage({
+          type: "started",
+          session_id: "ambient-session",
+          sample_rate: 24_000,
+          channels: 1,
+          scope_digest: "c".repeat(64),
+        });
+        return { id: "ambient-session" };
+      }
+      return undefined;
+    });
+
+    const playback = await startAmbientVoice("Exact reviewed text.");
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "ambient_voice_start",
+      expect.objectContaining({ text: "Exact reviewed text." }),
+    );
+    playback.stop();
+    expect(mocks.invoke).toHaveBeenCalledWith("ambient_voice_cancel", {
+      sessionId: "ambient-session",
+    });
   });
 });

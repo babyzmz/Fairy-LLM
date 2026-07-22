@@ -156,6 +156,7 @@ export function PresenceInputApp({
   const transientInputVisible = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [closedReplyId, setClosedReplyId] = useState<string | null>(null);
+  const [closedAmbientId, setClosedAmbientId] = useState<string | null>(null);
   const [submission, setSubmission] = useState<PresenceSubmissionState | null>(null);
   const [replyInteraction, setReplyInteraction] = useState(0);
   const [interaction, setInteraction] = useState<PresenceInteractionSnapshot | null>(null);
@@ -223,6 +224,9 @@ export function PresenceInputApp({
     const stop = channel.onProjection((next) => {
       setProjection(next);
       setClosedReplyId((current) => (current === next.reply?.id ? current : null));
+      setClosedAmbientId((current) =>
+        current === next.ambient_dialogue?.presentation_id ? current : null,
+      );
       setClock(now());
     });
     channel.requestProjection();
@@ -433,10 +437,15 @@ export function PresenceInputApp({
     dismissed_notice_ids: settings.dismissed_notice_ids,
   });
   const reply = view.reply?.id === closedReplyId ? null : view.reply;
+  const ambientDialogue =
+    view.ambient_dialogue?.presentation_id === closedAmbientId
+      ? null
+      : view.ambient_dialogue;
   const submissionCard = toSubmissionCard(submission);
   const menuBlocked =
     view.notice !== null ||
     reply !== null ||
+    ambientDialogue !== null ||
     submission !== null ||
     view.speaking ||
     !["idle", "ready"].includes(view.work_state);
@@ -477,6 +486,7 @@ export function PresenceInputApp({
       manual_input_open: manualInputOpen,
       menu_open: effectiveMenuOpen,
       reply,
+      ambient_dialogue: ambientDialogue !== null,
       notice_tone: view.notice?.tone ?? null,
       submission_phase: submission?.phase ?? null,
       work_state: view.work_state,
@@ -517,6 +527,20 @@ export function PresenceInputApp({
   const presentedMotionSnapshot: FairyMotionSnapshot = nextMotionSnapshot;
   const cardOpen = layout === "expanded";
   const inputOpen = nextMotionSnapshot.surface === "input";
+
+  useEffect(() => {
+    channel.publishInputState?.(inputOpen, inputOpen && document.hasFocus());
+    const publishFocus = () => {
+      channel.publishInputState?.(inputOpen, inputOpen && document.hasFocus());
+    };
+    window.addEventListener("focus", publishFocus);
+    window.addEventListener("blur", publishFocus);
+    return () => {
+      window.removeEventListener("focus", publishFocus);
+      window.removeEventListener("blur", publishFocus);
+      channel.publishInputState?.(false, false);
+    };
+  }, [channel, inputOpen]);
 
   useEffect(
     () => inputPresentationChannel.onRequest(() => {
@@ -918,6 +942,12 @@ export function PresenceInputApp({
             setSubmission(null);
           },
           closeSubmission: () => setSubmission(null),
+          dismissAmbient: () => {
+            if (ambientDialogue !== null) {
+              channel.requestVoiceStop();
+              setClosedAmbientId(ambientDialogue.presentation_id);
+            }
+          },
           dismissNotice,
           exit: () => void host.exit(),
           newChat: () => channel.requestNewChat(),
@@ -958,6 +988,7 @@ export function PresenceInputApp({
         menuOpen={effectiveMenuOpen}
         muted={muted}
         reply={reply}
+        ambientDialogue={ambientDialogue}
         submission={submissionCard}
         view={view}
         visible={contentVisible}
@@ -1021,6 +1052,7 @@ function layoutForSurface(surface: FairySurface): PetInputLayout {
     case "options":
     case "submission":
     case "reply": return "expanded";
+    case "ambient": return "expanded";
     case "notice": return "core";
     case "core": return "core";
   }

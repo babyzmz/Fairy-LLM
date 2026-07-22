@@ -13,6 +13,10 @@ use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
+use ambient_dialogue_state::{
+    AmbientDialogueLocalState, AmbientDialogueStateError, AmbientDialogueStateStore,
+    AmbientDialogueStateUpdate,
+};
 use desktop_preferences::{
     DesktopPreferences, DesktopPreferencesError, DesktopPreferencesStore, DesktopPreferencesUpdate,
     LegacyMemorySettings, PetPreferencesUpdate,
@@ -50,6 +54,8 @@ use voice_worker::{
     VoiceWorkerManager,
 };
 
+pub mod ambient_context;
+pub mod ambient_dialogue_state;
 pub mod capture;
 pub mod desktop_preferences;
 pub mod obsidian_path_registry;
@@ -394,6 +400,7 @@ struct DesktopState {
     voice: Arc<VoiceWorkerManager>,
     realtime: Arc<RealtimeWorkerManager>,
     preferences: Mutex<()>,
+    ambient_dialogue: Mutex<()>,
     provider_update_in_progress: AtomicBool,
     data_dir: PathBuf,
     desktop_program: PathBuf,
@@ -410,6 +417,46 @@ struct DesktopState {
     presence_startup: PresenceStartupGate,
     pet_placement_reconciled: AtomicBool,
     started_at: Instant,
+}
+
+#[tauri::command]
+async fn ambient_dialogue_state_get(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<AmbientDialogueLocalState, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    AmbientDialogueStateStore::new(&state.data_dir)
+        .load()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn ambient_device_facts_get(
+    window: WebviewWindow,
+) -> Result<ambient_context::AmbientDeviceFacts, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    Ok(ambient_context::sample_ambient_device_facts())
+}
+
+#[tauri::command]
+async fn ambient_dialogue_state_update(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: AmbientDialogueStateUpdate,
+) -> Result<AmbientDialogueLocalState, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let _guard = state
+        .ambient_dialogue
+        .lock()
+        .map_err(|_| "Ambient dialogue state lock is unavailable".to_owned())?;
+    AmbientDialogueStateStore::new(&state.data_dir)
+        .update(input)
+        .map_err(|error| match error {
+            AmbientDialogueStateError::RevisionConflict => {
+                "AMBIENT_DIALOGUE_REVISION_CONFLICT".to_owned()
+            }
+            other => other.to_string(),
+        })
 }
 
 #[tauri::command]
@@ -3988,6 +4035,54 @@ async fn realtime_voice_cancel(
 }
 
 #[tauri::command]
+async fn ambient_voice_start(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    text: String,
+    audio: Channel<Response>,
+    events: Channel<VoiceStreamEvent>,
+) -> Result<PreparedVoiceSession, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let session =
+        prepared_realtime_session(&text).map_err(|error| error.public_code().to_owned())?;
+    let worker_session = session.clone();
+    let failed_session_id = session.id.clone();
+    let voice = Arc::clone(&state.voice);
+    let failure_events = events.clone();
+    tauri::async_runtime::spawn(async move {
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            voice.stream(worker_session, audio, events)
+        })
+        .await;
+        let error_code = match result {
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => error.public_code().to_owned(),
+            Err(_) => "VOICE_WORKER_INTERRUPTED".to_owned(),
+        };
+        let _ = failure_events.send(VoiceStreamEvent::Failed {
+            session_id: failed_session_id,
+            error_code,
+            message: "Ambient Fairy voice playback could not start.".to_owned(),
+        });
+    });
+    Ok(session)
+}
+
+#[tauri::command]
+async fn ambient_voice_cancel(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    session_id: String,
+) -> Result<(), String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let voice = Arc::clone(&state.voice);
+    tauri::async_runtime::spawn_blocking(move || voice.cancel(&session_id))
+        .await
+        .map_err(|_| "VOICE_WORKER_INTERRUPTED".to_owned())?
+        .map_err(|error| error.public_code().to_owned())
+}
+
+#[tauri::command]
 async fn select_project_folder(
     window: WebviewWindow,
     app: tauri::AppHandle,
@@ -4543,6 +4638,7 @@ pub fn run() {
                 voice,
                 realtime,
                 preferences: Mutex::new(()),
+                ambient_dialogue: Mutex::new(()),
                 provider_update_in_progress: AtomicBool::new(false),
                 data_dir,
                 desktop_program,
@@ -4601,6 +4697,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            ambient_device_facts_get,
+            ambient_dialogue_state_get,
+            ambient_dialogue_state_update,
             core_rpc,
             settings_rpc,
             provider_openrouter_status,
@@ -4646,6 +4745,8 @@ pub fn run() {
             voice_test_cancel,
             realtime_voice_start,
             realtime_voice_cancel,
+            ambient_voice_start,
+            ambient_voice_cancel,
             select_project_folder,
             select_obsidian_vault,
             select_skill_source,

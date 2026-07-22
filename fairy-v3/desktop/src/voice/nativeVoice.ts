@@ -58,9 +58,21 @@ class NativeVoiceHost {
     return this.startCommand("realtime_voice_start", "realtime_voice_cancel", { text });
   }
 
+  async ambient(text: string): Promise<NativeVoicePlayback> {
+    return this.startCommand("ambient_voice_start", "ambient_voice_cancel", { text });
+  }
+
   private async startCommand(
-    command: "voice_session_start" | "voice_test_start" | "realtime_voice_start",
-    cancelCommand: "voice_session_cancel" | "voice_test_cancel" | "realtime_voice_cancel",
+    command:
+      | "voice_session_start"
+      | "voice_test_start"
+      | "realtime_voice_start"
+      | "ambient_voice_start",
+    cancelCommand:
+      | "voice_session_cancel"
+      | "voice_test_cancel"
+      | "realtime_voice_cancel"
+      | "ambient_voice_cancel",
     args: Record<string, unknown>,
   ): Promise<NativeVoicePlayback> {
     const node = await this.readyNode();
@@ -290,4 +302,9 @@ export function startNativeVoiceTest(): Promise<NativeVoicePlayback> {
 export function startRealtimeVoice(text: string): Promise<NativeVoicePlayback> {
   sharedHost ??= new NativeVoiceHost();
   return sharedHost.realtime(text);
+}
+
+export function startAmbientVoice(text: string): Promise<NativeVoicePlayback> {
+  sharedHost ??= new NativeVoiceHost();
+  return sharedHost.ambient(text);
 }

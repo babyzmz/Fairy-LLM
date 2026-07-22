@@ -7,6 +7,66 @@ import { PresenceBridge } from "./PresenceBridge";
 afterEach(cleanup);
 
 describe("PresenceBridge", () => {
+  it("reports only the ambient dialogue that remains visible after priority projection", async () => {
+    const channel: PresenceChannel = {
+      publishProjection: vi.fn(),
+      publishSubmission: vi.fn(),
+      requestProjection: vi.fn(),
+      requestWorkspaceOpen: vi.fn(),
+      requestNewChat: vi.fn(),
+      requestChatSend: vi.fn(),
+      requestChatCancel: vi.fn(),
+      requestVoiceStop: vi.fn(),
+      onProjection: vi.fn(() => () => undefined),
+      onSubmission: vi.fn(() => () => undefined),
+      onRequest: vi.fn(() => () => undefined),
+      close: vi.fn(),
+    };
+    const onAmbientVisibilityChange = vi.fn();
+    const ambientDialogue = {
+      presentation_id: "019f4b33-c7fb-7652-a127-75914303dbeb",
+      dialogue_id: "idle.long.01",
+      text: "The quiet interval remains under control.",
+      source: "authored_original" as const,
+      trigger: "idle_long" as const,
+      locale: "en",
+      tts_allowed: true,
+      expires_at: "2026-07-23T09:00:30Z",
+      persona_digest: "a".repeat(64),
+    };
+    const rendered = render(
+      <PresenceBridge
+        ambientDialogue={ambientDialogue}
+        channelFactory={() => channel}
+        events={[]}
+        onAmbientVisibilityChange={onAmbientVisibilityChange}
+      />,
+    );
+
+    await waitFor(() => expect(onAmbientVisibilityChange).toHaveBeenLastCalledWith(
+      ambientDialogue,
+    ));
+    rendered.rerender(
+      <PresenceBridge
+        ambientDialogue={ambientDialogue}
+        channelFactory={() => channel}
+        events={[]}
+        onAmbientVisibilityChange={onAmbientVisibilityChange}
+        reply={{
+          id: "reply-1",
+          text: "The real reply has priority.",
+          kind: "scratch",
+          streaming: false,
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(onAmbientVisibilityChange).toHaveBeenLastCalledWith(null));
+    expect(channel.publishProjection).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ambient_dialogue: null }),
+    );
+  });
+
   it("exposes only typed scratch, voice, and projection routes", async () => {
     const requests: { listener?: (request: PresenceRequest) => void } = {};
     const channel: PresenceChannel = {

@@ -21,6 +21,7 @@ import {
   VoiceController,
   VoiceRecordControl,
   VoiceSpeakControl,
+  useVoicePresence,
 } from "./VoiceController";
 
 afterEach(cleanup);
@@ -304,7 +305,42 @@ describe("VoiceController", () => {
     );
     await waitFor(() => expect(stop).toHaveBeenCalledOnce());
   });
+
+  it("plays an ambient projection exactly once without creating Turn voice state", async () => {
+    const stop = vi.fn();
+    const startAmbientPlayback = vi.fn(async () => ({
+      finished: new Promise<void>(() => undefined),
+      stop,
+    }));
+    renderVoice(
+      <AmbientVoiceProbe />,
+      voiceClient(),
+      environment({ startAmbientPlayback }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Speak ambient" }));
+    await waitFor(() => expect(startAmbientPlayback).toHaveBeenCalledWith("Exact reviewed text."));
+    fireEvent.click(screen.getByRole("button", { name: "Speak ambient" }));
+    expect(startAmbientPlayback).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("ambient-speaking")).toHaveTextContent("yes");
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop ambient" }));
+    await waitFor(() => expect(stop).toHaveBeenCalledOnce());
+  });
 });
+
+function AmbientVoiceProbe() {
+  const voice = useVoicePresence();
+  return (
+    <>
+      <button onClick={() => void voice.speakAmbient("Exact reviewed text.", "ambient-1")}>
+        Speak ambient
+      </button>
+      <button onClick={voice.stopAmbient}>Stop ambient</button>
+      <span data-testid="ambient-speaking">{voice.speakingAmbient ? "yes" : "no"}</span>
+    </>
+  );
+}
 
 function renderVoice(
   children: React.ReactNode,
@@ -362,6 +398,9 @@ function environment(overrides: Partial<VoiceEnvironment> = {}): VoiceEnvironmen
   };
   if (overrides.startNativePlayback !== undefined) {
     result.startNativePlayback = overrides.startNativePlayback;
+  }
+  if (overrides.startAmbientPlayback !== undefined) {
+    result.startAmbientPlayback = overrides.startAmbientPlayback;
   }
   return result;
 }

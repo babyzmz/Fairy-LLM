@@ -1,3 +1,101 @@
+export type AmbientSurface = "pet" | "main" | "hidden";
+export type DialogueSource = "protected" | "authored_original" | "generated_original";
+export type DialogueTrigger =
+  | "startup"
+  | "idle_short"
+  | "idle_long"
+  | "user_returned"
+  | "network_restored"
+  | "battery_low"
+  | "charging_started"
+  | "self_commentary";
+
+export interface AmbientContextSnapshot {
+  observed_at: string;
+  locale?: string;
+  surface?: AmbientSurface;
+  user_idle_seconds?: number;
+  startup_eligible?: boolean;
+  user_returned?: boolean;
+  network_restored?: boolean;
+  battery_percent?: number | null;
+  charging?: boolean | null;
+  charging_started?: boolean;
+  locked?: boolean;
+  do_not_disturb?: boolean;
+  typing?: boolean;
+  input_open?: boolean;
+  microphone_active?: boolean;
+  fullscreen?: boolean;
+  realtime_active?: boolean;
+  active_turn?: boolean;
+  approval_waiting?: boolean;
+  severe_error?: boolean;
+  tts_active?: boolean;
+}
+
+export interface AmbientDialoguePreferences {
+  enabled?: boolean;
+  voice_enabled?: boolean;
+  generated_enabled?: boolean;
+}
+
+export interface AmbientDialogueState {
+  local_date?: string | null;
+  startup_date?: string | null;
+  daily_text_count?: number;
+  daily_voice_count?: number;
+  daily_generated_count?: number;
+  last_global_at?: string | null;
+  category_last_at?: Record<string, string>;
+  line_last_at?: Record<string, string>;
+  returned_last_at?: string | null;
+  generated_digests?: string[];
+}
+
+export interface AmbientDialogueEvaluateInput {
+  context: AmbientContextSnapshot;
+  preferences?: AmbientDialoguePreferences;
+  state?: AmbientDialogueState;
+}
+
+export interface GeneratedDialogueRequest {
+  trigger: DialogueTrigger;
+  locale: string;
+  persona_digest: string;
+  safe_facts: string[];
+  recent_categories: string[];
+  recent_digests: string[];
+  max_output_tokens: number;
+}
+
+export interface GeneratedDialogueCandidate {
+  text: string;
+  intent: string;
+  required_facts: string[];
+  safe_for_tts: boolean;
+  cooldown_group: string;
+}
+
+export interface AmbientDialogueProjection {
+  presentation_id: string;
+  dialogue_id: string;
+  text: string;
+  source: DialogueSource;
+  trigger: DialogueTrigger;
+  locale: string;
+  tts_allowed: boolean;
+  expires_at: string;
+  persona_digest: string;
+}
+
+export interface AmbientDialogueDecision {
+  projection: AmbientDialogueProjection | null;
+  generation_request: GeneratedDialogueRequest | null;
+  next_state: Required<AmbientDialogueState>;
+  reason: string;
+}
+
 export type ObsidianSourceMode = "read_only" | "bidirectional";
 export type ObsidianReadScope = "selected_directories" | "whole_vault";
 

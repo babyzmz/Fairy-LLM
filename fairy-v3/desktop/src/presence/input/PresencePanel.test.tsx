@@ -28,6 +28,7 @@ const view: PresenceView = {
   recent_activity_ms: [],
   notice: null,
   reply: null,
+  ambient_dialogue: null,
   speaking: false,
 };
 
@@ -131,5 +132,84 @@ describe("PresencePanel optical boundary", () => {
       />,
     );
     expect(screen.getByRole("status")).toHaveTextContent("Fairy could not send this");
+  });
+
+  it("keeps ambient dialogue below real reply and submission projections", () => {
+    const ambientDialogue = {
+      presentation_id: "ambient-1",
+      dialogue_id: "idle.short.001",
+      text: "A reviewed idle line.",
+      source: "authored_original" as const,
+      trigger: "idle_short" as const,
+      locale: "en" as const,
+      tts_allowed: false,
+      expires_at: "2026-07-23T01:00:00Z",
+      persona_digest: "digest",
+    };
+    const { rerender } = render(
+      <PresencePanel
+        actions={actions}
+        alwaysOnTop
+        ambientDialogue={ambientDialogue}
+        autoPlay={false}
+        inputOpen={false}
+        menuOpen={false}
+        muted={false}
+        reply={null}
+        submission={{
+          id: "submission-1",
+          phase: "sending",
+          title: "Sending to Fairy",
+          detail: "Starting a private scratch chat",
+          canCancel: true,
+          canRetry: false,
+        }}
+        view={view}
+        visible
+      />,
+    );
+    expect(screen.queryByText("A reviewed idle line.")).toBeNull();
+
+    rerender(
+      <PresencePanel
+        actions={actions}
+        alwaysOnTop
+        ambientDialogue={ambientDialogue}
+        autoPlay={false}
+        inputOpen={false}
+        menuOpen={false}
+        muted={false}
+        reply={null}
+        submission={{
+          id: "submission-1",
+          phase: "failed",
+          title: "Fairy could not send this",
+          detail: "Open Fairy to retry.",
+          canCancel: false,
+          canRetry: true,
+        }}
+        view={view}
+        visible
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Fairy could not send this");
+    expect(screen.queryByText("A reviewed idle line.")).toBeNull();
+
+    rerender(
+      <PresencePanel
+        actions={actions}
+        alwaysOnTop
+        ambientDialogue={ambientDialogue}
+        autoPlay={false}
+        inputOpen={false}
+        menuOpen={false}
+        muted={false}
+        reply={null}
+        submission={null}
+        view={view}
+        visible
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("A reviewed idle line.");
   });
 });

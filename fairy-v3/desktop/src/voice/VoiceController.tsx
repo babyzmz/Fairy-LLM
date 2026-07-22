@@ -24,7 +24,11 @@ import {
   DESKTOP_PREFERENCES_EVENT,
   type DesktopPreferences,
 } from "../settings/client";
-import { nativeVoiceAvailable, startNativeVoice } from "./nativeVoice";
+import {
+  nativeVoiceAvailable,
+  startAmbientVoice,
+  startNativeVoice,
+} from "./nativeVoice";
 import { SentenceQueue } from "./sentenceQueue";
 
 const MAX_RECORDING_BYTES = 20 * 1024 * 1024;
@@ -50,6 +54,7 @@ export interface VoiceEnvironment {
   startRecording(): Promise<RecordingSession>;
   startPlayback(wav: Uint8Array): AudioPlayback;
   startNativePlayback?(input: VoiceSessionStartInput): Promise<AudioPlayback>;
+  startAmbientPlayback?(text: string): Promise<AudioPlayback>;
 }
 
 interface VoiceControllerProps {
@@ -78,7 +83,9 @@ interface VoiceContextValue {
   startRecording(onTranscript: (text: string) => void): Promise<void>;
   stopRecording(): Promise<void>;
   speak(message: Message): Promise<void>;
+  speakAmbient(text: string, presentationId: string): Promise<void>;
   stopSpeaking(): void;
+  stopAmbient(): void;
 }
 
 const VoiceContext = createContext<VoiceContextValue | null>(null);
@@ -111,6 +118,8 @@ export function VoiceController({
   const playbackRef = useRef<AudioPlayback | null>(null);
   const voiceRequestRef = useRef<AbortController | null>(null);
   const playbackEpoch = useRef(0);
+  const ambientStarting = useRef(false);
+  const ambientPresentationIds = useRef(new Set<string>());
   const sentenceQueue = useRef(new SentenceQueue());
   const autoTurnRef = useRef<string | null>(null);
   const autoEventIds = useRef(new Set<string>());
@@ -139,10 +148,17 @@ export function VoiceController({
     voiceRequestRef.current = null;
     playbackRef.current?.stop();
     playbackRef.current = null;
+    ambientStarting.current = false;
     setSpeakingMessageId(null);
     setSpeakingTurnId(null);
     setPlaybackState("idle");
   }, []);
+
+  const stopAmbient = useCallback(() => {
+    if (speakingMessageId?.startsWith("ambient:") === true || ambientStarting.current) {
+      stopSpeaking();
+    }
+  }, [speakingMessageId, stopSpeaking]);
 
   useEffect(() => {
     const update = (event: Event) => {
@@ -307,6 +323,55 @@ export function VoiceController({
     [client.voice, environment, profile, stopSpeaking, ttsAvailable],
   );
 
+  const speakAmbient = useCallback(
+    async (text: string, presentationId: string) => {
+      const normalized = text.trim();
+      if (
+        normalized === "" ||
+        petMuted ||
+        environment.startAmbientPlayback === undefined ||
+        ambientStarting.current ||
+        playbackRef.current !== null ||
+        speakingMessageId !== null ||
+        ambientPresentationIds.current.has(presentationId)
+      ) {
+        return;
+      }
+      ambientPresentationIds.current.add(presentationId);
+      if (ambientPresentationIds.current.size > 64) {
+        const oldest = ambientPresentationIds.current.values().next().value;
+        if (typeof oldest === "string") ambientPresentationIds.current.delete(oldest);
+      }
+      ambientStarting.current = true;
+      const epoch = playbackEpoch.current;
+      setSpeakingMessageId(`ambient:${presentationId}`);
+      setSpeakingTurnId(null);
+      setPlaybackState("preparing");
+      try {
+        const playback = await environment.startAmbientPlayback(normalized);
+        if (epoch !== playbackEpoch.current) {
+          playback.stop();
+          return;
+        }
+        playbackRef.current = playback;
+        ambientStarting.current = false;
+        setPlaybackState("speaking");
+        await playback.finished;
+      } catch {
+        // Ambient playback is optional and must not surface as a Turn or message failure.
+      } finally {
+        if (epoch === playbackEpoch.current) {
+          playbackRef.current = null;
+          ambientStarting.current = false;
+          setSpeakingMessageId(null);
+          setSpeakingTurnId(null);
+          setPlaybackState("idle");
+        }
+      }
+    },
+    [environment, petMuted, speakingMessageId],
+  );
+
   useEffect(() => {
     const autoPlay =
       turn !== null && turn.task_id === petTaskId
@@ -427,12 +492,15 @@ export function VoiceController({
       startRecording,
       stopRecording,
       speak,
+      speakAmbient,
       stopSpeaking,
+      stopAmbient,
     }),
     [
       environment.supported,
       recordingState,
       speak,
+      speakAmbient,
       speakingMessageId,
       speakingTurnId,
       playbackState,
@@ -440,6 +508,7 @@ export function VoiceController({
       recordingStatusMessage,
       stopRecording,
       stopSpeaking,
+      stopAmbient,
       sttAvailable,
       ttsAvailable,
     ],
@@ -453,11 +522,22 @@ export function useVoicePlaybackState(turnId: string): PlaybackState {
   return voice?.speakingTurnId === turnId ? voice.playbackState : "idle";
 }
 
-export function useVoicePresence(): { speaking: boolean; stopSpeaking(): void } {
+export function useVoicePresence(): {
+  recording: boolean;
+  speaking: boolean;
+  speakingAmbient: boolean;
+  speakAmbient(text: string, presentationId: string): Promise<void>;
+  stopSpeaking(): void;
+  stopAmbient(): void;
+} {
   const voice = useContext(VoiceContext);
   return {
+    recording: voice?.recordingState !== undefined && voice.recordingState !== "idle",
     speaking: voice?.playbackState === "preparing" || voice?.playbackState === "speaking",
+    speakingAmbient: voice?.speakingMessageId?.startsWith("ambient:") === true,
+    speakAmbient: voice?.speakAmbient ?? (async () => undefined),
     stopSpeaking: voice?.stopSpeaking ?? (() => undefined),
+    stopAmbient: voice?.stopAmbient ?? (() => undefined),
   };
 }
 
@@ -652,7 +732,10 @@ function defaultVoiceEnvironment(): VoiceEnvironment {
     startRecording: () => startBrowserRecording(),
     startPlayback: (wav) => startBrowserPlayback(wav),
   };
-  if (nativeVoiceAvailable()) environment.startNativePlayback = startNativeVoice;
+  if (nativeVoiceAvailable()) {
+    environment.startNativePlayback = startNativeVoice;
+    environment.startAmbientPlayback = startAmbientVoice;
+  }
   return environment;
 }
 

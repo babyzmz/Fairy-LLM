@@ -29,6 +29,7 @@ export const fairySurfaceSchema = z.enum([
   "submission",
   "reply",
   "notice",
+  "ambient",
 ]);
 
 export const fairyActivitySchema = z.enum([
@@ -77,6 +78,7 @@ export interface FairyMotionFacts {
   manual_input_open: boolean;
   menu_open: boolean;
   reply: { streaming: boolean } | null;
+  ambient_dialogue: boolean;
   notice_tone: "info" | "critical" | null;
   submission_phase: FairySubmissionPhase | null;
   work_state: PresenceWorkState;
@@ -183,13 +185,14 @@ function resolveSurface(facts: FairyMotionFacts, state: FairyState): FairySurfac
   if (
     state === "submitting" ||
     state === "thinking" ||
-    state === "notify" ||
     state === "awaiting_confirmation" ||
     state === "error"
   ) {
     return "core";
   }
   if (facts.reply !== null) return "reply";
+  if (facts.ambient_dialogue) return "ambient";
+  if (state === "notify") return "core";
   if (state === "responding" || state === "speaking") return "core";
   if (facts.menu_open) return "options";
   if (facts.manual_input_open || facts.input_window_visible) return "input";
@@ -226,6 +229,7 @@ function resolveState(facts: FairyMotionFacts): FairyState {
   if (facts.notice_tone !== null || facts.submission_phase === "cancelled") {
     return "notify";
   }
+  if (facts.ambient_dialogue) return "notify";
   if (facts.manual_input_open) return "input";
 
   switch (facts.interaction?.phase) {

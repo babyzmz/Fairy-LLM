@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const PREFERENCES_FILE: &str = "preferences/desktop.json";
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 8;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -114,6 +114,12 @@ pub struct DesktopPreferences {
     #[serde(default)]
     pub pet_do_not_disturb: bool,
     #[serde(default = "default_true")]
+    pub ambient_dialogue_enabled: bool,
+    #[serde(default)]
+    pub ambient_dialogue_voice_enabled: bool,
+    #[serde(default)]
+    pub ambient_generated_dialogue_enabled: bool,
+    #[serde(default = "default_true")]
     pub pet_remember_position: bool,
     #[serde(default)]
     pub pet_renderer_mode: PetRendererMode,
@@ -162,6 +168,9 @@ impl Default for DesktopPreferences {
             pet_hover_enabled: true,
             pet_hover_dwell_ms: default_pet_hover_dwell_ms(),
             pet_do_not_disturb: false,
+            ambient_dialogue_enabled: true,
+            ambient_dialogue_voice_enabled: false,
+            ambient_generated_dialogue_enabled: false,
             pet_remember_position: true,
             pet_renderer_mode: PetRendererMode::Auto,
             pet_optics_mode: PetOpticsMode::Standard,
@@ -246,18 +255,19 @@ impl DesktopPreferencesStore {
         let schema_version = value
             .get("schema_version")
             .and_then(serde_json::Value::as_u64);
-        let legacy = matches!(schema_version, Some(1..=6));
+        let legacy_memory_schema = matches!(schema_version, Some(1..=6));
+        let needs_schema_upgrade = matches!(schema_version, Some(1..=7));
         let retired_activation_style = value
             .get("pet_activation_style")
             .and_then(serde_json::Value::as_str)
             == Some("fluid_strands");
-        let legacy_memory = legacy_memory_settings(&value, legacy);
+        let legacy_memory = legacy_memory_settings(&value, legacy_memory_schema);
         let mut preferences = match serde_json::from_slice::<DesktopPreferences>(&bytes) {
             Ok(preferences) => preferences,
-            Err(_) if legacy => DesktopPreferences::default(),
+            Err(_) if legacy_memory_schema => DesktopPreferences::default(),
             Err(error) => return Err(error.into()),
         };
-        if legacy {
+        if needs_schema_upgrade {
             preferences.schema_version = SCHEMA_VERSION;
             if validate(&preferences).is_err() {
                 preferences = DesktopPreferences::default();
@@ -630,7 +640,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 7);
+        assert_eq!(migrated.schema_version, 8);
         assert!(!migrated.voice_auto_play_pet);
         assert!(!migrated.pet_always_on_top);
         assert!(migrated.pet_muted);
@@ -663,7 +673,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 7);
+        assert_eq!(migrated.schema_version, 8);
         assert_eq!(migrated.pet_target_fps, 60);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -687,7 +697,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 7);
+        assert_eq!(migrated.schema_version, 8);
         assert_eq!(migrated.pet_optics_mode, PetOpticsMode::Standard);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -701,10 +711,13 @@ mod tests {
             .expect("create preferences parent");
         let mut stored =
             serde_json::to_value(DesktopPreferences::default()).expect("serialize defaults");
-        stored
-            .as_object_mut()
-            .expect("preferences object")
-            .remove("pet_activation_style");
+        let object = stored.as_object_mut().expect("preferences object");
+        object.insert("schema_version".to_owned(), serde_json::json!(7));
+        object.insert("pet_muted".to_owned(), serde_json::json!(true));
+        object.remove("pet_activation_style");
+        object.remove("ambient_dialogue_enabled");
+        object.remove("ambient_dialogue_voice_enabled");
+        object.remove("ambient_generated_dialogue_enabled");
         std::fs::write(
             &path,
             serde_json::to_vec_pretty(&stored).expect("stored bytes"),
@@ -712,6 +725,11 @@ mod tests {
         .expect("write stored preferences");
 
         let loaded = store.load().expect("load version seven preferences");
+        assert_eq!(loaded.schema_version, 8);
+        assert!(loaded.pet_muted);
+        assert!(loaded.ambient_dialogue_enabled);
+        assert!(!loaded.ambient_dialogue_voice_enabled);
+        assert!(!loaded.ambient_generated_dialogue_enabled);
         assert_eq!(
             loaded.pet_activation_style,
             PetActivationStyle::FluidResponse
@@ -776,7 +794,7 @@ mod tests {
         .expect("write legacy preferences");
 
         let migrated = store.load().expect("migrate preferences");
-        assert_eq!(migrated.schema_version, 7);
+        assert_eq!(migrated.schema_version, 8);
         assert!(!migrated.trash_auto_purge_30_days);
         assert_eq!(store.load().expect("reload migrated"), migrated);
     }
@@ -809,7 +827,7 @@ mod tests {
                 retention_days: 45,
             })
         );
-        assert_eq!(startup.preferences.schema_version, 7);
+        assert_eq!(startup.preferences.schema_version, 8);
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(
                 &std::fs::read(&path).expect("read pending migration")
@@ -825,7 +843,7 @@ mod tests {
             &std::fs::read(&path).expect("read migrated preferences"),
         )
         .expect("parse migrated preferences");
-        assert_eq!(persisted["schema_version"], serde_json::json!(7));
+        assert_eq!(persisted["schema_version"], serde_json::json!(8));
         assert!(persisted.get("memory_enabled").is_none());
         assert!(persisted.get("memory_retention_days").is_none());
         assert!(store

@@ -96,6 +96,9 @@ export interface DesktopPreferences {
   pet_hover_enabled: boolean;
   pet_hover_dwell_ms: number;
   pet_do_not_disturb: boolean;
+  ambient_dialogue_enabled: boolean;
+  ambient_dialogue_voice_enabled: boolean;
+  ambient_generated_dialogue_enabled: boolean;
   pet_remember_position: boolean;
   pet_renderer_mode: PetRendererMode;
   pet_optics_mode: PetOpticsMode;

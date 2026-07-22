@@ -282,10 +282,11 @@ export function PresenceApp({
       onPointerUp={finishPointerGesture}
     >
       <PresencePanel
-          actions={{
-            cancelTurn: () => channel.requestChatCancel(createPresenceSubmissionId()),
-            closeReply: setClosedReplyId,
-            closeSubmission: () => undefined,
+        actions={{
+          cancelTurn: () => channel.requestChatCancel(createPresenceSubmissionId()),
+          closeReply: setClosedReplyId,
+          closeSubmission: () => undefined,
+          dismissAmbient: () => undefined,
           dismissNotice,
           exit: () => void host.exit(),
           newChat: () => channel.requestNewChat(),
@@ -302,9 +303,9 @@ export function PresenceApp({
             void host.openMain().catch(() => undefined);
           },
           openSettings: () => void host.openSettings(),
-            requestInputFocus: () => void host.requestInputFocus(),
-            resetPosition: () => void resetPosition(windowPort, settingsRef.current),
-            retrySubmission: () => undefined,
+          requestInputFocus: () => void host.requestInputFocus(),
+          resetPosition: () => void resetPosition(windowPort, settingsRef.current),
+          retrySubmission: () => undefined,
           send: (text) => channel.requestChatSend(text, createPresenceSubmissionId()),
           setInputOpen,
           setMenuOpen,
@@ -312,20 +313,21 @@ export function PresenceApp({
             void updatePetPreferences({ pet_always_on_top: !alwaysOnTop }),
           toggleAutoPlay: () =>
             void updatePetPreferences({ voice_auto_play_pet: !autoPlay }),
-            toggleMuted: () => {
+          toggleMuted: () => {
             if (!muted) channel.requestVoiceStop();
-              void updatePetPreferences({ pet_muted: !muted });
-            },
-            stopVoice: () => channel.requestVoiceStop(),
-          }}
+            void updatePetPreferences({ pet_muted: !muted });
+          },
+          stopVoice: () => channel.requestVoiceStop(),
+        }}
         alwaysOnTop={alwaysOnTop}
+        ambientDialogue={null}
         autoPlay={autoPlay}
         inputOpen={inputOpen}
         menuOpen={menuOpen}
         muted={muted}
-          reply={reply}
-          submission={null}
-          view={view}
+        reply={reply}
+        submission={null}
+        view={view}
         visible={expanded}
       />
 

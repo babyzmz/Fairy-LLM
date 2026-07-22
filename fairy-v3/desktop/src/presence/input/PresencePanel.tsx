@@ -25,12 +25,17 @@ import {
 } from "react";
 import { AnimatePresence, m } from "motion/react";
 
-import type { PresenceReply, PresenceView } from "../domain/projection";
+import type {
+  PresenceAmbientDialogue,
+  PresenceReply,
+  PresenceView,
+} from "../domain/projection";
 
 export interface PresencePanelActions {
   cancelTurn(): void;
   closeReply(replyId: string): void;
   closeSubmission(): void;
+  dismissAmbient(): void;
   dismissNotice(): void;
   exit(): void;
   newChat(): void;
@@ -69,6 +74,7 @@ interface PresencePanelProps {
   menuOpen: boolean;
   muted: boolean;
   reply: PresenceReply | null;
+  ambientDialogue?: PresenceAmbientDialogue | null;
   submission: PresenceSubmissionCard | null;
   view: PresenceView;
   visible: boolean;
@@ -94,6 +100,7 @@ export function PresencePanel({
   menuOpen,
   muted,
   reply,
+  ambientDialogue = null,
   submission,
   view,
   visible,
@@ -147,7 +154,14 @@ export function PresencePanel({
     const observer = new ResizeObserver(report);
     observer.observe(content);
     return () => observer.disconnect();
-  }, [menuOpen, onExpandedHeightChange, reply?.id, submission?.id, visible]);
+  }, [
+    ambientDialogue?.presentation_id,
+    menuOpen,
+    onExpandedHeightChange,
+    reply?.id,
+    submission?.id,
+    visible,
+  ]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -226,6 +240,43 @@ export function PresencePanel({
               aria-label="Close reply"
               onClick={() => actions.closeReply(reply.id)}
               title="Close"
+              type="button"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </m.aside>
+      ) : null}
+
+      {!menuOpen && reply === null && submission === null && ambientDialogue !== null ? (
+        <m.aside
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          className="presence-card ambient-dialogue"
+          exit={{ opacity: 0, y: -4, scale: 0.985 }}
+          initial={{ opacity: 0, y: 6, scale: 0.98 }}
+          key={`ambient:${ambientDialogue.presentation_id}`}
+          role="status"
+          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <div className="presence-card-copy">
+            <strong>Fairy</strong>
+            <span>{ambientDialogue.text}</span>
+          </div>
+          <div className="presence-card-controls">
+            {view.speaking ? (
+              <button
+                aria-label="Stop reading"
+                onClick={actions.stopVoice}
+                title="Stop reading"
+                type="button"
+              >
+                <VolumeX size={14} />
+              </button>
+            ) : null}
+            <button
+              aria-label="Dismiss ambient dialogue"
+              onClick={actions.dismissAmbient}
+              title="Dismiss"
               type="button"
             >
               <X size={14} />

@@ -12,6 +12,7 @@ export type PresenceRequest =
   | { kind: "chat.new" }
   | { kind: "chat.send"; submission_id: string; text: string }
   | { kind: "chat.cancel"; submission_id: string }
+  | { kind: "input.state"; open: boolean; focused: boolean }
   | { kind: "voice.stop" };
 
 export type PresenceSubmissionFailure = "offline" | "busy" | "unavailable";
@@ -32,6 +33,7 @@ export interface PresenceChannel {
   requestChatSend(text: string, submissionId: string): void;
   requestChatCancel(submissionId: string): void;
   requestVoiceStop(): void;
+  publishInputState?(open: boolean, focused: boolean): void;
   onProjection(listener: (projection: PresenceProjectionState) => void): () => void;
   onSubmission(listener: (update: PresenceSubmissionUpdate) => void): () => void;
   onRequest(listener: (request: PresenceRequest) => void): () => void;
@@ -69,6 +71,13 @@ const requestSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
   z.object({ kind: z.literal("voice.stop") }).strict(),
+  z
+    .object({
+      kind: z.literal("input.state"),
+      open: z.boolean(),
+      focused: z.boolean(),
+    })
+    .strict(),
 ]);
 
 const submissionSchema = z
@@ -153,6 +162,8 @@ export function createPresenceChannel(): PresenceChannel {
     requestChatCancel: (submissionId) =>
       postRequest({ kind: "chat.cancel", submission_id: submissionId }),
     requestVoiceStop: () => postRequest({ kind: "voice.stop" }),
+    publishInputState: (open, focused) =>
+      postRequest({ kind: "input.state", open, focused }),
     onProjection(listener) {
       projectionListeners.add(listener);
       return () => projectionListeners.delete(listener);

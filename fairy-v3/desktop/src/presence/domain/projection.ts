@@ -31,6 +31,26 @@ export interface PresenceReply {
   streaming: boolean;
 }
 
+export interface PresenceAmbientDialogue {
+  presentation_id: string;
+  dialogue_id: string;
+  text: string;
+  source: "protected" | "authored_original" | "generated_original";
+  trigger:
+    | "startup"
+    | "idle_short"
+    | "idle_long"
+    | "user_returned"
+    | "network_restored"
+    | "battery_low"
+    | "charging_started"
+    | "self_commentary";
+  locale: string;
+  tts_allowed: boolean;
+  expires_at: string;
+  persona_digest: string;
+}
+
 export interface PresenceProjectionState {
   activity: PresenceActivity;
   work_state: PresenceWorkState;
@@ -41,6 +61,7 @@ export interface PresenceProjectionState {
   recent_activity_ms: number[];
   notice: PresenceNotice | null;
   reply: PresenceReply | null;
+  ambient_dialogue: PresenceAmbientDialogue | null;
   speaking: boolean;
 }
 
@@ -114,6 +135,29 @@ export const presenceProjectionStateSchema = z
         text: z.string().min(1).max(1_200),
         kind: z.enum(["scratch", "task_notice"]),
         streaming: z.boolean(),
+      })
+      .strict()
+      .nullable(),
+    ambient_dialogue: z
+      .object({
+        presentation_id: z.string().uuid(),
+        dialogue_id: z.string().min(1).max(128),
+        text: z.string().min(1).max(1_200),
+        source: z.enum(["protected", "authored_original", "generated_original"]),
+        trigger: z.enum([
+          "startup",
+          "idle_short",
+          "idle_long",
+          "user_returned",
+          "network_restored",
+          "battery_low",
+          "charging_started",
+          "self_commentary",
+        ]),
+        locale: z.string().min(2).max(16),
+        tts_allowed: z.boolean(),
+        expires_at: z.string().datetime({ offset: true }),
+        persona_digest: z.string().regex(/^[a-f0-9]{64}$/u),
       })
       .strict()
       .nullable(),
@@ -342,6 +386,7 @@ function initialPresenceProjection(): PresenceProjectionState {
     recent_activity_ms: [],
     notice: null,
     reply: null,
+    ambient_dialogue: null,
     speaking: false,
   };
 }
@@ -379,6 +424,7 @@ function reducePresenceProjection(
             kind: "task_notice",
             streaming: false,
           },
+    ambient_dialogue: null,
     speaking: false,
   };
 }

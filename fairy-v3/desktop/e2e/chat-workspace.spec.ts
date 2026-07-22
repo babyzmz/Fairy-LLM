@@ -210,12 +210,27 @@ test("Liquid Glass pet settings persist without overflowing the settings window"
   await expect(renderer).toHaveValue("compatibility");
   await page.getByRole("checkbox", { name: "Do not disturb" }).check();
   await expect(page.getByRole("checkbox", { name: "Do not disturb" })).toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: /^Ambient dialogue Use the reviewed/ }),
+  ).toBeChecked();
+  const ambientVoice = page.getByRole("checkbox", { name: /^Speak ambient dialogue/ });
+  await expect(ambientVoice).not.toBeChecked();
+  await ambientVoice.check();
+  await expect(ambientVoice).toBeChecked();
   await expect(page.getByRole("slider", { name: "Size" })).toHaveAttribute("min", "75");
   await expect(page.getByRole("slider", { name: "Opacity" })).toHaveAttribute("max", "100");
   expect(await page.evaluate(() => ({
     horizontal: Math.max(0, document.documentElement.scrollWidth - innerWidth),
     vertical: Math.max(0, document.documentElement.scrollHeight - innerHeight),
   }))).toEqual({ horizontal: 0, vertical: 0 });
+
+  await page.getByRole("button", { name: /^Advanced/ }).click();
+  const generatedDialogue = page.getByRole("checkbox", {
+    name: /^Generated ambient dialogue/,
+  });
+  await expect(generatedDialogue).not.toBeChecked();
+  await generatedDialogue.check();
+  await expect(generatedDialogue).toBeChecked();
   await page.screenshot({ path: testInfo.outputPath("pet-settings.png") });
 });
 

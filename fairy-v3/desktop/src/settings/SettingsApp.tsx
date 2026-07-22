@@ -405,9 +405,12 @@ function SettingsCategory(props: {
       <SettingToggle label="Expand on hover" checked={data.preferences.pet_hover_enabled} disabled={busy} onChange={(value) => void updatePreferences({ pet_hover_enabled: value })} />
       <SettingRange label="Hover dwell" value={data.preferences.pet_hover_dwell_ms} min={100} max={1000} step={50} suffix=" ms" disabled={busy || !data.preferences.pet_hover_enabled} onCommit={(value) => void updatePreferences({ pet_hover_dwell_ms: value })} />
       <SettingToggle label="Do not disturb" checked={data.preferences.pet_do_not_disturb} disabled={busy} onChange={(value) => void updatePreferences({ pet_do_not_disturb: value })} />
+      <SettingToggle label="Ambient dialogue" detail="Use the reviewed Fairy dialogue catalog while the device is idle" checked={data.preferences.ambient_dialogue_enabled} disabled={busy} onChange={(value) => void updatePreferences({ ambient_dialogue_enabled: value })} />
+      <SettingToggle label="Speak ambient dialogue" detail="Separate from automatic playback of real replies" checked={data.preferences.ambient_dialogue_voice_enabled} disabled={busy || !data.preferences.ambient_dialogue_enabled || data.preferences.pet_muted} onChange={(value) => void updatePreferences({ ambient_dialogue_voice_enabled: value })} />
       <SettingToggle label="Remember position" checked={data.preferences.pet_remember_position} disabled={busy} onChange={(value) => void updatePreferences({ pet_remember_position: value })} />
     </Category>;
     case "advanced": return <Category title="Advanced" subtitle="Diagnostics and developer tools">
+      <SettingToggle label="Generated ambient dialogue" detail="Allows at most two bounded low-cost generations per day; reviewed dialogue remains the fallback" checked={data.preferences.ambient_generated_dialogue_enabled} disabled={busy || !data.preferences.ambient_dialogue_enabled} onChange={(value) => void updatePreferences({ ambient_generated_dialogue_enabled: value })} />
       <SettingToggle label="Developer mode" checked={data.preferences.developer_mode} disabled={busy} onChange={(value) => void updatePreferences({ developer_mode: value })} />
       <HealthRow icon={<ShieldCheck size={17} />} label="Settings capability" status="Restricted settings methods only" tone="success" />
     </Category>;

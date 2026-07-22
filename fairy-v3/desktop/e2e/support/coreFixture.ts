@@ -747,6 +747,9 @@ async function installCoreFixture(page: Page) {
         pet_remember_position: true,
         pet_renderer_mode: "auto",
         pet_anchor: null,
+        ambient_dialogue_enabled: true,
+        ambient_dialogue_voice_enabled: false,
+        ambient_generated_dialogue_enabled: false,
         developer_mode: false,
       };
       let mcpServer = {

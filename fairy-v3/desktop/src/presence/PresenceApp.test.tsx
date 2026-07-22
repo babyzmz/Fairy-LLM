@@ -62,6 +62,7 @@ function projection(overrides: Partial<PresenceProjectionState> = {}): PresenceP
     recent_activity_ms: [Date.parse("2026-07-11T08:00:00.000Z")],
     notice: null,
     reply: null,
+    ambient_dialogue: null,
     speaking: false,
     ...overrides,
   };
@@ -111,6 +112,9 @@ function preferences(): DesktopPreferences {
     pet_hover_enabled: true,
     pet_hover_dwell_ms: 250,
     pet_do_not_disturb: false,
+    ambient_dialogue_enabled: true,
+    ambient_dialogue_voice_enabled: false,
+    ambient_generated_dialogue_enabled: false,
     pet_remember_position: true,
     pet_renderer_mode: "auto",
     pet_optics_mode: "standard",

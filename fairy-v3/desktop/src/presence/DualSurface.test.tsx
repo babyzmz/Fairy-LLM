@@ -84,6 +84,7 @@ function projection(overrides: Partial<PresenceProjectionState> = {}): PresenceP
     recent_activity_ms: [],
     notice: null,
     reply: null,
+    ambient_dialogue: null,
     speaking: false,
     ...overrides,
   };
@@ -122,6 +123,9 @@ function preferences(): DesktopPreferences {
     pet_hover_enabled: true,
     pet_hover_dwell_ms: 250,
     pet_do_not_disturb: false,
+    ambient_dialogue_enabled: true,
+    ambient_dialogue_voice_enabled: false,
+    ambient_generated_dialogue_enabled: false,
     pet_remember_position: true,
     pet_renderer_mode: "auto",
     pet_optics_mode: "standard",
@@ -525,6 +529,42 @@ describe("dual presence surfaces", () => {
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenCalledWith("expanded"));
     expect(screen.getByText("Streaming from the shared assistant turn")).toBeInTheDocument();
     expect(screen.queryByLabelText("Fairy companion")).not.toBeInTheDocument();
+  });
+
+  it("stops ambient speech when its one-time card is dismissed", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.parse("2026-07-23T09:00:01Z")}
+        storage={storage}
+      />,
+    );
+
+    act(() => channel.emit(projection({
+      ambient_dialogue: {
+        presentation_id: "019f4b33-c7fb-7652-a127-75914303dbeb",
+        dialogue_id: "idle.long.01",
+        text: "The quiet interval remains under control.",
+        source: "authored_original",
+        trigger: "idle_long",
+        locale: "en",
+        tts_allowed: true,
+        expires_at: "2026-07-23T09:00:30Z",
+        persona_digest: "a".repeat(64),
+      },
+      speaking: true,
+    })));
+
+    const dismiss = await screen.findByRole("button", {
+      name: "Dismiss ambient dialogue",
+    });
+    fireEvent.click(dismiss);
+
+    expect(channel.channel.requestVoiceStop).toHaveBeenCalledOnce();
+    expect(screen.queryByText("The quiet interval remains under control.")).toBeNull();
   });
 
   it("toggles explicit quick input ownership on consecutive core taps", async () => {

@@ -43,7 +43,7 @@ fn system_power_saver_enabled() -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn foreground_window_is_fullscreen() -> bool {
+pub fn foreground_window_is_fullscreen() -> bool {
     use std::mem::size_of;
 
     use windows_sys::Win32::Foundation::RECT;
@@ -89,7 +89,7 @@ fn rect_covers_monitor(
 }
 
 #[cfg(not(target_os = "windows"))]
-fn foreground_window_is_fullscreen() -> bool {
+pub fn foreground_window_is_fullscreen() -> bool {
     false
 }
 

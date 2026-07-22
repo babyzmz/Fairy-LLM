@@ -1,4 +1,5 @@
 import type {
+  AmbientDialogueEvaluateInput,
   ApprovalDecisionInput,
   BrowserActionInput,
   BrowserSessionStartInput,
@@ -201,6 +202,11 @@ export interface CoreTransport {
 }
 
 export class CoreClient {
+  readonly ambient = {
+    evaluate: (input: AmbientDialogueEvaluateInput) =>
+      this.transport.call("ambient.dialogue.evaluate", input),
+  };
+
   readonly desktop = {
     openSettings: () => {
       if (this.transport.openSettingsWindow === undefined) {

@@ -2,6 +2,8 @@ import type { components, operations } from "./generated/api";
 import { LOCAL_ONLY_CORE_METHODS } from "./generated/rpcMethods";
 export { CORE_METHOD_TRANSPORT, LOCAL_ONLY_CORE_METHODS } from "./generated/rpcMethods";
 import type {
+  AmbientDialogueDecision,
+  AmbientDialogueEvaluateInput,
   BrowserActionInput,
   BrowserActionResult,
   BrowserProfile,
@@ -26,6 +28,13 @@ import type {
 } from "./localContracts";
 
 export type {
+  AmbientContextSnapshot,
+  AmbientDialogueDecision,
+  AmbientDialogueEvaluateInput,
+  AmbientDialoguePreferences,
+  AmbientDialogueProjection,
+  AmbientDialogueState,
+  AmbientSurface,
   BrowserActionInput,
   BrowserActionKind,
   BrowserActionResult,
@@ -38,6 +47,9 @@ export type {
   BrowserSnapshot,
   BrowserTab,
   BrowserWorkerHealth,
+  DialogueSource,
+  DialogueTrigger,
+  GeneratedDialogueRequest,
   KnowledgeSyncRun,
   KnowledgeSyncRunInput,
   KnowledgeSyncStartInput,
@@ -321,6 +333,10 @@ export interface EventSubscriptionOptions {
 type EmptyParams = Record<string, never>;
 
 export interface CoreMethodMap {
+  "ambient.dialogue.evaluate": {
+    params: AmbientDialogueEvaluateInput;
+    result: AmbientDialogueDecision;
+  };
   health: { params: EmptyParams; result: Health };
   "browser.health": { params: EmptyParams; result: BrowserWorkerHealth };
   "browser.profile.get": { params: EmptyParams; result: BrowserProfile };

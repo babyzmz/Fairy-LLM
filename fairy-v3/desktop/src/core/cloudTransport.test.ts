@@ -190,6 +190,19 @@ describe("CloudCoreTransport", () => {
       status: 400,
       errorCode: "CAPABILITY_NOT_AVAILABLE",
     });
+    await expect(
+      transport.call("ambient.dialogue.evaluate", {
+        context: {
+          observed_at: "2026-07-23T09:00:00Z",
+          surface: "pet",
+          startup_eligible: true,
+        },
+      }),
+    ).rejects.toMatchObject({
+      name: "CloudCoreError",
+      status: 400,
+      errorCode: "CAPABILITY_NOT_AVAILABLE",
+    });
     expect(fetcher).not.toHaveBeenCalled();
   });
 

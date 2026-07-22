@@ -10,6 +10,7 @@ import {
 } from "./transport/presenceChannel";
 import {
   PresenceProjection,
+  type PresenceAmbientDialogue,
   type PresenceReply,
   type PresenceProjectionState,
 } from "./domain/projection";
@@ -18,6 +19,7 @@ import type { RealtimePresenceState } from "../realtime/RealtimeCompanion";
 interface PresenceBridgeProps {
   events: readonly EventEnvelope[];
   reply?: PresenceReply | null;
+  ambientDialogue?: PresenceAmbientDialogue | null;
   speaking?: boolean;
   realtimePresence?: RealtimePresenceState;
   onNewChat?(): void | Promise<void>;
@@ -25,12 +27,15 @@ interface PresenceBridgeProps {
   onCancel?(): void | Promise<void>;
   onStopVoice?(): void;
   onOpenRealtime?(): void;
+  onInputState?(state: { open: boolean; focused: boolean }): void;
+  onAmbientVisibilityChange?(dialogue: PresenceAmbientDialogue | null): void;
   channelFactory?: () => PresenceChannel;
 }
 
 export function PresenceBridge({
   events,
   reply = null,
+  ambientDialogue = null,
   speaking = false,
   realtimePresence = "idle",
   onNewChat,
@@ -38,14 +43,22 @@ export function PresenceBridge({
   onCancel,
   onStopVoice,
   onOpenRealtime,
+  onInputState,
+  onAmbientVisibilityChange,
   channelFactory = createPresenceChannel,
 }: PresenceBridgeProps) {
   const projection = useMemo(() => {
     const durable = [...events]
         .sort((left, right) => left.cursor - right.cursor)
         .reduce(PresenceProjection.reduce, PresenceProjection.initial());
-    return withEphemeralPresence(durable, reply, speaking, realtimePresence);
-  }, [events, reply, speaking, realtimePresence]);
+    return withEphemeralPresence(
+      durable,
+      reply,
+      ambientDialogue,
+      speaking,
+      realtimePresence,
+    );
+  }, [ambientDialogue, events, reply, speaking, realtimePresence]);
   const projectionRef = useRef(projection);
   const channelRef = useRef<PresenceChannel | null>(null);
   projectionRef.current = projection;
@@ -68,6 +81,7 @@ export function PresenceBridge({
         onCancel,
         onStopVoice,
         onOpenRealtime,
+        onInputState,
       );
     });
     channel.publishProjection(projectionRef.current);
@@ -76,11 +90,23 @@ export function PresenceBridge({
       channel.close();
       channelRef.current = null;
     };
-  }, [channelFactory, onCancel, onNewChat, onOpenRealtime, onSend, onStopVoice]);
+  }, [
+    channelFactory,
+    onCancel,
+    onInputState,
+    onNewChat,
+    onOpenRealtime,
+    onSend,
+    onStopVoice,
+  ]);
 
   useEffect(() => {
     channelRef.current?.publishProjection(projection);
   }, [projection]);
+
+  useEffect(() => {
+    onAmbientVisibilityChange?.(projection.ambient_dialogue);
+  }, [onAmbientVisibilityChange, projection.ambient_dialogue]);
 
   return null;
 }
@@ -88,13 +114,21 @@ export function PresenceBridge({
 function withEphemeralPresence(
   projection: PresenceProjectionState,
   reply: PresenceReply | null,
+  ambientDialogue: PresenceAmbientDialogue | null,
   speaking: boolean,
   realtimePresence: RealtimePresenceState,
 ): PresenceProjectionState {
   const realtimeWorkState = realtimePresenceWorkState(realtimePresence);
+  const effectiveReply = projection.notice === null && reply !== null ? reply : projection.reply;
+  const ambientBlocked =
+    projection.notice !== null ||
+    effectiveReply !== null ||
+    realtimeWorkState !== null ||
+    !["idle", "ready"].includes(projection.work_state);
   return {
     ...projection,
-    reply: projection.notice === null && reply !== null ? reply : projection.reply,
+    reply: effectiveReply,
+    ambient_dialogue: ambientBlocked ? null : ambientDialogue,
     work_state: realtimeWorkState ?? projection.work_state,
     status_text: realtimeStatusText(realtimePresence) ?? projection.status_text,
     speaking: realtimePresence === "speaking" || speaking,
@@ -134,6 +168,7 @@ function handleRequest(
   onCancel: (() => void | Promise<void>) | undefined,
   onStopVoice: (() => void) | undefined,
   onOpenRealtime: (() => void) | undefined,
+  onInputState: ((state: { open: boolean; focused: boolean }) => void) | undefined,
 ): void {
   switch (request.kind) {
     case "projection":
@@ -191,6 +226,9 @@ function handleRequest(
       break;
     case "voice.stop":
       onStopVoice?.();
+      break;
+    case "input.state":
+      onInputState?.({ open: request.open, focused: request.focused });
       break;
   }
 }
