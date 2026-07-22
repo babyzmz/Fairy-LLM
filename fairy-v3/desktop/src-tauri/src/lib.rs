@@ -588,6 +588,8 @@ struct PresenceMonitor {
 
 #[derive(Debug)]
 struct PetGroupDragSession {
+    // Kept only for the fenced legacy command contract; native pointer sessions always use the
+    // fixed owner token below and no WebView can create or replace them.
     session_id: String,
     start_pointer: PhysicalPoint,
     start_anchor: PhysicalPoint,
@@ -1089,20 +1091,13 @@ pub(crate) fn begin_native_pet_drag(
             })
             .unwrap_or(fallback_placement);
         set_presence_placement(state, placement);
-        if let Some(input) = app.get_webview_window(PET_INPUT_LABEL) {
-            let _ = input.set_ignore_cursor_events(true);
-            let _ = input.hide();
-        }
+        let input_geometry = current_pet_input_geometry(state)?;
         let session = PetGroupDragSession {
             session_id: "native-pointer".to_owned(),
             start_pointer,
             start_anchor: placement.anchor,
             current_placement: placement,
-            input_geometry: PetInputGeometry {
-                layout: PetInputLayout::Hidden,
-                compact_width_logical: PET_INPUT_COMPACT_WIDTH_LOGICAL,
-                compact_height_logical: 64.0,
-            },
+            input_geometry,
             monitors,
             native_windows,
             native_renderer_drag_active: true,
@@ -1134,9 +1129,6 @@ pub(crate) fn move_native_pet_drag(
     let session = drag
         .as_mut()
         .ok_or_else(|| "Pet drag has not started".to_owned())?;
-    if session.session_id != "native-pointer" {
-        return Err("PET_DRAG_SESSION_MISMATCH".to_owned());
-    }
     let desired_anchor = PhysicalPoint {
         x: session
             .start_anchor
@@ -1162,18 +1154,13 @@ pub(crate) fn move_native_pet_drag(
     let crossed_surface = placement.monitor_work_area
         != session.current_placement.monitor_work_area
         || (placement.scale_factor - session.current_placement.scale_factor).abs() > f64::EPSILON;
-    if crossed_surface && !session.native_renderer_suspended {
-        let _ = app.emit_to(
-            PET_RENDER_LABEL,
-            PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT,
-            NativeRendererLifecycleSignal {
-                schema_version: 1,
-                reason: "drag_suspended",
-            },
-        );
-        session.native_renderer_suspended = true;
-    }
-    move_pet_window_visual(app, Some(session.native_windows), &placement)?;
+    move_pet_window_group_during_drag(
+        app,
+        session.native_windows,
+        &placement,
+        session.input_geometry,
+        crossed_surface,
+    )?;
     session.current_placement = placement;
     set_presence_placement(state, placement);
     Ok(())
@@ -1188,15 +1175,8 @@ pub(crate) fn end_native_pet_drag(
             .pet_drag
             .lock()
             .map_err(|_| "Pet drag lock is unavailable".to_owned())?;
-        match drag.as_ref() {
-            Some(session) if session.session_id == "native-pointer" => drag.take(),
-            Some(_) => return Err("PET_DRAG_SESSION_MISMATCH".to_owned()),
-            None => None,
-        }
+        drag.take()
     };
-    let native_renderer_suspended = session
-        .as_ref()
-        .is_some_and(|session| session.native_renderer_suspended);
     let native_renderer_drag_active = session
         .as_ref()
         .is_some_and(|session| session.native_renderer_drag_active);
@@ -1234,7 +1214,7 @@ pub(crate) fn end_native_pet_drag(
         Ok(())
     })();
     state.presence.set_repositioning(false);
-    let resume_result = if native_renderer_drag_active && !native_renderer_suspended {
+    let resume_result = if native_renderer_drag_active {
         state
             .native_gpu
             .set_drag_active(false)
@@ -2880,6 +2860,51 @@ fn move_pet_window_visual(
         .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
     let render_handle = native_windows.handle_for(PET_RENDER_LABEL)?;
     move_presence_window_positions(&render, render_handle, placement.render_frame, None)
+}
+
+fn move_pet_window_group_during_drag(
+    app: &tauri::AppHandle,
+    native_windows: PresenceNativeWindows,
+    placement: &PresenceWindowPlacement,
+    input_geometry: PetInputGeometry,
+    scale_changed: bool,
+) -> Result<(), String> {
+    if matches!(input_geometry.layout, PetInputLayout::Hidden) {
+        return move_pet_window_visual(app, Some(native_windows), placement);
+    }
+    let render = app
+        .get_webview_window(PET_RENDER_LABEL)
+        .ok_or_else(|| "Pet render window is unavailable".to_owned())?;
+    let input = app
+        .get_webview_window(PET_INPUT_LABEL)
+        .ok_or_else(|| "Pet input window is unavailable".to_owned())?;
+    let render_handle = native_windows.handle_for(PET_RENDER_LABEL)?;
+    let input_handle = native_windows.handle_for(PET_INPUT_LABEL)?;
+    let input_frame = pet_input_frame_for_geometry(*placement, input_geometry);
+    move_presence_window_positions(
+        &render,
+        render_handle,
+        placement.render_frame,
+        Some((&input, input_handle, input_frame)),
+    )?;
+    if scale_changed {
+        let scale = placement.scale_factor.clamp(0.5, 4.0);
+        apply_pet_input_window_region(
+            input_handle,
+            input_geometry.layout,
+            input_frame.width,
+            input_frame.height,
+            (input_geometry.compact_width_logical * scale)
+                .round()
+                .max(0.0) as u32,
+            (input_geometry.compact_height_logical * scale)
+                .round()
+                .max(0.0) as u32,
+            scale,
+            placement.expansion_direction,
+        )?;
+    }
+    Ok(())
 }
 
 fn move_pet_window_group_with_geometry(
@@ -5475,7 +5500,7 @@ mod native_window_group_tests {
     }
 
     #[test]
-    fn native_drag_moves_only_the_visual_until_input_settlement() {
+    fn hidden_input_drag_moves_only_the_visible_native_surfaces() {
         let render_start = PhysicalFrame {
             x: 80,
             y: 90,
@@ -5503,7 +5528,7 @@ mod native_window_group_tests {
             Some(native_surface.0 as isize),
             None,
         )
-        .expect("native visual should move without relocating WebView2 input");
+        .expect("hidden input should not be relocated during native drag");
 
         assert_eq!(
             native_presence_window_frame(render.0 as isize).unwrap(),

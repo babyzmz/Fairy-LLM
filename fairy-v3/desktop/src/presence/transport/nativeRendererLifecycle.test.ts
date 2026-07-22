@@ -10,12 +10,12 @@ describe("native renderer lifecycle signal", () => {
     }).success).toBe(true);
     expect(nativeRendererLifecycleSignalSchema.safeParse({
       schema_version: 1,
-      reason: "drag_suspended",
+      reason: "drag_ended",
     }).success).toBe(true);
     expect(nativeRendererLifecycleSignalSchema.safeParse({
       schema_version: 1,
-      reason: "drag_ended",
-    }).success).toBe(true);
+      reason: "drag_suspended",
+    }).success).toBe(false);
     expect(nativeRendererLifecycleSignalSchema.safeParse({
       schema_version: 1,
       reason: "resume",

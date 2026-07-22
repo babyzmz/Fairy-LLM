@@ -319,13 +319,8 @@ export function PresenceRenderApp({
         void nativeRendererHost.stop();
         return;
       }
-      if (signal.reason === "drag_suspended") {
-        // Drag mode is handled by the native session. Keep the last valid frame visible while a
-        // cross-monitor candidate is prepared instead of tearing down the active surface.
-        return;
-      }
       if (signal.reason === "drag_ended") {
-        nativeRendererHost.refreshCaptureSource(renderSnapshotRef.current);
+        nativeRendererHost.refreshNativeSurface(renderSnapshotRef.current);
         return;
       }
       nativeRendererHost.reconfigure(renderSnapshotRef.current);

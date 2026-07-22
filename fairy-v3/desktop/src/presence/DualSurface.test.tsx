@@ -165,9 +165,6 @@ function hostHarness() {
       if (input.request_focus) await requestInputFocus();
       return { session_id: input.session_id, revision: input.revision };
     }),
-    beginGroupDrag: vi.fn(async () => undefined),
-    moveGroupDrag: vi.fn(async () => true),
-    endGroupDrag: vi.fn(async () => preferences()),
     resetPosition: vi.fn(async () => preferences()),
     openMain: vi.fn(async () => undefined),
     openSettings: vi.fn(async () => undefined),
@@ -179,6 +176,12 @@ function hostHarness() {
       inputListener?.();
     },
   };
+}
+
+function expectNativeDragOnly(host: PetHost) {
+  expect(host).not.toHaveProperty("beginGroupDrag");
+  expect(host).not.toHaveProperty("moveGroupDrag");
+  expect(host).not.toHaveProperty("endGroupDrag");
 }
 
 function interactionHarness() {
@@ -394,6 +397,7 @@ describe("dual presence surfaces", () => {
                 started_at_ms: 1,
                 last_presented_at_ms: 2,
                 presentation_revision: 0,
+                visual_sequence: 0,
                 error_code: null,
               };
             },
@@ -454,9 +458,6 @@ describe("dual presence surfaces", () => {
     const startsBeforeDrag = startCount();
     const stopsBeforeDrag = stopCount();
 
-    act(() => lifecycle.emit("drag_suspended"));
-    await act(async () => Promise.resolve());
-    expect(stopCount()).toBe(stopsBeforeDrag);
     act(() => lifecycle.emit("surface_changed"));
     await waitFor(() => expect(commands.filter(
       (entry) => entry.command === "pet_native_gpu_rebind",
@@ -918,7 +919,7 @@ describe("dual presence surfaces", () => {
     });
     fireEvent.click(core);
 
-    expect(host.host.beginGroupDrag).not.toHaveBeenCalled();
+    expectNativeDragOnly(host.host);
     await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220));
   });
 
@@ -944,12 +945,12 @@ describe("dual presence surfaces", () => {
       screenX: 520,
       screenY: 420,
     });
-    expect(host.host.beginGroupDrag).not.toHaveBeenCalled();
+    expectNativeDragOnly(host.host);
 
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 340));
     });
-    expect(host.host.beginGroupDrag).not.toHaveBeenCalled();
+    expectNativeDragOnly(host.host);
     expect(surface).toHaveAttribute("data-moving", "false");
 
     fireEvent.pointerMove(core, {
@@ -969,8 +970,7 @@ describe("dual presence surfaces", () => {
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 80));
     });
-    expect(host.host.moveGroupDrag).not.toHaveBeenCalled();
-    expect(host.host.endGroupDrag).not.toHaveBeenCalled();
+    expectNativeDragOnly(host.host);
     expect(surface).toHaveAttribute("data-moving", "false");
     expect(surface).toHaveAttribute("data-layout", "hidden");
   });
@@ -999,21 +999,19 @@ describe("dual presence surfaces", () => {
       screenX: 548,
       screenY: 432,
     });
-    expect(host.host.beginGroupDrag).not.toHaveBeenCalled();
+    expectNativeDragOnly(host.host);
 
     fireEvent.pointerUp(window, {
       pointerId: 10,
       screenX: 548,
       screenY: 432,
     });
-    expect(host.host.moveGroupDrag).not.toHaveBeenCalled();
-    expect(host.host.endGroupDrag).not.toHaveBeenCalled();
+    expectNativeDragOnly(host.host);
   });
 
   it("does not capture the pointer or poll native drag RPCs", async () => {
     const channel = channelHarness();
     const host = hostHarness();
-    const moveGroupDrag = vi.mocked(host.host.moveGroupDrag);
     render(
       <PresenceInputApp
         channel={channel.channel}
@@ -1055,11 +1053,7 @@ describe("dual presence surfaces", () => {
     expect(surface).toHaveAttribute("data-moving", "false");
 
     fireEvent.lostPointerCapture(core, { pointerId: 11 });
-    expect(host.host.endGroupDrag).not.toHaveBeenCalled();
-
-    moveGroupDrag.mockResolvedValue(false);
-    expect(host.host.moveGroupDrag).not.toHaveBeenCalled();
-    expect(host.host.endGroupDrag).not.toHaveBeenCalled();
+    expectNativeDragOnly(host.host);
     expect(releasePointerCapture).not.toHaveBeenCalled();
     expect(surface).toHaveAttribute("data-moving", "false");
   });
@@ -1100,10 +1094,7 @@ describe("dual presence surfaces", () => {
     await drag(21, 520);
     await drag(22, 580);
 
-    const sessions = vi.mocked(host.host.beginGroupDrag).mock.calls.map(([sessionId]) => sessionId);
-    expect(sessions).toHaveLength(0);
-    expect(host.host.moveGroupDrag).not.toHaveBeenCalled();
-    expect(host.host.endGroupDrag).not.toHaveBeenCalled();
+    expectNativeDragOnly(host.host);
   });
 
   it("projects native coordinator repositioning without opening a WebView drag session", async () => {
@@ -1138,7 +1129,7 @@ describe("dual presence surfaces", () => {
       screenX: 544,
       screenY: 432,
     });
-    expect(host.host.endGroupDrag).not.toHaveBeenCalled();
+    expectNativeDragOnly(host.host);
 
     act(() => coordinator.emit(interactionAt(31, "repositioning", 300, 300)));
     await waitFor(() => expect(screen.getByTestId("presence-input-surface"))

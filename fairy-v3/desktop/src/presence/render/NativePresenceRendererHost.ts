@@ -54,6 +54,7 @@ const nativeGpuStatusSchema = z.object({
   started_at_ms: z.number().int().nonnegative().nullable(),
   last_presented_at_ms: z.number().int().nonnegative().nullable(),
   presentation_revision: z.number().int().nonnegative(),
+  visual_sequence: z.number().int().nonnegative(),
   fallback_reason: z.string().max(128).nullable().default(null),
   error_code: z.string().nullable(),
 }).strict();
@@ -88,6 +89,7 @@ export type NativeRendererState =
   | "disposed";
 
 export interface NativeGpuPresentationRequest {
+  visual_sequence: number;
   capsule_visible: boolean;
   input_surface_visible: boolean;
   input_surface_height: number;
@@ -144,6 +146,7 @@ export class NativePresenceRendererHost {
   private disposed = false;
   private requestedMode: PresenceRendererMode = "auto";
   private lastStatus: NativeGpuStatus | null = null;
+  private visualSequence = 0;
 
   constructor(private readonly options: NativePresenceRendererHostOptions = {}) {
     this.invokeCommand = options.invokeCommand === undefined
@@ -224,7 +227,7 @@ export class NativePresenceRendererHost {
     this.scheduleSourceRebind();
   }
 
-  refreshCaptureSource(snapshot: PresenceRenderSnapshot): void {
+  refreshNativeSurface(snapshot: PresenceRenderSnapshot): void {
     if (this.disposed) return;
     this.latestSnapshot = snapshot;
     if (this.state === "suspended") {
@@ -283,7 +286,7 @@ export class NativePresenceRendererHost {
     }
     this.setState("starting");
     this.report("initializing", null);
-    const presentation = nativePresentationForSnapshot(snapshot);
+    const presentation = this.sequencePresentation(nativePresentationForSnapshot(snapshot));
     try {
       const status = parseHealthyStatus(await this.invokeCommand("pet_native_gpu_start", {
         request: {
@@ -312,9 +315,10 @@ export class NativePresenceRendererHost {
   private async updateNow(): Promise<void> {
     const snapshot = this.latestSnapshot;
     if (snapshot === null || this.invokeCommand === null || this.state !== "running") return;
-    const presentation = nativePresentationForSnapshot(snapshot);
-    const key = presentationKey(presentation);
+    const basePresentation = nativePresentationForSnapshot(snapshot);
+    const key = presentationKey(basePresentation);
     if (key === this.lastPresentationKey) return;
+    const presentation = this.sequencePresentation(basePresentation);
     try {
       this.lastStatus = parseHealthyStatus(await this.invokeCommand("pet_native_gpu_update", {
         request: presentation,
@@ -450,7 +454,7 @@ export class NativePresenceRendererHost {
 
   private async rebindNow(snapshot: PresenceRenderSnapshot): Promise<boolean> {
     if (this.invokeCommand === null || this.state !== "running") return false;
-    const presentation = nativePresentationForSnapshot(snapshot);
+    const presentation = this.sequencePresentation(nativePresentationForSnapshot(snapshot));
     this.lastStatus = parseHealthyStatus(await this.invokeCommand("pet_native_gpu_rebind", {
       request: {
         target_frame_rate: snapshot.target_frame_rate,
@@ -461,6 +465,13 @@ export class NativePresenceRendererHost {
     this.startedTargetFrameRate = snapshot.target_frame_rate;
     this.startedSurfaceKey = nativeSurfaceKey(snapshot);
     return true;
+  }
+
+  private sequencePresentation(
+    presentation: NativeGpuPresentationRequest,
+  ): NativeGpuPresentationRequest {
+    this.visualSequence += 1;
+    return { ...presentation, visual_sequence: this.visualSequence };
   }
 
   private scheduleRecovery(): void {
@@ -537,6 +548,7 @@ export function nativePresentationForSnapshot(
     ? 88
     : (placement.anchor.y - placement.render_frame.y) / scale;
   return {
+    visual_sequence: 0,
     capsule_visible: snapshot.input_capsule_visible,
     input_surface_visible: snapshot.input_surface_visible,
     input_surface_height: clamp(snapshot.input_capsule_height, 64, 104),
@@ -612,7 +624,8 @@ function parseHealthyStatus(value: unknown): NativeGpuStatus {
 }
 
 function presentationKey(presentation: NativeGpuPresentationRequest): string {
-  return JSON.stringify(presentation);
+  const { visual_sequence: _visualSequence, ...state } = presentation;
+  return JSON.stringify(state);
 }
 
 export function nativeSurfaceKey(snapshot: PresenceRenderSnapshot): string | null {

@@ -239,11 +239,17 @@ impl WindowsNativeGpuSession {
     }
 
     pub(super) fn update(&self, presentation: NativeGpuPresentation) -> Result<(), NativeGpuError> {
-        *self.presentation.write().map_err(|_| {
-            NativeGpuError::StartFailed("presentation lock unavailable".to_owned())
-        })? = presentation;
+        let mut current = self
+            .presentation
+            .write()
+            .map_err(|_| NativeGpuError::StartFailed("presentation lock unavailable".to_owned()))?;
+        if !accepts_visual_sequence(current.visual_sequence, presentation.visual_sequence) {
+            return Ok(());
+        }
+        *current = presentation;
         if let Ok(mut status) = self.status.lock() {
             status.presentation_revision = status.presentation_revision.saturating_add(1);
+            status.visual_sequence = presentation.visual_sequence;
         }
         Ok(())
     }
@@ -272,6 +278,10 @@ impl WindowsNativeGpuSession {
     pub(super) fn is_drag_active(&self) -> bool {
         self.render_control.is_drag_active()
     }
+}
+
+fn accepts_visual_sequence(current: u64, candidate: u64) -> bool {
+    candidate > current
 }
 
 struct NativeRenderControl {
@@ -2625,6 +2635,13 @@ fn format_monitor_handle(handle: HMONITOR) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visual_sequence_rejects_duplicate_and_late_native_presentations() {
+        assert!(accepts_visual_sequence(8, 9));
+        assert!(!accepts_visual_sequence(8, 8));
+        assert!(!accepts_visual_sequence(8, 7));
+    }
     use windows::Win32::Graphics::Dxgi::Common::DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
 
     #[test]

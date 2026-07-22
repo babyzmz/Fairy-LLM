@@ -68,6 +68,8 @@ pub enum NativeGpuExpansionDirection {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct NativeGpuPresentation {
     #[serde(default)]
+    pub visual_sequence: u64,
+    #[serde(default)]
     pub capsule_visible: bool,
     #[serde(default)]
     pub input_surface_visible: bool,
@@ -114,6 +116,7 @@ pub struct NativeGpuPresentation {
 impl Default for NativeGpuPresentation {
     fn default() -> Self {
         Self {
+            visual_sequence: 0,
             capsule_visible: false,
             input_surface_visible: false,
             input_surface_height: default_input_surface_height(),
@@ -280,6 +283,7 @@ pub struct NativeGpuStatus {
     pub started_at_ms: Option<u64>,
     pub last_presented_at_ms: Option<u64>,
     pub presentation_revision: u64,
+    pub visual_sequence: u64,
     pub fallback_reason: Option<String>,
     pub error_code: Option<String>,
 }
@@ -312,6 +316,7 @@ impl NativeGpuStatus {
             surface_height: config.render_frame.height,
             target_x: config.render_frame.x,
             target_y: config.render_frame.y,
+            visual_sequence: config.presentation.visual_sequence,
             capture_source_stage: "selecting_monitor".to_owned(),
             ..Self::default()
         }

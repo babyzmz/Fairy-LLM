@@ -11,7 +11,6 @@ export const nativeRendererLifecycleSignalSchema = z.object({
     "resume",
     "surface_changed",
     "shutdown",
-    "drag_suspended",
     "drag_ended",
   ]),
 }).strict();

@@ -29,13 +29,6 @@ export interface PetHost {
   applyInputPresentation(
     input: PetInputPresentationApply,
   ): Promise<PetInputPresentationCommit>;
-  beginGroupDrag(
-    sessionId: string,
-    initialDeltaX: number,
-    initialDeltaY: number,
-  ): Promise<void>;
-  moveGroupDrag(sessionId: string, deltaX: number, deltaY: number): Promise<boolean>;
-  endGroupDrag(sessionId: string, expectedRevision: number): Promise<DesktopPreferences>;
   resetPosition(expectedRevision: number): Promise<DesktopPreferences>;
   openMain(): Promise<void>;
   openSettings(): Promise<void>;
@@ -89,20 +82,6 @@ export function createDefaultPetHost(): PetHost {
       invoke<PetInputPresentationCommit>("pet_input_presentation_begin"),
     applyInputPresentation: (input) =>
       invoke<PetInputPresentationCommit>("pet_input_presentation_apply", { input }),
-    beginGroupDrag: (sessionId, initialDeltaX, initialDeltaY) =>
-      invoke("pet_window_group_begin_drag", {
-        sessionId,
-        initialDeltaX: Math.round(initialDeltaX),
-        initialDeltaY: Math.round(initialDeltaY),
-      }),
-    moveGroupDrag: (sessionId, deltaX, deltaY) =>
-      invoke("pet_window_group_move", {
-        sessionId,
-        deltaX: Math.round(deltaX),
-        deltaY: Math.round(deltaY),
-      }),
-    endGroupDrag: (sessionId, expectedRevision) =>
-      invoke("pet_window_group_end_drag", { sessionId, expectedRevision }),
     resetPosition: (expectedRevision) =>
       invoke("pet_window_group_reset_position", { expectedRevision }),
     openMain: () => invoke("open_main_window"),
@@ -164,14 +143,6 @@ function createBrowserPetHost(): PetHost {
       }
       presentationRevision = input.revision;
       return { session_id: presentationSession, revision: presentationRevision };
-    },
-    async beginGroupDrag() {},
-    async moveGroupDrag() {
-      return true;
-    },
-    async endGroupDrag() {
-      preferences = { ...preferences, revision: preferences.revision + 1 };
-      return preferences;
     },
     async resetPosition() {
       preferences = {

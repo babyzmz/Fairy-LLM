@@ -115,6 +115,7 @@ function healthyStatus(
     started_at_ms: 1,
     last_presented_at_ms: 2,
     presentation_revision: 0,
+    visual_sequence: 0,
     fallback_reason: null,
     error_code: null,
     ...overrides,
@@ -152,6 +153,7 @@ describe("NativePresenceRendererHost", () => {
     expect(start?.args).toEqual({
       request: expect.objectContaining({
         target_frame_rate: 144,
+        visual_sequence: 1,
         capsule_visible: true,
         expansion_direction: "left",
         visual_state: "responding",
@@ -201,7 +203,11 @@ describe("NativePresenceRendererHost", () => {
       expect(calls.filter((call) => call.command === "pet_native_gpu_update")).toHaveLength(1);
     });
     expect(calls.find((call) => call.command === "pet_native_gpu_update")?.args).toEqual({
-      request: expect.objectContaining({ opacity: 0.8, visual_state: "tool" }),
+      request: expect.objectContaining({
+        opacity: 0.8,
+        visual_sequence: 2,
+        visual_state: "tool",
+      }),
     });
 
     await host.start(snapshot({ target_frame_rate: 300, frame_rate_limit: 300 }));
@@ -214,6 +220,7 @@ describe("NativePresenceRendererHost", () => {
       request: expect.objectContaining({
         target_frame_rate: 300,
         frame_rate_limit: 300,
+        visual_sequence: 3,
       }),
     });
 
@@ -420,7 +427,7 @@ describe("NativePresenceRendererHost", () => {
     const current = snapshot({ interaction: interaction() });
     await host.start(current);
 
-    host.refreshCaptureSource(current);
+    host.refreshNativeSurface(current);
     await Promise.resolve();
     expect(commands.filter((command) => command === "pet_native_gpu_rebind"))
       .toHaveLength(0);
