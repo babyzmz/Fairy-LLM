@@ -31,7 +31,7 @@ pub enum NativeGpuBackend {
 pub enum NativeGpuOpticsSource {
     #[default]
     None,
-    HostBackdrop,
+    HostBackdropIdentity,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -244,20 +244,17 @@ pub struct NativeGpuStatus {
     pub backend: NativeGpuBackend,
     pub optics_source: NativeGpuOpticsSource,
     pub lifecycle: NativeGpuLifecycle,
-    pub zero_copy_capture: bool,
+    pub host_backdrop_composition: bool,
+    pub backdrop_pixel_access: bool,
+    pub continuous_displacement_supported: bool,
     pub pixel_ipc: bool,
-    pub hdr_capture: bool,
+    pub hdr_composition: bool,
     pub target_frame_rate: u16,
     pub effective_frame_rate: u16,
     pub display_refresh_rate_hz: u16,
-    pub capture_frame_rate_limit: u16,
     pub frames_presented: u64,
-    pub capture_fps_avg: f64,
+    pub present_fps_avg: f64,
     pub frame_interval_p1_fps: f64,
-    pub source_frames_received: u64,
-    pub source_capture_fps_avg: f64,
-    pub source_frame_interval_p1_fps: f64,
-    pub callback_to_present_p95_ms: f64,
     pub present_p95_ms: f64,
     pub surface_width: u32,
     pub surface_height: u32,
@@ -275,11 +272,8 @@ pub struct NativeGpuStatus {
     pub output_device_name: Option<String>,
     pub output_index: Option<u32>,
     pub hdr_color_space: Option<String>,
-    pub capture_item_width: u32,
-    pub capture_item_height: u32,
-    pub capture_window_handle: Option<String>,
-    pub capture_source_stage: String,
-    pub capture_source_hresult: Option<String>,
+    pub composition_stage: String,
+    pub composition_hresult: Option<String>,
     pub started_at_ms: Option<u64>,
     pub last_presented_at_ms: Option<u64>,
     pub presentation_revision: u64,
@@ -294,9 +288,11 @@ impl NativeGpuStatus {
             backend: NativeGpuBackend::Unavailable,
             optics_source: NativeGpuOpticsSource::None,
             lifecycle: NativeGpuLifecycle::Idle,
-            zero_copy_capture: false,
+            host_backdrop_composition: false,
+            backdrop_pixel_access: false,
+            continuous_displacement_supported: false,
             pixel_ipc: false,
-            capture_source_stage: "idle".to_owned(),
+            composition_stage: "idle".to_owned(),
             ..Self::default()
         }
     }
@@ -305,11 +301,11 @@ impl NativeGpuStatus {
     fn starting(config: NativeGpuConfig) -> Self {
         Self {
             backend: NativeGpuBackend::WindowsHostBackdropD3d11Composition,
-            optics_source: NativeGpuOpticsSource::HostBackdrop,
+            optics_source: NativeGpuOpticsSource::HostBackdropIdentity,
             lifecycle: NativeGpuLifecycle::Starting,
-            // Retained for transport compatibility. HostBackdrop is a compositor brush, not a
-            // capture source, so capture-specific diagnostics remain false or zero.
-            zero_copy_capture: false,
+            host_backdrop_composition: false,
+            backdrop_pixel_access: false,
+            continuous_displacement_supported: false,
             pixel_ipc: false,
             target_frame_rate: config.target_frame_rate,
             surface_width: config.render_frame.width,
@@ -317,7 +313,7 @@ impl NativeGpuStatus {
             target_x: config.render_frame.x,
             target_y: config.render_frame.y,
             visual_sequence: config.presentation.visual_sequence,
-            capture_source_stage: "selecting_monitor".to_owned(),
+            composition_stage: "selecting_monitor".to_owned(),
             ..Self::default()
         }
     }
@@ -711,6 +707,33 @@ mod tests {
         ));
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn host_backdrop_status_never_claims_pixel_displacement() {
+        let status = NativeGpuStatus::starting(NativeGpuConfig {
+            render_hwnd: 1,
+            input_hwnd: 2,
+            render_frame: PhysicalFrame {
+                x: 0,
+                y: 0,
+                width: 640,
+                height: 260,
+            },
+            always_on_top: true,
+            target_frame_rate: 60,
+            presentation: NativeGpuPresentation::default(),
+        });
+
+        assert_eq!(
+            status.optics_source,
+            NativeGpuOpticsSource::HostBackdropIdentity
+        );
+        assert!(!status.host_backdrop_composition);
+        assert!(!status.backdrop_pixel_access);
+        assert!(!status.continuous_displacement_supported);
+        assert!(!status.pixel_ipc);
+    }
+
     #[test]
     fn native_presentation_rejects_unbounded_scalar_state() {
         assert!(matches!(
@@ -796,7 +819,7 @@ mod tests {
             "CreateHostBackdropBrush()",
             "CreateCompositionSurfaceForSwapChain(swap_chain)",
             ".update_lens(presentation, drag, render_frame)",
-            "capture_source_stage = \"host_backdrop_identity\"",
+            "composition_stage = \"host_backdrop_identity\"",
         ] {
             assert!(
                 production.contains(required),

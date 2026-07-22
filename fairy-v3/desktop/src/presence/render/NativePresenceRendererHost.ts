@@ -13,23 +13,20 @@ const nativeGpuStatusSchema = z.object({
   backend: z.enum(["unavailable", "windows_host_backdrop_d3d11_composition"]),
   optics_source: z.enum([
     "none",
-    "host_backdrop",
-  ]).default("host_backdrop"),
+    "host_backdrop_identity",
+  ]).default("host_backdrop_identity"),
   lifecycle: z.enum(["idle", "starting", "running", "stopping", "failed"]),
-  zero_copy_capture: z.boolean(),
+  host_backdrop_composition: z.boolean(),
+  backdrop_pixel_access: z.boolean(),
+  continuous_displacement_supported: z.boolean(),
   pixel_ipc: z.boolean(),
-  hdr_capture: z.boolean(),
+  hdr_composition: z.boolean(),
   target_frame_rate: z.number().int().positive(),
   effective_frame_rate: z.number().int().nonnegative(),
   display_refresh_rate_hz: z.number().int().nonnegative(),
-  capture_frame_rate_limit: z.number().int().nonnegative(),
   frames_presented: z.number().int().nonnegative(),
-  capture_fps_avg: z.number().nonnegative(),
+  present_fps_avg: z.number().nonnegative(),
   frame_interval_p1_fps: z.number().nonnegative(),
-  source_frames_received: z.number().int().nonnegative(),
-  source_capture_fps_avg: z.number().nonnegative(),
-  source_frame_interval_p1_fps: z.number().nonnegative(),
-  callback_to_present_p95_ms: z.number().nonnegative(),
   present_p95_ms: z.number().nonnegative(),
   surface_width: z.number().int().nonnegative(),
   surface_height: z.number().int().nonnegative(),
@@ -47,11 +44,8 @@ const nativeGpuStatusSchema = z.object({
   output_device_name: z.string().nullable(),
   output_index: z.number().int().nonnegative().nullable(),
   hdr_color_space: z.string().nullable(),
-  capture_item_width: z.number().int().nonnegative(),
-  capture_item_height: z.number().int().nonnegative(),
-  capture_window_handle: z.string().regex(/^0x[0-9A-F]{16}$/u).nullable(),
-  capture_source_stage: z.string().min(1).max(64),
-  capture_source_hresult: z.string().regex(/^0x[0-9A-F]{8}$/u).nullable(),
+  composition_stage: z.string().min(1).max(64),
+  composition_hresult: z.string().regex(/^0x[0-9A-F]{8}$/u).nullable(),
   started_at_ms: z.number().int().nonnegative().nullable(),
   last_presented_at_ms: z.number().int().nonnegative().nullable(),
   presentation_revision: z.number().int().nonnegative(),
@@ -511,7 +505,7 @@ export class NativePresenceRendererHost {
       mode: "native",
       actual_backend: nativeActive ? "native_liquid_glass" : "none",
       optics_source: nativeActive
-        ? this.lastStatus?.optics_source ?? "host_backdrop"
+        ? this.lastStatus?.optics_source ?? "host_backdrop_identity"
         : "none",
       status,
       error_code,
@@ -632,7 +626,10 @@ function parseHealthyStatus(value: unknown): NativeGpuStatus {
   const status = nativeGpuStatusSchema.parse(value);
   if (
     status.lifecycle !== "running" ||
-    status.optics_source !== "host_backdrop" ||
+    status.optics_source !== "host_backdrop_identity" ||
+    !status.host_backdrop_composition ||
+    status.backdrop_pixel_access ||
+    status.continuous_displacement_supported ||
     status.pixel_ipc
   ) {
     throw new Error(status.error_code ?? "PRESENCE_NATIVE_GPU_UNHEALTHY");

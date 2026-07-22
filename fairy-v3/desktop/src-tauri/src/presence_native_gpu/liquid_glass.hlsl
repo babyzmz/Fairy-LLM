@@ -6,8 +6,6 @@ static const float EDGE_MATERIAL_DEPTH_PX = 30.0;
 
 cbuffer PresenceConstants : register(b0) {
     float2 output_size;
-    float2 capture_size;
-    float2 source_origin_px;
     float2 configured_core_center_px;
     float2 configured_capsule_center_px;
     float elapsed_seconds;
@@ -24,15 +22,14 @@ cbuffer PresenceConstants : register(b0) {
     float increased_contrast;
     float particles_enabled;
     float diagnostic_solid;
-    float capture_linear;
     float capsule_half_width;
     float state_elapsed_seconds;
     float drag_active;
-    float capture_source_valid;
     float state_energy;
     float state_pulse;
     float state_notify_wave;
     float state_voice_mix;
+    float state_register_padding;
     float3 state_accent;
     float state_transition_progress;
     float2 drag_direction;

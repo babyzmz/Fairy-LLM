@@ -105,7 +105,7 @@ FPS and presented 299 frames in five seconds at 59.79 FPS; DirectComposition
 present p95 was 0.11 ms. A true 300 FPS performance claim remains gated on an
 interactive monitor mode that Windows reports at 300 Hz or above.
 
-## 2026-07-19 Live Composite Amendment
+## Historical 2026-07-19 Live Composite Experiment
 
 The active `XG27ACMS` mode now reports 300 Hz. The production source remains the
 pre-created `CreateForMonitor` item: the capture item and monitor are both

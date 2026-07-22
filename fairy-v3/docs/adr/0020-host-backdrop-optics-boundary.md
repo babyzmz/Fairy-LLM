@@ -50,7 +50,10 @@ problems, so the path is removed rather than weakened.
 
 ## Product Consequences
 
-- Native health reports `host_backdrop`, never a monitor-edge refraction source.
+- Native health reports `host_backdrop_identity`, with
+  `backdrop_pixel_access=false` and
+  `continuous_displacement_supported=false`; it never reports a monitor-edge
+  refraction source.
 - Settings describe the backend as a native Host Backdrop material with no
   pixel displacement.
 - The clear center shows the real composed desktop. Normal mode adds no center
@@ -61,6 +64,12 @@ problems, so the path is removed rather than weakened.
   a new supported Windows Composition displacement API or an explicitly
   consented capture mode with separately accepted visibility and recursion
   tradeoffs.
+
+The Windows native smoke gate rejects a renderer that reports pixel access or
+continuous displacement while using HostBackdrop. It also rejects the old WGC,
+Desktop Duplication, desktop-texture and displacement-map symbols from the
+production renderer. This makes the unsupported boundary executable rather
+than relying only on this ADR.
 
 ## Sources
 

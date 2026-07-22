@@ -160,6 +160,8 @@ public static class FairyNativeGpuProbe {
     [DllImport("user32.dll")]
     private static extern IntPtr WindowFromPoint(POINT point);
     [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr window, uint flags);
+    [DllImport("user32.dll")]
     private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext);
 
     public static void EnablePerMonitorV2() {
@@ -201,6 +203,10 @@ public static class FairyNativeGpuProbe {
 
     public static IntPtr WindowAt(int x, int y) {
         return WindowFromPoint(new POINT { X = x, Y = y });
+    }
+
+    public static IntPtr RootWindowAt(int x, int y) {
+        return GetAncestor(WindowAt(x, y), 2);
     }
 }
 
@@ -1026,8 +1032,39 @@ function Wait-FairyWindowClass(
 function Stop-ProcessTree([System.Diagnostics.Process]$Target) {
     $Target.Refresh()
     if ($Target.HasExited) { return }
-    Stop-Process -Id $Target.Id -Force -ErrorAction SilentlyContinue
-    $Target.WaitForExit(5000) | Out-Null
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        & taskkill.exe /PID $Target.Id /T /F 2>&1 | Out-Null
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $Target.Refresh()
+    if ($Target.HasExited) { return }
+    if (-not $Target.WaitForExit(5000)) {
+        $Target.Kill()
+        $Target.WaitForExit()
+    }
+}
+
+function Get-FairyProcessTree([int]$RootProcessId) {
+    $all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine, WorkingSetSize)
+    $pending = [System.Collections.Generic.Queue[uint32]]::new()
+    $seen = [System.Collections.Generic.HashSet[uint32]]::new()
+    $pending.Enqueue([uint32]$RootProcessId)
+    $rows = [System.Collections.Generic.List[object]]::new()
+    while ($pending.Count -gt 0) {
+        $parent = $pending.Dequeue()
+        if (-not $seen.Add($parent)) { continue }
+        foreach ($row in @($all | Where-Object { [uint32]$_.ProcessId -eq $parent })) {
+            $rows.Add($row)
+        }
+        foreach ($child in @($all | Where-Object { [uint32]$_.ParentProcessId -eq $parent })) {
+            $pending.Enqueue([uint32]$child.ProcessId)
+        }
+    }
+    return @($rows)
 }
 
 function Remove-VerifiedScratch([string]$Path) {
@@ -1139,7 +1176,12 @@ try {
         ($status | ConvertTo-Json -Depth 8),
         [System.Text.UTF8Encoding]::new($false)
     )
-    if ($status.lifecycle -ne "running" -or -not $status.zero_copy_capture -or $status.pixel_ipc) {
+    if ($status.lifecycle -ne "running" -or
+        -not $status.host_backdrop_composition -or
+        $status.optics_source -ne "host_backdrop_identity" -or
+        $status.backdrop_pixel_access -or
+        $status.continuous_displacement_supported -or
+        $status.pixel_ipc) {
         throw "Native GPU contract failed: $($status | ConvertTo-Json -Compress)"
     }
     if ([int]$status.target_frame_rate -ne $TargetFps) {
@@ -1150,8 +1192,8 @@ try {
     if ([long]$status.frames_presented -lt $minimumFrames) {
         throw "Native GPU renderer presented too few frames: $($status.frames_presented)"
     }
-    if ([double]$status.capture_fps_avg -lt ($effectiveFps * 0.90)) {
-        throw "Native GPU average frame rate missed the 90% gate: $($status.capture_fps_avg)"
+    if ([double]$status.present_fps_avg -lt ($effectiveFps * 0.90)) {
+        throw "Native GPU average frame rate missed the 90% gate: $($status.present_fps_avg)"
     }
     # DWM can quantize roughly one percent of 300 Hz presents into a 1.5-frame interval even
     # while the sustained cadence remains on target. Keep that tail visible in the report, but
@@ -1160,7 +1202,6 @@ try {
     if ([double]$status.frame_interval_p1_fps -lt ($effectiveFps * $p1Ratio)) {
         throw "Native GPU P1 frame rate missed the $([Math]::Round($p1Ratio * 100))% gate: $($status.frame_interval_p1_fps)"
     }
-    $callbackBudgetMs = [Math]::Max(8.0, 1000.0 / [double]$effectiveFps)
     $presentBudgetMs = if ($effectiveFps -ge 240) {
         3.2
     }
@@ -1170,9 +1211,8 @@ try {
     else {
         8.0
     }
-    if ([double]$status.callback_to_present_p95_ms -gt $callbackBudgetMs -or
-        [double]$status.present_p95_ms -gt $presentBudgetMs) {
-        throw "Native GPU p95 latency gate failed: callback=$($status.callback_to_present_p95_ms)ms budget=$callbackBudgetMs ms; present=$($status.present_p95_ms)ms budget=$presentBudgetMs ms"
+    if ([double]$status.present_p95_ms -gt $presentBudgetMs) {
+        throw "Native GPU p95 latency gate failed: present=$($status.present_p95_ms)ms budget=$presentBudgetMs ms"
     }
     if ($VerifyLiveBackdrop) {
         Add-Type -AssemblyName System.Drawing
@@ -1304,7 +1344,10 @@ try {
         }
         foreach ($run in $restartResult.runs) {
             if ($run.running.lifecycle -ne "running" -or
-                -not $run.running.zero_copy_capture -or
+                -not $run.running.host_backdrop_composition -or
+                $run.running.optics_source -ne "host_backdrop_identity" -or
+                $run.running.backdrop_pixel_access -or
+                $run.running.continuous_displacement_supported -or
                 $run.running.pixel_ipc -or
                 $run.stopped.lifecycle -ne "idle") {
                 throw "Native GPU restart contract failed: $($run | ConvertTo-Json -Compress)"
@@ -1351,11 +1394,65 @@ try {
     if (-not $inputAligned) {
         throw "Pet input core proxy is not aligned with the render window"
     }
+
+    $coreCenterX = if ($input.X -eq $inputCoreRightX) {
+        $webViewRender.X + [int][Math]::Round(96.0 * $windowScale)
+    }
+    else {
+        $webViewRender.X + $webViewRender.Width - [int][Math]::Round(96.0 * $windowScale)
+    }
+    $coreCenterY = $webViewRender.Y + [int][Math]::Round(130.0 * $windowScale)
+    $coreRadius = [double][Math]::Round(72.0 * $windowScale)
+    $overlayHandles = @(
+        $webViewRender.Handle.ToInt64(),
+        $render.Handle.ToInt64(),
+        $input.Handle.ToInt64()
+    )
+    $hitTestGrid = [System.Collections.Generic.List[object]]::new()
+    foreach ($xFraction in @(0.05, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95)) {
+        foreach ($yFraction in @(0.08, 0.29, 0.5, 0.71, 0.92)) {
+            $probeX = $webViewRender.X + [int][Math]::Round($webViewRender.Width * $xFraction)
+            $probeY = $webViewRender.Y + [int][Math]::Round($webViewRender.Height * $yFraction)
+            $distance = [Math]::Sqrt(
+                [Math]::Pow($probeX - $coreCenterX, 2) +
+                [Math]::Pow($probeY - $coreCenterY, 2)
+            )
+            if ($distance -le ($coreRadius + 4.0 * $windowScale)) { continue }
+            $rootAtPoint = [FairyNativeGpuProbe]::RootWindowAt($probeX, $probeY)
+            $blocked = $overlayHandles -contains $rootAtPoint.ToInt64()
+            $hitTestGrid.Add([PSCustomObject]@{
+                x = $probeX
+                y = $probeY
+                root_hwnd = "0x$([Convert]::ToString($rootAtPoint.ToInt64(), 16))"
+                blocked = $blocked
+            })
+            if ($blocked) {
+                throw "Fairy blocked an out-of-core hit-test grid point: ${probeX},${probeY}"
+            }
+        }
+    }
+    if ($hitTestGrid.Count -lt 20) {
+        throw "Presence hit-test grid did not cover enough out-of-core points: $($hitTestGrid.Count)"
+    }
+
+    $processTree = @(Get-FairyProcessTree $process.Id)
+    $voiceWorkers = @($processTree | Where-Object {
+        [string]$_.CommandLine -match 'fairy_voice_worker|fairy-voice-worker|CosyVoice'
+    })
+    if ($voiceWorkers.Count -gt 0) {
+        throw "Voice worker started during passive Fairy startup: $($voiceWorkers.CommandLine -join '; ')"
+    }
+    $processTreeWorkingSet = [long](($processTree |
+        Measure-Object -Property WorkingSetSize -Sum).Sum)
+    if ($processTreeWorkingSet -gt 1.5GB) {
+        throw "Passive Fairy process tree exceeded the 1.5 GiB working-set gate: $processTreeWorkingSet bytes"
+    }
+
     & node $probe --port $port --action capture --target-fps $TargetFps --duration-seconds 0 --output $ScreenshotPath | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Native GPU WGC screenshot failed" }
+    if ($LASTEXITCODE -ne 0) { throw "Native GPU diagnostic screenshot failed" }
     if (-not (Test-Path -LiteralPath $ScreenshotPath -PathType Leaf) -or
         (Get-Item -LiteralPath $ScreenshotPath).Length -lt 1KB) {
-        throw "Native GPU WGC screenshot is missing or empty"
+        throw "Native GPU diagnostic screenshot is missing or empty"
     }
     $transparentHitTest = [FairyNativeGpuProbe]::ReturnsTransparentHitTest($render)
     if (-not $transparentHitTest) { throw "pet-render did not preserve native HTTRANSPARENT" }
@@ -1396,7 +1493,10 @@ try {
         input_window = $input
         window_group_aligned = $surfaceAligned -and $inputAligned
         transparent_hit_test = $transparentHitTest
+        hit_test_grid = $hitTestGrid
         click_through = $passThrough
+        passive_process_tree_working_set_bytes = $processTreeWorkingSet
+        passive_voice_worker_count = $voiceWorkers.Count
         cadence = $cadenceResult
         restart_cycles = $restartResult
         live_backdrop = $liveBackdropResult

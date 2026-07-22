@@ -30,7 +30,7 @@ export type PresenceActualRendererBackend =
 
 export type PresenceOpticsSource =
   | "none"
-  | "host_backdrop"
+  | "host_backdrop_identity"
   | "webgl_texture"
   | "procedural";
 

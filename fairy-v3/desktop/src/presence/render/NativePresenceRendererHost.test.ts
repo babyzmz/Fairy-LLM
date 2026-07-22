@@ -74,22 +74,19 @@ function healthyStatus(
 ): NativeGpuStatus {
   return {
     backend: "windows_host_backdrop_d3d11_composition",
-    optics_source: "host_backdrop",
+    optics_source: "host_backdrop_identity",
     lifecycle: "running",
-    zero_copy_capture: false,
+    host_backdrop_composition: true,
+    backdrop_pixel_access: false,
+    continuous_displacement_supported: false,
     pixel_ipc: false,
-    hdr_capture: false,
+    hdr_composition: false,
     target_frame_rate: 144,
     effective_frame_rate: 144,
     display_refresh_rate_hz: 144,
-    capture_frame_rate_limit: 0,
     frames_presented: 2,
-    capture_fps_avg: 144,
+    present_fps_avg: 144,
     frame_interval_p1_fps: 120,
-    source_frames_received: 0,
-    source_capture_fps_avg: 0,
-    source_frame_interval_p1_fps: 0,
-    callback_to_present_p95_ms: 0.3,
     present_p95_ms: 0.2,
     surface_width: 640,
     surface_height: 260,
@@ -107,11 +104,8 @@ function healthyStatus(
     output_device_name: "\\\\.\\DISPLAY1",
     output_index: 0,
     hdr_color_space: "0",
-    capture_item_width: 1920,
-    capture_item_height: 1080,
-    capture_window_handle: null,
-    capture_source_stage: "monitor_capture_started",
-    capture_source_hresult: null,
+    composition_stage: "host_backdrop_identity",
+    composition_hresult: null,
     started_at_ms: 1,
     last_presented_at_ms: 2,
     presentation_revision: 0,
@@ -171,6 +165,27 @@ describe("NativePresenceRendererHost", () => {
     expect(JSON.stringify(start?.args)).not.toMatch(
       /rgba|pixel|data_url|backdrop|capture_frame/i,
     );
+
+    await host.dispose();
+  });
+
+  it.each([
+    { backdrop_pixel_access: true },
+    { continuous_displacement_supported: true },
+  ])("rejects unsupported HostBackdrop optics claims: %o", async (claim) => {
+    const commands: string[] = [];
+    const host = new NativePresenceRendererHost({
+      invokeCommand: async (command) => {
+        commands.push(command);
+        return healthyStatus(claim);
+      },
+      watchdogIntervalMs: 60_000,
+      recoveryDelaysMs: [],
+    });
+
+    await expect(host.start(snapshot())).resolves.toBe(false);
+    expect(host.currentState()).toBe("fallback");
+    expect(commands).toEqual(["pet_native_gpu_start", "pet_native_gpu_stop"]);
 
     await host.dispose();
   });
@@ -350,7 +365,7 @@ describe("NativePresenceRendererHost", () => {
     const host = new NativePresenceRendererHost({
       invokeCommand: async (command) => {
         commands.push(command);
-        return healthyStatus({ capture_source_stage: "monitor_capture_started" });
+        return healthyStatus({ composition_stage: "host_backdrop_identity" });
       },
       watchdogIntervalMs: 250,
     });

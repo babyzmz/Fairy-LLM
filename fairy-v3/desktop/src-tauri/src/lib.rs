@@ -1621,6 +1621,17 @@ struct PetInputGeometry {
     compact_height_logical: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PetInputWindowRegion {
+    layout: PetInputLayout,
+    width: u32,
+    height: u32,
+    compact_content_width: u32,
+    compact_content_height: u32,
+    scale_factor: f64,
+    direction: ExpansionDirection,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct PetInputPresentationFence {
     session_id: u64,
@@ -1832,13 +1843,7 @@ fn pet_input_region_parts(
 #[cfg(target_os = "windows")]
 fn apply_pet_input_window_region(
     handle: PresenceNativeHandle,
-    layout: PetInputLayout,
-    width: u32,
-    height: u32,
-    compact_content_width: u32,
-    compact_content_height: u32,
-    scale_factor: f64,
-    direction: ExpansionDirection,
+    region: PetInputWindowRegion,
 ) -> Result<(), String> {
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::Graphics::Gdi::{
@@ -1847,7 +1852,7 @@ fn apply_pet_input_window_region(
     };
 
     let _dpi_scope = PerMonitorDpiScope::enter();
-    if matches!(layout, PetInputLayout::Hidden) {
+    if matches!(region.layout, PetInputLayout::Hidden) {
         let empty = unsafe { CreateRectRgn(0, 0, 0, 0) };
         if empty.is_null() {
             return Err("PET_INPUT_REGION_CREATE_FAILED".to_owned());
@@ -1863,13 +1868,13 @@ fn apply_pet_input_window_region(
     }
     let mut combined: HRGN = std::ptr::null_mut();
     for part in pet_input_region_parts(
-        layout,
-        width,
-        height,
-        compact_content_width,
-        compact_content_height,
-        scale_factor,
-        direction,
+        region.layout,
+        region.width,
+        region.height,
+        region.compact_content_width,
+        region.compact_content_height,
+        region.scale_factor,
+        region.direction,
     ) {
         let region = unsafe {
             match part.kind {
@@ -1920,13 +1925,7 @@ fn apply_pet_input_window_region(
 #[cfg(not(target_os = "windows"))]
 fn apply_pet_input_window_region(
     _handle: PresenceNativeHandle,
-    _layout: PetInputLayout,
-    _width: u32,
-    _height: u32,
-    _compact_content_width: u32,
-    _compact_content_height: u32,
-    _scale_factor: f64,
-    _direction: ExpansionDirection,
+    _region: PetInputWindowRegion,
 ) -> Result<(), String> {
     Ok(())
 }
@@ -1945,13 +1944,15 @@ fn apply_pet_input_layout(
         #[cfg(target_os = "windows")]
         apply_pet_input_window_region(
             window.hwnd().map_err(|error| error.to_string())?.0 as isize,
-            layout,
-            0,
-            0,
-            0,
-            0,
-            1.0,
-            ExpansionDirection::Right,
+            PetInputWindowRegion {
+                layout,
+                width: 0,
+                height: 0,
+                compact_content_width: 0,
+                compact_content_height: 0,
+                scale_factor: 1.0,
+                direction: ExpansionDirection::Right,
+            },
         )?;
         *state
             .pet_input_geometry
@@ -2006,13 +2007,15 @@ fn apply_pet_input_layout(
     move_presence_input_window(&input, input_handle, frame)?;
     apply_pet_input_window_region(
         input_handle,
-        layout,
-        frame.width,
-        frame.height,
-        compact_content_width,
-        compact_content_height,
-        scale,
-        placement.expansion_direction,
+        PetInputWindowRegion {
+            layout,
+            width: frame.width,
+            height: frame.height,
+            compact_content_width,
+            compact_content_height,
+            scale_factor: scale,
+            direction: placement.expansion_direction,
+        },
     )?;
     input.show().map_err(|error| error.to_string())?;
     *state
@@ -2797,17 +2800,19 @@ fn align_pet_input_to_native_presentation(
     // the native hit surface follows the visible core instead of retaining the old-side mask.
     apply_pet_input_window_region(
         input_handle,
-        geometry.layout,
-        target_input_frame.width,
-        target_input_frame.height,
-        (geometry.compact_width_logical * placement.scale_factor)
-            .round()
-            .max(0.0) as u32,
-        (geometry.compact_height_logical * placement.scale_factor)
-            .round()
-            .max(0.0) as u32,
-        placement.scale_factor,
-        placement.expansion_direction,
+        PetInputWindowRegion {
+            layout: geometry.layout,
+            width: target_input_frame.width,
+            height: target_input_frame.height,
+            compact_content_width: (geometry.compact_width_logical * placement.scale_factor)
+                .round()
+                .max(0.0) as u32,
+            compact_content_height: (geometry.compact_height_logical * placement.scale_factor)
+                .round()
+                .max(0.0) as u32,
+            scale_factor: placement.scale_factor,
+            direction: placement.expansion_direction,
+        },
     )?;
     set_presence_placement(state, placement);
     Ok(Some(placement))
@@ -2891,17 +2896,19 @@ fn move_pet_window_group_during_drag(
         let scale = placement.scale_factor.clamp(0.5, 4.0);
         apply_pet_input_window_region(
             input_handle,
-            input_geometry.layout,
-            input_frame.width,
-            input_frame.height,
-            (input_geometry.compact_width_logical * scale)
-                .round()
-                .max(0.0) as u32,
-            (input_geometry.compact_height_logical * scale)
-                .round()
-                .max(0.0) as u32,
-            scale,
-            placement.expansion_direction,
+            PetInputWindowRegion {
+                layout: input_geometry.layout,
+                width: input_frame.width,
+                height: input_frame.height,
+                compact_content_width: (input_geometry.compact_width_logical * scale)
+                    .round()
+                    .max(0.0) as u32,
+                compact_content_height: (input_geometry.compact_height_logical * scale)
+                    .round()
+                    .max(0.0) as u32,
+                scale_factor: scale,
+                direction: placement.expansion_direction,
+            },
         )?;
     }
     Ok(())
@@ -2956,13 +2963,16 @@ fn move_pet_window_group_with_geometry(
     )?;
     apply_pet_input_window_region(
         input_handle,
-        geometry.layout,
-        frame.width,
-        frame.height,
-        (geometry.compact_width_logical * scale).round().max(0.0) as u32,
-        (geometry.compact_height_logical * scale).round().max(0.0) as u32,
-        scale,
-        placement.expansion_direction,
+        PetInputWindowRegion {
+            layout: geometry.layout,
+            width: frame.width,
+            height: frame.height,
+            compact_content_width: (geometry.compact_width_logical * scale).round().max(0.0) as u32,
+            compact_content_height: (geometry.compact_height_logical * scale).round().max(0.0)
+                as u32,
+            scale_factor: scale,
+            direction: placement.expansion_direction,
+        },
     )
 }
 
@@ -3597,8 +3607,8 @@ async fn pet_native_gpu_start(
             let failed = manager.status();
             eprintln!(
                 "[presence-native-gpu] start failed: error={error}; stage={}; hresult={}; target=({},{} {}x{}); monitor=({},{} {}x{}); monitor_handle={}; device={}; adapter={}; output={}",
-                failed.capture_source_stage,
-                failed.capture_source_hresult.as_deref().unwrap_or("none"),
+                failed.composition_stage,
+                failed.composition_hresult.as_deref().unwrap_or("none"),
                 failed.target_x,
                 failed.target_y,
                 failed.surface_width,
@@ -4792,13 +4802,15 @@ mod native_window_group_tests {
         });
         apply_pet_input_window_region(
             input.0 as isize,
-            PetInputLayout::Core,
-            616,
-            360,
-            300,
-            64,
-            1.0,
-            ExpansionDirection::Right,
+            PetInputWindowRegion {
+                layout: PetInputLayout::Core,
+                width: 616,
+                height: 360,
+                compact_content_width: 300,
+                compact_content_height: 64,
+                scale_factor: 1.0,
+                direction: ExpansionDirection::Right,
+            },
         )
         .expect("core input region should apply");
 
@@ -4821,13 +4833,15 @@ mod native_window_group_tests {
         });
         apply_pet_input_window_region(
             input.0 as isize,
-            PetInputLayout::Hidden,
-            616,
-            360,
-            0,
-            64,
-            1.0,
-            ExpansionDirection::Right,
+            PetInputWindowRegion {
+                layout: PetInputLayout::Hidden,
+                width: 616,
+                height: 360,
+                compact_content_width: 0,
+                compact_content_height: 64,
+                scale_factor: 1.0,
+                direction: ExpansionDirection::Right,
+            },
         )
         .expect("hidden input layout should apply an empty native region");
 
@@ -4881,13 +4895,15 @@ mod native_window_group_tests {
         });
         apply_pet_input_window_region(
             input.0 as isize,
-            PetInputLayout::Compact,
-            616,
-            360,
-            308,
-            64,
-            1.0,
-            ExpansionDirection::Right,
+            PetInputWindowRegion {
+                layout: PetInputLayout::Compact,
+                width: 616,
+                height: 360,
+                compact_content_width: 308,
+                compact_content_height: 64,
+                scale_factor: 1.0,
+                direction: ExpansionDirection::Right,
+            },
         )
         .expect("compact input region should apply");
         let region = unsafe { CreateRectRgn(0, 0, 0, 0) };
@@ -4949,24 +4965,28 @@ mod native_window_group_tests {
         });
         apply_pet_input_window_region(
             input.0 as isize,
-            PetInputLayout::Compact,
-            616,
-            360,
-            308,
-            64,
-            1.0,
-            ExpansionDirection::Right,
+            PetInputWindowRegion {
+                layout: PetInputLayout::Compact,
+                width: 616,
+                height: 360,
+                compact_content_width: 308,
+                compact_content_height: 64,
+                scale_factor: 1.0,
+                direction: ExpansionDirection::Right,
+            },
         )
         .expect("right-facing input region should apply");
         apply_pet_input_window_region(
             input.0 as isize,
-            PetInputLayout::Compact,
-            616,
-            360,
-            308,
-            64,
-            1.0,
-            ExpansionDirection::Left,
+            PetInputWindowRegion {
+                layout: PetInputLayout::Compact,
+                width: 616,
+                height: 360,
+                compact_content_width: 308,
+                compact_content_height: 64,
+                scale_factor: 1.0,
+                direction: ExpansionDirection::Left,
+            },
         )
         .expect("left-facing input region should replace the old region");
 

@@ -1,7 +1,7 @@
 # Fairy V3 Completion Audit
 
 - Baseline audit date: 2026-07-14
-- Liquid Glass amendments: 2026-07-17 and 2026-07-19
+- Liquid Glass amendments: 2026-07-17, 2026-07-19, and corrective boundary on 2026-07-22
 - Audit repair amendment: 2026-07-21
 - Product root: `fairy-v3/`
 - Source baseline: the approved Fairy V3 architecture plan and the supplied
@@ -39,7 +39,22 @@ recorded below, but these gates must be rerun before a new release is certified.
 No Python static type checker is configured in this repository; Ruff is lint and
 format evidence, not Python type-checking evidence.
 
-## 2026-07-17 Liquid Glass Amendment
+## 2026-07-22 HostBackdrop Boundary Amendment
+
+ADR 0020 supersedes the WGC and Desktop Duplication optical-source claims below.
+The production renderer now reports `host_backdrop_identity`, does not expose
+HostBackdrop pixels to the D3D shader, and does not claim continuous radial
+displacement. The July 17 and July 19 measurements remain historical experiment
+evidence only; they do not certify the current renderer or Apple-style
+edge-responsive lensing.
+
+Current native validation must prove the identity HostBackdrop material,
+foreground identity-layer isolation, input hit regions, renderer lifecycle and
+performance. True desktop refraction is an unmet capability gate until Windows
+offers a supported Composition displacement path or the product explicitly
+accepts a separate capture-mode tradeoff.
+
+## Historical 2026-07-17 Liquid Glass Amendment
 
 This amendment supersedes the Pet-specific statements below where they conflict.
 `standard` optics remain procedural and perform no desktop capture. Explicit

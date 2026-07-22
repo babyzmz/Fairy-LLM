@@ -63,7 +63,7 @@ pub enum PresenceActualRendererBackend {
 #[serde(rename_all = "snake_case")]
 pub enum PresenceOpticsSource {
     None,
-    HostBackdrop,
+    HostBackdropIdentity,
     WebglTexture,
     Procedural,
 }

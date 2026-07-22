@@ -774,7 +774,7 @@ function nativeRendererHealth(): PresenceRendererHealth {
     requested_mode: "liquid",
     mode: "native",
     actual_backend: "native_liquid_glass",
-    optics_source: "host_backdrop",
+    optics_source: "host_backdrop_identity",
     status: "running",
     error_code: null,
     fallback_reason: null,

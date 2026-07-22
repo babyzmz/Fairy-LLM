@@ -15,7 +15,7 @@ const healthReportSchema = z.object({
   ]),
   optics_source: z.enum([
     "none",
-    "host_backdrop",
+    "host_backdrop_identity",
     "webgl_texture",
     "procedural",
   ]),

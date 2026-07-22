@@ -135,12 +135,14 @@ impl WindowsNativeGpuSession {
             false,
         );
         update_status(&status, |status| {
-            status.hdr_capture = hdr_capture;
+            status.hdr_composition = hdr_capture;
             status.display_refresh_rate_hz = display_refresh_rate_hz;
             status.effective_frame_rate = effective_frame_rate;
-            // Legacy capture diagnostics remain zero. HostBackdrop is evaluated by the system
-            // compositor and has no application-owned source frame loop.
-            status.capture_frame_rate_limit = 0;
+            // HostBackdrop is evaluated by the system compositor and never exposes its pixels
+            // to Fairy's D3D shader or an application-owned source frame loop.
+            status.host_backdrop_composition = false;
+            status.backdrop_pixel_access = false;
+            status.continuous_displacement_supported = false;
         });
         let (device, context) = create_native_d3d_device(&status)?;
         let surface_hwnd = Arc::new(AtomicIsize::new(0));
@@ -166,9 +168,9 @@ impl WindowsNativeGpuSession {
             )
         })?;
         update_status(&status, |status| {
-            status.capture_source_stage = "host_backdrop_renderer_started".to_owned();
-            status.capture_source_hresult = None;
-            status.optics_source = NativeGpuOpticsSource::HostBackdrop;
+            status.composition_stage = "host_backdrop_renderer_started".to_owned();
+            status.composition_hresult = None;
+            status.optics_source = NativeGpuOpticsSource::HostBackdropIdentity;
         });
         Ok(Self {
             control,
@@ -417,7 +419,9 @@ impl NativeRenderLoop {
                 update_status(&thread_status, |status| {
                     status.backend = NativeGpuBackend::WindowsHostBackdropD3d11Composition;
                     status.lifecycle = NativeGpuLifecycle::Running;
-                    status.zero_copy_capture = false;
+                    status.host_backdrop_composition = true;
+                    status.backdrop_pixel_access = false;
+                    status.continuous_displacement_supported = false;
                     status.pixel_ipc = false;
                     status.monitor_width = monitor_frame.width;
                     status.monitor_height = monitor_frame.height;
@@ -516,7 +520,7 @@ impl NativeRenderMetrics {
         let elapsed = self.started.elapsed().as_secs_f64();
         update_status(status, |status| {
             status.frames_presented = self.frames_presented;
-            status.capture_fps_avg = if elapsed > 0.0 {
+            status.present_fps_avg = if elapsed > 0.0 {
                 self.frames_presented as f64 / elapsed
             } else {
                 0.0
@@ -525,10 +529,6 @@ impl NativeRenderMetrics {
                 .filter(|interval| *interval > 0.0)
                 .map(|interval| 1_000.0 / interval)
                 .unwrap_or(0.0);
-            status.source_frames_received = 0;
-            status.source_capture_fps_avg = 0.0;
-            status.source_frame_interval_p1_fps = 0.0;
-            status.callback_to_present_p95_ms = 0.0;
             status.present_p95_ms = percentile(&self.present_ms, 0.95).unwrap_or(0.0);
             status.last_presented_at_ms = now_ms();
         });
@@ -1105,9 +1105,9 @@ impl HostBackdropComposition {
             .Children()
             .map_err(|error| windows_stage_error("HOST_BACKDROP_ROOT_CHILDREN", error))?;
 
-        // Keep the center on the compositor's live HostBackdrop. Windows deliberately rejects
-        // transforms on backdrop brushes, so geometric edge optics are drawn from an independent
-        // monitor texture while this layer remains an identity sample with no recursive capture.
+        // Keep the complete core on the compositor's live identity HostBackdrop. The foreground
+        // surface adds only bounded edge material and Fairy identity marks; no monitor texture or
+        // per-pixel backdrop displacement exists in this production path.
         let backdrop = compositor
             .CreateSpriteVisual()
             .map_err(|error| windows_stage_error("HOST_BACKDROP_SOURCE_VISUAL", error))?;
@@ -1767,8 +1767,6 @@ fn ease_in_out_cubic(value: f32) -> f32 {
 #[derive(Clone, Copy)]
 struct PresenceConstants {
     output_size: [f32; 2],
-    capture_size: [f32; 2],
-    source_origin_px: [f32; 2],
     core_center_px: [f32; 2],
     capsule_center_px: [f32; 2],
     elapsed_seconds: f32,
@@ -1785,21 +1783,19 @@ struct PresenceConstants {
     increased_contrast: f32,
     particles_enabled: f32,
     diagnostic_solid: f32,
-    capture_linear: f32,
     capsule_half_width: f32,
     state_elapsed_seconds: f32,
     drag_active: f32,
-    capture_source_valid: f32,
     state_energy: f32,
     state_pulse: f32,
     state_notify_wave: f32,
     state_voice_mix: f32,
+    state_register_padding: f32,
     state_accent: [f32; 3],
     state_transition_progress: f32,
     drag_direction: [f32; 2],
     drag_stretch: f32,
     drag_release: f32,
-    constants_padding: [f32; 3],
 }
 
 struct NativeCompositionRendererInput {
@@ -1833,9 +1829,12 @@ impl NativeCompositionRenderer {
         let (vertex_shader, pixel_shader) = create_shaders(&device)?;
         let constants = create_constant_buffer(&device)?;
         update_status(&status, |status| {
-            status.capture_source_stage = "host_backdrop_identity".to_owned();
-            status.capture_source_hresult = None;
-            status.optics_source = NativeGpuOpticsSource::HostBackdrop;
+            status.composition_stage = "host_backdrop_identity".to_owned();
+            status.composition_hresult = None;
+            status.optics_source = NativeGpuOpticsSource::HostBackdropIdentity;
+            status.host_backdrop_composition = true;
+            status.backdrop_pixel_access = false;
+            status.continuous_displacement_supported = false;
             status.fallback_reason = None;
         });
         let swap_chain_base: IDXGISwapChain1 = swap_chain
@@ -1913,14 +1912,6 @@ impl NativeCompositionRenderer {
             .update_lens(presentation, drag, render_frame)?;
         let constants = PresenceConstants {
             output_size: [render_frame.width as f32, render_frame.height as f32],
-            capture_size: [
-                self.monitor_frame.width as f32,
-                self.monitor_frame.height as f32,
-            ],
-            source_origin_px: [
-                render_frame.x.saturating_sub(self.monitor_frame.x) as f32,
-                render_frame.y.saturating_sub(self.monitor_frame.y) as f32,
-            ],
             core_center_px: [
                 presentation.core_x * (render_frame.width as f32 / 640.0),
                 presentation.core_y * (render_frame.width as f32 / 640.0),
@@ -1943,23 +1934,19 @@ impl NativeCompositionRenderer {
             increased_contrast: f32::from(presentation.increased_contrast),
             particles_enabled: f32::from(presentation.particles_enabled),
             diagnostic_solid: diagnostic_solid_output(),
-            capture_linear: 0.0,
             capsule_half_width: presentation.capsule_half_width,
             state_elapsed_seconds: state_sample.state_elapsed_seconds,
             drag_active: f32::from(drag_active),
-            // Windows Composition does not expose HostBackdrop pixels to this shader. These
-            // reserved fields remain zero until the constant-buffer contract is versioned.
-            capture_source_valid: 0.0,
             state_energy: state_sample.style.energy,
             state_pulse: state_sample.style.pulse,
             state_notify_wave: state_sample.style.notify_wave,
             state_voice_mix: state_sample.style.voice_mix,
+            state_register_padding: 0.0,
             state_accent: state_sample.style.accent,
             state_transition_progress: state_sample.transition_progress,
             drag_direction: drag.direction,
             drag_stretch: drag.stretch,
             drag_release: drag.release,
-            constants_padding: [0.0; 3],
         };
         let render_target = self.current_render_target()?;
         unsafe {
@@ -2048,7 +2035,7 @@ fn create_native_d3d_device(
     status: &Arc<Mutex<NativeGpuStatus>>,
 ) -> Result<(ID3D11Device, ID3D11DeviceContext), NativeGpuError> {
     update_status(status, |status| {
-        status.capture_source_stage = "creating_d3d11_device".to_owned();
+        status.composition_stage = "creating_d3d11_device".to_owned();
     });
     let feature_levels = [
         D3D_FEATURE_LEVEL_11_1,
@@ -2095,8 +2082,8 @@ fn create_native_d3d_device(
         )
     })?;
     update_status(status, |status| {
-        status.capture_source_stage = "d3d11_device_created".to_owned();
-        status.capture_source_hresult = None;
+        status.composition_stage = "d3d11_device_created".to_owned();
+        status.composition_hresult = None;
     });
     Ok((device, context))
 }
@@ -2329,7 +2316,7 @@ fn inspect_host_backdrop_monitor(
 ) -> Result<HostBackdropMonitor, NativeGpuError> {
     let handle = monitor_handle_for_presentation(frame, presentation)?;
     update_status(status, |status| {
-        status.capture_source_stage = "monitor_selected".to_owned();
+        status.composition_stage = "monitor_selected".to_owned();
         status.monitor_handle = Some(format_monitor_handle(handle));
     });
     let monitor = monitor_diagnostics(handle)?;
@@ -2340,7 +2327,7 @@ fn inspect_host_backdrop_monitor(
         .as_ref()
         .is_some_and(|diagnostics| diagnostics.hdr_capture);
     update_status(status, |status| {
-        status.capture_source_stage = "monitor_validated".to_owned();
+        status.composition_stage = "monitor_validated".to_owned();
         status.monitor_x = monitor_frame.x;
         status.monitor_y = monitor_frame.y;
         status.monitor_width = monitor_frame.width;
@@ -2355,12 +2342,9 @@ fn inspect_host_backdrop_monitor(
             .map(|value| value.output_device_name.clone());
         status.output_index = output.as_ref().map(|value| value.output_index);
         status.hdr_color_space = output.as_ref().map(|value| value.color_space.clone());
-        status.hdr_capture = hdr_capture;
-        status.capture_item_width = 0;
-        status.capture_item_height = 0;
-        status.capture_window_handle = None;
-        status.capture_source_stage = "host_backdrop_monitor_validated".to_owned();
-        status.capture_source_hresult = None;
+        status.hdr_composition = hdr_capture;
+        status.composition_stage = "host_backdrop_monitor_validated".to_owned();
+        status.composition_hresult = None;
     });
     Ok(HostBackdropMonitor {
         monitor_frame,
@@ -2649,8 +2633,8 @@ fn composition_source_failure(
     message: String,
 ) -> NativeGpuError {
     update_status(status, |status| {
-        status.capture_source_stage = format!("{stage}_failed");
-        status.capture_source_hresult = None;
+        status.composition_stage = format!("{stage}_failed");
+        status.composition_hresult = None;
     });
     NativeGpuError::StartFailed(message)
 }
@@ -2662,8 +2646,8 @@ fn composition_source_windows_error(
 ) -> NativeGpuError {
     let hresult = format!("0x{:08X}", error.code().0 as u32);
     update_status(status, |status| {
-        status.capture_source_stage = format!("{}_failed", stage.to_ascii_lowercase());
-        status.capture_source_hresult = Some(hresult.clone());
+        status.composition_stage = format!("{}_failed", stage.to_ascii_lowercase());
+        status.composition_hresult = Some(hresult.clone());
     });
     NativeGpuError::StartFailed(format!(
         "PRESENCE_NATIVE_GPU_{stage}_FAILED: HRESULT={hresult}: {}",
@@ -2722,7 +2706,7 @@ mod tests {
     #[test]
     fn constant_buffer_remains_aligned_for_d3d11() {
         assert_eq!(std::mem::size_of::<PresenceConstants>() % 16, 0);
-        assert_eq!(std::mem::size_of::<PresenceConstants>(), 176);
+        assert_eq!(std::mem::size_of::<PresenceConstants>(), 144);
     }
 
     #[test]
@@ -3026,7 +3010,7 @@ mod tests {
             "D3D11CreateDevice(",
             "host_backdrop_renderer_started",
             "host_backdrop_identity",
-            "capture_source_hresult",
+            "composition_hresult",
         ] {
             assert!(
                 production.contains(required),
@@ -3138,8 +3122,9 @@ mod tests {
             "DWMWA_USE_HOSTBACKDROPBRUSH",
             "CreateHostBackdropBrush()",
             "CreateCompositionSurfaceForSwapChain(swap_chain)",
-            "capture_source_valid: 0.0",
-            "capture_source_stage = \"host_backdrop_identity\"",
+            "status.backdrop_pixel_access = false",
+            "status.continuous_displacement_supported = false",
+            "composition_stage = \"host_backdrop_identity\"",
         ] {
             assert!(
                 production.contains(required),
