@@ -71,19 +71,33 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
   const noteRequestRef = useRef(0);
   const noteAbortRef = useRef<AbortController | null>(null);
   const project = model.mode === "project" ? model.selectedProject : null;
+  const conversation = model.mode === "chat" ? model.selectedChatConversation : null;
+  const scopeId = project?.id ?? conversation?.id ?? null;
+  const scopeName = project?.name ?? conversation?.title ?? "Conversation workspace";
+  const effectiveSourceFilter: SourceFilter = model.mode === "chat" ? "workspace" : sourceFilter;
   const activeContextRef = useRef("");
   const conversations = useMemo(
-    () => model.projectConversations.filter((item) => item.project_id === project?.id),
-    [model.projectConversations, project?.id],
+    () => project === null
+      ? conversation === null ? [] : [conversation]
+      : model.projectConversations.filter((item) => item.project_id === project.id),
+    [conversation, model.projectConversations, project],
   );
   const visibleVaultItems = useMemo(
-    () => model.obsidianItems.filter((item) => sourceFilter === "all" || item.source_id === sourceFilter),
-    [model.obsidianItems, sourceFilter],
+    () => model.mode === "chat" ? [] : model.obsidianItems.filter(
+      (item) => effectiveSourceFilter === "all" || item.source_id === effectiveSourceFilter,
+    ),
+    [effectiveSourceFilter, model.mode, model.obsidianItems],
   );
   const graph = useMemo(
     () => {
-      const base = model.knowledgeGraph === null
-        ? buildProjectGraph(project?.id ?? null, project?.name ?? "Project", conversations, model.workspaceFiles)
+      const base = model.mode === "chat"
+        ? buildConversationGraph(
+          conversation,
+          model.allTasks.filter((task) => task.conversation_id === conversation?.id),
+          model.workspaceFiles,
+        )
+        : model.knowledgeGraph === null
+          ? buildProjectGraph(project?.id ?? null, project?.name ?? "Project", conversations, model.workspaceFiles)
         : {
           nodes: model.knowledgeGraph.nodes.map((node) => ({
             id: node.id,
@@ -93,27 +107,42 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
           })),
           edges: model.knowledgeGraph.edges.map((edge) => ({ source: edge.source_id, target: edge.target_id })),
         };
-      const complete = model.knowledgeGraph === null
+      const complete = model.mode === "project" && model.knowledgeGraph === null
         ? mergeVaultGraph(base, project?.id ?? null, visibleVaultItems)
         : base;
-      return filterGraphBySource(complete, sourceFilter);
+      return filterGraphBySource(complete, effectiveSourceFilter);
     },
-    [conversations, model.knowledgeGraph, model.workspaceFiles, project?.id, project?.name, sourceFilter, visibleVaultItems],
+    [conversation, conversations, effectiveSourceFilter, model.allTasks, model.knowledgeGraph, model.mode, model.workspaceFiles, project?.id, project?.name, visibleVaultItems],
   );
   const noteFiles = useMemo(
     () => {
-      const vaultKeys = new Set(model.obsidianItems.map((item) => `${item.relative_path}\0${item.content_hash}`));
-      const workspaceNotes = model.knowledgeItems
-        .filter((item) => item.kind === "note")
-        .filter((item) => !vaultKeys.has(`${item.relative_path ?? item.title}\0${item.content_hash ?? ""}`))
-        .map((item) => ({
-        id: item.id,
-        title: item.title,
-        relativePath: item.relative_path ?? item.title,
-        byteLength: item.byte_length ?? 0,
-        sourceId: null,
-        contentHash: item.content_hash ?? null,
-      }));
+      const vaultKeys = new Set(
+        model.mode === "chat"
+          ? []
+          : model.obsidianItems.map((item) => `${item.relative_path}\0${item.content_hash}`),
+      );
+      const workspaceNotes: NoteEntry[] = model.mode === "chat"
+        ? model.workspaceFiles
+          .filter((item) => item.path.toLocaleLowerCase().endsWith(".md"))
+          .map((item) => ({
+            id: `file:${item.path}`,
+            title: basename(item.path),
+            relativePath: item.path,
+            byteLength: item.byte_length,
+            sourceId: null,
+            contentHash: item.content_hash,
+          }))
+        : model.knowledgeItems
+          .filter((item) => item.kind === "note")
+          .filter((item) => !vaultKeys.has(`${item.relative_path ?? item.title}\0${item.content_hash ?? ""}`))
+          .map((item) => ({
+            id: item.id,
+            title: item.title,
+            relativePath: item.relative_path ?? item.title,
+            byteLength: item.byte_length ?? 0,
+            sourceId: null,
+            contentHash: item.content_hash ?? null,
+          }));
       const vaultNotes = visibleVaultItems.map((item) => ({
         id: `obsidian:${item.source_id}:${item.relative_path}`,
         title: item.title,
@@ -124,14 +153,13 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
         vaultItem: item,
       }));
       return [
-        ...(sourceFilter === "all" || sourceFilter === "workspace" ? workspaceNotes : []),
-        ...(sourceFilter === "workspace" ? [] : vaultNotes),
+        ...(effectiveSourceFilter === "all" || effectiveSourceFilter === "workspace" ? workspaceNotes : []),
+        ...(effectiveSourceFilter === "workspace" ? [] : vaultNotes),
       ];
     },
-    [model.knowledgeItems, model.obsidianItems, sourceFilter, visibleVaultItems],
+    [effectiveSourceFilter, model.knowledgeItems, model.mode, model.obsidianItems, model.workspaceFiles, visibleVaultItems],
   );
-  const currentProjectId = project?.id ?? null;
-  const activeContextKey = `${currentProjectId ?? "none"}:${sourceFilter}`;
+  const activeContextKey = `${model.mode}:${scopeId ?? "none"}:${effectiveSourceFilter}`;
   activeContextRef.current = activeContextKey;
   useEffect(() => {
     noteRequestRef.current += 1;
@@ -140,7 +168,7 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
     setOpenNote(null);
     setNoteError(null);
     setNoteLoading(false);
-  }, [currentProjectId, sourceFilter]);
+  }, [model.mode, scopeId, sourceFilter]);
   useEffect(() => {
     if (
       sourceFilter !== "all" &&
@@ -152,9 +180,9 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
   }, [model.obsidianSources, sourceFilter]);
   useEffect(() => {
     if (openNote === null) return;
-    const stillCurrent = noteFiles.some((entry) => noteScopeKey(currentProjectId, entry) === openNote.scopeKey);
+    const stillCurrent = noteFiles.some((entry) => noteScopeKey(scopeId, entry) === openNote.scopeKey);
     if (!stillCurrent) setOpenNote(null);
-  }, [currentProjectId, noteFiles, openNote]);
+  }, [noteFiles, openNote, scopeId]);
   useEffect(() => () => noteAbortRef.current?.abort(), []);
   const showNote = async (entry: NoteEntry) => {
     if (entry.vaultItem === undefined) {
@@ -166,7 +194,7 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
     noteAbortRef.current?.abort();
     const controller = new AbortController();
     noteAbortRef.current = controller;
-    const scopeKey = noteScopeKey(currentProjectId, entry);
+    const scopeKey = noteScopeKey(scopeId, entry);
     setNoteLoading(true);
     setNoteError(null);
     try {
@@ -175,7 +203,7 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
         !controller.signal.aborted &&
         noteRequestRef.current === request &&
         activeContextRef.current === activeContextKey &&
-        noteScopeKey(currentProjectId, entry) === scopeKey
+        noteScopeKey(scopeId, entry) === scopeKey
       ) {
         setOpenNote({ scopeKey, note });
       }
@@ -190,17 +218,17 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
 
   const status = knowledgeStatus(model);
 
-  if (model.mode !== "project") {
+  if (model.mode === "chat" && conversation === null) {
     return (
-      <section className="obsidian-empty" aria-label="Obsidian project knowledge">
+      <section className="obsidian-empty" aria-label="Obsidian conversation knowledge">
         <Network size={24} />
-        <h2>Project knowledge is isolated</h2>
-        <p>Ordinary chats cannot read a previously selected project's files, Vault sources, memory, or graph.</p>
+        <h2>Select a chat</h2>
+        <p>Conversation files and their relationships are isolated to the selected chat.</p>
       </section>
     );
   }
 
-  if (project === null) {
+  if (model.mode === "project" && project === null) {
     return (
       <section className="obsidian-empty" aria-label="Obsidian project knowledge">
         <Network size={24} />
@@ -211,11 +239,14 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
   }
 
   return (
-    <section className="obsidian-panel" aria-label="Obsidian project knowledge">
+    <section
+      className="obsidian-panel"
+      aria-label={model.mode === "project" ? "Obsidian project knowledge" : "Obsidian conversation knowledge"}
+    >
       <header className="obsidian-header">
         <div>
-          <span>PROJECT KNOWLEDGE</span>
-          <h2>{project.name}</h2>
+          <span>{model.mode === "project" ? "PROJECT KNOWLEDGE" : "CONVERSATION KNOWLEDGE"}</span>
+          <h2>{scopeName}</h2>
         </div>
         <div className="obsidian-health" data-state={status.tone}>
           <CircleDot size={12} /> {status.label}
@@ -233,7 +264,7 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
           </button>
         ))}
       </nav>
-      {model.obsidianSources.length > 0 && ["notes", "links", "graph"].includes(view) ? (
+      {model.mode === "project" && model.obsidianSources.length > 0 && ["notes", "links", "graph"].includes(view) ? (
         <SourceFilterControl
           sources={model.obsidianSources}
           value={sourceFilter}
@@ -243,11 +274,12 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
       <div className="obsidian-body">
         {view === "overview" ? (
           <Overview
-            fileCount={model.knowledgeOverview?.file_count ?? model.workspaceFiles.length}
-            noteCount={model.knowledgeOverview?.note_count ?? noteFiles.length}
-            conversationCount={model.knowledgeOverview?.conversation_count ?? conversations.length}
-            linkCount={model.knowledgeOverview?.relation_count ?? graph.edges.length}
-            sourceCount={model.obsidianSources.length}
+            mode={model.mode}
+            fileCount={model.mode === "chat" ? model.workspaceFiles.length : model.knowledgeOverview?.file_count ?? model.workspaceFiles.length}
+            noteCount={model.mode === "chat" ? noteFiles.length : model.knowledgeOverview?.note_count ?? noteFiles.length}
+            conversationCount={model.mode === "chat" ? 1 : model.knowledgeOverview?.conversation_count ?? conversations.length}
+            linkCount={model.mode === "chat" ? graph.edges.length : model.knowledgeOverview?.relation_count ?? graph.edges.length}
+            sourceCount={model.mode === "chat" ? 0 : model.obsidianSources.length}
             sourceSummary={status.detail}
             onOpenFiles={onOpenFiles}
           />
@@ -255,12 +287,12 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
           openNote !== null ? (
             <NoteReader note={openNote.note} onBack={() => setOpenNote(null)} />
           ) : (
-            <Notes files={noteFiles} loading={noteLoading} error={noteError} onOpenNote={showNote} />
+            <Notes mode={model.mode} files={noteFiles} loading={noteLoading} error={noteError} onOpenNote={showNote} />
           )
         ) : view === "links" ? (
-          <Links graph={graph} />
+          <Links mode={model.mode} graph={graph} />
         ) : view === "graph" ? (
-          <ProjectGraph nodes={graph.nodes} edges={graph.edges} />
+          <KnowledgeGraph mode={model.mode} nodes={graph.nodes} edges={graph.edges} />
         ) : (
           <SyncStatus model={model} />
         )}
@@ -270,6 +302,7 @@ export function ObsidianPanel({ model, onOpenFiles }: { model: WorkspaceModel; o
 }
 
 function Overview({
+  mode,
   fileCount,
   noteCount,
   conversationCount,
@@ -278,6 +311,7 @@ function Overview({
   sourceSummary,
   onOpenFiles,
 }: {
+  mode: WorkspaceModel["mode"];
   fileCount: number;
   noteCount: number;
   conversationCount: number;
@@ -291,18 +325,25 @@ function Overview({
       <dl className="obsidian-metrics">
         <div><dt>Files</dt><dd>{fileCount}</dd></div>
         <div><dt>Managed notes</dt><dd>{noteCount}</dd></div>
-        <div><dt>Project chats</dt><dd>{conversationCount}</dd></div>
+        <div><dt>{mode === "chat" ? "Chat" : "Project chats"}</dt><dd>{conversationCount}</dd></div>
         <div><dt>Relations</dt><dd>{linkCount}</dd></div>
       </dl>
       <section>
         <FolderTree size={18} />
-        <div><h3>Workspace remains authoritative</h3><p>Source files stay in Fairy. Obsidian receives editable notes and stable links instead of duplicate source trees.</p></div>
+        <div>
+          <h3>{mode === "chat" ? "Conversation Workspace" : "Workspace remains authoritative"}</h3>
+          <p>{mode === "chat"
+            ? "Files and relations come from this chat's current immutable Workspace Version."
+            : "Source files stay in Fairy. Obsidian receives editable notes and stable links instead of duplicate source trees."}</p>
+        </div>
         <button type="button" onClick={onOpenFiles}>Open files</button>
       </section>
       <section>
         <BookOpenText size={18} />
         <div>
-          <h3>{sourceCount === 0 ? "Vault connection" : `${sourceCount} connected Vault${sourceCount === 1 ? "" : "s"}`}</h3>
+          <h3>{mode === "chat"
+            ? "Conversation-only scope"
+            : sourceCount === 0 ? "Vault connection" : `${sourceCount} connected Vault${sourceCount === 1 ? "" : "s"}`}</h3>
           <p>{sourceSummary}</p>
         </div>
       </section>
@@ -332,18 +373,28 @@ function SourceFilterControl({
 }
 
 function Notes({
+  mode,
   files,
   loading,
   error,
   onOpenNote,
 }: {
+  mode: WorkspaceModel["mode"];
   files: NoteEntry[];
   loading: boolean;
   error: string | null;
   onOpenNote(file: NoteEntry): Promise<void>;
 }) {
   if (files.length === 0) {
-    return <EmptyState icon={<BookOpenText size={22} />} title="No managed notes" detail="Markdown notes created for this project will appear here." />;
+    return (
+      <EmptyState
+        icon={<BookOpenText size={22} />}
+        title="No managed notes"
+        detail={mode === "chat"
+          ? "Markdown files in this conversation's current Workspace Version will appear here."
+          : "Markdown notes created for this project will appear here."}
+      />
+    );
   }
   return (
     <div className="obsidian-list">
@@ -379,9 +430,17 @@ function NoteReader({ note, onBack }: { note: ObsidianVaultItemContent; onBack()
   );
 }
 
-function Links({ graph }: { graph: { nodes: GraphNode[]; edges: GraphEdge[] } }) {
+function Links({ mode, graph }: { mode: WorkspaceModel["mode"]; graph: { nodes: GraphNode[]; edges: GraphEdge[] } }) {
   if (graph.edges.length === 0) {
-    return <EmptyState icon={<Link2 size={22} />} title="No relations yet" detail="Folder, thread, and note relations appear after the project has indexed content." />;
+    return (
+      <EmptyState
+        icon={<Link2 size={22} />}
+        title="No relations yet"
+        detail={mode === "chat"
+          ? "Folder, task, and local file-reference relations appear after this conversation has generated files."
+          : "Folder, thread, and note relations appear after the project has indexed content."}
+      />
+    );
   }
   const labels = new Map(graph.nodes.map((node) => [node.id, node.label]));
   return (
@@ -395,7 +454,7 @@ function Links({ graph }: { graph: { nodes: GraphNode[]; edges: GraphEdge[] } })
   );
 }
 
-function ProjectGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] }) {
+function KnowledgeGraph({ mode, nodes, edges }: { mode: WorkspaceModel["mode"]; nodes: GraphNode[]; edges: GraphEdge[] }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const positionsRef = useRef(new Map<string, { x: number; y: number }>());
   const [zoom, setZoom] = useState(1);
@@ -432,7 +491,7 @@ function ProjectGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[]
     <div className="obsidian-graph">
       <canvas
         ref={canvasRef}
-        aria-label={`Project graph with ${nodes.length} nodes and ${edges.length} links`}
+        aria-label={`${mode === "chat" ? "Conversation" : "Project"} graph with ${nodes.length} nodes and ${edges.length} links`}
         onClick={selectAt}
       />
       <div className="obsidian-graph-tools" aria-label="Graph controls">
@@ -440,7 +499,11 @@ function ProjectGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[]
         <button type="button" aria-label="Reset graph" title="Reset graph" onClick={() => { setZoom(1); setSelectedId(null); }}><RotateCcw size={14} /></button>
         <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => setZoom((value) => Math.min(1.6, value + 0.15))}><ZoomIn size={14} /></button>
       </div>
-      <div className="obsidian-graph-legend"><span>Project</span><span>Chats</span><span>Folders</span><span>Files</span></div>
+      <div className="obsidian-graph-legend">
+        <span>{mode === "chat" ? "Conversation" : "Project"}</span>
+        <span>{mode === "chat" ? "Tasks" : "Chats"}</span>
+        <span>Folders</span><span>Files</span>
+      </div>
       {selected === null ? null : (
         <aside className="obsidian-graph-detail">
           <small>{selected.kind}</small><strong>{selected.label}</strong>
@@ -488,6 +551,28 @@ function SyncStatus({ model }: { model: WorkspaceModel }) {
     : model.knowledgeError === null
       ? "Ready"
       : "Needs attention";
+  if (model.mode === "chat") {
+    const ready = !model.workspaceFilesLoading;
+    return (
+      <div className="obsidian-sync">
+        <section>
+          <RefreshCw size={18} />
+          <div>
+            <h3>Conversation Workspace index</h3>
+            <p>Files and local references come only from this chat's current immutable Workspace Version.</p>
+          </div>
+          <strong data-state={ready ? "ready" : "attention"}>{ready ? "Ready" : "Indexing"}</strong>
+        </section>
+        <section>
+          <Network size={18} />
+          <div>
+            <h3>Vault connections are project-scoped</h3>
+            <p>Move this chat into a project before attaching an Obsidian Vault or shared Hermes knowledge.</p>
+          </div>
+        </section>
+      </div>
+    );
+  }
   return (
     <div className="obsidian-sync">
       <section>
@@ -645,8 +730,48 @@ function buildProjectGraph(
     nodes.push({ id, label: conversation.title, kind: "conversation", sourceId: null });
     edges.push({ source: rootId, target: id });
   }
+  appendWorkspaceFiles(rootId, files, nodes, edges);
+  return { nodes, edges };
+}
+
+function buildConversationGraph(
+  conversation: WorkspaceModel["selectedChatConversation"],
+  tasks: WorkspaceModel["allTasks"],
+  files: WorkspaceFile[],
+): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  if (conversation === null) return { nodes: [], edges: [] };
+  const rootId = `conversation:${conversation.id}`;
+  const nodes: GraphNode[] = [{
+    id: rootId,
+    label: conversation.title,
+    kind: "conversation",
+    sourceId: null,
+  }];
+  const edges: GraphEdge[] = [];
+  for (const task of tasks) {
+    const taskId = `task:${task.id}`;
+    nodes.push({
+      id: taskId,
+      label: task.display_title ?? task.user_request.slice(0, 120),
+      kind: "task",
+      sourceId: null,
+    });
+    edges.push({ source: rootId, target: taskId });
+  }
+  appendWorkspaceFiles(rootId, files, nodes, edges);
+  return { nodes, edges };
+}
+
+function appendWorkspaceFiles(
+  rootId: string,
+  files: WorkspaceFile[],
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+) {
   const folders = new Set<string>();
-  for (const file of files.slice(0, 300)) {
+  const visibleFiles = files.slice(0, 300);
+  const paths = new Set(visibleFiles.map((file) => file.path));
+  for (const file of visibleFiles) {
     const segments = file.path.split("/");
     const folder = segments.length > 1 ? segments.slice(0, -1).join("/") : "root";
     if (!folders.has(folder)) {
@@ -656,8 +781,33 @@ function buildProjectGraph(
     }
     nodes.push({ id: `file:${file.path}`, label: basename(file.path), kind: "file", sourceId: null });
     edges.push({ source: `folder:${folder}`, target: `file:${file.path}` });
+    for (const imported of file.imports ?? []) {
+      const target = resolveWorkspaceImport(file.path, imported, paths);
+      if (target !== null) edges.push({ source: `file:${file.path}`, target: `file:${target}` });
+    }
   }
-  return { nodes, edges };
+}
+
+function resolveWorkspaceImport(source: string, imported: string, paths: Set<string>): string | null {
+  const raw = imported.replace(/\\/g, "/").split(/[?#]/, 1)[0] ?? "";
+  const sourceFolder = source.split("/").slice(0, -1);
+  const candidateParts = raw.startsWith(".") ? [...sourceFolder, ...raw.split("/")] : raw.split("/");
+  const normalized: string[] = [];
+  for (const part of candidateParts) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (normalized.length === 0) return null;
+      normalized.pop();
+    } else {
+      normalized.push(part);
+    }
+  }
+  const candidate = normalized.join("/");
+  for (const suffix of ["", ".ts", ".tsx", ".js", ".jsx", ".css", ".html", "/index.ts", "/index.js"]) {
+    const resolved = `${candidate}${suffix}`;
+    if (paths.has(resolved)) return resolved;
+  }
+  return null;
 }
 
 function drawGraph(
@@ -780,7 +930,17 @@ function filterGraphBySource(
 
 function knowledgeStatus(model: WorkspaceModel): { label: string; detail: string; tone: string } {
   if (model.state === "offline") {
-    return { label: "Core offline", detail: "Project knowledge is unavailable until Fairy Core reconnects.", tone: "error" };
+    return { label: "Core offline", detail: "Knowledge is unavailable until Fairy Core reconnects.", tone: "error" };
+  }
+  if (model.mode === "chat") {
+    if (model.workspaceFilesLoading) {
+      return { label: "Indexing conversation", detail: "Fairy is reading the current Workspace Version.", tone: "loading" };
+    }
+    return {
+      label: "Conversation index ready",
+      detail: `${model.workspaceFiles.length} current Workspace file${model.workspaceFiles.length === 1 ? "" : "s"}; project and Vault knowledge remain isolated.`,
+      tone: "ready",
+    };
   }
   if (model.knowledgeLoading || model.obsidianLoading) {
     return { label: "Refreshing knowledge", detail: "Fairy is reading the current durable knowledge projection.", tone: "loading" };
@@ -812,8 +972,8 @@ function sourceStatusLabel(status: string, loading: boolean): string {
   return "Configured";
 }
 
-function noteScopeKey(projectId: string | null, entry: NoteEntry): string {
-  return [projectId ?? "none", entry.sourceId ?? "workspace", entry.contentHash ?? entry.id].join(":");
+function noteScopeKey(scopeId: string | null, entry: NoteEntry): string {
+  return [scopeId ?? "none", entry.sourceId ?? "workspace", entry.contentHash ?? entry.id].join(":");
 }
 
 function shortDigest(value: string | null | undefined): string {

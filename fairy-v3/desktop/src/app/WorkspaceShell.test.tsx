@@ -54,6 +54,7 @@ describe("WorkspaceShell", () => {
       content_hash: "main-hash",
       kind: "source",
       language: "typescript",
+      imports: [],
     };
     const model = workspaceModel();
     model.mode = "chat";
@@ -397,6 +398,7 @@ describe("WorkspaceShell", () => {
         content_hash: "a".repeat(64),
         kind: "text",
         language: "markdown",
+        imports: [],
       }],
     };
     render(<WorkspaceShell model={model} />);
@@ -411,18 +413,27 @@ describe("WorkspaceShell", () => {
     expect(within(knowledge).getByText("Official Obsidian Vault")).toBeVisible();
   });
 
-  it("does not expose a persisted project graph from an ordinary chat", () => {
+  it("builds an isolated Conversation Workspace graph for an ordinary chat", () => {
     const project = projectFixture();
+    const chat = {
+      ...projectConversationFixture(project),
+      project_id: null,
+      workspace_type: "chat_scratch" as const,
+      title: "Three-file website",
+    };
+    const task = { ...workspaceTask(), conversation_id: chat.id };
     const model = {
       ...workspaceModel(),
       mode: "chat" as const,
       selectedProject: project,
-      selectedChatConversation: {
-        ...projectConversationFixture(project),
-        project_id: null,
-        workspace_type: "chat_scratch" as const,
-      },
-      workspaceTask: workspaceTask(),
+      selectedChatConversation: chat,
+      workspaceTask: task,
+      allTasks: [task],
+      workspaceFiles: [
+        workspaceFile("index.html", ["styles.css", "main.js"]),
+        workspaceFile("styles.css"),
+        workspaceFile("main.js"),
+      ],
       knowledgeGraph: {
         project_id: project.id,
         source_version_id: null,
@@ -463,10 +474,19 @@ describe("WorkspaceShell", () => {
     render(<WorkspaceShell model={model} />);
 
     fireEvent.click(screen.getByRole("tab", { name: "Obsidian" }));
-    const knowledge = screen.getByLabelText("Obsidian project knowledge");
-    expect(within(knowledge).getByRole("heading", { name: "Project knowledge is isolated" })).toBeVisible();
+    const knowledge = screen.getByLabelText("Obsidian conversation knowledge");
+    expect(within(knowledge).getByRole("heading", { name: chat.title })).toBeVisible();
+    expect(knowledge).toHaveTextContent("3 current Workspace files");
     expect(within(knowledge).queryByText("core.db")).not.toBeInTheDocument();
     expect(knowledge).not.toHaveTextContent(project.name);
+    fireEvent.click(within(knowledge).getByRole("button", { name: "Graph" }));
+    expect(within(knowledge).getByLabelText("Conversation graph with 6 nodes and 7 links")).toBeVisible();
+    fireEvent.click(within(knowledge).getByRole("button", { name: "Links" }));
+    expect(within(knowledge).getAllByText("index.html").length).toBeGreaterThan(0);
+    expect(within(knowledge).getAllByText("styles.css")).toHaveLength(2);
+    expect(within(knowledge).getAllByText("main.js")).toHaveLength(2);
+    fireEvent.click(within(knowledge).getByRole("button", { name: "Sync" }));
+    expect(within(knowledge).getByText("Vault connections are project-scoped")).toBeVisible();
   });
 
   it("isolates a selected Vault source from workspace files in Graph", () => {
@@ -663,6 +683,7 @@ describe("WorkspaceShell", () => {
         content_hash: "c".repeat(64),
         kind: "text",
         language: "markdown",
+        imports: [],
       }],
       selectObsidianVault: vi.fn(async () => ({
         local_path_token: "019f566f-f8b4-7000-8000-000000000142",
@@ -1006,6 +1027,17 @@ function graphNode(
     task_id: null,
     source_id: sourceId,
     revision_id: null,
+  };
+}
+
+function workspaceFile(path: string, imports: string[] = []): WorkspaceFile {
+  return {
+    path,
+    byte_length: 128,
+    content_hash: "f".repeat(64),
+    kind: "source",
+    language: path.split(".").at(-1) ?? null,
+    imports,
   };
 }
 

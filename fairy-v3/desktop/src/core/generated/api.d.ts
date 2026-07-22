@@ -7855,6 +7855,11 @@ export interface components {
             byte_length: number;
             /** Content Hash */
             content_hash: string;
+            /**
+             * Imports
+             * @default []
+             */
+            imports: string[];
             /** Kind */
             kind: string;
             /** Language */

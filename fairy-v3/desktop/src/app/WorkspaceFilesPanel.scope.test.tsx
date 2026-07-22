@@ -177,5 +177,6 @@ function workspaceFile(path: string): WorkspaceFile {
     language: "text",
     byte_length: 23,
     content_hash: "a".repeat(64),
+    imports: [],
   };
 }

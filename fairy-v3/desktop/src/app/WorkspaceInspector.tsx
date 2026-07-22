@@ -47,7 +47,10 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
     parent.style.setProperty("--inspector-width", `${clampInspectorWidth(width)}px`);
   }, []);
 
-  if (model.workspaceTask === null && !hasFiles && !hasOutputs && model.selectedProject === null) return null;
+  const hasKnowledgeScope = model.mode === "project"
+    ? model.selectedProject !== null
+    : model.selectedChatConversation !== null;
+  if (model.workspaceTask === null && !hasFiles && !hasOutputs && !hasKnowledgeScope) return null;
 
   return (
     <aside className="workspace-inspector" aria-label="Workspace inspector">

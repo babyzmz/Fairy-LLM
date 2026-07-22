@@ -67,6 +67,7 @@ class WorkspaceFileModel(ContractModel):
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     kind: str
     language: str | None
+    imports: tuple[str, ...] = ()
 
 
 class WorkspaceFilePageModel(ContractModel):

@@ -14061,6 +14061,14 @@
             "title": "Content Hash",
             "type": "string"
           },
+          "imports": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Imports",
+            "type": "array"
+          },
           "kind": {
             "title": "Kind",
             "type": "string"

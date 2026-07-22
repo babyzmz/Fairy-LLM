@@ -6,8 +6,10 @@ import json
 import os
 import stat
 import tomllib
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from fairy_core.workspace.models import ProjectFile, ProjectIndex
@@ -172,6 +174,8 @@ class ProjectIndexer:
         if suffix in {".ts", ".tsx", ".js", ".jsx"}:
             imports, exports, symbols = _typescript_semantics(text)
             return "source", language, imports, exports, symbols, {}
+        if suffix == ".html":
+            return "source", language, _html_references(relative, text), (), (), {}
         if suffix == ".rs":
             imports, exports, symbols = _rust_semantics(text)
             return "source", language, imports, exports, symbols, {}
@@ -346,6 +350,78 @@ def _rust_semantics(text: str) -> tuple[tuple[str, ...], tuple[str, ...], tuple[
                 if index > 0 and tokens[index - 1] == "pub":
                     exports.add(name)
     return tuple(sorted(imports)), tuple(sorted(exports)), tuple(sorted(symbols))
+
+
+class _HTMLReferenceParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.references: set[str] = set()
+
+    def handle_starttag(
+        self,
+        _tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        self._collect(attrs)
+
+    def handle_startendtag(
+        self,
+        _tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        self._collect(attrs)
+
+    def _collect(self, attrs: list[tuple[str, str | None]]) -> None:
+        for name, value in attrs:
+            if name.casefold() not in {"href", "src"} or value is None:
+                continue
+            reference = _local_html_reference(value)
+            if reference is not None:
+                self.references.add(reference)
+
+
+def _html_references(source_path: str, text: str) -> tuple[str, ...]:
+    parser = _HTMLReferenceParser()
+    try:
+        parser.feed(text[:_MAX_SEMANTIC_BYTES])
+        parser.close()
+    except (UnicodeError, ValueError):
+        return ()
+    references = (
+        normalized
+        for value in parser.references
+        if (normalized := _workspace_html_reference(source_path, value)) is not None
+    )
+    return tuple(sorted(references))
+
+
+def _local_html_reference(value: str) -> str | None:
+    candidate = value.strip().replace("\\", "/")
+    if not candidate or candidate.startswith(("#", "//")):
+        return None
+    parsed = urlsplit(candidate)
+    if parsed.scheme or parsed.netloc:
+        return None
+    if not parsed.path:
+        return None
+    return parsed.path
+
+
+def _workspace_html_reference(source_path: str, reference: str) -> str | None:
+    source_parts = source_path.replace("\\", "/").split("/")[:-1]
+    parts: list[str] = [] if reference.startswith("/") else source_parts
+    for part in reference.lstrip("/").split("/"):
+        if not part or part == ".":
+            continue
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+            continue
+        parts.append(part)
+    if not parts:
+        return None
+    return "/".join(parts)
 
 
 def _lex(text: str) -> tuple[str, ...]:

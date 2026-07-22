@@ -39,6 +39,15 @@ def _project_task(service, source: Path) -> tuple[dict[str, object], dict[str, o
 
 def _source_tree(root: Path) -> None:
     (root / "src").mkdir(parents=True)
+    (root / "index.html").write_text(
+        '<script src="src/ui.ts"></script><a href="https://example.com">External</a>',
+        encoding="utf-8",
+    )
+    (root / "pages").mkdir()
+    (root / "pages" / "details.html").write_text(
+        '<link href="../src/theme.css"><script src="../src/ui.ts?build=1"></script>',
+        encoding="utf-8",
+    )
     (root / "package.json").write_text(
         '{"name":"atlas","scripts":{"test":"vitest"},"dependencies":{"react":"19"}}',
         encoding="utf-8",
@@ -109,9 +118,21 @@ def test_task_workspace_and_project_index_are_bound_once_and_deterministic(
         assert index.file("src/main.py").symbols == ("App", "run")
         assert index.file("src/ui.ts").imports == ("react",)
         assert index.file("src/ui.ts").exports == ("App",)
+        assert index.file("index.html").imports == ("src/ui.ts",)
+        assert index.file("pages/details.html").imports == ("src/theme.css", "src/ui.ts")
         assert index.file("src/lib.rs").imports == ("std",)
         assert index.file("src/lib.rs").exports == ("Runner", "launch")
         assert index.file("package.json").summary["name"] == "atlas"
+        listed_files = service.invoke(
+            "workspaces.files.list",
+            {"workspace_id": task["workspace_id"], "version_id": version["id"]},
+        )["items"]
+        listed_by_path = {item["path"]: item for item in listed_files}
+        assert listed_by_path["index.html"]["imports"] == ["src/ui.ts"]
+        assert listed_by_path["pages/details.html"]["imports"] == [
+            "src/theme.css",
+            "src/ui.ts",
+        ]
 
         rebuilt = ProjectIndexer().build(
             project_id=workspace.project_id,
