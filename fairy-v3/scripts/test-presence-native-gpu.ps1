@@ -20,6 +20,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+$petCoreAnchorXLogical = 96.0
+$petCoreAnchorYLogical = 88.0
+$petCoreExtentLogical = 144.0
 if ([string]::IsNullOrWhiteSpace($Executable)) {
     $Executable = Join-Path $root "desktop\src-tauri\target\debug\fairy.exe"
 }
@@ -1306,8 +1309,25 @@ try {
                 $redImage = [System.Drawing.Bitmap]::new($liveRed)
                 $greenImage = [System.Drawing.Bitmap]::new($liveGreen)
                 $scale = [double]$redImage.Width / 640.0
-                $centerX = [int][Math]::Round(96.0 * $scale)
-                $centerY = [int][Math]::Round(88.0 * $scale)
+                $expectedInputWidth = [int][Math]::Round(616.0 * $scale)
+                $coreInsetX = [int][Math]::Round(24.0 * $scale)
+                $inputCoreRightX = $render.X + $coreInsetX
+                $inputCoreLeftX =
+                    $render.X + $render.Width - $coreInsetX - $expectedInputWidth
+                $inputAlignedRight =
+                    [Math]::Abs($input.X - $inputCoreRightX) -le (2.0 * $scale)
+                $inputAlignedLeft =
+                    [Math]::Abs($input.X - $inputCoreLeftX) -le (2.0 * $scale)
+                if (-not $inputAlignedRight -and -not $inputAlignedLeft) {
+                    throw "Cannot resolve the Fairy core side for live-backdrop sampling"
+                }
+                $centerX = if ($inputAlignedRight) {
+                    [int][Math]::Round($petCoreAnchorXLogical * $scale)
+                }
+                else {
+                    $redImage.Width - [int][Math]::Round($petCoreAnchorXLogical * $scale)
+                }
+                $centerY = [int][Math]::Round($petCoreAnchorYLogical * $scale)
                 $minimumRadius = 12.0 * $scale
                 $maximumRadius = 52.0 * $scale
                 $difference = 0.0
@@ -1464,13 +1484,16 @@ try {
     }
 
     $coreCenterX = if ($input.X -eq $inputCoreRightX) {
-        $webViewRender.X + [int][Math]::Round(96.0 * $windowScale)
+        $webViewRender.X + [int][Math]::Round($petCoreAnchorXLogical * $windowScale)
     }
     else {
-        $webViewRender.X + $webViewRender.Width - [int][Math]::Round(96.0 * $windowScale)
+        $webViewRender.X + $webViewRender.Width -
+            [int][Math]::Round($petCoreAnchorXLogical * $windowScale)
     }
-    $coreCenterY = $webViewRender.Y + [int][Math]::Round(130.0 * $windowScale)
-    $coreRadius = [double][Math]::Round(72.0 * $windowScale)
+    $coreCenterY =
+        $webViewRender.Y + [int][Math]::Round($petCoreAnchorYLogical * $windowScale)
+    $coreRadius =
+        [double][Math]::Round(($petCoreExtentLogical / 2.0) * $windowScale)
     $overlayHandles = @(
         $webViewRender.Handle.ToInt64(),
         $render.Handle.ToInt64(),

@@ -133,10 +133,13 @@ stops when the pet is hidden, disabled, suspended or the process exits.
 - A stationary Fairy reflects changing desktop content within one display frame.
 - Horizontal, vertical and cross-monitor movement produces no recursive image,
   old-frame trail, seam, flash or whole-window jump.
-- Center displacement stays below 0.75 physical pixels. The full core uses a
-  continuous 8-10.5 physical-pixel edge lens; thinner droplets and capsules
-  scale the same monotonic field proportionally to prevent source-coordinate
-  folding.
+- Center displacement is zero through the inner half-radius and remains below
+  0.5 physical pixels at 0.60R. The full core concentrates a continuous
+  12.5-pixel lens through the outer shoulder; thinner droplets and capsules
+  scale the same normalized monotonic field in proportion to optical radius.
+- The source-coordinate Jacobian remains above 0.25 for both the core and thin
+  shapes. Chromatic displacement is confined to the outer ten percent and
+  remains below 1.1 pixels before surface scaling.
 - No repeated text, concentric magnification boundaries or foreground-ring
   dispersion is present.
 - GPU frame time p95 remains below 8 ms and capture-to-present p95 remains below

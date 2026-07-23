@@ -3962,11 +3962,14 @@ mod tests {
             "SamplerState desktop_sampler",
             "sample_continuous_liquid_glass",
             "continuous_refraction_px",
-            "EDGE_LENS_START = 0.40",
-            "EDGE_REFRACTION_MAX_PX = 10.5",
-            "EDGE_DISPERSION_MAX_PX = 1.8",
+            "EDGE_LENS_START = 0.50",
+            "EDGE_REFRACTION_MAX_PX = 12.5",
+            "EDGE_DISPERSION_MAX_PX = 1.1",
+            "THIN_SHAPE_REFRACTION_SCALE = 0.33333334",
             "smootherstep_range",
-            "float shape_refraction_scale = lerp(0.55, 1.0, thin_shape_mix)",
+            "float shape_refraction_scale = lerp(",
+            "THIN_SHAPE_REFRACTION_SCALE",
+            "smootherstep_range(0.90, 1.0, radial_progress)",
             "edge_material_profile",
             "EDGE_MATERIAL_DEPTH_PX = 34.0",
             "float edge_material = pow(saturate(edge_focus), 1.65)",
@@ -4001,27 +4004,42 @@ mod tests {
         }
 
         fn refraction(progress: f64) -> f64 {
-            let shoulder = smootherstep_range(0.40, 0.64, progress);
-            let body = smootherstep_range(0.56, 0.86, progress);
-            let rim = smootherstep_range(0.74, 1.0, progress);
-            10.5 * (0.10 * shoulder + 0.48 * body + 0.42 * rim)
+            let shoulder = smootherstep_range(0.50, 0.76, progress);
+            let body = smootherstep_range(0.64, 1.0, progress);
+            let rim = smootherstep_range(0.84, 1.0, progress);
+            12.5 * (0.12 * shoulder + 0.72 * body + 0.16 * rim)
         }
 
-        assert!(refraction(0.40) <= f64::EPSILON);
-        assert!(refraction(0.52) <= 0.75);
-        assert!((refraction(1.0) - 10.5).abs() <= f64::EPSILON);
+        assert!(refraction(0.50) <= f64::EPSILON);
+        assert!(refraction(0.60) < 0.5);
+        assert!(refraction(0.70) < 2.0);
+        assert!(refraction(0.94) >= 11.5);
+        assert!((refraction(1.0) - 12.5).abs() <= f64::EPSILON);
+        assert!(
+            refraction(0.94) - refraction(0.80) > 6.0,
+            "most visible compression must be concentrated in the outer shoulder"
+        );
 
-        for (radius, shape_scale) in [(72.0, 1.0), (24.0, 0.55)] {
+        for radius in [72.0, 24.0] {
+            let shape_scale = radius / 72.0;
             let mut previous_source_radius = 0.0;
+            let mut minimum_normalized_step = f64::MAX;
             for step in 1..=2_000 {
                 let progress = f64::from(step) / 2_000.0;
                 let source_radius = progress * radius - refraction(progress) * shape_scale;
+                let normalized_step = (source_radius - previous_source_radius) / (radius / 2_000.0);
                 assert!(
                     source_radius >= previous_source_radius,
                     "source coordinates folded at progress {progress} for radius {radius}"
                 );
+                minimum_normalized_step = minimum_normalized_step.min(normalized_step);
                 previous_source_radius = source_radius;
             }
+            assert!(
+                minimum_normalized_step > 0.25,
+                "edge compression is too close to source-coordinate folding for radius {radius}: \
+                 {minimum_normalized_step}"
+            );
         }
     }
 

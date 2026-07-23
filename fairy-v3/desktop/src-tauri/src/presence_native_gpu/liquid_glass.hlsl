@@ -2,9 +2,10 @@
 // excluded from DDA. Each output pixel samples one continuous optical field; there are no stacked
 // backdrop copies or concentric magnification layers. HostBackdrop remains an identity fallback.
 static const float EDGE_MATERIAL_DEPTH_PX = 34.0;
-static const float EDGE_LENS_START = 0.40;
-static const float EDGE_REFRACTION_MAX_PX = 10.5;
-static const float EDGE_DISPERSION_MAX_PX = 1.8;
+static const float EDGE_LENS_START = 0.50;
+static const float EDGE_REFRACTION_MAX_PX = 12.5;
+static const float EDGE_DISPERSION_MAX_PX = 1.1;
+static const float THIN_SHAPE_REFRACTION_SCALE = 0.33333334;
 
 Texture2D<float4> desktop_texture : register(t0);
 SamplerState desktop_sampler : register(s0);
@@ -285,12 +286,13 @@ float fluid_surface_wave(float2 local_px, float radial_progress) {
 }
 
 float continuous_refraction_px(float radial_progress) {
-    // Preserve the center, then bend a wider shoulder into a pronounced outer lens. The C2 ramps
-    // overlap into one monotonic coordinate field; they are weights, not separately sampled rings.
-    float shoulder = smootherstep_range(EDGE_LENS_START, 0.64, radial_progress);
-    float body = smootherstep_range(0.56, 0.86, radial_progress);
-    float rim = smootherstep_range(0.74, 1.0, radial_progress);
-    float profile = 0.10 * shoulder + 0.48 * body + 0.42 * rim;
+    // Preserve the central half-radius, then concentrate coordinate compression in the outer
+    // shoulder. These C2 ramps form one monotonic field; no independently sampled lens rings are
+    // blended together.
+    float shoulder = smootherstep_range(EDGE_LENS_START, 0.76, radial_progress);
+    float body = smootherstep_range(0.64, 1.0, radial_progress);
+    float rim = smootherstep_range(0.84, 1.0, radial_progress);
+    float profile = 0.12 * shoulder + 0.72 * body + 0.16 * rim;
     return EDGE_REFRACTION_MAX_PX * profile;
 }
 
@@ -304,8 +306,13 @@ float3 sample_continuous_liquid_glass(
     float thin_shape_mix = saturate(
         (optical_depth_px - 24.0 * surface_scale) / max(48.0 * surface_scale, 1.0)
     );
-    // Thin droplets and capsules scale the same profile down to keep the source mapping monotonic.
-    float shape_refraction_scale = lerp(0.55, 1.0, thin_shape_mix);
+    // Scale displacement in proportion to local optical radius. This preserves the same source
+    // Jacobian for thin droplets and capsules instead of folding their smaller coordinate field.
+    float shape_refraction_scale = lerp(
+        THIN_SHAPE_REFRACTION_SCALE,
+        1.0,
+        thin_shape_mix
+    );
     float displacement_px = continuous_refraction_px(radial_progress)
         * shape_refraction_scale
         * surface_scale;
@@ -317,7 +324,7 @@ float3 sample_continuous_liquid_glass(
     float2 base_screen_px = surface_origin_px + local_px
         - normal * displacement_px
         + tangent * tangential_response_px;
-    float dispersion_px = smootherstep_range(0.86, 1.0, radial_progress)
+    float dispersion_px = smootherstep_range(0.90, 1.0, radial_progress)
         * EDGE_DISPERSION_MAX_PX
         * shape_refraction_scale
         * surface_scale
