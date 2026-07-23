@@ -1,5 +1,3 @@
-.realtime-launch { position: fixed; z-index: 20; right: 18px; top: 78px; height: 36px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border: 1px solid #3b4b48; background: #151a19; color: #dce9e5; box-shadow: 0 8px 20px #0007; }
-.realtime-launch:hover { border-color: #6ac6bd; }
 .realtime-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 18px; background: #050706b8; }
 .realtime-panel { width: min(560px, 100%); max-height: calc(100vh - 36px); overflow: auto; background: #141817; border: 1px solid #3b4643; box-shadow: 0 24px 70px #000b; color: #eef5f2; }
 .realtime-panel > header { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; padding: 18px 20px; background: #141817f5; border-bottom: 1px solid #303735; }
@@ -29,4 +27,3 @@
 .realtime-warning { margin: 0 20px 20px; padding: 11px 12px; border-left: 2px solid #d5a94f; background: #2d2818; color: #f1d797; font-size: 12px; }
 @keyframes realtime-pulse { 50% { transform: scale(.72); opacity: .65; } }
 @media (prefers-reduced-motion: reduce) { .realtime-pulse { animation: none; } }
-@media (max-width: 720px) { .realtime-launch span { display: none; }.realtime-launch { right: 10px; top: 72px; width: 36px; padding: 0; justify-content: center; } }

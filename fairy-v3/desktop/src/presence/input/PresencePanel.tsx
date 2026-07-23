@@ -422,7 +422,10 @@ export function PresencePanel({
           <MenuButton
             icon={<Gamepad2 size={15} />}
             label="Game companion"
-            onClick={actions.openCompanion}
+            onClick={() => {
+              actions.openCompanion();
+              actions.setMenuOpen(false);
+            }}
           />
           <MenuToggle
             checked={autoPlay}

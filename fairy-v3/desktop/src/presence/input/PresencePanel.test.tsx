@@ -33,6 +33,35 @@ const view: PresenceView = {
 };
 
 describe("PresencePanel optical boundary", () => {
+  it("routes Game Companion exclusively through the Fairy menu action", () => {
+    const openCompanion = vi.fn();
+    const setMenuOpen = vi.fn();
+    const menuActions = {
+      ...actions,
+      openCompanion,
+      setMenuOpen,
+    };
+    render(
+      <PresencePanel
+        actions={menuActions}
+        alwaysOnTop
+        autoPlay={false}
+        inputOpen={false}
+        menuOpen
+        muted={false}
+        reply={null}
+        submission={null}
+        view={view}
+        visible
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Game companion" }));
+
+    expect(openCompanion).toHaveBeenCalledOnce();
+    expect(setMenuOpen).toHaveBeenCalledWith(false);
+  });
+
   it("keeps text and controls as a transparent DOM overlay without a renderer", () => {
     const { container } = render(
       <PresencePanel

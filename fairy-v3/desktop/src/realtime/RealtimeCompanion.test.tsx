@@ -90,6 +90,31 @@ describe("RealtimeCompanion", () => {
     });
   });
 
+  it("has no persistent workspace launcher and opens only from an explicit request", async () => {
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+      },
+      memories: { save: vi.fn() },
+      worker: {
+        status: vi.fn(async () => workerStatus(false)),
+      },
+    } as unknown as CoreClient["realtime"];
+
+    const { rerender } = render(
+      <RealtimeCompanion client={client} openRequest={0} />,
+    );
+
+    expect(screen.queryByTitle("Game companion")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Game companion" })).toBeNull();
+
+    rerender(<RealtimeCompanion client={client} openRequest={1} />);
+
+    expect(
+      await screen.findByRole("dialog", { name: "Game companion" }),
+    ).not.toBeNull();
+  });
+
   it("keeps captions ephemeral and reports only aggregate media usage", async () => {
     const report = vi.fn(async (input: { status: RealtimeSession["status"] }) =>
       session(input.status, input.status === "active" ? 2 : 4));
@@ -110,8 +135,7 @@ describe("RealtimeCompanion", () => {
       },
     } as unknown as CoreClient["realtime"];
 
-    render(<RealtimeCompanion client={client} />);
-    fireEvent.click(screen.getByTitle("Game companion"));
+    render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
     const consents = screen.getAllByRole("checkbox");
     fireEvent.click(consents[0]);
@@ -163,8 +187,7 @@ describe("RealtimeCompanion", () => {
       },
     } as unknown as CoreClient["realtime"];
 
-    render(<RealtimeCompanion client={client} />);
-    fireEvent.click(screen.getByTitle("Game companion"));
+    render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
     const consents = screen.getAllByRole("checkbox");
     fireEvent.click(consents[0]);
@@ -212,8 +235,7 @@ describe("RealtimeCompanion", () => {
       },
     } as unknown as CoreClient["realtime"];
 
-    render(<RealtimeCompanion client={client} />);
-    fireEvent.click(screen.getByTitle("Game companion"));
+    render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
     const consents = screen.getAllByRole("checkbox");
     fireEvent.click(consents[0]);
@@ -258,8 +280,7 @@ describe("RealtimeCompanion", () => {
       },
     } as unknown as CoreClient["realtime"];
 
-    render(<RealtimeCompanion client={client} />);
-    fireEvent.click(screen.getByTitle("Game companion"));
+    render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
     const consents = screen.getAllByRole("checkbox");
     fireEvent.click(consents[0]);
@@ -321,8 +342,7 @@ describe("RealtimeCompanion", () => {
       },
     } as unknown as CoreClient["realtime"];
 
-    render(<RealtimeCompanion client={client} />);
-    fireEvent.click(screen.getByTitle("Game companion"));
+    render(<RealtimeCompanion client={client} openRequest={1} />);
     await screen.findByRole("option", { name: "Test Game · 1280×720" });
     const consents = screen.getAllByRole("checkbox");
     fireEvent.click(consents[0]);

@@ -456,9 +456,6 @@ export function RealtimeCompanion({
   const active = session !== null && !isTerminal(session.status);
   return (
     <>
-      <button className="realtime-launch" type="button" onClick={() => setOpen(true)} title="Game companion">
-        <Gamepad2 size={17} /><span>Companion</span>
-      </button>
       {open ? <div className="realtime-backdrop" role="presentation">
         <section className="realtime-panel" role="dialog" aria-modal="true" aria-label="Game companion">
           <header><div><span>Realtime</span><h2>Game companion</h2></div><button type="button" aria-label="Close" onClick={() => { if (!active) { setOpen(false); setCaptions([]); setDraftCaption(""); } }}><X size={17} /></button></header>
