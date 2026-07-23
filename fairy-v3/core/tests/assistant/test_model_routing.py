@@ -23,6 +23,7 @@ from fairy_core.model_catalog.models import (
     ProviderCredentialStatus,
 )
 from fairy_core.model_catalog.ports import ModelCatalogFetchResult
+from fairy_core.persona import load_default_persona_authority
 from fairy_core.providers import (
     ModelDelta,
     ModelExecutionRole,
@@ -700,7 +701,13 @@ def test_multi_model_review_streams_only_the_single_final_answer(tmp_path: Path)
             ModelExecutionRole.REVIEWER,
         ]
         assert [request.model_role for request in glm.requests] == [ModelExecutionRole.PRIMARY]
-        assert deepseek.requests[-1].messages[-2].content == "Unreviewed private draft."
+        reviewer_request = deepseek.requests[-1]
+        authority = load_default_persona_authority()
+        assert authority.system_prompt in reviewer_request.messages[0].content
+        assert "Never identify yourself as the provider or underlying model" in (
+            reviewer_request.messages[0].content
+        )
+        assert reviewer_request.messages[-2].content == "Unreviewed private draft."
         assert [step["kind"] for step in trace["steps"]] == [
             "model",
             "route",

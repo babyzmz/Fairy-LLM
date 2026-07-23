@@ -16,6 +16,7 @@ from fairy_core.assistant.tools import model_tools_for_definitions
 from fairy_core.commanding.registry import ToolDefinition
 from fairy_core.domain.models import ScopeContract, Task
 from fairy_core.execution.plans import TaskStepKind, TaskStepStatus
+from fairy_core.knowledge.models import HarnessContextManifest
 from fairy_core.perception import ImageAttachmentStore
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.persona import load_default_persona_authority
@@ -58,6 +59,19 @@ class AssistantContext:
     tool_definitions: tuple[ToolDefinition, ...]
     required_capabilities: frozenset[ProviderCapability]
     diagnostics: AssistantContextDiagnostics
+
+
+def bound_persona_instruction(manifest: HarnessContextManifest) -> str:
+    persona_instruction = manifest.persona_instruction
+    if manifest.persona_version == "legacy":
+        return ""
+    if persona_instruction:
+        return persona_instruction
+    # Compatibility for v2 manifests created before the private prompt snapshot.
+    persona = load_default_persona_authority()
+    if manifest.persona_version != persona.version or manifest.persona_digest != persona.digest:
+        raise ValueError("Assistant Turn Persona Authority binding is unavailable")
+    return persona.system_prompt
 
 
 class AssistantContextBuilder:
@@ -288,18 +302,7 @@ class AssistantContextBuilder:
         completion_handoff: bool,
         delivery_ready: bool,
     ) -> ModelMessage:
-        persona_instruction = manifest.persona_instruction
-        if manifest.persona_version == "legacy":
-            persona_instruction = ""
-        elif not persona_instruction:
-            # Compatibility for v2 manifests created before the private prompt snapshot.
-            persona = load_default_persona_authority()
-            if (
-                manifest.persona_version != persona.version
-                or manifest.persona_digest != persona.digest
-            ):
-                raise ValueError("Assistant Turn Persona Authority binding is unavailable")
-            persona_instruction = persona.system_prompt
+        persona_instruction = bound_persona_instruction(manifest)
         persona_block = f"{persona_instruction}\n\n" if persona_instruction else ""
         content = (
             f"{persona_block}"

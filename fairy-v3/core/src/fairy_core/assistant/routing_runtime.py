@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fairy_core.assistant import limits
+from fairy_core.assistant.context import bound_persona_instruction
 from fairy_core.assistant.events import append_message_created
 from fairy_core.assistant.models import (
     AssistantTurn,
@@ -571,6 +572,17 @@ class AssistantRoutingMixin:
         if decision.reviewer_model_id is None:
             raise ValueError("reviewer model is not configured")
         turn = self._turns.get(turn_id)
+        if turn.harness_manifest_id is None or turn.harness_manifest_hash is None:
+            raise ValueError("reviewer requires a bound Harness Manifest")
+        with self._unit_of_work_factory() as unit_of_work:
+            manifest = unit_of_work.knowledge.get_manifest(
+                turn.harness_manifest_id,
+                task_id=turn.task_id,
+            )
+        if manifest is None or manifest.content_hash != turn.harness_manifest_hash:
+            raise ValueError("reviewer Harness Manifest binding is unavailable")
+        persona_instruction = bound_persona_instruction(manifest)
+        persona_block = f"{persona_instruction}\n\n" if persona_instruction else ""
         profile = self._providers.profile_for_model(decision.reviewer_model_id)
         _turn, run = self._start_model_round(
             turn_id,
@@ -584,9 +596,12 @@ class AssistantRoutingMixin:
                 ModelMessage.create(
                     role=ModelRole.SYSTEM,
                     content=(
+                        f"{persona_block}"
                         "Review the proposed response for correctness, completeness, and safety. "
                         "Return only the polished final answer. Do not describe the review, expose "
-                        "hidden reasoning, or call tools. For generated Workspace files, return a "
+                        "hidden reasoning, or call tools. Preserve the bound Fairy identity and "
+                        "voice. Never identify yourself as the provider or underlying model. "
+                        "For generated Workspace files, return a "
                         "concise summary and never repeat full file contents or invent a localhost "
                         "URL or port."
                     ),
