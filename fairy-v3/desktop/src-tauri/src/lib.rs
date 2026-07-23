@@ -91,6 +91,68 @@ const TRAY_OPEN_ID: &str = "fairy.tray.open";
 const TRAY_SETTINGS_ID: &str = "fairy.tray.settings";
 const TRAY_RESET_ID: &str = "fairy.tray.reset";
 const TRAY_EXIT_ID: &str = "fairy.tray.exit";
+const MAIN_VIEW_REQUESTED_EVENT: &str = "main-view-requested";
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum MainView {
+    #[default]
+    Workspace,
+    Settings,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SettingsCategoryId {
+    General,
+    Appearance,
+    Models,
+    Voice,
+    Permissions,
+    Extensions,
+    Knowledge,
+    Pet,
+    Advanced,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+struct MainViewRequest {
+    schema_version: u16,
+    sequence: u64,
+    view: MainView,
+    settings_category: Option<SettingsCategoryId>,
+}
+
+impl Default for MainViewRequest {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            sequence: 0,
+            view: MainView::Workspace,
+            settings_category: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+struct MainViewNavigateInput {
+    view: MainView,
+    settings_category: Option<SettingsCategoryId>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MainWindowCloseAction {
+    HideToTray,
+    Exit,
+}
+
+const fn main_window_close_action(minimize_to_tray: bool) -> MainWindowCloseAction {
+    if minimize_to_tray {
+        MainWindowCloseAction::HideToTray
+    } else {
+        MainWindowCloseAction::Exit
+    }
+}
 
 #[derive(Clone, Debug, serde::Serialize)]
 struct PetRenderSettings {
@@ -206,7 +268,7 @@ pub fn authorize_core_rpc_window(label: &str) -> Result<(), WindowScopeError> {
 }
 
 pub fn authorize_settings_window(label: &str) -> Result<(), WindowScopeError> {
-    if label == "settings" {
+    if label == "main" {
         Ok(())
     } else {
         Err(WindowScopeError)
@@ -230,7 +292,7 @@ pub fn authorize_realtime_window(label: &str) -> Result<(), WindowScopeError> {
 }
 
 pub fn authorize_preferences_reader(label: &str) -> Result<(), WindowScopeError> {
-    if ["main", "settings", PET_INPUT_LABEL, COMPANION_LABEL].contains(&label) {
+    if ["main", PET_INPUT_LABEL, COMPANION_LABEL].contains(&label) {
         Ok(())
     } else {
         Err(WindowScopeError)
@@ -254,7 +316,7 @@ pub fn authorize_pet_render_window(label: &str) -> Result<(), WindowScopeError> 
 }
 
 pub fn authorize_voice_health_window(label: &str) -> Result<(), WindowScopeError> {
-    if ["main", "settings"].contains(&label) {
+    if label == "main" {
         Ok(())
     } else {
         Err(WindowScopeError)
@@ -448,6 +510,7 @@ struct DesktopState {
     pet_input_presentation: Mutex<PetInputPresentationFence>,
     renderer_supervisor: Mutex<PresenceRendererSupervisor>,
     renderer_health: Mutex<Option<PresenceRendererHealthReport>>,
+    main_view_request: Mutex<MainViewRequest>,
     presence_startup: PresenceStartupGate,
     pet_placement_reconciled: AtomicBool,
     started_at: Instant,
@@ -2351,22 +2414,34 @@ fn main_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
         .map_err(|error| error.to_string())
 }
 
-fn settings_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
-    if let Some(window) = app.get_webview_window("settings") {
-        return Ok(window);
-    }
-    WebviewWindowBuilder::new(
-        app,
-        "settings",
-        WebviewUrl::App("index.html?surface=settings".into()),
-    )
-    .title("Fairy Settings")
-    .inner_size(980.0, 720.0)
-    .min_inner_size(760.0, 560.0)
-    .resizable(true)
-    .visible(false)
-    .build()
-    .map_err(|error| error.to_string())
+fn update_main_view_request(
+    state: &DesktopState,
+    input: MainViewNavigateInput,
+) -> Result<MainViewRequest, String> {
+    let mut request = state
+        .main_view_request
+        .lock()
+        .map_err(|_| "Main view navigation is unavailable".to_owned())?;
+    request.sequence = request.sequence.saturating_add(1);
+    request.view = input.view;
+    request.settings_category = if input.view == MainView::Settings {
+        input.settings_category
+    } else {
+        None
+    };
+    Ok(request.clone())
+}
+
+fn request_main_view(
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+    input: MainViewNavigateInput,
+) -> Result<MainViewRequest, String> {
+    let request = update_main_view_request(state, input)?;
+    let window = main_window(app)?;
+    show_and_focus(&window)?;
+    let _ = app.emit_to("main", MAIN_VIEW_REQUESTED_EVENT, &request);
+    Ok(request)
 }
 
 fn companion_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
@@ -3673,7 +3748,16 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent)
             let _ = main_window(app).and_then(|window| show_and_focus(&window));
         }
         FairyTrayAction::Settings => {
-            let _ = settings_window(app).and_then(|window| show_and_focus(&window));
+            if let Some(state) = app.try_state::<DesktopState>() {
+                let _ = request_main_view(
+                    app,
+                    state.inner(),
+                    MainViewNavigateInput {
+                        view: MainView::Settings,
+                        settings_category: None,
+                    },
+                );
+            }
         }
         FairyTrayAction::Reset => {
             let _ = reset_pet_position_from_tray(app);
@@ -3737,11 +3821,46 @@ fn sync_tray_preferences(app: &tauri::AppHandle, preferences: &DesktopPreference
 }
 
 #[tauri::command]
-async fn open_settings_window(window: WebviewWindow) -> Result<(), String> {
-    if !["main", PET_INPUT_LABEL, "settings"].contains(&window.label()) {
+async fn open_settings_window(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    category: Option<SettingsCategoryId>,
+) -> Result<(), String> {
+    if !["main", PET_INPUT_LABEL, COMPANION_LABEL].contains(&window.label()) {
         return Err("Window is not authorized".to_owned());
     }
-    show_and_focus(&settings_window(window.app_handle())?)
+    request_main_view(
+        window.app_handle(),
+        state.inner(),
+        MainViewNavigateInput {
+            view: MainView::Settings,
+            settings_category: category,
+        },
+    )
+    .map(|_| ())
+}
+
+#[tauri::command]
+fn main_view_request_get(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<MainViewRequest, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .main_view_request
+        .lock()
+        .map(|request| request.clone())
+        .map_err(|_| "Main view navigation is unavailable".to_owned())
+}
+
+#[tauri::command]
+fn main_view_navigate(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: MainViewNavigateInput,
+) -> Result<MainViewRequest, String> {
+    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    update_main_view_request(state.inner(), input)
 }
 
 #[tauri::command]
@@ -4766,6 +4885,7 @@ pub fn run() {
                 pet_input_presentation: Mutex::new(PetInputPresentationFence::default()),
                 renderer_supervisor: Mutex::new(PresenceRendererSupervisor::default()),
                 renderer_health: Mutex::new(None),
+                main_view_request: Mutex::new(MainViewRequest::default()),
                 presence_startup: PresenceStartupGate::default(),
                 pet_placement_reconciled: AtomicBool::new(false),
                 started_at: Instant::now(),
@@ -4850,6 +4970,8 @@ pub fn run() {
             open_companion_window,
             hide_companion_window,
             open_settings_window,
+            main_view_request_get,
+            main_view_navigate,
             voice_worker_health,
             voice_model_install,
             voice_session_start,
@@ -4879,6 +5001,26 @@ pub fn run() {
             api.prevent_close();
             if let Some(window) = app.get_webview_window(COMPANION_LABEL) {
                 let _ = window.hide();
+            }
+        }
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "main" => {
+            let minimize_to_tray = app
+                .try_state::<DesktopState>()
+                .and_then(|state| DesktopPreferencesStore::new(&state.data_dir).load().ok())
+                .map(|preferences| preferences.minimize_to_tray)
+                .unwrap_or(true);
+            match main_window_close_action(minimize_to_tray) {
+                MainWindowCloseAction::HideToTray => {
+                    api.prevent_close();
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.hide();
+                    }
+                }
+                MainWindowCloseAction::Exit => app.exit(0),
             }
         }
         tauri::RunEvent::WindowEvent { label, event, .. } if label == PET_RENDER_LABEL => {
@@ -5037,6 +5179,39 @@ mod companion_window_scope_tests {
             serde_json::from_str(include_str!("../capabilities/companion.json")).unwrap();
         assert_eq!(capability["windows"], serde_json::json!(["companion"]));
         assert!(!capability.to_string().contains("core:default"));
+    }
+}
+
+#[cfg(test)]
+mod main_window_settings_tests {
+    use super::{
+        authorize_preferences_reader, authorize_settings_window, main_window_close_action,
+        MainWindowCloseAction,
+    };
+
+    #[test]
+    fn main_window_is_the_only_settings_surface() {
+        assert!(authorize_settings_window("main").is_ok());
+        assert!(authorize_settings_window("settings").is_err());
+        assert!(authorize_preferences_reader("main").is_ok());
+        assert!(authorize_preferences_reader("settings").is_err());
+    }
+
+    #[test]
+    fn tauri_config_does_not_declare_a_settings_webview() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let windows = config["app"]["windows"].as_array().unwrap();
+        assert!(windows.iter().all(|window| window["label"] != "settings"));
+    }
+
+    #[test]
+    fn close_policy_matches_the_tray_preference() {
+        assert_eq!(
+            main_window_close_action(true),
+            MainWindowCloseAction::HideToTray
+        );
+        assert_eq!(main_window_close_action(false), MainWindowCloseAction::Exit);
     }
 }
 

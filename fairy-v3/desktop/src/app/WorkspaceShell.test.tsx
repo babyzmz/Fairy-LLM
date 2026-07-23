@@ -202,7 +202,7 @@ describe("WorkspaceShell", () => {
     expect(model.selectProjectFolder).toHaveBeenCalledTimes(1);
   });
 
-  it("uses the sidebar gear only to open the independent settings window", () => {
+  it("uses the sidebar gear only to open the internal settings view", () => {
     const model = workspaceModel();
     render(<WorkspaceShell model={model} />);
 

@@ -1438,6 +1438,12 @@ async function installCoreFixture(page: Page) {
       let browserActive = false;
       let browserUrl = "about:blank";
       let browserRevision = 1;
+      let mainViewRequest = {
+        schema_version: 1,
+        sequence: 0,
+        view: "workspace",
+        settings_category: null as string | null,
+      };
       const browserSession = (status: "active" | "stopped" = "active") => ({
         id: browserSessionId,
         project_id: id.project,
@@ -1624,10 +1630,27 @@ async function installCoreFixture(page: Page) {
             return { id: sessionId };
           }
           if (command === "voice_session_cancel") return null;
+          if (command === "main_view_request_get") {
+            return { ...mainViewRequest };
+          }
+          if (command === "main_view_navigate") {
+            const input = args.input as {
+              view: "workspace" | "settings";
+              settings_category: string | null;
+            };
+            mainViewRequest = {
+              schema_version: 1,
+              sequence: mainViewRequest.sequence + 1,
+              view: input.view,
+              settings_category:
+                input.view === "settings" ? input.settings_category : null,
+            };
+            return { ...mainViewRequest };
+          }
           if (command === "open_settings_window") {
             fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
               method: "desktop.settings.open",
-              params: {},
+              params: { category: args.category ?? null },
             });
             return null;
           }

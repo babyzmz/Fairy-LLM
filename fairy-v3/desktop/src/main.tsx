@@ -2,6 +2,7 @@ import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { isTauri } from "@tauri-apps/api/core";
 import { AppMotion } from "./motion/AppMotion";
+import type { MainViewRequest } from "./app/mainViewBridge";
 
 const root = document.getElementById("root");
 if (root === null) {
@@ -41,16 +42,6 @@ async function mountSurface() {
     return;
   }
 
-  if (surface === "settings") {
-    const [{ invoke }, { SettingsApp }, { SettingsClient }] = await Promise.all([
-      import("@tauri-apps/api/core"),
-      import("./settings/SettingsApp"),
-      import("./settings/client"),
-    ]);
-    renderSurface(<SettingsApp client={new SettingsClient(invoke)} />);
-    return;
-  }
-
   if (surface === "companion") {
     const [
       { invoke },
@@ -78,15 +69,38 @@ async function mountSurface() {
     return;
   }
 
-  const [{ invoke }, { App }, { CoreClient }, { TauriCoreTransport }, { SettingsClient }] = await Promise.all([
+  const [
+    { invoke },
+    { listen },
+    { App },
+    { TauriMainViewHost },
+    { CoreClient },
+    { TauriCoreTransport },
+    { SettingsClient },
+  ] = await Promise.all([
     import("@tauri-apps/api/core"),
+    import("@tauri-apps/api/event"),
     import("./app/App"),
+    import("./app/mainViewBridge"),
     import("./core/client"),
     import("./core/tauriTransport"),
     import("./settings/client"),
   ]);
   const client = new CoreClient(new TauriCoreTransport(invoke));
-  renderSurface(<App client={client} settingsClient={new SettingsClient(invoke)} />);
+  const mainViewHost = new TauriMainViewHost(
+    invoke,
+    (listener) =>
+      listen<MainViewRequest>("main-view-requested", (event) => {
+        listener(event.payload);
+      }),
+  );
+  renderSurface(
+    <App
+      client={client}
+      mainViewHost={mainViewHost}
+      settingsClient={new SettingsClient(invoke)}
+    />,
+  );
 }
 
 void mountSurface();

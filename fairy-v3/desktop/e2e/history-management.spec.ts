@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installWorkspaceFixture } from "./support/coreFixture";
+import { openInternalSettings } from "./support/settings";
 
 test.beforeEach(async ({ page }) => {
   await installWorkspaceFixture(page);
@@ -66,7 +67,7 @@ test("history navigation stays two levels deep and shares the project action men
 test("settings restores archived projects and ordinary chats from Recently deleted", async ({
   page,
 }) => {
-  await page.goto("/?surface=settings&historySeed=1");
+  await openInternalSettings(page, { path: "/?historySeed=1" });
 
   await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
   await expect(page.getByText("Atlas Console", { exact: true })).toBeVisible();

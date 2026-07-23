@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installWorkspaceFixture } from "./support/coreFixture";
+import { openInternalSettings } from "./support/settings";
 
 test.beforeEach(async ({ page }) => {
   await installWorkspaceFixture(page);
@@ -158,12 +159,11 @@ test("reduced motion disables repeated chat activity animation", async ({ page }
   expect(animation.iterations === "1" || animation.duration === "0s").toBe(true);
 });
 
-test("model settings stay inside the narrow settings window and expose no secret", async ({
+test("model settings stay inside the narrow internal view and expose no secret", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 760, height: 700 });
-  await page.goto("/?surface=settings");
-  await page.getByRole("button", { name: /Models/ }).click();
+  await openInternalSettings(page, { category: /Models/ });
 
   const panel = page.locator(".settings-category");
   await expect(panel).toBeVisible();
@@ -198,12 +198,11 @@ test("model settings stay inside the narrow settings window and expose no secret
   await expect(page.getByRole("button", { name: "Save and connect" })).toBeVisible();
 });
 
-test("Liquid Glass pet settings persist without overflowing the settings window", async ({
+test("Liquid Glass pet settings persist without overflowing the internal view", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 980, height: 720 });
-  await page.goto("/?surface=settings");
-  await page.getByRole("button", { name: /^Pet/ }).click();
+  await openInternalSettings(page, { category: /^Pet/ });
 
   const renderer = page.getByRole("combobox", { name: "Renderer" });
   await renderer.selectOption("compatibility");
@@ -278,8 +277,7 @@ async function openScratchChat(page: import("@playwright/test").Page) {
 }
 
 async function enableDeveloperMode(page: import("@playwright/test").Page) {
-  await page.goto("/?surface=settings");
-  await page.getByRole("button", { name: /Advanced/ }).click();
+  await openInternalSettings(page, { category: /Advanced/ });
   await page.getByRole("checkbox", { name: "Developer mode" }).check();
-  await page.goto("/");
+  await page.getByRole("button", { name: "Back to workspace" }).click();
 }

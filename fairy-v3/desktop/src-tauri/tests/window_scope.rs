@@ -8,7 +8,7 @@ use fairy_desktop_v3::{
     fairy_tray_action, presence_window_creation_specs, resolve_desktop_data_dir,
     settings_method_allowed, FairyTrayAction, PetWindowFrame,
 };
-use serde_json::{json, Value};
+use serde_json::json;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -24,18 +24,18 @@ fn only_the_main_window_can_call_core_rpc() {
 #[test]
 fn voice_host_commands_keep_session_and_model_access_out_of_auxiliary_windows() {
     assert!(authorize_voice_health_window("main").is_ok());
-    assert!(authorize_voice_health_window("settings").is_ok());
+    assert!(authorize_voice_health_window("settings").is_err());
     assert!(authorize_voice_health_window("pet-render").is_err());
     assert!(authorize_voice_health_window("pet-input").is_err());
-    assert!(authorize_voice_settings_window("settings").is_ok());
-    assert!(authorize_voice_settings_window("main").is_err());
+    assert!(authorize_voice_settings_window("main").is_ok());
+    assert!(authorize_voice_settings_window("settings").is_err());
     assert!(authorize_voice_settings_window("pet-input").is_err());
 }
 
 #[test]
-fn settings_window_has_a_narrow_method_allow_list() {
-    assert!(authorize_settings_window("settings").is_ok());
-    assert!(authorize_settings_window("main").is_err());
+fn main_window_settings_module_has_a_narrow_method_allow_list() {
+    assert!(authorize_settings_window("main").is_ok());
+    assert!(authorize_settings_window("settings").is_err());
     assert!(settings_method_allowed("permissions.update"));
     assert!(settings_method_allowed("mcp.servers.configure"));
     assert!(settings_method_allowed("memory.settings.get"));
@@ -91,10 +91,6 @@ fn capability_files_keep_pet_local() {
     let input: serde_json::Value =
         serde_json::from_str(include_str!("../capabilities/pet-input.json"))
             .expect("input capability");
-    let settings: serde_json::Value =
-        serde_json::from_str(include_str!("../capabilities/settings.json"))
-            .expect("settings capability");
-
     for capability in [&render, &input] {
         let permissions = capability["permissions"]
             .as_array()
@@ -109,11 +105,6 @@ fn capability_files_keep_pet_local() {
             })
         }));
     }
-    assert!(!settings["permissions"]
-        .as_array()
-        .expect("settings permissions")
-        .iter()
-        .any(|permission| permission == "core:default"));
 }
 
 #[test]
@@ -136,11 +127,7 @@ fn presence_windows_are_created_serially_after_main_load() {
     assert_eq!((input.max_width, input.max_height), (616, 360));
     assert!(input.focusable);
 
-    let settings = windows
-        .iter()
-        .find(|window| window["label"] == "settings")
-        .expect("settings window");
-    assert_eq!(settings.get("create").and_then(Value::as_bool), Some(false));
+    assert!(windows.iter().all(|window| window["label"] != "settings"));
 }
 
 #[test]

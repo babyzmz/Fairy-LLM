@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
 
 import { installWorkspaceFixture } from "./support/coreFixture";
+import { openInternalSettings } from "./support/settings";
 
 test.beforeEach(async ({ page }) => {
   await installWorkspaceFixture(page);
-  await page.goto("/?surface=settings");
+  await openInternalSettings(page);
   await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
 });
 

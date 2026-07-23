@@ -1,14 +1,17 @@
 import { expect, test } from "@playwright/test";
 
 import { installWorkspaceFixture } from "./support/coreFixture";
+import { openInternalSettings } from "./support/settings";
 
 test.beforeEach(async ({ page }) => {
   await installWorkspaceFixture(page);
 });
 
 test("sandbox health disables only capabilities that require it", async ({ page }) => {
-  await page.goto("/?surface=settings&sandboxUnavailable=1");
-  await page.getByRole("button", { name: /Execution permissions/ }).click();
+  await openInternalSettings(page, {
+    path: "/?sandboxUnavailable=1",
+    category: /Execution permissions/,
+  });
 
   await expect(page.getByText("Sandbox unavailable", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "run.sandboxed" })).toBeDisabled();
@@ -16,8 +19,10 @@ test("sandbox health disables only capabilities that require it", async ({ page 
 });
 
 test("permission conflicts reload the latest Core revision", async ({ page }) => {
-  await page.goto("/?surface=settings&permissionConflict=1");
-  await page.getByRole("button", { name: /Execution permissions/ }).click();
+  await openInternalSettings(page, {
+    path: "/?permissionConflict=1",
+    category: /Execution permissions/,
+  });
   await page.getByRole("radio", { name: "Autonomous" }).click();
 
   await expect(

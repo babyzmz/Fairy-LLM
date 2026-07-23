@@ -22,6 +22,7 @@ import type {
 import { CoreRpcError, type InvokeFunction } from "../core/tauriTransport";
 import { SettingsClient, type DesktopPreferences } from "../settings/client";
 import { App } from "./App";
+import type { MainViewHost } from "./mainViewBridge";
 import type { WorkspaceClient } from "./workspaceModel";
 
 const ID = {
@@ -357,7 +358,8 @@ describe("App", () => {
     const composer = await screen.findByLabelText("Message Fairy");
     await waitFor(() => expect(composer).toBeEnabled());
     await userEvent.type(composer, "Keep this draft while settings are open");
-    await userEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    const settingsButton = screen.getByRole("button", { name: "Open settings" });
+    await userEvent.click(settingsButton);
 
     expect(await screen.findByRole("heading", { name: "General" })).toBeVisible();
     expect(screen.getByTestId("workspace-view")).toHaveAttribute("hidden");
@@ -365,6 +367,44 @@ describe("App", () => {
 
     expect(screen.getByLabelText("Message Fairy")).toBe(composer);
     expect(composer).toHaveValue("Keep this draft while settings are open");
+    await waitFor(() => expect(settingsButton).toHaveFocus());
+  });
+
+  it("recovers a native settings deep link after the main WebView mounts", async () => {
+    const settingsClient = new SettingsClient(
+      appSettingsInvoke() as unknown as InvokeFunction,
+    );
+    const request = {
+      schema_version: 1 as const,
+      sequence: 7,
+      view: "settings" as const,
+      settings_category: "models" as const,
+    };
+    const mainViewHost: MainViewHost = {
+      get: vi.fn(async () => request),
+      navigate: vi.fn(async () => request),
+      subscribe: vi.fn(async () => () => undefined),
+    };
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [project],
+      { scratch: true },
+    );
+
+    render(
+      <App
+        client={client}
+        mainViewHost={mainViewHost}
+        settingsClient={settingsClient}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Models" })).toBeVisible();
+    expect(screen.getByTestId("workspace-view")).toHaveAttribute("hidden");
   });
 
   it("renders real create and import actions for an empty repository", async () => {

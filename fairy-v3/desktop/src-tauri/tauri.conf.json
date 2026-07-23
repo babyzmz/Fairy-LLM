@@ -22,18 +22,6 @@
         "resizable": true
       },
       {
-        "label": "settings",
-        "title": "Fairy Settings",
-        "create": false,
-        "url": "index.html?surface=settings",
-        "width": 980,
-        "height": 720,
-        "minWidth": 760,
-        "minHeight": 560,
-        "resizable": true,
-        "visible": false
-      },
-      {
         "label": "companion",
         "title": "Fairy Game Companion",
         "create": false,

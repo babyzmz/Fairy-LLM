@@ -23,6 +23,11 @@ import {
   type RealtimePresenceState,
 } from "../realtime/realtimePresence";
 
+import type {
+  MainView,
+  MainViewHost,
+  MainViewRequest,
+} from "./mainViewBridge";
 import { WorkspaceShell } from "./WorkspaceShell";
 import { type WorkspaceClient, useWorkspaceModel } from "./workspaceModel";
 
@@ -31,9 +36,8 @@ interface AppProps {
     ambient?: CoreClient["ambient"];
   };
   settingsClient?: SettingsClient;
+  mainViewHost?: MainViewHost;
 }
-
-export type MainView = "workspace" | "settings";
 
 const LazySettingsApp = lazy(async () => {
   const module = await import("../settings/SettingsApp");
@@ -166,7 +170,7 @@ function WorkspacePresence({
   );
 }
 
-export function App({ client, settingsClient }: AppProps) {
+export function App({ client, settingsClient, mainViewHost }: AppProps) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -187,26 +191,113 @@ export function App({ client, settingsClient }: AppProps) {
   }>({ sequence: 0 });
   const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
   const focusReturnRef = useRef<HTMLElement | null>(null);
+  const mainViewRef = useRef<MainView>("workspace");
+  const lastNativeSequenceRef = useRef(-1);
+
+  const showSettings = useCallback((
+    category?: SettingsCategoryId,
+    sequence?: number,
+  ) => {
+    if (mainViewRef.current !== "settings") {
+      const activeElement = document.activeElement;
+      focusReturnRef.current =
+        activeElement instanceof HTMLElement ? activeElement : null;
+    }
+    mainViewRef.current = "settings";
+    setSettingsMounted(true);
+    setSettingsRequest((current) => ({
+      sequence: sequence ?? current.sequence + 1,
+      category,
+    }));
+    setMainView("settings");
+  }, []);
+
+  const showWorkspace = useCallback(() => {
+    mainViewRef.current = "workspace";
+    setMainView("workspace");
+    requestAnimationFrame(() => focusReturnRef.current?.focus());
+  }, []);
+
+  const applyMainViewRequest = useCallback((request: MainViewRequest) => {
+    if (
+      request.schema_version !== 1 ||
+      request.sequence <= lastNativeSequenceRef.current
+    ) {
+      return;
+    }
+    lastNativeSequenceRef.current = request.sequence;
+    if (request.view === "settings") {
+      showSettings(request.settings_category ?? undefined, request.sequence);
+    } else {
+      showWorkspace();
+    }
+  }, [showSettings, showWorkspace]);
 
   const openSettings = useCallback(async (category?: SettingsCategoryId) => {
     if (settingsClient === undefined) {
       await client.desktop.openSettings(category);
       return;
     }
-    const activeElement = document.activeElement;
-    focusReturnRef.current = activeElement instanceof HTMLElement ? activeElement : null;
-    setSettingsMounted(true);
-    setSettingsRequest((current) => ({
-      sequence: current.sequence + 1,
-      category,
-    }));
-    setMainView("settings");
-  }, [client.desktop, settingsClient]);
+    showSettings(category);
+    if (mainViewHost !== undefined) {
+      applyMainViewRequest(await mainViewHost.navigate("settings", category));
+    }
+  }, [
+    applyMainViewRequest,
+    client.desktop,
+    mainViewHost,
+    settingsClient,
+    showSettings,
+  ]);
 
   const closeSettings = useCallback(() => {
-    setMainView("workspace");
-    requestAnimationFrame(() => focusReturnRef.current?.focus());
-  }, []);
+    showWorkspace();
+    if (mainViewHost !== undefined) {
+      void mainViewHost
+        .navigate("workspace")
+        .then(applyMainViewRequest)
+        .catch(() => undefined);
+    }
+  }, [applyMainViewRequest, mainViewHost, showWorkspace]);
+
+  useEffect(() => {
+    if (mainViewHost === undefined) return;
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
+    void mainViewHost
+      .subscribe((request) => {
+        if (active) applyMainViewRequest(request);
+      })
+      .then((stop) => {
+        if (active) {
+          unsubscribe = stop;
+        } else {
+          stop();
+        }
+      })
+      .then(() => mainViewHost.get())
+      .then((request) => {
+        if (active) applyMainViewRequest(request);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [applyMainViewRequest, mainViewHost]);
+
+  useEffect(() => {
+    if (mainView !== "settings") return;
+    const frame = requestAnimationFrame(() => {
+      const heading = document.querySelector<HTMLElement>(
+        '[data-testid="settings-view"] h1',
+      );
+      if (heading === null) return;
+      heading.tabIndex = -1;
+      heading.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [mainView, settingsRequest.sequence]);
 
   useEffect(() => {
     if (mainView !== "settings") return;
@@ -217,7 +308,6 @@ export function App({ client, settingsClient }: AppProps) {
         active instanceof HTMLInputElement ||
         active instanceof HTMLTextAreaElement ||
         active instanceof HTMLSelectElement ||
-        active instanceof HTMLButtonElement ||
         active?.getAttribute("contenteditable") === "true" ||
         document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]') !== null
       ) {

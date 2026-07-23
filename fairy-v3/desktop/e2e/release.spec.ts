@@ -57,13 +57,12 @@ test("release workspace exposes project, chat, preview, settings, and developer 
   await expect(page.getByLabel("Folder path")).toHaveValue("C:\\Projects\\fixture");
   await page.getByRole("button", { name: "Close project manager" }).click();
   await page.getByRole("button", { name: "Open settings" }).click();
-  await page.goto("/?surface=settings");
   await page.getByRole("button", { name: /Advanced/ }).click();
   await page.getByRole("checkbox", { name: "Developer mode" }).check();
   await page.getByRole("button", { name: /Models/ }).click();
   await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
   await expect(page.locator("body")).not.toContainText("sk-or-v1-");
-  await page.goto("/");
+  await page.getByRole("button", { name: "Back to workspace" }).click();
   await expect(page.getByLabel("Developer details")).toBeVisible();
 
   await page
