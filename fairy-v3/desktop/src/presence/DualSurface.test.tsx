@@ -138,6 +138,10 @@ function preferences(): DesktopPreferences {
 
 function hostHarness() {
   let inputListener: (() => void) | null = null;
+  let inputToggleListener: (() => void) | null = null;
+  let inputCloseListener: (() => void) | null = null;
+  let menuListener: (() => void) | null = null;
+  let presentationSession = 0;
   const setInputLayout = vi.fn<PetHost["setInputLayout"]>(async () => undefined);
   const setInputInteractive = vi.fn<PetHost["setInputInteractive"]>(
     async () => undefined,
@@ -155,12 +159,33 @@ function hostHarness() {
         inputListener = null;
       };
     }),
+    onInputToggleRequested: vi.fn(async (listener) => {
+      inputToggleListener = listener;
+      return () => {
+        inputToggleListener = null;
+      };
+    }),
+    onInputCloseRequested: vi.fn(async (listener) => {
+      inputCloseListener = listener;
+      return () => {
+        inputCloseListener = null;
+      };
+    }),
+    onMenuRequested: vi.fn(async (listener) => {
+      menuListener = listener;
+      return () => {
+        menuListener = null;
+      };
+    }),
     onNewChatRequested: vi.fn(async () => () => undefined),
     setExpanded: vi.fn(async () => undefined),
     setInputLayout,
     setInputInteractive,
     requestInputFocus,
-    beginInputPresentationSession: vi.fn(async () => ({ session_id: 1, revision: 0 })),
+    beginInputPresentationSession: vi.fn(async () => ({
+      session_id: ++presentationSession,
+      revision: 0,
+    })),
     applyInputPresentation: vi.fn(async (input) => {
       await setInputInteractive(false);
       if (input.compact_width === undefined) await setInputLayout(input.layout);
@@ -178,6 +203,15 @@ function hostHarness() {
     host,
     requestInput() {
       inputListener?.();
+    },
+    requestInputToggle() {
+      inputToggleListener?.();
+    },
+    requestInputClose() {
+      inputCloseListener?.();
+    },
+    requestMenu() {
+      menuListener?.();
     },
   };
 }
@@ -604,6 +638,38 @@ describe("dual presence surfaces", () => {
     );
   });
 
+  it("applies native toggle, close, and menu intents from the host", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(host.host.onInputToggleRequested).toHaveBeenCalledOnce();
+      expect(host.host.onInputCloseRequested).toHaveBeenCalledOnce();
+      expect(host.host.onMenuRequested).toHaveBeenCalledOnce();
+      expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core");
+    });
+
+    act(() => host.requestInputToggle());
+    await waitFor(() =>
+      expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)
+    );
+
+    act(() => host.requestInputClose());
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+
+    act(() => host.requestMenu());
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("expanded"));
+    expect(screen.getByRole("menu", { name: "Fairy menu" })).toBeInTheDocument();
+  });
+
   it("opens the main window on double click without leaving quick input open", async () => {
     const channel = channelHarness();
     const host = hostHarness();
@@ -719,7 +785,7 @@ describe("dual presence surfaces", () => {
     );
   });
 
-  it("publishes a non-interactive core snapshot after native presentation failure", async () => {
+  it("publishes a safe core snapshot and rebuilds the native session after failure", async () => {
     const channel = channelHarness();
     const host = hostHarness();
     const published: PresenceInputPresentation[] = [];
@@ -730,8 +796,9 @@ describe("dual presence surfaces", () => {
       onRequest: vi.fn(() => () => undefined),
       close: vi.fn(),
     };
+    let compactAttempts = 0;
     vi.mocked(host.host.applyInputPresentation).mockImplementation(async (input) => {
-      if (input.layout === "compact") {
+      if (input.layout === "compact" && compactAttempts++ === 0) {
         throw new Error("PET_INPUT_REGION_APPLY_FAILED");
       }
       return { session_id: input.session_id, revision: input.revision };
@@ -756,7 +823,7 @@ describe("dual presence surfaces", () => {
         request_focus: false,
       }),
     ));
-    expect(published.at(-1)).toEqual(expect.objectContaining({
+    expect(published).toContainEqual(expect.objectContaining({
       layout: "core",
       capsule_visible: false,
       motion: expect.objectContaining({
@@ -765,6 +832,17 @@ describe("dual presence surfaces", () => {
         capsule_visible: false,
       }),
     }));
+    await waitFor(() =>
+      expect(host.host.beginInputPresentationSession).toHaveBeenCalledTimes(2)
+    );
+    await waitFor(() =>
+      expect(host.host.applyInputPresentation).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          layout: "compact",
+          interactive: true,
+        }),
+      )
+    );
   });
 
   it("opens the companion menu from the core context target without a second input shell", async () => {

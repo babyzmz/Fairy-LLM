@@ -78,6 +78,9 @@ pub const PET_INPUT_LABEL: &str = "pet-input";
 const PET_INPUT_EXPANDED_CONTENT_HEIGHT_LOGICAL: f64 = 72.0;
 const PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT: &str = "presence-native-renderer-lifecycle";
 pub(crate) const PRESENCE_INPUT_REQUESTED_EVENT: &str = "presence-input-requested";
+pub(crate) const PRESENCE_INPUT_TOGGLE_REQUESTED_EVENT: &str = "presence-input-toggle-requested";
+pub(crate) const PRESENCE_INPUT_CLOSE_REQUESTED_EVENT: &str = "presence-input-close-requested";
+pub(crate) const PRESENCE_MENU_REQUESTED_EVENT: &str = "presence-menu-requested";
 const TRAY_ASK_ID: &str = "fairy.tray.ask";
 const TRAY_NEW_CHAT_ID: &str = "fairy.tray.new_chat";
 const TRAY_AUTO_PLAY_ID: &str = "fairy.tray.auto_play";
@@ -2260,6 +2263,10 @@ fn show_and_focus(window: &WebviewWindow) -> Result<(), String> {
     window.show().map_err(|error| error.to_string())?;
     window.unminimize().map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())
+}
+
+pub(crate) fn show_main_window_from_presence(app: &tauri::AppHandle) -> Result<(), String> {
+    show_and_focus(&main_window(app)?)
 }
 
 fn main_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {

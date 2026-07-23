@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 
 import type { DesktopPreferences } from "../../settings/client";
 import type { PresenceInteractionSnapshot } from "../domain/interaction";
@@ -92,6 +93,8 @@ const PET_DRAG_DISTANCE_PX = 6;
 const PRESENCE_SURFACE_EXIT_MS = 240;
 const PRESENCE_SURFACE_REDUCED_EXIT_MS = 80;
 const MENU_FOCUS_LOSS_MS = 600;
+const INPUT_PRESENTATION_RETRY_BASE_MS = 120;
+const INPUT_PRESENTATION_RETRY_MAX_MS = 2_000;
 
 interface PresenceSubmissionState {
   id: string;
@@ -120,6 +123,7 @@ export function PresenceInputApp({
   const [channel] = useState(() => suppliedChannel ?? createPresenceChannel());
   const accessibility = usePresenceAccessibilityPreferences();
   const [host] = useState(() => suppliedHost ?? createDefaultPetHost());
+  const [nativePointerGestures] = useState(() => isTauri());
   const [interactionSource] = useState(
     () => suppliedInteractionSource ?? createPresenceInteractionSource(),
   );
@@ -132,6 +136,7 @@ export function PresenceInputApp({
   const [inputPresentationSessionId, setInputPresentationSessionId] = useState<
     number | null
   >(null);
+  const [inputPresentationGeneration, setInputPresentationGeneration] = useState(0);
   const latestInputPresentation = useRef<PresenceInputPresentation>(
     DEFAULT_INPUT_PRESENTATION,
   );
@@ -178,11 +183,28 @@ export function PresenceInputApp({
   const coreLongPressTimer = useRef<number | null>(null);
   const nativeDragWasActive = useRef(false);
   const menuFocusLossTimer = useRef<number | null>(null);
+  const presentationRetryTimer = useRef<number | null>(null);
+  const presentationRetryAttempt = useRef(0);
   const applyInputIntent = useCallback((action: PresenceInputIntentAction) => {
     const next = reducePresenceInputIntent(inputIntentRef.current, action);
     inputIntentRef.current = next;
     setInputIntent(next);
     return next;
+  }, []);
+  const scheduleInputPresentationRestart = useCallback(() => {
+    if (presentationRetryTimer.current !== null) return;
+    const delay = Math.min(
+      INPUT_PRESENTATION_RETRY_BASE_MS * (2 ** presentationRetryAttempt.current),
+      INPUT_PRESENTATION_RETRY_MAX_MS,
+    );
+    presentationRetryAttempt.current = Math.min(
+      presentationRetryAttempt.current + 1,
+      8,
+    );
+    presentationRetryTimer.current = window.setTimeout(() => {
+      presentationRetryTimer.current = null;
+      setInputPresentationGeneration((generation) => generation + 1);
+    }, delay);
   }, []);
   const manualInputOpen = inputIntent.pinned;
   const hoverSuppressed = inputIntent.hover_blocked_until_exit;
@@ -204,6 +226,9 @@ export function PresenceInputApp({
       }
       if (menuFocusLossTimer.current !== null) {
         window.clearTimeout(menuFocusLossTimer.current);
+      }
+      if (presentationRetryTimer.current !== null) {
+        window.clearTimeout(presentationRetryTimer.current);
       }
     },
     [],
@@ -260,17 +285,21 @@ export function PresenceInputApp({
       if (!disposed) {
         writeInputPresentationDiagnostics(null, "failed");
         void host.setInputInteractive(false).catch(() => undefined);
+        scheduleInputPresentationRestart();
       }
     });
     return () => {
       disposed = true;
     };
-  }, [host]);
+  }, [host, inputPresentationGeneration, scheduleInputPresentationRestart]);
 
   useEffect(() => {
     let disposed = false;
     let stopPreferences: (() => void) | undefined;
     let stopInput: (() => void) | undefined;
+    let stopInputToggle: (() => void) | undefined;
+    let stopInputClose: (() => void) | undefined;
+    let stopMenu: (() => void) | undefined;
     let stopNewChat: (() => void) | undefined;
     void host.getPreferences().then((value) => {
       if (!disposed) setPreferences(value);
@@ -290,6 +319,42 @@ export function PresenceInputApp({
       if (disposed) stop();
       else stopInput = stop;
     });
+    void host.onInputToggleRequested(() => {
+      if (disposed) return;
+      const opening = !inputIntentRef.current.pinned && !transientInputVisible.current;
+      setMenuOpen(false);
+      applyInputIntent({
+        type: "toggle",
+        transient_visible: transientInputVisible.current,
+      });
+      if (opening) {
+        setFocusRequest((value) => value + 1);
+      } else if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    }).then((stop) => {
+      if (disposed) stop();
+      else stopInputToggle = stop;
+    });
+    void host.onInputCloseRequested(() => {
+      if (disposed) return;
+      setMenuOpen(false);
+      applyInputIntent({ type: "close" });
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    }).then((stop) => {
+      if (disposed) stop();
+      else stopInputClose = stop;
+    });
+    void host.onMenuRequested(() => {
+      if (disposed) return;
+      applyInputIntent({ type: "close" });
+      setMenuOpen(true);
+    }).then((stop) => {
+      if (disposed) stop();
+      else stopMenu = stop;
+    });
     void host.onNewChatRequested(() => {
       if (disposed) return;
       channel.requestNewChat();
@@ -304,6 +369,9 @@ export function PresenceInputApp({
       disposed = true;
       stopPreferences?.();
       stopInput?.();
+      stopInputToggle?.();
+      stopInputClose?.();
+      stopMenu?.();
       stopNewChat?.();
     };
   }, [applyInputIntent, channel, host]);
@@ -621,6 +689,7 @@ export function PresenceInputApp({
           appliedFocusRequest.current = focusRequest;
         }
         if (revision !== presentationRevision.current) return;
+        presentationRetryAttempt.current = 0;
         latestInputPresentation.current = presentation;
         writeInputPresentationDiagnostics(commit, "committed");
         inputPresentationChannel.publish(presentation);
@@ -667,6 +736,7 @@ export function PresenceInputApp({
             writeInputPresentationDiagnostics(commit, "recovered");
           }
         }).catch(() => host.setInputInteractive(false).catch(() => undefined));
+        scheduleInputPresentationRestart();
       });
   }, [
     capsuleVisible,
@@ -679,6 +749,7 @@ export function PresenceInputApp({
     inputPresentationSessionId,
     layout,
     presentedMotionSnapshot.revision,
+    scheduleInputPresentationRestart,
     surfaceInteractive,
   ]);
 
@@ -817,11 +888,7 @@ export function PresenceInputApp({
   }
 
   function cancelCorePointer(event: ReactPointerEvent<HTMLButtonElement>) {
-    const cancelledActivePress = corePress.current?.pointerId === event.pointerId;
     releaseCorePointer(event);
-    if (cancelledActivePress && suppressCoreActivationTimer.current === null) {
-      suppressCoreClickAfterDrag();
-    }
   }
 
   function openContextMenu() {
@@ -902,32 +969,37 @@ export function PresenceInputApp({
       onWheel={() => setReplyInteraction((value) => value + 1)}
       onContextMenu={(event) => {
         event.preventDefault();
-        openContextMenu();
+        if (!nativePointerGestures) openContextMenu();
       }}
     >
       <button
         aria-label="Open Fairy quick input"
         className="presence-core-hit-target"
         onClick={(event) => {
-          if (event.detail > 1 || suppressCoreActivation.current || moving) return;
+          if (
+            nativePointerGestures ||
+            event.detail > 1 ||
+            suppressCoreActivation.current ||
+            moving
+          ) return;
           activateCore();
         }}
         onContextMenu={(event) => {
           event.preventDefault();
           event.stopPropagation();
-          openContextMenu();
+          if (!nativePointerGestures) openContextMenu();
         }}
         onDoubleClick={() => {
-          if (suppressCoreActivation.current || moving) return;
+          if (nativePointerGestures || suppressCoreActivation.current || moving) return;
           applyInputIntent({ type: "close" });
           setMenuOpen(false);
           channel.requestWorkspaceOpen();
           void host.openMain().catch(() => undefined);
         }}
-        onPointerCancel={cancelCorePointer}
-        onPointerDown={captureCorePointer}
-        onPointerMove={trackCorePointer}
-        onPointerUp={releaseCorePointer}
+        onPointerCancel={nativePointerGestures ? undefined : cancelCorePointer}
+        onPointerDown={nativePointerGestures ? undefined : captureCorePointer}
+        onPointerMove={nativePointerGestures ? undefined : trackCorePointer}
+        onPointerUp={nativePointerGestures ? undefined : releaseCorePointer}
         tabIndex={-1}
         type="button"
       />

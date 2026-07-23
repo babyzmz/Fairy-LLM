@@ -460,19 +460,53 @@ float4 ps_main(VertexOutput input) : SV_Target {
     float pulse = state_pulse_value();
     float voice_pulse = state_voice_mix;
     float notify_wave = notify_wave_value();
-    float core_orb = exp(-(core_radius * core_radius) / 42.0);
-    float atmosphere_outer = exp(-abs(core_radius - 36.0) / 1.25);
-    float atmosphere_inner = exp(-abs(core_radius - 24.0) / 1.05);
+    float pulse_progress = saturate((pulse - 0.64) / 0.36);
+    float ring_offset = (pulse_progress - 0.5) * 1.8 + notify_wave * 3.2;
+    float atmosphere_outer = exp(-abs(core_radius - (36.0 + ring_offset)) / 0.92);
+    float atmosphere_inner = exp(-abs(core_radius - (24.0 - ring_offset * 0.28)) / 0.82);
+    float atmosphere_outer_halo = exp(
+        -abs(core_radius - (36.0 + ring_offset)) / 3.4
+    );
+    float atmosphere_inner_halo = exp(
+        -abs(core_radius - (24.0 - ring_offset * 0.28)) / 2.8
+    );
     float atmosphere_alpha = (
-        atmosphere_outer * (0.055 + state_energy * 0.045)
-        + atmosphere_inner * (0.035 + state_energy * 0.035)
-    ) * lerp(0.82, 1.0, pulse);
+        atmosphere_outer * (0.15 + state_energy * 0.12)
+        + atmosphere_inner * (0.11 + state_energy * 0.10)
+    ) * lerp(0.82, 1.08, pulse_progress);
     // Fairy's two atmosphere rings and breathing beacon are an independent foreground identity
     // layer. No broad center fill, glow, desktop sample, dispersion, or caustic is allowed here.
-    float3 identity_color = float3(0.86, 0.96, 1.0);
-    float beacon_emission = core_orb
-        * (0.48 + state_energy * 0.42 + voice_pulse * 0.12)
-        * lerp(0.74, 1.0, pulse);
+    float backdrop_luminance = dot(
+        saturate(desktop_color),
+        float3(0.2126, 0.7152, 0.0722)
+    );
+    float light_backdrop = smootherstep_range(0.58, 0.92, backdrop_luminance);
+    float3 identity_on_dark = float3(0.60, 0.90, 1.0);
+    float3 identity_on_light = float3(0.025, 0.34, 0.92);
+    float3 identity_color = lerp(identity_on_dark, identity_on_light, light_backdrop);
+    identity_color = lerp(
+        identity_color,
+        accent,
+        saturate(state_energy * 1.25 + voice_pulse * 0.22) * 0.22
+    );
+    float beacon_core = exp(-(core_radius * core_radius) / 10.5);
+    float beacon_halo = exp(-(core_radius * core_radius) / 68.0);
+    float beacon_emission = (
+        beacon_core * (0.66 + state_energy * 0.30 + voice_pulse * 0.16)
+        + beacon_halo * (0.14 + state_energy * 0.12 + voice_pulse * 0.08)
+    ) * lerp(0.80, 1.16, pulse_progress);
+    float identity_contrast_alpha = saturate(
+        (
+            atmosphere_outer_halo * 0.13
+            + atmosphere_inner_halo * 0.10
+            + beacon_halo * 0.12
+        ) * lerp(0.18, 1.0, light_backdrop)
+    );
+    float3 identity_contrast_color = lerp(
+        float3(0.02, 0.12, 0.22),
+        float3(0.008, 0.045, 0.16),
+        light_backdrop
+    );
 
     float shape_mask = saturate((1.5 * scale - signed_distance) / (2.5 * scale));
     // The center remains one identity desktop sample. Material opacity grows only toward the edge;
@@ -492,16 +526,27 @@ float4 ps_main(VertexOutput input) : SV_Target {
     alpha = max(alpha, shape_mask * optical_highlight_alpha);
     float atmosphere_layer_alpha = saturate(atmosphere_alpha * 1.55) * shape_mask;
     float beacon_layer_alpha = saturate(beacon_emission) * shape_mask;
-    float identity_alpha = 1.0
-        - (1.0 - atmosphere_layer_alpha)
-        * (1.0 - beacon_layer_alpha);
+    float contrast_layer_alpha = identity_contrast_alpha * shape_mask;
+    float3 identity_premultiplied = linear_to_srgb(identity_contrast_color)
+        * contrast_layer_alpha;
+    float identity_alpha = contrast_layer_alpha;
+    identity_premultiplied = linear_to_srgb(identity_color)
+        * atmosphere_layer_alpha
+        + identity_premultiplied * (1.0 - atmosphere_layer_alpha);
+    identity_alpha = atmosphere_layer_alpha
+        + identity_alpha * (1.0 - atmosphere_layer_alpha);
+    float3 beacon_color = lerp(
+        float3(0.96, 0.985, 1.0),
+        float3(0.30, 0.78, 1.0),
+        light_backdrop
+    );
+    identity_premultiplied = linear_to_srgb(beacon_color)
+        * beacon_layer_alpha
+        + identity_premultiplied * (1.0 - beacon_layer_alpha);
+    identity_alpha = beacon_layer_alpha
+        + identity_alpha * (1.0 - beacon_layer_alpha);
     float material_alpha = alpha;
     float3 material_premultiplied = linear_to_srgb(saturate(color)) * material_alpha;
-    float3 identity_premultiplied = linear_to_srgb(identity_color)
-        * atmosphere_layer_alpha;
-    identity_premultiplied += linear_to_srgb(float3(0.96, 0.985, 1.0))
-        * beacon_layer_alpha
-        * (1.0 - atmosphere_layer_alpha);
     float3 foreground_premultiplied = identity_premultiplied
         + material_premultiplied * (1.0 - identity_alpha);
     float foreground_alpha = identity_alpha

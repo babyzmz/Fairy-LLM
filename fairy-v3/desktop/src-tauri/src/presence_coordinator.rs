@@ -14,7 +14,10 @@ use crate::presence_runtime::{
 use crate::presence_window_policy::{
     input_follows_render, relation_for_phase, PresenceWindowRelation,
 };
-use crate::{PET_INPUT_LABEL, PET_RENDER_LABEL};
+use crate::{
+    PET_INPUT_LABEL, PET_RENDER_LABEL, PRESENCE_INPUT_CLOSE_REQUESTED_EVENT,
+    PRESENCE_INPUT_TOGGLE_REQUESTED_EVENT, PRESENCE_MENU_REQUESTED_EVENT,
+};
 
 pub const PRESENCE_INTERACTION_EVENT: &str = "presence-interaction-snapshot";
 pub const PET_CORE_ANCHOR_X_LOGICAL: f64 = 96.0;
@@ -37,6 +40,8 @@ const RUNTIME_POLICY_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const PROJECTION_RECOVERY_HEARTBEAT_MS: u64 = 30_000;
 const CURSOR_FAILURE_LIMIT: u8 = 3;
 const NATIVE_DRAG_HOLD_MS: u64 = 320;
+const NATIVE_DOUBLE_CLICK_MS: u64 = 350;
+const NATIVE_CLICK_DISTANCE_PX: i32 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PresenceCoordinatorConfig {
@@ -553,10 +558,19 @@ struct NativePointerPress {
     sampled_at_ms: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct NativeButtonSample {
+    down: bool,
+    pressed_since_last_sample: bool,
+}
+
 #[derive(Default)]
 struct NativePointerController {
     primary_was_down: bool,
+    secondary_was_down: bool,
     primary_press: Option<NativePointerPress>,
+    secondary_press: Option<NativePointerPress>,
+    last_click: Option<NativePointerPress>,
     dragging: bool,
 }
 
@@ -568,9 +582,15 @@ impl NativePointerController {
         point: Option<PhysicalPoint>,
         sampled_at_ms: u64,
     ) {
-        let primary_down = primary_pointer_down();
-        let primary_pressed = primary_down && !self.primary_was_down;
-        let primary_released = !primary_down && self.primary_was_down;
+        let (primary, secondary) = pointer_button_state();
+        let primary_pressed = primary.down && !self.primary_was_down;
+        let primary_released = !primary.down && self.primary_was_down;
+        let primary_tapped_between_samples =
+            button_tapped_between_samples(primary, self.primary_was_down);
+        let secondary_pressed = secondary.down && !self.secondary_was_down;
+        let secondary_released = !secondary.down && self.secondary_was_down;
+        let secondary_tapped_between_samples =
+            button_tapped_between_samples(secondary, self.secondary_was_down);
 
         if primary_pressed {
             self.primary_press = point
@@ -581,7 +601,7 @@ impl NativePointerController {
                 });
         }
 
-        if primary_down && !self.dragging {
+        if primary.down && !self.dragging {
             if let Some(press) = self.primary_press {
                 if native_drag_hold_elapsed(press.sampled_at_ms, sampled_at_ms) {
                     if let Some(state) = app.try_state::<crate::DesktopState>() {
@@ -593,6 +613,7 @@ impl NativePointerController {
                         ) {
                             Ok(()) => {
                                 self.dragging = true;
+                                self.last_click = None;
                             }
                             Err(error) => eprintln!("failed to begin native pet drag: {error}"),
                         }
@@ -601,7 +622,7 @@ impl NativePointerController {
             }
         }
 
-        if primary_down && self.dragging {
+        if primary.down && self.dragging {
             if let (Some(point), Some(state)) = (point, app.try_state::<crate::DesktopState>()) {
                 if let Err(error) = crate::move_native_pet_drag(app, state.inner(), point) {
                     eprintln!("failed to move native pet drag: {error}");
@@ -617,16 +638,89 @@ impl NativePointerController {
                     }
                 }
                 self.dragging = false;
+            } else if let (Some(press), Some(point)) = (self.primary_press.take(), point) {
+                if point_inside_native_core(point, placement)
+                    && !point_distance_exceeds(press.point, point, NATIVE_CLICK_DISTANCE_PX)
+                {
+                    self.activate_primary_click(app, placement, Some(point), sampled_at_ms);
+                }
             }
             self.primary_press = None;
         }
+        if primary_tapped_between_samples {
+            self.activate_primary_click(app, placement, point, sampled_at_ms);
+        }
 
-        self.primary_was_down = primary_down;
+        if secondary_pressed {
+            self.secondary_press = point
+                .filter(|point| point_inside_native_core(*point, placement))
+                .map(|point| NativePointerPress {
+                    point,
+                    sampled_at_ms,
+                });
+        }
+        if secondary_released {
+            if let (Some(press), Some(point)) = (self.secondary_press.take(), point) {
+                if point_inside_native_core(point, placement)
+                    && !point_distance_exceeds(press.point, point, NATIVE_CLICK_DISTANCE_PX)
+                {
+                    let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_MENU_REQUESTED_EVENT, ());
+                }
+            }
+        }
+        if secondary_tapped_between_samples
+            && point.is_some_and(|point| point_inside_native_core(point, placement))
+        {
+            let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_MENU_REQUESTED_EVENT, ());
+        }
+
+        self.primary_was_down = primary.down;
+        self.secondary_was_down = secondary.down;
+    }
+
+    fn activate_primary_click(
+        &mut self,
+        app: &tauri::AppHandle,
+        placement: PresenceWindowPlacement,
+        point: Option<PhysicalPoint>,
+        sampled_at_ms: u64,
+    ) {
+        let Some(point) = point.filter(|point| point_inside_native_core(*point, placement)) else {
+            return;
+        };
+        if native_click_is_double(self.last_click, point, sampled_at_ms) {
+            self.last_click = None;
+            let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_INPUT_CLOSE_REQUESTED_EVENT, ());
+            if let Err(error) = crate::show_main_window_from_presence(app) {
+                eprintln!("failed to open Fairy from native pet: {error}");
+            }
+        } else {
+            self.last_click = Some(NativePointerPress {
+                point,
+                sampled_at_ms,
+            });
+            let _ = app.emit_to(PET_INPUT_LABEL, PRESENCE_INPUT_TOGGLE_REQUESTED_EVENT, ());
+        }
     }
 }
 
 fn native_drag_hold_elapsed(pressed_at_ms: u64, sampled_at_ms: u64) -> bool {
     sampled_at_ms.saturating_sub(pressed_at_ms) >= NATIVE_DRAG_HOLD_MS
+}
+
+fn button_tapped_between_samples(sample: NativeButtonSample, was_down: bool) -> bool {
+    !sample.down && !was_down && sample.pressed_since_last_sample
+}
+
+fn native_click_is_double(
+    previous: Option<NativePointerPress>,
+    point: PhysicalPoint,
+    sampled_at_ms: u64,
+) -> bool {
+    previous.is_some_and(|click| {
+        sampled_at_ms.saturating_sub(click.sampled_at_ms) <= NATIVE_DOUBLE_CLICK_MS
+            && !point_distance_exceeds(click.point, point, NATIVE_CLICK_DISTANCE_PX)
+    })
 }
 
 fn point_inside_native_core(point: PhysicalPoint, placement: PresenceWindowPlacement) -> bool {
@@ -636,15 +730,30 @@ fn point_inside_native_core(point: PhysicalPoint, placement: PresenceWindowPlace
     dx.mul_add(dx, dy * dy) <= radius * radius
 }
 
+fn point_distance_exceeds(left: PhysicalPoint, right: PhysicalPoint, threshold: i32) -> bool {
+    let dx = i64::from(left.x) - i64::from(right.x);
+    let dy = i64::from(left.y) - i64::from(right.y);
+    dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy)) > i64::from(threshold).pow(2)
+}
+
 #[cfg(target_os = "windows")]
-fn primary_pointer_down() -> bool {
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-    unsafe { (GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000) != 0 }
+fn pointer_button_state() -> (NativeButtonSample, NativeButtonSample) {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON,
+    };
+    let sample = |button| {
+        let state = unsafe { GetAsyncKeyState(button) as u16 };
+        NativeButtonSample {
+            down: state & 0x8000 != 0,
+            pressed_since_last_sample: state & 0x0001 != 0,
+        }
+    };
+    (sample(VK_LBUTTON as i32), sample(VK_RBUTTON as i32))
 }
 
 #[cfg(not(target_os = "windows"))]
-fn primary_pointer_down() -> bool {
-    false
+fn pointer_button_state() -> (NativeButtonSample, NativeButtonSample) {
+    (NativeButtonSample::default(), NativeButtonSample::default())
 }
 
 impl PresenceCoordinatorHandle {
@@ -847,7 +956,8 @@ fn run_coordinator(app: tauri::AppHandle, state: CoordinatorThreadState) {
         let hover_enabled = hover_enabled.load(Ordering::Acquire);
         let hover_dwell_ms = hover_dwell_ms.load(Ordering::Acquire);
         let repositioning = is_repositioning;
-        let pointer_over_input = point.is_some_and(|point| input_pointer_state(&app, point));
+        let pointer_over_input =
+            point.is_some_and(|point| input_pointer_state(&app, point, current_placement));
         let effective_cursor_band = configured_cursor_band(cursor, hover_enabled, hover_dwell_ms);
         let projected_cursor = CursorMetrics {
             band: effective_cursor_band,
@@ -907,28 +1017,21 @@ fn unavailable_cursor(placement: PresenceWindowPlacement) -> CursorMetrics {
     }
 }
 
-fn input_pointer_state(app: &tauri::AppHandle, point: PhysicalPoint) -> bool {
+fn input_pointer_state(
+    app: &tauri::AppHandle,
+    point: PhysicalPoint,
+    placement: PresenceWindowPlacement,
+) -> bool {
     let Some(input) = app.get_webview_window(PET_INPUT_LABEL) else {
         return false;
     };
     if !input.is_visible().unwrap_or(false) {
         return false;
     }
-    input
-        .outer_position()
-        .ok()
-        .zip(input.outer_size().ok())
-        .is_some_and(|(position, size)| {
-            point_in_input_region(&input, point, position.x, position.y).unwrap_or_else(|| {
-                PhysicalFrame {
-                    x: position.x,
-                    y: position.y,
-                    width: size.width,
-                    height: size.height,
-                }
-                .contains(point)
-            })
-        })
+    input.outer_position().ok().is_some_and(|position| {
+        point_in_input_region(&input, point, position.x, position.y)
+            .unwrap_or_else(|| point_inside_native_core(point, placement))
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -1141,6 +1244,54 @@ mod native_pointer_tests {
         assert!(!native_drag_hold_elapsed(1_000, 1_319));
         assert!(native_drag_hold_elapsed(1_000, 1_320));
         assert!(native_drag_hold_elapsed(1_000, 1_600));
+    }
+
+    #[test]
+    fn native_double_click_requires_nearby_clicks_inside_the_time_window() {
+        let previous = NativePointerPress {
+            point: PhysicalPoint { x: 100, y: 200 },
+            sampled_at_ms: 1_000,
+        };
+        assert!(native_click_is_double(
+            Some(previous),
+            PhysicalPoint { x: 105, y: 204 },
+            1_350,
+        ));
+        assert!(!native_click_is_double(
+            Some(previous),
+            PhysicalPoint { x: 109, y: 200 },
+            1_350,
+        ));
+        assert!(!native_click_is_double(
+            Some(previous),
+            PhysicalPoint { x: 100, y: 200 },
+            1_351,
+        ));
+    }
+
+    #[test]
+    fn native_pointer_preserves_clicks_shorter_than_one_poll_interval() {
+        assert!(button_tapped_between_samples(
+            NativeButtonSample {
+                down: false,
+                pressed_since_last_sample: true,
+            },
+            false,
+        ));
+        assert!(!button_tapped_between_samples(
+            NativeButtonSample {
+                down: true,
+                pressed_since_last_sample: true,
+            },
+            false,
+        ));
+        assert!(!button_tapped_between_samples(
+            NativeButtonSample {
+                down: false,
+                pressed_since_last_sample: true,
+            },
+            true,
+        ));
     }
 
     #[test]
