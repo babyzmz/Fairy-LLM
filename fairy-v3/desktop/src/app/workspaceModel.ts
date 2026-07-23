@@ -737,7 +737,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           }),
         );
         await invalidateDomains(
-          ["approvals", "tasks", "traces"],
+          ["messages", "approvals", "tasks", "traces"],
           {
             conversationId: workspaceTask?.conversation_id ?? null,
             taskId: workspaceTask?.id ?? selectedTask?.id ?? chatTaskId,
@@ -1056,6 +1056,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     selectedChatConversation,
     selectedTask,
     workspaceTask,
+    workspaceActivePreviewId: selectedWorkspaceQuery.data === undefined
+      ? mode === "project"
+        ? selectedConversation?.active_preview_id ?? selectedProject?.active_preview_id ?? null
+        : selectedChatConversation?.active_preview_id ?? null
+      : selectedWorkspaceQuery.data.active_preview_id,
     selectedVersion,
     preview: previewActivationState.activation?.context ?? previewQuery.data ?? null,
     previewActivation: previewActivationState.activation,

@@ -51,6 +51,36 @@ describe("WorkspaceShell", () => {
     expect(screen.getByLabelText("Message Fairy")).toBeVisible();
   });
 
+  it("opens an active Preview before resolution and preserves a manual tab choice", () => {
+    const project = {
+      ...projectFixture(),
+      active_preview_id: "019f566f-f8b4-7000-8000-000000000131",
+    };
+    const conversation = projectConversationFixture(project);
+    const model = workspaceModel();
+    model.projects = [project];
+    model.selectedProject = project;
+    model.selectedConversation = conversation;
+    model.selectedTask = workspaceTask();
+    model.workspaceTask = model.selectedTask;
+    model.workspaceActivePreviewId = project.active_preview_id;
+    model.workspaceFiles = [{
+      path: "src/main.ts",
+      byte_length: 22,
+      content_hash: "main-hash",
+      kind: "source",
+      language: "typescript",
+      imports: [],
+    }];
+    const { rerender } = render(<WorkspaceShell model={model} />);
+
+    expect(screen.getByRole("tab", { name: "Preview" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("tab", { name: /Files/ }));
+    rerender(<WorkspaceShell model={{ ...model, previewActivationLoading: true }} />);
+
+    expect(screen.getByRole("tab", { name: /Files/ })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("resizes the workspace inspector with the keyboard and persists the width", () => {
     const model = workspaceModel();
     model.selectedTask = workspaceTask();
@@ -845,6 +875,7 @@ function workspaceModel(): WorkspaceModel {
     selectedChatConversation: null,
     selectedTask: null,
     workspaceTask: null,
+    workspaceActivePreviewId: null,
     selectedVersion: null,
     preview: null,
     previewActivation: null,

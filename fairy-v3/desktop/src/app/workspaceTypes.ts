@@ -160,6 +160,7 @@ export interface WorkspaceModel {
   selectedChatConversation: Conversation | null;
   selectedTask: Task | null;
   workspaceTask: Task | null;
+  workspaceActivePreviewId: string | null;
   selectedVersion: Version | null;
   preview: PreviewContext | null;
   previewActivation: PreviewActivation | null;

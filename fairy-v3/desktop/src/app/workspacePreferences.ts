@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { EventCheckpoint } from "../core/eventStream";
+import { DESKTOP_PREFERENCES_EVENT } from "../settings/client";
 
 const eventCheckpointKey = "fairy.events.checkpoint.v2";
 const legacyEventCursorKey = "fairy.events.cursor";
@@ -129,7 +130,18 @@ function useStorageSync(key: string, update: (value: string | null) => void): vo
     const listener = (event: StorageEvent) => {
       if (event.key === key) update(event.newValue);
     };
+    const preferencesListener = () => {
+      try {
+        update(window.localStorage.getItem(key));
+      } catch {
+        // Core preferences remain authoritative when browser storage is unavailable.
+      }
+    };
     window.addEventListener("storage", listener);
-    return () => window.removeEventListener("storage", listener);
+    window.addEventListener(DESKTOP_PREFERENCES_EVENT, preferencesListener);
+    return () => {
+      window.removeEventListener("storage", listener);
+      window.removeEventListener(DESKTOP_PREFERENCES_EVENT, preferencesListener);
+    };
   }, [key, update]);
 }
