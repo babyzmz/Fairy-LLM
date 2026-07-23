@@ -71,6 +71,14 @@ pub fn authorize_capture_window(label: &str) -> Result<(), CaptureWindowError> {
     }
 }
 
+pub fn authorize_capture_list_window(label: &str) -> Result<(), CaptureWindowError> {
+    if ["main", "companion"].contains(&label) {
+        Ok(())
+    } else {
+        Err(CaptureWindowError)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureError {
     ScopeMismatch,
@@ -121,7 +129,11 @@ impl<B: CaptureBackend> CaptureService<B> {
     }
 
     pub fn list(&self, window_label: &str) -> Result<Vec<CaptureSurface>, CaptureError> {
-        authorize_capture_window(window_label).map_err(|_| CaptureError::ScopeMismatch)?;
+        authorize_capture_list_window(window_label).map_err(|_| CaptureError::ScopeMismatch)?;
+        self.validated_surfaces()
+    }
+
+    fn validated_surfaces(&self) -> Result<Vec<CaptureSurface>, CaptureError> {
         let surfaces = self.backend.list_surfaces()?;
         if surfaces.len() > MAX_CAPTURE_SURFACES {
             return Err(CaptureError::LimitExceeded("too many capture surfaces"));
@@ -137,8 +149,9 @@ impl<B: CaptureBackend> CaptureService<B> {
         window_label: &str,
         request: CaptureRequest,
     ) -> Result<CaptureResult, CaptureError> {
+        authorize_capture_window(window_label).map_err(|_| CaptureError::ScopeMismatch)?;
         validate_source_id(&request.source_id)?;
-        let surfaces = self.list(window_label)?;
+        let surfaces = self.validated_surfaces()?;
         let surface = surfaces
             .into_iter()
             .find(|surface| surface.kind == request.kind && surface.source_id == request.source_id)
@@ -351,4 +364,16 @@ pub async fn capture_surface(
 
 fn public_error(error: CaptureError) -> String {
     format!("{}: {error}", error.code())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{authorize_capture_list_window, authorize_capture_window};
+
+    #[test]
+    fn companion_can_list_sources_but_cannot_capture_frames() {
+        assert!(authorize_capture_list_window("companion").is_ok());
+        assert!(authorize_capture_window("companion").is_err());
+        assert!(authorize_capture_window("main").is_ok());
+    }
 }

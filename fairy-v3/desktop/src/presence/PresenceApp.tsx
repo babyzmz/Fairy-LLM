@@ -295,8 +295,7 @@ export function PresenceApp({
             void host.openMain().catch(() => undefined);
           },
           openCompanion: () => {
-            channel.requestRealtimeOpen?.();
-            void host.openMain().catch(() => undefined);
+            void host.openCompanion().catch(() => undefined);
           },
           openReview: () => {
             channel.requestWorkspaceOpen();

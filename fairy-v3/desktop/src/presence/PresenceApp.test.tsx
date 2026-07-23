@@ -151,6 +151,7 @@ function petHost(): PetHost {
     })),
     resetPosition: vi.fn(async () => current),
     openMain: vi.fn(async () => undefined),
+    openCompanion: vi.fn(async () => undefined),
     openSettings: vi.fn(async () => undefined),
     exit: vi.fn(async () => undefined),
   };

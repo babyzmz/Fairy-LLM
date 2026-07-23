@@ -75,6 +75,7 @@ pub mod voice_worker;
 
 pub const PET_RENDER_LABEL: &str = "pet-render";
 pub const PET_INPUT_LABEL: &str = "pet-input";
+pub const COMPANION_LABEL: &str = "companion";
 const PET_INPUT_EXPANDED_CONTENT_HEIGHT_LOGICAL: f64 = 72.0;
 const PRESENCE_NATIVE_RENDERER_LIFECYCLE_EVENT: &str = "presence-native-renderer-lifecycle";
 pub(crate) const PRESENCE_INPUT_REQUESTED_EVENT: &str = "presence-input-requested";
@@ -212,8 +213,24 @@ pub fn authorize_settings_window(label: &str) -> Result<(), WindowScopeError> {
     }
 }
 
+pub fn authorize_companion_window(label: &str) -> Result<(), WindowScopeError> {
+    if label == COMPANION_LABEL {
+        Ok(())
+    } else {
+        Err(WindowScopeError)
+    }
+}
+
+pub fn authorize_realtime_window(label: &str) -> Result<(), WindowScopeError> {
+    if ["main", COMPANION_LABEL].contains(&label) {
+        Ok(())
+    } else {
+        Err(WindowScopeError)
+    }
+}
+
 pub fn authorize_preferences_reader(label: &str) -> Result<(), WindowScopeError> {
-    if ["main", "settings", PET_INPUT_LABEL].contains(&label) {
+    if ["main", "settings", PET_INPUT_LABEL, COMPANION_LABEL].contains(&label) {
         Ok(())
     } else {
         Err(WindowScopeError)
@@ -293,6 +310,20 @@ pub fn settings_method_allowed(method: &str) -> bool {
             | "trash.items.purge"
             | "trash.items.purge_all"
             | "trash.items.restore"
+    )
+}
+
+pub fn companion_core_method_allowed(method: &str) -> bool {
+    matches!(
+        method,
+        "realtime.sessions.start"
+            | "realtime.sessions.get"
+            | "realtime.sessions.list"
+            | "realtime.sessions.report"
+            | "realtime.sessions.stop"
+            | "realtime.memories.save"
+            | "realtime.memories.list"
+            | "realtime.memories.delete"
     )
 }
 
@@ -467,7 +498,7 @@ async fn realtime_worker_status(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<RealtimeWorkerStatus, String> {
-    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
     Ok(state.realtime.status())
 }
 
@@ -478,7 +509,7 @@ async fn realtime_worker_start(
     state: State<'_, DesktopState>,
     input: RealtimeWorkerStartInput,
 ) -> Result<RealtimeWorkerStatus, String> {
-    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
     let credential_provider = input.provider.credential_provider();
     let credential = ProviderCredentialStore::new(&state.data_dir)
         .load(credential_provider)
@@ -496,7 +527,7 @@ async fn realtime_worker_stop(
     state: State<'_, DesktopState>,
     input: RealtimeWorkerStopInput,
 ) -> Result<RealtimeWorkerStatus, String> {
-    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
     state
         .realtime
         .stop(&input.session_id)
@@ -509,7 +540,7 @@ async fn realtime_worker_tool_result(
     state: State<'_, DesktopState>,
     input: RealtimeWorkerToolResultInput,
 ) -> Result<(), String> {
-    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
     state
         .realtime
         .tool_result(input)
@@ -733,6 +764,32 @@ async fn settings_rpc(
     Ok(call_core(&state, request).await)
 }
 
+#[tauri::command]
+async fn companion_rpc(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    request: Value,
+) -> Result<Value, String> {
+    let request_id = request.get("id").cloned().unwrap_or(Value::Null);
+    if authorize_companion_window(window.label()).is_err() {
+        return Ok(scope_failure_response(
+            request_id,
+            "Window is not authorized to access Companion methods",
+        ));
+    }
+    let method = request
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !companion_core_method_allowed(method) {
+        return Ok(scope_failure_response(
+            request_id,
+            "Method is outside the Companion allow list",
+        ));
+    }
+    Ok(call_core(&state, request).await)
+}
+
 #[derive(serde::Deserialize)]
 struct OpenRouterConfigureInput {
     api_key: String,
@@ -775,7 +832,7 @@ async fn provider_realtime_status(
     input: RealtimeProviderCredentialTarget,
 ) -> Result<RealtimeProviderCredentialStatus, String> {
     if authorize_settings_window(window.label()).is_err()
-        && authorize_core_rpc_window(window.label()).is_err()
+        && authorize_realtime_window(window.label()).is_err()
     {
         return Err("Window is not authorized".to_owned());
     }
@@ -2312,11 +2369,45 @@ fn settings_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
     .map_err(|error| error.to_string())
 }
 
+fn companion_window(app: &tauri::AppHandle) -> Result<WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window(COMPANION_LABEL) {
+        return Ok(window);
+    }
+    WebviewWindowBuilder::new(
+        app,
+        COMPANION_LABEL,
+        WebviewUrl::App("index.html?surface=companion".into()),
+    )
+    .title("Fairy Game Companion")
+    .inner_size(620.0, 760.0)
+    .min_inner_size(520.0, 620.0)
+    .resizable(true)
+    .skip_taskbar(true)
+    .visible(false)
+    .center()
+    .build()
+    .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 async fn open_main_window(window: WebviewWindow) -> Result<(), String> {
     authorize_pet_input_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
     show_and_focus(&main_window(window.app_handle())?)
+}
+
+#[tauri::command]
+async fn open_companion_window(window: WebviewWindow) -> Result<(), String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    show_and_focus(&companion_window(window.app_handle())?)
+}
+
+#[tauri::command]
+async fn hide_companion_window(window: WebviewWindow) -> Result<(), String> {
+    authorize_companion_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    window.hide().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -4012,7 +4103,7 @@ async fn realtime_voice_start(
     audio: Channel<Response>,
     events: Channel<VoiceStreamEvent>,
 ) -> Result<PreparedVoiceSession, String> {
-    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
     let session =
         prepared_realtime_session(&text).map_err(|error| error.public_code().to_owned())?;
     let worker_session = session.clone();
@@ -4044,7 +4135,7 @@ async fn realtime_voice_cancel(
     state: State<'_, DesktopState>,
     session_id: String,
 ) -> Result<(), String> {
-    authorize_core_rpc_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
     let voice = Arc::clone(&state.voice);
     tauri::async_runtime::spawn_blocking(move || voice.cancel(&session_id))
         .await
@@ -4720,6 +4811,7 @@ pub fn run() {
             ambient_dialogue_state_update,
             core_rpc,
             settings_rpc,
+            companion_rpc,
             provider_openrouter_status,
             provider_openrouter_configure,
             provider_openrouter_delete,
@@ -4755,6 +4847,8 @@ pub fn run() {
             pet_native_gpu_stop,
             pet_exit,
             open_main_window,
+            open_companion_window,
+            hide_companion_window,
             open_settings_window,
             voice_worker_health,
             voice_model_install,
@@ -4777,6 +4871,16 @@ pub fn run() {
         .expect("failed to build Fairy desktop");
     application.run(|app, event| match event {
         tauri::RunEvent::Resumed => reset_native_presence_after_resume(app),
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == COMPANION_LABEL => {
+            api.prevent_close();
+            if let Some(window) = app.get_webview_window(COMPANION_LABEL) {
+                let _ = window.hide();
+            }
+        }
         tauri::RunEvent::WindowEvent { label, event, .. } if label == PET_RENDER_LABEL => {
             match event {
                 tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
@@ -4873,6 +4977,66 @@ mod pet_input_presentation_tests {
             Err("PET_INPUT_PRESENTATION_STALE_REVISION")
         );
         assert!(fence.validate(session.session_id, 4).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod companion_window_scope_tests {
+    use super::{
+        authorize_companion_window, authorize_core_rpc_window, companion_core_method_allowed,
+    };
+
+    #[test]
+    fn companion_is_not_a_general_core_window() {
+        assert!(authorize_companion_window("companion").is_ok());
+        assert!(authorize_companion_window("main").is_err());
+        assert!(authorize_core_rpc_window("companion").is_err());
+    }
+
+    #[test]
+    fn companion_core_allow_list_contains_only_realtime_domain_methods() {
+        for allowed in [
+            "realtime.sessions.start",
+            "realtime.sessions.get",
+            "realtime.sessions.list",
+            "realtime.sessions.report",
+            "realtime.sessions.stop",
+            "realtime.memories.save",
+            "realtime.memories.list",
+            "realtime.memories.delete",
+        ] {
+            assert!(companion_core_method_allowed(allowed), "{allowed}");
+        }
+        for denied in [
+            "health",
+            "projects.list",
+            "conversations.list",
+            "workspaces.files.list",
+            "browser.sessions.start",
+            "providers.list",
+        ] {
+            assert!(!companion_core_method_allowed(denied), "{denied}");
+        }
+    }
+
+    #[test]
+    fn companion_window_and_capability_are_declared_as_secondary_only() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let windows = config["app"]["windows"].as_array().unwrap();
+        let companion = windows
+            .iter()
+            .find(|window| window["label"] == "companion")
+            .unwrap();
+        assert_eq!(companion["create"], false);
+        assert_eq!(companion["visible"], false);
+        assert_eq!(companion["skipTaskbar"], true);
+        assert_eq!(companion["url"], "index.html?surface=companion");
+
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/companion.json")).unwrap();
+        assert_eq!(capability["windows"], serde_json::json!(["companion"]));
+        assert!(!capability.to_string().contains("core:default"));
     }
 }
 

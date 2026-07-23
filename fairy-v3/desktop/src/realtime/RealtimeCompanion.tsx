@@ -11,8 +11,10 @@ import type {
   RealtimeSessionStatus,
   RealtimeWorkerProvider,
 } from "../core/client";
+import type { InvokeFunction } from "../core/tauriTransport";
 import type { DesktopPreferences } from "../settings/client";
 import { startRealtimeVoice, type NativeVoicePlayback } from "../voice/nativeVoice";
+import type { RealtimePresenceState } from "./realtimePresence";
 import "./realtime-companion.css";
 
 interface CaptureSurface {
@@ -55,28 +57,22 @@ const EMPTY_USAGE: RealtimeUsage = {
   tool_call_count: 0,
 };
 
-export type RealtimePresenceState =
-  | "idle"
-  | "starting"
-  | "connecting"
-  | "active"
-  | "listening"
-  | "analyzing"
-  | "speaking"
-  | "stopping"
-  | "completed"
-  | "error";
-
 export function RealtimeCompanion({
   client,
+  hostInvoke = invoke,
+  onClose,
   onPresenceChange,
   openRequest = 0,
+  windowMode = false,
 }: {
   client: CoreClient["realtime"];
+  hostInvoke?: InvokeFunction;
+  onClose?(): void;
   onPresenceChange?(state: RealtimePresenceState): void;
   openRequest?: number;
+  windowMode?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(windowMode);
   const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
   const [credentialReady, setCredentialReady] = useState<boolean | null>(null);
   const [surfaces, setSurfaces] = useState<CaptureSurface[]>([]);
@@ -119,15 +115,15 @@ export function RealtimeCompanion({
   }, [onPresenceChange, presence]);
 
   useEffect(() => {
-    if (openRequest > 0) setOpen(true);
-  }, [openRequest]);
+    if (windowMode || openRequest > 0) setOpen(true);
+  }, [openRequest, windowMode]);
 
   const load = useCallback(async () => {
     setError(null);
     try {
       const [nextPreferences, captureSurfaces, recentSessions, workerStatus] = await Promise.all([
-        invoke<DesktopPreferences>("desktop_preferences_get"),
-        invoke<CaptureSurface[]>("list_capture_surfaces"),
+        hostInvoke<DesktopPreferences>("desktop_preferences_get"),
+        hostInvoke<CaptureSurface[]>("list_capture_surfaces"),
         client.sessions.list(20),
         client.worker.status(),
       ]);
@@ -135,7 +131,7 @@ export function RealtimeCompanion({
         nextPreferences.realtime_provider,
         navigator.language || "zh-CN",
       );
-      const credential = await invoke<RealtimeProviderCredentialStatus>(
+      const credential = await hostInvoke<RealtimeProviderCredentialStatus>(
         "provider_realtime_status",
         { input: { provider: credentialProvider } },
       );
@@ -178,7 +174,7 @@ export function RealtimeCompanion({
     } catch (caught) {
       setError(messageOf(caught));
     }
-  }, [client.sessions, client.worker]);
+  }, [client.sessions, client.worker, hostInvoke]);
 
   useEffect(() => {
     if (open) void load();
@@ -454,11 +450,22 @@ export function RealtimeCompanion({
   };
 
   const active = session !== null && !isTerminal(session.status);
+  const close = () => {
+    if (windowMode) {
+      onClose?.();
+      return;
+    }
+    if (!active) {
+      setOpen(false);
+      setCaptions([]);
+      setDraftCaption("");
+    }
+  };
   return (
     <>
-      {open ? <div className="realtime-backdrop" role="presentation">
-        <section className="realtime-panel" role="dialog" aria-modal="true" aria-label="Game companion">
-          <header><div><span>Realtime</span><h2>Game companion</h2></div><button type="button" aria-label="Close" onClick={() => { if (!active) { setOpen(false); setCaptions([]); setDraftCaption(""); } }}><X size={17} /></button></header>
+      {open ? <div className={`realtime-backdrop${windowMode ? " is-window" : ""}`} role="presentation">
+        <section className="realtime-panel" role="dialog" aria-modal={!windowMode} aria-label="Game companion">
+          <header><div><span>Realtime</span><h2>Game companion</h2></div><button type="button" aria-label="Close" onClick={close}><X size={17} /></button></header>
           <div className="realtime-privacy"><ShieldCheck size={16} /><span>Audio, frames and captions stay in transient worker memory. Only a session audit and a summary you confirm can be saved.</span></div>
           {!active ? <div className="realtime-config">
             <label><span><Monitor size={15} /> Game window</span><select value={sourceId} onChange={(event) => setSourceId(event.target.value)} disabled={busy}>{surfaces.map((surface) => <option key={surface.source_id} value={surface.source_id}>{surface.label} · {surface.width}×{surface.height}</option>)}</select></label>

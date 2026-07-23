@@ -32,6 +32,19 @@
         "minHeight": 560,
         "resizable": true,
         "visible": false
+      },
+      {
+        "label": "companion",
+        "title": "Fairy Game Companion",
+        "create": false,
+        "url": "index.html?surface=companion",
+        "width": 620,
+        "height": 760,
+        "minWidth": 520,
+        "minHeight": 620,
+        "resizable": true,
+        "skipTaskbar": true,
+        "visible": false
       }
     ],
     "security": {

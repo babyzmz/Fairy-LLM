@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { PresenceBridge } from "../presence/PresenceBridge";
 import { projectPetReply } from "../presence/domain/reply";
@@ -10,9 +10,9 @@ import { AmbientDialogueHost } from "../persona/AmbientDialogueHost";
 import type { AmbientDialogueProjection } from "../core/contracts";
 import type { CoreClient } from "../core/client";
 import {
-  RealtimeCompanion,
+  subscribeRealtimePresence,
   type RealtimePresenceState,
-} from "../realtime/RealtimeCompanion";
+} from "../realtime/realtimePresence";
 
 import { WorkspaceShell } from "./WorkspaceShell";
 import { type WorkspaceClient, useWorkspaceModel } from "./workspaceModel";
@@ -20,15 +20,17 @@ import { type WorkspaceClient, useWorkspaceModel } from "./workspaceModel";
 interface AppProps {
   client: WorkspaceClient & {
     ambient?: CoreClient["ambient"];
-    realtime?: CoreClient["realtime"];
   };
 }
 
 function Workspace({ client }: AppProps) {
   const model = useWorkspaceModel(client);
   const [realtimePresence, setRealtimePresence] = useState<RealtimePresenceState>("idle");
-  const [realtimeOpenRequest, setRealtimeOpenRequest] = useState(0);
   const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
+  useEffect(
+    () => subscribeRealtimePresence(setRealtimePresence),
+    [],
+  );
   const profile =
     model.providers.find((provider) => provider.id === model.selectedProfileId) ?? null;
   const health =
@@ -42,13 +44,6 @@ function Workspace({ client }: AppProps) {
   return (
     <>
       <DesktopPreferencesBridge trash={client.trash} onChange={setPreferences} />
-      {client.realtime ? (
-        <RealtimeCompanion
-          client={client.realtime}
-          onPresenceChange={setRealtimePresence}
-          openRequest={realtimeOpenRequest}
-        />
-      ) : null}
       <VoiceController
         client={client}
         conversationId={conversationId}
@@ -63,7 +58,6 @@ function Workspace({ client }: AppProps) {
           ambientClient={client.ambient}
           preferences={preferences}
           realtimePresence={realtimePresence}
-          onOpenRealtime={() => setRealtimeOpenRequest((value) => value + 1)}
         />
         <WorkspaceShell model={model} />
       </VoiceController>
@@ -76,13 +70,11 @@ function WorkspacePresence({
   ambientClient,
   preferences,
   realtimePresence,
-  onOpenRealtime,
 }: {
   model: ReturnType<typeof useWorkspaceModel>;
   ambientClient: CoreClient["ambient"] | undefined;
   preferences: DesktopPreferences | null;
   realtimePresence: RealtimePresenceState;
-  onOpenRealtime(): void;
 }) {
   const voice = useVoicePresence();
   const voiceRef = useRef(voice);
@@ -139,7 +131,6 @@ function WorkspacePresence({
         })}
         speaking={voice.speaking}
         realtimePresence={realtimePresence}
-        onOpenRealtime={onOpenRealtime}
       />
     </>
   );

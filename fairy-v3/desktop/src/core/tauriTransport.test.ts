@@ -28,6 +28,29 @@ describe("TauriCoreTransport", () => {
     });
   });
 
+  it("routes a restricted secondary surface through its dedicated RPC command", async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { items: [] },
+    });
+    const transport = new TauriCoreTransport(invoke, {
+      rpcCommand: "companion_rpc",
+    });
+
+    await expect(transport.call("realtime.sessions.list", { limit: 20 })).resolves.toEqual({
+      items: [],
+    });
+    expect(invoke).toHaveBeenCalledWith("companion_rpc", {
+      request: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "realtime.sessions.list",
+        params: { limit: 20 },
+      },
+    });
+  });
+
   it("waits through the native Core startup race before returning health", async () => {
     const invoke = vi
       .fn()

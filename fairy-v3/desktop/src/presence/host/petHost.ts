@@ -34,6 +34,7 @@ export interface PetHost {
   ): Promise<PetInputPresentationCommit>;
   resetPosition(expectedRevision: number): Promise<DesktopPreferences>;
   openMain(): Promise<void>;
+  openCompanion(): Promise<void>;
   openSettings(): Promise<void>;
   exit(): Promise<void>;
 }
@@ -97,6 +98,7 @@ export function createDefaultPetHost(): PetHost {
     resetPosition: (expectedRevision) =>
       invoke("pet_window_group_reset_position", { expectedRevision }),
     openMain: () => invoke("open_main_window"),
+    openCompanion: () => invoke("open_companion_window"),
     openSettings: () => invoke("open_settings_window"),
     exit: () => invoke("pet_exit"),
   };
@@ -176,6 +178,7 @@ function createBrowserPetHost(): PetHost {
       return preferences;
     },
     async openMain() {},
+    async openCompanion() {},
     async openSettings() {},
     async exit() {},
   };

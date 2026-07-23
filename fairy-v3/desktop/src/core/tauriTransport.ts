@@ -47,6 +47,7 @@ type JsonRpcResponse<T> = JsonRpcSuccess<T> | JsonRpcFailure;
 interface CoreStartupPolicy {
   timeoutMs?: number;
   retryDelayMs?: number;
+  rpcCommand?: "core_rpc" | "companion_rpc";
 }
 
 const defaultCoreStartupTimeoutMs = 30_000;
@@ -72,6 +73,7 @@ export class TauriCoreTransport implements CoreTransport {
   private requestId = 0;
   private readonly startupTimeoutMs: number;
   private readonly startupRetryDelayMs: number;
+  private readonly rpcCommand: "core_rpc" | "companion_rpc";
 
   constructor(
     private readonly invoke: InvokeFunction,
@@ -79,6 +81,7 @@ export class TauriCoreTransport implements CoreTransport {
   ) {
     this.startupTimeoutMs = startupPolicy.timeoutMs ?? defaultCoreStartupTimeoutMs;
     this.startupRetryDelayMs = startupPolicy.retryDelayMs ?? defaultCoreStartupRetryDelayMs;
+    this.rpcCommand = startupPolicy.rpcCommand ?? "core_rpc";
   }
 
   providerOpenRouterStatus(): Promise<OpenRouterConfigurationStatus> {
@@ -175,7 +178,7 @@ export class TauriCoreTransport implements CoreTransport {
     const deadline = Date.now() + this.startupTimeoutMs;
     while (true) {
       signal?.throwIfAborted();
-      const response = await this.invoke<JsonRpcResponse<T>>("core_rpc", { request });
+      const response = await this.invoke<JsonRpcResponse<T>>(this.rpcCommand, { request });
       if (
         !waitForStartup ||
         !("error" in response) ||

@@ -198,6 +198,7 @@ function hostHarness() {
     }),
     resetPosition: vi.fn(async () => preferences()),
     openMain: vi.fn(async () => undefined),
+    openCompanion: vi.fn(async () => undefined),
     openSettings: vi.fn(async () => undefined),
     exit: vi.fn(async () => undefined),
   };
@@ -966,6 +967,28 @@ describe("dual presence surfaces", () => {
       () => expect(screen.queryByRole("menu", { name: "Fairy menu" })).not.toBeInTheDocument(),
       { timeout: 1_000 },
     );
+  });
+
+  it("opens Game Companion as its own secondary window without waking the workspace", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Open Fairy quick input" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Game companion" }),
+    );
+
+    expect(host.host.openCompanion).toHaveBeenCalledOnce();
+    expect(host.host.openMain).not.toHaveBeenCalled();
+    expect(channel.channel.requestWorkspaceOpen).not.toHaveBeenCalled();
   });
 
   it("gates materialization at 300ms, content at 430ms, and clicks at 520ms", async () => {

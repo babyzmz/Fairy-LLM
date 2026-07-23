@@ -1,5 +1,11 @@
 .realtime-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 18px; background: #050706b8; }
 .realtime-panel { width: min(560px, 100%); max-height: calc(100vh - 36px); overflow: auto; background: #141817; border: 1px solid #3b4643; box-shadow: 0 24px 70px #000b; color: #eef5f2; }
+:root[data-surface="companion"],
+:root[data-surface="companion"] body,
+:root[data-surface="companion"] #root { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #0d100f; }
+:root[data-surface="companion"] * { box-sizing: border-box; }
+.realtime-backdrop.is-window { position: relative; width: 100%; height: 100%; padding: 0; place-items: stretch; background: #0d100f; }
+.realtime-backdrop.is-window .realtime-panel { width: 100%; height: 100%; max-height: none; border: 0; box-shadow: none; }
 .realtime-panel > header { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; padding: 18px 20px; background: #141817f5; border-bottom: 1px solid #303735; }
 .realtime-panel header span { color: #78cfc5; font: 600 11px/1.2 monospace; text-transform: uppercase; }
 .realtime-panel h2 { margin: 3px 0 0; font-size: 20px; }

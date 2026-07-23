@@ -14,7 +14,7 @@ import {
   type PresenceReply,
   type PresenceProjectionState,
 } from "./domain/projection";
-import type { RealtimePresenceState } from "../realtime/RealtimeCompanion";
+import type { RealtimePresenceState } from "../realtime/realtimePresence";
 
 interface PresenceBridgeProps {
   events: readonly EventEnvelope[];
@@ -26,7 +26,6 @@ interface PresenceBridgeProps {
   onSend?(text: string): void | Promise<void>;
   onCancel?(): void | Promise<void>;
   onStopVoice?(): void;
-  onOpenRealtime?(): void;
   onInputState?(state: { open: boolean; focused: boolean }): void;
   onAmbientVisibilityChange?(dialogue: PresenceAmbientDialogue | null): void;
   channelFactory?: () => PresenceChannel;
@@ -42,7 +41,6 @@ export function PresenceBridge({
   onSend,
   onCancel,
   onStopVoice,
-  onOpenRealtime,
   onInputState,
   onAmbientVisibilityChange,
   channelFactory = createPresenceChannel,
@@ -80,7 +78,6 @@ export function PresenceBridge({
         onSend,
         onCancel,
         onStopVoice,
-        onOpenRealtime,
         onInputState,
       );
     });
@@ -95,7 +92,6 @@ export function PresenceBridge({
     onCancel,
     onInputState,
     onNewChat,
-    onOpenRealtime,
     onSend,
     onStopVoice,
   ]);
@@ -167,7 +163,6 @@ function handleRequest(
   onSend: ((text: string) => void | Promise<void>) | undefined,
   onCancel: (() => void | Promise<void>) | undefined,
   onStopVoice: (() => void) | undefined,
-  onOpenRealtime: (() => void) | undefined,
   onInputState: ((state: { open: boolean; focused: boolean }) => void) | undefined,
 ): void {
   switch (request.kind) {
@@ -176,10 +171,6 @@ function handleRequest(
       break;
     case "workspace.open":
       void openWorkspaceWindow();
-      break;
-    case "realtime.open":
-      void openWorkspaceWindow();
-      onOpenRealtime?.();
       break;
     case "chat.new":
       if (onNewChat !== undefined) enqueue(onNewChat);

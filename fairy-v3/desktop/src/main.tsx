@@ -51,6 +51,27 @@ async function mountSurface() {
     return;
   }
 
+  if (surface === "companion") {
+    const [
+      { invoke },
+      { RealtimeCompanionWindowApp },
+      { CoreClient },
+      { TauriCoreTransport },
+    ] = await Promise.all([
+      import("@tauri-apps/api/core"),
+      import("./realtime/RealtimeCompanionWindowApp"),
+      import("./core/client"),
+      import("./core/tauriTransport"),
+    ]);
+    const client = new CoreClient(
+      new TauriCoreTransport(invoke, { rpcCommand: "companion_rpc" }),
+    );
+    renderSurface(
+      <RealtimeCompanionWindowApp client={client.realtime} invoke={invoke} />,
+    );
+    return;
+  }
+
   if (!isTauri()) {
     const { DesktopHostRequired } = await import("./host/DesktopHostRequired");
     renderSurface(<DesktopHostRequired />);
