@@ -68,7 +68,9 @@ test("ordinary chat exposes the shared workspace file inspector", async ({ page 
   await page.goto("/");
   await openScratchChat(page);
 
-  await expect(page.getByLabel("Workspace inspector")).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Workspace inspector" }),
+  ).toBeVisible();
   await page.getByRole("tab", { name: /Files/ }).click();
   await page.getByRole("button", { name: "main.ts" }).click();
   await expect(page.getByText("console.log('Fairy');")).toBeVisible();

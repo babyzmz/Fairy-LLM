@@ -77,7 +77,7 @@ test("input surface owns cards and controls without duplicating the renderer", a
   await context.close();
 });
 
-test("hidden input fallback opens the pet menu and keeps the input shell singular", async ({
+test("collapsed input fallback opens the pet menu and keeps the input shell singular", async ({
   browser,
 }, testInfo) => {
   const context = await browser.newContext({ viewport: { width: 616, height: 360 } });
@@ -85,7 +85,7 @@ test("hidden input fallback opens the pet menu and keeps the input shell singula
   await page.goto("/?surface=pet-input");
   const surface = page.getByTestId("presence-input-surface");
 
-  await expect(surface).toHaveAttribute("data-layout", "hidden");
+  await expect(surface).toHaveAttribute("data-layout", "core");
   const fallbackTarget = page.getByRole("button", { name: "Open Fairy quick input" });
   await expect(fallbackTarget).toBeAttached();
   await fallbackTarget.dispatchEvent("contextmenu");
@@ -122,7 +122,11 @@ test("pet input reuses one streaming turn and keeps voice and approval isolated"
   );
   const submissionId = (sendRequest as { submission_id?: string } | null)?.submission_id;
   expect(submissionId).toEqual(expect.any(String));
-  await expect(page.getByRole("status")).toContainText("Sending to Fairy");
+  await expect(page.getByTestId("presence-input-surface")).toHaveAttribute(
+    "data-motion-state",
+    "submitting",
+  );
+  await expect(page.getByRole("status")).toHaveCount(0);
 
   await publishSubmission(page, {
     submission_id: submissionId ?? "missing",
@@ -201,7 +205,11 @@ test("pet input reuses one streaming turn and keeps voice and approval isolated"
     reply: null,
     speaking: false,
   });
-  await expect(page.getByRole("button", { name: "Review in Fairy" })).toBeVisible();
+  await expect(page.getByTestId("presence-input-surface")).toHaveAttribute(
+    "data-motion-state",
+    "awaiting_confirmation",
+  );
+  await expect(page.getByRole("button", { name: "Review in Fairy" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /approve/i })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /reject/i })).toHaveCount(0);
   await context.close();
@@ -289,9 +297,10 @@ test("render settings switch modes through the safe companion-only channel", asy
     channel.postMessage({
       kind: "render-settings.snapshot",
       settings: {
-        schema_version: 3,
+        schema_version: 4,
         mode: "compatibility",
         optics_mode: "standard",
+        activation_style: "fluid_response",
         size_scale: 0.75,
         opacity: 0.4,
         motion_enabled: false,
@@ -314,9 +323,10 @@ test("render settings switch modes through the safe companion-only channel", asy
     channel.postMessage({
       kind: "render-settings.snapshot",
       settings: {
-        schema_version: 3,
+        schema_version: 4,
         mode: "liquid",
         optics_mode: "standard",
+        activation_style: "fluid_response",
         size_scale: 1.5,
         opacity: 1,
         motion_enabled: true,
@@ -389,7 +399,7 @@ test("public work and speaking states drive the render surface", async ({
 });
 
 for (const expansionDirection of ["right", "left"] as const) {
-  test(`Liquid Glass material keeps the ${expansionDirection} core and input capsule aligned`, async ({
+  test(`Liquid Glass material keeps the ${expansionDirection} core isolated from the stable input surface`, async ({
     browser,
   }, testInfo) => {
     const context = await browser.newContext({ viewport: { width: 640, height: 260 } });
@@ -419,7 +429,7 @@ for (const expansionDirection of ["right", "left"] as const) {
     expect(glassCenter).toBeLessThanOrEqual(22);
     expect(glassEdge).toBeGreaterThanOrEqual(54);
     expect(glassEdge).toBeLessThanOrEqual(140);
-    expect(alphaAt(pixels, capsuleCenterX, 220)).toBeGreaterThan(4);
+    expect(alphaAt(pixels, capsuleCenterX, 220)).toBeLessThanOrEqual(4);
     expect(alphaAt(pixels, anchorX + direction * 94, 176)).toBeLessThanOrEqual(4);
     expect(alphaAt(pixels, 0, 0)).toBe(0);
     await context.close();
@@ -566,7 +576,10 @@ test("system accessibility modes reach both pet surfaces", async ({ browser }) =
 async function publishProjection(page: Page, projection: PresenceProjectionState) {
   await page.evaluate((value) => {
     const channel = new BroadcastChannel("fairy.presence.v2");
-    const publish = () => channel.postMessage({ kind: "presence.projection", projection: value });
+    const publish = () => channel.postMessage({
+      kind: "presence.projection",
+      projection: { ambient_dialogue: null, ...value },
+    });
     publish();
     window.setTimeout(publish, 30);
     window.setTimeout(publish, 80);
@@ -707,16 +720,17 @@ async function advanceInteraction(
 
 async function publishInputPresentation(page: Page, capsuleVisible: boolean) {
   await page.evaluate((visible) => {
-    const channel = new BroadcastChannel("fairy.presence.input-presentation.v4");
+    const channel = new BroadcastChannel("fairy.presence.input-presentation.v5");
     const message = {
       kind: "input-presentation.snapshot",
       presentation: {
-        schema_version: 4,
+        schema_version: 5,
         session_id: 1,
         sequence: 1,
         layout: visible ? "compact" : "core",
         capsule_visible: visible,
         capsule_width: 280,
+        capsule_height: 64,
         motion: {
           schema_version: 1,
           revision: 1,

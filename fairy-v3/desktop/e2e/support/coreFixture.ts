@@ -522,6 +522,7 @@ async function installCoreFixture(page: Page) {
         error_code: null,
         idempotency_key: "e2e-preview",
         revision: 1,
+        last_accessed_at: timestamp,
         created_at: timestamp,
         updated_at: timestamp,
       };
@@ -964,6 +965,15 @@ async function installCoreFixture(page: Page) {
         "files.present": filePresentation,
         "annotations.list": { document: null },
         "previews.resolve": { task, runtime, preview },
+        "previews.activate": {
+          outcome: "ready",
+          context: { task, runtime, preview },
+          adapter: "static",
+          capacity: 3,
+          active_count: 1,
+          evicted_preview_id: null,
+          public_reason: null,
+        },
         "runtimes.health": {
           executor: {
             available: true,

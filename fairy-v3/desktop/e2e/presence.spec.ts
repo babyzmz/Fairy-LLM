@@ -12,6 +12,7 @@ const READY_PROJECTION: PresenceProjectionState = {
   recent_activity_ms: [NOW],
   notice: null,
   reply: null,
+  ambient_dialogue: null,
   speaking: false,
 };
 
@@ -85,8 +86,11 @@ test("Fairy quick chat, cards, and context menu stay inside the expanded surface
       text: "An approval needs your decision",
     },
   });
-  await expect(page.getByRole("alert")).toContainText("An approval needs your decision");
-  await expect(page.getByRole("button", { name: "Review in Fairy" })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Fairy companion" })).toHaveAttribute(
+    "title",
+    "Waiting for your decision",
+  );
 
   await page.getByTestId("presence-surface").click({ button: "right" });
   await expect(page.getByRole("menu", { name: "Fairy menu" })).toBeVisible();

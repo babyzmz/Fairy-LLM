@@ -7,7 +7,7 @@ import type { PresenceInteractionSnapshot } from "../src/presence/domain/interac
 const WIDTH = 640;
 const HEIGHT = 260;
 
-test("stable liquid surfaces stay aligned and return without a one-frame jump", async ({
+test("stable liquid core stays isolated from input and returns without stale geometry", async ({
   browser,
 }, testInfo) => {
   const context = await browser.newContext({ viewport: { width: WIDTH, height: HEIGHT } });
@@ -23,28 +23,27 @@ test("stable liquid surfaces stay aligned and return without a one-frame jump", 
   const coreCoverage = axisCoverage(interactive, 24, 168, 88, 72);
   const capsuleCoverage = axisCoverage(interactive, 31, 297, 220, 26);
   expect(coreCoverage).toBeGreaterThan(0.96);
-  expect(capsuleCoverage).toBeGreaterThan(0.96);
+  expect(capsuleCoverage).toBeLessThan(0.1);
   expect(axisCoverage(interactive, 172, 220, 176, 5)).toBeLessThan(0.1);
   expect(visiblePixelRatio(interactive)).toBeLessThan(0.34);
   expect(alphaAt(interactive, 0, 0)).toBe(0);
   expect(alphaAt(interactive, WIDTH - 1, HEIGHT - 1)).toBe(0);
   expect(maximumAlpha(interactive)).toBeLessThan(230);
 
-  await startReturnMotionRecording(page);
   await publishInteraction(page, interactionSnapshot("returning", 2, 1_000));
-  await waitForReturnMotionComplete(page);
-  const returnSamples = await readReturnMotionSamples(page);
-  expect(returnSamples[0]?.capsule).toBeGreaterThan(0.75);
-  expect(returnSamples.some((sample) => sample.capsule > 0.15 && sample.capsule < 0.85))
-    .toBe(true);
-  expect(Math.max(...returnSamples.map((sample) => sample.bridge))).toBeGreaterThan(0.25);
-  for (let index = 1; index < returnSamples.length; index += 1) {
-    expect(returnSamples[index].capsule - returnSamples[index - 1].capsule)
-      .toBeLessThanOrEqual(0.01);
-  }
+  await page.waitForTimeout(450);
+  const settledShape = await page.locator("canvas.presence-webgl-canvas").evaluate(
+    (canvas) => ({
+      bridge: Number((canvas as HTMLCanvasElement).dataset.shapeBridge),
+      capsule: Number((canvas as HTMLCanvasElement).dataset.shapeCapsule),
+    }),
+  );
+  expect(settledShape.bridge).toBeLessThanOrEqual(0.01);
+  expect(settledShape.capsule).toBeLessThanOrEqual(0.01);
 
   const returned = PNG.sync.read(await page.screenshot({ omitBackground: true }));
   await writeFile(testInfo.outputPath("liquid-return-complete.png"), PNG.sync.write(returned));
+  expect(axisCoverage(returned, 24, 168, 88, 72)).toBeGreaterThan(0.96);
   expect(axisCoverage(returned, 31, 297, 220, 26)).toBeLessThan(0.42);
   expect(alphaAt(returned, 0, 0)).toBe(0);
   expect(alphaAt(returned, WIDTH - 1, HEIGHT - 1)).toBe(0);
@@ -84,7 +83,7 @@ test("liquid glass remains legible across desktop background classes", async ({
   await context.close();
 });
 
-test("liquid optics expose bounded thickness, paired dispersion, and screen lock", async ({
+test("liquid core exposes bounded thickness and screen-locked optics", async ({
   browser,
 }, testInfo) => {
   const context = await browser.newContext({ viewport: { width: WIDTH, height: HEIGHT } });
@@ -97,10 +96,10 @@ test("liquid optics expose bounded thickness, paired dispersion, and screen lock
 
   const origin = PNG.sync.read(await page.screenshot({ omitBackground: true }));
   await writeFile(testInfo.outputPath("liquid-optics-origin.png"), PNG.sync.write(origin));
-  const centerAlpha = alphaAt(origin, 164, 220);
+  const centerAlpha = alphaAt(origin, 96, 70);
   const rimAlpha = Math.max(
-    maximumAlphaAtX(origin, 164, 188, 202),
-    maximumAlphaAtX(origin, 164, 238, 252),
+    maximumAlphaAtX(origin, 96, 24, 40),
+    maximumAlphaAtX(origin, 96, 136, 152),
   );
   expect(centerAlpha).toBeGreaterThanOrEqual(8);
   expect(centerAlpha).toBeLessThanOrEqual(29);
@@ -108,21 +107,12 @@ test("liquid optics expose bounded thickness, paired dispersion, and screen lock
   expect(rimAlpha).toBeLessThanOrEqual(120);
   expect(rimAlpha - centerAlpha).toBeGreaterThanOrEqual(48);
 
-  const dispersion = spectralExtremes(origin, {
-    left: 8,
-    top: 8,
-    right: 304,
-    bottom: 258,
-  });
-  expect(dispersion.warm).toBeGreaterThanOrEqual(32);
-  expect(dispersion.cool).toBeGreaterThanOrEqual(32);
-
   await publishInteraction(page, interactionSnapshot("interactive", 2, 1_000, 320));
   await page.waitForTimeout(120);
   const moved = PNG.sync.read(await page.screenshot({ omitBackground: true }));
   await writeFile(testInfo.outputPath("liquid-optics-moved.png"), PNG.sync.write(moved));
-  const movedCoverage = axisCoverage(moved, 31, 297, 220, 26);
-  expect(movedCoverage).toBe(1);
+  const movedCoverage = axisCoverage(moved, 24, 168, 88, 72);
+  expect(movedCoverage).toBeGreaterThan(0.96);
   expect(changedPixelCountInBounds(origin, moved, 5, {
     left: 8,
     top: 8,
@@ -181,73 +171,6 @@ async function publishInteraction(page: Page, snapshot: PresenceInteractionSnaps
   }, snapshot);
 }
 
-interface ReturnMotionSample {
-  bridge: number;
-  capsule: number;
-}
-
-async function startReturnMotionRecording(page: Page) {
-  await page.evaluate(() => {
-    type MotionWindow = typeof window & {
-      __fairyReturnMotionSamples?: Array<{ bridge: number; capsule: number }>;
-      __fairyReturnMotionFrame?: number;
-    };
-    const motionWindow = window as MotionWindow;
-    motionWindow.__fairyReturnMotionSamples = [];
-    if (motionWindow.__fairyReturnMotionFrame !== undefined) {
-      cancelAnimationFrame(motionWindow.__fairyReturnMotionFrame);
-    }
-    const record = () => {
-      const surface = document.querySelector<HTMLElement>(
-        '[data-testid="presence-render-surface"]',
-      );
-      const canvas = document.querySelector<HTMLCanvasElement>(".presence-webgl-canvas");
-      if (surface?.dataset.interactionPhase === "returning" && canvas !== null) {
-        const bridge = Number(canvas.dataset.shapeBridge);
-        const capsule = Number(canvas.dataset.shapeCapsule);
-        if (Number.isFinite(bridge) && Number.isFinite(capsule)) {
-          motionWindow.__fairyReturnMotionSamples?.push({ bridge, capsule });
-        }
-      }
-      const complete = motionWindow.__fairyReturnMotionSamples?.some(
-        (sample) => sample.bridge === 0 && sample.capsule === 0,
-      );
-      if (!complete) {
-        motionWindow.__fairyReturnMotionFrame = requestAnimationFrame(record);
-      }
-    };
-    motionWindow.__fairyReturnMotionFrame = requestAnimationFrame(record);
-  });
-}
-
-async function readReturnMotionSamples(page: Page): Promise<ReturnMotionSample[]> {
-  return page.evaluate(() => {
-    const motionWindow = window as typeof window & {
-      __fairyReturnMotionSamples?: ReturnMotionSample[];
-    };
-    return motionWindow.__fairyReturnMotionSamples ?? [];
-  });
-}
-
-async function waitForReturnMotionComplete(page: Page) {
-  try {
-    await page.waitForFunction(() => {
-      const motionWindow = window as typeof window & {
-        __fairyReturnMotionSamples?: ReturnMotionSample[];
-      };
-      const samples = motionWindow.__fairyReturnMotionSamples ?? [];
-      const last = samples.at(-1);
-      return samples.length >= 5 && last?.capsule === 0 && last.bridge === 0;
-    }, undefined, { timeout: 2_000 });
-  } catch (error) {
-    const samples = await readReturnMotionSamples(page);
-    throw new Error(
-      `Return motion did not settle: ${JSON.stringify(samples.slice(-12))}`,
-      { cause: error },
-    );
-  }
-}
-
 async function waitForInteractionSource(page: Page) {
   await expect(page.getByTestId("presence-renderer")).toHaveAttribute(
     "data-renderer",
@@ -270,9 +193,10 @@ async function publishRenderSettings(
     channel.postMessage({
       kind: "render-settings.snapshot",
       settings: {
-        schema_version: 3,
+        schema_version: 4,
         mode: rendererMode,
         optics_mode: "standard",
+        activation_style: "fluid_response",
         size_scale: 1,
         opacity: 0.92,
         motion_enabled: true,
@@ -286,16 +210,17 @@ async function publishRenderSettings(
 
 async function publishInputPresentation(page: Page, capsuleVisible: boolean) {
   await page.evaluate((visible) => {
-    const channel = new BroadcastChannel("fairy.presence.input-presentation.v4");
+    const channel = new BroadcastChannel("fairy.presence.input-presentation.v5");
     const message = {
       kind: "input-presentation.snapshot",
       presentation: {
-        schema_version: 4,
+        schema_version: 5,
         session_id: 1,
         sequence: 1,
         layout: visible ? "compact" : "core",
         capsule_visible: visible,
         capsule_width: 280,
+        capsule_height: 64,
         motion: {
           schema_version: 1,
           revision: 1,
