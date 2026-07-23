@@ -149,6 +149,7 @@ function hostHarness() {
   const requestInputFocus = vi.fn<PetHost["requestInputFocus"]>(
     async () => undefined,
   );
+  let inputIntentRevision = 0;
   const host: PetHost = {
     getPreferences: vi.fn(async () => preferences()),
     updatePreferences: vi.fn(async () => preferences()),
@@ -181,6 +182,7 @@ function hostHarness() {
     setExpanded: vi.fn(async () => undefined),
     setInputLayout,
     setInputInteractive,
+    setInputOpenIntent: vi.fn(async () => ++inputIntentRevision),
     requestInputFocus,
     beginInputPresentationSession: vi.fn(async () => ({
       session_id: ++presentationSession,
@@ -670,6 +672,73 @@ describe("dual presence surfaces", () => {
     expect(screen.getByRole("menu", { name: "Fairy menu" })).toBeInTheDocument();
   });
 
+  it("runs tap-open through the physical reveal before enabling focus", async () => {
+    const channel = channelHarness();
+    const host = hostHarness();
+    const coordinator = interactionHarness();
+    render(
+      <PresenceInputApp
+        channel={channel.channel}
+        host={host.host}
+        interactionSource={coordinator.source}
+        now={() => Date.now()}
+        storage={storage}
+      />,
+    );
+
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+    await waitFor(() => expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
+      "data-interaction-ready",
+      "true",
+    ));
+    act(() => coordinator.emit(interactionAt(10, "idle", 0, 0)));
+    await waitFor(() => expect(screen.getByTestId("presence-input-surface")).toHaveAttribute(
+      "data-interaction-phase",
+      "idle",
+    ));
+    act(() => host.requestInputToggle());
+    await waitFor(() =>
+      expect(host.host.setInputOpenIntent).toHaveBeenLastCalledWith(true)
+    );
+    expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core");
+
+    act(() => coordinator.emit(interactionAt(11, "droplet", 100, 100)));
+    expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core");
+
+    act(() => coordinator.emit(interactionAt(12, "input_reveal", 300, 300)));
+    await waitFor(() => expect(host.host.applyInputPresentation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        layout: "compact",
+        interactive: false,
+        request_focus: false,
+      }),
+    ));
+    expect(host.host.requestInputFocus).not.toHaveBeenCalled();
+
+    act(() => coordinator.emit(interactionAt(13, "interactive", 520, 520)));
+    await waitFor(() => expect(host.host.requestInputFocus).toHaveBeenCalledOnce());
+    expect(vi.mocked(host.host.applyInputPresentation).mock.calls.some(
+      ([input]) => input.layout === "compact" &&
+        input.interactive &&
+        input.request_focus,
+    )).toBe(true);
+
+    act(() => host.requestInputToggle());
+    await waitFor(() =>
+      expect(host.host.setInputOpenIntent).toHaveBeenLastCalledWith(false)
+    );
+    act(() => coordinator.emit(interactionAt(14, "returning", 600, 600)));
+    await waitFor(() => expect(host.host.applyInputPresentation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        layout: "compact",
+        interactive: false,
+        request_focus: false,
+      }),
+    ));
+    act(() => coordinator.emit(interactionAt(15, "idle", 1_000, 1_000)));
+    await waitFor(() => expect(host.host.setInputLayout).toHaveBeenLastCalledWith("core"));
+  });
+
   it("opens the main window on double click without leaving quick input open", async () => {
     const channel = channelHarness();
     const host = hostHarness();
@@ -773,8 +842,9 @@ describe("dual presence surfaces", () => {
     act(() => coordinator.emit(interactionAt(50, "interactive", 520, 520)));
     const inputField = await screen.findByTestId("presence-input-field");
     fireEvent.pointerDown(inputField);
-    act(() => coordinator.emit(interactionAt(51, "returning", 900, 900)));
-    act(() => coordinator.emit(interactionAt(52, "idle", 1_100, 1_100)));
+    await waitFor(() =>
+      expect(host.host.setInputOpenIntent).toHaveBeenLastCalledWith(true)
+    );
 
     await waitFor(() =>
       expect(host.host.setInputLayout).toHaveBeenLastCalledWith("compact", 220)

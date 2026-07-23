@@ -537,6 +537,8 @@ pub struct PresenceCoordinatorHandle {
     reduced_motion: Arc<AtomicBool>,
     hover_enabled: Arc<AtomicBool>,
     hover_dwell_ms: Arc<AtomicU64>,
+    manual_input_open: Arc<AtomicBool>,
+    manual_input_revision: Arc<AtomicU64>,
     repositioning: Arc<AtomicBool>,
     window_relation: Arc<AtomicU8>,
 }
@@ -548,6 +550,8 @@ struct CoordinatorThreadState {
     reduced_motion: Arc<AtomicBool>,
     hover_enabled: Arc<AtomicBool>,
     hover_dwell_ms: Arc<AtomicU64>,
+    manual_input_open: Arc<AtomicBool>,
+    manual_input_revision: Arc<AtomicU64>,
     repositioning: Arc<AtomicBool>,
     window_relation: Arc<AtomicU8>,
 }
@@ -766,6 +770,8 @@ impl PresenceCoordinatorHandle {
             reduced_motion: Arc::new(AtomicBool::new(config.reduced_motion)),
             hover_enabled: Arc::new(AtomicBool::new(config.hover_enabled)),
             hover_dwell_ms: Arc::new(AtomicU64::new(u64::from(config.hover_dwell_ms))),
+            manual_input_open: Arc::new(AtomicBool::new(false)),
+            manual_input_revision: Arc::new(AtomicU64::new(0)),
             repositioning: Arc::new(AtomicBool::new(false)),
             window_relation: Arc::new(AtomicU8::new(PresenceWindowRelation::Independent as u8)),
         }
@@ -786,6 +792,8 @@ impl PresenceCoordinatorHandle {
             reduced_motion: Arc::clone(&self.reduced_motion),
             hover_enabled: Arc::clone(&self.hover_enabled),
             hover_dwell_ms: Arc::clone(&self.hover_dwell_ms),
+            manual_input_open: Arc::clone(&self.manual_input_open),
+            manual_input_revision: Arc::clone(&self.manual_input_revision),
             repositioning: Arc::clone(&self.repositioning),
             window_relation: Arc::clone(&self.window_relation),
         };
@@ -824,6 +832,13 @@ impl PresenceCoordinatorHandle {
         self.repositioning.store(repositioning, Ordering::Release);
     }
 
+    pub fn set_manual_input_open(&self, open: bool) -> u64 {
+        self.manual_input_open.store(open, Ordering::Release);
+        self.manual_input_revision
+            .fetch_add(1, Ordering::AcqRel)
+            .saturating_add(1)
+    }
+
     pub fn is_repositioning(&self) -> bool {
         self.repositioning.load(Ordering::Acquire)
     }
@@ -853,6 +868,8 @@ fn run_coordinator(app: tauri::AppHandle, state: CoordinatorThreadState) {
         reduced_motion,
         hover_enabled,
         hover_dwell_ms,
+        manual_input_open,
+        manual_input_revision,
         repositioning,
         window_relation,
     } = state;
@@ -867,6 +884,7 @@ fn run_coordinator(app: tauri::AppHandle, state: CoordinatorThreadState) {
     let mut runtime_policy_emission_gate = RuntimePolicyEmissionGate::default();
     let mut cursor_sampling = CursorSamplingHealth::default();
     let mut native_pointer = NativePointerController::default();
+    let mut applied_manual_input_revision = 0_u64;
 
     while !shutdown.load(Ordering::Acquire) {
         let Some(render) = app.get_webview_window(PET_RENDER_LABEL) else {
@@ -955,6 +973,12 @@ fn run_coordinator(app: tauri::AppHandle, state: CoordinatorThreadState) {
         let reduced_motion = reduced_motion.load(Ordering::Acquire);
         let hover_enabled = hover_enabled.load(Ordering::Acquire);
         let hover_dwell_ms = hover_dwell_ms.load(Ordering::Acquire);
+        let requested_manual_input_revision = manual_input_revision.load(Ordering::Acquire);
+        if requested_manual_input_revision != applied_manual_input_revision {
+            interaction
+                .set_manual_input_open(manual_input_open.load(Ordering::Acquire), sampled_at_ms);
+            applied_manual_input_revision = requested_manual_input_revision;
+        }
         let repositioning = is_repositioning;
         let pointer_over_input =
             point.is_some_and(|point| input_pointer_state(&app, point, current_placement));

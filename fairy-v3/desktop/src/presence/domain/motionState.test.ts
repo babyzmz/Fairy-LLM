@@ -141,6 +141,47 @@ describe("Fairy motion state", () => {
     expect(fairyMotionSnapshotSchema.parse(forming)).toEqual(forming);
   });
 
+  it("does not let pinned input bypass the physical reveal phases", () => {
+    const aware = advance({
+      interaction: interaction("aware"),
+      manual_input_open: true,
+    }, 1_000);
+    expect(aware).toEqual(expect.objectContaining({
+      state: "aware",
+      surface: "core",
+      content_visible: false,
+      surface_interactive: true,
+    }));
+
+    const reveal = advance({
+      interaction: interaction("input_reveal"),
+      input_window_visible: true,
+      manual_input_open: true,
+    }, 1_300);
+    expect(reveal).toEqual(expect.objectContaining({
+      state: "forming",
+      surface: "input",
+      content_visible: false,
+      surface_interactive: false,
+      capsule_visible: true,
+    }));
+
+    const interactive = advance({
+      interaction: interaction("interactive"),
+      input_window_visible: true,
+      input_content_visible: true,
+      input_interactive: true,
+      manual_input_open: true,
+    }, 1_520);
+    expect(interactive).toEqual(expect.objectContaining({
+      state: "input",
+      surface: "input",
+      content_visible: true,
+      surface_interactive: true,
+      capsule_visible: false,
+    }));
+  });
+
   it("keeps transition timing stable and only revises semantic changes", () => {
     const started = advance({ submission_phase: "sending" }, 1_000);
     const progressed = advanceFairyMotionSnapshot(

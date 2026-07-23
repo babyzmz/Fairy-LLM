@@ -153,18 +153,21 @@ export function advanceFairyMotionSnapshot(
 function resolveFairyMotionTarget(facts: FairyMotionFacts): FairyMotionTarget {
   const state = resolveState(facts);
   const surface = resolveSurface(facts, state);
+  const usesPhysicalInputPhases = facts.interaction !== null;
   return {
     state,
     surface,
     activity: resolveActivity(facts, state),
     content_visible: surface !== "core" && (
-      surface !== "input" || facts.manual_input_open || facts.input_content_visible
+      surface !== "input" ||
+      facts.input_content_visible ||
+      (!usesPhysicalInputPhases && facts.manual_input_open)
     ),
     surface_interactive:
       surface === "core" ||
       surface !== "input" ||
-      facts.manual_input_open ||
-      facts.input_interactive,
+      facts.input_interactive ||
+      (!usesPhysicalInputPhases && facts.manual_input_open),
     capsule_visible: isLiquidTransitionPhase(facts.interaction?.phase),
     reduced_motion: facts.reduced_motion,
     do_not_disturb: facts.do_not_disturb,
@@ -195,7 +198,12 @@ function resolveSurface(facts: FairyMotionFacts, state: FairyState): FairySurfac
   if (state === "notify") return "core";
   if (state === "responding" || state === "speaking") return "core";
   if (facts.menu_open) return "options";
-  if (facts.manual_input_open || facts.input_window_visible) return "input";
+  if (
+    facts.input_window_visible ||
+    (facts.interaction === null && facts.manual_input_open)
+  ) {
+    return "input";
+  }
   return "core";
 }
 
@@ -230,7 +238,7 @@ function resolveState(facts: FairyMotionFacts): FairyState {
     return "notify";
   }
   if (facts.ambient_dialogue) return "notify";
-  if (facts.manual_input_open) return "input";
+  if (facts.interaction === null && facts.manual_input_open) return "input";
 
   switch (facts.interaction?.phase) {
     case "aware": return "aware";

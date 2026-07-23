@@ -26,6 +26,7 @@ export interface PetHost {
   setExpanded(expanded: boolean): Promise<void>;
   setInputLayout(layout: PetInputLayout, compactWidth?: number): Promise<void>;
   setInputInteractive(interactive: boolean): Promise<void>;
+  setInputOpenIntent(open: boolean): Promise<number>;
   requestInputFocus(): Promise<void>;
   beginInputPresentationSession(): Promise<PetInputPresentationCommit>;
   applyInputPresentation(
@@ -86,6 +87,8 @@ export function createDefaultPetHost(): PetHost {
       invoke("pet_input_set_layout", { layout, compactWidth }),
     setInputInteractive: (interactive) =>
       invoke("pet_input_set_interactive", { interactive }),
+    setInputOpenIntent: (open) =>
+      invoke<number>("pet_input_set_open_intent", { open }),
     requestInputFocus: () => invoke("pet_input_request_focus"),
     beginInputPresentationSession: () =>
       invoke<PetInputPresentationCommit>("pet_input_presentation_begin"),
@@ -103,6 +106,7 @@ function createBrowserPetHost(): PetHost {
   let preferences = browserPreferences();
   let presentationSession = 0;
   let presentationRevision = 0;
+  let inputIntentRevision = 0;
   const listeners = new Set<(value: DesktopPreferences) => void>();
   return {
     async getPreferences() {
@@ -146,6 +150,10 @@ function createBrowserPetHost(): PetHost {
     async setExpanded() {},
     async setInputLayout() {},
     async setInputInteractive() {},
+    async setInputOpenIntent() {
+      inputIntentRevision += 1;
+      return inputIntentRevision;
+    },
     async requestInputFocus() {},
     async beginInputPresentationSession() {
       presentationSession += 1;

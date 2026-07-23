@@ -2140,6 +2140,17 @@ async fn pet_input_set_interactive(
     apply_pet_input_interactive(&window, state.inner(), interactive, interactive)
 }
 
+#[tauri::command]
+async fn pet_input_set_open_intent(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    open: bool,
+) -> Result<u64, String> {
+    authorize_pet_input_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    Ok(state.presence.set_manual_input_open(open))
+}
+
 fn apply_pet_input_focus(window: &WebviewWindow, state: &DesktopState) -> Result<(), String> {
     if state.presence.is_repositioning() {
         return Err("PET_INPUT_PRESENTATION_REPOSITIONING".to_owned());
@@ -4724,6 +4735,7 @@ pub fn run() {
             pet_preferences_update,
             pet_input_set_layout,
             pet_input_set_interactive,
+            pet_input_set_open_intent,
             pet_input_request_focus,
             pet_input_presentation_begin,
             pet_input_presentation_apply,

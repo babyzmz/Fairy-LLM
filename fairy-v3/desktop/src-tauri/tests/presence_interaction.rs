@@ -195,11 +195,108 @@ fn reduced_motion_skips_liquid_shape_phases_and_uses_a_short_fade() {
         PresenceInteractionPhase::InputReveal
     );
     assert_eq!(
-        machine.advance(reduced(199)).phase,
+        machine.advance(reduced(159)).phase,
         PresenceInteractionPhase::InputReveal
     );
     assert_eq!(
-        machine.advance(reduced(200)).phase,
+        machine.advance(reduced(160)).phase,
+        PresenceInteractionPhase::Interactive
+    );
+}
+
+#[test]
+fn manual_open_uses_the_same_timeline_without_cursor_dwell() {
+    let mut machine = PresenceInteractionStateMachine::new(0);
+    let outside = |sampled_at_ms| PresenceInteractionSignal {
+        cursor_band: CursorBand::Outside,
+        cursor_speed_px_s: 0.0,
+        ..signal(sampled_at_ms)
+    };
+
+    machine.set_manual_input_open(true, 0);
+    assert_eq!(
+        machine.advance(outside(0)).phase,
+        PresenceInteractionPhase::Aware
+    );
+    assert_eq!(
+        machine.advance(outside(100)).phase,
+        PresenceInteractionPhase::Droplet
+    );
+    assert_eq!(
+        machine.advance(outside(180)).phase,
+        PresenceInteractionPhase::Stretching
+    );
+    assert_eq!(
+        machine.advance(outside(300)).phase,
+        PresenceInteractionPhase::InputReveal
+    );
+    assert_eq!(
+        machine.advance(outside(520)).phase,
+        PresenceInteractionPhase::Interactive
+    );
+    assert_eq!(
+        machine.advance(outside(2_000)).phase,
+        PresenceInteractionPhase::Interactive
+    );
+}
+
+#[test]
+fn manual_close_returns_once_and_blocks_hover_until_pointer_exit() {
+    let mut machine = PresenceInteractionStateMachine::new(0);
+    machine.set_manual_input_open(true, 0);
+    machine.advance(signal(520));
+
+    machine.set_manual_input_open(false, 600);
+    assert_eq!(
+        machine.advance(signal(600)).phase,
+        PresenceInteractionPhase::Returning
+    );
+    assert_eq!(
+        machine.advance(signal(999)).phase,
+        PresenceInteractionPhase::Returning
+    );
+    assert_eq!(
+        machine.advance(signal(1_000)).phase,
+        PresenceInteractionPhase::Idle
+    );
+    assert_eq!(
+        machine.advance(signal(1_200)).phase,
+        PresenceInteractionPhase::Idle
+    );
+
+    let outside = PresenceInteractionSignal {
+        cursor_band: CursorBand::Outside,
+        cursor_speed_px_s: 0.0,
+        ..signal(1_201)
+    };
+    assert_eq!(
+        machine.advance(outside).phase,
+        PresenceInteractionPhase::Idle
+    );
+    assert_eq!(
+        machine.advance(signal(1_202)).phase,
+        PresenceInteractionPhase::Aware
+    );
+}
+
+#[test]
+fn manual_open_reverses_an_active_return_without_snapping_to_idle() {
+    let mut machine = PresenceInteractionStateMachine::new(0);
+    machine.set_manual_input_open(true, 0);
+    machine.advance(signal(520));
+    machine.set_manual_input_open(false, 600);
+    assert_eq!(
+        machine.advance(signal(650)).phase,
+        PresenceInteractionPhase::Returning
+    );
+
+    machine.set_manual_input_open(true, 700);
+    assert_eq!(
+        machine.advance(signal(700)).phase,
+        PresenceInteractionPhase::Droplet
+    );
+    assert_eq!(
+        machine.advance(signal(1_120)).phase,
         PresenceInteractionPhase::Interactive
     );
 }
