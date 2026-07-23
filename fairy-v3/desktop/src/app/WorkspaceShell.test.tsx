@@ -12,6 +12,31 @@ afterEach(() => {
 });
 
 describe("WorkspaceShell", () => {
+  it("prefetches only the intended Conversation from history hover and focus", () => {
+    const project = projectFixture();
+    const chat = {
+      ...projectConversationFixture(project),
+      id: "019f566f-f8b4-7000-8000-000000000122",
+      project_id: null,
+      workspace_type: "chat_scratch" as const,
+      title: "Warm chat",
+    };
+    const model = workspaceModel();
+    model.mode = "chat";
+    model.chatConversations = [chat];
+    model.selectedChatConversation = chat;
+    model.prefetchConversation = vi.fn(async () => undefined);
+    render(<WorkspaceShell model={model} />);
+
+    const row = screen.getByRole("button", { name: "Warm chat" });
+    fireEvent.mouseEnter(row);
+    fireEvent.focus(row);
+
+    expect(model.prefetchConversation).toHaveBeenCalledTimes(2);
+    expect(model.prefetchConversation).toHaveBeenNthCalledWith(1, chat);
+    expect(model.prefetchConversation).toHaveBeenNthCalledWith(2, chat);
+  });
+
   it("keeps context, task timeline, workspace inspector, and composer visible", () => {
     const model = workspaceModel();
     model.selectedTask = workspaceTask();
@@ -808,9 +833,6 @@ function workspaceModel(): WorkspaceModel {
     messages: [],
     providers: [],
     providerHealth: [],
-    openRouterStatus: { configured: false, account_id: null },
-    skills: [],
-    mcpServers: [],
     selectedProfileId: null,
     modelCatalog: null,
     modelSelection: null,
@@ -868,11 +890,6 @@ function workspaceModel(): WorkspaceModel {
     setMode: vi.fn(),
     setPermissionProfile: vi.fn(async () => undefined),
     setCapabilityEnabled: vi.fn(async () => undefined),
-    configureMcpServer: vi.fn(async () => undefined),
-    discoverMcpServer: vi.fn(async () => undefined),
-    acceptMcpServer: vi.fn(async () => undefined),
-    setMcpServerEnabled: vi.fn(async () => undefined),
-    deleteMcpServer: vi.fn(async () => undefined),
     listDocuments: vi.fn(async () => []),
     searchDocuments: vi.fn(async () => []),
     deleteDocument: vi.fn(async () => undefined),
@@ -881,11 +898,10 @@ function workspaceModel(): WorkspaceModel {
     setDeveloperMode: vi.fn(),
     selectModel: vi.fn(async () => undefined),
     refreshModelCatalog: vi.fn(async () => undefined),
-    configureOpenRouter: vi.fn(async () => undefined),
-    deleteOpenRouter: vi.fn(async () => undefined),
     selectProject: vi.fn(),
     selectConversation: vi.fn(),
     selectChatConversation: vi.fn(),
+    prefetchConversation: vi.fn(async () => undefined),
     selectTask: vi.fn(),
     createProject: vi.fn(async () => undefined),
     importProject: vi.fn(async () => undefined),

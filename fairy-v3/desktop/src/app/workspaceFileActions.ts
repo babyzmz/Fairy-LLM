@@ -9,7 +9,7 @@ interface WorkspaceFileActionContext {
   workspace: Workspace | undefined;
   runAction<T>(action: () => Promise<T>): Promise<T>;
   selectTask(taskId: string): void;
-  invalidateWorkspace(): Promise<void>;
+  invalidateExecution(): Promise<void>;
   refreshFiles(): Promise<void>;
 }
 
@@ -41,7 +41,7 @@ export function createWorkspaceFileActions(context: WorkspaceFileActionContext) 
       }),
     );
     context.selectTask(result.task.id);
-    await context.invalidateWorkspace();
+    await context.invalidateExecution();
   };
   return {
     async readWorkspaceFile(path: string) {

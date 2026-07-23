@@ -27,9 +27,6 @@ import type {
   MediaGenerationJob,
   ModelCatalogPage,
   ModelSelectionPreference,
-  McpServer,
-  McpToolPolicyInput,
-  OpenRouterConfigurationStatus,
   PreviewActivation,
   PreviewContext,
   Project,
@@ -37,7 +34,6 @@ import type {
   ProviderProfile,
   RuntimeHealth,
   SettingsCategoryId,
-  Skill,
   Task,
   TurnTrace,
   Version,
@@ -54,7 +50,6 @@ import type {
   FileCompareResult,
 } from "../core/client";
 import type { PendingImageAttachment } from "../perception/CaptureControl";
-import type { McpServerDraft } from "../settings/extensionTypes";
 
 export type WorkspaceMode = "project" | "chat";
 export type PermissionProfile = "observe" | "standard" | "autonomous";
@@ -153,9 +148,6 @@ export interface WorkspaceModel {
   messages: Message[];
   providers: ProviderProfile[];
   providerHealth: ProviderHealth[];
-  openRouterStatus: OpenRouterConfigurationStatus | null;
-  skills: Skill[];
-  mcpServers: McpServer[];
   selectedProfileId: string | null;
   modelCatalog: ModelCatalogPage | null;
   modelSelection: ModelSelectionPreference | null;
@@ -213,11 +205,6 @@ export interface WorkspaceModel {
   setMode(mode: WorkspaceMode): void;
   setPermissionProfile(profile: PermissionProfile): Promise<void>;
   setCapabilityEnabled(name: string, enabled: boolean): Promise<void>;
-  configureMcpServer(input: McpServerDraft): Promise<void>;
-  discoverMcpServer(serverId: string): Promise<void>;
-  acceptMcpServer(serverId: string, tools: McpToolPolicyInput[]): Promise<void>;
-  setMcpServerEnabled(serverId: string, enabled: boolean): Promise<void>;
-  deleteMcpServer(serverId: string): Promise<void>;
   listDocuments(): Promise<DocumentContext[]>;
   searchDocuments(query: string): Promise<DocumentSearchHit[]>;
   deleteDocument(documentId: string): Promise<void>;
@@ -226,11 +213,10 @@ export interface WorkspaceModel {
   setDeveloperMode(enabled: boolean): void;
   selectModel(mode: "auto" | "manual", modelId: string | null): Promise<void>;
   refreshModelCatalog(): Promise<void>;
-  configureOpenRouter(apiKey: string): Promise<void>;
-  deleteOpenRouter(): Promise<void>;
   selectProject(projectId: string): void;
   selectConversation(conversationId: string): void;
   selectChatConversation(conversationId: string): void;
+  prefetchConversation(conversation: Conversation): Promise<void>;
   selectTask(taskId: string): void;
   createProject(name: string): Promise<void>;
   importProject(name: string, sourcePath: string): Promise<void>;

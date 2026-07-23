@@ -14,6 +14,7 @@ const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const ACCEPTED_DOCUMENTS = ".txt,.md,.markdown,.html,.htm,.pdf,.docx";
 
 interface ComposerProps {
+  inputAriaLabel?: string;
   disabled: boolean;
   isBusy: boolean;
   visionAvailable: boolean;
@@ -33,6 +34,7 @@ interface ComposerProps {
 }
 
 export function Composer({
+  inputAriaLabel = "Message Fairy",
   disabled,
   isBusy,
   visionAvailable,
@@ -148,10 +150,10 @@ export function Composer({
       ) : null}
       <div className="composer-input-surface">
         <label className="composer-field chat-composer-field">
-          <span className="sr-only">Message Fairy</span>
+          <span className="sr-only">{inputAriaLabel}</span>
           <textarea
             ref={inputRef}
-            aria-label="Message Fairy"
+            aria-label={inputAriaLabel}
             value={value}
             rows={1}
             placeholder="Message Fairy"

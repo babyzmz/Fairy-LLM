@@ -1,5 +1,3 @@
-import type { McpServer } from "../core/client";
-
 type PermissionProfileValue = "observe" | "standard" | "autonomous";
 
 export function equalOverrides(
@@ -20,24 +18,6 @@ export function permissionUpdateKey(
     profile,
     overrides: Object.entries(overrides).sort(([a], [b]) => a.localeCompare(b)),
   });
-}
-
-export function requireMcpServer(
-  servers: McpServer[] | undefined,
-  serverId: string,
-): McpServer {
-  const server = servers?.find((item) => item.server_id === serverId);
-  if (server === undefined) throw new Error("MCP server is unavailable");
-  return server;
-}
-
-export function extensionUpdateKey(
-  operation: string,
-  serverId: string,
-  revision: number,
-  payload: unknown,
-): string {
-  return hashedKey(`mcp:${serverId}:${operation}:${revision}`, payload);
 }
 
 function hashedKey(prefix: string, payload: unknown): string {

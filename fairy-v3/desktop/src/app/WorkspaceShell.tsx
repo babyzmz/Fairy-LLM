@@ -60,7 +60,9 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
           ) : null}
         </div>
 
-        {model.state === "loading" || model.state === "offline" ? (
+        {model.state === "loading" ? (
+          <WorkspaceStartingFrame mode={model.mode} />
+        ) : model.state === "offline" ? (
           <EmptyWorkspace
             state={model.state}
             statusLabel={model.statusLabel}
@@ -196,5 +198,37 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
         )}
       </div>
     </div>
+  );
+}
+
+function WorkspaceStartingFrame({ mode }: { mode: WorkspaceModel["mode"] }) {
+  return (
+    <section className="workspace-starting-frame" aria-label="Workspace starting">
+      <main className="workspace-starting-content">
+        <div className="workspace-starting-header">
+          <span className="eyebrow">{mode === "chat" ? "Conversation" : "Project"}</span>
+          <h1>{mode === "chat" ? "Chat" : "Workspace"}</h1>
+        </div>
+        <div className="workspace-starting-lines" aria-label="Loading content">
+          <span />
+          <span />
+          <span />
+        </div>
+      </main>
+      <Composer
+        inputAriaLabel="Message Fairy starting"
+        disabled
+        isBusy={false}
+        visionAvailable={false}
+        modelCatalog={null}
+        modelSelection={null}
+        modelSelectionDisabled
+        submissionBlockedReason="Fairy Core is starting"
+        onSubmit={async () => undefined}
+        onStop={async () => undefined}
+        onSelectModel={async () => undefined}
+        onOpenModelSettings={async () => undefined}
+      />
+    </section>
   );
 }

@@ -76,6 +76,11 @@ export function useWorkspaceBrowser({
   const queryError = firstError(healthQuery.error, sessionsQuery.error, snapshotQuery.error);
 
   const actions = useMemo<BrowserActions>(() => {
+    const commit = async <T>(operation: () => Promise<T>): Promise<T> => {
+      const result = await runAction(operation);
+      await refetchSessions();
+      return result;
+    };
     const startNew = (initialUrl?: string) => {
       if (conversationId === null) throw new Error("Conversation is unavailable");
       return client.browser.sessions.start({
@@ -109,41 +114,41 @@ export function useWorkspaceBrowser({
     return {
       async startBrowser(initialUrl?: string) {
         if (!needsResume) {
-          await runAction(() => startNew(initialUrl));
+          await commit(() => startNew(initialUrl));
           return;
         }
-        const resumed = await runAction(resume);
-        if (initialUrl !== undefined) await runAction(() => navigateSession(resumed, initialUrl));
+        const resumed = await commit(resume);
+        if (initialUrl !== undefined) await commit(() => navigateSession(resumed, initialUrl));
       },
       async stopBrowser() {
-        if (session !== null) await runAction(() => client.browser.sessions.stop(session.id));
+        if (session !== null) await commit(() => client.browser.sessions.stop(session.id));
       },
       async navigateBrowser(url: string) {
         const targetSession = needsResume
-          ? await runAction(resume)
-          : session ?? await runAction(() => startNew(url));
+          ? await commit(resume)
+          : session ?? await commit(() => startNew(url));
         if (session === null && !needsResume) return;
-        await runAction(() => navigateSession(targetSession, url));
+        await commit(() => navigateSession(targetSession, url));
       },
       async openBrowserTab(url = "about:blank") {
         const targetSession = needsResume
-          ? await runAction(resume)
-          : session ?? await runAction(() => startNew(url));
+          ? await commit(resume)
+          : session ?? await commit(() => startNew(url));
         if (session === null && !needsResume) return;
-        await runAction(() => client.browser.tabs.open(targetSession.id, url));
+        await commit(() => client.browser.tabs.open(targetSession.id, url));
       },
       async selectBrowserTab(tabId: string) {
         if (session === null || session.active_tab_id === tabId) return;
-        await runAction(() => client.browser.tabs.select(session.id, tabId));
+        await commit(() => client.browser.tabs.select(session.id, tabId));
       },
       async closeBrowserTab(tabId: string) {
-        if (session !== null) await runAction(() => client.browser.tabs.close(session.id, tabId));
+        if (session !== null) await commit(() => client.browser.tabs.close(session.id, tabId));
       },
       async executeBrowserAction(input) {
         if (session === null || activeTab === null || session.status !== "active") {
           throw new Error("Browser session is unavailable");
         }
-        await runAction(() => client.browser.actions.execute({
+        await commit(() => client.browser.actions.execute({
           ...input,
           session_id: session.id,
           tab_id: activeTab.id,
@@ -158,7 +163,7 @@ export function useWorkspaceBrowser({
       },
       setBrowserSurfaceActive,
     };
-  }, [activeTab, client.browser, conversationId, projectId, runAction, session, setBrowserSurfaceActive, snapshotQuery, taskId]);
+  }, [activeTab, client.browser, conversationId, projectId, refetchSessions, runAction, session, setBrowserSurfaceActive, snapshotQuery, taskId]);
 
   return {
     health: healthQuery.data ?? null,

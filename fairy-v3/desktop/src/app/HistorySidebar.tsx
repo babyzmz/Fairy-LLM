@@ -108,6 +108,7 @@ export function HistorySidebar({ model, onCreateProject }: HistorySidebarProps) 
               icon={<MessageSquareText size={14} />}
               label={conversation.title}
               pinned={conversation.pinned_at !== null}
+              onIntent={() => void model.prefetchConversation(conversation).catch(() => undefined)}
               onSelect={() => openConversation(model, conversation)}
               onMenu={(x, y, returnFocus) =>
                 setMenu({ kind: "conversation", item: conversation, x, y, returnFocus })
@@ -333,6 +334,7 @@ function ProjectTree({
               label={conversation.title}
               pinned={conversation.pinned_at !== null}
               nested
+              onIntent={() => void model.prefetchConversation(conversation).catch(() => undefined)}
               onSelect={() => openConversation(model, conversation)}
               onMenu={(x, y, returnFocus) =>
                 onMenu({ kind: "conversation", item: conversation, x, y, returnFocus })
@@ -351,6 +353,7 @@ function HistoryRow({
   label,
   pinned,
   nested = false,
+  onIntent,
   onSelect,
   onMenu,
 }: {
@@ -359,6 +362,7 @@ function HistoryRow({
   label: string;
   pinned: boolean;
   nested?: boolean;
+  onIntent(): void;
   onSelect(): void;
   onMenu(x: number, y: number, returnFocus: HTMLElement): void;
 }) {
@@ -385,7 +389,14 @@ function HistoryRow({
         }
       }}
     >
-      <button type="button" className="history-row-main" onClick={onSelect} title={label}>
+      <button
+        type="button"
+        className="history-row-main"
+        onMouseEnter={onIntent}
+        onFocus={onIntent}
+        onClick={onSelect}
+        title={label}
+      >
         {icon}
         <span>{label}</span>
         {pinned ? <Pin size={11} /> : null}

@@ -3,9 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAssistantTurn } from "../chat/useAssistantTurn";
 import { useTurnTraces } from "../chat/useTurnTraces";
-import type { EventEnvelope, McpToolPolicyInput, Task } from "../core/client";
+import type { EventEnvelope, Task } from "../core/client";
 import { runEventDelivery } from "../core/eventStream";
-import type { McpServerDraft } from "../settings/extensionTypes";
 import {
   selectedProfileId as profileIdForSelection,
   selectionBlockReason,
@@ -22,7 +21,7 @@ import {
   usePersistedSelection,
   writeEventCheckpoint,
 } from "./workspacePreferences";
-import { equalOverrides, extensionUpdateKey, permissionUpdateKey, requireMcpServer } from "./workspaceCommandKeys";
+import { equalOverrides, permissionUpdateKey } from "./workspaceCommandKeys";
 import { createWorkspaceFileActions } from "./workspaceFileActions";
 import { previewStartIdempotencyKey } from "./workspacePreviewActions";
 import { usePreviewActivation } from "./usePreviewActivation";
@@ -46,9 +45,18 @@ import {
   selectedItem,
   selectWorkspaceTask,
   shouldRetryCoreStartup,
-  terminalAssistantEvents,
   workspaceKey,
 } from "./workspaceModelUtils";
+import {
+  addWorkspaceEventInvalidation,
+  addWorkspaceInvalidation,
+  createWorkspaceInvalidationBatch,
+  workspaceQueryMatchesInvalidation,
+} from "./workspaceQueryInvalidation";
+import type { WorkspaceInvalidationDomain } from "./workspaceQueryInvalidation";
+
+const messageCacheStaleTime = 30_000;
+const eventInvalidationWindow = 50;
 
 export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const queryClient = useQueryClient();
@@ -70,6 +78,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const [petTaskId, setPetTaskId] = useState<string | null>(null);
   const petSubmissionRef = useRef(false);
   const petConversationIdRef = useRef<string | null>(null);
+  const activeActionCountRef = useRef(0);
+  const invalidationBatchRef = useRef(createWorkspaceInvalidationBatch());
+  const invalidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const healthQuery = useQuery({
     queryKey: [...workspaceKey, "health"],
@@ -103,27 +114,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     enabled: healthQuery.isSuccess,
     retry: false,
   });
-  const skillsQuery = useQuery({
-    queryKey: [...workspaceKey, "skills"],
-    queryFn: () => client.skills.list(),
-    enabled: healthQuery.isSuccess,
-    retry: false,
-  });
-  const mcpServersQuery = useQuery({
-    queryKey: [...workspaceKey, "mcp-servers"],
-    queryFn: () => client.mcp.servers.list(),
-    enabled: healthQuery.isSuccess,
-    retry: false,
-  });
   const providerHealthQuery = useQuery({
     queryKey: [...workspaceKey, "provider-health"],
     queryFn: () => client.providers.health(),
-    enabled: healthQuery.isSuccess,
-    retry: false,
-  });
-  const openRouterStatusQuery = useQuery({
-    queryKey: [...workspaceKey, "openrouter-status"],
-    queryFn: () => client.providers.openRouterStatus(),
     enabled: healthQuery.isSuccess,
     retry: false,
   });
@@ -202,6 +195,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       }),
     enabled: selectedChatConversation !== null,
     retry: false,
+    staleTime: messageCacheStaleTime,
   });
   const messageItems = messagesQuery.data?.items ?? [];
   const messages = messageItems.filter(
@@ -216,8 +210,27 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       }),
     enabled: mode === "project" && selectedConversation !== null,
     retry: false,
+    staleTime: messageCacheStaleTime,
   });
   const projectMessageItems = projectMessagesQuery.data?.items ?? [];
+  const prefetchConversation = useCallback<WorkspaceModel["prefetchConversation"]>(
+    async (conversation) => {
+      await queryClient.prefetchQuery({
+        queryKey: [
+          ...workspaceKey,
+          conversation.project_id === null ? "messages" : "project-messages",
+          conversation.id,
+        ],
+        queryFn: () =>
+          client.messages.list({
+            conversation_id: conversation.id,
+            limit: 100,
+          }),
+        staleTime: messageCacheStaleTime,
+      });
+    },
+    [client, queryClient],
+  );
 
   const versionsQuery = useQuery({
     queryKey: [...workspaceKey, "versions", selectedProject?.id],
@@ -346,12 +359,101 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
 
-  const invalidateWorkspace = useCallback(async () => {
+  const flushEventInvalidations = useCallback(async () => {
+    const batch = invalidationBatchRef.current;
+    invalidationBatchRef.current = createWorkspaceInvalidationBatch();
+    invalidationTimerRef.current = null;
+    if (batch.domains.size === 0) return;
     await queryClient.invalidateQueries({
-      queryKey: workspaceKey,
-      predicate: (query) => query.queryKey[1] !== "health",
+      predicate: (query) => workspaceQueryMatchesInvalidation(query.queryKey, batch),
     });
   }, [queryClient]);
+
+  const queueEventInvalidation = useCallback(
+    (event: EventEnvelope) => {
+      addWorkspaceEventInvalidation(invalidationBatchRef.current, event);
+      if (
+        invalidationBatchRef.current.domains.size === 0 ||
+        invalidationTimerRef.current !== null
+      ) {
+        return;
+      }
+      invalidationTimerRef.current = setTimeout(() => {
+        void flushEventInvalidations();
+      }, eventInvalidationWindow);
+    },
+    [flushEventInvalidations],
+  );
+
+  useEffect(
+    () => () => {
+      if (invalidationTimerRef.current !== null) {
+        clearTimeout(invalidationTimerRef.current);
+        invalidationTimerRef.current = null;
+      }
+    },
+    [],
+  );
+
+  const invalidateDomains = useCallback(async (
+    domains: readonly WorkspaceInvalidationDomain[],
+    scope: {
+      conversationId?: string | null;
+      projectId?: string | null;
+      taskId?: string | null;
+      turnId?: string | null;
+    } = {},
+  ) => {
+    const batch = createWorkspaceInvalidationBatch();
+    addWorkspaceInvalidation(batch, domains, scope);
+    await queryClient.invalidateQueries({
+      predicate: (query) => workspaceQueryMatchesInvalidation(query.queryKey, batch),
+    });
+  }, [queryClient]);
+
+  const invalidateHistory = useCallback(
+    () => invalidateDomains(["projects", "conversations"]),
+    [invalidateDomains],
+  );
+
+  const invalidateExecution = useCallback(
+    () =>
+      invalidateDomains(
+        ["tasks", "workspace", "previews", "media", "approvals", "traces"],
+        {
+          conversationId:
+            workspaceTask?.conversation_id ??
+            (mode === "chat" ? selectedChatConversation?.id : selectedConversation?.id) ??
+            null,
+          projectId: selectedProject?.id ?? null,
+          taskId:
+            workspaceTask?.id ??
+            (mode === "chat" ? chatTaskId : selectedTask?.id) ??
+            null,
+        },
+      ),
+    [
+      chatTaskId,
+      invalidateDomains,
+      mode,
+      selectedChatConversation?.id,
+      selectedConversation?.id,
+      selectedProject?.id,
+      selectedTask?.id,
+      workspaceTask?.conversation_id,
+      workspaceTask?.id,
+    ],
+  );
+
+  const invalidateAssistantScope = useCallback(
+    async (conversationId: string | null, taskId: string | null) => {
+      await invalidateDomains(
+        ["messages", "tasks", "traces", "approvals", "workspace", "previews"],
+        { conversationId, taskId },
+      );
+    },
+    [invalidateDomains],
+  );
 
   const chatAssistant = useAssistantTurn({
     client,
@@ -364,7 +466,8 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       setChatTaskId(taskId);
       if (petSubmissionRef.current) setPetTaskId(taskId);
     },
-    onSettled: invalidateWorkspace,
+    onSettled: () =>
+      invalidateAssistantScope(selectedChatConversation?.id ?? null, chatTaskId),
   });
   const projectAssistant = useAssistantTurn({
     client,
@@ -379,7 +482,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     },
     onSettled() {
       setProjectTurnTaskId(null);
-      void invalidateWorkspace();
+      void invalidateAssistantScope(
+        selectedConversation?.id ?? null,
+        projectTurnTaskId ?? selectedTask?.id ?? null,
+      );
     },
   });
   const { turnTraces, turnTraceStates, projectTrace, projectTraceState } = useTurnTraces(client, {
@@ -414,21 +520,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
               if (event.visibility !== "internal") {
                 setAllEvents((current) => appendEvent(current, event));
               }
-              if (terminalAssistantEvents.has(event.event_type) || event.event_type === "message.created") {
-                void queryClient.invalidateQueries({
-                  queryKey: workspaceKey,
-                  predicate: (query) => ["messages", "project-messages"].includes(String(query.queryKey[1])),
-                });
-                void queryClient.invalidateQueries({ queryKey: [...workspaceKey, "tasks"] });
-              } else if (event.event_type !== "assistant.message.delta") {
-                void queryClient.invalidateQueries({
-                  queryKey: workspaceKey,
-                  predicate: (query) =>
-                    !["health", "messages", "project-messages", "providers", "provider-health"].includes(
-                      String(query.queryKey[1]),
-                    ),
-                });
-              }
+              queueEventInvalidation(event);
             },
           },
         );
@@ -440,26 +532,26 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       }
     })();
     return () => controller.abort();
-  }, [client, healthQuery.isSuccess, queryClient]);
+  }, [client, healthQuery.isSuccess, queueEventInvalidation]);
 
   const runAction = useCallback(
     async <T>(operation: () => Promise<T>): Promise<T> => {
+      activeActionCountRef.current += 1;
       setIsActing(true);
       setActionError(null);
       setActionErrorCode(null);
       try {
-        const result = await operation();
-        await invalidateWorkspace();
-        return result;
+        return await operation();
       } catch (error) {
         setActionError(errorMessage(error));
         setActionErrorCode(coreErrorCode(error));
         throw error;
       } finally {
-        setIsActing(false);
+        activeActionCountRef.current = Math.max(0, activeActionCountRef.current - 1);
+        setIsActing(activeActionCountRef.current > 0);
       }
     },
-    [invalidateWorkspace],
+    [],
   );
   const workspaceBrowser = useWorkspaceBrowser({
     client,
@@ -528,122 +620,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     [capabilitiesQuery.data?.command_metadata, permissionsQuery.data, persistPermissions],
   );
 
-  const configureOpenRouter = useCallback(
-    async (apiKey: string): Promise<void> => {
-      const status = await runAction(() =>
-        client.providers.configureOpenRouter({ api_key: apiKey }),
-      );
-      queryClient.setQueryData([...workspaceKey, "openrouter-status"], status);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: [...workspaceKey, "providers"] }),
-        queryClient.invalidateQueries({ queryKey: [...workspaceKey, "provider-health"] }),
-        modelController.refresh(),
-      ]);
-    },
-    [client.providers, modelController, queryClient, runAction],
-  );
-
   const selectProjectFolder = useCallback(
     () => runAction(() => client.projects.selectFolder()),
     [client.projects, runAction],
-  );
-
-  const deleteOpenRouter = useCallback(async (): Promise<void> => {
-    const status = await runAction(() => client.providers.deleteOpenRouter());
-    queryClient.setQueryData([...workspaceKey, "openrouter-status"], status);
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: [...workspaceKey, "providers"] }),
-      queryClient.invalidateQueries({ queryKey: [...workspaceKey, "provider-health"] }),
-      modelController.refresh(),
-    ]);
-  }, [client.providers, modelController, queryClient, runAction]);
-
-  const configureMcpServer = useCallback(
-    async (input: McpServerDraft): Promise<void> => {
-      const current = mcpServersQuery.data?.items.find((server) => server.server_id === input.serverId);
-      const expectedRevision = current?.revision ?? 0;
-      await runAction(() =>
-        client.mcp.servers.configure({
-          server_id: input.serverId,
-          display_name: input.displayName,
-          transport: input.transport,
-          command: input.command,
-          arguments: input.arguments,
-          endpoint: input.endpoint,
-          credential_ref: input.credentialRef,
-          environment_refs: input.environmentRefs,
-          expected_revision: expectedRevision,
-          idempotency_key: extensionUpdateKey("configure", input.serverId, expectedRevision, input),
-        }),
-      );
-    },
-    [client.mcp.servers, mcpServersQuery.data?.items, runAction],
-  );
-
-  const discoverMcpServer = useCallback(
-    async (serverId: string): Promise<void> => {
-      const current = requireMcpServer(mcpServersQuery.data?.items, serverId);
-      const taskId = selectedTask?.id ?? chatTaskId;
-      if (taskId === null) throw new Error("A durable Task is required to discover MCP tools");
-      await runAction(() =>
-        client.mcp.servers.discover({
-          server_id: serverId,
-          task_id: taskId,
-          expected_revision: current.revision,
-          idempotency_key: extensionUpdateKey("discover", serverId, current.revision, { taskId }),
-        }),
-      );
-    },
-    [chatTaskId, client.mcp.servers, mcpServersQuery.data?.items, runAction, selectedTask?.id],
-  );
-
-  const acceptMcpServer = useCallback(
-    async (serverId: string, tools: McpToolPolicyInput[]): Promise<void> => {
-      const current = requireMcpServer(mcpServersQuery.data?.items, serverId);
-      if (current.pending_schema_digest === null) {
-        throw new Error("MCP server has no pending schema to accept");
-      }
-      await runAction(() =>
-        client.mcp.servers.accept({
-          server_id: serverId,
-          expected_revision: current.revision,
-          schema_digest: current.pending_schema_digest as string,
-          enabled: true,
-          tools,
-          idempotency_key: extensionUpdateKey("accept", serverId, current.revision, tools),
-        }),
-      );
-    },
-    [client.mcp.servers, mcpServersQuery.data?.items, runAction],
-  );
-
-  const setMcpServerEnabled = useCallback(
-    async (serverId: string, enabled: boolean): Promise<void> => {
-      const current = requireMcpServer(mcpServersQuery.data?.items, serverId);
-      await runAction(() =>
-        client.mcp.servers.setEnabled({
-          server_id: serverId,
-          expected_revision: current.revision,
-          enabled,
-          idempotency_key: extensionUpdateKey(enabled ? "enable" : "disable", serverId, current.revision, { enabled }),
-        }),
-      );
-    },
-    [client.mcp.servers, mcpServersQuery.data?.items, runAction],
-  );
-
-  const deleteMcpServer = useCallback(
-    async (serverId: string): Promise<void> => {
-      const current = requireMcpServer(mcpServersQuery.data?.items, serverId);
-      await runAction(() =>
-        client.mcp.servers.delete({
-          server_id: serverId,
-          expected_revision: current.revision,
-          idempotency_key: extensionUpdateKey("delete", serverId, current.revision, {}),
-        }),
-      );
-    },
-    [client.mcp.servers, mcpServersQuery.data?.items, runAction],
   );
 
   const historyActions = useMemo(
@@ -651,6 +630,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       createWorkspaceHistoryActions({
         client,
         runAction,
+        invalidateHistory,
         projects,
         selectedProjectId: selectedProject?.id ?? null,
         projectConversations,
@@ -677,6 +657,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       conversationSelection,
       projectConversations,
       projects,
+      invalidateHistory,
       runAction,
       selectedProject?.id,
       setChatConversationSelection,
@@ -701,6 +682,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
               workspace_type: "chat_scratch",
             }),
           );
+          await invalidateHistory();
           conversationId = conversation.id;
           setChatConversationSelection(conversation.id);
           setChatTaskId(null);
@@ -724,6 +706,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             expected_revision: latest.metadata_revision,
           });
         });
+        await invalidateDomains(["tasks"], { taskId: task.id });
       },
       async setTaskPinned(task: Task, pinned: boolean) {
         await runAction(async () => {
@@ -734,6 +717,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             expected_revision: latest.metadata_revision,
           });
         });
+        await invalidateDomains(["tasks"], { taskId: task.id });
       },
       async archiveTask(task: Task) {
         await runAction(async () => {
@@ -743,6 +727,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             expected_revision: latest.metadata_revision,
           });
         });
+        await invalidateDomains(["tasks"], { taskId: task.id });
       },
       async decideApproval(approvalId: string, approved: boolean) {
         const result = await runAction(() =>
@@ -750,6 +735,14 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             approval_id: approvalId,
             approved,
           }),
+        );
+        await invalidateDomains(
+          ["approvals", "tasks", "traces"],
+          {
+            conversationId: workspaceTask?.conversation_id ?? null,
+            taskId: workspaceTask?.id ?? selectedTask?.id ?? chatTaskId,
+            turnId: result.assistant_turn_id,
+          },
         );
         if (result.resume_requested && result.assistant_turn_id !== null) {
           chatAssistant.markApprovalResume(result.assistant_turn_id);
@@ -773,6 +766,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             idempotency_key: previewStartIdempotencyKey(workspaceTask.id, preview),
           }),
         );
+        await invalidateDomains(
+          ["previews"],
+          { conversationId: workspaceTask.conversation_id, taskId: workspaceTask.id },
+        );
       },
       async stopPreview() {
         const activePreview = previewQuery.data?.preview;
@@ -789,11 +786,16 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             idempotency_key: `desktop:preview:${activePreview.id}:stop`,
           }),
         );
+        await invalidateDomains(
+          ["previews"],
+          { conversationId: workspaceTask.conversation_id, taskId: workspaceTask.id },
+        );
       },
       ...workspaceBrowser.actions,
       async reviewTask() {
         if (selectedTask === null) throw new Error("Task is unavailable");
         await runAction(() => client.tasks.review(selectedTask.id));
+        await invalidateExecution();
       },
       async acceptVersion() {
         if (selectedTask === null || selectedProject === null) {
@@ -806,6 +808,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             user_confirmed: true,
           }),
         );
+        await invalidateExecution();
       },
       async discardVersion() {
         if (selectedTask === null) throw new Error("Task is unavailable");
@@ -829,6 +832,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
           }
           await client.versions.discard(selectedTask.id);
         });
+        await invalidateExecution();
       },
       async listDocuments() {
         const taskId = requireId(selectedTask?.id ?? chatTaskId);
@@ -850,6 +854,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             idempotency_key: `desktop:document-delete:${documentId}:${crypto.randomUUID()}`,
           }),
         );
+        await invalidateDomains(
+          ["knowledge"],
+          { projectId: selectedProject?.id ?? null, taskId },
+        );
       },
       async searchMemory(query: string) {
         const taskId = requireId(selectedTask?.id ?? chatTaskId);
@@ -867,6 +875,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
             user_confirmed: true,
             idempotency_key: `desktop:memory-forget:${targetId}:${crypto.randomUUID()}`,
           }),
+        );
+        await invalidateDomains(
+          ["knowledge"],
+          { projectId: selectedProject?.id ?? null, taskId },
         );
       },
       async copyMessage(taskId: string, content: string) {
@@ -897,10 +909,17 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         workspace: selectedWorkspaceQuery.data,
         runAction,
         selectTask: mode === "chat" ? setChatTaskId : setTaskSelection,
-        invalidateWorkspace,
+        invalidateExecution,
         refreshFiles: () =>
           queryClient.invalidateQueries({
-            queryKey: [...workspaceKey, "files"],
+            queryKey: [
+              ...workspaceKey,
+              "files",
+              workspaceTask?.conversation_id,
+              workspaceTask?.workspace_id,
+              workspaceTask?.target_version_id,
+            ],
+            exact: true,
           }),
       }),
     }),
@@ -912,7 +931,9 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       historyActions,
       previewQuery.data?.preview,
       projectAssistant,
-      invalidateWorkspace,
+      invalidateDomains,
+      invalidateExecution,
+      invalidateHistory,
       mode,
       runAction,
       selectedProject,
@@ -936,10 +957,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     conversationsQuery.error,
     providersQuery.error,
     providerHealthQuery.error,
-    openRouterStatusQuery.error,
     modelController.error,
-    skillsQuery.error,
-    mcpServersQuery.error,
     tasksQuery.error,
     versionsQuery.error,
     approvalsQuery.error,
@@ -1026,9 +1044,6 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     messages,
     providers,
     providerHealth,
-    openRouterStatus: openRouterStatusQuery.data ?? null,
-    skills: skillsQuery.data?.items ?? [],
-    mcpServers: mcpServersQuery.data?.items ?? [],
     selectedProfileId,
     modelCatalog: modelController.catalog,
     modelSelection: modelController.selection,
@@ -1086,11 +1101,6 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     setMode,
     setPermissionProfile,
     setCapabilityEnabled,
-    configureMcpServer,
-    discoverMcpServer,
-    acceptMcpServer,
-    setMcpServerEnabled,
-    deleteMcpServer,
     listDocuments: actions.listDocuments,
     searchDocuments: actions.searchDocuments,
     deleteDocument: actions.deleteDocument,
@@ -1100,11 +1110,10 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     selectModel: (selectionMode, modelId) =>
       runAction(() => modelController.update({ mode: selectionMode, model_id: modelId })),
     refreshModelCatalog: () => runAction(modelController.refresh),
-    configureOpenRouter,
-    deleteOpenRouter,
     selectProject: actions.selectProject,
     selectConversation: actions.selectConversation,
     selectChatConversation: actions.selectChatConversation,
+    prefetchConversation,
     selectTask: setTaskSelection,
     createProject: actions.createProject,
     importProject: actions.importProject,
@@ -1125,7 +1134,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         mode: "read_only",
         idempotency_key: `obsidian:${selectedProject.id}:${selection.local_path_token}`,
       }));
-      await queryClient.invalidateQueries({ queryKey: [...workspaceKey, "obsidian"] });
+      await invalidateDomains(["knowledge"], { projectId: selectedProject.id });
     },
     syncObsidianSource: async (source) => {
       if (
@@ -1139,10 +1148,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
         source_id: source.id,
         expected_revision: source.revision,
       }));
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: [...workspaceKey, "obsidian"] }),
-        queryClient.invalidateQueries({ queryKey: [...workspaceKey, "knowledge"] }),
-      ]);
+      await invalidateDomains(["knowledge"], { projectId: selectedProject.id });
     },
     readObsidianItem: (item, signal) => {
       if (
@@ -1219,15 +1225,23 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     renameWorkspaceFile: actions.renameWorkspaceFile,
     deleteWorkspaceFile: actions.deleteWorkspaceFile,
     exportWorkspace: actions.exportWorkspace,
-    cancelMediaJob: (job) =>
-      runAction(() =>
+    cancelMediaJob: async (job) => {
+      await runAction(() =>
         client.media.videos.cancel({
           job_id: job.id,
           expected_revision: job.revision,
           idempotency_key: `desktop:media-cancel:${job.id}:${job.revision}`,
           user_confirmed: true,
         }),
-      ).then(() => undefined),
+      );
+      await invalidateDomains(
+        ["media"],
+        {
+          conversationId: workspaceTask?.conversation_id ?? null,
+          taskId: workspaceTask?.id ?? null,
+        },
+      );
+    },
     cancelProjectTurn: projectAssistant.cancel,
     decideApproval: actions.decideApproval,
     startPreview: actions.startPreview,

@@ -241,6 +241,44 @@ describe("App", () => {
     expect(screen.queryByRole("heading", { name: "Core offline" })).not.toBeInTheDocument();
   });
 
+  it("shows a stable Chat frame instead of a full-page Core connection screen", () => {
+    window.localStorage.setItem("fairy.workspace.mode", "chat");
+    const client = createClient(() => new Promise(() => undefined), [project]);
+
+    render(<App client={client} />);
+
+    expect(screen.getByLabelText("History navigation")).toBeVisible();
+    expect(screen.getByRole("banner")).toHaveTextContent("Core starting");
+    expect(screen.getByRole("heading", { name: "Chat" })).toBeVisible();
+    expect(screen.getByLabelText("Message Fairy starting")).toBeDisabled();
+    expect(screen.queryByText("Opening Fairy")).not.toBeInTheDocument();
+    expect(screen.queryByText("Connecting to Core")).not.toBeInTheDocument();
+  });
+
+  it("does not load settings-only extension and credential data during workspace startup", async () => {
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [project],
+    );
+    const listSkills = vi.fn(client.skills.list);
+    const listMcpServers = vi.fn(client.mcp.servers.list);
+    const openRouterStatus = vi.fn(client.providers.openRouterStatus);
+    client.skills.list = listSkills;
+    client.mcp.servers.list = listMcpServers;
+    client.providers.openRouterStatus = openRouterStatus;
+
+    render(<App client={client} />);
+
+    expect(await screen.findByRole("heading", { name: "Task Timeline" })).toBeVisible();
+    expect(listSkills).not.toHaveBeenCalled();
+    expect(listMcpServers).not.toHaveBeenCalled();
+    expect(openRouterStatus).not.toHaveBeenCalled();
+  });
+
   it("renders durable workspace data without exposing raw Ledger events", async () => {
     const health = vi.fn(async () => ({
       status: "ok",
@@ -562,6 +600,34 @@ describe("App", () => {
       conversation_id: ID.scratchConversation,
       limit: 100,
     });
+  });
+
+  it("does not reload workspace queries after a stateless system action", async () => {
+    window.localStorage.setItem("fairy.workspace.mode", "chat");
+    const listMessages = vi.fn(async () => ({ items: [scratchMessage], next_cursor: null }));
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [project],
+      { scratch: true, listMessages },
+    );
+    const listProviders = vi.fn(client.providers.list);
+    const executeSystemAction = vi.fn(async () => ({} as never));
+    client.providers.list = listProviders;
+    client.systemActions.execute = executeSystemAction;
+
+    render(<App client={client} />);
+
+    expect(await screen.findByText("Scratch chat is durable")).toBeVisible();
+    await waitFor(() => expect(listProviders).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole("button", { name: "Copy message" }));
+
+    await waitFor(() => expect(executeSystemAction).toHaveBeenCalledTimes(1));
+    expect(listProviders).toHaveBeenCalledTimes(1);
+    expect(listMessages).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes conversation metadata before a confirmed delete", async () => {

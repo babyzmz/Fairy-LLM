@@ -8,6 +8,7 @@ export type WorkspaceRunAction = <T>(operation: () => Promise<T>) => Promise<T>;
 interface WorkspaceHistoryActionOptions {
   client: WorkspaceClient;
   runAction: WorkspaceRunAction;
+  invalidateHistory(): Promise<void>;
   projects: Project[];
   selectedProjectId: string | null;
   projectConversations: Conversation[];
@@ -29,6 +30,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
   const {
     client,
     runAction,
+    invalidateHistory,
     projects,
     selectedProjectId,
     projectConversations,
@@ -45,6 +47,11 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
     setMode,
     resetChatAssistant,
   } = options;
+  const mutateHistory = async <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = await runAction(operation);
+    await invalidateHistory();
+    return result;
+  };
 
   const selectChatConversation = (conversationId: string) => {
     setMode("chat");
@@ -57,7 +64,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
   };
 
   const createScratchConversation = async (forPet: boolean) => {
-    const conversation = await runAction(() =>
+    const conversation = await mutateHistory(() =>
       client.conversations.create({ project_id: null, workspace_type: "chat_scratch" }),
     );
     setPetConversationId(forPet ? conversation.id : null);
@@ -71,7 +78,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
   const createProjectFrom = async (
     operation: () => ReturnType<WorkspaceClient["projects"]["create"]>,
   ) => {
-    const { result, initialConversation } = await runAction(async () => {
+    const { result, initialConversation } = await mutateHistory(async () => {
       const result = await operation();
       const page = await collectCursorPages((cursor) =>
         client.conversations.list({ limit: 100, cursor }),
@@ -108,7 +115,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
     createChatConversation: () => createScratchConversation(false),
     createPetChatConversation: () => createScratchConversation(true),
     async createProjectConversation(project: Project) {
-      const conversation = await runAction(() =>
+      const conversation = await mutateHistory(() =>
         client.conversations.create({ project_id: project.id, workspace_type: "project_chat" }),
       );
       setProjectSelection(project.id);
@@ -119,7 +126,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
     async renameProject(project: Project, name: string) {
       const trimmed = name.trim();
       if (trimmed.length === 0 || trimmed === project.name) return;
-      await runAction(async () => {
+      await mutateHistory(async () => {
         const latest = await client.projects.get(project.id);
         return client.projects.updateMetadata({
           project_id: project.id,
@@ -129,7 +136,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
       });
     },
     async setProjectPinned(project: Project, pinned: boolean) {
-      await runAction(async () => {
+      await mutateHistory(async () => {
         const latest = await client.projects.get(project.id);
         return client.projects.updateMetadata({
           project_id: project.id,
@@ -139,7 +146,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
       });
     },
     async archiveProject(project: Project) {
-      await runAction(async () => {
+      await mutateHistory(async () => {
         const latest = await client.projects.get(project.id);
         return client.projects.archive({
           project_id: project.id,
@@ -149,7 +156,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
       selectProjectFallback(project.id);
     },
     async deleteProject(project: Project, cancelActive = true) {
-      await runAction(async () => {
+      await mutateHistory(async () => {
         const latest = await client.projects.get(project.id);
         return client.projects.delete({
           project_id: project.id,
@@ -163,7 +170,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
     async renameConversation(conversation: Conversation, title: string) {
       const trimmed = title.trim();
       if (trimmed.length === 0 || trimmed === conversation.title) return;
-      await runAction(async () => {
+      await mutateHistory(async () => {
         const latest = await client.conversations.get(conversation.id);
         return client.conversations.update({
           conversation_id: conversation.id,
@@ -173,7 +180,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
       });
     },
     async setConversationPinned(conversation: Conversation, pinned: boolean) {
-      await runAction(async () => {
+      await mutateHistory(async () => {
         const latest = await client.conversations.get(conversation.id);
         return client.conversations.update({
           conversation_id: conversation.id,
@@ -183,7 +190,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
       });
     },
     async deleteConversation(conversation: Conversation) {
-      await runAction(async () => {
+      await mutateHistory(async () => {
         const latest = await client.conversations.get(conversation.id);
         return client.conversations.delete({
           conversation_id: conversation.id,
@@ -206,7 +213,7 @@ export function createWorkspaceHistoryActions(options: WorkspaceHistoryActionOpt
       }
     },
     async moveConversationToProject(conversation: Conversation, project: Project) {
-      const result = await runAction(async () => {
+      const result = await mutateHistory(async () => {
         const latest = await client.conversations.get(conversation.id);
         return client.conversations.moveToProject({
           conversation_id: conversation.id,
