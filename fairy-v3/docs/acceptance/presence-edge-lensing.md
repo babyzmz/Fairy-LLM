@@ -14,6 +14,10 @@ native DDA Liquid Glass renderer.
   cue.
 - Atmospheric rings, particles, and the breathing beacon remain in the final
   identity pass and keep their original geometry.
+- With placement, drag, and shape morph held constant, idle breathing and
+  semantic-state animation cannot change any desktop sample coordinate.
+  State motion belongs to the material and identity passes so fine text behind
+  a stationary edge does not shimmer.
 - Core, transitional droplets, and input capsules use the same normalized
   monotonic field. Thin shapes scale displacement with their optical radius.
 
@@ -30,6 +34,9 @@ native DDA Liquid Glass renderer.
   or below `1.1px` before surface scaling.
 - Each output pixel uses one primary desktop coordinate. No stacked backdrop
   copies, concentric bands, center scaling, or broad blur are permitted.
+- `elapsed_seconds`, `state_elapsed_seconds`, `state_pulse`, voice level, and
+  semantic activation must not feed the desktop UV path. Only stable geometry,
+  explicit shape morph, and drag/release deformation may move that path.
 
 ## Automated acceptance
 
@@ -37,6 +44,8 @@ native DDA Liquid Glass renderer.
   definition.
 - CPU mirror tests sample the profile densely, verify identity and rim
   thresholds, and enforce the minimum normalized source-coordinate Jacobian.
+- Shader dependency tests reject time-varying state from both the core SDF and
+  the desktop-sampling function.
 - Existing HLSL compilation, DDA source, foreground identity, and no-concentric-
   lens tests remain mandatory.
 
@@ -54,5 +63,9 @@ The following checks require the real Tauri/D3D runtime:
    black frame, or one-frame style switch is allowed.
 5. Repeat with the core on both the left and right side of its render surface,
    on the expanded input capsule, and at supported DPI scales.
+6. Keep a high-contrast checkerboard or fine text static for five seconds in
+   idle, hover, thinking, and speaking states. The sampled background edge must
+   remain spatially fixed; only the foreground identity/material light may
+   animate.
 
 Unit tests cannot substitute for these native pixel and presentation checks.

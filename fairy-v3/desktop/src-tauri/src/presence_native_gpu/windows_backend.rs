@@ -4109,6 +4109,40 @@ mod tests {
     }
 
     #[test]
+    fn stable_geometry_keeps_semantic_animation_out_of_desktop_sampling() {
+        let shader = include_str!("liquid_glass.hlsl");
+        let core_sdf = shader
+            .split_once("float core_sdf")
+            .and_then(|(_, body)| body.split_once("float capsule_sdf"))
+            .map(|(body, _)| body)
+            .expect("core SDF");
+        let desktop_sampling = shader
+            .split_once("float3 sample_continuous_liquid_glass")
+            .and_then(|(_, body)| body.split_once("float edge_material_profile"))
+            .map(|(body, _)| body)
+            .expect("desktop sampling function");
+
+        for forbidden in ["state_pulse", "elapsed_seconds", "state_elapsed_seconds"] {
+            assert!(
+                !core_sdf.contains(forbidden),
+                "core geometry depends on animated state: {forbidden}"
+            );
+        }
+        for forbidden in [
+            "fluid_surface_wave",
+            "fluid_activation_value",
+            "state_pulse",
+            "elapsed_seconds",
+            "state_elapsed_seconds",
+        ] {
+            assert!(
+                !desktop_sampling.contains(forbidden),
+                "desktop UV path depends on animated state: {forbidden}"
+            );
+        }
+    }
+
+    #[test]
     fn native_drag_keeps_host_backdrop_live_without_a_capture_rebase() {
         let backend = include_str!("windows_backend.rs");
         let production = backend.split("#[cfg(test)]").next().unwrap_or(backend);

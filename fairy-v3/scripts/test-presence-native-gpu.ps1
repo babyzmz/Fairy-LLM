@@ -977,7 +977,7 @@ function Get-AvailablePort {
     finally { $listener.Stop() }
 }
 
-function Measure-RadialLuminance(
+function Measure-RadialColor(
     $Image,
     [int]$CenterX,
     [int]$CenterY,
@@ -985,7 +985,9 @@ function Measure-RadialLuminance(
     [double]$Tolerance = 1.0
 ) {
     $maximumRadius = [int][Math]::Ceiling($Radius + $Tolerance)
-    $sum = 0.0
+    $sumRed = 0.0
+    $sumGreen = 0.0
+    $sumBlue = 0.0
     $samples = 0
     for ($y = [Math]::Max(0, $CenterY - $maximumRadius);
         $y -le [Math]::Min($Image.Height - 1, $CenterY + $maximumRadius);
@@ -998,12 +1000,56 @@ function Measure-RadialLuminance(
             )
             if ([Math]::Abs($distance - $Radius) -gt $Tolerance) { continue }
             $pixel = $Image.GetPixel($x, $y)
-            $sum += ($pixel.R + $pixel.G + $pixel.B) / 3.0
+            $sumRed += $pixel.R
+            $sumGreen += $pixel.G
+            $sumBlue += $pixel.B
             $samples++
         }
     }
     if ($samples -lt 1) { throw "Identity radial sample area is empty" }
-    return $sum / $samples
+    return [PSCustomObject]@{
+        red = $sumRed / $samples
+        green = $sumGreen / $samples
+        blue = $sumBlue / $samples
+    }
+}
+
+function Get-MidpointColor($First, $Second) {
+    return [PSCustomObject]@{
+        red = ([double]$First.red + [double]$Second.red) / 2.0
+        green = ([double]$First.green + [double]$Second.green) / 2.0
+        blue = ([double]$First.blue + [double]$Second.blue) / 2.0
+    }
+}
+
+function Get-ColorDistance($First, $Second) {
+    return (
+        [Math]::Abs([double]$First.red - [double]$Second.red) +
+        [Math]::Abs([double]$First.green - [double]$Second.green) +
+        [Math]::Abs([double]$First.blue - [double]$Second.blue)
+    ) / 3.0
+}
+
+function Measure-IdentityContrast(
+    $Image,
+    [int]$CenterX,
+    [int]$CenterY,
+    [double]$Scale
+) {
+    $center = Measure-RadialColor $Image $CenterX $CenterY 0.0 (3.0 * $Scale)
+    $innerBaseline = Get-MidpointColor `
+        (Measure-RadialColor $Image $CenterX $CenterY (16.0 * $Scale)) `
+        (Measure-RadialColor $Image $CenterX $CenterY (30.0 * $Scale))
+    $innerRing = Measure-RadialColor $Image $CenterX $CenterY (24.0 * $Scale)
+    $outerBaseline = Get-MidpointColor `
+        (Measure-RadialColor $Image $CenterX $CenterY (30.0 * $Scale)) `
+        (Measure-RadialColor $Image $CenterX $CenterY (44.0 * $Scale))
+    $outerRing = Measure-RadialColor $Image $CenterX $CenterY (36.0 * $Scale)
+    return [PSCustomObject]@{
+        center = (Get-ColorDistance $center $innerBaseline)
+        inner_ring = (Get-ColorDistance $innerRing $innerBaseline)
+        outer_ring = (Get-ColorDistance $outerRing $outerBaseline)
+    }
 }
 
 function Format-FairyProcessWindows([System.Diagnostics.Process]$Process) {
@@ -1357,26 +1403,17 @@ try {
                 if ($meanDifference -lt 18.0) {
                     throw "Stationary lens did not refresh the live monitor background: mean difference=$meanDifference"
                 }
-                $meanRadialLuminance = {
-                    param([double]$Radius, [double]$Tolerance = 1.0)
-                    $red = Measure-RadialLuminance $redImage $centerX $centerY $Radius $Tolerance
-                    $green = Measure-RadialLuminance $greenImage $centerX $centerY $Radius $Tolerance
-                    return ($red + $green) / 2.0
-                }
-                $centerLuminance = & $meanRadialLuminance 0.0 (3.0 * $scale)
-                $innerBaseline = (
-                    (& $meanRadialLuminance (16.0 * $scale)) +
-                    (& $meanRadialLuminance (30.0 * $scale))
+                $redContrast = Measure-IdentityContrast $redImage $centerX $centerY $scale
+                $greenContrast = Measure-IdentityContrast $greenImage $centerX $centerY $scale
+                $centerContrast = (
+                    [double]$redContrast.center + [double]$greenContrast.center
                 ) / 2.0
-                $innerRingLuminance = & $meanRadialLuminance (24.0 * $scale)
-                $outerBaseline = (
-                    (& $meanRadialLuminance (30.0 * $scale)) +
-                    (& $meanRadialLuminance (44.0 * $scale))
+                $innerRingContrast = (
+                    [double]$redContrast.inner_ring + [double]$greenContrast.inner_ring
                 ) / 2.0
-                $outerRingLuminance = & $meanRadialLuminance (36.0 * $scale)
-                $centerContrast = $centerLuminance - $innerBaseline
-                $innerRingContrast = $innerRingLuminance - $innerBaseline
-                $outerRingContrast = $outerRingLuminance - $outerBaseline
+                $outerRingContrast = (
+                    [double]$redContrast.outer_ring + [double]$greenContrast.outer_ring
+                ) / 2.0
                 if ($centerContrast -lt 20.0 -or
                     $innerRingContrast -lt 2.0 -or
                     $outerRingContrast -lt 3.0) {

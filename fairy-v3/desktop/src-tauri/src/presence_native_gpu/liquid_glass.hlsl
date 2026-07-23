@@ -161,8 +161,9 @@ float core_sdf(float2 position_px) {
     delta += axis * drag_center_shift;
     float along = dot(delta, axis) / max(1.0 + deformation, 0.88);
     float across = dot(delta, normal_axis) / max(1.0 - deformation * 0.45, 0.88);
-    float breathing = reduced_motion > 0.5 ? 0.0 : (state_pulse - 0.82) * 1.2 * surface_scale;
-    return length(float2(along, across)) - (72.0 * surface_scale + breathing);
+    // Semantic breathing belongs to the foreground identity layer. Moving the optical boundary by
+    // fractions of a pixel makes high-contrast desktop detail shimmer at the strong outer lens.
+    return length(float2(along, across)) - 72.0 * surface_scale;
 }
 
 float capsule_sdf(float2 position_px) {
@@ -316,19 +317,13 @@ float3 sample_continuous_liquid_glass(
     float displacement_px = continuous_refraction_px(radial_progress)
         * shape_refraction_scale
         * surface_scale;
-    float fluid_wave = fluid_surface_wave(local_px, radial_progress);
-    float activation = fluid_activation_value();
-    displacement_px *= 1.0 + activation * 0.06 + fluid_wave * 0.025;
     float2 tangent = float2(-normal.y, normal.x);
-    float tangential_response_px = fluid_wave * 0.34 * surface_scale;
     float2 base_screen_px = surface_origin_px + local_px
-        - normal * displacement_px
-        + tangent * tangential_response_px;
+        - normal * displacement_px;
     float dispersion_px = smootherstep_range(0.90, 1.0, radial_progress)
         * EDGE_DISPERSION_MAX_PX
         * shape_refraction_scale
-        * surface_scale
-        * (1.0 + activation * 0.08);
+        * surface_scale;
     float3 center = sample_desktop(base_screen_px);
     float3 refracted = float3(
         sample_desktop(base_screen_px - normal * dispersion_px).r,
@@ -420,6 +415,8 @@ float4 ps_main(VertexOutput input) : SV_Target {
         desktop_color = sample_continuous_liquid_glass(local_px, signed_distance, normal);
     }
     float edge_focus = edge_material_profile(signed_distance);
+    float radial_progress = optical_radial_progress(signed_distance, local_px);
+    float fluid_material_wave = fluid_surface_wave(local_px, radial_progress);
     float3 material_base = float3(0.91, 0.96, 0.98);
 
     float rim_fresnel = pow(edge_focus, 1.72);
@@ -446,6 +443,15 @@ float4 ps_main(VertexOutput input) : SV_Target {
     color += float3(0.78, 0.92, 1.0) * fill_highlight * 0.28;
     color += float3(0.82, 0.96, 1.0) * rim_caustic * 0.12;
     color += float3(0.82, 0.94, 1.0) * rim_fresnel * silhouette * 0.15;
+    color += state_accent_color()
+        * max(fluid_material_wave, 0.0)
+        * rim_caustic
+        * 0.045;
+    color *= 1.0
+        - max(-fluid_material_wave, 0.0)
+            * rim_fresnel
+            * silhouette
+            * 0.018;
     float state_travel = 0.5 + 0.5 * sin(
         dot(local_px - core_center_px(), normalize(float2(0.94, -0.34)))
             * 0.055 / scale
