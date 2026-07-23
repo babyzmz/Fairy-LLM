@@ -198,8 +198,19 @@ export interface CoreTransport {
   realtimeWorkerToolResult?(input: RealtimeWorkerToolResultInput): Promise<void>;
   selectProjectFolder?(): Promise<string | null>;
   selectObsidianVault?(): Promise<ObsidianVaultSelection | null>;
-  openSettingsWindow?(): Promise<void>;
+  openSettingsWindow?(category?: SettingsCategoryId): Promise<void>;
 }
+
+export type SettingsCategoryId =
+  | "general"
+  | "appearance"
+  | "models"
+  | "voice"
+  | "permissions"
+  | "extensions"
+  | "knowledge"
+  | "pet"
+  | "advanced";
 
 export class CoreClient {
   readonly ambient = {
@@ -208,11 +219,11 @@ export class CoreClient {
   };
 
   readonly desktop = {
-    openSettings: () => {
+    openSettings: (category?: SettingsCategoryId) => {
       if (this.transport.openSettingsWindow === undefined) {
         throw new Error("Settings require the Fairy desktop host");
       }
-      return this.transport.openSettingsWindow();
+      return this.transport.openSettingsWindow(category);
     },
   };
 

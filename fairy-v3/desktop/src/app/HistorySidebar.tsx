@@ -87,8 +87,8 @@ export function HistorySidebar({ model, onCreateProject }: HistorySidebarProps) 
       </label>
 
       <div className="history-groups">
-        {model.state === "offline" ? <p className="history-status">Fairy Core is offline</p> : null}
-        {model.state === "loading" ? <p className="history-status">Loading history...</p> : null}
+        {model.connectionState === "offline" ? <p className="history-status">Fairy Core is offline</p> : null}
+        {model.historyLoading ? <p className="history-status">Loading history...</p> : null}
         {noResults ? <p className="history-status">No matching chats or projects</p> : null}
 
         <HistoryGroup

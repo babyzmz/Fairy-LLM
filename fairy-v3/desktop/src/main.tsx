@@ -78,14 +78,15 @@ async function mountSurface() {
     return;
   }
 
-  const [{ invoke }, { App }, { CoreClient }, { TauriCoreTransport }] = await Promise.all([
+  const [{ invoke }, { App }, { CoreClient }, { TauriCoreTransport }, { SettingsClient }] = await Promise.all([
     import("@tauri-apps/api/core"),
     import("./app/App"),
     import("./core/client"),
     import("./core/tauriTransport"),
+    import("./settings/client"),
   ]);
   const client = new CoreClient(new TauriCoreTransport(invoke));
-  renderSurface(<App client={client} />);
+  renderSurface(<App client={client} settingsClient={new SettingsClient(invoke)} />);
 }
 
 void mountSurface();

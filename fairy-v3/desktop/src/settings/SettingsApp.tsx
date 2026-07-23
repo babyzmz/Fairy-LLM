@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Bot,
   Brain,
   Check,
@@ -27,7 +28,13 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { m } from "motion/react";
 
 import type {
@@ -43,6 +50,7 @@ import type {
   SkillImportInspection,
   ProjectArchivedItem,
   TrashItem,
+  SettingsCategoryId,
 } from "../core/client";
 import { ActionDialog } from "../ui/ActionDialog";
 import { startNativeVoiceTest } from "../voice/nativeVoice";
@@ -75,19 +83,10 @@ import {
 } from "./settingsControls";
 import "./settings-app.css";
 
-type CategoryId =
-  | "general"
-  | "appearance"
-  | "models"
-  | "voice"
-  | "permissions"
-  | "extensions"
-  | "knowledge"
-  | "pet"
-  | "advanced";
+export type { SettingsCategoryId } from "../core/client";
 
 const categories: readonly {
-  id: CategoryId;
+  id: SettingsCategoryId;
   label: string;
   keywords: string;
   icon: typeof MonitorCog;
@@ -124,83 +123,300 @@ interface SettingsData extends KnowledgePrivacyData {
   autoPurgeError: string | null;
 }
 
-export function SettingsApp({ client }: { client: SettingsClient }) {
-  const [category, setCategory] = useState<CategoryId>("general");
+interface GeneralSettingsData {
+  archivedProjects: ProjectArchivedItem[];
+  trashItems: TrashItem[];
+  autoPurgeError: string | null;
+}
+
+interface ModelSettingsData {
+  openRouterConfigured: boolean;
+  openRouterAccountId: string | null;
+  realtimeCredentials: Record<"gemini" | "zhipu", boolean>;
+  modelCatalog: ModelCatalogPage;
+  modelSelection: ModelSelectionPreference;
+}
+
+interface PermissionSettingsData {
+  permissions: ExecutionSettings;
+  capabilities: CapabilityManifest;
+}
+
+interface ExtensionSettingsData {
+  extensionCatalog: ExtensionCatalogEntry[];
+  skills: Skill[];
+  servers: McpServer[];
+  latestTaskId: string | null;
+}
+
+interface KnowledgeSettingsData extends KnowledgePrivacyData {
+  memorySettings: MemorySettings;
+}
+
+export const settingsQueryKeys = {
+  preferences: ["settings", "common", "preferences"] as const,
+  general: ["settings", "category", "general"] as const,
+  models: ["settings", "category", "models"] as const,
+  voice: ["settings", "category", "voice"] as const,
+  permissions: ["settings", "category", "permissions"] as const,
+  extensions: ["settings", "category", "extensions"] as const,
+  knowledge: ["settings", "category", "knowledge"] as const,
+  pet: ["settings", "category", "pet"] as const,
+};
+
+interface SettingsNavigationRequest {
+  sequence: number;
+  category?: SettingsCategoryId;
+}
+
+interface SettingsAppProps {
+  client: SettingsClient;
+  initialPreferences?: DesktopPreferences | null;
+  navigationRequest?: SettingsNavigationRequest;
+  onBack?(): void;
+  queryClient?: QueryClient;
+}
+
+export function SettingsApp(props: SettingsAppProps) {
+  const [ownedQueryClient] = useState(() => new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        refetchOnWindowFocus: false,
+      },
+    },
+  }));
+  return (
+    <QueryClientProvider client={props.queryClient ?? ownedQueryClient}>
+      <SettingsContent {...props} />
+    </QueryClientProvider>
+  );
+}
+
+function SettingsContent({
+  client,
+  initialPreferences = null,
+  navigationRequest,
+  onBack,
+}: SettingsAppProps) {
+  const queryClient = useQueryClient();
+  const [category, setCategory] = useState<SettingsCategoryId>(
+    navigationRequest?.category ?? "general",
+  );
+  const [visited, setVisited] = useState<ReadonlySet<SettingsCategoryId>>(
+    () => new Set([navigationRequest?.category ?? "general"]),
+  );
   const [query, setQuery] = useState("");
-  const [data, setData] = useState<SettingsData | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const contentRef = useRef<HTMLElement | null>(null);
+  const lastNavigationSequence = useRef(0);
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const [preferences, memorySettings, status, geminiStatus, zhipuStatus, modelCatalog, modelSelection, permissions, capabilities, catalog, skills, servers, tasks, voiceHealth, rendererHealth, archived, initialTrash, knowledgePrivacy] =
-        await Promise.all([
-          client.preferences.get(),
-          client.memory.settings.get(),
-          client.providers.openRouterStatus(),
-          client.providers.realtimeStatus("gemini").catch(() => ({ provider: "gemini" as const, configured: false })),
-          client.providers.realtimeStatus("zhipu").catch(() => ({ provider: "zhipu" as const, configured: false })),
-          client.models.catalog.list(),
-          client.models.selection.get(),
-          client.permissions.get(),
-          client.permissions.capabilities(),
-          client.extensions.catalog(),
-          client.extensions.skills(),
-          client.extensions.servers(),
-          client.context.latestTask(),
-          client.voice.health().catch(() => unavailableVoiceHealth()),
-          client.pet.rendererHealth().catch(() => null),
-          listAllArchivedProjects(client),
-          listAllTrashItems(client),
-          loadKnowledgePrivacy(client),
-        ]);
-      let trash = initialTrash;
+  useEffect(() => {
+    if (
+      navigationRequest === undefined ||
+      navigationRequest.sequence <= lastNavigationSequence.current
+    ) {
+      return;
+    }
+    lastNavigationSequence.current = navigationRequest.sequence;
+    if (navigationRequest.category !== undefined) {
+      setCategory(navigationRequest.category);
+      setVisited((current) => new Set(current).add(navigationRequest.category as SettingsCategoryId));
+    }
+    setQuery("");
+  }, [navigationRequest]);
+
+  useEffect(() => {
+    if (initialPreferences === null) return;
+    queryClient.setQueryData(settingsQueryKeys.preferences, initialPreferences);
+  }, [initialPreferences, queryClient]);
+
+  const preferencesQuery = useQuery({
+    queryKey: settingsQueryKeys.preferences,
+    queryFn: () => client.preferences.get(),
+    initialData: initialPreferences ?? undefined,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const generalQuery = useQuery({
+    queryKey: settingsQueryKeys.general,
+    enabled: visited.has("general") && preferencesQuery.data !== undefined,
+    staleTime: 60_000,
+    queryFn: async (): Promise<GeneralSettingsData> => {
+      const [archivedProjects, initialTrash] = await Promise.all([
+        listAllArchivedProjects(client),
+        listAllTrashItems(client),
+      ]);
+      let trashItems = initialTrash;
       let autoPurgeError = automaticTrashMaintenanceFailed()
         ? "Automatic cleanup did not finish"
         : null;
       const maintenance = await runAutomaticTrashMaintenance(
-        preferences,
+        preferencesQuery.data as DesktopPreferences,
         client.projectManagement.trash,
       );
       if (maintenance.attempted) {
         if (maintenance.failed) {
           autoPurgeError = "Automatic cleanup did not finish";
         } else {
-          trash = await listAllTrashItems(client);
+          trashItems = await listAllTrashItems(client);
           autoPurgeError = null;
         }
       }
-      setData({
-        preferences,
-        memorySettings,
+      return { archivedProjects, trashItems, autoPurgeError };
+    },
+  });
+  const modelsQuery = useQuery({
+    queryKey: settingsQueryKeys.models,
+    enabled: visited.has("models"),
+    staleTime: 6 * 60 * 60 * 1_000,
+    queryFn: async (): Promise<ModelSettingsData> => {
+      const [status, geminiStatus, zhipuStatus, modelCatalog, modelSelection] =
+        await Promise.all([
+          client.providers.openRouterStatus(),
+          client.providers.realtimeStatus("gemini").catch(() => ({ provider: "gemini" as const, configured: false })),
+          client.providers.realtimeStatus("zhipu").catch(() => ({ provider: "zhipu" as const, configured: false })),
+          client.models.catalog.list(),
+          client.models.selection.get(),
+        ]);
+      return {
         openRouterConfigured: status.configured,
         openRouterAccountId: status.account_id,
-        realtimeCredentials: { gemini: geminiStatus.configured, zhipu: zhipuStatus.configured },
+        realtimeCredentials: {
+          gemini: geminiStatus.configured,
+          zhipu: zhipuStatus.configured,
+        },
         modelCatalog,
         modelSelection,
-        permissions,
-        capabilities,
+      };
+    },
+  });
+  const voiceQuery = useQuery({
+    queryKey: settingsQueryKeys.voice,
+    enabled: visited.has("voice"),
+    staleTime: 30_000,
+    queryFn: () => client.voice.health().catch(() => unavailableVoiceHealth()),
+  });
+  const permissionsQuery = useQuery({
+    queryKey: settingsQueryKeys.permissions,
+    enabled: visited.has("permissions"),
+    staleTime: 60_000,
+    queryFn: async (): Promise<PermissionSettingsData> => {
+      const [permissions, capabilities] = await Promise.all([
+        client.permissions.get(),
+        client.permissions.capabilities(),
+      ]);
+      return { permissions, capabilities };
+    },
+  });
+  const extensionsQuery = useQuery({
+    queryKey: settingsQueryKeys.extensions,
+    enabled: visited.has("extensions"),
+    staleTime: 60_000,
+    queryFn: async (): Promise<ExtensionSettingsData> => {
+      const [catalog, skills, servers, tasks] = await Promise.all([
+        client.extensions.catalog(),
+        client.extensions.skills(),
+        client.extensions.servers(),
+        client.context.latestTask(),
+      ]);
+      return {
         extensionCatalog: catalog.items,
         skills: skills.items,
         servers: servers.items,
         latestTaskId: tasks.items.at(-1)?.id ?? null,
-        voiceHealth,
-        rendererHealth: rendererHealth ?? UNAVAILABLE_RENDERER_HEALTH,
-        archivedProjects: archived,
-        trashItems: trash,
-        autoPurgeError,
-        ...knowledgePrivacy,
-      });
-      applyDesktopPreferences(preferences);
+      };
+    },
+  });
+  const knowledgeQuery = useQuery({
+    queryKey: settingsQueryKeys.knowledge,
+    enabled: visited.has("knowledge"),
+    staleTime: 60_000,
+    queryFn: async (): Promise<KnowledgeSettingsData> => {
+      const [memorySettings, knowledgePrivacy] = await Promise.all([
+        client.memory.settings.get(),
+        loadKnowledgePrivacy(client),
+      ]);
+      return { memorySettings, ...knowledgePrivacy };
+    },
+  });
+  const petQuery = useQuery({
+    queryKey: settingsQueryKeys.pet,
+    enabled: visited.has("pet"),
+    staleTime: 10_000,
+    queryFn: async () =>
+      await client.pet.rendererHealth().catch(() => null) ?? UNAVAILABLE_RENDERER_HEALTH,
+  });
+
+  const data = useMemo<SettingsData | null>(() => {
+    const preferences = preferencesQuery.data;
+    if (preferences === undefined) return null;
+    return {
+      preferences,
+      memorySettings: knowledgeQuery.data?.memorySettings ?? emptyMemorySettings(),
+      openRouterConfigured: modelsQuery.data?.openRouterConfigured ?? false,
+      openRouterAccountId: modelsQuery.data?.openRouterAccountId ?? null,
+      realtimeCredentials: modelsQuery.data?.realtimeCredentials ?? { gemini: false, zhipu: false },
+      modelCatalog: modelsQuery.data?.modelCatalog ?? emptyModelCatalog(),
+      modelSelection: modelsQuery.data?.modelSelection ?? emptyModelSelection(),
+      permissions: permissionsQuery.data?.permissions ?? emptyExecutionSettings(),
+      capabilities: permissionsQuery.data?.capabilities ?? emptyCapabilityManifest(),
+      extensionCatalog: extensionsQuery.data?.extensionCatalog ?? [],
+      skills: extensionsQuery.data?.skills ?? [],
+      servers: extensionsQuery.data?.servers ?? [],
+      latestTaskId: extensionsQuery.data?.latestTaskId ?? null,
+      voiceHealth: voiceQuery.data ?? unavailableVoiceHealth(),
+      rendererHealth: petQuery.data ?? UNAVAILABLE_RENDERER_HEALTH,
+      archivedProjects: generalQuery.data?.archivedProjects ?? [],
+      trashItems: generalQuery.data?.trashItems ?? [],
+      autoPurgeError: generalQuery.data?.autoPurgeError ?? null,
+      knowledgeSources: knowledgeQuery.data?.knowledgeSources ?? [],
+      memoryProposals: knowledgeQuery.data?.memoryProposals ?? [],
+      obsidianHealth: knowledgeQuery.data?.obsidianHealth ?? unavailableObsidianHealth(),
+      knowledgeDiagnostics: knowledgeQuery.data?.knowledgeDiagnostics ?? [],
+    };
+  }, [
+    extensionsQuery.data,
+    generalQuery.data,
+    knowledgeQuery.data,
+    modelsQuery.data,
+    permissionsQuery.data,
+    petQuery.data,
+    preferencesQuery.data,
+    voiceQuery.data,
+  ]);
+
+  useEffect(() => {
+    if (preferencesQuery.data !== undefined) {
+      applyDesktopPreferences(preferencesQuery.data);
+    }
+  }, [preferencesQuery.data]);
+
+  const currentCategoryQuery = categoryQueryFor(
+    category,
+    {
+      general: generalQuery,
+      models: modelsQuery,
+      voice: voiceQuery,
+      permissions: permissionsQuery,
+      extensions: extensionsQuery,
+      knowledge: knowledgeQuery,
+      pet: petQuery,
+    },
+  );
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      if (category === "appearance" || category === "advanced") {
+        await preferencesQuery.refetch();
+      } else {
+        await currentCategoryQuery?.refetch();
+      }
     } catch (caught) {
       setError(messageOf(caught));
     }
-  }, [client]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  }, [category, currentCategoryQuery, preferencesQuery]);
 
   const act = useCallback(async (operation: () => Promise<void>) => {
     setBusy(true);
@@ -228,11 +444,11 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
       if (data === null) return;
       await act(async () => {
         const saved = await client.preferences.update({ ...data.preferences, ...patch });
-        setData((current) => current === null ? null : { ...current, preferences: saved });
+        queryClient.setQueryData(settingsQueryKeys.preferences, saved);
         applyDesktopPreferences(saved);
       });
     },
-    [act, client.preferences, data],
+    [act, client.preferences, data, queryClient],
   );
 
   const updateMemorySettings = useCallback(
@@ -255,10 +471,15 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
             Number(next.sync_normalized_content),
           ].join(":"),
         });
-        setData((current) => current === null ? null : { ...current, memorySettings: saved });
+        queryClient.setQueryData<KnowledgeSettingsData>(
+          settingsQueryKeys.knowledge,
+          (current) => current === undefined
+            ? { ...emptyKnowledgeSettingsData(), memorySettings: saved }
+            : { ...current, memorySettings: saved },
+        );
       });
     },
-    [act, client.memory.settings, data],
+    [act, client.memory.settings, data, queryClient],
   );
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -278,6 +499,17 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
     <main className="settings-shell" aria-label="Fairy settings">
       <aside className="settings-navigation">
         <header className="settings-brand">
+          {onBack ? (
+            <button
+              className="settings-back"
+              type="button"
+              aria-label="Back to workspace"
+              title="Back to workspace"
+              onClick={onBack}
+            >
+              <ArrowLeft size={16} />
+            </button>
+          ) : null}
           <span className="settings-mark" aria-hidden="true" />
           <div><strong>Fairy</strong><span>Settings</span></div>
         </header>
@@ -290,7 +522,11 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
         <nav aria-label="Settings categories">
           {visibleCategories.map((item) => {
             const Icon = item.icon;
-            return <button key={item.id} type="button" className={visibleCategory === item.id ? "active" : ""} onClick={() => { setCategory(item.id); setQuery(""); }}>
+            return <button key={item.id} type="button" className={visibleCategory === item.id ? "active" : ""} onClick={() => {
+              setCategory(item.id);
+              setVisited((current) => new Set(current).add(item.id));
+              setQuery("");
+            }}>
               <Icon size={16} /><span>{item.label}</span><ChevronRight size={13} />
             </button>;
           })}
@@ -300,9 +536,11 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
         </button>
       </aside>
 
-      <m.section className="settings-content" key={visibleCategory} initial={{ opacity: 0.4 }} animate={{ opacity: 1 }}>
+      <m.section ref={contentRef} className="settings-content" key={visibleCategory} initial={{ opacity: 0.4 }} animate={{ opacity: 1 }}>
         {error ? <div className="settings-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}><X size={14} /></button></div> : null}
-        {data === null ? <div className="settings-loading" role="status"><span className="settings-spinner" />Connecting to Fairy Core</div> : (
+        {data === null || currentCategoryQuery?.isPending === true ? (
+          <SettingsCategorySkeleton id={visibleCategory} />
+        ) : (
           <SettingsCategory
             id={visibleCategory}
             data={data}
@@ -312,7 +550,22 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
             reload={load}
             updatePreferences={updatePreferences}
             updateMemorySettings={updateMemorySettings}
-            updateData={setData}
+            updateData={(updater) => {
+              const next = typeof updater === "function" ? updater(data) : updater;
+              if (next === null) return;
+              queryClient.setQueryData(settingsQueryKeys.preferences, next.preferences);
+              queryClient.setQueryData<ModelSettingsData>(settingsQueryKeys.models, {
+                openRouterConfigured: next.openRouterConfigured,
+                openRouterAccountId: next.openRouterAccountId,
+                realtimeCredentials: next.realtimeCredentials,
+                modelCatalog: next.modelCatalog,
+                modelSelection: next.modelSelection,
+              });
+              queryClient.setQueryData<PermissionSettingsData>(settingsQueryKeys.permissions, {
+                permissions: next.permissions,
+                capabilities: next.capabilities,
+              });
+            }}
           />
         )}
       </m.section>
@@ -320,8 +573,46 @@ export function SettingsApp({ client }: { client: SettingsClient }) {
   );
 }
 
+type SettingsQueryHandle = {
+  isPending: boolean;
+  refetch(): Promise<unknown>;
+};
+
+function categoryQueryFor(
+  category: SettingsCategoryId,
+  queries: {
+    general: SettingsQueryHandle;
+    models: SettingsQueryHandle;
+    voice: SettingsQueryHandle;
+    permissions: SettingsQueryHandle;
+    extensions: SettingsQueryHandle;
+    knowledge: SettingsQueryHandle;
+    pet: SettingsQueryHandle;
+  },
+): SettingsQueryHandle | undefined {
+  if (category === "appearance" || category === "advanced") return undefined;
+  return queries[category];
+}
+
+function SettingsCategorySkeleton({ id }: { id: SettingsCategoryId }) {
+  const definition = categories.find((item) => item.id === id) ?? categories[0];
+  return (
+    <section className="settings-category" aria-busy="true">
+      <header>
+        <span>Settings</span>
+        <h1>{definition.label}</h1>
+      </header>
+      <div className="settings-category-skeleton" role="status" aria-label={`Loading ${definition.label}`}>
+        <span />
+        <span />
+        <span />
+      </div>
+    </section>
+  );
+}
+
 function SettingsCategory(props: {
-  id: CategoryId;
+  id: SettingsCategoryId;
   data: SettingsData;
   client: SettingsClient;
   busy: boolean;
@@ -1128,6 +1419,85 @@ function messageOf(value: unknown) {
     return value.message;
   }
   return "Settings request failed";
+}
+
+function emptyMemorySettings(): MemorySettings {
+  return {
+    enabled: true,
+    retention_days: 365,
+    export_to_obsidian: false,
+    sync_normalized_content: false,
+    revision: 0,
+    updated_at: "1970-01-01T00:00:00Z",
+  };
+}
+
+function emptyModelCatalog(): ModelCatalogPage {
+  return {
+    account: {
+      account_id: "openrouter-default",
+      provider_kind: "openrouter",
+      display_name: "OpenRouter",
+      credential_status: "unavailable",
+    },
+    items: [],
+    fetched_at: "1970-01-01T00:00:00Z",
+    expires_at: "1970-01-01T00:00:00Z",
+    stale: true,
+    revision: 0,
+    last_error_code: null,
+  };
+}
+
+function emptyModelSelection(): ModelSelectionPreference {
+  return {
+    mode: "auto",
+    model_id: null,
+    allow_free_fallback: false,
+    zero_data_retention: false,
+    revision: 0,
+    updated_at: "1970-01-01T00:00:00Z",
+  };
+}
+
+function emptyExecutionSettings(): ExecutionSettings {
+  return {
+    profile: "standard",
+    capability_overrides: {},
+    revision: 0,
+    updated_at: "1970-01-01T00:00:00Z",
+  };
+}
+
+function emptyCapabilityManifest(): CapabilityManifest {
+  return {
+    profile: "standard",
+    operations: {},
+    sandbox_healthy: false,
+    command_metadata: [],
+    slash_commands: [],
+    schema_version: 3,
+  };
+}
+
+function unavailableObsidianHealth(): KnowledgePrivacyData["obsidianHealth"] {
+  return {
+    desktop_installed: false,
+    cli_available: false,
+    minimum_installer_version: "1.12.7",
+    status: "unavailable",
+    public_summary: "Obsidian connector is unavailable",
+  };
+}
+
+function emptyKnowledgeSettingsData(): KnowledgeSettingsData {
+  return {
+    memorySettings: emptyMemorySettings(),
+    knowledgeSources: [],
+    memoryProposals: [],
+    obsidianHealth: unavailableObsidianHealth(),
+    knowledgeDiagnostics: [],
+  };
 }
 
 function unavailableVoiceHealth(): VoiceWorkerHealth {

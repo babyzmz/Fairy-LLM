@@ -941,28 +941,21 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     skillsQuery.error,
     mcpServersQuery.error,
     tasksQuery.error,
-    messagesQuery.error,
-    projectMessagesQuery.error,
     versionsQuery.error,
     approvalsQuery.error,
     chatApprovalsQuery.error,
-    previewQuery.error,
-    runtimeHealthQuery.error,
-    workspaceFilesQuery.error,
-    assetSetsQuery.error,
-    mediaJobsQuery.error,
     permissionsQuery.error,
     capabilitiesQuery.error,
   );
+  const historyLoading =
+    healthQuery.isSuccess &&
+    (projectsQuery.isPending ||
+      conversationsQuery.isPending ||
+      tasksQuery.isPending);
   const isWorkspaceLoading =
     healthQuery.isPending ||
     (healthQuery.isSuccess && permissionsQuery.isPending) ||
-    (healthQuery.isSuccess &&
-      (projectsQuery.isPending ||
-        conversationsQuery.isPending ||
-        tasksQuery.isPending)) ||
-    (selectedProject !== null && conversationsQuery.isPending) ||
-    (selectedChatConversation !== null && messagesQuery.isPending);
+    historyLoading;
   const state = healthQuery.isError
     ? "offline"
     : isWorkspaceLoading
@@ -970,9 +963,33 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       : projects.length === 0
         ? "empty"
         : "ready";
+  const conversationContentState =
+    selectedChatConversation === null
+      ? "idle"
+      : messagesQuery.data !== undefined
+        ? "ready"
+        : messagesQuery.isError
+          ? "error"
+          : "loading";
+  const projectContentState =
+    selectedConversation === null
+      ? "idle"
+      : projectMessagesQuery.data !== undefined
+        ? "ready"
+        : projectMessagesQuery.isError
+          ? "error"
+          : "loading";
 
   return {
     state,
+    connectionState: healthQuery.isError
+      ? "offline"
+      : healthQuery.isSuccess
+        ? "ready"
+        : "starting",
+    historyLoading,
+    conversationContentState,
+    projectContentState,
     mode,
     statusLabel: healthQuery.isError
       ? "Core offline"
@@ -1232,6 +1249,6 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       setActionErrorCode(null);
       await queryClient.resetQueries({ queryKey: workspaceKey });
     },
-    openSettings: () => client.desktop.openSettings(),
+    openSettings: (category) => client.desktop.openSettings(category),
   };
 }

@@ -23,6 +23,7 @@ import "./streaming.css";
 
 export interface ChatWorkspaceProps {
   conversationAvailable: boolean;
+  contentState?: "idle" | "loading" | "ready" | "error";
   messages: Message[];
   events: EventEnvelope[];
   streamedText: string;
@@ -71,6 +72,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [composerDraft, setComposerDraft] = useState<AssistantDraft | null>(null);
   const providerAvailable = props.modelSelectionBlockReason === null;
+  const contentState = props.contentState ?? "ready";
   const retryAvailable = ["failed", "cancelled"].includes(props.turn?.status ?? "");
   const newConversationAvailable = props.slashCommands.some(
     (command) => command.name === "new" && command.available,
@@ -172,7 +174,17 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           {props.error ?? notice}
         </div>
       ) : null}
-      {props.conversationAvailable ? (
+      {props.conversationAvailable && contentState === "loading" ? (
+        <div className="message-list message-list-loading" role="status">
+          <span className="message-loading-indicator" aria-hidden="true" />
+          <strong>Loading conversation</strong>
+        </div>
+      ) : props.conversationAvailable && contentState === "error" ? (
+        <div className="message-list message-list-empty" role="alert">
+          <AlertTriangle size={24} />
+          <strong>Conversation could not be loaded</strong>
+        </div>
+      ) : props.conversationAvailable ? (
         <MessageList
           messages={props.messages}
           events={props.events}
@@ -251,7 +263,11 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         </div>
       ) : null}
       <Composer
-        disabled={props.offline || !props.conversationAvailable}
+        disabled={
+          props.offline ||
+          !props.conversationAvailable ||
+          contentState !== "ready"
+        }
         isBusy={props.isBusy}
         visionAvailable={props.visionAvailable}
         modelCatalog={props.modelCatalog}

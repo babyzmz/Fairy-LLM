@@ -775,6 +775,10 @@ function projectConversationFixture(project: Project): Conversation {
 function workspaceModel(): WorkspaceModel {
   return {
     state: "ready",
+    connectionState: "ready",
+    historyLoading: false,
+    conversationContentState: "ready",
+    projectContentState: "ready",
     mode: "project",
     statusLabel: "Core ready",
     errorMessage: null,

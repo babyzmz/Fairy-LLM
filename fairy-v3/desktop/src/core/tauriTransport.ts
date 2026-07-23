@@ -140,8 +140,8 @@ export class TauriCoreTransport implements CoreTransport {
     return this.invoke("select_obsidian_vault");
   }
 
-  openSettingsWindow(): Promise<void> {
-    return this.invoke("open_settings_window");
+  openSettingsWindow(category?: import("./client").SettingsCategoryId): Promise<void> {
+    return this.invoke("open_settings_window", { category });
   }
 
   async call<M extends CoreMethodName>(

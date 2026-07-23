@@ -78,6 +78,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
           <div className="unified-workspace unified-workspace-chat">
             <ChatWorkspace
               conversationAvailable={model.selectedChatConversation !== null}
+              contentState={model.conversationContentState}
               messages={model.messages}
               events={model.chatEvents}
               streamedText={model.chatStreamedText}
@@ -113,7 +114,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               onOpenMessageLink={model.openMessageLink}
               onDecision={model.decideApproval}
               onSelectModel={model.selectModel}
-              onOpenModelSettings={model.openSettings}
+              onOpenModelSettings={() => model.openSettings("models")}
             />
             <WorkspaceInspector model={model} />
           </div>
@@ -152,7 +153,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               onSubmit={model.sendProjectMessage}
               onStop={model.cancelProjectTurn}
               onSelectModel={model.selectModel}
-              onOpenModelSettings={model.openSettings}
+              onOpenModelSettings={() => model.openSettings("models")}
             />
           </section>
         ) : (

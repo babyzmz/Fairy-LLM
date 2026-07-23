@@ -19,7 +19,8 @@ import type {
   Task,
   Version,
 } from "../core/client";
-import { CoreRpcError } from "../core/tauriTransport";
+import { CoreRpcError, type InvokeFunction } from "../core/tauriTransport";
+import { SettingsClient, type DesktopPreferences } from "../settings/client";
 import { App } from "./App";
 import type { WorkspaceClient } from "./workspaceModel";
 
@@ -312,6 +313,60 @@ describe("App", () => {
     expect(screen.getByLabelText("Workspace status")).toHaveTextContent("Core ready");
   });
 
+  it("keeps the Chat frame visible while an unvisited conversation loads", async () => {
+    window.localStorage.setItem("fairy.workspace.mode", "chat");
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [project],
+      {
+        scratch: true,
+        listMessages: () => new Promise(() => undefined),
+      },
+    );
+
+    render(<App client={client} />);
+
+    const history = await screen.findByLabelText("History navigation");
+    await waitFor(() => expect(history).toHaveTextContent("New conversation"));
+    expect(await screen.findByRole("heading", { name: "Chat" })).toBeVisible();
+    expect(screen.getByLabelText("Message Fairy")).toBeDisabled();
+    expect(screen.queryByText("Connecting to Fairy Core")).not.toBeInTheDocument();
+  });
+
+  it("opens Settings inside the main view and preserves the Composer draft on return", async () => {
+    window.localStorage.setItem("fairy.workspace.mode", "chat");
+    const settingsClient = new SettingsClient(
+      appSettingsInvoke() as unknown as InvokeFunction,
+    );
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [project],
+      { scratch: true },
+    );
+
+    render(<App client={client} settingsClient={settingsClient} />);
+
+    const composer = await screen.findByLabelText("Message Fairy");
+    await waitFor(() => expect(composer).toBeEnabled());
+    await userEvent.type(composer, "Keep this draft while settings are open");
+    await userEvent.click(screen.getByRole("button", { name: "Open settings" }));
+
+    expect(await screen.findByRole("heading", { name: "General" })).toBeVisible();
+    expect(screen.getByTestId("workspace-view")).toHaveAttribute("hidden");
+    await userEvent.click(screen.getByRole("button", { name: "Back to workspace" }));
+
+    expect(screen.getByLabelText("Message Fairy")).toBe(composer);
+    expect(composer).toHaveValue("Keep this draft while settings are open");
+  });
+
   it("renders real create and import actions for an empty repository", async () => {
     const client = createClient(
       async () => ({
@@ -413,7 +468,9 @@ describe("App", () => {
     );
     render(<App client={client} />);
 
-    await userEvent.type(await screen.findByLabelText("Message Fairy"), "Notify me");
+    const composer = await screen.findByLabelText("Message Fairy");
+    await waitFor(() => expect(composer).toBeEnabled());
+    await userEvent.type(composer, "Notify me");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(runTurn).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("button", { name: "Stop response" })).not.toBeInTheDocument();
@@ -521,6 +578,7 @@ describe("App", () => {
     render(<App client={client} />);
 
     const composer = await screen.findByLabelText("Message Fairy");
+    await waitFor(() => expect(composer).toBeEnabled());
     await userEvent.type(composer, "Implement the approved layout");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
 
@@ -562,6 +620,7 @@ describe("App", () => {
     render(<App client={client} />);
 
     const composer = await screen.findByLabelText("Message Fairy");
+    await waitFor(() => expect(composer).toBeEnabled());
     await userEvent.type(composer, "Keep this draft");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
 
@@ -570,6 +629,67 @@ describe("App", () => {
     expect(createTask).not.toHaveBeenCalled();
   });
 });
+
+function appSettingsInvoke() {
+  const preferences: DesktopPreferences = {
+    schema_version: 7,
+    revision: 0,
+    language: "system",
+    launch_at_startup: false,
+    minimize_to_tray: true,
+    theme: "system",
+    reduced_motion: false,
+    compact_density: false,
+    selected_profile_id: "openrouter",
+    voice_auto_play_chat: false,
+    voice_auto_play_pet: true,
+    voice_volume_percent: 80,
+    voice_rate_percent: 100,
+    permission_cloud_profile: "standard",
+    analytics_enabled: false,
+    realtime_provider: "auto",
+    realtime_voice_mode: "native",
+    realtime_game_audio_default: false,
+    realtime_memory_enabled: true,
+    realtime_max_session_minutes: 30,
+    trash_auto_purge_30_days: false,
+    pet_enabled: true,
+    pet_always_on_top: true,
+    pet_muted: false,
+    pet_size_percent: 100,
+    pet_opacity_percent: 92,
+    pet_motion_enabled: true,
+    pet_particles_enabled: true,
+    pet_hover_enabled: true,
+    pet_hover_dwell_ms: 250,
+    pet_do_not_disturb: false,
+    ambient_dialogue_enabled: true,
+    ambient_dialogue_voice_enabled: false,
+    ambient_generated_dialogue_enabled: false,
+    pet_remember_position: true,
+    pet_renderer_mode: "auto",
+    pet_optics_mode: "standard",
+    pet_activation_style: "fluid_response",
+    pet_target_fps: 60,
+    pet_anchor: null,
+    developer_mode: false,
+  };
+  return vi.fn(async (command: string, args?: Record<string, unknown>) => {
+    if (command === "desktop_preferences_get") return preferences;
+    if (command === "desktop_preferences_update") return preferences;
+    if (command === "settings_rpc") {
+      const request = args?.request as { id?: number; method?: string } | undefined;
+      if (request?.method === "projects.archived.list" || request?.method === "trash.items.list") {
+        return {
+          jsonrpc: "2.0",
+          id: request.id ?? 1,
+          result: { items: [], next_cursor: null },
+        };
+      }
+    }
+    throw new Error(`Unexpected settings command: ${command}`);
+  });
+}
 
 function createClient(
   health: WorkspaceClient["health"],

@@ -25,6 +25,29 @@ afterEach(() => {
 });
 
 describe("SettingsApp", () => {
+  it("loads only General data until another category is opened", async () => {
+    const invoke = settingsInvoke();
+    render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
+
+    expect(await screen.findByRole("checkbox", { name: "Launch at startup" })).toBeInTheDocument();
+    expect(rpcRequests(invoke, "projects.archived.list")).toHaveLength(1);
+    expect(rpcRequests(invoke, "trash.items.list")).toHaveLength(1);
+    expect(rpcRequests(invoke, "models.catalog.list")).toHaveLength(0);
+    expect(rpcRequests(invoke, "models.selection.get")).toHaveLength(0);
+    expect(rpcRequests(invoke, "extensions.catalog.list")).toHaveLength(0);
+    expect(rpcRequests(invoke, "memory.settings.get")).toHaveLength(0);
+    expect(invoke.mock.calls.some(([command]) => command === "pet_renderer_get_health")).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: /Models/ }));
+    await vi.waitFor(() => {
+      expect(rpcRequests(invoke, "models.catalog.list")).toHaveLength(1);
+      expect(rpcRequests(invoke, "models.selection.get")).toHaveLength(1);
+    });
+    expect(rpcRequests(invoke, "extensions.catalog.list")).toHaveLength(0);
+    expect(rpcRequests(invoke, "memory.settings.get")).toHaveLength(0);
+    expect(invoke.mock.calls.some(([command]) => command === "pet_renderer_get_health")).toBe(false);
+  });
+
   it("loads all nine categories and persists ordinary preferences with a revision fence", async () => {
     const invoke = settingsInvoke();
     render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
@@ -51,7 +74,7 @@ describe("SettingsApp", () => {
     invoke.mockImplementationOnce(async () => defaultPreferences());
     render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
 
-    await screen.findByRole("heading", { name: "General" });
+    await screen.findByRole("checkbox", { name: "Launch at startup" });
     invoke.mockRejectedValueOnce("Pet render window is unavailable");
     fireEvent.click(screen.getByRole("checkbox", { name: "Launch at startup" }));
 

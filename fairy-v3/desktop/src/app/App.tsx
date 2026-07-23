@@ -1,14 +1,23 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { PresenceBridge } from "../presence/PresenceBridge";
 import { projectPetReply } from "../presence/domain/reply";
 import { VoiceController, useVoicePresence } from "../voice/VoiceController";
 import { DesktopPreferencesBridge } from "../settings/DesktopPreferencesBridge";
 import type { DesktopPreferences } from "../settings/client";
+import type { SettingsClient } from "../settings/client";
 import { AmbientDialogueHost } from "../persona/AmbientDialogueHost";
 import type { AmbientDialogueProjection } from "../core/contracts";
-import type { CoreClient } from "../core/client";
+import type { CoreClient, SettingsCategoryId } from "../core/client";
 import {
   subscribeRealtimePresence,
   type RealtimePresenceState,
@@ -21,15 +30,37 @@ interface AppProps {
   client: WorkspaceClient & {
     ambient?: CoreClient["ambient"];
   };
+  settingsClient?: SettingsClient;
 }
 
-function Workspace({ client }: AppProps) {
+export type MainView = "workspace" | "settings";
+
+const LazySettingsApp = lazy(async () => {
+  const module = await import("../settings/SettingsApp");
+  return { default: module.SettingsApp };
+});
+
+function Workspace({
+  client,
+  preferences,
+  onOpenSettings,
+}: {
+  client: AppProps["client"];
+  preferences: DesktopPreferences | null;
+  onOpenSettings(category?: SettingsCategoryId): Promise<void>;
+}) {
   const model = useWorkspaceModel(client);
   const [realtimePresence, setRealtimePresence] = useState<RealtimePresenceState>("idle");
-  const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
   useEffect(
     () => subscribeRealtimePresence(setRealtimePresence),
     [],
+  );
+  const shellModel = useMemo(
+    () => ({
+      ...model,
+      openSettings: onOpenSettings,
+    }),
+    [model, onOpenSettings],
   );
   const profile =
     model.providers.find((provider) => provider.id === model.selectedProfileId) ?? null;
@@ -43,7 +74,6 @@ function Workspace({ client }: AppProps) {
       : model.selectedConversation?.id ?? null;
   return (
     <>
-      <DesktopPreferencesBridge trash={client.trash} onChange={setPreferences} />
       <VoiceController
         client={client}
         conversationId={conversationId}
@@ -54,12 +84,12 @@ function Workspace({ client }: AppProps) {
         petTaskId={model.petTaskId}
       >
         <WorkspacePresence
-          model={model}
+          model={shellModel}
           ambientClient={client.ambient}
           preferences={preferences}
           realtimePresence={realtimePresence}
         />
-        <WorkspaceShell model={model} />
+        <WorkspaceShell model={shellModel} />
       </VoiceController>
     </>
   );
@@ -136,7 +166,7 @@ function WorkspacePresence({
   );
 }
 
-export function App({ client }: AppProps) {
+export function App({ client, settingsClient }: AppProps) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -149,10 +179,105 @@ export function App({ client }: AppProps) {
         },
       }),
   );
+  const [mainView, setMainView] = useState<MainView>("workspace");
+  const [settingsMounted, setSettingsMounted] = useState(false);
+  const [settingsRequest, setSettingsRequest] = useState<{
+    sequence: number;
+    category?: SettingsCategoryId;
+  }>({ sequence: 0 });
+  const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
+  const focusReturnRef = useRef<HTMLElement | null>(null);
+
+  const openSettings = useCallback(async (category?: SettingsCategoryId) => {
+    if (settingsClient === undefined) {
+      await client.desktop.openSettings(category);
+      return;
+    }
+    const activeElement = document.activeElement;
+    focusReturnRef.current = activeElement instanceof HTMLElement ? activeElement : null;
+    setSettingsMounted(true);
+    setSettingsRequest((current) => ({
+      sequence: current.sequence + 1,
+      category,
+    }));
+    setMainView("settings");
+  }, [client.desktop, settingsClient]);
+
+  const closeSettings = useCallback(() => {
+    setMainView("workspace");
+    requestAnimationFrame(() => focusReturnRef.current?.focus());
+  }, []);
+
+  useEffect(() => {
+    if (mainView !== "settings") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        active instanceof HTMLSelectElement ||
+        active instanceof HTMLButtonElement ||
+        active?.getAttribute("contenteditable") === "true" ||
+        document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]') !== null
+      ) {
+        return;
+      }
+      closeSettings();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [closeSettings, mainView]);
+
+  useEffect(() => {
+    const preload = () => {
+      if (settingsClient !== undefined) void import("../settings/SettingsApp");
+    };
+    const requestIdle = window.requestIdleCallback?.bind(window);
+    if (typeof requestIdle === "function") {
+      const id = requestIdle(preload, { timeout: 2_000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = globalThis.setTimeout(preload, 750);
+    return () => globalThis.clearTimeout(id);
+  }, [settingsClient]);
 
   return (
     <QueryClientProvider client={queryClient}>
-      <Workspace client={client} />
+      <DesktopPreferencesBridge
+        trash={client.trash}
+        onChange={setPreferences}
+      />
+      <div
+        className="main-view-surface"
+        data-testid="workspace-view"
+        hidden={mainView !== "workspace"}
+        inert={mainView !== "workspace"}
+      >
+        <Workspace
+          client={client}
+          preferences={preferences}
+          onOpenSettings={openSettings}
+        />
+      </div>
+      {settingsMounted && settingsClient !== undefined ? (
+        <div
+          className="main-view-surface"
+          data-testid="settings-view"
+          hidden={mainView !== "settings"}
+          inert={mainView !== "settings"}
+        >
+          <Suspense fallback={<div className="settings-route-loading" role="status">Loading settings</div>}>
+            <LazySettingsApp
+              client={settingsClient}
+              initialPreferences={preferences}
+              navigationRequest={settingsRequest}
+              onBack={closeSettings}
+              queryClient={queryClient}
+            />
+          </Suspense>
+        </div>
+      ) : null}
     </QueryClientProvider>
   );
 }

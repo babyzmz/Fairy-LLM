@@ -36,6 +36,7 @@ import type {
   ProviderHealth,
   ProviderProfile,
   RuntimeHealth,
+  SettingsCategoryId,
   Skill,
   Task,
   TurnTrace,
@@ -124,6 +125,10 @@ export interface WorkspaceClient extends AssistantTurnClient {
 
 export interface WorkspaceModel {
   state: "loading" | "offline" | "empty" | "ready";
+  connectionState: "starting" | "ready" | "offline";
+  historyLoading: boolean;
+  conversationContentState: "idle" | "loading" | "ready" | "error";
+  projectContentState: "idle" | "loading" | "ready" | "error";
   mode: WorkspaceMode;
   statusLabel: string;
   errorMessage: string | null;
@@ -305,5 +310,5 @@ export interface WorkspaceModel {
   acceptVersion(): Promise<void>;
   discardVersion(): Promise<void>;
   retryWorkspace(): Promise<void>;
-  openSettings(): Promise<void>;
+  openSettings(category?: SettingsCategoryId): Promise<void>;
 }
