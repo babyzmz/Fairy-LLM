@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAssistantTurn } from "../chat/useAssistantTurn";
 import { useTurnTraces } from "../chat/useTurnTraces";
 import type { EventEnvelope, Task } from "../core/client";
-import { runEventDelivery } from "../core/eventStream";
+import { runResilientEventDelivery } from "../core/eventStream";
 import {
   selectedProfileId as profileIdForSelection,
   selectionBlockReason,
@@ -69,7 +69,11 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const [actionErrorCode, setActionErrorCode] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
   const [chatTaskId, setChatTaskId] = useState<string | null>(null);
+  const chatTaskIdRef = useRef<string | null>(null);
+  chatTaskIdRef.current = chatTaskId;
   const [projectTurnTaskId, setProjectTurnTaskId] = useState<string | null>(null);
+  const projectTurnTaskIdRef = useRef<string | null>(null);
+  projectTurnTaskIdRef.current = projectTurnTaskId;
   const [petTaskId, setPetTaskId] = useState<string | null>(null);
   const petSubmissionRef = useRef(false);
   const petConversationIdRef = useRef<string | null>(null);
@@ -350,11 +354,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     operationMode: "answer",
     events: allEvents,
     onTaskCreated(taskId) {
+      chatTaskIdRef.current = taskId;
       setChatTaskId(taskId);
       if (petSubmissionRef.current) setPetTaskId(taskId);
     },
     onSettled: () =>
-      invalidateAssistantScope(selectedChatConversation?.id ?? null, chatTaskId),
+      invalidateAssistantScope(selectedChatConversation?.id ?? null, chatTaskIdRef.current),
   });
   const projectAssistant = useAssistantTurn({
     client,
@@ -364,15 +369,14 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     operationMode: "continue_current_chat_draft",
     events: allEvents,
     onTaskCreated(taskId) {
+      projectTurnTaskIdRef.current = taskId;
       setProjectTurnTaskId(taskId);
       setTaskSelection(taskId);
     },
     onSettled() {
+      const settledTaskId = projectTurnTaskIdRef.current ?? selectedTask?.id ?? null;
       setProjectTurnTaskId(null);
-      void invalidateAssistantScope(
-        selectedConversation?.id ?? null,
-        projectTurnTaskId ?? selectedTask?.id ?? null,
-      );
+      void invalidateAssistantScope(selectedConversation?.id ?? null, settledTaskId);
     },
   });
   const { turnTraces, turnTraceStates, projectTrace, projectTraceState } = useTurnTraces(client, {
@@ -387,37 +391,33 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   useEffect(() => {
     if (!healthQuery.isSuccess) return;
     const controller = new AbortController();
-    void (async () => {
-      try {
-        await runEventDelivery(
-          {
-            sourceId: client.events.sourceId(),
-            state: client.events.state,
-            list: client.events.list,
-            subscribe: client.events.subscribe,
-          },
-          {
-            checkpoint: eventCheckpoint.current,
-            signal: controller.signal,
-            onCheckpoint(checkpoint) {
-              eventCheckpoint.current = checkpoint;
-              writeEventCheckpoint(checkpoint);
-            },
-            onEvent(event) {
-              if (event.visibility !== "internal") {
-                setAllEvents((current) => appendEvent(current, event));
-              }
-              queueEventInvalidation(event);
-            },
-          },
-        );
-      } catch (error) {
-        if (!controller.signal.aborted) {
+    void runResilientEventDelivery(
+      {
+        sourceId: client.events.sourceId(),
+        state: client.events.state,
+        list: client.events.list,
+        subscribe: client.events.subscribe,
+      },
+      {
+        checkpoint: eventCheckpoint.current,
+        signal: controller.signal,
+        onCheckpoint(checkpoint) {
+          eventCheckpoint.current = checkpoint;
+          writeEventCheckpoint(checkpoint);
+        },
+        onEvent(event) {
+          if (event.visibility !== "internal") {
+            setAllEvents((current) => appendEvent(current, event));
+          }
+          queueEventInvalidation(event);
+        },
+        onError(error) {
+          if (controller.signal.aborted) return;
           setActionError(errorMessage(error));
           setActionErrorCode(coreErrorCode(error));
-        }
-      }
-    })();
+        },
+      },
+    );
     return () => controller.abort();
   }, [client, healthQuery.isSuccess, queueEventInvalidation]);
 

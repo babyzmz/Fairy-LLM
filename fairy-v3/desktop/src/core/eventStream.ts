@@ -90,3 +90,72 @@ export async function runEventDelivery(
 function checkpointFor(sourceId: string, ledgerId: string, cursor: number): EventCheckpoint {
   return { source_id: sourceId, ledger_id: ledgerId, cursor };
 }
+
+export interface ResilientDeliveryOptions extends EventDeliveryOptions {
+  onError?(error: unknown, attempt: number): void | Promise<void>;
+  reconnectDelayMs?(attempt: number): number;
+}
+
+const MAX_RECONNECT_DELAY_MS = 10_000;
+
+export function defaultReconnectDelay(attempt: number): number {
+  const exponential = 500 * 2 ** Math.max(0, attempt - 1);
+  return Math.min(exponential, MAX_RECONNECT_DELAY_MS);
+}
+
+/**
+ * Runs {@link runEventDelivery} and automatically reconnects after a stream
+ * error or a clean completion, resuming from the most recent checkpoint. It
+ * only returns when the abort signal fires, so a single transient transport
+ * failure can never permanently stop live event delivery.
+ */
+export async function runResilientEventDelivery(
+  client: EventDeliveryClient,
+  options: ResilientDeliveryOptions,
+): Promise<void> {
+  const reconnectDelay = options.reconnectDelayMs ?? defaultReconnectDelay;
+  let checkpoint = options.checkpoint;
+  let attempt = 0;
+
+  const onCheckpoint = async (next: EventCheckpoint) => {
+    checkpoint = next;
+    await options.onCheckpoint(next);
+  };
+  const onEvent = async (event: EventEnvelopeLike) => {
+    attempt = 0;
+    await options.onEvent(event);
+  };
+
+  while (!options.signal?.aborted) {
+    try {
+      await runEventDelivery(client, {
+        ...options,
+        checkpoint,
+        onEvent,
+        onCheckpoint,
+      });
+    } catch (error) {
+      if (options.signal?.aborted) return;
+      await options.onError?.(error, attempt + 1);
+    }
+    if (options.signal?.aborted) return;
+    attempt += 1;
+    await abortableDelay(reconnectDelay(attempt), options.signal);
+  }
+}
+
+type EventEnvelopeLike = Parameters<EventDeliveryOptions["onEvent"]>[0];
+
+function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted || milliseconds <= 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timeout = setTimeout(finish, milliseconds);
+    signal?.addEventListener("abort", finish, { once: true });
+
+    function finish() {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    }
+  });
+}

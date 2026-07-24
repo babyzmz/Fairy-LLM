@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { EventEnvelope } from "./contracts";
 import {
+  defaultReconnectDelay,
   reconcileEventCheckpoint,
   runEventDelivery,
+  runResilientEventDelivery,
   type EventCheckpoint,
   type EventDeliveryClient,
 } from "./eventStream";
@@ -136,6 +138,103 @@ it("fails instead of looping when history does not advance", async () => {
       onCheckpoint() {},
     }),
   ).rejects.toThrow("Event history did not advance");
+});
+
+it("reconnects and resumes from the latest checkpoint after a stream error", async () => {
+  const delivered: number[] = [];
+  const errors: number[] = [];
+  const subscribeCursors: number[] = [];
+  let attempt = 0;
+  let stateCalls = 0;
+  const controller = new AbortController();
+  const client: EventDeliveryClient = {
+    sourceId: "local:stdio",
+    async state() {
+      stateCalls += 1;
+      // First connection has nothing backfilled (watermark 0); after the drop
+      // the watermark has advanced past the two delivered events.
+      return {
+        ledger_id: "019f4b33-c7fb-7652-a127-759143030010",
+        oldest_cursor: 1,
+        latest_cursor: stateCalls === 1 ? 0 : 2,
+      };
+    },
+    async list(cursor) {
+      return { items: [], next_cursor: cursor };
+    },
+    async *subscribe(cursor) {
+      subscribeCursors.push(cursor);
+      attempt += 1;
+      if (attempt === 1) {
+        yield event(1);
+        yield event(2);
+        throw new Error("transport dropped");
+      }
+      yield event(3);
+      controller.abort();
+    },
+  };
+
+  await runResilientEventDelivery(client, {
+    checkpoint: null,
+    signal: controller.signal,
+    reconnectDelayMs: () => 0,
+    onEvent(next) {
+      delivered.push(next.cursor);
+    },
+    onCheckpoint() {},
+    onError(_error, retryAttempt) {
+      errors.push(retryAttempt);
+    },
+  });
+
+  // A mid-stream failure is recovered: delivery continues from cursor 2,
+  // not from the beginning, and the second subscribe resumes at cursor 2.
+  expect(delivered).toEqual([1, 2, 3]);
+  expect(subscribeCursors).toEqual([0, 2]);
+  // The retry counter resets after events flow, so the post-event failure
+  // is reported as attempt 1 rather than an ever-growing backoff.
+  expect(errors).toEqual([1]);
+});
+
+it("uses a capped exponential reconnect backoff", () => {
+  expect(defaultReconnectDelay(1)).toBe(500);
+  expect(defaultReconnectDelay(2)).toBe(1_000);
+  expect(defaultReconnectDelay(5)).toBe(8_000);
+  expect(defaultReconnectDelay(50)).toBe(10_000);
+});
+
+it("stops reconnecting once the signal is aborted", async () => {
+  const controller = new AbortController();
+  let subscribeCalls = 0;
+  const client: EventDeliveryClient = {
+    sourceId: "local:stdio",
+    async state() {
+      return {
+        ledger_id: "019f4b33-c7fb-7652-a127-759143030010",
+        oldest_cursor: 0,
+        latest_cursor: 0,
+      };
+    },
+    async list(cursor) {
+      return { items: [], next_cursor: cursor };
+    },
+    async *subscribe() {
+      subscribeCalls += 1;
+      controller.abort();
+      throw new Error("stream failed while aborting");
+    },
+  };
+
+  await runResilientEventDelivery(client, {
+    checkpoint: null,
+    signal: controller.signal,
+    reconnectDelayMs: () => 0,
+    onEvent() {},
+    onCheckpoint() {},
+  });
+
+  expect(subscribeCalls).toBe(1);
 });
 
 it("stops live projection immediately after cancellation", async () => {
