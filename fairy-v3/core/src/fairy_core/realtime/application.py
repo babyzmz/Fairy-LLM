@@ -53,6 +53,10 @@ class RealtimeApplication:
             raise KeyError(f"realtime session not found: {session_id}")
         return session
 
+    def find_session_by_idempotency_key(self, key: str) -> RealtimeSession | None:
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.realtime.get_session_by_idempotency_key(key)
+
     def list(self, *, limit: int) -> tuple[RealtimeSession, ...]:
         with self._unit_of_work_factory() as unit_of_work:
             return unit_of_work.realtime.list_sessions(limit=limit)

@@ -23,8 +23,14 @@ Handler = Callable[[BaseModel], Any]
 
 
 class RealtimeService:
-    def __init__(self, unit_of_work_factory: CoreUnitOfWorkFactory) -> None:
+    def __init__(
+        self,
+        unit_of_work_factory: CoreUnitOfWorkFactory,
+        *,
+        conversation_factory: Callable[[], Any] | None = None,
+    ) -> None:
         self._application = RealtimeApplication(unit_of_work_factory)
+        self._conversation_factory = conversation_factory
         self.handlers: Mapping[str, Handler] = MappingProxyType(
             {
                 "realtime.sessions.start": self.start,
@@ -39,7 +45,18 @@ class RealtimeService:
         )
 
     def start(self, request: BaseModel):
-        return self._application.start(cast(RealtimeSessionStartInput, request))
+        validated = cast(RealtimeSessionStartInput, request)
+        if validated.conversation_id is None and self._conversation_factory is not None:
+            # Link the voice session to a fresh scratch conversation so it appears
+            # in history. Captions stay ephemeral; only the association is saved.
+            # Return an idempotent replay unchanged so a retry never leaks an
+            # extra empty conversation.
+            existing = self._application.find_session_by_idempotency_key(validated.idempotency_key)
+            if existing is not None:
+                return existing
+            conversation = self._conversation_factory()
+            validated = validated.model_copy(update={"conversation_id": conversation.id})
+        return self._application.start(validated)
 
     def get(self, request: BaseModel):
         return self._application.get(cast(RealtimeSessionIdInput, request).session_id)

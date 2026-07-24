@@ -108,6 +108,59 @@ def test_realtime_session_and_game_memory_round_trip(tmp_path) -> None:
         service.close()
 
 
+def test_voice_start_links_a_scratch_conversation(tmp_path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        started = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-1",
+                "provider": "auto",
+                "locale": "en-AU",
+                "microphone_consent": True,
+                "screen_consent": True,
+                "game_audio_consent": False,
+                "idempotency_key": "voice-1",
+            },
+        )
+        # Starting voice auto-links a fresh conversation.
+        assert started["conversation_id"] is not None
+
+        # An idempotent replay reuses the session and its conversation.
+        replay = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-1",
+                "provider": "auto",
+                "locale": "en-AU",
+                "microphone_consent": True,
+                "screen_consent": True,
+                "game_audio_consent": False,
+                "idempotency_key": "voice-1",
+            },
+        )
+        assert replay["id"] == started["id"]
+        assert replay["conversation_id"] == started["conversation_id"]
+
+        # A new session gets its own conversation.
+        other = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-1",
+                "provider": "auto",
+                "locale": "en-AU",
+                "microphone_consent": True,
+                "screen_consent": True,
+                "game_audio_consent": False,
+                "idempotency_key": "voice-2",
+            },
+        )
+        assert other["conversation_id"] is not None
+        assert other["conversation_id"] != started["conversation_id"]
+    finally:
+        service.close()
+
+
 def test_starting_session_stop_is_cancelled_and_idempotent(tmp_path) -> None:
     service = build_local_service(tmp_path)
     try:
