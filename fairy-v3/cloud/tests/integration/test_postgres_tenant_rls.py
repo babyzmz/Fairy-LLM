@@ -590,12 +590,13 @@ async def _insert_tenant_project_event(
             INSERT INTO core_preview_sessions (
                 tenant_id, id, project_id, workspace_id, conversation_id, task_id, version_id,
                 runtime_id, project_root, execution_target, url, visibility,
-                status, health, idempotency_key, revision, created_at, updated_at
+                status, health, idempotency_key, revision,
+                created_at, updated_at, last_accessed_at
             ) VALUES (
                 :tenant_id, :preview_id, :project_id, :project_id, :conversation_id, :task_id,
                 :version_id, :runtime_id, :project_root, 'local',
                 'http://127.0.0.1:43125/rls/', 'chat_draft', 'ready', 'healthy',
-                'preview:rls', 0, now(), now()
+                'preview:rls', 0, now(), now(), now()
             )
             """
         ),

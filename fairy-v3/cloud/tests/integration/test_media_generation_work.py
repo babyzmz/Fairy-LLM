@@ -44,7 +44,11 @@ def test_postgres_media_work_is_single_claim_fenced_and_tenant_scoped(
                 idempotency_key="media:work:task",
             )
         ).task
-        scope = application_a.scope_for_task(task.id)
+        with factory_a() as scope_unit_of_work:
+            scope = application_a.scope_for_task(
+                scope_unit_of_work.state,
+                scope_unit_of_work.state.get_task(task.id),
+            )
         assert scope.workspace_id is not None
         assert scope.target_version_id is not None
         job = MediaGenerationJob.create(

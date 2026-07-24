@@ -80,7 +80,9 @@ def test_postgres_recovers_each_durable_assistant_phase_without_duplicate_effect
                 expected_status=previous_status,
                 expected_cancellation_revision=persisted.cancellation_revision,
             )
-            scope = application.scope_for_task(unit_of_work.state, task)
+            scope = application.scope_for_task(
+                unit_of_work.state, unit_of_work.state.get_task(task.id)
+            )
             bus = CommandBus(
                 registry=registry,
                 policy=PolicyEngine(registry),
