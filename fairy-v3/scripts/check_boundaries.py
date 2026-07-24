@@ -18,6 +18,8 @@ SOURCE_ROOTS = (
 PYTHON_SUFFIXES = {".py"}
 SCRIPT_SUFFIXES = {".cjs", ".js", ".jsx", ".mjs", ".rs", ".ts", ".tsx"}
 MANIFEST_NAMES = {"Cargo.toml", "package.json", "pyproject.toml"}
+VENDORED_CRATE_ROOT = Path("desktop/src-tauri/crates")
+VENDORED_METADATA_NAMES = {"LICENSE", "UPSTREAM.md"}
 OWNED_SOURCE_SUFFIXES = PYTHON_SUFFIXES | SCRIPT_SUFFIXES | {".css", ".json", ".toml"}
 FORBIDDEN_PYTHON_ROOTS = {
     "app",
@@ -365,6 +367,13 @@ def check_boundaries(root: Path) -> list[Violation]:
             )
         for path in sorted(item for item in source_root.rglob("*") if item.is_file()):
             if _under_ignored_directory(path, source_root):
+                continue
+            if (
+                relative_source_root == VENDORED_CRATE_ROOT
+                and path.name in VENDORED_METADATA_NAMES
+            ):
+                # Vendored crates must keep their upstream license and
+                # provenance records (see the DDA Liquid Glass source design).
                 continue
             if (
                 path.suffix not in OWNED_SOURCE_SUFFIXES

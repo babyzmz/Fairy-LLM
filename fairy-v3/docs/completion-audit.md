@@ -178,7 +178,9 @@ Companion a general capture API.
   and oversized source modules.
 - Boundary-checked Python and TypeScript/JavaScript modules remain below 1,200
   lines and CSS below 1,500 lines; generated contracts and Rust platform modules
-  are exempt and are checked by their own compiler and test gates.
+  are exempt and are checked by their own compiler and test gates. Vendored
+  crates under `desktop/src-tauri/crates` keep their upstream `LICENSE` and
+  `UPSTREAM.md` provenance records, which the boundary gate accepts explicitly.
 
 ## Environment Evidence
 
