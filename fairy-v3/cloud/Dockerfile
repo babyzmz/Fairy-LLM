@@ -24,6 +24,7 @@ WORKDIR /app
 COPY core /app/core
 COPY capabilities /app/capabilities
 COPY cloud /app/cloud
+COPY resources /app/resources
 COPY sandbox/runner/fairy_sandbox_runner.py /opt/fairy/fairy_sandbox_runner.py
 COPY sandbox/runner/fairy_runtime_supervisor.py /opt/fairy/fairy_runtime_supervisor.py
 WORKDIR /app/cloud

@@ -83,7 +83,34 @@ def main() -> None:
         raise SystemExit(
             f"resource inventory mismatch; missing={missing!r}, unlisted={unlisted!r}"
         )
+
+    check_resources_are_packaged()
     print(f"validated {len(assets)} manifested Fairy resource(s)")
+
+
+def check_resources_are_packaged() -> None:
+    """Core loads the Persona resource when it builds its runtime services, so
+    every packaged Core (the cloud image and the desktop sidecar) must ship the
+    ``resources`` directory. Running from source hides a missing copy, so these
+    packaging recipes are checked explicitly."""
+    dockerfile = ROOT / "cloud" / "Dockerfile"
+    if not dockerfile.is_file():
+        raise SystemExit("cloud/Dockerfile is missing")
+    if "COPY resources /app/resources" not in dockerfile.read_text(encoding="utf-8"):
+        raise SystemExit(
+            "cloud/Dockerfile must copy the resources directory into the image; "
+            "Core Persona loading fails without /app/resources"
+        )
+
+    sidecar = ROOT / "scripts" / "build-core-sidecar.ps1"
+    if not sidecar.is_file():
+        raise SystemExit("scripts/build-core-sidecar.ps1 is missing")
+    sidecar_text = sidecar.read_text(encoding="utf-8")
+    if "--add-data" not in sidecar_text or "resources" not in sidecar_text:
+        raise SystemExit(
+            "build-core-sidecar.ps1 must bundle the resources directory; the "
+            "frozen Core sidecar cannot load the Persona resource otherwise"
+        )
 
 
 def required_text(asset: dict[str, object], field: str, index: int) -> str:

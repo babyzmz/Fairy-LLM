@@ -35,6 +35,7 @@ try {
             --paths (Join-Path $root "capabilities\src") `
             --collect-all fairy_core `
             --collect-all fairy_capabilities `
+            --add-data "$(Join-Path $root 'resources');resources" `
             (Join-Path $root "capabilities\src\fairy_capabilities\stdio.py")
         if ($LASTEXITCODE -ne 0) {
             throw "PyInstaller failed with exit code $LASTEXITCODE"
