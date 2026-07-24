@@ -53,9 +53,13 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
   useEffect(() => {
     const parent = document.querySelector<HTMLElement>(".unified-workspace-chat, .workspace-main");
     if (parent === null) return;
-    const saved = Number(localStorage.getItem("fairy.workspace.inspector-width"));
-    const width = Number.isFinite(saved) ? saved : Math.round(window.innerWidth * 0.42);
-    parent.style.setProperty("--inspector-width", `${clampInspectorWidth(width)}px`);
+    const raw = localStorage.getItem("fairy.workspace.inspector-width");
+    // With no saved width, leave the CSS percentage default in place instead of
+    // forcing the minimum pixel width.
+    if (raw === null || raw.trim() === "") return;
+    const saved = Number(raw);
+    if (!Number.isFinite(saved)) return;
+    parent.style.setProperty("--inspector-width", `${clampInspectorWidth(saved)}px`);
   }, []);
 
   const hasKnowledgeScope = model.mode === "project"
