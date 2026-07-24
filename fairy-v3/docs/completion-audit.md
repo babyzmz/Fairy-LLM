@@ -39,7 +39,24 @@ recorded below, but these gates must be rerun before a new release is certified.
 No Python static type checker is configured in this repository; Ruff is lint and
 format evidence, not Python type-checking evidence.
 
-## 2026-07-22 HostBackdrop Boundary Amendment
+## 2026-07-24 DDA Production Optics Amendment
+
+ADR 0021 supersedes the 2026-07-22 HostBackdrop amendment below. The production
+renderer now uses DXGI Desktop Duplication (`DesktopTextureSource`) as its live
+optical source, with the identity `host_backdrop_identity` HostBackdrop material
+retained as the explicit fallback. The July 17 and July 19 WGC measurements
+remain historical experiment evidence only.
+
+Current native validation must prove the DDA source and DDA-only self-exclusion
+(true underlying pixels sampled while Fairy stays visible to ordinary capture),
+stationary-lens updates within one display frame, cross-monitor handoff without
+recursion, foreground identity-layer isolation, input hit regions, and renderer
+lifecycle and performance. The Rust shader-contract, CPU-mirror optical, HLSL,
+and self-exclusion gates are executable; the native DDA optical acceptance in
+`docs/acceptance/presence-edge-lensing.md` requires the interactive Tauri/D3D11
+runtime on the target machine and must be re-run before release certification.
+
+## 2026-07-22 HostBackdrop Boundary Amendment (superseded by ADR 0021)
 
 ADR 0020 supersedes the WGC and Desktop Duplication optical-source claims below.
 The production renderer now reports `host_backdrop_identity`, does not expose

@@ -2,9 +2,16 @@
 
 ## Status
 
-Accepted on 2026-07-22. This supersedes the production optical-source portions
-of ADR 0016. ADR 0016 remains historical evidence for the earlier capture
-experiments and the two-window Presence architecture.
+Accepted on 2026-07-22. Superseded on 2026-07-24 by ADR 0021 for the production
+optical source: production now uses DXGI Desktop Duplication, with the identity
+HostBackdrop material retained as the explicit fallback. This document remains
+authoritative for the Windows Composition API boundary analysis and for why the
+HostBackdrop-only and July 22 hybrid paths cannot deliver edge-responsive
+refraction — that analysis is what motivated the DDA decision in ADR 0021.
+
+This supersedes the production optical-source portions of ADR 0016. ADR 0016
+remains historical evidence for the earlier capture experiments and the
+two-window Presence architecture.
 
 ## Decision
 
