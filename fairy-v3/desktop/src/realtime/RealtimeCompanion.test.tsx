@@ -8,6 +8,7 @@ import {
   RealtimeCompanion,
   mergeCaptionDelta,
   realtimeProviderErrorMessage,
+  todaysRealtimeMinutes,
 } from "./RealtimeCompanion";
 
 const invoke = vi.fn();
@@ -165,6 +166,20 @@ describe("RealtimeCompanion", () => {
       tool_call_count: 0,
     })));
     expect(JSON.stringify(report.mock.calls)).not.toContain("Boss at half health");
+  });
+
+  it("no longer offers a game or system audio consent control", async () => {
+    const client = {
+      sessions: { list: vi.fn(async () => ({ items: [] })) },
+      memories: { save: vi.fn() },
+      worker: { status: vi.fn(async () => workerStatus(false)) },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByRole("option", { name: "Test Game · 1280×720" });
+    // Only microphone and window-image consent remain.
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    expect(screen.queryByText(/game audio/i)).toBeNull();
   });
 
   it("cancels a session that is still connecting without reporting completion", async () => {
@@ -365,6 +380,29 @@ describe("credentialProviderFor", () => {
     expect(credentialProviderFor("auto", "en-AU")).toBe("gemini");
     expect(credentialProviderFor("glm_realtime_air", "en-AU")).toBe("zhipu");
     expect(credentialProviderFor("gemini_live", "zh-CN")).toBe("gemini");
+  });
+});
+
+describe("todaysRealtimeMinutes", () => {
+  it("sums only today's sessions by their larger audio direction", async () => {
+    const nowIso = new Date().toISOString();
+    const yesterdayIso = new Date(Date.now() - 26 * 3_600_000).toISOString();
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [
+          { ...session("completed", 3), started_at: nowIso, audio_input_ms: 120 * 60_000, audio_output_ms: 30 * 60_000 },
+          { ...session("completed", 3), started_at: yesterdayIso, audio_input_ms: 999 * 60_000, audio_output_ms: 0 },
+        ] })),
+      },
+    } as unknown as CoreClient["realtime"];
+    expect(await todaysRealtimeMinutes(client)).toBeCloseTo(120);
+  });
+
+  it("returns zero when the usage lookup fails", async () => {
+    const client = {
+      sessions: { list: vi.fn(async () => { throw new Error("offline"); }) },
+    } as unknown as CoreClient["realtime"];
+    expect(await todaysRealtimeMinutes(client)).toBe(0);
   });
 });
 

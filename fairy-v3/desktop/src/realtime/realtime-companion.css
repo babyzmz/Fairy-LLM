@@ -26,6 +26,9 @@
 .realtime-live-status button { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid #774b47; background: #351b19; color: #ffc0b8; }
 .realtime-pulse { width: 10px; height: 10px; border-radius: 50%; background: #65cfc1; box-shadow: 0 0 0 5px #65cfc11c; animation: realtime-pulse 1.4s ease-in-out infinite; }
 .realtime-pulse.speaking { background: #8bbcff; }.realtime-pulse.error, .realtime-pulse.failed { background: #ff796d; }
+.realtime-note { margin: 0; color: #84908c; font-size: 11px; line-height: 1.45; }
+.realtime-usage { display: flex; gap: 14px; padding: 2px 2px 0; color: #84908c; font: 600 10px/1.4 monospace; text-transform: uppercase; letter-spacing: 0.04em; }
+.realtime-usage span { display: inline-flex; gap: 5px; }
 .realtime-captions { min-height: 190px; max-height: 300px; overflow: auto; padding: 14px; background: #0c0f0e; border: 1px solid #29302e; }
 .realtime-captions p { margin: 0; padding: 9px 0; border-bottom: 1px solid #222826; line-height: 1.5; }.realtime-captions span { color: #7f8b87; }
 .realtime-memory { border-top: 1px solid #303735; }.realtime-memory h3 { margin: 0; font-size: 15px; }

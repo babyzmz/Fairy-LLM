@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Gamepad2, LoaderCircle, Mic, Monitor, Save, ShieldCheck, Square, X } from "lucide-react";
+import { LoaderCircle, Mic, Monitor, Save, ShieldCheck, Square, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
@@ -57,6 +57,12 @@ const EMPTY_USAGE: RealtimeUsage = {
   tool_call_count: 0,
 };
 
+// Cost controls. Idle auto-disconnect stops a session the user has walked away
+// from; the daily cap is a soft cumulative guard across sessions.
+const REALTIME_IDLE_TIMEOUT_MS = 3 * 60_000;
+const REALTIME_IDLE_CHECK_MS = 15_000;
+const REALTIME_DAILY_LIMIT_MINUTES = 180;
+
 export function RealtimeCompanion({
   client,
   hostInvoke = invoke,
@@ -79,7 +85,6 @@ export function RealtimeCompanion({
   const [sourceId, setSourceId] = useState("");
   const [microphoneConsent, setMicrophoneConsent] = useState(false);
   const [screenConsent, setScreenConsent] = useState(false);
-  const [gameAudio, setGameAudio] = useState(false);
   const [session, setSession] = useState<RealtimeSession | null>(null);
   const sessionRef = useRef<RealtimeSession | null>(null);
   const [presence, setPresence] = useState<RealtimePresenceState>("idle");
@@ -94,6 +99,8 @@ export function RealtimeCompanion({
   const voiceGeneration = useRef(0);
   const activeVoice = useRef<NativeVoicePlayback | null>(null);
   const usage = useRef<RealtimeUsage>({ ...EMPTY_USAGE });
+  const [liveUsage, setLiveUsage] = useState<RealtimeUsage>({ ...EMPTY_USAGE });
+  const lastUserActivity = useRef(0);
 
   const updateSession = useCallback((value: RealtimeSession | null) => {
     sessionRef.current = value;
@@ -170,7 +177,6 @@ export function RealtimeCompanion({
       setCredentialReady(credential.configured);
       setSurfaces(windows);
       setSourceId((current) => current || windows[0]?.source_id || "");
-      setGameAudio(nextPreferences.realtime_game_audio_default);
     } catch (caught) {
       setError(messageOf(caught));
     }
@@ -241,9 +247,11 @@ export function RealtimeCompanion({
       } else if (payload.type === "presence") {
         setPresence(normalizePresence(payload.state));
       } else if (payload.type === "barge_in") {
+        lastUserActivity.current = Date.now();
         stopFairyVoice();
         setPresence("listening");
       } else if (payload.type === "public_caption") {
+        if (payload.speaker === "user") lastUserActivity.current = Date.now();
         if (payload.stable) {
           setDraftCaption((draft) => {
             const completed = mergeCaptionDelta(draft, payload.text);
@@ -288,6 +296,7 @@ export function RealtimeCompanion({
           interruption_count: payload.interruption_count,
           tool_call_count: payload.tool_call_count,
         };
+        setLiveUsage(usage.current);
       } else if (payload.type === "tool_request") {
         void client.worker.toolResult({
           session_id: payload.session_id,
@@ -310,6 +319,22 @@ export function RealtimeCompanion({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.status, preferences?.realtime_max_session_minutes]);
 
+  // Idle auto-disconnect: stop the metered session when the user has not spoken
+  // (no captions or barge-in) for the idle window, so a walked-away session does
+  // not keep streaming audio and frames until the maximum-duration cap.
+  useEffect(() => {
+    if (session?.status !== "active") return;
+    lastUserActivity.current = Date.now();
+    const interval = window.setInterval(() => {
+      if (Date.now() - lastUserActivity.current >= REALTIME_IDLE_TIMEOUT_MS) {
+        window.clearInterval(interval);
+        void stop();
+      }
+    }, REALTIME_IDLE_CHECK_MS);
+    return () => window.clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.status]);
+
   const start = async () => {
     if (
       preferences === null || credentialReady !== true || !microphoneConsent
@@ -322,8 +347,17 @@ export function RealtimeCompanion({
     setCaptions([]);
     setDraftCaption("");
     usage.current = { ...EMPTY_USAGE };
+    setLiveUsage({ ...EMPTY_USAGE });
+    lastUserActivity.current = Date.now();
     setMemory(null);
     try {
+      const priorMinutes = await todaysRealtimeMinutes(client);
+      if (priorMinutes >= REALTIME_DAILY_LIMIT_MINUTES) {
+        setError(
+          `Daily realtime limit reached (${REALTIME_DAILY_LIMIT_MINUTES} min). Start a new session tomorrow to control provider cost.`,
+        );
+        return;
+      }
       const created = await client.sessions.start({
         device_id: deviceId(),
         conversation_id: null,
@@ -333,7 +367,7 @@ export function RealtimeCompanion({
         memory_mode: preferences.realtime_memory_enabled ? "progress_digest" : "none",
         microphone_consent: true,
         screen_consent: true,
-        game_audio_consent: gameAudio,
+        game_audio_consent: false,
         idempotency_key: crypto.randomUUID(),
       });
       updateSession(created);
@@ -344,7 +378,7 @@ export function RealtimeCompanion({
         voice_mode: created.voice_mode,
         source_id: Number(sourceId),
         screen_enabled: true,
-        game_audio_enabled: gameAudio,
+        game_audio_enabled: false,
       });
       setPresence("connecting");
     } catch (caught) {
@@ -473,9 +507,9 @@ export function RealtimeCompanion({
             {credentialReady === false ? <div className="realtime-error" role="alert">Configure the selected realtime provider in Settings before starting.</div> : null}
             <label className="realtime-consent"><input type="checkbox" checked={microphoneConsent} onChange={(event) => setMicrophoneConsent(event.target.checked)} /><Mic size={15} /><span>Share microphone for this session</span></label>
             <label className="realtime-consent"><input type="checkbox" checked={screenConsent} onChange={(event) => setScreenConsent(event.target.checked)} /><Monitor size={15} /><span>Share only the selected game window</span></label>
-            <label className="realtime-consent"><input type="checkbox" checked={gameAudio} onChange={(event) => setGameAudio(event.target.checked)} /><Gamepad2 size={15} /><span>Share selected game audio</span></label>
+            <p className="realtime-note">Game and system audio are not captured. Fairy uses only your microphone and the selected window image.</p>
             <button className="realtime-primary" type="button" disabled={busy || credentialReady !== true || !microphoneConsent || !screenConsent || sourceId === ""} onClick={() => void start()}>{busy ? <LoaderCircle className="spin" size={15} /> : <Mic size={15} />} Start companion</button>
-          </div> : <div className="realtime-live"><div className="realtime-live-status"><span className={`realtime-pulse ${presence}`} /><div><strong>{presenceLabel(presence)}</strong><small>{session.provider.replaceAll("_", " ")}</small></div><button type="button" disabled={busy} onClick={() => void stop()}><Square size={14} /> Stop</button></div><div className="realtime-captions" aria-live="polite">{captions.length === 0 && draftCaption === "" ? <span>Listening for the conversation and game context…</span> : <>{captions.map((text, index) => <p key={`${index}-${text.slice(0, 16)}`}>{text}</p>)}{draftCaption ? <p className="is-streaming">{draftCaption}</p> : null}</>}</div></div>}
+          </div> : <div className="realtime-live"><div className="realtime-live-status"><span className={`realtime-pulse ${presence}`} /><div><strong>{presenceLabel(presence)}</strong><small>{session.provider.replaceAll("_", " ")}</small></div><button type="button" disabled={busy} onClick={() => void stop()}><Square size={14} /> Stop</button></div><div className="realtime-usage" aria-label="Session usage"><span>Voice {formatUsageMinutes(liveUsage.audio_input_ms + liveUsage.audio_output_ms)}</span><span>Frames {liveUsage.video_frame_count}</span></div><div className="realtime-captions" aria-live="polite">{captions.length === 0 && draftCaption === "" ? <span>Listening for the conversation and game context…</span> : <>{captions.map((text, index) => <p key={`${index}-${text.slice(0, 16)}`}>{text}</p>)}{draftCaption ? <p className="is-streaming">{draftCaption}</p> : null}</>}</div></div>}
           {memory ? <div className="realtime-memory"><h3>Save game progress</h3><label>Game<input value={memory.gameTitle} maxLength={160} onChange={(event) => setMemory({ ...memory, gameTitle: event.target.value })} /></label><label>Progress<textarea value={memory.progress} maxLength={800} onChange={(event) => setMemory({ ...memory, progress: event.target.value })} /></label><label>Next goal<input value={memory.nextGoal} maxLength={300} onChange={(event) => setMemory({ ...memory, nextGoal: event.target.value })} /></label><button type="button" disabled={busy || !memory.gameTitle.trim() || !memory.progress.trim()} onClick={() => void saveMemory()}><Save size={14} /> Save summary</button></div> : null}
           {voiceWarning ? <div className="realtime-warning" role="status">{voiceWarning}</div> : null}
           {error ? <div className="realtime-error" role="alert">{error}</div> : null}
@@ -487,6 +521,28 @@ export function RealtimeCompanion({
 
 function isTerminal(status: RealtimeSessionStatus): boolean {
   return ["completed", "failed", "cancelled", "interrupted"].includes(status);
+}
+
+function formatUsageMinutes(totalMs: number): string {
+  const totalSeconds = Math.max(0, Math.round(totalMs / 1_000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+export async function todaysRealtimeMinutes(client: CoreClient["realtime"]): Promise<number> {
+  try {
+    const recent = await client.sessions.list(50);
+    const today = new Date().toDateString();
+    const totalMs = recent.items.reduce((sum, item) => {
+      if (new Date(item.started_at).toDateString() !== today) return sum;
+      return sum + Math.max(item.audio_input_ms, item.audio_output_ms);
+    }, 0);
+    return totalMs / 60_000;
+  } catch {
+    // A usage lookup failure must not block starting a session.
+    return 0;
+  }
 }
 
 function deviceId(): string {
