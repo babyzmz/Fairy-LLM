@@ -36,7 +36,6 @@ import {
 import {
   appendEvent,
   capabilityQueryKey,
-  coreStartupRetryDelay,
   coreErrorCode,
   errorMessage,
   firstError,
@@ -44,19 +43,15 @@ import {
   requireId,
   selectedItem,
   selectWorkspaceTask,
-  shouldRetryCoreStartup,
   workspaceKey,
 } from "./workspaceModelUtils";
 import {
-  addWorkspaceEventInvalidation,
-  addWorkspaceInvalidation,
-  createWorkspaceInvalidationBatch,
-  workspaceQueryMatchesInvalidation,
-} from "./workspaceQueryInvalidation";
-import type { WorkspaceInvalidationDomain } from "./workspaceQueryInvalidation";
+  messageCacheStaleTime,
+  useConversationPrefetch,
+  useWorkspaceBaseQueries,
+  useWorkspaceInvalidation,
+} from "./workspaceQueryModel";
 
-const messageCacheStaleTime = 30_000;
-const eventInvalidationWindow = 50;
 
 export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const queryClient = useQueryClient();
@@ -79,47 +74,16 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const petSubmissionRef = useRef(false);
   const petConversationIdRef = useRef<string | null>(null);
   const activeActionCountRef = useRef(0);
-  const invalidationBatchRef = useRef(createWorkspaceInvalidationBatch());
-  const invalidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const healthQuery = useQuery({
-    queryKey: [...workspaceKey, "health"],
-    queryFn: () => client.health(),
-    retry: shouldRetryCoreStartup,
-    retryDelay: coreStartupRetryDelay,
-    refetchOnWindowFocus: false,
-  });
-  const permissionsQuery = useQuery({
-    queryKey: permissionQueryKey,
-    queryFn: () => client.permissions.get(),
-    enabled: healthQuery.isSuccess,
-    retry: false,
-  });
+  const {
+    healthQuery,
+    permissionsQuery,
+    projectsQuery,
+    conversationsQuery,
+    providersQuery,
+    providerHealthQuery,
+  } = useWorkspaceBaseQueries(client);
   const permissionProfile = permissionsQuery.data?.profile ?? null;
-  const projectsQuery = useQuery({
-    queryKey: [...workspaceKey, "projects"],
-    queryFn: () => collectCursorPages((cursor) => client.projects.list({ limit: 100, cursor })),
-    enabled: healthQuery.isSuccess,
-    retry: false,
-  });
-  const conversationsQuery = useQuery({
-    queryKey: [...workspaceKey, "conversations"],
-    queryFn: () => collectCursorPages((cursor) => client.conversations.list({ limit: 100, cursor })),
-    enabled: healthQuery.isSuccess,
-    retry: false,
-  });
-  const providersQuery = useQuery({
-    queryKey: [...workspaceKey, "providers"],
-    queryFn: () => client.providers.list(),
-    enabled: healthQuery.isSuccess,
-    retry: false,
-  });
-  const providerHealthQuery = useQuery({
-    queryKey: [...workspaceKey, "provider-health"],
-    queryFn: () => client.providers.health(),
-    enabled: healthQuery.isSuccess,
-    retry: false,
-  });
   const modelController = useModelSelection(client, healthQuery.isSuccess);
 
   const projects = sortHistoryItems(projectsQuery.data?.items ?? []);
@@ -213,24 +177,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     staleTime: messageCacheStaleTime,
   });
   const projectMessageItems = projectMessagesQuery.data?.items ?? [];
-  const prefetchConversation = useCallback<WorkspaceModel["prefetchConversation"]>(
-    async (conversation) => {
-      await queryClient.prefetchQuery({
-        queryKey: [
-          ...workspaceKey,
-          conversation.project_id === null ? "messages" : "project-messages",
-          conversation.id,
-        ],
-        queryFn: () =>
-          client.messages.list({
-            conversation_id: conversation.id,
-            limit: 100,
-          }),
-        staleTime: messageCacheStaleTime,
-      });
-    },
-    [client, queryClient],
-  );
+  const prefetchConversation = useConversationPrefetch(client);
 
   const versionsQuery = useQuery({
     queryKey: [...workspaceKey, "versions", selectedProject?.id],
@@ -359,62 +306,12 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     retry: false,
   });
 
-  const flushEventInvalidations = useCallback(async () => {
-    const batch = invalidationBatchRef.current;
-    invalidationBatchRef.current = createWorkspaceInvalidationBatch();
-    invalidationTimerRef.current = null;
-    if (batch.domains.size === 0) return;
-    await queryClient.invalidateQueries({
-      predicate: (query) => workspaceQueryMatchesInvalidation(query.queryKey, batch),
-    });
-  }, [queryClient]);
-
-  const queueEventInvalidation = useCallback(
-    (event: EventEnvelope) => {
-      addWorkspaceEventInvalidation(invalidationBatchRef.current, event);
-      if (
-        invalidationBatchRef.current.domains.size === 0 ||
-        invalidationTimerRef.current !== null
-      ) {
-        return;
-      }
-      invalidationTimerRef.current = setTimeout(() => {
-        void flushEventInvalidations();
-      }, eventInvalidationWindow);
-    },
-    [flushEventInvalidations],
-  );
-
-  useEffect(
-    () => () => {
-      if (invalidationTimerRef.current !== null) {
-        clearTimeout(invalidationTimerRef.current);
-        invalidationTimerRef.current = null;
-      }
-    },
-    [],
-  );
-
-  const invalidateDomains = useCallback(async (
-    domains: readonly WorkspaceInvalidationDomain[],
-    scope: {
-      conversationId?: string | null;
-      projectId?: string | null;
-      taskId?: string | null;
-      turnId?: string | null;
-    } = {},
-  ) => {
-    const batch = createWorkspaceInvalidationBatch();
-    addWorkspaceInvalidation(batch, domains, scope);
-    await queryClient.invalidateQueries({
-      predicate: (query) => workspaceQueryMatchesInvalidation(query.queryKey, batch),
-    });
-  }, [queryClient]);
-
-  const invalidateHistory = useCallback(
-    () => invalidateDomains(["projects", "conversations"]),
-    [invalidateDomains],
-  );
+  const {
+    queueEventInvalidation,
+    invalidateDomains,
+    invalidateHistory,
+    invalidateAssistantScope,
+  } = useWorkspaceInvalidation();
 
   const invalidateExecution = useCallback(
     () =>
@@ -443,16 +340,6 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
       workspaceTask?.conversation_id,
       workspaceTask?.id,
     ],
-  );
-
-  const invalidateAssistantScope = useCallback(
-    async (conversationId: string | null, taskId: string | null) => {
-      await invalidateDomains(
-        ["messages", "tasks", "traces", "approvals", "workspace", "previews"],
-        { conversationId, taskId },
-      );
-    },
-    [invalidateDomains],
   );
 
   const chatAssistant = useAssistantTurn({
