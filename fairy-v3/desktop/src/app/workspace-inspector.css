@@ -138,6 +138,24 @@
   background: #262a28;
 }
 
+.preview-mode-badge {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #64d9d0;
+  box-shadow: 0 0 6px rgba(100, 217, 208, 0.8);
+  animation: preview-mode-badge-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes preview-mode-badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-mode-badge { animation: none; }
+}
+
 .preview-mode-content,
 .browser-panel,
 .browser-surface,

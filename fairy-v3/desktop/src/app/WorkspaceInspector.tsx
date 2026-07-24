@@ -1,10 +1,9 @@
-import { Eye, Files, GalleryVerticalEnd, Network } from "lucide-react";
-import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Eye, Files, Network } from "lucide-react";
+import { type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 
 import type { WorkspaceModel } from "./workspaceModel";
 import { PreviewWorkspace } from "./PreviewWorkspace";
 import { WorkspaceFilesPanel } from "./WorkspaceFilesPanel";
-import { projectMediaJobs, WorkspaceOutputsPanel } from "./WorkspaceOutputsPanel";
 import { ObsidianPanel } from "./ObsidianPanel";
 import "./workspace-inspector.css";
 
@@ -14,11 +13,13 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
   const previewStarting = model.previewActivationLoading ||
     ["ready", "starting", "waiting_for_slot"].includes(model.previewActivation?.outcome ?? "");
   const activePreviewId = model.workspaceActivePreviewId;
-  const hasPreview = previewReady || previewStarting || activePreviewId !== null;
-  const mediaJobs = useMemo(() => projectMediaJobs(model.mediaJobs), [model.mediaJobs]);
-  const hasOutputs = mediaJobs.length > 0;
-  const hasActiveOutput = mediaJobs.some((job) => !["completed", "failed", "cancelled", "interrupted"].includes(job.status));
-  const [tab, setTab] = useState<"preview" | "files" | "outputs" | "obsidian">(
+  const hasMedia = model.mediaJobs.length > 0;
+  const hasActiveMedia = model.mediaJobs.some(
+    (job) => !["completed", "failed", "cancelled", "interrupted"].includes(job.status),
+  );
+  // Preview now also hosts generated media, so any media makes it available.
+  const hasPreview = previewReady || previewStarting || activePreviewId !== null || hasMedia;
+  const [tab, setTab] = useState<"preview" | "files" | "obsidian">(
     hasPreview ? "preview" : "files",
   );
   const manuallySelectedTab = useRef(false);
@@ -28,13 +29,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
     model.workspaceTask?.workspace_id ?? "no-workspace",
     model.workspaceTask?.target_version_id ?? "no-version",
   ].join(":");
-  const recommendedTab = hasActiveOutput
-    ? "outputs"
-    : hasPreview
-      ? "preview"
-      : hasFiles
-        ? "files"
-        : "preview";
+  const recommendedTab = hasPreview ? "preview" : hasFiles ? "files" : "preview";
 
   useEffect(() => {
     manuallySelectedTab.current = false;
@@ -42,13 +37,14 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
   }, [scopeKey]);
 
   useEffect(() => {
-    if (hasActiveOutput) {
+    // Active generation now lives inside Preview, so pull attention there.
+    if (hasActiveMedia) {
       manuallySelectedTab.current = false;
-      setTab("outputs");
+      setTab("preview");
     } else if (!manuallySelectedTab.current) {
       setTab(recommendedTab);
     }
-  }, [hasActiveOutput, recommendedTab]);
+  }, [hasActiveMedia, recommendedTab]);
 
   useEffect(() => {
     const parent = document.querySelector<HTMLElement>(".unified-workspace-chat, .workspace-main");
@@ -65,7 +61,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
   const hasKnowledgeScope = model.mode === "project"
     ? model.selectedProject !== null
     : model.selectedChatConversation !== null;
-  if (model.workspaceTask === null && !hasFiles && !hasOutputs && !hasKnowledgeScope) return null;
+  if (model.workspaceTask === null && !hasFiles && !hasMedia && !hasKnowledgeScope) return null;
 
   return (
     <aside className="workspace-inspector" aria-label="Workspace inspector">
@@ -85,10 +81,6 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
         <button type="button" role="tab" aria-selected={tab === "files"} onClick={() => selectTab("files")}>
           <Files size={14} /> Files
           {hasFiles ? <span>{model.workspaceFiles.length}</span> : null}
-        </button>
-        <button type="button" role="tab" aria-selected={tab === "outputs"} onClick={() => selectTab("outputs")}>
-          <GalleryVerticalEnd size={14} /> Outputs
-          {hasOutputs ? <span>{mediaJobs.length}</span> : null}
         </button>
         <button type="button" role="tab" aria-selected={tab === "obsidian"} onClick={() => selectTab("obsidian")}>
           <Network size={14} /> Obsidian
@@ -121,14 +113,6 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
             onDelete={model.deleteWorkspaceFile}
             onExport={model.exportWorkspace}
           />
-        ) : tab === "outputs" ? (
-          <WorkspaceOutputsPanel
-            scopeKey={scopeKey}
-            jobs={mediaJobs}
-            loading={model.mediaJobsLoading}
-            onOpenStream={model.openWorkspaceFileStream}
-            onCancel={model.cancelMediaJob}
-          />
         ) : (
           <ObsidianPanel model={model} onOpenFiles={() => selectTab("files")} />
         )}
@@ -136,7 +120,7 @@ export function WorkspaceInspector({ model }: { model: WorkspaceModel }) {
     </aside>
   );
 
-  function selectTab(next: "preview" | "files" | "outputs" | "obsidian") {
+  function selectTab(next: "preview" | "files" | "obsidian") {
     manuallySelectedTab.current = true;
     setTab(next);
   }
