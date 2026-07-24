@@ -40,6 +40,37 @@ describe("usePreviewActivation", () => {
     expect(activate).toHaveBeenCalledTimes(1);
   });
 
+  it("retries automatically after a transient first activation failure", async () => {
+    vi.useFakeTimers();
+    try {
+      let attempt = 0;
+      const activate = vi.fn(async () => {
+        attempt += 1;
+        if (attempt === 1) throw new Error("transient activation failure");
+        return activation("ready", "vite");
+      });
+      const hook = renderHook(() => usePreviewActivation({
+        client: previewClient(activate),
+        enabled: true,
+        task: task(firstTaskId),
+        workspace: workspace(4),
+      }));
+
+      // The first automatic attempt fails and surfaces an error.
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(activate).toHaveBeenCalledTimes(1);
+      expect(hook.result.current.error).not.toBeNull();
+
+      // The bounded error retry fires and recovers without a task reselection.
+      await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+      expect(activate).toHaveBeenCalledTimes(2);
+      expect(hook.result.current.activation?.outcome).toBe("ready");
+      expect(hook.result.current.error).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("ignores a late activation result after switching conversations", async () => {
     const first = deferred<PreviewActivation>();
     const second = deferred<PreviewActivation>();

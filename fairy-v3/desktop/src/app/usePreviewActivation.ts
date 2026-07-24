@@ -6,6 +6,7 @@ import type { WorkspaceClient } from "./workspaceTypes";
 const READY_HEARTBEAT_MS = 120_000;
 const STARTING_RETRY_MS = 2_000;
 const WAITING_RETRY_MS = 15_000;
+const ERROR_RETRY_MS = 8_000;
 
 const pendingActivations = new Map<string, Promise<PreviewActivation>>();
 
@@ -108,7 +109,7 @@ export function usePreviewActivation({
 
     const schedule = () => {
       if (cancelled) return;
-      const delay = retryDelay(activationRef.current);
+      const delay = retryDelay(activationRef.current, error !== null);
       if (delay === null) return;
       timeout = window.setTimeout(async () => {
         await activate(false);
@@ -120,7 +121,7 @@ export function usePreviewActivation({
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [activate, activation, identity]);
+  }, [activate, activation, error, identity]);
 
   return stateIdentity === identity
     ? { activation, loading, error }
@@ -136,8 +137,11 @@ function activationIdentity(
   return [task.id, task.workspace_id, task.target_version_id, workspace.revision].join(":");
 }
 
-function retryDelay(activation: PreviewActivation | null): number | null {
-  if (activation === null) return null;
+function retryDelay(activation: PreviewActivation | null, hasError: boolean): number | null {
+  // A thrown activation (no result yet) auto-recovers on a bounded delay instead
+  // of leaving the preview stuck on the first transient failure until the user
+  // reselects the task.
+  if (activation === null) return hasError ? ERROR_RETRY_MS : null;
   if (activation.outcome === "starting") return STARTING_RETRY_MS;
   if (activation.outcome === "waiting_for_slot") return WAITING_RETRY_MS;
   if (activation.outcome === "ready") return READY_HEARTBEAT_MS;
