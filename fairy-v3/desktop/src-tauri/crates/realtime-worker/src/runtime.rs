@@ -14,6 +14,18 @@ use crate::protocol::{ProviderKind, WorkerEvent};
 use crate::provider::{CaptionSpeaker, ProviderOutput};
 use crate::transport::ProviderSocket;
 
+// Absolute worker-side ceiling as defense in depth: the renderer enforces the
+// user's configurable maximum, and this backstop stops a runaway session if the
+// renderer timer ever fails to fire. It sits above the maximum renderer setting.
+const SESSION_HARD_LIMIT: Duration = Duration::from_secs(130 * 60);
+
+fn frame_hash(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
 struct EphemeralAudioQueue(VecDeque<i16>);
 
 impl EphemeralAudioQueue {
@@ -244,8 +256,10 @@ fn run_session(
         provider: Some(provider_kind),
         error_code: None,
     });
+    let session_start = Instant::now();
     let mut last_video_sent = Instant::now() - Duration::from_secs(1);
     let mut last_usage_sent = Instant::now();
+    let mut last_frame_hash: Option<u64> = None;
     let mut game_audio_queue = EphemeralAudioQueue::with_capacity(32_000);
     let mut audio_input_samples = 0_u64;
     let mut audio_output_samples = 0_u64;
@@ -254,6 +268,9 @@ fn run_session(
     let mut tool_call_count = 0_u64;
     loop {
         if cancelled.load(Ordering::Acquire) {
+            break;
+        }
+        if session_start.elapsed() >= SESSION_HARD_LIMIT {
             break;
         }
         match commands.try_recv() {
@@ -295,14 +312,23 @@ fn run_session(
         }
         if last_video_sent.elapsed() >= Duration::from_secs(1) {
             if let Some(mut frame) = video.as_ref().and_then(VideoCapture::take_latest) {
-                if let Err(error) = provider.send_video(&frame.jpeg) {
+                let hash = frame_hash(&frame.jpeg);
+                if last_frame_hash == Some(hash) {
+                    // Identical to the last sent frame (a static screen); skip the
+                    // send to avoid re-billing image tokens for an unchanged view.
                     frame.jpeg.zeroize();
-                    emit_failed(&events, &session_id, error.public_code());
-                    return;
+                    last_video_sent = Instant::now();
+                } else {
+                    if let Err(error) = provider.send_video(&frame.jpeg) {
+                        frame.jpeg.zeroize();
+                        emit_failed(&events, &session_id, error.public_code());
+                        return;
+                    }
+                    frame.jpeg.zeroize();
+                    last_frame_hash = Some(hash);
+                    video_frame_count = video_frame_count.saturating_add(1);
+                    last_video_sent = Instant::now();
                 }
-                frame.jpeg.zeroize();
-                video_frame_count = video_frame_count.saturating_add(1);
-                last_video_sent = Instant::now();
             }
         }
         let outputs = match provider.receive() {
@@ -481,6 +507,19 @@ fn emit_cancelled(events: &mpsc::Sender<WorkerEvent>, session_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identical_frames_hash_equal_and_changed_frames_differ() {
+        assert_eq!(frame_hash(&[1, 2, 3, 4]), frame_hash(&[1, 2, 3, 4]));
+        assert_ne!(frame_hash(&[1, 2, 3, 4]), frame_hash(&[1, 2, 3, 5]));
+    }
+
+    #[test]
+    fn session_hard_limit_backstops_above_the_max_renderer_setting() {
+        // The renderer maximum is 120 minutes; the worker ceiling sits above it
+        // so the renderer normally stops first and this only catches a runaway.
+        assert!(SESSION_HARD_LIMIT > Duration::from_secs(120 * 60));
+    }
 
     #[test]
     fn startup_stop_is_observed_within_the_barge_in_budget() {
