@@ -71,6 +71,10 @@ pub enum RuntimeCommand {
         call_id: String,
         public_summary: String,
     },
+    SetInput {
+        microphone: bool,
+        video: bool,
+    },
 }
 
 pub struct RealtimeRuntime {
@@ -260,6 +264,10 @@ fn run_session(
     let mut last_video_sent = Instant::now() - Duration::from_secs(1);
     let mut last_usage_sent = Instant::now();
     let mut last_frame_hash: Option<u64> = None;
+    // Input gating for the mute (microphone) and pause (microphone + screen)
+    // controls. Both default on; muted/paused input is not sent to the provider.
+    let mut microphone_enabled = true;
+    let mut video_enabled = true;
     let mut game_audio_queue = EphemeralAudioQueue::with_capacity(32_000);
     let mut audio_input_samples = 0_u64;
     let mut audio_output_samples = 0_u64;
@@ -284,6 +292,10 @@ fn run_session(
                     return;
                 }
             }
+            Ok(RuntimeCommand::SetInput { microphone, video }) => {
+                microphone_enabled = microphone;
+                video_enabled = video;
+            }
             Err(mpsc::TryRecvError::Empty) => {}
         }
         if let Some(capture) = game_audio.as_mut() {
@@ -295,6 +307,12 @@ fn run_session(
             }
         }
         while let Some(packet) = microphone.try_recv() {
+            if !microphone_enabled {
+                // Muted or paused: drain and discard without sending. Dropping the
+                // packet zeroizes its samples.
+                drop(packet);
+                continue;
+            }
             let mut samples = resample_pcm16(&packet.pcm16, packet.sample_rate, 16_000);
             game_audio_queue.mix_into(&mut samples, 0.35);
             audio_input_samples = audio_input_samples.saturating_add(samples.len() as u64);
@@ -310,7 +328,7 @@ fn run_session(
             }
             bytes.zeroize();
         }
-        if last_video_sent.elapsed() >= Duration::from_secs(1) {
+        if video_enabled && last_video_sent.elapsed() >= Duration::from_secs(1) {
             if let Some(mut frame) = video.as_ref().and_then(VideoCapture::take_latest) {
                 let hash = frame_hash(&frame.jpeg);
                 if last_frame_hash == Some(hash) {
@@ -461,7 +479,7 @@ fn startup_cancel_requested(
                 cancelled.store(true, Ordering::Release);
                 return true;
             }
-            Ok(RuntimeCommand::ToolResult { .. }) => {}
+            Ok(RuntimeCommand::ToolResult { .. }) | Ok(RuntimeCommand::SetInput { .. }) => {}
             Err(mpsc::TryRecvError::Empty) => return false,
         }
     }

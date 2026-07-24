@@ -74,6 +74,13 @@ pub struct RealtimeWorkerToolResultInput {
     pub succeeded: bool,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct RealtimeWorkerSetInputInput {
+    pub session_id: String,
+    pub microphone: bool,
+    pub video: bool,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct RealtimeWorkerStatus {
     pub running: bool,
@@ -247,6 +254,28 @@ impl RealtimeWorkerManager {
                 call_id: input.call_id,
                 public_summary: input.public_summary,
                 succeeded: input.succeeded,
+            },
+        )
+    }
+
+    pub fn set_input(
+        &self,
+        input: RealtimeWorkerSetInputInput,
+    ) -> Result<(), RealtimeWorkerError> {
+        let guard = self
+            .process
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?;
+        let process = guard.as_ref().ok_or(RealtimeWorkerError::Unavailable)?;
+        if process.session_id.as_deref() != Some(input.session_id.as_str()) {
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        send_command(
+            &process.input,
+            &HostCommand::SetInput {
+                session_id: input.session_id,
+                microphone: input.microphone,
+                video: input.video,
             },
         )
     }

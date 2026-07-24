@@ -168,6 +168,48 @@ describe("RealtimeCompanion", () => {
     expect(JSON.stringify(report.mock.calls)).not.toContain("Boss at half health");
   });
 
+  it("gates microphone and screen input through the collapsible session controls", async () => {
+    const setInput = vi.fn(async () => undefined);
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [] })),
+        start: vi.fn(async () => session("starting", 1)),
+        get: vi.fn(async () => session("active", 2)),
+        report: vi.fn(async () => session("active", 2)),
+        stop: vi.fn(),
+      },
+      memories: { save: vi.fn() },
+      worker: {
+        status: vi.fn(async () => workerStatus(false)),
+        start: vi.fn(async () => workerStatus(true)),
+        stop: vi.fn(),
+        toolResult: vi.fn(),
+        setInput,
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByRole("option", { name: "Test Game · 1280×720" });
+    const consents = screen.getAllByRole("checkbox");
+    fireEvent.click(consents[0]);
+    fireEvent.click(consents[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Start companion" }));
+    await waitFor(() => expect(client.worker.start).toHaveBeenCalledOnce());
+    await act(async () => eventListener?.({ payload: {
+      type: "session_state", session_id: session("active", 2).id, status: "active",
+    } }));
+
+    fireEvent.click(screen.getByRole("button", { name: "展开控制" }));
+    fireEvent.click(screen.getByRole("button", { name: /闭麦/ }));
+    await waitFor(() => expect(setInput).toHaveBeenLastCalledWith(
+      expect.objectContaining({ microphone: false, video: true }),
+    ));
+    fireEvent.click(screen.getByRole("button", { name: /暂停/ }));
+    await waitFor(() => expect(setInput).toHaveBeenLastCalledWith(
+      expect.objectContaining({ microphone: false, video: false }),
+    ));
+  });
+
   it("no longer offers a game or system audio consent control", async () => {
     const client = {
       sessions: { list: vi.fn(async () => ({ items: [] })) },

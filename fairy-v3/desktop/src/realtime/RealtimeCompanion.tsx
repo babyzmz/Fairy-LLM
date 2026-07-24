@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { LoaderCircle, Mic, Monitor, Save, ShieldCheck, Square, X } from "lucide-react";
+import { LoaderCircle, Mic, MicOff, Monitor, Pause, Play, Save, ShieldCheck, SlidersHorizontal, Square, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
@@ -101,6 +101,35 @@ export function RealtimeCompanion({
   const usage = useRef<RealtimeUsage>({ ...EMPTY_USAGE });
   const [liveUsage, setLiveUsage] = useState<RealtimeUsage>({ ...EMPTY_USAGE });
   const lastUserActivity = useRef(0);
+  const [muted, setMuted] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
+
+  const applyInput = useCallback((nextMuted: boolean, nextPaused: boolean) => {
+    const current = sessionRef.current;
+    if (current === null || isTerminal(current.status)) return;
+    void client.worker.setInput({
+      session_id: current.id,
+      microphone: !nextMuted && !nextPaused,
+      video: !nextPaused,
+    }).catch(() => undefined);
+  }, [client.worker]);
+
+  const toggleMute = useCallback(() => {
+    setMuted((current) => {
+      const next = !current;
+      applyInput(next, paused);
+      return next;
+    });
+  }, [applyInput, paused]);
+
+  const togglePause = useCallback(() => {
+    setPaused((current) => {
+      const next = !current;
+      applyInput(muted, next);
+      return next;
+    });
+  }, [applyInput, muted]);
 
   const updateSession = useCallback((value: RealtimeSession | null) => {
     sessionRef.current = value;
@@ -349,6 +378,9 @@ export function RealtimeCompanion({
     usage.current = { ...EMPTY_USAGE };
     setLiveUsage({ ...EMPTY_USAGE });
     lastUserActivity.current = Date.now();
+    setMuted(false);
+    setPaused(false);
+    setControlsOpen(false);
     setMemory(null);
     try {
       const priorMinutes = await todaysRealtimeMinutes(client);
@@ -514,6 +546,32 @@ export function RealtimeCompanion({
           {voiceWarning ? <div className="realtime-warning" role="status">{voiceWarning}</div> : null}
           {error ? <div className="realtime-error" role="alert">{error}</div> : null}
         </section>
+        {active ? (
+          <div className={`realtime-controls${controlsOpen ? " is-open" : ""}`}>
+            {controlsOpen ? (
+              <div className="realtime-controls-cluster" role="group" aria-label="Session controls">
+                <button type="button" onClick={togglePause} aria-pressed={paused} title={paused ? "恢复" : "暂停"}>
+                  {paused ? <Play size={16} /> : <Pause size={16} />}<span>{paused ? "恢复" : "暂停"}</span>
+                </button>
+                <button type="button" className="realtime-controls-stop" disabled={busy} onClick={() => void stop()} title="停止">
+                  <Square size={16} /><span>停止</span>
+                </button>
+                <button type="button" onClick={toggleMute} aria-pressed={muted} title={muted ? "开麦" : "闭麦"}>
+                  {muted ? <MicOff size={16} /> : <Mic size={16} />}<span>{muted ? "开麦" : "闭麦"}</span>
+                </button>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="realtime-controls-toggle"
+              aria-expanded={controlsOpen}
+              aria-label={controlsOpen ? "收起控制" : "展开控制"}
+              onClick={() => setControlsOpen((state) => !state)}
+            >
+              {controlsOpen ? <X size={16} /> : <SlidersHorizontal size={16} />}
+            </button>
+          </div>
+        ) : null}
       </div> : null}
     </>
   );

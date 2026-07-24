@@ -29,6 +29,11 @@ pub enum HostCommand {
     Stop {
         session_id: String,
     },
+    SetInput {
+        session_id: String,
+        microphone: bool,
+        video: bool,
+    },
     UpdateUsage {
         session_id: String,
         audio_input_ms: u64,

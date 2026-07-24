@@ -163,6 +163,12 @@ export interface RealtimeWorkerToolResultInput {
   succeeded: boolean;
 }
 
+export interface RealtimeWorkerSetInputInput {
+  session_id: string;
+  microphone: boolean;
+  video: boolean;
+}
+
 export interface ObsidianVaultSelection {
   local_path_token: string;
   display_name: string;
@@ -196,6 +202,7 @@ export interface CoreTransport {
   realtimeWorkerStart?(input: RealtimeWorkerStartInput): Promise<RealtimeWorkerStatus>;
   realtimeWorkerStop?(sessionId: string): Promise<RealtimeWorkerStatus>;
   realtimeWorkerToolResult?(input: RealtimeWorkerToolResultInput): Promise<void>;
+  realtimeWorkerSetInput?(input: RealtimeWorkerSetInputInput): Promise<void>;
   selectProjectFolder?(): Promise<string | null>;
   selectObsidianVault?(): Promise<ObsidianVaultSelection | null>;
   openSettingsWindow?(category?: SettingsCategoryId): Promise<void>;
@@ -636,6 +643,10 @@ export class CoreClient {
       toolResult: (input: RealtimeWorkerToolResultInput) => {
         if (!this.transport.realtimeWorkerToolResult) throw new Error("Realtime requires Fairy desktop");
         return this.transport.realtimeWorkerToolResult(input);
+      },
+      setInput: (input: RealtimeWorkerSetInputInput) => {
+        if (!this.transport.realtimeWorkerSetInput) throw new Error("Realtime requires Fairy desktop");
+        return this.transport.realtimeWorkerSetInput(input);
       },
     },
   };

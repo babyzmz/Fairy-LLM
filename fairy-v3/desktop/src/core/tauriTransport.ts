@@ -10,6 +10,7 @@ import type {
   RealtimeCredentialProvider,
   RealtimeProviderCredentialInput,
   RealtimeProviderCredentialStatus,
+  RealtimeWorkerSetInputInput,
   RealtimeWorkerStartInput,
   RealtimeWorkerStatus,
   RealtimeWorkerToolResultInput,
@@ -130,6 +131,10 @@ export class TauriCoreTransport implements CoreTransport {
 
   realtimeWorkerToolResult(input: RealtimeWorkerToolResultInput): Promise<void> {
     return this.invoke("realtime_worker_tool_result", { input });
+  }
+
+  realtimeWorkerSetInput(input: RealtimeWorkerSetInputInput): Promise<void> {
+    return this.invoke("realtime_worker_set_input", { input });
   }
 
   selectProjectFolder(): Promise<string | null> {

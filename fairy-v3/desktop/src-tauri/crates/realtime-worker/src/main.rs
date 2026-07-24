@@ -87,6 +87,15 @@ fn main() {
                     });
                 }
             }
+            HostCommand::SetInput {
+                session_id,
+                microphone,
+                video,
+            } if active_session.as_deref() == Some(session_id.as_str()) => {
+                if let Some(active) = runtime.as_ref() {
+                    active.command(RuntimeCommand::SetInput { microphone, video });
+                }
+            }
             HostCommand::Ping => {
                 if write_frame(&mut stdout().lock(), &WorkerEvent::Pong).is_err() {
                     return;

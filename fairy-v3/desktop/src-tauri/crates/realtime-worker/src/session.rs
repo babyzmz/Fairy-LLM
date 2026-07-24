@@ -105,6 +105,10 @@ impl RealtimeWorker {
                 credential,
             }),
             HostCommand::Stop { session_id } => self.stop(&session_id),
+            HostCommand::SetInput { session_id, .. } => {
+                self.require_active(&session_id)?;
+                Ok(Vec::new())
+            }
             HostCommand::UpdateUsage {
                 session_id,
                 audio_input_ms,

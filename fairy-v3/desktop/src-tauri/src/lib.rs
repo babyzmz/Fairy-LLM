@@ -45,8 +45,8 @@ use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStor
 use provider_credentials::{CredentialReplacement, ProviderCredentialStore};
 use realtime_worker::{
     bundled_realtime_launch, development_realtime_launch, RealtimeWorkerManager,
-    RealtimeWorkerStartInput, RealtimeWorkerStatus, RealtimeWorkerStopInput,
-    RealtimeWorkerToolResultInput,
+    RealtimeWorkerSetInputInput, RealtimeWorkerStartInput, RealtimeWorkerStatus,
+    RealtimeWorkerStopInput, RealtimeWorkerToolResultInput,
 };
 use voice_worker::{
     bundled_voice_launch, development_voice_launch, prepared_realtime_session,
@@ -607,6 +607,19 @@ async fn realtime_worker_tool_result(
     state
         .realtime
         .tool_result(input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn realtime_worker_set_input(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: RealtimeWorkerSetInputInput,
+) -> Result<(), String> {
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    state
+        .realtime
+        .set_input(input)
         .map_err(|error| error.to_string())
 }
 
@@ -4942,6 +4955,7 @@ pub fn run() {
             realtime_worker_start,
             realtime_worker_stop,
             realtime_worker_tool_result,
+            realtime_worker_set_input,
             desktop_preferences_get,
             desktop_preferences_update,
             pet_preferences_update,
