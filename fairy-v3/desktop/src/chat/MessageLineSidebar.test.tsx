@@ -200,6 +200,51 @@ describe("MessageLineSidebar", () => {
     expect(onNavigate).toHaveBeenCalledWith("turn:second", true);
   });
 
+  it("shows one detached preview for the exact hovered or focused exchange", () => {
+    const view = render(
+      <MessageLineSidebar
+        items={ITEMS}
+        activeKey="turn:first"
+        onNavigate={vi.fn()}
+      />,
+    );
+    const first = screen.getByRole("button", {
+      name: "First request: First response",
+    });
+    const second = screen.getByRole("button", {
+      name: "Second request: Second response",
+    });
+
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    fireEvent.pointerEnter(first);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("First request");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("First response");
+
+    fireEvent.pointerEnter(second);
+    expect(screen.getAllByRole("tooltip")).toHaveLength(1);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Second request");
+
+    fireEvent.pointerLeave(second);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    fireEvent.focus(first);
+    fireEvent.pointerEnter(first);
+    fireEvent.pointerLeave(first);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("First response");
+    fireEvent.blur(first, { relatedTarget: document.body });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    fireEvent.pointerEnter(second);
+    view.rerender(
+      <MessageLineSidebar
+        items={[ITEMS[0]]}
+        activeKey="turn:first"
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
+
   it("pauses active-item following while browsing and resumes after pointer and focus leave", () => {
     vi.useFakeTimers();
     const view = render(
