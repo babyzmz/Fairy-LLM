@@ -25,18 +25,45 @@ for (const viewport of [
     await expect(page.locator("body")).not.toContainText("fixture provider payload");
     const outline = page.getByRole("navigation", { name: "Conversation outline" });
     await expect(outline).toBeVisible();
-    await outline
-      .getByRole("button", { name: "Fairy: Scratch chat is durable" })
-      .focus();
-    await expect.poll(
-      async () => outline.evaluate((element) => element.getBoundingClientRect().width),
-    ).toBeGreaterThan(100);
+    const scratchExchange = outline.getByRole("button", {
+      name: "Current request: Scratch chat is durable",
+    });
+    await scratchExchange.focus();
+    const card = page.getByRole("tooltip");
+    await expect(card).toContainText("Current request");
+    await expect(card).toContainText("Scratch chat is durable");
     const outlineBounds = await outline.evaluate((element) => {
       const rectangle = element.getBoundingClientRect();
-      return { left: rectangle.left, right: rectangle.right, viewportWidth: innerWidth };
+      return {
+        left: rectangle.left,
+        right: rectangle.right,
+        width: rectangle.width,
+        background: getComputedStyle(element).backgroundColor,
+        viewportWidth: innerWidth,
+      };
     });
     expect(outlineBounds.left).toBeGreaterThanOrEqual(0);
     expect(outlineBounds.right).toBeLessThanOrEqual(outlineBounds.viewportWidth);
+    expect(outlineBounds.width).toBe(36);
+    expect(outlineBounds.background).toBe("rgba(0, 0, 0, 0)");
+    const cardBounds = await card.evaluate((element) => {
+      const rectangle = element.getBoundingClientRect();
+      const shell = element.closest(".message-list-shell")?.getBoundingClientRect();
+      return {
+        left: rectangle.left,
+        right: rectangle.right,
+        top: rectangle.top,
+        bottom: rectangle.bottom,
+        shellLeft: shell?.left ?? 0,
+        shellRight: shell?.right ?? 0,
+        shellTop: shell?.top ?? 0,
+        shellBottom: shell?.bottom ?? 0,
+      };
+    });
+    expect(cardBounds.left).toBeGreaterThanOrEqual(cardBounds.shellLeft);
+    expect(cardBounds.right).toBeLessThanOrEqual(cardBounds.shellRight);
+    expect(cardBounds.top).toBeGreaterThanOrEqual(cardBounds.shellTop);
+    expect(cardBounds.bottom).toBeLessThanOrEqual(cardBounds.shellBottom);
     const composer = page.getByLabel("Message Fairy");
     await composer.fill("Check Sydney weather");
     await page.getByRole("button", { name: "Send message" }).click();
@@ -77,9 +104,11 @@ test("the Line Sidebar navigates and follows a long Conversation without taking 
   const outlineScroller = page.getByTestId("message-line-sidebar-scroller");
   const transcript = page.getByLabel("Conversation messages");
   const first = outline.getByRole("button", {
-    name: "You: Outline request 01 — stable message anchor",
+    name:
+      "Outline request 01 — stable message anchor: " +
+      "Outline response 02 — stable message anchor",
   });
-  await expect(outline.getByRole("button")).toHaveCount(30);
+  await expect(outline.getByRole("button")).toHaveCount(15);
   await expect(first).toBeVisible();
 
   const scrollSurfaces = await page.evaluate(() => {
@@ -111,24 +140,45 @@ test("the Line Sidebar navigates and follows a long Conversation without taking 
     outlineScrollable: true,
   });
 
-  await outline.hover();
-  await expect.poll(
-    async () => outline.evaluate((element) => element.getBoundingClientRect().width),
-  ).toBeGreaterThan(180);
+  await first.hover();
+  const card = page.getByRole("tooltip");
+  await expect(card).toContainText("Outline request 01");
+  await expect(card).toContainText("Outline response 02");
   expect(
     await outline.evaluate((element) => {
       const style = getComputedStyle(element);
       return {
+        width: element.getBoundingClientRect().width,
         background: style.backgroundColor,
         border: style.borderTopWidth,
         shadow: style.boxShadow,
       };
     }),
   ).toEqual({
+    width: 36,
     background: "rgba(0, 0, 0, 0)",
     border: "0px",
     shadow: "none",
   });
+  await expect(card).toHaveCSS("background-color", "rgb(43, 44, 43)");
+  const cardBounds = await card.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect();
+    const shell = element.closest(".message-list-shell")?.getBoundingClientRect();
+    return {
+      left: rectangle.left,
+      right: rectangle.right,
+      top: rectangle.top,
+      bottom: rectangle.bottom,
+      shellLeft: shell?.left ?? 0,
+      shellRight: shell?.right ?? 0,
+      shellTop: shell?.top ?? 0,
+      shellBottom: shell?.bottom ?? 0,
+    };
+  });
+  expect(cardBounds.left).toBeGreaterThanOrEqual(cardBounds.shellLeft);
+  expect(cardBounds.right).toBeLessThanOrEqual(cardBounds.shellRight);
+  expect(cardBounds.top).toBeGreaterThanOrEqual(cardBounds.shellTop);
+  expect(cardBounds.bottom).toBeLessThanOrEqual(cardBounds.shellBottom);
   await transcript.evaluate((element) =>
     element.scrollTo({ top: 0, behavior: "auto" }),
   );
@@ -160,6 +210,35 @@ test("the Line Sidebar navigates and follows a long Conversation without taking 
     vertical: Math.max(0, document.documentElement.scrollHeight - innerHeight),
   }))).toEqual({ horizontal: 0, vertical: 0 });
   await page.screenshot({ path: testInfo.outputPath("chat-line-sidebar.png") });
+  await first.hover();
+  const firstBounds = await first.boundingBox();
+  const focusedCardBounds = await page.getByRole("tooltip").boundingBox();
+  if (firstBounds === null || focusedCardBounds === null) {
+    throw new Error("Expected focused Line Sidebar bounds for visual QA");
+  }
+  const clipX = Math.max(0, firstBounds.x);
+  const clipY = Math.max(0, Math.min(firstBounds.y, focusedCardBounds.y) - 8);
+  await page.screenshot({
+    path: testInfo.outputPath("chat-line-sidebar-focused.png"),
+    clip: {
+      x: clipX,
+      y: clipY,
+      width:
+        Math.max(
+          firstBounds.x + firstBounds.width,
+          focusedCardBounds.x + focusedCardBounds.width,
+        ) -
+        clipX +
+        8,
+      height:
+        Math.max(
+          firstBounds.y + firstBounds.height,
+          focusedCardBounds.y + focusedCardBounds.height,
+        ) -
+        clipY +
+        8,
+    },
+  });
 });
 
 test("developer mode shows bounded trace diagnostics without raw tool protocol", async ({ page }) => {
@@ -279,6 +358,16 @@ test("reduced motion disables repeated chat activity animation", async ({ page }
     .getByRole("navigation", { name: "Conversation outline" })
     .evaluate((element) => getComputedStyle(element).transitionDuration);
   expect(outlineTransition).toBe("0s");
+  await page
+    .getByRole("navigation", { name: "Conversation outline" })
+    .getByRole("button", {
+      name: "Current request: Scratch chat is durable",
+    })
+    .focus();
+  const cardTransition = await page
+    .getByRole("tooltip")
+    .evaluate((element) => getComputedStyle(element).transitionDuration);
+  expect(cardTransition).toBe("0s");
 });
 
 test("model settings stay inside the narrow internal view and expose no secret", async ({

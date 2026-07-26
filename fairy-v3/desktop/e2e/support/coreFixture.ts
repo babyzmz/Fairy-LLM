@@ -570,11 +570,13 @@ async function installCoreFixture(page: Page) {
       const lineSidebarSeed = fixtureParams.get("lineSidebarSeed") === "1";
       const lineSidebarMessages = Array.from({ length: 30 }, (_, index) => {
         const sequence = index + 1;
+        const pairIndex = Math.floor(index / 2) + 1;
         const role = index % 2 === 0 ? "user" : "assistant";
         return {
           ...scratchMessage,
           id: `0198f4de-0114-7000-8000-${String(300 + sequence).padStart(12, "0")}`,
-          turn_id: null,
+          turn_id:
+            `0198f4de-0114-7000-8000-${String(500 + pairIndex).padStart(12, "0")}`,
           sequence,
           role,
           content:
