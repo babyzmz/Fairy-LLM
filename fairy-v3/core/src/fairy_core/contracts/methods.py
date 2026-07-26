@@ -274,6 +274,10 @@ from fairy_core.contracts.realtime import (
     RealtimeSessionReportInput,
     RealtimeSessionStartInput,
     RealtimeSessionStopInput,
+    RealtimeTranscriptAppendInput,
+    RealtimeTranscriptEntryModel,
+    RealtimeTranscriptListInput,
+    RealtimeTranscriptPageModel,
 )
 from fairy_core.contracts.transcript import MessagePageModel
 from fairy_core.contracts.turn_trace import TurnTraceModel
@@ -1104,6 +1108,18 @@ CORE_METHODS: Mapping[str, CoreMethod] = MappingProxyType(
         ),
         "realtime.sessions.stop": CoreMethod(
             "realtime.sessions.stop", RealtimeSessionStopInput, RealtimeSessionModel
+        ),
+        "realtime.transcript.append": CoreMethod(
+            "realtime.transcript.append",
+            RealtimeTranscriptAppendInput,
+            RealtimeTranscriptEntryModel,
+            CoreMethodTransport.LOCAL_ONLY,
+        ),
+        "realtime.transcript.list": CoreMethod(
+            "realtime.transcript.list",
+            RealtimeTranscriptListInput,
+            RealtimeTranscriptPageModel,
+            CoreMethodTransport.LOCAL_ONLY,
         ),
         "renderer_packs.update": CoreMethod(
             "renderer_packs.update", RendererPackInstallInput, RendererPackModel

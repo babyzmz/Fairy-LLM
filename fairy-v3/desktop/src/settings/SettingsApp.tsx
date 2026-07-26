@@ -71,6 +71,7 @@ import { ExtensionsPanel } from "./SettingsExtensions";
 import {
   messageOf,
   titleCase,
+  type RealtimeCredentialView,
   type SettingsCategoryProps,
   type SettingsData,
 } from "./settingsShared";
@@ -111,7 +112,7 @@ interface GeneralSettingsData {
 interface ModelSettingsData {
   openRouterConfigured: boolean;
   openRouterAccountId: string | null;
-  realtimeCredentials: Record<"gemini" | "zhipu", boolean>;
+  realtimeCredentials: Record<"gemini" | "zhipu", RealtimeCredentialView>;
   modelCatalog: ModelCatalogPage;
   modelSelection: ModelSelectionPreference;
 }
@@ -250,21 +251,27 @@ function SettingsContent({
     enabled: visited.has("models"),
     staleTime: 6 * 60 * 60 * 1_000,
     queryFn: async (): Promise<ModelSettingsData> => {
-      const [status, geminiStatus, zhipuStatus, modelCatalog, modelSelection] =
-        await Promise.all([
-          client.providers.openRouterStatus(),
-          client.providers.realtimeStatus("gemini").catch(() => ({ provider: "gemini" as const, configured: false })),
-          client.providers.realtimeStatus("zhipu").catch(() => ({ provider: "zhipu" as const, configured: false })),
-          client.models.catalog.list(),
-          client.models.selection.get(),
-        ]);
+      const readRealtime = async (
+        provider: "gemini" | "zhipu",
+      ): Promise<RealtimeCredentialView> => {
+        try {
+          const status = await client.providers.realtimeStatus(provider);
+          return { configured: status.configured, hint: status.hint ?? null, error: false };
+        } catch {
+          return { configured: false, hint: null, error: true };
+        }
+      };
+      const [status, gemini, zhipu, modelCatalog, modelSelection] = await Promise.all([
+        client.providers.openRouterStatus(),
+        readRealtime("gemini"),
+        readRealtime("zhipu"),
+        client.models.catalog.list(),
+        client.models.selection.get(),
+      ]);
       return {
         openRouterConfigured: status.configured,
         openRouterAccountId: status.account_id,
-        realtimeCredentials: {
-          gemini: geminiStatus.configured,
-          zhipu: zhipuStatus.configured,
-        },
+        realtimeCredentials: { gemini, zhipu },
         modelCatalog,
         modelSelection,
       };
@@ -335,7 +342,10 @@ function SettingsContent({
       memorySettings: knowledgeQuery.data?.memorySettings ?? emptyMemorySettings(),
       openRouterConfigured: modelsQuery.data?.openRouterConfigured ?? false,
       openRouterAccountId: modelsQuery.data?.openRouterAccountId ?? null,
-      realtimeCredentials: modelsQuery.data?.realtimeCredentials ?? { gemini: false, zhipu: false },
+      realtimeCredentials: modelsQuery.data?.realtimeCredentials ?? {
+        gemini: { configured: false, hint: null, error: false },
+        zhipu: { configured: false, hint: null, error: false },
+      },
       modelCatalog: modelsQuery.data?.modelCatalog ?? emptyModelCatalog(),
       modelSelection: modelsQuery.data?.modelSelection ?? emptyModelSelection(),
       permissions: permissionsQuery.data?.permissions ?? emptyExecutionSettings(),
@@ -755,8 +765,8 @@ function ModelsPanel(props: Parameters<typeof SettingsCategory>[0]) {
         {data.openRouterConfigured ? <button className="danger-icon" type="button" aria-label="Remove OpenRouter credential" title="Remove OpenRouter credential" disabled={busy} onClick={() => setConfirmCredentialDelete(true)}><Trash2 size={15} /></button> : null}
       </div>
     </form>
-    <RealtimeCredentialForm provider="gemini" label="Gemini Live" configured={data.realtimeCredentials.gemini} busy={busy} client={client} act={act} reload={reload} />
-    <RealtimeCredentialForm provider="zhipu" label="Zhipu GLM Realtime" configured={data.realtimeCredentials.zhipu} busy={busy} client={client} act={act} reload={reload} />
+    <RealtimeCredentialForm provider="gemini" label="Gemini Live" status={data.realtimeCredentials.gemini} busy={busy} client={client} act={act} reload={reload} />
+    <RealtimeCredentialForm provider="zhipu" label="Zhipu GLM Realtime" status={data.realtimeCredentials.zhipu} busy={busy} client={client} act={act} reload={reload} />
     <ActionDialog
       open={confirmCredentialDelete}
       busy={busy}
@@ -776,10 +786,10 @@ function ModelsPanel(props: Parameters<typeof SettingsCategory>[0]) {
   </Category>;
 }
 
-function RealtimeCredentialForm({ provider, label, configured, busy, client, act, reload }: {
+function RealtimeCredentialForm({ provider, label, status, busy, client, act, reload }: {
   provider: "gemini" | "zhipu";
   label: string;
-  configured: boolean;
+  status: RealtimeCredentialView;
   busy: boolean;
   client: SettingsClient;
   act(operation: () => Promise<void>): Promise<void>;
@@ -787,11 +797,18 @@ function RealtimeCredentialForm({ provider, label, configured, busy, client, act
 }) {
   const [apiKey, setApiKey] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const summary = status.error
+    ? "Credential status unavailable"
+    : status.configured
+      ? status.hint
+        ? `Credential protected by Windows · ••••${status.hint}`
+        : "Credential protected by Windows"
+      : "Credential not configured";
   return <>
     <form className="settings-form" onSubmit={(event) => { event.preventDefault(); void act(async () => { await client.providers.configureRealtime({ provider, api_key: apiKey }); setApiKey(""); await reload(); }); }}>
-      <div className="settings-form-heading"><KeyRound size={17} /><div><strong>{label}</strong><span>{configured ? "Credential protected by Windows" : "Credential not configured"}</span></div></div>
-      <label><span>API key</span><input type="password" autoComplete="off" required value={apiKey} disabled={busy} placeholder={configured ? "Enter a new key to replace" : "API key"} onChange={(event) => setApiKey(event.target.value)} /></label>
-      <div className="settings-form-actions"><button className="primary-command" type="submit" disabled={busy || !apiKey.trim()}><KeyRound size={14} />Save credential</button>{configured ? <button className="danger-icon" type="button" aria-label={`Remove ${label} credential`} disabled={busy} onClick={() => setConfirmDelete(true)}><Trash2 size={15} /></button> : null}</div>
+      <div className="settings-form-heading"><KeyRound size={17} /><div><strong>{label}</strong><span className={status.error ? "settings-form-warning" : undefined}>{summary}</span></div></div>
+      <label><span>API key</span><input type="password" autoComplete="off" required value={apiKey} disabled={busy} placeholder={status.configured ? "Enter a new key to replace" : "API key"} onChange={(event) => setApiKey(event.target.value)} /></label>
+      <div className="settings-form-actions"><button className="primary-command" type="submit" disabled={busy || !apiKey.trim()}><KeyRound size={14} />Save credential</button>{status.configured || status.error ? <button className="danger-icon" type="button" aria-label={`Remove ${label} credential`} disabled={busy} onClick={() => setConfirmDelete(true)}><Trash2 size={15} /></button> : null}</div>
     </form>
     <ActionDialog open={confirmDelete} busy={busy} destructive title={`Remove ${label} credential`} description="The encrypted credential will be removed from this device. Saved session audits and game memories remain." confirmLabel="Remove" onCancel={() => setConfirmDelete(false)} onConfirm={async () => { await act(async () => { await client.providers.deleteRealtime(provider); await reload(); }); setConfirmDelete(false); }} />
   </>;

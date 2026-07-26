@@ -309,6 +309,7 @@ select {
 .settings-form-heading { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; color: #86c8eb; }
 .settings-form-heading div { display: grid; gap: 2px; }
 .settings-form-heading span { color: #87908a; font-size: 11px; }
+.settings-form-heading span.settings-form-warning { color: #e8a49d; }
 .settings-form label { min-width: 0; display: grid; gap: 5px; color: #aeb5b1; font-size: 11px; }
 .settings-form input { min-width: 0; height: 32px; box-sizing: border-box; border: 1px solid #414642; border-radius: 4px; outline: 0; background: #242725; color: #f0f3f1; padding: 0 9px; }
 .settings-form textarea { min-width: 0; resize: vertical; box-sizing: border-box; border: 1px solid #414642; border-radius: 4px; outline: 0; background: #242725; color: #f0f3f1; padding: 8px 9px; font: inherit; line-height: 1.45; }

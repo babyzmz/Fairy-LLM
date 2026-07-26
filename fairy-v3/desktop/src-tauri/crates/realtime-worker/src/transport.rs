@@ -119,7 +119,6 @@ impl ProviderSocket {
                         model: model.to_owned(),
                         system_instruction,
                         video_enabled,
-                        native_audio,
                     }),
                 )
             }

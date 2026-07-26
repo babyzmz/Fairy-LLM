@@ -8,6 +8,7 @@ from pydantic import Field, model_validator
 
 from fairy_core.contracts.common import ContractModel
 from fairy_core.realtime.models import (
+    RealtimeCaptionSpeaker,
     RealtimeMemoryMode,
     RealtimeProvider,
     RealtimeSessionStatus,
@@ -137,6 +138,31 @@ class GameMemoryDeleteResult(ContractModel):
     deleted: bool
 
 
+class RealtimeTranscriptAppendInput(ContractModel):
+    session_id: UUID
+    speaker: RealtimeCaptionSpeaker
+    text: str = Field(min_length=1, max_length=4_000)
+
+
+class RealtimeTranscriptListInput(ContractModel):
+    conversation_id: UUID
+    limit: int = Field(default=500, ge=1, le=2_000)
+
+
+class RealtimeTranscriptEntryModel(ContractModel):
+    id: UUID
+    session_id: UUID
+    conversation_id: UUID
+    sequence: int
+    speaker: RealtimeCaptionSpeaker
+    text: str
+    created_at: datetime
+
+
+class RealtimeTranscriptPageModel(ContractModel):
+    items: tuple[RealtimeTranscriptEntryModel, ...]
+
+
 __all__ = [
     "GameMemoryDeleteResult",
     "GameMemoryDigestModel",
@@ -144,6 +170,7 @@ __all__ = [
     "GameMemoryListInput",
     "GameMemoryPageModel",
     "GameMemorySaveInput",
+    "RealtimeCaptionSpeaker",
     "RealtimeProviderSelection",
     "RealtimeSessionIdInput",
     "RealtimeSessionListInput",
@@ -152,4 +179,8 @@ __all__ = [
     "RealtimeSessionReportInput",
     "RealtimeSessionStartInput",
     "RealtimeSessionStopInput",
+    "RealtimeTranscriptAppendInput",
+    "RealtimeTranscriptEntryModel",
+    "RealtimeTranscriptListInput",
+    "RealtimeTranscriptPageModel",
 ]

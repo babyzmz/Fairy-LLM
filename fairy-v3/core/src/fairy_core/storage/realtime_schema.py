@@ -19,7 +19,7 @@ from fairy_core.persistence.tenant import TENANT_ID_LENGTH
 from fairy_core.storage.types import UTCDateTime
 
 
-def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table]:
+def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table]:
     sessions = Table(
         "core_realtime_sessions",
         metadata,
@@ -90,6 +90,39 @@ def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table]:
             name="ck_core_game_memory_observations_duration",
         ),
     )
+    # Local-only, reviewable transcript of a voice session's stable public
+    # captions. Raw audio, frames, VAD, partial captions, and hidden reasoning
+    # are never stored here; see ADR 0018.
+    transcript = Table(
+        "core_realtime_transcript_entries",
+        metadata,
+        Column("tenant_id", String(TENANT_ID_LENGTH), primary_key=True),
+        Column("id", String(36), primary_key=True),
+        Column("session_id", String(36), nullable=False),
+        Column("conversation_id", String(36), nullable=False),
+        Column("sequence", BigInteger, nullable=False),
+        Column("speaker", String(16), nullable=False),
+        Column("text", String, nullable=False),
+        Column("created_at", UTCDateTime(), nullable=False),
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_core_realtime_transcript_entries"),
+        UniqueConstraint(
+            "tenant_id",
+            "session_id",
+            "sequence",
+            name="uq_core_realtime_transcript_sequence",
+        ),
+        CheckConstraint("sequence >= 1", name="ck_core_realtime_transcript_sequence"),
+        CheckConstraint(
+            "speaker IN ('user', 'assistant')",
+            name="ck_core_realtime_transcript_speaker",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "session_id"],
+            ["core_realtime_sessions.tenant_id", "core_realtime_sessions.id"],
+            name="fk_core_realtime_transcript_session",
+            ondelete="CASCADE",
+        ),
+    )
     Index(
         "ix_core_realtime_sessions_tenant_started",
         sessions.c.tenant_id,
@@ -100,7 +133,13 @@ def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table]:
         memories.c.tenant_id,
         memories.c.played_at,
     )
-    return sessions, memories
+    Index(
+        "ix_core_realtime_transcript_conversation",
+        transcript.c.tenant_id,
+        transcript.c.conversation_id,
+        transcript.c.created_at,
+    )
+    return sessions, memories, transcript
 
 
 __all__ = ["build_realtime_tables"]

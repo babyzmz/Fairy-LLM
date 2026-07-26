@@ -1,10 +1,62 @@
+use std::fmt;
 use std::io::{Read, Write};
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 use zeroize::Zeroizing;
 
 pub const MAX_CONTROL_FRAME_BYTES: usize = 256 * 1024;
+
+/// A credential carried over the worker's stdin control channel.
+///
+/// It serializes as a plain JSON string (the wire shape the provider handshake
+/// needs) but keeps its in-memory copy in [`Zeroizing`], so the plaintext key is
+/// wiped from the host and worker heaps as soon as the owning frame is dropped
+/// — the frame bytes themselves are already zeroized by [`write_frame`].
+pub struct SecretString(Zeroizing<String>);
+
+impl SecretString {
+    /// Borrow the plaintext for the brief window it must be used (e.g. building
+    /// the provider `Authorization` header or validating a start request).
+    pub fn expose(&self) -> &str {
+        self.0.as_str()
+    }
+
+    /// Consume into the owning [`Zeroizing`] handle without copying the plaintext.
+    pub fn into_zeroizing(self) -> Zeroizing<String> {
+        self.0
+    }
+}
+
+impl From<String> for SecretString {
+    fn from(value: String) -> Self {
+        Self(Zeroizing::new(value))
+    }
+}
+
+impl From<Zeroizing<String>> for SecretString {
+    fn from(value: Zeroizing<String>) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SecretString(***)")
+    }
+}
+
+impl Serialize for SecretString {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for SecretString {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::from)
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,7 +76,7 @@ pub enum HostCommand {
         source_id: Option<u64>,
         screen_enabled: bool,
         game_audio_enabled: bool,
-        credential: String,
+        credential: SecretString,
     },
     Stop {
         session_id: String,
@@ -114,9 +166,12 @@ pub fn read_frame<T: DeserializeOwned>(reader: &mut impl Read) -> Result<Option<
     if length == 0 || length > MAX_CONTROL_FRAME_BYTES {
         return Err(ProtocolError::FrameTooLarge);
     }
-    let mut payload = vec![0_u8; length];
-    reader.read_exact(&mut payload)?;
-    Ok(Some(serde_json::from_slice(&payload)?))
+    // Zeroize the inbound frame bytes on drop, symmetric with write_frame: a
+    // Start frame carries the plaintext credential, so the raw buffer must not
+    // linger in freed heap after serde copies it into the SecretString.
+    let mut payload = Zeroizing::new(vec![0_u8; length]);
+    reader.read_exact(payload.as_mut_slice())?;
+    Ok(Some(serde_json::from_slice(payload.as_slice())?))
 }
 
 pub fn write_frame<T: Serialize>(writer: &mut impl Write, value: &T) -> Result<(), ProtocolError> {

@@ -139,6 +139,8 @@ export const CORE_METHOD_TRANSPORT = {
   "realtime.sessions.report": "local_and_cloud",
   "realtime.sessions.start": "local_and_cloud",
   "realtime.sessions.stop": "local_and_cloud",
+  "realtime.transcript.append": "local_only",
+  "realtime.transcript.list": "local_only",
   "renderer_packs.health": "local_and_cloud",
   "renderer_packs.install": "local_and_cloud",
   "renderer_packs.list": "local_and_cloud",
@@ -205,4 +207,6 @@ export const LOCAL_ONLY_CORE_METHODS = [
   "obsidian.sources.items.read",
   "obsidian.sources.list",
   "obsidian.sync.start",
+  "realtime.transcript.append",
+  "realtime.transcript.list",
 ] as const;

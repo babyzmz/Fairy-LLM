@@ -362,14 +362,17 @@ fn run_session(
                 ProviderOutput::Audio(mut bytes) => {
                     audio_output_samples =
                         audio_output_samples.saturating_add((bytes.len() / 2) as u64);
-                    let mut samples = bytes
-                        .chunks_exact(2)
-                        .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
-                        .collect::<Vec<_>>();
+                    // In Fairy voice mode there is no local playback (Fairy speaks
+                    // from the transcript captions instead), so the provider audio
+                    // is discarded without the cost of decoding it.
                     if let Some(playback) = playback.as_ref() {
+                        let mut samples = bytes
+                            .chunks_exact(2)
+                            .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+                            .collect::<Vec<_>>();
                         playback.enqueue_pcm16(&samples, 24_000);
+                        samples.zeroize();
                     }
-                    samples.zeroize();
                     bytes.zeroize();
                     let _ = events.send(WorkerEvent::Presence {
                         session_id: session_id.clone(),

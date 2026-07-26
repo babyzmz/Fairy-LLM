@@ -835,6 +835,18 @@
       "transport": "local_and_cloud"
     },
     {
+      "name": "realtime.transcript.append",
+      "request_model": "RealtimeTranscriptAppendInput",
+      "response_model": "RealtimeTranscriptEntryModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "realtime.transcript.list",
+      "request_model": "RealtimeTranscriptListInput",
+      "response_model": "RealtimeTranscriptPageModel",
+      "transport": "local_only"
+    },
+    {
       "name": "renderer_packs.health",
       "request_model": "EmptyInput",
       "response_model": "RendererPackPageModel",

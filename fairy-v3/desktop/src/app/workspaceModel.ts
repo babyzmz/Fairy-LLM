@@ -169,6 +169,18 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
   const messages = messageItems.filter(
     (message) => developerMode || message.visibility === "user",
   );
+  const realtimeTranscriptQuery = useQuery({
+    queryKey: [...workspaceKey, "realtime-transcript", selectedChatConversation?.id],
+    queryFn: () =>
+      client.realtime.transcript.list({
+        conversation_id: requireId(selectedChatConversation?.id),
+        limit: 500,
+      }),
+    enabled: selectedChatConversation !== null,
+    retry: false,
+    staleTime: messageCacheStaleTime,
+  });
+  const realtimeTranscript = realtimeTranscriptQuery.data?.items ?? [];
   const projectMessagesQuery = useQuery({
     queryKey: [...workspaceKey, "project-messages", selectedConversation?.id],
     queryFn: () =>
@@ -929,6 +941,7 @@ export function useWorkspaceModel(client: WorkspaceClient): WorkspaceModel {
     ),
     presenceEvents: allEvents.filter((event) => event.visibility === "user"),
     messages,
+    realtimeTranscript,
     providers,
     providerHealth,
     selectedProfileId,

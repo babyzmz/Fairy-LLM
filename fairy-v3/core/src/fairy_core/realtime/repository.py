@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from uuid import UUID
 
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 
@@ -11,13 +11,19 @@ from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictEr
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.realtime.models import (
     GameMemoryDigest,
+    RealtimeCaptionSpeaker,
     RealtimeMemoryMode,
     RealtimeProvider,
     RealtimeSession,
     RealtimeSessionStatus,
+    RealtimeTranscriptEntry,
     RealtimeVoiceMode,
 )
-from fairy_core.storage.schema import game_memory_observations, realtime_sessions
+from fairy_core.storage.schema import (
+    game_memory_observations,
+    realtime_sessions,
+    realtime_transcript_entries,
+)
 
 
 class SqlAlchemyRealtimeRepository:
@@ -147,6 +153,70 @@ class SqlAlchemyRealtimeRepository:
         )
         return changed.rowcount == 1
 
+    def append_transcript(
+        self,
+        *,
+        session_id: UUID,
+        conversation_id: UUID,
+        speaker: RealtimeCaptionSpeaker,
+        text: str,
+    ) -> RealtimeTranscriptEntry:
+        last_error: IntegrityError | None = None
+        for _ in range(6):
+            sequence = self._next_transcript_sequence(session_id)
+            entry = RealtimeTranscriptEntry.create(
+                session_id=session_id,
+                conversation_id=conversation_id,
+                sequence=sequence,
+                speaker=speaker,
+                text=text,
+            )
+            try:
+                self._connection.execute(
+                    insert(realtime_transcript_entries).values(
+                        **_transcript_values(self._tenant_id, entry)
+                    )
+                )
+            except IntegrityError as error:
+                # A concurrent append took this per-session sequence; retry.
+                last_error = error
+                continue
+            return entry
+        raise IdempotencyConflictError(
+            "realtime transcript sequence contention"
+        ) from last_error
+
+    def list_transcript_by_conversation(
+        self, conversation_id: UUID, *, limit: int = 500
+    ) -> tuple[RealtimeTranscriptEntry, ...]:
+        if limit < 1 or limit > 2_000:
+            raise ValueError("transcript limit must be between 1 and 2000")
+        rows = self._connection.execute(
+            select(realtime_transcript_entries)
+            .where(
+                realtime_transcript_entries.c.tenant_id == self._tenant_id,
+                realtime_transcript_entries.c.conversation_id == str(conversation_id),
+            )
+            .order_by(
+                realtime_transcript_entries.c.created_at,
+                realtime_transcript_entries.c.sequence,
+                realtime_transcript_entries.c.id,
+            )
+            .limit(limit)
+        ).mappings()
+        return tuple(_transcript_from_row(row) for row in rows)
+
+    def _next_transcript_sequence(self, session_id: UUID) -> int:
+        current = self._connection.execute(
+            select(
+                func.coalesce(func.max(realtime_transcript_entries.c.sequence), 0)
+            ).where(
+                realtime_transcript_entries.c.tenant_id == self._tenant_id,
+                realtime_transcript_entries.c.session_id == str(session_id),
+            )
+        ).scalar_one()
+        return int(current) + 1
+
 
 def _session_values(tenant_id: str, session: RealtimeSession) -> dict[str, object]:
     return {
@@ -222,6 +292,31 @@ def _session_from_row(row: Mapping[str, object]) -> RealtimeSession:
         started_at=row["started_at"],  # type: ignore[arg-type]
         ended_at=row["ended_at"],  # type: ignore[arg-type]
         revision=int(row["revision"]),
+    )
+
+
+def _transcript_values(tenant_id: str, entry: RealtimeTranscriptEntry) -> dict[str, object]:
+    return {
+        "tenant_id": tenant_id,
+        "id": str(entry.id),
+        "session_id": str(entry.session_id),
+        "conversation_id": str(entry.conversation_id),
+        "sequence": entry.sequence,
+        "speaker": entry.speaker.value,
+        "text": entry.text,
+        "created_at": entry.created_at,
+    }
+
+
+def _transcript_from_row(row: Mapping[str, object]) -> RealtimeTranscriptEntry:
+    return RealtimeTranscriptEntry(
+        id=UUID(str(row["id"])),
+        session_id=UUID(str(row["session_id"])),
+        conversation_id=UUID(str(row["conversation_id"])),
+        sequence=int(row["sequence"]),
+        speaker=RealtimeCaptionSpeaker(str(row["speaker"])),
+        text=str(row["text"]),
+        created_at=row["created_at"],  # type: ignore[arg-type]
     )
 
 

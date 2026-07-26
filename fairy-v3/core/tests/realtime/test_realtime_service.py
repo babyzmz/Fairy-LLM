@@ -161,6 +161,65 @@ def test_voice_start_links_a_scratch_conversation(tmp_path) -> None:
         service.close()
 
 
+def test_voice_transcript_append_and_list(tmp_path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        started = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-1",
+                "provider": "auto",
+                "locale": "en-AU",
+                "microphone_consent": True,
+                "screen_consent": True,
+                "game_audio_consent": False,
+                "idempotency_key": "transcript-1",
+            },
+        )
+        conversation_id = started["conversation_id"]
+        assert conversation_id is not None
+
+        first = service.invoke(
+            "realtime.transcript.append",
+            {"session_id": started["id"], "speaker": "user", "text": "Where is the boss?"},
+        )
+        second = service.invoke(
+            "realtime.transcript.append",
+            {"session_id": started["id"], "speaker": "assistant", "text": "Behind the door."},
+        )
+        # Sequences are server-allocated and monotonic, linked to the conversation.
+        assert (first["sequence"], second["sequence"]) == (1, 2)
+        assert first["conversation_id"] == conversation_id
+
+        page = service.invoke(
+            "realtime.transcript.list", {"conversation_id": conversation_id}
+        )
+        assert [(e["speaker"], e["text"]) for e in page["items"]] == [
+            ("user", "Where is the boss?"),
+            ("assistant", "Behind the door."),
+        ]
+
+        # An unrelated conversation has no transcript.
+        empty = service.invoke(
+            "realtime.transcript.list",
+            {"conversation_id": "01900000-0000-7000-8000-0000000000ff"},
+        )
+        assert empty["items"] == []
+
+        # Appending against an unknown session is rejected, never silently dropped.
+        with pytest.raises(KeyError):
+            service.invoke(
+                "realtime.transcript.append",
+                {
+                    "session_id": "01900000-0000-7000-8000-0000000000aa",
+                    "speaker": "user",
+                    "text": "Nobody is listening.",
+                },
+            )
+    finally:
+        service.close()
+
+
 def test_starting_session_stop_is_cancelled_and_idempotent(tmp_path) -> None:
     service = build_local_service(tmp_path)
     try:

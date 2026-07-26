@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 const CREDENTIAL_DIRECTORY: &str = "credentials";
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -47,6 +48,17 @@ impl ProviderCredentialStore {
 
     pub fn configured_for(&self, provider: &str) -> Result<bool, CredentialError> {
         Ok(self.path_for(provider)?.is_file())
+    }
+
+    /// A non-secret preview of a stored credential: the last four characters,
+    /// e.g. to render `••••1a2b` in settings. Returns `None` when the provider
+    /// has no stored credential, and errors when a stored credential exists but
+    /// cannot be decrypted (a different Windows user/machine) — so callers can
+    /// distinguish "not configured" from "configured but unreadable".
+    pub fn hint_for(&self, provider: &str) -> Result<Option<String>, CredentialError> {
+        Ok(self
+            .load(provider)?
+            .map(|secret| credential_hint(&Zeroizing::new(secret))))
     }
 
     pub fn save_openrouter(&self, secret: &str) -> Result<(), CredentialError> {
@@ -144,6 +156,20 @@ impl Drop for CredentialReplacement {
             let _ = restore_snapshot(&self.path, self.previous.as_deref());
         }
     }
+}
+
+/// The last four characters of a credential, used as a non-secret UI hint. The
+/// preview is suppressed (empty string) for keys shorter than eight characters,
+/// so a short key is never echoed back whole; the last four of a real (long) key
+/// reveal nothing usable while still confirming which key is stored.
+fn credential_hint(secret: &str) -> String {
+    let trimmed = secret.trim();
+    if trimmed.chars().count() < 8 {
+        return String::new();
+    }
+    let mut tail: Vec<char> = trimmed.chars().rev().take(4).collect();
+    tail.reverse();
+    tail.into_iter().collect()
 }
 
 fn restore_snapshot(path: &Path, previous: Option<&[u8]>) -> Result<(), CredentialError> {
@@ -392,6 +418,31 @@ mod tests {
         assert_eq!(
             store.load_openrouter().expect("load committed").as_deref(),
             Some("sk-or-v1-valid-candidate")
+        );
+    }
+
+    #[test]
+    fn hint_previews_last_four_without_exposing_the_key() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let store = ProviderCredentialStore::new(directory.path());
+
+        assert_eq!(store.hint_for("zhipu").expect("missing hint"), None);
+
+        store
+            .save("zhipu", "  zhipu-secret-key-7f3a  ")
+            .expect("save Zhipu");
+        // The stored key is trimmed; the hint is its last four characters.
+        assert_eq!(
+            store.hint_for("zhipu").expect("hint").as_deref(),
+            Some("7f3a")
+        );
+
+        // A short key stays present (Some) but its preview is suppressed (empty)
+        // so a tiny credential is never echoed back whole.
+        store.save("gemini", "sk-42").expect("save short");
+        assert_eq!(
+            store.hint_for("gemini").expect("short hint").as_deref(),
+            Some("")
         );
     }
 

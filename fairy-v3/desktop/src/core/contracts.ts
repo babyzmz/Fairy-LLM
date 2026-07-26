@@ -25,6 +25,10 @@ import type {
   ObsidianVaultItemContent,
   ObsidianVaultItemPage,
   ObsidianVaultItemReadInput,
+  RealtimeTranscriptAppendInput,
+  RealtimeTranscriptEntry,
+  RealtimeTranscriptListInput,
+  RealtimeTranscriptPage,
 } from "./localContracts";
 
 export type {
@@ -65,6 +69,11 @@ export type {
   ObsidianVaultItemContent,
   ObsidianVaultItemPage,
   ObsidianVaultItemReadInput,
+  RealtimeCaptionSpeaker,
+  RealtimeTranscriptAppendInput,
+  RealtimeTranscriptEntry,
+  RealtimeTranscriptListInput,
+  RealtimeTranscriptPage,
 } from "./localContracts";
 
 type Schemas = components["schemas"];
@@ -601,6 +610,14 @@ export interface CoreMethodMap {
   "realtime.memories.delete": {
     params: { memory_id: string };
     result: GameMemoryDeleteResult;
+  };
+  "realtime.transcript.append": {
+    params: RealtimeTranscriptAppendInput;
+    result: RealtimeTranscriptEntry;
+  };
+  "realtime.transcript.list": {
+    params: RealtimeTranscriptListInput;
+    result: RealtimeTranscriptPage;
   };
   "workspaces.get": { params: WorkspaceIdInput; result: Workspace };
   "workspaces.files.list": {

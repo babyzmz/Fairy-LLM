@@ -286,6 +286,7 @@ function workspaceProps(
   return {
     conversationAvailable: true,
     messages: MESSAGES,
+    realtimeTranscript: [],
     events: [],
     streamedText: "",
     pendingUserMessage: null,

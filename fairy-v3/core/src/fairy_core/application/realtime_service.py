@@ -15,6 +15,8 @@ from fairy_core.contracts.realtime import (
     RealtimeSessionReportInput,
     RealtimeSessionStartInput,
     RealtimeSessionStopInput,
+    RealtimeTranscriptAppendInput,
+    RealtimeTranscriptListInput,
 )
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
 from fairy_core.realtime.application import RealtimeApplication
@@ -41,6 +43,8 @@ class RealtimeService:
                 "realtime.memories.save": self.save_memory,
                 "realtime.memories.list": self.list_memories,
                 "realtime.memories.delete": self.delete_memory,
+                "realtime.transcript.append": self.append_transcript,
+                "realtime.transcript.list": self.list_transcript,
             }
         )
 
@@ -86,6 +90,19 @@ class RealtimeService:
         return {
             "memory_id": validated.memory_id,
             "deleted": self._application.delete_memory(validated.memory_id),
+        }
+
+    def append_transcript(self, request: BaseModel):
+        return self._application.append_transcript(
+            cast(RealtimeTranscriptAppendInput, request)
+        )
+
+    def list_transcript(self, request: BaseModel):
+        validated = cast(RealtimeTranscriptListInput, request)
+        return {
+            "items": self._application.list_transcript(
+                validated.conversation_id, limit=validated.limit
+            )
         }
 
 

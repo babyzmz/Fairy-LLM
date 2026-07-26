@@ -3,7 +3,12 @@ from __future__ import annotations
 from typing import Protocol
 from uuid import UUID
 
-from fairy_core.realtime.models import GameMemoryDigest, RealtimeSession
+from fairy_core.realtime.models import (
+    GameMemoryDigest,
+    RealtimeCaptionSpeaker,
+    RealtimeSession,
+    RealtimeTranscriptEntry,
+)
 
 
 class RealtimeRepository(Protocol):
@@ -26,6 +31,19 @@ class RealtimeRepository(Protocol):
     def list_memories(self, *, limit: int = 50) -> tuple[GameMemoryDigest, ...]: ...
 
     def delete_memory(self, memory_id: UUID) -> bool: ...
+
+    def append_transcript(
+        self,
+        *,
+        session_id: UUID,
+        conversation_id: UUID,
+        speaker: RealtimeCaptionSpeaker,
+        text: str,
+    ) -> RealtimeTranscriptEntry: ...
+
+    def list_transcript_by_conversation(
+        self, conversation_id: UUID, *, limit: int = 500
+    ) -> tuple[RealtimeTranscriptEntry, ...]: ...
 
 
 __all__ = ["RealtimeRepository"]

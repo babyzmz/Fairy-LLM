@@ -109,6 +109,20 @@ export function createPresenceChannel(): PresenceChannel {
     typeof window !== "undefined" && "BroadcastChannel" in window
       ? new window.BroadcastChannel("fairy.presence.v2")
       : null;
+  let closed = false;
+
+  // Posting to a closed BroadcastChannel throws InvalidStateError. A submission
+  // can resolve after the presence bridge unmounts (or a StrictMode remount
+  // closes the first channel), so every post is routed through this guard: once
+  // the channel is closed the message is dropped instead of raising.
+  const safePost = (message: unknown) => {
+    if (broadcast === null || closed) return;
+    try {
+      broadcast.postMessage(message);
+    } catch {
+      // The channel was closed concurrently during teardown; drop the message.
+    }
+  };
 
   if (broadcast !== null) {
     broadcast.onmessage = (event: MessageEvent<unknown>) => {
@@ -127,7 +141,7 @@ export function createPresenceChannel(): PresenceChannel {
   const postRequest = (request: PresenceRequest) => {
     const parsed = requestSchema.safeParse(request);
     if (parsed.success) {
-      broadcast?.postMessage({ kind: "presence.request", request: parsed.data });
+      safePost({ kind: "presence.request", request: parsed.data });
     }
   };
 
@@ -135,7 +149,7 @@ export function createPresenceChannel(): PresenceChannel {
     publishProjection(projection) {
       const parsed = presenceProjectionStateSchema.safeParse(projection);
       if (parsed.success) {
-        broadcast?.postMessage({
+        safePost({
           kind: "presence.projection",
           projection: parsed.data,
         });
@@ -144,7 +158,7 @@ export function createPresenceChannel(): PresenceChannel {
     publishSubmission(update) {
       const parsed = submissionSchema.safeParse(update);
       if (parsed.success) {
-        broadcast?.postMessage({
+        safePost({
           kind: "presence.submission",
           update: parsed.data,
         });
@@ -173,6 +187,7 @@ export function createPresenceChannel(): PresenceChannel {
       return () => requestListeners.delete(listener);
     },
     close() {
+      closed = true;
       projectionListeners.clear();
       submissionListeners.clear();
       requestListeners.clear();

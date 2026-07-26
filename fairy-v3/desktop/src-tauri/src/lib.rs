@@ -386,6 +386,7 @@ pub fn companion_core_method_allowed(method: &str) -> bool {
             | "realtime.memories.save"
             | "realtime.memories.list"
             | "realtime.memories.delete"
+            | "realtime.transcript.append"
     )
 }
 
@@ -892,6 +893,9 @@ struct RealtimeProviderCredentialTarget {
 struct RealtimeProviderCredentialStatus {
     provider: String,
     configured: bool,
+    /// Last four characters of the stored key (`None` when unconfigured), so the
+    /// settings UI can preview which credential is saved without exposing it.
+    hint: Option<String>,
 }
 
 fn realtime_credential_provider(value: &str) -> Result<&str, String> {
@@ -913,12 +917,16 @@ async fn provider_realtime_status(
         return Err("Window is not authorized".to_owned());
     }
     let provider = realtime_credential_provider(&input.provider)?;
-    let configured = ProviderCredentialStore::new(&state.data_dir)
-        .configured_for(provider)
+    let stored = ProviderCredentialStore::new(&state.data_dir)
+        .hint_for(provider)
         .map_err(|error| error.to_string())?;
+    // `stored` is Some for a present, readable credential (the string is empty
+    // when the key is too short to preview); a missing key is None; an
+    // undecryptable key surfaced as an Err above.
     Ok(RealtimeProviderCredentialStatus {
         provider: provider.to_owned(),
-        configured,
+        configured: stored.is_some(),
+        hint: stored.filter(|hint| !hint.is_empty()),
     })
 }
 
@@ -931,12 +939,18 @@ async fn provider_realtime_configure(
     authorize_settings_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
     let provider = realtime_credential_provider(&input.provider)?;
     let _update_guard = begin_provider_update(&state)?;
-    ProviderCredentialStore::new(&state.data_dir)
+    let store = ProviderCredentialStore::new(&state.data_dir);
+    store
         .save(provider, &input.api_key)
         .map_err(|error| error.to_string())?;
+    let hint = store
+        .hint_for(provider)
+        .map_err(|error| error.to_string())?
+        .filter(|hint| !hint.is_empty());
     Ok(RealtimeProviderCredentialStatus {
         provider: provider.to_owned(),
         configured: true,
+        hint,
     })
 }
 
@@ -955,6 +969,7 @@ async fn provider_realtime_delete(
     Ok(RealtimeProviderCredentialStatus {
         provider: provider.to_owned(),
         configured: false,
+        hint: None,
     })
 }
 
@@ -5160,6 +5175,7 @@ mod companion_window_scope_tests {
             "realtime.memories.save",
             "realtime.memories.list",
             "realtime.memories.delete",
+            "realtime.transcript.append",
         ] {
             assert!(companion_core_method_allowed(allowed), "{allowed}");
         }

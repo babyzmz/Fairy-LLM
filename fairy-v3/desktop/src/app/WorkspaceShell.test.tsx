@@ -861,6 +861,7 @@ function workspaceModel(): WorkspaceModel {
     chatEvents: [],
     presenceEvents: [],
     messages: [],
+    realtimeTranscript: [],
     providers: [],
     providerHealth: [],
     selectedProfileId: null,

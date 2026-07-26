@@ -10,6 +10,7 @@ import type {
   ModelSelectionPreference,
   ProviderHealth,
   ProviderProfile,
+  RealtimeTranscriptEntry,
   SlashCommandMetadata,
   TurnTrace,
 } from "../core/client";
@@ -25,6 +26,7 @@ export interface ChatWorkspaceProps {
   conversationAvailable: boolean;
   contentState?: "idle" | "loading" | "ready" | "error";
   messages: Message[];
+  realtimeTranscript: RealtimeTranscriptEntry[];
   events: EventEnvelope[];
   streamedText: string;
   pendingUserMessage: OptimisticUserMessage | null;
@@ -187,6 +189,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       ) : props.conversationAvailable ? (
         <MessageList
           messages={props.messages}
+          realtimeTranscript={props.realtimeTranscript}
           events={props.events}
           streamedText={props.streamedText}
           turn={props.turn}

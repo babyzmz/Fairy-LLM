@@ -226,7 +226,6 @@ mod safety_tests {
             model: "glm-test".to_owned(),
             system_instruction: "test".to_owned(),
             video_enabled: true,
-            native_audio: true,
         }
         .setup();
 
@@ -239,7 +238,6 @@ pub struct GlmProtocol {
     pub model: String,
     pub system_instruction: String,
     pub video_enabled: bool,
-    pub native_audio: bool,
 }
 
 impl RealtimeProtocol for GlmProtocol {
@@ -248,11 +246,12 @@ impl RealtimeProtocol for GlmProtocol {
             "type": "session.update",
             "session": {
                 "model": self.model,
-                "modalities": if self.native_audio {
-                    json!(["audio", "text"])
-                } else {
-                    json!(["text"])
-                },
+                // glm-realtime is voice-first: it only produces content (and a
+                // transcript) in audio mode; a text-only session returns empty
+                // text. Always request audio+text so both native voice (plays the
+                // provider audio) and Fairy voice (worker suppresses playback and
+                // speaks locally from the transcript captions) get real output.
+                "modalities": json!(["audio", "text"]),
                 "instructions": self.system_instruction,
                 "voice": "tongtong",
                 "input_audio_format": "pcm16",
@@ -328,31 +327,38 @@ impl RealtimeProtocol for GlmProtocol {
             "session.updated" => Some(ProviderOutput::Ready),
             "input_audio_buffer.speech_started" => Some(ProviderOutput::SpeechStarted),
             "input_audio_buffer.speech_stopped" => Some(ProviderOutput::SpeechStopped),
-            "response.audio.delta" => Some(ProviderOutput::Audio(
-                BASE64
-                    .decode(required_string(event, "delta")?)
-                    .map_err(|_| ProviderProtocolError::InvalidBase64)?,
-            )),
+            "response.audio.delta" => match optional_string(event, "delta") {
+                Some(delta) => Some(ProviderOutput::Audio(
+                    BASE64
+                        .decode(delta)
+                        .map_err(|_| ProviderProtocolError::InvalidBase64)?,
+                )),
+                None => None,
+            },
             "response.text.delta" | "response.audio_transcript.delta" => {
-                Some(ProviderOutput::PublicCaption {
-                    text: bounded_public_text(&required_string(event, "delta")?),
+                caption_text(event, "delta").map(|text| ProviderOutput::PublicCaption {
+                    text,
                     stable: false,
                     speaker: CaptionSpeaker::Assistant,
                 })
             }
-            "response.text.done" => Some(ProviderOutput::PublicCaption {
-                text: bounded_public_text(&required_string(event, "text")?),
-                stable: true,
-                speaker: CaptionSpeaker::Assistant,
-            }),
-            "response.audio_transcript.done" => Some(ProviderOutput::PublicCaption {
-                text: bounded_public_text(&required_string(event, "transcript")?),
-                stable: true,
-                speaker: CaptionSpeaker::Assistant,
-            }),
+            "response.text.done" => {
+                caption_text(event, "text").map(|text| ProviderOutput::PublicCaption {
+                    text,
+                    stable: true,
+                    speaker: CaptionSpeaker::Assistant,
+                })
+            }
+            "response.audio_transcript.done" => {
+                caption_text(event, "transcript").map(|text| ProviderOutput::PublicCaption {
+                    text,
+                    stable: true,
+                    speaker: CaptionSpeaker::Assistant,
+                })
+            }
             "conversation.item.input_audio_transcription.completed" => {
-                Some(ProviderOutput::PublicCaption {
-                    text: bounded_public_text(&required_string(event, "transcript")?),
+                caption_text(event, "transcript").map(|text| ProviderOutput::PublicCaption {
+                    text,
                     stable: true,
                     speaker: CaptionSpeaker::User,
                 })
@@ -389,6 +395,23 @@ fn required_string(value: &Value, field: &str) -> Result<String, ProviderProtoco
         .filter(|text| !text.is_empty() && text.len() <= 64 * 1024)
         .map(str::to_owned)
         .ok_or(ProviderProtocolError::InvalidEvent)
+}
+
+/// A bounded string field that is allowed to be absent or empty. Providers send
+/// terminal frames such as `response.text.done` with an empty `text` (e.g. an
+/// audio-only turn); those must be tolerated as "no value", never treated as a
+/// protocol violation that would tear down the live session.
+fn optional_string<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty() && text.len() <= 64 * 1024)
+}
+
+/// Extract a caption/transcript field, yielding a bounded caption only when the
+/// provider actually supplied non-empty text.
+fn caption_text(value: &Value, field: &str) -> Option<String> {
+    optional_string(value, field).map(bounded_public_text)
 }
 
 fn bounded_public_text(value: &str) -> String {
@@ -440,9 +463,15 @@ mod tests {
             model: "glm-realtime-flash".to_owned(),
             system_instruction: "Be concise.".to_owned(),
             video_enabled: true,
-            native_audio: true,
         };
         let setup = protocol.setup();
+        // glm-realtime is voice-first: audio+text is always requested so a
+        // transcript is produced even for Fairy voice mode (which speaks the
+        // transcript locally). A text-only session returns empty output.
+        assert_eq!(
+            setup.pointer("/session/modalities"),
+            Some(&json!(["audio", "text"]))
+        );
         assert_eq!(
             setup.pointer("/session/turn_detection/type"),
             Some(&json!("server_vad"))
@@ -479,7 +508,6 @@ mod tests {
             model: "glm-realtime-air".to_owned(),
             system_instruction: String::new(),
             video_enabled: false,
-            native_audio: false,
         };
         assert_eq!(
             protocol
@@ -499,7 +527,6 @@ mod tests {
             model: "glm-realtime-flash".to_owned(),
             system_instruction: String::new(),
             video_enabled: false,
-            native_audio: true,
         };
         assert_eq!(
             protocol
@@ -527,6 +554,37 @@ mod tests {
                 speaker: CaptionSpeaker::User,
             }]
         );
+    }
+
+    #[test]
+    fn glm_tolerates_empty_terminal_frames_without_failing_the_session() {
+        // Regression: the live glm-realtime-flash sends `response.text.done` with
+        // an empty `text` (a voice-first model completing a text-only turn). This
+        // must yield no caption, never a protocol error that tears down the call.
+        let protocol = GlmProtocol {
+            model: "glm-realtime-flash".to_owned(),
+            system_instruction: String::new(),
+            video_enabled: false,
+        };
+        for event in [
+            json!({"type": "response.text.done", "text": ""}),
+            json!({"type": "response.text.done"}),
+            json!({"type": "response.text.delta", "delta": ""}),
+            json!({"type": "response.audio_transcript.done", "transcript": ""}),
+            json!({"type": "response.audio.delta", "delta": ""}),
+            json!({"type": "response.content_part.done", "part": {"type": "text"}}),
+            json!({"type": "response.output_item.done", "item": {"content": [{}]}}),
+        ] {
+            assert_eq!(
+                protocol
+                    .parse(&event)
+                    .expect("empty terminal frame is tolerated"),
+                Vec::new(),
+                "unexpected output for {event}"
+            );
+        }
+        // A genuinely malformed frame (no type) is still rejected.
+        assert!(protocol.parse(&json!({"no_type": true})).is_err());
     }
 
     #[test]

@@ -121,7 +121,9 @@ conversations = Table(
     ),
 )
 
-realtime_sessions, game_memory_observations = build_realtime_tables(state_metadata)
+realtime_sessions, game_memory_observations, realtime_transcript_entries = build_realtime_tables(
+    state_metadata
+)
 
 build_history_indexes(projects=projects, conversations=conversations)
 

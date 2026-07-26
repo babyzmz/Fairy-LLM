@@ -1002,6 +1002,8 @@ def test_core_method_catalog_is_the_single_public_method_authority() -> None:
         "realtime.sessions.report",
         "realtime.sessions.start",
         "realtime.sessions.stop",
+        "realtime.transcript.append",
+        "realtime.transcript.list",
         "renderer_packs.health",
         "renderer_packs.install",
         "renderer_packs.list",

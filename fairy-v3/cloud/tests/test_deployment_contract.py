@@ -21,7 +21,8 @@ def test_alembic_has_one_linear_cloud_schema_head() -> None:
     config = Config(CLOUD_ROOT / "alembic.ini")
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == ["20260723_0042"]
+    assert scripts.get_heads() == ["20260724_0043"]
+    assert scripts.get_revision("20260724_0043").down_revision == "20260723_0042"
     assert scripts.get_revision("20260723_0042").down_revision == "20260723_0041"
     assert scripts.get_revision("20260723_0041").down_revision == "20260722_0040"
     assert scripts.get_revision("20260722_0040").down_revision == "20260721_0039"
@@ -259,6 +260,32 @@ def test_realtime_companion_migration_is_private_tenant_scoped_and_reversible() 
     downgrade_ddl = " ".join(output.getvalue().upper().split())
     assert "DROP TABLE CORE_GAME_MEMORY_OBSERVATIONS" in downgrade_ddl
     assert "DROP TABLE CORE_REALTIME_SESSIONS" in downgrade_ddl
+
+
+def test_realtime_transcript_migration_is_private_tenant_scoped_and_reversible() -> None:
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+
+    command.upgrade(config, "20260723_0042:20260724_0043", sql=True)
+    upgrade_ddl = " ".join(output.getvalue().upper().split())
+    table = "CORE_REALTIME_TRANSCRIPT_ENTRIES"
+    assert f"CREATE TABLE {table}" in upgrade_ddl
+    assert f'ALTER TABLE "{table}" ENABLE ROW LEVEL SECURITY' in upgrade_ddl
+    assert f'ALTER TABLE "{table}" FORCE ROW LEVEL SECURITY' in upgrade_ddl
+    assert f'CREATE POLICY "TENANT_ISOLATION_{table}"' in upgrade_ddl
+    assert "CK_CORE_REALTIME_TRANSCRIPT_SPEAKER" in upgrade_ddl
+    assert "UQ_CORE_REALTIME_TRANSCRIPT_SEQUENCE" in upgrade_ddl
+    assert "IX_CORE_REALTIME_TRANSCRIPT_CONVERSATION" in upgrade_ddl
+    # Deleting a session cascades its transcript; nothing leaks to the cloud audit.
+    assert "ON DELETE CASCADE" in upgrade_ddl
+
+    output = io.StringIO()
+    config = Config(CLOUD_ROOT / "alembic.ini", output_buffer=output)
+    command.downgrade(config, "20260724_0043:20260723_0042", sql=True)
+    downgrade_ddl = " ".join(output.getvalue().upper().split())
+    assert f'DROP POLICY IF EXISTS "TENANT_ISOLATION_{table}"' in downgrade_ddl
+    assert "DROP INDEX IX_CORE_REALTIME_TRANSCRIPT_CONVERSATION" in downgrade_ddl
+    assert f"DROP TABLE {table}" in downgrade_ddl
 
 
 def test_event_outbox_migration_executes_asyncpg_ddl_one_command_at_a_time() -> None:

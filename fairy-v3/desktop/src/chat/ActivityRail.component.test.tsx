@@ -64,6 +64,7 @@ describe("ActivityRail", () => {
           message(3, "user", "Second request", SECOND_TURN_ID),
           message(4, "assistant", "Second answer", SECOND_TURN_ID),
         ]}
+        realtimeTranscript={[]}
         streamedText=""
         turn={null}
         turnTraces={{ [TURN_ID]: firstTrace, [SECOND_TURN_ID]: secondTrace }}

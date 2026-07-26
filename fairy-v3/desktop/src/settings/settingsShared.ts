@@ -21,12 +21,20 @@ import type {
 } from "./client";
 import type { KnowledgePrivacyData } from "./KnowledgePrivacyPanel";
 
+export interface RealtimeCredentialView {
+  configured: boolean;
+  /** Last four characters of the stored key, when configured and readable. */
+  hint: string | null;
+  /** The status lookup failed (e.g. a stored key that cannot be decrypted) — distinct from "not configured". */
+  error: boolean;
+}
+
 export interface SettingsData extends KnowledgePrivacyData {
   preferences: DesktopPreferences;
   memorySettings: MemorySettings;
   openRouterConfigured: boolean;
   openRouterAccountId: string | null;
-  realtimeCredentials: Record<"gemini" | "zhipu", boolean>;
+  realtimeCredentials: Record<"gemini" | "zhipu", RealtimeCredentialView>;
   modelCatalog: ModelCatalogPage;
   modelSelection: ModelSelectionPreference;
   permissions: ExecutionSettings;

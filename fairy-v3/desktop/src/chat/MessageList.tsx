@@ -11,15 +11,23 @@ import {
 import { Fragment, useEffect, useRef, useState } from "react";
 import { m } from "motion/react";
 
-import type { AssistantTurn, EventEnvelope, Message, TurnTrace } from "../core/client";
+import type {
+  AssistantTurn,
+  EventEnvelope,
+  Message,
+  RealtimeTranscriptEntry,
+  TurnTrace,
+} from "../core/client";
 import { VoiceSpeakControl } from "../voice/VoiceController";
 import { ActivityRail } from "./ActivityRail";
+import { RealtimeTranscript } from "./RealtimeTranscript";
 import type { OptimisticUserMessage } from "./useAssistantTurn";
 import type { TurnTraceQueryState } from "./useTurnTraces";
 import { MessageContent } from "./MessageContent";
 
 interface MessageListProps {
   messages: Message[];
+  realtimeTranscript: RealtimeTranscriptEntry[];
   streamedText: string;
   turn: AssistantTurn | null;
   turnTraces: Record<string, TurnTrace>;
@@ -36,6 +44,7 @@ interface MessageListProps {
 
 export function MessageList({
   messages,
+  realtimeTranscript,
   streamedText,
   turn,
   turnTraces,
@@ -66,7 +75,12 @@ export function MessageList({
     scrollToLatest(listRef.current, endRef.current, false);
   }, [messages, pendingUserMessage, streamedText]);
 
-  if (visibleMessages.length === 0 && !visibleStreamedText && pendingUserMessage === null) {
+  if (
+    visibleMessages.length === 0 &&
+    realtimeTranscript.length === 0 &&
+    !visibleStreamedText &&
+    pendingUserMessage === null
+  ) {
     return (
       <div className="message-list message-list-empty" aria-label="Conversation messages">
         <Bot size={24} />
@@ -93,6 +107,7 @@ export function MessageList({
         setShowJump(!following);
       }}
     >
+      <RealtimeTranscript entries={realtimeTranscript} />
       {visibleMessages.map((message) => (
         <Fragment key={message.id}>
           <MessageRow

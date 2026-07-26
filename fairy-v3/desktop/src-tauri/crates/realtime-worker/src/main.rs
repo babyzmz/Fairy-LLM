@@ -3,10 +3,9 @@ use std::io::{stdin, stdout};
 use std::thread;
 
 use fairy_realtime_worker::{
-    read_frame, write_frame, HostCommand, RealtimeRuntime, RuntimeCommand, RuntimeLaunch,
-    WorkerEvent,
+    read_frame, validate_start, write_frame, HostCommand, RealtimeRuntime, RuntimeCommand,
+    RuntimeLaunch, WorkerEvent,
 };
-use zeroize::Zeroizing;
 
 fn main() {
     let mut input = stdin().lock();
@@ -40,10 +39,31 @@ fn main() {
                 game_audio_enabled,
                 credential,
             } if runtime.is_none() => {
+                if validate_start(
+                    &session_id,
+                    &voice_mode,
+                    source_id,
+                    screen_enabled,
+                    game_audio_enabled,
+                    credential.expose(),
+                )
+                .is_err()
+                {
+                    let _ = write_frame(
+                        &mut stdout().lock(),
+                        &WorkerEvent::SessionState {
+                            session_id,
+                            status: "failed",
+                            provider: Some(provider),
+                            error_code: Some("REALTIME_INVALID_START"),
+                        },
+                    );
+                    continue;
+                }
                 let mut started = RealtimeRuntime::spawn(RuntimeLaunch {
                     session_id: session_id.clone(),
                     provider,
-                    credential: Zeroizing::new(credential),
+                    credential: credential.into_zeroizing(),
                     system_instruction: companion_instruction(),
                     source_id,
                     screen_enabled,

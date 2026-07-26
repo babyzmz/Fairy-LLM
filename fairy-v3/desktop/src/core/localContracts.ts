@@ -213,6 +213,33 @@ export interface KnowledgeSyncRun {
   completed_at: string | null;
 }
 
+export type RealtimeCaptionSpeaker = "user" | "assistant";
+
+export interface RealtimeTranscriptAppendInput {
+  session_id: string;
+  speaker: RealtimeCaptionSpeaker;
+  text: string;
+}
+
+export interface RealtimeTranscriptListInput {
+  conversation_id: string;
+  limit?: number;
+}
+
+export interface RealtimeTranscriptEntry {
+  id: string;
+  session_id: string;
+  conversation_id: string;
+  sequence: number;
+  speaker: RealtimeCaptionSpeaker;
+  text: string;
+  created_at: string;
+}
+
+export interface RealtimeTranscriptPage {
+  items: RealtimeTranscriptEntry[];
+}
+
 export type BrowserProfileKind = "persistent" | "ephemeral";
 export type BrowserSessionStatus =
   | "starting"

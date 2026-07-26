@@ -90,6 +90,7 @@ export function RealtimeCompanion({
   const [presence, setPresence] = useState<RealtimePresenceState>("idle");
   const [captions, setCaptions] = useState<string[]>([]);
   const [draftCaption, setDraftCaption] = useState("");
+  const draftCaptionRef = useRef("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [voiceWarning, setVoiceWarning] = useState<string | null>(null);
@@ -167,10 +168,13 @@ export function RealtimeCompanion({
         nextPreferences.realtime_provider,
         navigator.language || "zh-CN",
       );
+      // An unreadable stored key (e.g. a DPAPI blob from another machine) must
+      // not blank the whole panel: treat a failed status lookup as "not ready"
+      // so the Configure-in-Settings guidance shows instead of a raw error.
       const credential = await hostInvoke<RealtimeProviderCredentialStatus>(
         "provider_realtime_status",
         { input: { provider: credentialProvider } },
-      );
+      ).catch(() => ({ provider: credentialProvider, configured: false }));
       const localDeviceId = deviceId();
       for (const stale of recentSessions.items) {
         if (
@@ -282,13 +286,22 @@ export function RealtimeCompanion({
       } else if (payload.type === "public_caption") {
         if (payload.speaker === "user") lastUserActivity.current = Date.now();
         if (payload.stable) {
-          setDraftCaption((draft) => {
-            const completed = mergeCaptionDelta(draft, payload.text);
-            if (completed.trim()) setCaptions((items) => [...items.slice(-7), completed]);
-            return "";
-          });
+          const completed = mergeCaptionDelta(draftCaptionRef.current, payload.text);
+          draftCaptionRef.current = "";
+          setDraftCaption("");
+          const finished = completed.trim();
+          if (finished) {
+            setCaptions((items) => [...items.slice(-7), completed]);
+            // Persist the finished caption so the linked conversation stays
+            // reviewable. Best-effort: a failed write never interrupts the call.
+            void client.transcript
+              .append({ session_id: payload.session_id, speaker: payload.speaker, text: finished })
+              .catch(() => undefined);
+          }
         } else {
-          setDraftCaption((draft) => mergeCaptionDelta(draft, payload.text));
+          const merged = mergeCaptionDelta(draftCaptionRef.current, payload.text);
+          draftCaptionRef.current = merged;
+          setDraftCaption(merged);
         }
         if (
           payload.stable && payload.speaker === "assistant"
@@ -375,6 +388,7 @@ export function RealtimeCompanion({
     stopFairyVoice();
     setCaptions([]);
     setDraftCaption("");
+    draftCaptionRef.current = "";
     usage.current = { ...EMPTY_USAGE };
     setLiveUsage({ ...EMPTY_USAGE });
     lastUserActivity.current = Date.now();
@@ -525,6 +539,7 @@ export function RealtimeCompanion({
       setOpen(false);
       setCaptions([]);
       setDraftCaption("");
+      draftCaptionRef.current = "";
     }
   };
   return (
@@ -532,7 +547,7 @@ export function RealtimeCompanion({
       {open ? <div className={`realtime-backdrop${windowMode ? " is-window" : ""}`} role="presentation">
         <section className="realtime-panel" role="dialog" aria-modal={!windowMode} aria-label="Game companion">
           <header><div><span>Realtime</span><h2>Game companion</h2></div><button type="button" aria-label="Close" onClick={close}><X size={17} /></button></header>
-          <div className="realtime-privacy"><ShieldCheck size={16} /><span>Audio, frames and captions stay in transient worker memory. Only a session audit and a summary you confirm can be saved.</span></div>
+          <div className="realtime-privacy"><ShieldCheck size={16} /><span>Audio and video frames stay in transient worker memory and are never saved. Spoken captions are kept on this device in the linked conversation so you can review the chat.</span></div>
           {!active ? <div className="realtime-config">
             <label><span><Monitor size={15} /> Game window</span><select value={sourceId} onChange={(event) => setSourceId(event.target.value)} disabled={busy}>{surfaces.map((surface) => <option key={surface.source_id} value={surface.source_id}>{surface.label} · {surface.width}×{surface.height}</option>)}</select></label>
             <div className="realtime-policy"><span>Provider</span><strong>{providerLabel(preferences?.realtime_provider)}</strong><span>Voice</span><strong>{preferences?.realtime_voice_mode === "fairy" ? "Fairy local voice" : "Provider voice"}</strong></div>

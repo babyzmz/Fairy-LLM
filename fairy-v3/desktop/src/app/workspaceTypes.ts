@@ -32,6 +32,7 @@ import type {
   Project,
   ProviderHealth,
   ProviderProfile,
+  RealtimeTranscriptEntry,
   RuntimeHealth,
   SettingsCategoryId,
   Task,
@@ -114,6 +115,7 @@ export interface WorkspaceClient extends AssistantTurnClient {
     "selectVault" | "health" | "createSource" | "listSources" | "listItems" | "readItem" | "sync"
   >;
   voice: Pick<CoreClient["voice"], "transcribe" | "synthesize">;
+  realtime: { transcript: Pick<CoreClient["realtime"]["transcript"], "list"> };
   systemActions: Pick<CoreClient["systemActions"], "execute">;
   events: Pick<CoreClient["events"], "sourceId" | "state" | "list" | "subscribe">;
 }
@@ -146,6 +148,7 @@ export interface WorkspaceModel {
   chatEvents: EventEnvelope[];
   presenceEvents: EventEnvelope[];
   messages: Message[];
+  realtimeTranscript: RealtimeTranscriptEntry[];
   providers: ProviderProfile[];
   providerHealth: ProviderHealth[];
   selectedProfileId: string | null;

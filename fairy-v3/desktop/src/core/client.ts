@@ -66,6 +66,8 @@ import type {
   RealtimeSessionReportInput,
   RealtimeSessionStartInput,
   RealtimeSessionStopInput,
+  RealtimeTranscriptAppendInput,
+  RealtimeTranscriptListInput,
   SystemActionRequest,
   SkillInstallInput,
   SkillCreateInput,
@@ -133,6 +135,8 @@ export interface RealtimeProviderCredentialInput {
 export interface RealtimeProviderCredentialStatus {
   provider: RealtimeCredentialProvider;
   configured: boolean;
+  /** Last four characters of the stored key, for a masked preview. */
+  hint?: string | null;
 }
 
 export type RealtimeWorkerProvider = "gemini_live" | "glm_realtime_flash" | "glm_realtime_air";
@@ -626,6 +630,12 @@ export class CoreClient {
       list: (limit = 50) => this.transport.call("realtime.memories.list", { limit }),
       delete: (memoryId: string) =>
         this.transport.call("realtime.memories.delete", { memory_id: memoryId }),
+    },
+    transcript: {
+      append: (input: RealtimeTranscriptAppendInput) =>
+        this.transport.call("realtime.transcript.append", input),
+      list: (input: RealtimeTranscriptListInput) =>
+        this.transport.call("realtime.transcript.list", input),
     },
     worker: {
       status: () => {

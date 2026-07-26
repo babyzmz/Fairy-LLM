@@ -83,6 +83,7 @@ export function WorkspaceShell({ model }: WorkspaceShellProps) {
               conversationAvailable={model.selectedChatConversation !== null}
               contentState={model.conversationContentState}
               messages={model.messages}
+              realtimeTranscript={model.realtimeTranscript}
               events={model.chatEvents}
               streamedText={model.chatStreamedText}
               pendingUserMessage={model.chatPendingUserMessage}

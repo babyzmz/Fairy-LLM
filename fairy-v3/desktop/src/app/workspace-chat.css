@@ -262,6 +262,71 @@
   font-size: 11px;
 }
 
+.realtime-transcript {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #3b6f69;
+  border-radius: 6px;
+  background: #1a201f;
+}
+
+.realtime-transcript-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: #79dcd2;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.realtime-transcript-entry {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 9px;
+  padding: 7px 0;
+}
+
+.realtime-transcript-entry + .realtime-transcript-entry {
+  border-top: 1px solid #262b29;
+}
+
+.realtime-transcript-avatar {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #444946;
+  border-radius: 3px;
+  color: #9ca49f;
+}
+
+.realtime-transcript-assistant .realtime-transcript-avatar {
+  border-color: #3b6f69;
+  color: #79dcd2;
+}
+
+.realtime-transcript-body {
+  min-width: 0;
+}
+
+.realtime-transcript-body strong {
+  display: block;
+  margin-bottom: 2px;
+  color: #cbd0cd;
+  font-size: 11px;
+}
+
+.realtime-transcript-body p {
+  margin: 0;
+  color: #d7dcd9;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .chat-retry-bar {
   flex: 0 0 auto;
   justify-content: space-between;

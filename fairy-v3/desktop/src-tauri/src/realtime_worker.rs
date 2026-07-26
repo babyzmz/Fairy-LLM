@@ -7,7 +7,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fairy_realtime_worker::{read_frame, write_frame, HostCommand, ProviderKind};
+use fairy_realtime_worker::{read_frame, write_frame, HostCommand, ProviderKind, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
@@ -175,7 +175,7 @@ impl RealtimeWorkerManager {
             source_id: input.source_id,
             screen_enabled: input.screen_enabled,
             game_audio_enabled: input.game_audio_enabled,
-            credential: credential.to_string(),
+            credential: SecretString::from(credential),
         };
         if send_command(&process.input, &command).is_err() {
             let _ = process.child.kill();
@@ -258,10 +258,7 @@ impl RealtimeWorkerManager {
         )
     }
 
-    pub fn set_input(
-        &self,
-        input: RealtimeWorkerSetInputInput,
-    ) -> Result<(), RealtimeWorkerError> {
+    pub fn set_input(&self, input: RealtimeWorkerSetInputInput) -> Result<(), RealtimeWorkerError> {
         let guard = self
             .process
             .lock()

@@ -28,6 +28,14 @@ class RealtimeMemoryMode(StrEnum):
     NONE = "none"
 
 
+class RealtimeCaptionSpeaker(StrEnum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+_MAX_TRANSCRIPT_TEXT = 4_000
+
+
 class RealtimeSessionStatus(StrEnum):
     STARTING = "starting"
     ACTIVE = "active"
@@ -300,11 +308,52 @@ class GameMemoryDigest:
         return self if self.accepted else replace(self, accepted=True)
 
 
+@dataclass(frozen=True, slots=True)
+class RealtimeTranscriptEntry:
+    id: UUID
+    session_id: UUID
+    conversation_id: UUID
+    sequence: int
+    speaker: RealtimeCaptionSpeaker
+    text: str
+    created_at: datetime
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        session_id: UUID,
+        conversation_id: UUID,
+        sequence: int,
+        speaker: RealtimeCaptionSpeaker,
+        text: str,
+        now: datetime | None = None,
+    ) -> RealtimeTranscriptEntry:
+        if isinstance(sequence, bool) or sequence < 1:
+            raise ValueError("transcript sequence must be positive")
+        normalized = " ".join(text.split())
+        if not normalized or len(normalized) > _MAX_TRANSCRIPT_TEXT:
+            raise ValueError(
+                f"transcript text must contain 1 to {_MAX_TRANSCRIPT_TEXT} characters"
+            )
+        return cls(
+            id=new_id(),
+            session_id=session_id,
+            conversation_id=conversation_id,
+            sequence=sequence,
+            speaker=speaker,
+            text=normalized,
+            created_at=(now or _now()).astimezone(UTC),
+        )
+
+
 __all__ = [
     "GameMemoryDigest",
+    "RealtimeCaptionSpeaker",
     "RealtimeMemoryMode",
     "RealtimeProvider",
     "RealtimeSession",
     "RealtimeSessionStatus",
+    "RealtimeTranscriptEntry",
     "RealtimeVoiceMode",
 ]

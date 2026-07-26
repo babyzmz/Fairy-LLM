@@ -1138,6 +1138,11 @@ function createClient(
         throw new Error("not used");
       },
     },
+    realtime: {
+      transcript: {
+        list: async () => ({ items: [] }),
+      },
+    },
     systemActions: {
       execute: async () => ({}) as never,
     },

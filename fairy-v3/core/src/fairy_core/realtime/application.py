@@ -5,6 +5,7 @@ from fairy_core.contracts.realtime import (
     RealtimeProviderSelection,
     RealtimeSessionReportInput,
     RealtimeSessionStartInput,
+    RealtimeTranscriptAppendInput,
 )
 from fairy_core.domain.errors import InvalidTransitionError, VersionConflictError
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
@@ -14,6 +15,7 @@ from fairy_core.realtime.models import (
     RealtimeProvider,
     RealtimeSession,
     RealtimeSessionStatus,
+    RealtimeTranscriptEntry,
 )
 
 _MODEL_BY_PROVIDER = {
@@ -139,6 +141,32 @@ class RealtimeApplication:
     def list_memories(self, *, limit: int) -> tuple[GameMemoryDigest, ...]:
         with self._unit_of_work_factory() as unit_of_work:
             return unit_of_work.realtime.list_memories(limit=limit)
+
+    def append_transcript(
+        self, request: RealtimeTranscriptAppendInput
+    ) -> RealtimeTranscriptEntry:
+        with self._unit_of_work_factory() as unit_of_work:
+            session = unit_of_work.realtime.get_session(request.session_id)
+            if session is None:
+                raise KeyError(f"realtime session not found: {request.session_id}")
+            if session.conversation_id is None:
+                raise ValueError("realtime session has no linked conversation")
+            entry = unit_of_work.realtime.append_transcript(
+                session_id=session.id,
+                conversation_id=session.conversation_id,
+                speaker=request.speaker,
+                text=request.text,
+            )
+            unit_of_work.commit()
+            return entry
+
+    def list_transcript(
+        self, conversation_id, *, limit: int
+    ) -> tuple[RealtimeTranscriptEntry, ...]:
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.realtime.list_transcript_by_conversation(
+                conversation_id, limit=limit
+            )
 
     def delete_memory(self, memory_id) -> bool:
         with self._unit_of_work_factory() as unit_of_work:

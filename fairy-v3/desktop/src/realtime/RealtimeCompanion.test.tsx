@@ -116,10 +116,11 @@ describe("RealtimeCompanion", () => {
     ).not.toBeNull();
   });
 
-  it("keeps captions ephemeral and reports only aggregate media usage", async () => {
+  it("persists stable captions to the linked transcript, never into the usage report", async () => {
     const report = vi.fn(async (input: { status: RealtimeSession["status"] }) =>
       session(input.status, input.status === "active" ? 2 : 4));
     const stop = vi.fn(async () => session("stopping", 3));
+    const append = vi.fn(async () => ({}));
     const client = {
       sessions: {
         list: vi.fn(async () => ({ items: [] })),
@@ -128,6 +129,7 @@ describe("RealtimeCompanion", () => {
         stop,
       },
       memories: { save: vi.fn() },
+      transcript: { append, list: vi.fn(async () => ({ items: [] })) },
       worker: {
         status: vi.fn(async () => workerStatus(false)),
         start: vi.fn(async () => workerStatus(true)),
@@ -147,13 +149,23 @@ describe("RealtimeCompanion", () => {
     await act(async () => eventListener?.({ payload: {
       type: "session_state", session_id: session("active", 2).id, status: "active",
     } }));
+    // A partial caption only updates the live draft; nothing is persisted yet.
     await act(async () => eventListener?.({ payload: {
-      type: "public_caption", session_id: session("active", 2).id, text: "Boss at ", stable: false,
+      type: "public_caption", session_id: session("active", 2).id,
+      text: "Boss at ", stable: false, speaker: "assistant",
     } }));
+    expect(append).not.toHaveBeenCalled();
+    // The stable caption completes the line and is written to the transcript.
     await act(async () => eventListener?.({ payload: {
-      type: "public_caption", session_id: session("active", 2).id, text: "half health", stable: false,
+      type: "public_caption", session_id: session("active", 2).id,
+      text: "half health", stable: true, speaker: "assistant",
     } }));
     expect(screen.getByText("Boss at half health")).not.toBeNull();
+    await waitFor(() => expect(append).toHaveBeenCalledWith({
+      session_id: session("active", 2).id,
+      speaker: "assistant",
+      text: "Boss at half health",
+    }));
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(stop).toHaveBeenCalledOnce());
@@ -165,6 +177,7 @@ describe("RealtimeCompanion", () => {
       interruption_count: 1,
       tool_call_count: 0,
     })));
+    // Captions live only in the local transcript, never in the cloud-synced usage report.
     expect(JSON.stringify(report.mock.calls)).not.toContain("Boss at half health");
   });
 
@@ -329,6 +342,7 @@ describe("RealtimeCompanion", () => {
         stop: vi.fn(),
       },
       memories: { save: vi.fn() },
+      transcript: { append: vi.fn(async () => ({})), list: vi.fn(async () => ({ items: [] })) },
       worker: {
         status: vi.fn(async () => workerStatus(false)),
         start: vi.fn(async () => workerStatus(true)),

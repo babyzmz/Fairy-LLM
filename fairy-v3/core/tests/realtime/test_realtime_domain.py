@@ -5,12 +5,15 @@ from datetime import UTC, datetime
 import pytest
 
 from fairy_core.domain.errors import InvalidTransitionError
+from fairy_core.domain.ids import new_id
 from fairy_core.realtime.models import (
     GameMemoryDigest,
+    RealtimeCaptionSpeaker,
     RealtimeMemoryMode,
     RealtimeProvider,
     RealtimeSession,
     RealtimeSessionStatus,
+    RealtimeTranscriptEntry,
     RealtimeVoiceMode,
 )
 
@@ -80,6 +83,45 @@ def test_realtime_usage_is_monotonic() -> None:
             video_frame_count=3,
             interruption_count=1,
             tool_call_count=1,
+        )
+
+
+def test_realtime_transcript_entry_normalizes_and_bounds_text() -> None:
+    entry = RealtimeTranscriptEntry.create(
+        session_id=new_id(),
+        conversation_id=new_id(),
+        sequence=1,
+        speaker=RealtimeCaptionSpeaker.ASSISTANT,
+        text="  The boss   is\n  weak to fire.  ",
+    )
+    assert entry.text == "The boss is weak to fire."
+    assert entry.speaker is RealtimeCaptionSpeaker.ASSISTANT
+
+    with pytest.raises(ValueError, match="sequence must be positive"):
+        RealtimeTranscriptEntry.create(
+            session_id=new_id(),
+            conversation_id=new_id(),
+            sequence=0,
+            speaker=RealtimeCaptionSpeaker.USER,
+            text="Anything.",
+        )
+
+    with pytest.raises(ValueError, match="1 to 4000 characters"):
+        RealtimeTranscriptEntry.create(
+            session_id=new_id(),
+            conversation_id=new_id(),
+            sequence=1,
+            speaker=RealtimeCaptionSpeaker.USER,
+            text="   ",
+        )
+
+    with pytest.raises(ValueError, match="1 to 4000 characters"):
+        RealtimeTranscriptEntry.create(
+            session_id=new_id(),
+            conversation_id=new_id(),
+            sequence=1,
+            speaker=RealtimeCaptionSpeaker.USER,
+            text="x" * 4_001,
         )
 
 
