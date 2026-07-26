@@ -20,20 +20,23 @@ it("uses immediate anchor navigation when reduced motion is requested", () => {
     <MessageLineSidebar
       items={[
         {
-          key: "message:reduced",
-          role: "assistant",
-          label: "Fairy",
-          excerpt: "Reduced motion response",
+          key: "turn:reduced",
+          anchorKey: "message:reduced",
+          messageIds: ["request:reduced", "response:reduced"],
+          title: "Reduced motion request",
+          response: "Reduced motion response",
           streaming: false,
         },
       ]}
-      activeKey="message:reduced"
+      activeKey="turn:reduced"
       onNavigate={onNavigate}
     />,
   );
 
   fireEvent.click(
-    screen.getByRole("button", { name: "Fairy: Reduced motion response" }),
+    screen.getByRole("button", {
+      name: "Reduced motion request: Reduced motion response",
+    }),
   );
-  expect(onNavigate).toHaveBeenCalledWith("message:reduced", false);
+  expect(onNavigate).toHaveBeenCalledWith("turn:reduced", false);
 });

@@ -97,28 +97,35 @@ export function MessageList({
     () => new Set(lineItemSignature ? lineItemSignature.split("\u0000") : []),
     [lineItemSignature],
   );
+  const lineItemByKey = useMemo(
+    () => new Map(lineItems.map((item) => [item.key, item])),
+    [lineItems],
+  );
+  const lineItemAnchorKeys = useMemo(
+    () => new Set(lineItems.map((item) => item.anchorKey)),
+    [lineItems],
+  );
   const firstLineItemKey = lineItemKeys[0] ?? null;
-  const lastLineItemKey = lineItemKeys.at(-1) ?? null;
   const conversationScopeKey =
     visibleMessages[0]?.conversation_id ?? turn?.conversation_id ?? "empty";
 
   const updateActiveLine = useCallback(
     (list: HTMLDivElement | null) => {
-      if (list === null || lineItemKeys.length === 0) {
+      if (list === null || lineItems.length === 0) {
         setActiveLineKey(null);
         return;
       }
       const scanLine = list.getBoundingClientRect().top + 96;
-      let next = lineItemKeys[0] ?? null;
-      for (const key of lineItemKeys) {
-        const anchor = anchorRefs.current.get(key);
+      let next = lineItems[0]?.key ?? null;
+      for (const item of lineItems) {
+        const anchor = anchorRefs.current.get(item.anchorKey);
         if (anchor === undefined) continue;
         if (anchor.getBoundingClientRect().top > scanLine) break;
-        next = key;
+        next = item.key;
       }
       setActiveLineKey((current) => current === next ? current : next);
     },
-    [lineItemKeys],
+    [lineItems],
   );
 
   const registerAnchor = useCallback((key: string, node: HTMLElement | null) => {
@@ -141,16 +148,14 @@ export function MessageList({
 
   useEffect(() => {
     anchorRefs.current.forEach((_node, key) => {
-      if (!lineItemKeySet.has(key)) anchorRefs.current.delete(key);
+      if (!lineItemAnchorKeys.has(key)) anchorRefs.current.delete(key);
     });
     setActiveLineKey((current) =>
       current !== null && lineItemKeySet.has(current)
         ? current
-        : current?.startsWith("stream:")
-          ? lastLineItemKey
-          : firstLineItemKey,
+        : firstLineItemKey,
     );
-  }, [firstLineItemKey, lastLineItemKey, lineItemKeySet]);
+  }, [firstLineItemKey, lineItemAnchorKeys, lineItemKeySet]);
 
   if (
     visibleMessages.length === 0 &&
@@ -179,7 +184,9 @@ export function MessageList({
         activeKey={activeLineKey}
         onNavigate={(key, smooth) => {
           const list = listRef.current;
-          const anchor = anchorRefs.current.get(key);
+          const anchorKey = lineItemByKey.get(key)?.anchorKey;
+          const anchor =
+            anchorKey === undefined ? undefined : anchorRefs.current.get(anchorKey);
           if (list === null || anchor === undefined) return;
           followingRef.current = false;
           setActiveLineKey(key);

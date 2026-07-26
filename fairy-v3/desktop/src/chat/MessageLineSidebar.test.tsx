@@ -20,35 +20,167 @@ afterEach(() => {
 });
 
 describe("MessageLineSidebar", () => {
-  it("projects only durable user and assistant messages plus the current response", () => {
+  it("groups one durable user request and assistant response by Turn", () => {
     const items = projectMessageLineItems(
       [
-        message(1, "user", "First request"),
-        message(2, "tool", "private tool payload"),
-        message(3, "system_notice", "Core notice"),
-        message(4, "assistant", "First answer"),
+        message(1, "user", "Build the sidebar", TURN_ID),
+        message(2, "assistant", "The sidebar is ready", TURN_ID),
       ],
-      "Answer in progress",
-      TURN_ID,
+      "",
+      null,
     );
 
-    expect(items.map((item) => [item.role, item.excerpt, item.streaming])).toEqual([
-      ["user", "First request", false],
-      ["assistant", "First answer", false],
-      ["assistant", "Answer in progress", true],
+    expect(items).toEqual([
+      {
+        key: `turn:${TURN_ID}`,
+        anchorKey: `message:${messageId(1)}`,
+        messageIds: [messageId(1), messageId(2)],
+        title: "Build the sidebar",
+        response: "The sidebar is ready",
+        streaming: false,
+      },
     ]);
   });
 
-  it("creates readable bounded excerpts from Markdown and Unicode", () => {
+  it("keeps multiple assistant messages in one Turn and filters non-chat roles", () => {
+    const items = projectMessageLineItems(
+      [
+        message(1, "user", "Inspect it", TURN_ID),
+        message(2, "tool", "private tool payload", TURN_ID),
+        message(3, "assistant", "First result", TURN_ID),
+        message(4, "system_notice", "Core notice", TURN_ID),
+        message(5, "assistant", "Second result", TURN_ID),
+      ],
+      "",
+      null,
+    );
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      key: `turn:${TURN_ID}`,
+      messageIds: [messageId(1), messageId(3), messageId(5)],
+      response: "First result Second result",
+      streaming: false,
+    });
+  });
+
+  it("updates one Turn exchange from stream to durable response without duplication", () => {
+    const streaming = projectMessageLineItems(
+      [message(1, "user", "Inspect it", TURN_ID)],
+      "Checking now",
+      TURN_ID,
+    );
+    const durable = projectMessageLineItems(
+      [
+        message(1, "user", "Inspect it", TURN_ID),
+        message(2, "assistant", "Inspection complete", TURN_ID),
+      ],
+      "Checking now",
+      TURN_ID,
+    );
+
+    expect(streaming).toHaveLength(1);
+    expect(streaming[0]).toMatchObject({
+      key: `turn:${TURN_ID}`,
+      response: "Checking now",
+      streaming: true,
+    });
+    expect(durable).toHaveLength(1);
+    expect(durable[0]).toMatchObject({
+      key: `turn:${TURN_ID}`,
+      response: "Inspection complete",
+      streaming: false,
+    });
+  });
+
+  it("pairs legacy messages only by safe adjacency and preserves orphan responses", () => {
+    const items = projectMessageLineItems(
+      [
+        message(1, "assistant", "Orphan response", null),
+        message(2, "user", "Legacy request", null),
+        message(3, "assistant", "Legacy response", null),
+        message(4, "assistant", "Follow-up detail", null),
+        message(5, "user", "Next request", null),
+        message(6, "assistant", "Next response", null),
+      ],
+      "",
+      null,
+    );
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        key: `exchange:${messageId(1)}`,
+        anchorKey: `message:${messageId(1)}`,
+        title: "Current request",
+        response: "Orphan response",
+      }),
+      expect.objectContaining({
+        key: `exchange:${messageId(2)}`,
+        anchorKey: `message:${messageId(2)}`,
+        title: "Legacy request",
+        response: "Legacy response Follow-up detail",
+      }),
+      expect.objectContaining({
+        key: `exchange:${messageId(5)}`,
+        anchorKey: `message:${messageId(5)}`,
+        title: "Next request",
+        response: "Next response",
+      }),
+    ]);
+  });
+
+  it("fills a response-only Turn when the durable user request arrives later", () => {
+    const responseOnly = projectMessageLineItems(
+      [message(2, "assistant", "Already responding", TURN_ID)],
+      "",
+      null,
+    );
+    const complete = projectMessageLineItems(
+      [
+        message(1, "user", "Delayed request", TURN_ID),
+        message(2, "assistant", "Already responding", TURN_ID),
+      ],
+      "",
+      null,
+    );
+
+    expect(responseOnly).toEqual([
+      expect.objectContaining({
+        key: `turn:${TURN_ID}`,
+        anchorKey: `message:${messageId(2)}`,
+        title: "Current request",
+      }),
+    ]);
+    expect(complete).toEqual([
+      expect.objectContaining({
+        key: `turn:${TURN_ID}`,
+        anchorKey: `message:${messageId(1)}`,
+        title: "Delayed request",
+      }),
+    ]);
+  });
+
+  it("creates readable independently bounded title and response excerpts", () => {
     expect(
       messageLineExcerpt(
         "## [Fairy link](https://example.com)\n\n```ts\nconst ready = true;\n```",
         "assistant",
+        120,
       ),
     ).toBe("Fairy link const ready = true;");
     expect(messageLineExcerpt("   ", "user")).toBe("Attachment message");
     expect(messageLineExcerpt("", "assistant")).toBe("Response");
     expect(Array.from(messageLineExcerpt("🧚".repeat(60), "assistant"))).toHaveLength(48);
+    expect(
+      Array.from(messageLineExcerpt("答".repeat(140), "assistant", 120)),
+    ).toHaveLength(120);
+
+    const noResponse = projectMessageLineItems(
+      [message(1, "user", "Waiting request", TURN_ID)],
+      "",
+      null,
+    );
+    expect(noResponse[0]?.response).toBe("Fairy is responding…");
   });
 
   it("exposes the active location and navigates with its stable key", () => {
@@ -56,16 +188,16 @@ describe("MessageLineSidebar", () => {
     render(
       <MessageLineSidebar
         items={ITEMS}
-        activeKey="message:first"
+        activeKey="turn:first"
         onNavigate={onNavigate}
       />,
     );
 
     expect(screen.getByRole("navigation", { name: "Conversation outline" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "You: First request" }))
+    expect(screen.getByRole("button", { name: "First request: First response" }))
       .toHaveAttribute("aria-current", "location");
-    fireEvent.click(screen.getByRole("button", { name: "Fairy: First answer" }));
-    expect(onNavigate).toHaveBeenCalledWith("message:second", true);
+    fireEvent.click(screen.getByRole("button", { name: "Second request: Second response" }));
+    expect(onNavigate).toHaveBeenCalledWith("turn:second", true);
   });
 
   it("pauses active-item following while browsing and resumes after pointer and focus leave", () => {
@@ -73,13 +205,15 @@ describe("MessageLineSidebar", () => {
     const view = render(
       <MessageLineSidebar
         items={ITEMS}
-        activeKey="message:first"
+        activeKey="turn:first"
         onNavigate={vi.fn()}
       />,
     );
     const nav = screen.getByRole("navigation", { name: "Conversation outline" });
     const scroller = screen.getByTestId("message-line-sidebar-scroller");
-    const second = screen.getByRole("button", { name: "Fairy: First answer" });
+    const second = screen.getByRole("button", {
+      name: "Second request: Second response",
+    });
     const scrollTo = vi.fn();
     Object.defineProperties(scroller, {
       clientHeight: { configurable: true, value: 40 },
@@ -96,7 +230,7 @@ describe("MessageLineSidebar", () => {
     view.rerender(
       <MessageLineSidebar
         items={ITEMS}
-        activeKey="message:second"
+        activeKey="turn:second"
         onNavigate={vi.fn()}
       />,
     );
@@ -120,31 +254,38 @@ const TASK_ID = "019f7b34-9300-7000-8000-000000000003";
 
 const ITEMS = [
   {
-    key: "message:first",
-    role: "user",
-    label: "You",
-    excerpt: "First request",
+    key: "turn:first",
+    anchorKey: "message:first",
+    messageIds: ["first-user", "first-assistant"],
+    title: "First request",
+    response: "First response",
     streaming: false,
   },
   {
-    key: "message:second",
-    role: "assistant",
-    label: "Fairy",
-    excerpt: "First answer",
+    key: "turn:second",
+    anchorKey: "message:second",
+    messageIds: ["second-user", "second-assistant"],
+    title: "Second request",
+    response: "Second response",
     streaming: false,
   },
 ] as const;
+
+function messageId(sequence: number): string {
+  return `019f7b34-9300-7000-8000-${sequence.toString().padStart(12, "0")}`;
+}
 
 function message(
   sequence: number,
   role: Message["role"],
   content: string,
+  turnId: string | null,
 ): Message {
   return {
-    id: `019f7b34-9300-7000-8000-${sequence.toString().padStart(12, "0")}`,
+    id: messageId(sequence),
     conversation_id: CONVERSATION_ID,
     task_id: TASK_ID,
-    turn_id: TURN_ID,
+    turn_id: turnId,
     sequence,
     role,
     visibility: "user",

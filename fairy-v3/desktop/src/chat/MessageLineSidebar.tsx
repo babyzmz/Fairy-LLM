@@ -9,7 +9,8 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import type { Message } from "../core/client";
 
-const EXCERPT_LENGTH = 48;
+const TITLE_EXCERPT_LENGTH = 48;
+const RESPONSE_EXCERPT_LENGTH = 120;
 const IDLE_POINTER_INDEX = Number.POSITIVE_INFINITY;
 const FOLLOW_RESUME_DELAY_MS = 400;
 const ITEM_HEIGHT = 28;
@@ -17,9 +18,10 @@ const SCROLLER_PADDING = 6;
 
 export interface MessageLineItem {
   key: string;
-  role: "user" | "assistant";
-  label: "You" | "Fairy";
-  excerpt: string;
+  anchorKey: string;
+  messageIds: readonly string[];
+  title: string;
+  response: string;
   streaming: boolean;
 }
 
@@ -186,19 +188,18 @@ function MessageLineButton({
       className={`message-line-sidebar-item${active ? " is-active" : ""}`}
       type="button"
       aria-current={active ? "location" : undefined}
-      aria-label={`${item.label}: ${item.excerpt}`}
+      aria-label={`${item.title}: ${item.response}`}
       data-line-key={item.key}
-      data-role={item.role}
       data-streaming={item.streaming ? "true" : undefined}
-      title={`${item.label}: ${item.excerpt}`}
+      title={`${item.title}: ${item.response}`}
       onClick={() => onNavigate(item.key, !reducedMotion)}
     >
       <span className="message-line-sidebar-mark-slot" aria-hidden="true">
         <m.span className="message-line-sidebar-mark" style={{ width, x }} />
       </span>
       <span className="message-line-sidebar-summary">
-        <strong>{item.label}</strong>
-        <span>{item.excerpt}</span>
+        <strong>{item.title}</strong>
+        <span>{item.response}</span>
       </span>
     </button>
   );
@@ -209,32 +210,116 @@ export function projectMessageLineItems(
   streamedText: string,
   turnId: string | null,
 ): MessageLineItem[] {
-  const durable = messages.flatMap<MessageLineItem>((message) => {
-    if (message.role !== "user" && message.role !== "assistant") return [];
-    const role = message.role;
-    return [{
-      key: messageLineKey(message.id),
-      role,
-      label: role === "user" ? "You" : "Fairy",
-      excerpt: messageLineExcerpt(message.content, role),
-      streaming: false,
-    }];
+  const exchanges: MutableExchange[] = [];
+  const exchangesByTurn = new Map<string, MutableExchange>();
+  let currentLegacyExchange: MutableExchange | null = null;
+
+  for (const message of messages) {
+    if (message.role !== "user" && message.role !== "assistant") continue;
+    if (message.turn_id !== null) {
+      currentLegacyExchange = null;
+      const key = turnMessageLineKey(message.turn_id);
+      let exchange = exchangesByTurn.get(key);
+      if (exchange === undefined) {
+        exchange = createExchange(key, messageLineKey(message.id));
+        exchangesByTurn.set(key, exchange);
+        exchanges.push(exchange);
+      }
+      exchange.messageIds.push(message.id);
+      if (message.role === "user") {
+        if (!exchange.userText) exchange.userText = message.content;
+        exchange.anchorKey = messageLineKey(message.id);
+      } else {
+        exchange.assistantTexts.push(message.content);
+      }
+      continue;
+    }
+
+    if (message.role === "user") {
+      currentLegacyExchange = createExchange(
+        legacyMessageLineKey(message.id),
+        messageLineKey(message.id),
+      );
+      currentLegacyExchange.messageIds.push(message.id);
+      currentLegacyExchange.userText = message.content;
+      exchanges.push(currentLegacyExchange);
+      continue;
+    }
+
+    if (currentLegacyExchange === null) {
+      currentLegacyExchange = createExchange(
+        legacyMessageLineKey(message.id),
+        messageLineKey(message.id),
+      );
+      exchanges.push(currentLegacyExchange);
+    }
+    currentLegacyExchange.messageIds.push(message.id);
+    currentLegacyExchange.assistantTexts.push(message.content);
+  }
+
+  const normalizedStream = streamedText.trim();
+  if (normalizedStream) {
+    let exchange: MutableExchange | undefined;
+    if (turnId !== null) {
+      const key = turnMessageLineKey(turnId);
+      exchange = exchangesByTurn.get(key);
+      if (exchange === undefined) {
+        exchange = createExchange(key, streamingMessageLineKey(turnId));
+        exchangesByTurn.set(key, exchange);
+        exchanges.push(exchange);
+      }
+    } else {
+      exchange = currentLegacyExchange ?? createExchange(
+        streamingMessageLineKey(null),
+        streamingMessageLineKey(null),
+      );
+      if (currentLegacyExchange === null) exchanges.push(exchange);
+    }
+    exchange.streamedText = streamedText;
+  }
+
+  return exchanges.map((exchange) => {
+    const durableResponse = exchange.assistantTexts.join(" ").trim();
+    const activeResponse = exchange.streamedText.trim();
+    return {
+      key: exchange.key,
+      anchorKey: exchange.anchorKey,
+      messageIds: exchange.messageIds,
+      title: exchange.userText.trim()
+        ? messageLineExcerpt(
+          exchange.userText,
+          "user",
+          TITLE_EXCERPT_LENGTH,
+        )
+        : "Current request",
+      response: durableResponse
+        ? messageLineExcerpt(
+          durableResponse,
+          "assistant",
+          RESPONSE_EXCERPT_LENGTH,
+        )
+        : activeResponse
+          ? messageLineExcerpt(
+            activeResponse,
+            "assistant",
+            RESPONSE_EXCERPT_LENGTH,
+          )
+          : "Fairy is responding…",
+      streaming: durableResponse.length === 0 && activeResponse.length > 0,
+    };
   });
-  if (!streamedText) return durable;
-  return [
-    ...durable,
-    {
-      key: streamingMessageLineKey(turnId),
-      role: "assistant",
-      label: "Fairy",
-      excerpt: messageLineExcerpt(streamedText, "assistant"),
-      streaming: true,
-    },
-  ];
 }
 
 export function messageLineKey(messageId: string): string {
   return `message:${messageId}`;
+}
+
+export function turnMessageLineKey(turnId: string): string {
+  return `turn:${turnId}`;
+}
+
+export function legacyMessageLineKey(messageId: string): string {
+  return `exchange:${messageId}`;
 }
 
 export function streamingMessageLineKey(turnId: string | null): string {
@@ -243,7 +328,8 @@ export function streamingMessageLineKey(turnId: string | null): string {
 
 export function messageLineExcerpt(
   content: string,
-  role: MessageLineItem["role"],
+  role: MessageLineRole,
+  limit = TITLE_EXCERPT_LENGTH,
 ): string {
   const visible = content
     .replace(/!\[([^\]]*)\]\([^)]*\)/gu, "$1")
@@ -254,7 +340,29 @@ export function messageLineExcerpt(
     .replace(/\s+/gu, " ")
     .trim();
   if (!visible) return role === "user" ? "Attachment message" : "Response";
-  return Array.from(visible).slice(0, EXCERPT_LENGTH).join("");
+  return Array.from(visible).slice(0, limit).join("");
+}
+
+type MessageLineRole = "user" | "assistant";
+
+interface MutableExchange {
+  key: string;
+  anchorKey: string;
+  messageIds: string[];
+  userText: string;
+  assistantTexts: string[];
+  streamedText: string;
+}
+
+function createExchange(key: string, anchorKey: string): MutableExchange {
+  return {
+    key,
+    anchorKey,
+    messageIds: [],
+    userText: "",
+    assistantTexts: [],
+    streamedText: "",
+  };
 }
 
 function revealItem(

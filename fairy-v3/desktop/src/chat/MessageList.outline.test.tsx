@@ -17,7 +17,7 @@ describe("MessageList outline integration", () => {
     renderMessageList(MESSAGES);
     const list = screen.getByLabelText("Conversation messages");
     const target = document.querySelector<HTMLElement>(
-      `[data-message-line-key="message:${MESSAGES[1].id}"]`,
+      `[data-message-line-key="message:${MESSAGES[0].id}"]`,
     );
     expect(target).not.toBeNull();
     const scrollTo = vi.fn();
@@ -30,32 +30,43 @@ describe("MessageList outline integration", () => {
       .mockReturnValue(rect({ top: 400 }));
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Fairy: Durable answer" }),
+      screen.getByRole("button", {
+        name: "Durable request: Durable answer",
+      }),
     );
 
     expect(scrollTo).toHaveBeenCalledWith({ top: 332, behavior: "smooth" });
-    expect(screen.getByRole("button", { name: "Fairy: Durable answer" }))
+    expect(screen.getByRole("button", {
+      name: "Durable request: Durable answer",
+    }))
       .toHaveAttribute("aria-current", "location");
   });
 
-  it("tracks the message crossing the transcript scan line", () => {
-    renderMessageList(MESSAGES);
+  it("tracks exchanges at their user anchors instead of assistant rows", () => {
+    renderMessageList(THREE_EXCHANGES);
     const list = screen.getByLabelText("Conversation messages");
     const first = document.querySelector<HTMLElement>(
-      `[data-message-line-key="message:${MESSAGES[0].id}"]`,
+      `[data-message-line-key="message:${THREE_EXCHANGES[0].id}"]`,
     );
     const second = document.querySelector<HTMLElement>(
-      `[data-message-line-key="message:${MESSAGES[1].id}"]`,
+      `[data-message-line-key="message:${THREE_EXCHANGES[2].id}"]`,
+    );
+    const third = document.querySelector<HTMLElement>(
+      `[data-message-line-key="message:${THREE_EXCHANGES[4].id}"]`,
     );
     vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect({ top: 100 }));
     vi.spyOn(first as HTMLElement, "getBoundingClientRect")
       .mockReturnValue(rect({ top: 120 }));
     vi.spyOn(second as HTMLElement, "getBoundingClientRect")
       .mockReturnValue(rect({ top: 180 }));
+    vi.spyOn(third as HTMLElement, "getBoundingClientRect")
+      .mockReturnValue(rect({ top: 260 }));
 
     fireEvent.scroll(list);
 
-    expect(screen.getByRole("button", { name: "Fairy: Durable answer" }))
+    expect(screen.getByRole("button", {
+      name: "Second request: Second answer",
+    }))
       .toHaveAttribute("aria-current", "location");
   });
 
@@ -64,7 +75,9 @@ describe("MessageList outline integration", () => {
       streamedText: "Current response",
       turn: TURN,
     });
-    expect(screen.getByRole("button", { name: "Fairy: Current response" }))
+    expect(screen.getByRole("button", {
+      name: "Durable request: Current response",
+    }))
       .toHaveAttribute("data-streaming", "true");
 
     view.rerender(
@@ -77,8 +90,12 @@ describe("MessageList outline integration", () => {
       ),
     );
 
-    expect(screen.getAllByRole("button", { name: /Fairy:/u })).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Fairy: Durable answer" }))
+    expect(screen.getAllByRole("button", {
+      name: /Durable request:/u,
+    })).toHaveLength(1);
+    expect(screen.getByRole("button", {
+      name: "Durable request: Durable answer",
+    }))
       .not.toHaveAttribute("data-streaming");
   });
 
@@ -95,11 +112,13 @@ describe("MessageList outline integration", () => {
 
     view.rerender(messageList(other));
 
-    expect(screen.queryByRole("button", { name: "You: Durable request" }))
+    expect(screen.queryByRole("button", {
+      name: "Durable request: Durable answer",
+    }))
       .not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Fairy: Durable answer" }))
-      .not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "You: Second conversation" }))
+    expect(screen.getByRole("button", {
+      name: "Second conversation: Fairy is responding…",
+    }))
       .toHaveAttribute("aria-current", "location");
   });
 });
@@ -118,6 +137,15 @@ const TURN = {
 const MESSAGES: Message[] = [
   message(1, "user", "Durable request"),
   message(2, "assistant", "Durable answer"),
+];
+
+const THREE_EXCHANGES: Message[] = [
+  message(1, "user", "First request", `${TURN_ID}-1`),
+  message(2, "assistant", "First answer", `${TURN_ID}-1`),
+  message(3, "user", "Second request", `${TURN_ID}-2`),
+  message(4, "assistant", "Second answer", `${TURN_ID}-2`),
+  message(5, "user", "Third request", `${TURN_ID}-3`),
+  message(6, "assistant", "Third answer", `${TURN_ID}-3`),
 ];
 
 function renderMessageList(
@@ -161,12 +189,13 @@ function message(
   sequence: number,
   role: Message["role"],
   content: string,
+  turnId = TURN_ID,
 ): Message {
   return {
     id: `019f7b34-9300-7000-8000-${(20 + sequence).toString().padStart(12, "0")}`,
     conversation_id: CONVERSATION_ID,
     task_id: TASK_ID,
-    turn_id: TURN_ID,
+    turn_id: turnId,
     sequence,
     role,
     visibility: "user",
