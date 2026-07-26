@@ -578,7 +578,8 @@ describe("App", () => {
     render(<App client={client} />);
 
     expect(await screen.findByRole("heading", { name: "Chat" })).toBeVisible();
-    expect(await screen.findByText("Scratch chat is durable")).toBeVisible();
+    const transcript = within(await screen.findByLabelText("Conversation messages"));
+    expect(await transcript.findByText("Scratch chat is durable")).toBeVisible();
     await userEvent.type(screen.getByLabelText("Message Fairy"), "Check Sydney weather");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
 
@@ -621,7 +622,8 @@ describe("App", () => {
 
     render(<App client={client} />);
 
-    expect(await screen.findByText("Scratch chat is durable")).toBeVisible();
+    const transcript = within(await screen.findByLabelText("Conversation messages"));
+    expect(await transcript.findByText("Scratch chat is durable")).toBeVisible();
     await waitFor(() => expect(listProviders).toHaveBeenCalledTimes(1));
     await userEvent.click(screen.getByRole("button", { name: "Copy message" }));
 

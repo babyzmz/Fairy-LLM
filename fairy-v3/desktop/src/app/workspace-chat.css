@@ -207,7 +207,189 @@
   flex: 1 1 auto;
   overflow-y: auto;
   padding: 18px max(18px, calc((100% - 900px) / 2));
+  scrollbar-color: #4b534e #151616;
+  scrollbar-width: thin;
   scrollbar-gutter: stable;
+}
+
+.message-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.message-list::-webkit-scrollbar-track {
+  background: #151616;
+}
+
+.message-list::-webkit-scrollbar-thumb {
+  min-height: 34px;
+  border: 2px solid #151616;
+  border-radius: 999px;
+  background: #4b534e;
+  background-clip: padding-box;
+}
+
+.message-list::-webkit-scrollbar-thumb:hover {
+  background: #66706a;
+  background-clip: padding-box;
+}
+
+.message-list::-webkit-scrollbar-thumb:active {
+  background: #72aaa3;
+  background-clip: padding-box;
+}
+
+.message-list-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.message-list-shell > .message-list {
+  width: 100%;
+  height: 100%;
+}
+
+.message-list-with-outline {
+  padding-left: max(54px, calc((100% - 900px) / 2));
+}
+
+.message-line-sidebar {
+  position: absolute;
+  z-index: 5;
+  top: 12px;
+  bottom: 12px;
+  left: 8px;
+  width: 36px;
+  overflow: hidden;
+  background: transparent;
+  transition: width 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.message-line-sidebar:hover,
+.message-line-sidebar:focus-within {
+  width: min(220px, calc(100% - 56px));
+}
+
+.message-line-sidebar-scroller {
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 0;
+  scrollbar-width: none;
+}
+
+.message-line-sidebar-scroller::-webkit-scrollbar {
+  display: none;
+}
+
+.message-line-sidebar-item {
+  width: 100%;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  outline: 0;
+  color: #9ca49f;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-line-sidebar-item:hover,
+.message-line-sidebar-item:focus-visible {
+  background: transparent;
+}
+
+.message-line-sidebar-mark-slot {
+  width: 34px;
+  min-width: 34px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding-left: 7px;
+}
+
+.message-line-sidebar-mark {
+  height: 2px;
+  display: block;
+  border-radius: 999px;
+  background: #8f9792;
+  transform-origin: left center;
+}
+
+.message-line-sidebar-item[data-role="assistant"] .message-line-sidebar-mark {
+  background: #63aaa3;
+}
+
+.message-line-sidebar-item.is-active .message-line-sidebar-mark {
+  height: 3px;
+  min-width: 20px;
+  background: #d9e1dc;
+}
+
+.message-line-sidebar-item.is-active[data-role="assistant"] .message-line-sidebar-mark {
+  background: #9aeee5;
+}
+
+.message-line-sidebar-item:hover .message-line-sidebar-mark,
+.message-line-sidebar-item:focus-visible .message-line-sidebar-mark {
+  filter: brightness(1.2);
+}
+
+.message-line-sidebar-item[data-streaming="true"] .message-line-sidebar-mark {
+  animation: line-sidebar-pulse 1.2s ease-in-out infinite;
+}
+
+.message-line-sidebar-summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 7px;
+  padding-right: 10px;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    opacity 120ms ease,
+    transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.message-line-sidebar:hover .message-line-sidebar-summary,
+.message-line-sidebar:focus-within .message-line-sidebar-summary {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.message-line-sidebar-summary strong {
+  color: #aeb6b1;
+  font: 600 9px/1.2 "Cascadia Mono", monospace;
+  text-transform: uppercase;
+}
+
+.message-line-sidebar-item[data-role="assistant"] .message-line-sidebar-summary strong {
+  color: #78c8c0;
+}
+
+.message-line-sidebar-summary > span {
+  min-width: 0;
+  overflow: hidden;
+  color: #c8ceca;
+  font-size: 10px;
+  line-height: 1.3;
+  text-shadow: 0 1px 2px #111412;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-line-sidebar-item:focus-visible .message-line-sidebar-summary > span {
+  color: #edf4ef;
 }
 
 .message-list-empty {
@@ -702,6 +884,16 @@
   }
 }
 
+@keyframes line-sidebar-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 @media (max-width: 1100px) {
   .workspace-main {
     grid-template-columns: minmax(0, 1fr);
@@ -777,5 +969,14 @@
     scroll-behavior: auto !important;
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
+  }
+
+  .message-line-sidebar,
+  .message-line-sidebar-summary {
+    transition: none;
+  }
+
+  .message-line-sidebar-item[data-streaming="true"] .message-line-sidebar-mark {
+    animation: none;
   }
 }

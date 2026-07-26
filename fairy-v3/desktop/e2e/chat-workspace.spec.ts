@@ -19,8 +19,24 @@ for (const viewport of [
     await openScratchChat(page);
 
     await expect(page.getByRole("heading", { name: "Chat" })).toBeVisible();
-    await expect(page.getByText("Scratch chat is durable")).toBeVisible();
+    await expect(
+      page.getByLabel("Conversation messages").getByText("Scratch chat is durable"),
+    ).toBeVisible();
     await expect(page.locator("body")).not.toContainText("fixture provider payload");
+    const outline = page.getByRole("navigation", { name: "Conversation outline" });
+    await expect(outline).toBeVisible();
+    await outline
+      .getByRole("button", { name: "Fairy: Scratch chat is durable" })
+      .focus();
+    await expect.poll(
+      async () => outline.evaluate((element) => element.getBoundingClientRect().width),
+    ).toBeGreaterThan(100);
+    const outlineBounds = await outline.evaluate((element) => {
+      const rectangle = element.getBoundingClientRect();
+      return { left: rectangle.left, right: rectangle.right, viewportWidth: innerWidth };
+    });
+    expect(outlineBounds.left).toBeGreaterThanOrEqual(0);
+    expect(outlineBounds.right).toBeLessThanOrEqual(outlineBounds.viewportWidth);
     const composer = page.getByLabel("Message Fairy");
     await composer.fill("Check Sydney weather");
     await page.getByRole("button", { name: "Send message" }).click();
@@ -49,6 +65,102 @@ for (const viewport of [
     });
   });
 }
+
+test("the Line Sidebar navigates and follows a long Conversation without taking over scrolling", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 880, height: 680 });
+  await page.goto("/?lineSidebarSeed=1");
+  await openScratchChat(page);
+
+  const outline = page.getByRole("navigation", { name: "Conversation outline" });
+  const outlineScroller = page.getByTestId("message-line-sidebar-scroller");
+  const transcript = page.getByLabel("Conversation messages");
+  const first = outline.getByRole("button", {
+    name: "You: Outline request 01 — stable message anchor",
+  });
+  await expect(outline.getByRole("button")).toHaveCount(30);
+  await expect(first).toBeVisible();
+
+  const scrollSurfaces = await page.evaluate(() => {
+    const transcriptNode = document.querySelector<HTMLElement>(".message-list");
+    const outlineNode = document.querySelector<HTMLElement>(
+      ".message-line-sidebar-scroller",
+    );
+    return {
+      transcriptOverflow: transcriptNode === null
+        ? ""
+        : getComputedStyle(transcriptNode).overflowY,
+      transcriptScrollbarWidth: transcriptNode === null
+        ? ""
+        : getComputedStyle(transcriptNode).scrollbarWidth,
+      transcriptScrollable:
+        (transcriptNode?.scrollHeight ?? 0) > (transcriptNode?.clientHeight ?? 0),
+      outlineScrollbarWidth: outlineNode === null
+        ? ""
+        : getComputedStyle(outlineNode).scrollbarWidth,
+      outlineScrollable:
+        (outlineNode?.scrollHeight ?? 0) > (outlineNode?.clientHeight ?? 0),
+    };
+  });
+  expect(scrollSurfaces).toEqual({
+    transcriptOverflow: "auto",
+    transcriptScrollbarWidth: "thin",
+    transcriptScrollable: true,
+    outlineScrollbarWidth: "none",
+    outlineScrollable: true,
+  });
+
+  await outline.hover();
+  await expect.poll(
+    async () => outline.evaluate((element) => element.getBoundingClientRect().width),
+  ).toBeGreaterThan(180);
+  expect(
+    await outline.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        background: style.backgroundColor,
+        border: style.borderTopWidth,
+        shadow: style.boxShadow,
+      };
+    }),
+  ).toEqual({
+    background: "rgba(0, 0, 0, 0)",
+    border: "0px",
+    shadow: "none",
+  });
+  await transcript.evaluate((element) =>
+    element.scrollTo({ top: 0, behavior: "auto" }),
+  );
+  await expect(first).toHaveAttribute("aria-current", "location");
+  await outlineScroller.evaluate((element) =>
+    element.scrollTo({ top: 0, behavior: "auto" }),
+  );
+  await transcript.evaluate((element) =>
+    element.scrollTo({ top: element.scrollHeight, behavior: "auto" }),
+  );
+  await page.waitForTimeout(80);
+  expect(await outlineScroller.evaluate((element) => element.scrollTop)).toBe(0);
+
+  await page.getByRole("heading", { name: "Chat" }).click();
+  await page.mouse.move(500, 70);
+  await expect.poll(
+    async () => outlineScroller.evaluate((element) => element.scrollTop),
+    { timeout: 2_000 },
+  ).toBeGreaterThan(0);
+
+  await first.click();
+  await expect(first).toHaveAttribute("aria-current", "location");
+  await expect.poll(
+    async () => transcript.evaluate((element) => element.scrollTop),
+    { timeout: 2_000 },
+  ).toBeLessThan(40);
+  expect(await page.evaluate(() => ({
+    horizontal: Math.max(0, document.documentElement.scrollWidth - innerWidth),
+    vertical: Math.max(0, document.documentElement.scrollHeight - innerHeight),
+  }))).toEqual({ horizontal: 0, vertical: 0 });
+  await page.screenshot({ path: testInfo.outputPath("chat-line-sidebar.png") });
+});
 
 test("developer mode shows bounded trace diagnostics without raw tool protocol", async ({ page }) => {
   await enableDeveloperMode(page);
@@ -127,7 +239,11 @@ test("a user message appears before Core task creation returns", async ({ page }
     page.getByLabel("Conversation messages").getByText("Visible before Core confirms"),
   ).toBeVisible();
   await expect(page.getByText("Sending", { exact: true })).toBeVisible();
-  await expect(page.getByText("Fixture streamed response completed")).toBeVisible();
+  await expect(
+    page
+      .getByLabel("Conversation messages")
+      .getByText("Fixture streamed response completed"),
+  ).toBeVisible();
   const workChain = page.getByRole("region", { name: "Fairy work chain" });
   await expect(workChain).toContainText(
     "Response ready",
@@ -159,6 +275,10 @@ test("reduced motion disables repeated chat activity animation", async ({ page }
     };
   });
   expect(animation.iterations === "1" || animation.duration === "0s").toBe(true);
+  const outlineTransition = await page
+    .getByRole("navigation", { name: "Conversation outline" })
+    .evaluate((element) => getComputedStyle(element).transitionDuration);
+  expect(outlineTransition).toBe("0s");
 });
 
 test("model settings stay inside the narrow internal view and expose no secret", async ({
@@ -249,7 +369,11 @@ test("approved assistant tools resume the durable turn exactly once", async ({ p
   await expect(page.getByText("Approval required", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Approve" }).click();
 
-  await expect(page.getByText("Notification completed after approval")).toBeVisible();
+  await expect(
+    page
+      .getByLabel("Conversation messages")
+      .getByText("Notification completed after approval"),
+  ).toBeVisible();
   await expect(approval).not.toBeVisible();
 
   const calls = await page.evaluate(() =>

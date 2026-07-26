@@ -69,7 +69,9 @@ test("release workspace exposes project, chat, preview, settings, and developer 
     .getByLabel("History navigation")
     .getByRole("button", { name: "Scratch chat", exact: true })
     .click();
-  await expect(page.getByText("Scratch chat is durable")).toBeVisible();
+  await expect(
+    page.getByLabel("Conversation messages").getByText("Scratch chat is durable"),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Open settings" })).toBeVisible();
 });
 

@@ -567,7 +567,25 @@ async function installCoreFixture(page: Page) {
       let approvalScenario = false;
       let approvalVisible = false;
       let approvalDecision: "pending" | "approved" | "rejected" = "pending";
-      let messages = [scratchMessage, toolMessage];
+      const lineSidebarSeed = fixtureParams.get("lineSidebarSeed") === "1";
+      const lineSidebarMessages = Array.from({ length: 30 }, (_, index) => {
+        const sequence = index + 1;
+        const role = index % 2 === 0 ? "user" : "assistant";
+        return {
+          ...scratchMessage,
+          id: `0198f4de-0114-7000-8000-${String(300 + sequence).padStart(12, "0")}`,
+          turn_id: null,
+          sequence,
+          role,
+          content:
+            role === "user"
+              ? `Outline request ${String(sequence).padStart(2, "0")} — stable message anchor`
+              : `Outline response ${String(sequence).padStart(2, "0")} — stable message anchor`,
+        };
+      });
+      let messages = lineSidebarSeed
+        ? lineSidebarMessages
+        : [scratchMessage, toolMessage];
       let latestUserRequest = "";
       fixtureWindow.__FAIRY_PUSH_EVENT__ = (message) => {
         const startedAt = performance.now();

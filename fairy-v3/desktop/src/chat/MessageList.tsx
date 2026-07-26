@@ -8,7 +8,14 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { m } from "motion/react";
 
 import type {
@@ -20,6 +27,12 @@ import type {
 } from "../core/client";
 import { VoiceSpeakControl } from "../voice/VoiceController";
 import { ActivityRail } from "./ActivityRail";
+import {
+  messageLineKey,
+  MessageLineSidebar,
+  projectMessageLineItems,
+  streamingMessageLineKey,
+} from "./MessageLineSidebar";
 import { RealtimeTranscript } from "./RealtimeTranscript";
 import type { OptimisticUserMessage } from "./useAssistantTurn";
 import type { TurnTraceQueryState } from "./useTurnTraces";
@@ -60,20 +73,84 @@ export function MessageList({
 }: MessageListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const anchorRefs = useRef(new Map<string, HTMLElement>());
   const followingRef = useRef(true);
   const [showJump, setShowJump] = useState(false);
-  const visibleMessages = messages.filter((message) => message.role !== "tool");
+  const [activeLineKey, setActiveLineKey] = useState<string | null>(null);
+  const visibleMessages = useMemo(
+    () => messages.filter((message) => message.role !== "tool"),
+    [messages],
+  );
   const durableAssistantForTurn =
     turn !== null &&
     visibleMessages.some(
       (message) => message.role === "assistant" && message.turn_id === turn.id,
     );
   const visibleStreamedText = durableAssistantForTurn ? "" : streamedText;
+  const lineItems = useMemo(
+    () => projectMessageLineItems(visibleMessages, visibleStreamedText, turn?.id ?? null),
+    [turn?.id, visibleMessages, visibleStreamedText],
+  );
+  const lineItemKeys = useMemo(() => lineItems.map((item) => item.key), [lineItems]);
+  const lineItemSignature = lineItemKeys.join("\u0000");
+  const lineItemKeySet = useMemo(
+    () => new Set(lineItemSignature ? lineItemSignature.split("\u0000") : []),
+    [lineItemSignature],
+  );
+  const firstLineItemKey = lineItemKeys[0] ?? null;
+  const lastLineItemKey = lineItemKeys.at(-1) ?? null;
+  const conversationScopeKey =
+    visibleMessages[0]?.conversation_id ?? turn?.conversation_id ?? "empty";
+
+  const updateActiveLine = useCallback(
+    (list: HTMLDivElement | null) => {
+      if (list === null || lineItemKeys.length === 0) {
+        setActiveLineKey(null);
+        return;
+      }
+      const scanLine = list.getBoundingClientRect().top + 96;
+      let next = lineItemKeys[0] ?? null;
+      for (const key of lineItemKeys) {
+        const anchor = anchorRefs.current.get(key);
+        if (anchor === undefined) continue;
+        if (anchor.getBoundingClientRect().top > scanLine) break;
+        next = key;
+      }
+      setActiveLineKey((current) => current === next ? current : next);
+    },
+    [lineItemKeys],
+  );
+
+  const registerAnchor = useCallback((key: string, node: HTMLElement | null) => {
+    if (node === null) anchorRefs.current.delete(key);
+    else anchorRefs.current.set(key, node);
+  }, []);
 
   useEffect(() => {
     if (!followingRef.current) return;
     scrollToLatest(listRef.current, endRef.current, false);
-  }, [messages, pendingUserMessage, streamedText]);
+    const frame = requestAnimationFrame(() => updateActiveLine(listRef.current));
+    return () => cancelAnimationFrame(frame);
+  }, [messages, pendingUserMessage, streamedText, updateActiveLine]);
+
+  useEffect(() => {
+    followingRef.current = true;
+    setShowJump(false);
+    setActiveLineKey(null);
+  }, [conversationScopeKey]);
+
+  useEffect(() => {
+    anchorRefs.current.forEach((_node, key) => {
+      if (!lineItemKeySet.has(key)) anchorRefs.current.delete(key);
+    });
+    setActiveLineKey((current) =>
+      current !== null && lineItemKeySet.has(current)
+        ? current
+        : current?.startsWith("stream:")
+          ? lastLineItemKey
+          : firstLineItemKey,
+    );
+  }, [firstLineItemKey, lastLineItemKey, lineItemKeySet]);
 
   if (
     visibleMessages.length === 0 &&
@@ -95,116 +172,155 @@ export function MessageList({
       .map((message) => message.turn_id as string),
   );
   return (
-    <div
-      ref={listRef}
-      className="message-list"
-      aria-label="Conversation messages"
-      aria-live="polite"
-      onScroll={(event) => {
-        const node = event.currentTarget;
-        const following = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
-        followingRef.current = following;
-        setShowJump(!following);
-      }}
-    >
-      <RealtimeTranscript entries={realtimeTranscript} />
-      {visibleMessages.map((message) => (
-        <Fragment key={message.id}>
-          <MessageRow
-            message={message}
-            developerMode={developerMode}
-            onCopy={onCopy}
-            onOpenLink={onOpenLink}
-          />
-          {message.role === "user" && message.turn_id !== null &&
-          (turnTraceStates[message.turn_id] !== undefined ||
-            turnTraces[message.turn_id] !== undefined ||
-            turn?.id === message.turn_id) ? (
-            <ActivityRail
-              turn={turn?.id === message.turn_id ? turn : null}
-              turnId={message.turn_id}
-              trace={turnTraces[message.turn_id] ?? null}
-              traceState={turnTraceStates[message.turn_id] ?? null}
-              events={events}
+    <div className="message-list-shell">
+      <MessageLineSidebar
+        key={conversationScopeKey}
+        items={lineItems}
+        activeKey={activeLineKey}
+        onNavigate={(key, smooth) => {
+          const list = listRef.current;
+          const anchor = anchorRefs.current.get(key);
+          if (list === null || anchor === undefined) return;
+          followingRef.current = false;
+          setActiveLineKey(key);
+          scrollToAnchor(list, anchor, smooth);
+        }}
+      />
+      <div
+        ref={listRef}
+        className="message-list message-list-with-outline"
+        aria-label="Conversation messages"
+        aria-live="polite"
+        onScroll={(event) => {
+          const node = event.currentTarget;
+          const following = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+          followingRef.current = following;
+          setShowJump(!following);
+          updateActiveLine(node);
+        }}
+      >
+        <RealtimeTranscript entries={realtimeTranscript} />
+        {visibleMessages.map((message) => (
+          <Fragment key={message.id}>
+            <MessageRow
+              message={message}
+              anchorKey={
+                message.role === "user" || message.role === "assistant"
+                  ? messageLineKey(message.id)
+                  : null
+              }
+              registerAnchor={registerAnchor}
               developerMode={developerMode}
-            />
-            ) : null}
-        </Fragment>
-      ))}
-      {pendingUserMessage !== null ? (
-        <>
-          <PendingMessageRow
-            message={pendingUserMessage}
-            onRetry={onRetryPending}
-            onEdit={onEditPending}
-            onDelete={onDeletePending}
-          />
-          {turn !== null && !durableUserTurnIds.has(turn.id) ? (
-            <ActivityRail
-              turn={turn}
-              trace={turnTraces[turn.id] ?? null}
-              traceState={turnTraceStates[turn.id] ?? null}
-              events={events}
-              developerMode={developerMode}
-            />
-          ) : null}
-        </>
-      ) : null}
-      {visibleStreamedText ? (
-        <m.article initial={{ opacity: 0.4, y: 6 }} animate={{ opacity: 1, y: 0 }} className="message-row message-assistant message-streaming">
-          <div className="message-avatar" aria-hidden="true">
-            <LoaderCircle className="spin" size={16} />
-          </div>
-          <div className="message-content">
-            <div className="message-meta">
-              <strong>Fairy</strong>
-              <span>responding</span>
-            </div>
-            <MessageContent
-              content={visibleStreamedText}
-              taskId={turn?.task_id ?? ""}
               onCopy={onCopy}
               onOpenLink={onOpenLink}
             />
-            <span className="streaming-cursor" aria-hidden="true" />
-          </div>
-        </m.article>
-      ) : null}
-      {showJump ? (
-        <button
-          className="jump-to-latest"
-          type="button"
-          onClick={() => {
-            followingRef.current = true;
-            setShowJump(false);
-            scrollToLatest(listRef.current, endRef.current, true);
-          }}
-        >
-          Jump to latest
-        </button>
-      ) : null}
-      <div ref={endRef} />
+            {message.role === "user" && message.turn_id !== null &&
+            (turnTraceStates[message.turn_id] !== undefined ||
+              turnTraces[message.turn_id] !== undefined ||
+              turn?.id === message.turn_id) ? (
+              <ActivityRail
+                turn={turn?.id === message.turn_id ? turn : null}
+                turnId={message.turn_id}
+                trace={turnTraces[message.turn_id] ?? null}
+                traceState={turnTraceStates[message.turn_id] ?? null}
+                events={events}
+                developerMode={developerMode}
+              />
+              ) : null}
+          </Fragment>
+        ))}
+        {pendingUserMessage !== null ? (
+          <>
+            <PendingMessageRow
+              message={pendingUserMessage}
+              onRetry={onRetryPending}
+              onEdit={onEditPending}
+              onDelete={onDeletePending}
+            />
+            {turn !== null && !durableUserTurnIds.has(turn.id) ? (
+              <ActivityRail
+                turn={turn}
+                trace={turnTraces[turn.id] ?? null}
+                traceState={turnTraceStates[turn.id] ?? null}
+                events={events}
+                developerMode={developerMode}
+              />
+            ) : null}
+          </>
+        ) : null}
+        {visibleStreamedText ? (
+          <m.article
+            ref={(node) => registerAnchor(
+              streamingMessageLineKey(turn?.id ?? null),
+              node,
+            )}
+            data-message-line-key={streamingMessageLineKey(turn?.id ?? null)}
+            initial={{ opacity: 0.4, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="message-row message-assistant message-streaming"
+          >
+            <div className="message-avatar" aria-hidden="true">
+              <LoaderCircle className="spin" size={16} />
+            </div>
+            <div className="message-content">
+              <div className="message-meta">
+                <strong>Fairy</strong>
+                <span>responding</span>
+              </div>
+              <MessageContent
+                content={visibleStreamedText}
+                taskId={turn?.task_id ?? ""}
+                onCopy={onCopy}
+                onOpenLink={onOpenLink}
+              />
+              <span className="streaming-cursor" aria-hidden="true" />
+            </div>
+          </m.article>
+        ) : null}
+        {showJump ? (
+          <button
+            className="jump-to-latest"
+            type="button"
+            onClick={() => {
+              followingRef.current = true;
+              setShowJump(false);
+              scrollToLatest(listRef.current, endRef.current, true);
+            }}
+          >
+            Jump to latest
+          </button>
+        ) : null}
+        <div ref={endRef} />
+      </div>
     </div>
   );
 }
 
 function MessageRow({
   message,
+  anchorKey,
+  registerAnchor,
   developerMode,
   onCopy,
   onOpenLink,
 }: {
   message: Message;
+  anchorKey: string | null;
+  registerAnchor(key: string, node: HTMLElement | null): void;
   developerMode: boolean;
   onCopy(taskId: string, content: string): Promise<void>;
   onOpenLink(taskId: string, url: string): Promise<void>;
 }) {
   return (
     <m.article
+      ref={(node) => {
+        if (anchorKey !== null) registerAnchor(anchorKey, node);
+      }}
       initial={{ opacity: 0.4, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       className={`message-row message-${message.role}`}
       data-message-sequence={message.sequence}
+      data-message-line-key={anchorKey ?? undefined}
     >
       <div className="message-avatar" aria-hidden="true">
         <MessageIcon role={message.role} />
@@ -288,6 +404,25 @@ function scrollToLatest(
     return;
   }
   end?.scrollIntoView?.({ block: "end" });
+}
+
+function scrollToAnchor(
+  list: HTMLDivElement,
+  anchor: HTMLElement,
+  smooth: boolean,
+) {
+  const top = Math.max(
+    0,
+    anchor.getBoundingClientRect().top -
+      list.getBoundingClientRect().top +
+      list.scrollTop -
+      18,
+  );
+  if (typeof list.scrollTo === "function") {
+    list.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
+  } else {
+    list.scrollTop = top;
+  }
 }
 
 function MessageIcon({ role }: { role: Message["role"] }) {

@@ -1,5 +1,12 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -20,8 +27,9 @@ describe("ChatWorkspace", () => {
     const props = workspaceProps();
     render(<ChatWorkspace {...props} />);
 
-    expect(screen.getByText("Hello Fairy")).toBeVisible();
-    expect(screen.getByText("Hello from the durable ledger")).toBeVisible();
+    const transcript = within(screen.getByLabelText("Conversation messages"));
+    expect(transcript.getByText("Hello Fairy")).toBeVisible();
+    expect(transcript.getByText("Hello from the durable ledger")).toBeVisible();
     await user.type(screen.getByLabelText("Message Fairy"), "What is the weather today?");
     await user.click(screen.getByRole("button", { name: "Send message" }));
 
@@ -134,7 +142,10 @@ describe("ChatWorkspace", () => {
     });
     const { rerender } = render(<ChatWorkspace {...props} />);
 
-    expect(screen.getAllByText("Streaming once, not twice")).toHaveLength(1);
+    expect(
+      within(screen.getByLabelText("Conversation messages"))
+        .getAllByText("Streaming once, not twice"),
+    ).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Stop response" }));
     expect(props.onCancel).toHaveBeenCalledOnce();
 
@@ -161,7 +172,10 @@ describe("ChatWorkspace", () => {
 
     render(<ChatWorkspace {...props} />);
 
-    expect(screen.getAllByText(MESSAGES[1].content)).toHaveLength(1);
+    expect(
+      within(screen.getByLabelText("Conversation messages"))
+        .getAllByText(MESSAGES[1].content),
+    ).toHaveLength(1);
     expect(screen.queryByText("responding")).not.toBeInTheDocument();
   });
 
