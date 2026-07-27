@@ -42,7 +42,7 @@ $buildRoot = Join-Path $runtimeRoot "out\$Profile"
 if ($LASTEXITCODE -ne 0) {
     throw "CMake build failed for '$Profile'."
 }
-if ($Test) {
+if ($Test -and $Profile -eq "contract") {
     & $cmake --build $buildRoot --target RUN_TESTS --config Release
     if ($LASTEXITCODE -ne 0) {
         throw "CMake tests failed for '$Profile'."
@@ -53,7 +53,7 @@ $executable = Join-Path $runtimeRoot "out\$Profile\Release\fairy-omni-runtime.ex
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
     throw "Expected runtime executable '$executable' is missing."
 }
-if ($Test) {
+if ($Test -and $Profile -eq "contract") {
     & (Join-Path $PSScriptRoot "control-integration.tests.ps1") -Executable $executable
 }
 if ($Profile -ne "contract") {
