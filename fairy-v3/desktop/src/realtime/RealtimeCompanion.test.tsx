@@ -63,6 +63,14 @@ const workerStatus = (running: boolean): RealtimeWorkerStatus => ({
   action_required: false,
   presence_projection: null,
   assistance: [],
+  resource: null,
+  sidecar: {
+    restart_used: false,
+    quarantined: false,
+    context_interrupted: false,
+    failure_count: 0,
+    error_code: null,
+  },
   audio_input_ms: 1_250,
   audio_output_ms: 400,
   video_frame_count: 8,
@@ -197,6 +205,78 @@ describe("RealtimeCompanion", () => {
     expect(
       await screen.findByRole("dialog", { name: "Realtime Companion Beta" }),
     ).not.toBeNull();
+  });
+
+  it("restores only bounded memory state for the latest completed Session", async () => {
+    const completed = {
+      ...session("completed", 3),
+      ended_at: "2026-07-20T00:10:00Z",
+    };
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [completed] })),
+      },
+      digests: {
+        list: vi.fn(async () => ({ items: [{
+          id: "01900000-0000-7000-8000-000000000002",
+          session_id: completed.id,
+        }] })),
+      },
+      memoryProposals: {
+        list: vi.fn(async () => ({ items: [{
+          id: "01900000-0000-7000-8000-000000000003",
+          session_id: completed.id,
+          digest_id: "01900000-0000-7000-8000-000000000002",
+          status: "pending",
+          normalized_text: "private inferred detail",
+        }] })),
+      },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => workerStatus(false)),
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+
+    expect(await screen.findByText("Memory review available")).not.toBeNull();
+    expect(screen.queryByText("private inferred detail")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open main chat" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_realtime_main_chat",
+      { input: { session_id: completed.id } },
+    ));
+  });
+
+  it("projects persisted Sidecar quarantine after a terminal Session without recovery controls", async () => {
+    const status = workerStatus(false);
+    status.sidecar = {
+      restart_used: true,
+      quarantined: true,
+      context_interrupted: true,
+      failure_count: 2,
+      error_code: "LOCAL_SIDECAR_PROCESS_EXIT",
+    };
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [session("failed", 3)] })),
+      },
+      digests: {
+        list: vi.fn(async () => ({ items: [] })),
+      },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => status),
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+
+    expect(await screen.findByText("Local runtime needs verification")).not.toBeNull();
+    expect(screen.getByText(/Automatic recovery is disabled/)).not.toBeNull();
+    expect(screen.queryByRole("button", { name: /restart|recover/i })).toBeNull();
   });
 
   it("cannot start while Realtime Beta is disabled", async () => {
@@ -536,6 +616,10 @@ describe("RealtimeCompanion", () => {
       session(input.status, input.status === "active" ? 2 : 4));
     const stop = vi.fn(async () => session("stopping", 3));
     const append = vi.fn(async () => ({}));
+    const createDigest = vi.fn(async () => ({
+      id: "01900000-0000-7000-8000-000000000002",
+      session_id: session("completed", 4).id,
+    }));
     const client = {
       sessions: {
         list: vi.fn(async () => ({ items: [] })),
@@ -545,6 +629,13 @@ describe("RealtimeCompanion", () => {
       },
       memories: { save: vi.fn() },
       transcript: { append, list: vi.fn(async () => ({ items: [] })) },
+      digests: {
+        create: createDigest,
+        list: vi.fn(async () => ({ items: [] })),
+      },
+      memoryProposals: {
+        list: vi.fn(async () => ({ items: [] })),
+      },
       worker: {
         preview: vi.fn(backendPreview),
         status: vi.fn(async () => workerStatus(false)),
@@ -593,6 +684,16 @@ describe("RealtimeCompanion", () => {
       interruption_count: 1,
       tool_call_count: 0,
     })));
+    await waitFor(() => expect(createDigest).toHaveBeenCalledWith({
+      session_id: session("completed", 4).id,
+      request_id: `desktop:realtime-digest:${session("completed", 4).id}`,
+      activity: "auto",
+      subject_title: "Test Game",
+    }));
+    expect(append.mock.invocationCallOrder[0]).toBeLessThan(
+      createDigest.mock.invocationCallOrder[0],
+    );
+    expect(await screen.findByText("Session summary saved")).not.toBeNull();
     // Captions live only in the local transcript, never in the cloud-synced usage report.
     expect(JSON.stringify(report.mock.calls)).not.toContain("Boss at half health");
   });

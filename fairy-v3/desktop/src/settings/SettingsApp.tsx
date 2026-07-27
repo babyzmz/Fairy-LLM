@@ -364,6 +364,11 @@ function SettingsContent({
       memoryProposals: knowledgeQuery.data?.memoryProposals ?? [],
       obsidianHealth: knowledgeQuery.data?.obsidianHealth ?? unavailableObsidianHealth(),
       knowledgeDiagnostics: knowledgeQuery.data?.knowledgeDiagnostics ?? [],
+      realtimeMemoryReview: knowledgeQuery.data?.realtimeMemoryReview ?? {
+        digests: [],
+        proposals: [],
+        diagnostic: null,
+      },
     };
   }, [
     extensionsQuery.data,
@@ -955,6 +960,11 @@ function emptyKnowledgeSettingsData(): KnowledgeSettingsData {
     memoryProposals: [],
     obsidianHealth: unavailableObsidianHealth(),
     knowledgeDiagnostics: [],
+    realtimeMemoryReview: {
+      digests: [],
+      proposals: [],
+      diagnostic: null,
+    },
   };
 }
 

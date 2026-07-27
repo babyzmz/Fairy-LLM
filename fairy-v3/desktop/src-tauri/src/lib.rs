@@ -434,6 +434,9 @@ pub fn companion_core_method_allowed(method: &str) -> bool {
             | "realtime.memories.delete"
             | "realtime.assistance.get"
             | "realtime.assistance.cancel"
+            | "realtime.digests.create"
+            | "realtime.digests.list"
+            | "realtime.memory-proposals.list"
             | "realtime.transcript.append"
     )
 }
@@ -5739,6 +5742,9 @@ mod companion_window_scope_tests {
             "realtime.memories.delete",
             "realtime.assistance.get",
             "realtime.assistance.cancel",
+            "realtime.digests.create",
+            "realtime.digests.list",
+            "realtime.memory-proposals.list",
             "realtime.transcript.append",
         ] {
             assert!(companion_core_method_allowed(allowed), "{allowed}");
@@ -5751,6 +5757,8 @@ mod companion_window_scope_tests {
             "browser.sessions.start",
             "providers.list",
             "realtime.assistance.request",
+            "realtime.memory-proposals.accept",
+            "realtime.memory-proposals.reject",
         ] {
             assert!(!companion_core_method_allowed(denied), "{denied}");
         }

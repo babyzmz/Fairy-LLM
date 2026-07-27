@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { LoaderCircle, MessageSquareText, Mic, MicOff, Monitor, Pause, Play, RotateCcw, Save, Search, ShieldCheck, SlidersHorizontal, Square, Volume2, X } from "lucide-react";
+import { Brain, CheckCircle2, LoaderCircle, MessageSquareText, Mic, MicOff, Monitor, Pause, Play, RotateCcw, Search, ShieldCheck, SlidersHorizontal, Square, Volume2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
@@ -26,6 +26,11 @@ import {
 } from "./realtimePresence";
 import { useTranscriptPersistence } from "./useTranscriptPersistence";
 import { RealtimeSpeechPipeline } from "./realtimeSpeech";
+import {
+  createCompanionMemoryNotice,
+  loadCompanionMemoryNotice,
+  type CompanionMemoryNotice,
+} from "./realtimeMemoryState";
 import "./realtime-companion.css";
 
 interface CaptureSurface {
@@ -51,14 +56,9 @@ type WorkerEvent =
       error_code: string | null;
     })
   | { type: "usage"; session_id: string; segment_id: string; context_epoch: number; audio_input_ms: number; audio_output_ms: number; video_frame_count: number; interruption_count: number; tool_call_count: number }
+  | { type: "sidecar_recovery"; status: "restarting" | "quarantined"; segment_id: string | null; restart_used: boolean; quarantined: boolean; context_interrupted: boolean; failure_count: number; error_code: string | null }
   | { type: "worker_interrupted"; error_code: string }
   | { type: "ready" | "pong" };
-
-interface MemoryDraft {
-  gameTitle: string;
-  progress: string;
-  nextGoal: string;
-}
 
 interface RealtimeUsage {
   audio_input_ms: number;
@@ -74,6 +74,14 @@ const EMPTY_USAGE: RealtimeUsage = {
   video_frame_count: 0,
   interruption_count: 0,
   tool_call_count: 0,
+};
+
+const EMPTY_SIDECAR: RealtimeWorkerStatus["sidecar"] = {
+  restart_used: false,
+  quarantined: false,
+  context_interrupted: false,
+  failure_count: 0,
+  error_code: null,
 };
 
 export function RealtimeCompanion({
@@ -112,8 +120,9 @@ export function RealtimeCompanion({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [voiceWarning, setVoiceWarning] = useState<string | null>(null);
-  const [memory, setMemory] = useState<MemoryDraft | null>(null);
-  const startedAt = useRef(0);
+  const [memoryNotice, setMemoryNotice] = useState<CompanionMemoryNotice | null>(null);
+  const [memoryRetrySessionId, setMemoryRetrySessionId] = useState<string | null>(null);
+  const [sidecar, setSidecar] = useState<RealtimeWorkerStatus["sidecar"]>(EMPTY_SIDECAR);
   const usage = useRef<RealtimeUsage>({ ...EMPTY_USAGE });
   const [liveUsage, setLiveUsage] = useState<RealtimeUsage>({ ...EMPTY_USAGE });
   const [muted, setMuted] = useState(false);
@@ -124,6 +133,7 @@ export function RealtimeCompanion({
   const {
     enqueue: enqueueTranscript,
     reset: resetTranscriptPersistence,
+    flush: flushTranscriptPersistence,
     retryUnsaved,
     unsavedCount,
   } = useTranscriptPersistence({
@@ -148,6 +158,7 @@ export function RealtimeCompanion({
         ? status.assistance.filter(isRealtimeAssistanceProjection).slice(-6)
         : [],
     );
+    setSidecar(status.sidecar ?? EMPTY_SIDECAR);
     if (!isPresenceProjection(status.presence_projection)) return;
     presenceProjectionRef.current = status.presence_projection;
     setPresenceProjection(status.presence_projection);
@@ -272,6 +283,8 @@ export function RealtimeCompanion({
 
   const load = useCallback(async () => {
     setError(null);
+    setMemoryNotice(null);
+    setMemoryRetrySessionId(null);
     try {
       const [nextPreferences, captureSurfaces, recentSessions, workerStatus] = await Promise.all([
         hostInvoke<DesktopPreferences>("desktop_preferences_get"),
@@ -309,6 +322,7 @@ export function RealtimeCompanion({
           }
         }
       }
+      setSidecar(workerStatus.sidecar ?? EMPTY_SIDECAR);
       if (workerStatus.running && workerStatus.session_id !== null) {
         const restoredSession = recentSessions.items.find(
           (item) => item.id === workerStatus.session_id,
@@ -323,6 +337,16 @@ export function RealtimeCompanion({
         };
         setLiveUsage(usage.current);
         applyWorkerStatus(workerStatus);
+      } else {
+        const latestCompleted = recentSessions.items.find((item) => isTerminal(item.status));
+        if (latestCompleted !== undefined) {
+          const notice = await loadCompanionMemoryNotice(client, latestCompleted.id)
+            .catch(() => null);
+          if (notice !== null) {
+            updateSession(latestCompleted);
+            setMemoryNotice(notice);
+          }
+        }
       }
       const windows = captureSurfaces.filter((item) => item.kind === "window");
       setPreferences(nextPreferences);
@@ -332,7 +356,7 @@ export function RealtimeCompanion({
     } catch (caught) {
       setError(messageOf(caught));
     }
-  }, [applyWorkerStatus, client.sessions, client.worker, hostInvoke, updateSession]);
+  }, [applyWorkerStatus, client, hostInvoke, updateSession]);
 
   useEffect(() => {
     if (open) void load();
@@ -405,6 +429,16 @@ export function RealtimeCompanion({
         if (current === null || isTerminal(current.status)) return;
         void report("interrupted", payload.error_code);
         setError(realtimeProviderErrorMessage(payload.error_code));
+        return;
+      }
+      if (payload.type === "sidecar_recovery") {
+        setSidecar({
+          restart_used: payload.restart_used,
+          quarantined: payload.quarantined,
+          context_interrupted: payload.context_interrupted,
+          failure_count: payload.failure_count,
+          error_code: payload.error_code,
+        });
         return;
       }
       if (!("session_id" in payload) || payload.session_id !== current?.id) return;
@@ -541,7 +575,8 @@ export function RealtimeCompanion({
     setControlsOpen(false);
     setAssistance([]);
     setAssistanceBusy(null);
-    setMemory(null);
+    setMemoryNotice(null);
+    setMemoryRetrySessionId(null);
     presenceProjectionRef.current = null;
     setPresenceProjection(null);
     try {
@@ -579,7 +614,6 @@ export function RealtimeCompanion({
         idempotency_key: crypto.randomUUID(),
       });
       updateSession(created);
-      startedAt.current = Date.now();
       const worker = await client.worker.start({
         session_id: created.id,
         resolution_token: resolution.resolution_token,
@@ -651,6 +685,48 @@ export function RealtimeCompanion({
     }
   }, [client.assistance]);
 
+  const createSessionDigest = useCallback(async (sessionId: string) => {
+    if (preferences?.realtime_memory_enabled !== true) {
+      setMemoryRetrySessionId(null);
+      return;
+    }
+    const transcriptSaved = await flushTranscriptPersistence();
+    if (!transcriptSaved) {
+      setMemoryRetrySessionId(sessionId);
+      setError("Session ended, but some stable captions still need saving before the summary can be created.");
+      return;
+    }
+    try {
+      const activity = presenceProjectionRef.current?.requested_activity_profile
+        ?? preferences.realtime_activity_profile;
+      const surface = surfaces.find((item) => item.source_id === sourceId);
+      const notice = await createCompanionMemoryNotice(client, {
+        sessionId,
+        activity,
+        subjectTitle: surface?.label ?? null,
+      });
+      if (sessionRef.current?.id === sessionId) {
+        setMemoryNotice(notice);
+        setMemoryRetrySessionId(null);
+      }
+    } catch (caught) {
+      setMemoryRetrySessionId(sessionId);
+      setError(`Session ended, but its summary was deferred. ${messageOf(caught)}`);
+    }
+  }, [
+    client,
+    flushTranscriptPersistence,
+    preferences,
+    sourceId,
+    surfaces,
+  ]);
+  const retryTranscriptAndDigest = useCallback(() => {
+    retryUnsaved();
+    const sessionId = memoryRetrySessionId;
+    if (sessionId === null) return;
+    void createSessionDigest(sessionId);
+  }, [createSessionDigest, memoryRetrySessionId, retryUnsaved]);
+
   const stop = async () => {
     const current = sessionRef.current;
     if (current === null || isTerminal(current.status)) return;
@@ -711,32 +787,7 @@ export function RealtimeCompanion({
       await report("completed");
       if (sessionRef.current?.status !== "completed") return;
       setActiveBackend(null);
-      const surface = surfaces.find((item) => item.source_id === sourceId);
-      if (preferences?.realtime_memory_enabled) {
-        setMemory({ gameTitle: surface?.label ?? "Game session", progress: "", nextGoal: "" });
-      }
-    } catch (caught) {
-      setError(messageOf(caught));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const saveMemory = async () => {
-    if (memory === null || session === null || memory.progress.trim() === "") return;
-    setBusy(true);
-    try {
-      await client.memories.save({
-        session_id: session.id,
-        game_title: memory.gameTitle.trim(),
-        played_at: new Date(startedAt.current).toISOString(),
-        duration_seconds: Math.max(0, Math.round((Date.now() - startedAt.current) / 1_000)),
-        activities: [],
-        progress_summary: memory.progress.trim(),
-        next_goal: memory.nextGoal.trim() || null,
-        notable_outcome: null,
-      });
-      setMemory(null);
+      await createSessionDigest(current.id);
     } catch (caught) {
       setError(messageOf(caught));
     } finally {
@@ -920,8 +971,57 @@ export function RealtimeCompanion({
               </div>
             </div>
           )}
-          {memory ? <div className="realtime-memory"><h3>Save game progress</h3><label>Game<input value={memory.gameTitle} maxLength={160} onChange={(event) => setMemory({ ...memory, gameTitle: event.target.value })} /></label><label>Progress<textarea value={memory.progress} maxLength={800} onChange={(event) => setMemory({ ...memory, progress: event.target.value })} /></label><label>Next goal<input value={memory.nextGoal} maxLength={300} onChange={(event) => setMemory({ ...memory, nextGoal: event.target.value })} /></label><button type="button" disabled={busy || !memory.gameTitle.trim() || !memory.progress.trim()} onClick={() => void saveMemory()}><Save size={14} /> Save summary</button></div> : null}
-          {unsavedCount > 0 ? <div className="realtime-transcript-warning" role="status"><span>{unsavedCount} {unsavedCount === 1 ? "caption" : "captions"} unsaved</span><button type="button" onClick={retryUnsaved}><RotateCcw size={13} /> Retry saving</button></div> : null}
+          {sidecar.restart_used ? (
+            <div
+              className={`realtime-sidecar-state${sidecar.quarantined ? " is-quarantined" : ""}`}
+              role={sidecar.quarantined ? "alert" : "status"}
+            >
+              <RotateCcw size={14} aria-hidden="true" />
+              <span>
+                <strong>{sidecar.quarantined
+                  ? "Local runtime needs verification"
+                  : "Local runtime recovered"}</strong>
+                <small>{sidecar.quarantined
+                  ? "Automatic recovery is disabled until Verify succeeds in main Settings."
+                  : sidecar.context_interrupted
+                    ? "The Sidecar restarted once in a new segment; prior context was interrupted."
+                    : "The Sidecar restarted once in a new segment."}</small>
+              </span>
+            </div>
+          ) : null}
+          {memoryNotice !== null && memoryNotice.sessionId === session?.id ? (
+            <div className="realtime-memory-notice" role="status">
+              {memoryNotice.pendingCount > 0
+                ? <Brain size={15} aria-hidden="true" />
+                : <CheckCircle2 size={15} aria-hidden="true" />}
+              <span>
+                <strong>{memoryNotice.pendingCount > 0
+                  ? "Memory review available"
+                  : "Session summary saved"}</strong>
+                <small>{memoryNotice.pendingCount > 0
+                  ? `${memoryNotice.pendingCount} suggestion${memoryNotice.pendingCount === 1 ? "" : "s"} require review in the main window.`
+                  : memoryNotice.savedCount > 0
+                    ? `${memoryNotice.savedCount} explicit low-risk fact${memoryNotice.savedCount === 1 ? "" : "s"} saved.`
+                    : "No durable facts were saved."}</small>
+              </span>
+              <button
+                type="button"
+                disabled={assistanceBusy !== null}
+                onClick={() => void openAssistanceChat()}
+              >
+                <MessageSquareText size={13} /> Open main chat
+              </button>
+            </div>
+          ) : null}
+          {unsavedCount > 0 ? <div className="realtime-transcript-warning" role="status"><span>{unsavedCount} {unsavedCount === 1 ? "caption" : "captions"} unsaved</span><button type="button" onClick={retryTranscriptAndDigest}><RotateCcw size={13} /> Retry saving</button></div> : null}
+          {memoryRetrySessionId !== null && unsavedCount === 0 ? (
+            <div className="realtime-transcript-warning" role="status">
+              <span>Session summary deferred</span>
+              <button type="button" disabled={busy} onClick={() => void createSessionDigest(memoryRetrySessionId)}>
+                <RotateCcw size={13} /> Retry summary
+              </button>
+            </div>
+          ) : null}
           {voiceWarning ? <div className="realtime-warning" role="status">{voiceWarning}</div> : null}
           {error ? <div className="realtime-error" role="alert">{error}</div> : null}
         </section>

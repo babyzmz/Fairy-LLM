@@ -194,6 +194,24 @@ export interface RealtimeWorkerStatus {
   action_required: boolean;
   presence_projection: import("../realtime/realtimePresence").RealtimePresenceProjection | null;
   assistance: import("../realtime/realtimePresence").RealtimeAssistanceProjection[];
+  resource: {
+    policy: {
+      level: "normal" | "pressure" | "high" | "critical" | "device_removed";
+      video_interval_ms: number;
+      background_analysis_allowed: boolean;
+      user_initiated_only: boolean;
+      media_paused: boolean;
+    };
+    recovery_samples: number;
+    sample_count: number;
+  } | null;
+  sidecar: {
+    restart_used: boolean;
+    quarantined: boolean;
+    context_interrupted: boolean;
+    failure_count: number;
+    error_code: string | null;
+  };
   audio_input_ms: number;
   audio_output_ms: number;
   video_frame_count: number;

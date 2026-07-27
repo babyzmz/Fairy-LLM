@@ -25,6 +25,11 @@ import type {
   ProviderHealthPage,
   ProviderProfilePage,
   RealtimeCredentialProvider,
+  CompanionDigestListInput,
+  CompanionSessionDigestPage,
+  RealtimeMemoryProposalActionInput,
+  RealtimeMemoryProposalListInput,
+  RealtimeMemoryProposalPage,
   RealtimeProviderCredentialInput,
   RealtimeProviderCredentialStatus,
   ProjectArchiveInput,
@@ -428,6 +433,21 @@ export class SettingsClient {
     cancel: () => this.invoke<OmniModelInstallState>("omni_model_install_cancel"),
     verify: () => this.invoke<OmniModelInstallState>("omni_model_verify"),
     remove: () => this.invoke<OmniModelInstallState>("omni_model_remove"),
+  };
+
+  readonly realtimeMemory = {
+    digests: {
+      list: (input: CompanionDigestListInput = {}) =>
+        this.call("realtime.digests.list", input) as Promise<CompanionSessionDigestPage>,
+    },
+    proposals: {
+      list: (input: RealtimeMemoryProposalListInput = {}) =>
+        this.call("realtime.memory-proposals.list", input) as Promise<RealtimeMemoryProposalPage>,
+      accept: (input: RealtimeMemoryProposalActionInput) =>
+        this.call("realtime.memory-proposals.accept", input),
+      reject: (input: RealtimeMemoryProposalActionInput) =>
+        this.call("realtime.memory-proposals.reject", input),
+    },
   };
 
   readonly pet = {

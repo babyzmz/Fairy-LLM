@@ -110,4 +110,27 @@ describe("useTranscriptPersistence", () => {
     expect(append).toHaveBeenCalledTimes(1);
     expect(result.current.unsavedCount).toBe(0);
   });
+
+  it("flushes only after every queued stable caption is durable", async () => {
+    let resolveAppend: (() => void) | null = null;
+    const append = vi.fn(() => new Promise<void>((resolve) => {
+      resolveAppend = resolve;
+    }));
+    const { result } = renderHook(() =>
+      useTranscriptPersistence({ sessionId: "session-a", append }),
+    );
+
+    act(() => result.current.enqueue(request()));
+    const flushed = result.current.flush();
+    let settled = false;
+    void flushed.then(() => { settled = true; });
+    await act(async () => Promise.resolve());
+    expect(settled).toBe(false);
+
+    await act(async () => {
+      resolveAppend?.();
+      await flushed;
+    });
+    await expect(flushed).resolves.toBe(true);
+  });
 });

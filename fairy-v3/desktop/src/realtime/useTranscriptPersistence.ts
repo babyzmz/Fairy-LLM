@@ -21,6 +21,7 @@ export interface TranscriptPersistenceState {
   unsavedCount: number;
   enqueue(request: TranscriptAppendRequest): void;
   retryUnsaved(): void;
+  flush(): Promise<boolean>;
   reset(): void;
 }
 
@@ -36,6 +37,7 @@ class TranscriptPersistenceQueue {
   private generation = 0;
   private nextId = 1;
   private recentFingerprint: { value: string; receivedAt: number } | null = null;
+  private flushWaiters: Array<(saved: boolean) => void> = [];
 
   constructor(
     private readonly append: (request: TranscriptAppendRequest) => Promise<unknown>,
@@ -69,6 +71,15 @@ class TranscriptPersistenceQueue {
     this.drain();
   }
 
+  flush(): Promise<boolean> {
+    if (!this.running && this.retryTimer === null && this.pending.length === 0) {
+      return Promise.resolve(this.exhausted.length === 0);
+    }
+    return new Promise((resolve) => {
+      this.flushWaiters.push(resolve);
+    });
+  }
+
   reset(notify = true): void {
     this.generation += 1;
     if (this.retryTimer !== null) window.clearTimeout(this.retryTimer);
@@ -77,13 +88,17 @@ class TranscriptPersistenceQueue {
     this.pending = [];
     this.exhausted = [];
     this.recentFingerprint = null;
+    this.resolveFlushWaiters(false);
     if (notify) this.onUnsavedCount(0);
   }
 
   private drain(): void {
     if (this.running || this.retryTimer !== null) return;
     const entry = this.pending.shift();
-    if (entry === undefined) return;
+    if (entry === undefined) {
+      this.resolveFlushWaiters(this.exhausted.length === 0);
+      return;
+    }
 
     this.running = true;
     const generation = this.generation;
@@ -112,6 +127,11 @@ class TranscriptPersistenceQueue {
         }, delay);
       },
     );
+  }
+
+  private resolveFlushWaiters(saved: boolean): void {
+    const waiters = this.flushWaiters.splice(0);
+    waiters.forEach((resolve) => resolve(saved));
   }
 }
 
@@ -145,9 +165,13 @@ export function useTranscriptPersistence({
   const retryUnsaved = useCallback(() => {
     queueRef.current?.retryUnsaved();
   }, []);
+  const flush = useCallback(
+    () => queueRef.current?.flush() ?? Promise.resolve(false),
+    [],
+  );
   const reset = useCallback(() => {
     queueRef.current?.reset();
   }, []);
 
-  return { unsavedCount, enqueue, retryUnsaved, reset };
+  return { unsavedCount, enqueue, retryUnsaved, flush, reset };
 }

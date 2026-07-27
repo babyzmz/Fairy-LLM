@@ -34,6 +34,12 @@
 .realtime-session-policy select { width: 100%; min-width: 0; height: 30px; padding: 4px 7px; border: 1px solid #3a4743; background: #171d1b; color: #e4eeeb; }
 .realtime-session-policy select:disabled { opacity: .55; }
 .realtime-policy-help { margin: -4px 1px 0; color: #84908c; font-size: 11px; line-height: 1.45; }
+.realtime-sidecar-state { min-width: 0; display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 9px; margin: 0 20px 20px; padding: 10px 11px; border-left: 2px solid #72b9aa; background: #13201c; color: #a8dcd2; }
+.realtime-sidecar-state.is-quarantined { border-left-color: #ce8b65; background: #2a2119; color: #e6b28f; }
+.realtime-sidecar-state > span { min-width: 0; display: grid; gap: 3px; }
+.realtime-sidecar-state strong, .realtime-sidecar-state small { overflow-wrap: anywhere; }
+.realtime-sidecar-state strong { font-size: 12px; }
+.realtime-sidecar-state small { color: #91a19c; font-size: 10px; line-height: 1.4; }
 .realtime-assistance { display: grid; gap: 8px; }
 .realtime-assistance article { min-width: 0; display: grid; gap: 8px; padding: 11px 12px; border: 1px solid #33413d; border-left: 2px solid #67c9bd; background: #101614; }
 .realtime-assistance article[data-status="awaiting_approval"] { border-left-color: #d0aa61; }
@@ -65,6 +71,12 @@
 .realtime-captions { min-height: 190px; max-height: 300px; overflow: auto; padding: 14px; background: #0c0f0e; border: 1px solid #29302e; }
 .realtime-captions p { margin: 0; padding: 9px 0; border-bottom: 1px solid #222826; line-height: 1.5; }.realtime-captions span { color: #7f8b87; }
 .realtime-memory { border-top: 1px solid #303735; }.realtime-memory h3 { margin: 0; font-size: 15px; }
+.realtime-memory-notice { min-width: 0; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 10px; margin: 0 20px 20px; padding: 11px 12px; border-left: 2px solid #66b8a8; background: #13211d; color: #bfe4db; }
+.realtime-memory-notice > span { min-width: 0; display: grid; gap: 3px; }
+.realtime-memory-notice strong, .realtime-memory-notice small { overflow-wrap: anywhere; }
+.realtime-memory-notice strong { font-size: 12px; }
+.realtime-memory-notice small { color: #91a19c; font-size: 10px; line-height: 1.4; }
+.realtime-memory-notice > button { min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 8px; border: 1px solid #42675f; background: #1b302b; color: #ccebe4; font-size: 10px; }
 .realtime-error { margin: 0 20px 20px; padding: 11px 12px; border-left: 2px solid #ef7369; background: #341c1a; color: #ffc4bd; font-size: 12px; }
 .realtime-warning { margin: 0 20px 20px; padding: 11px 12px; border-left: 2px solid #d5a94f; background: #2d2818; color: #f1d797; font-size: 12px; }
 .realtime-transcript-warning { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 20px 20px; padding: 9px 11px; border-left: 2px solid #d5a94f; background: #242116; color: #e5cd91; font-size: 12px; }
@@ -87,4 +99,6 @@
   .realtime-session-policy { grid-template-columns: minmax(0, 1fr); }
   .realtime-standby { align-items: stretch; flex-direction: column; }
   .realtime-assistance-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .realtime-memory-notice { grid-template-columns: 18px minmax(0, 1fr); }
+  .realtime-memory-notice > button { grid-column: 2; justify-self: start; }
 }

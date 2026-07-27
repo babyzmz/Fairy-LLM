@@ -11,6 +11,11 @@ import type {
 } from "../core/client";
 import { ActionDialog } from "../ui/ActionDialog";
 import type { DesktopPreferences, SettingsClient } from "./client";
+import { RealtimeMemoryReview } from "./RealtimeMemoryReview";
+import {
+  loadRealtimeMemoryReview,
+  type RealtimeMemoryReviewData,
+} from "./realtimeMemoryReviewData";
 import { Category, HealthRow, SettingRange, SettingToggle } from "./settingsControls";
 
 export interface KnowledgePrivacyData {
@@ -18,9 +23,10 @@ export interface KnowledgePrivacyData {
   memoryProposals: MemoryProposal[];
   obsidianHealth: ObsidianConnectorHealth;
   knowledgeDiagnostics: string[];
+  realtimeMemoryReview: RealtimeMemoryReviewData;
 }
 
-type KnowledgePrivacyTab = "sources" | "memory" | "proposals" | "diagnostics";
+type KnowledgePrivacyTab = "sources" | "memory" | "proposals" | "companion" | "diagnostics";
 type MemoryProposalDecision = {
   proposal: MemoryProposal;
   action: "accept" | "reject";
@@ -74,6 +80,7 @@ export function KnowledgePrivacyPanel(props: KnowledgePrivacyPanelProps) {
         <button type="button" role="tab" aria-selected={tab === "sources"} className={tab === "sources" ? "active" : ""} onClick={() => setTab("sources")}>Sources <span>{data.knowledgeSources.length}</span></button>
         <button type="button" role="tab" aria-selected={tab === "memory"} className={tab === "memory" ? "active" : ""} onClick={() => setTab("memory")}>Memory</button>
         <button type="button" role="tab" aria-selected={tab === "proposals"} className={tab === "proposals" ? "active" : ""} onClick={() => setTab("proposals")}>Proposals <span>{pendingProposals.length}</span></button>
+        <button type="button" role="tab" aria-selected={tab === "companion"} className={tab === "companion" ? "active" : ""} onClick={() => setTab("companion")}>Companion <span>{data.realtimeMemoryReview.proposals.filter((item) => item.status === "pending").length}</span></button>
         <button type="button" role="tab" aria-selected={tab === "diagnostics"} className={tab === "diagnostics" ? "active" : ""} onClick={() => setTab("diagnostics")}>Diagnostics</button>
       </div>
 
@@ -123,6 +130,16 @@ export function KnowledgePrivacyPanel(props: KnowledgePrivacyPanelProps) {
         ))}
       </div> : null}
 
+      {tab === "companion" ? (
+        <RealtimeMemoryReview
+          data={data.realtimeMemoryReview}
+          busy={busy}
+          client={client}
+          act={act}
+          reload={reload}
+        />
+      ) : null}
+
       {tab === "diagnostics" ? <div className="knowledge-diagnostics">
         <HealthRow icon={<Network size={17} />} label="Obsidian Desktop" status={data.obsidianHealth.desktop_installed ? "Detected" : "Not detected"} tone={data.obsidianHealth.desktop_installed ? "success" : "neutral"} />
         <HealthRow icon={<BookOpenText size={17} />} label="Obsidian CLI" status={data.obsidianHealth.cli_available ? "Available for managed writes" : "Read-only indexing remains available"} tone={data.obsidianHealth.cli_available ? "success" : "neutral"} />
@@ -164,10 +181,11 @@ export function KnowledgePrivacyPanel(props: KnowledgePrivacyPanelProps) {
 
 export async function loadKnowledgePrivacy(client: SettingsClient): Promise<KnowledgePrivacyData> {
   const diagnostics: string[] = [];
-  const [projectsResult, tasksResult, healthResult] = await Promise.allSettled([
+  const [projectsResult, tasksResult, healthResult, realtimeMemoryResult] = await Promise.allSettled([
     listAllSettingsProjects(client),
     listAllSettingsTasks(client),
     client.obsidian.health(),
+    loadRealtimeMemoryReview(client),
   ]);
   const projects = projectsResult.status === "fulfilled" ? projectsResult.value : [];
   const tasks = tasksResult.status === "fulfilled" ? tasksResult.value : [];
@@ -213,6 +231,13 @@ export async function loadKnowledgePrivacy(client: SettingsClient): Promise<Know
     memoryProposals: [...proposalsById.values()].sort((left, right) => right.created_at.localeCompare(left.created_at)),
     obsidianHealth: healthResult.status === "fulfilled" ? healthResult.value : unavailableObsidianHealth(),
     knowledgeDiagnostics: diagnostics,
+    realtimeMemoryReview: realtimeMemoryResult.status === "fulfilled"
+      ? realtimeMemoryResult.value
+      : {
+          digests: [],
+          proposals: [],
+          diagnostic: "Realtime memory review could not be loaded.",
+        },
   };
 }
 
