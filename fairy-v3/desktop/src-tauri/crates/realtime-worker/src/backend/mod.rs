@@ -49,6 +49,55 @@ pub enum RealtimeVoiceOutput {
     TextOnly,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RealtimeCandidateDecision {
+    Listen,
+    Speak,
+    RequestAssistance,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RealtimeDialogueCandidate {
+    pub decision: RealtimeCandidateDecision,
+    pub activity: RealtimeActivityProfile,
+    pub confidence: f64,
+    pub intent: String,
+    pub grounding: Vec<String>,
+    pub text: String,
+    pub urgency: f64,
+    pub needs_online_assistance: bool,
+    pub response_to_user: bool,
+    pub stable: bool,
+    pub persona_digest: String,
+}
+
+impl RealtimeDialogueCandidate {
+    pub fn is_valid(&self) -> bool {
+        let text_valid = self.text.chars().count() <= 2_000;
+        let content_valid = match self.decision {
+            RealtimeCandidateDecision::Listen => self.text.trim().is_empty(),
+            RealtimeCandidateDecision::Speak | RealtimeCandidateDecision::RequestAssistance => {
+                !self.text.trim().is_empty()
+            }
+        };
+        self.confidence.is_finite()
+            && (0.0..=1.0).contains(&self.confidence)
+            && self.urgency.is_finite()
+            && (0.0..=1.0).contains(&self.urgency)
+            && valid_public_label(&self.intent)
+            && self.grounding.len() <= 8
+            && self
+                .grounding
+                .iter()
+                .all(|item| !item.trim().is_empty() && item.chars().count() <= 240)
+            && text_valid
+            && content_valid
+            && valid_digest(&self.persona_digest)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LocalOmniLaunch {
     pub runtime_path: PathBuf,
@@ -67,9 +116,7 @@ pub enum BackendCaptionSpeaker {
 #[derive(Clone, Debug, PartialEq)]
 pub enum BackendEvent {
     Ready,
-    PerceptionCandidate {
-        public_summary: String,
-    },
+    PerceptionCandidate(RealtimeDialogueCandidate),
     Audio(Vec<u8>),
     PublicCaption {
         text: String,
@@ -87,6 +134,21 @@ pub enum BackendEvent {
     GoAway,
 }
 
+fn valid_public_label(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+}
+
+fn valid_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 #[derive(Debug, Error)]
 pub enum BackendError {
     #[error("the realtime cloud backend failed")]
@@ -95,6 +157,8 @@ pub enum BackendError {
     LocalUnavailable,
     #[error("the local Omni backend protocol failed")]
     LocalProtocol,
+    #[error("the realtime dialogue candidate protocol failed")]
+    DialogueProtocol,
     #[error("the local Omni backend operation timed out")]
     LocalTimeout,
     #[error("the local Omni backend process failed")]
@@ -107,6 +171,7 @@ impl BackendError {
             Self::Cloud(error) => error.public_code(),
             Self::LocalUnavailable => "LOCAL_BACKEND_NOT_READY",
             Self::LocalProtocol => "LOCAL_BACKEND_PROTOCOL_FAILED",
+            Self::DialogueProtocol => "REALTIME_BACKEND_PROTOCOL_FAILED",
             Self::LocalTimeout => "LOCAL_BACKEND_TIMEOUT",
             Self::LocalIo(_) => "LOCAL_BACKEND_INTERRUPTED",
         }
@@ -271,5 +336,31 @@ mod tests {
         let mut request = local_request();
         request.persona_snapshot_present = false;
         assert!(validate_backend_start(&request).is_err());
+    }
+
+    #[test]
+    fn dialogue_candidate_fields_are_bounded_and_finite() {
+        let mut candidate = RealtimeDialogueCandidate {
+            decision: RealtimeCandidateDecision::Speak,
+            activity: RealtimeActivityProfile::Game,
+            confidence: 0.9,
+            intent: "warn".to_owned(),
+            grounding: vec!["current_window: health is low".to_owned()],
+            text: "Move back.".to_owned(),
+            urgency: 0.7,
+            needs_online_assistance: false,
+            response_to_user: false,
+            stable: true,
+            persona_digest: "a".repeat(64),
+        };
+        assert!(candidate.is_valid());
+        candidate.confidence = f64::NAN;
+        assert!(!candidate.is_valid());
+        candidate.confidence = 0.9;
+        candidate.grounding = vec!["x".repeat(241)];
+        assert!(!candidate.is_valid());
+        candidate.grounding.clear();
+        candidate.intent = "Open URL".to_owned();
+        assert!(!candidate.is_valid());
     }
 }

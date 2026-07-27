@@ -9,8 +9,8 @@ mod transport;
 
 pub use backend::{
     validate_backend_start, BackendStartRequest, LocalOmniLaunch, RealtimeActivityProfile,
-    RealtimeBackendKind, RealtimeCloudProviderKind, RealtimeInteractionIntensity,
-    RealtimeVoiceOutput,
+    RealtimeBackendKind, RealtimeCandidateDecision, RealtimeCloudProviderKind,
+    RealtimeDialogueCandidate, RealtimeInteractionIntensity, RealtimeVoiceOutput,
 };
 pub use media::{
     resample_pcm16, AudioPacket, AudioPlayback, MicrophoneCapture, VideoCapture, VideoFrame,

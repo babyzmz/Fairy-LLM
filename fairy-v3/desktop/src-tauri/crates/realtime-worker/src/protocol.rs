@@ -7,7 +7,7 @@ use zeroize::Zeroizing;
 
 use crate::backend::{
     LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
-    RealtimeInteractionIntensity, RealtimeVoiceOutput,
+    RealtimeDialogueCandidate, RealtimeInteractionIntensity, RealtimeVoiceOutput,
 };
 
 pub const MAX_CONTROL_FRAME_BYTES: usize = 256 * 1024;
@@ -126,7 +126,7 @@ pub enum HostCommand {
     Ping,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkerEvent {
     Ready {
@@ -182,7 +182,8 @@ pub enum WorkerEvent {
         segment_id: String,
         context_epoch: u64,
         sequence: u64,
-        public_summary: String,
+        #[serde(flatten)]
+        candidate: RealtimeDialogueCandidate,
     },
     AssistanceRequest {
         session_id: String,
@@ -410,7 +411,19 @@ mod tests {
                 segment_id: identity().1,
                 context_epoch: 1,
                 sequence: 3,
-                public_summary: "A menu is open".to_owned(),
+                candidate: RealtimeDialogueCandidate {
+                    decision: crate::backend::RealtimeCandidateDecision::Speak,
+                    activity: RealtimeActivityProfile::Game,
+                    confidence: 0.9,
+                    intent: "comment".to_owned(),
+                    grounding: vec!["current_window: menu is open".to_owned()],
+                    text: "A menu is open".to_owned(),
+                    urgency: 0.0,
+                    needs_online_assistance: false,
+                    response_to_user: false,
+                    stable: true,
+                    persona_digest: "a".repeat(64),
+                },
             },
             WorkerEvent::AssistanceRequest {
                 session_id: identity().0,

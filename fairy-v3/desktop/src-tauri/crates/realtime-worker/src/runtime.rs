@@ -7,7 +7,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::backend::{
     BackendCaptionSpeaker, BackendEvent, CloudBackendLaunch, CloudLiveBackend, LocalOmniBackend,
-    LocalOmniLaunch, RealtimeBackend, RealtimeBackendKind, RealtimeCloudProviderKind,
+    LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackend, RealtimeBackendKind,
+    RealtimeCandidateDecision, RealtimeCloudProviderKind, RealtimeDialogueCandidate,
     RealtimeVoiceOutput,
 };
 use crate::media::{
@@ -37,6 +38,7 @@ pub struct RuntimeLaunch {
     pub credential: Option<Zeroizing<String>>,
     pub local_omni: Option<LocalOmniLaunch>,
     pub persona: ValidatedRealtimePersona,
+    pub activity_profile: RealtimeActivityProfile,
     pub source_id: Option<u64>,
     pub microphone_enabled: bool,
     pub screen_enabled: bool,
@@ -51,6 +53,8 @@ struct RuntimeIdentity {
     context_epoch: u64,
     backend: RealtimeBackendKind,
     cloud_provider: Option<RealtimeCloudProviderKind>,
+    persona_digest: String,
+    activity_profile: RealtimeActivityProfile,
 }
 
 pub enum RuntimeCommand {
@@ -130,6 +134,7 @@ fn run_session(
         credential,
         local_omni,
         persona,
+        activity_profile,
         source_id,
         microphone_enabled: initial_microphone_enabled,
         screen_enabled,
@@ -142,6 +147,8 @@ fn run_session(
         context_epoch,
         backend,
         cloud_provider,
+        persona_digest: persona.digest().to_owned(),
+        activity_profile,
     };
     let native_audio = backend == RealtimeBackendKind::CloudLive
         && voice_output == RealtimeVoiceOutput::ProviderNativeVoice;
@@ -175,6 +182,8 @@ fn run_session(
                         connect_segment_id,
                         context_epoch,
                         persona.instruction(),
+                        activity_profile,
+                        persona.digest().to_owned(),
                     )
                     .map(|backend| Box::new(backend) as Box<dyn RealtimeBackend>),
                     None => Err(crate::backend::BackendError::LocalUnavailable),
@@ -296,6 +305,7 @@ fn run_session(
     let mut interruption_count = 0_u64;
     let mut tool_call_count = 0_u64;
     let mut event_sequence = 0_u64;
+    let mut current_user_utterance = false;
     loop {
         if cancelled.load(Ordering::Acquire) {
             break;
@@ -405,14 +415,14 @@ fn run_session(
         for output in outputs {
             match output {
                 BackendEvent::Ready => {}
-                BackendEvent::PerceptionCandidate { public_summary } => {
+                BackendEvent::PerceptionCandidate(candidate) => {
                     event_sequence = event_sequence.saturating_add(1);
                     let _ = events.send(WorkerEvent::PerceptionCandidate {
                         session_id: identity.session_id.clone(),
                         segment_id: identity.segment_id.clone(),
                         context_epoch: identity.context_epoch,
                         sequence: event_sequence,
-                        public_summary,
+                        candidate,
                     });
                 }
                 BackendEvent::Audio(mut bytes) => {
@@ -444,18 +454,46 @@ fn run_session(
                     speaker,
                 } => {
                     event_sequence = event_sequence.saturating_add(1);
-                    let _ = events.send(WorkerEvent::PublicCaption {
-                        session_id: identity.session_id.clone(),
-                        segment_id: identity.segment_id.clone(),
-                        context_epoch: identity.context_epoch,
-                        sequence: event_sequence,
-                        text,
-                        stable,
-                        speaker: match speaker {
-                            BackendCaptionSpeaker::User => "user".to_owned(),
-                            BackendCaptionSpeaker::Assistant => "assistant".to_owned(),
-                        },
-                    });
+                    match speaker {
+                        BackendCaptionSpeaker::User => {
+                            if stable && !text.trim().is_empty() {
+                                current_user_utterance = true;
+                            }
+                            let _ = events.send(WorkerEvent::PublicCaption {
+                                session_id: identity.session_id.clone(),
+                                segment_id: identity.segment_id.clone(),
+                                context_epoch: identity.context_epoch,
+                                sequence: event_sequence,
+                                text,
+                                stable,
+                                speaker: "user".to_owned(),
+                            });
+                        }
+                        BackendCaptionSpeaker::Assistant => {
+                            let candidate = match assistant_caption_candidate(
+                                &identity,
+                                text,
+                                stable,
+                                current_user_utterance,
+                            ) {
+                                Ok(candidate) => candidate,
+                                Err(error) => {
+                                    emit_failed(&events, &identity, error.public_code());
+                                    return;
+                                }
+                            };
+                            let _ = events.send(WorkerEvent::PerceptionCandidate {
+                                session_id: identity.session_id.clone(),
+                                segment_id: identity.segment_id.clone(),
+                                context_epoch: identity.context_epoch,
+                                sequence: event_sequence,
+                                candidate,
+                            });
+                            if stable {
+                                current_user_utterance = false;
+                            }
+                        }
+                    }
                 }
                 BackendEvent::SpeechStarted => {
                     interruption_count = interruption_count.saturating_add(1);
@@ -541,6 +579,39 @@ fn run_session(
         cloud_provider: identity.cloud_provider,
         error_code: None,
     });
+}
+
+fn assistant_caption_candidate(
+    identity: &RuntimeIdentity,
+    text: String,
+    stable: bool,
+    response_to_user: bool,
+) -> Result<RealtimeDialogueCandidate, crate::backend::BackendError> {
+    let candidate = RealtimeDialogueCandidate {
+        decision: RealtimeCandidateDecision::Speak,
+        activity: identity.activity_profile,
+        confidence: 1.0,
+        intent: if response_to_user {
+            "answer".to_owned()
+        } else {
+            "comment".to_owned()
+        },
+        grounding: if response_to_user {
+            vec!["current_user_utterance".to_owned()]
+        } else {
+            Vec::new()
+        },
+        text,
+        urgency: 0.0,
+        needs_online_assistance: false,
+        response_to_user,
+        stable,
+        persona_digest: identity.persona_digest.clone(),
+    };
+    candidate
+        .is_valid()
+        .then_some(candidate)
+        .ok_or(crate::backend::BackendError::DialogueProtocol)
 }
 
 fn startup_cancel_requested(
@@ -640,5 +711,44 @@ mod tests {
         assert!(startup_cancel_requested(&receiver, &cancelled));
         assert!(started.elapsed() < Duration::from_millis(100));
         assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn cloud_assistant_caption_becomes_a_persona_bound_candidate() {
+        let identity = RuntimeIdentity {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            backend: RealtimeBackendKind::CloudLive,
+            cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
+            persona_digest: "a".repeat(64),
+            activity_profile: RealtimeActivityProfile::Focus,
+        };
+        let candidate = assistant_caption_candidate(&identity, "Answer.".to_owned(), true, true)
+            .expect("candidate");
+        assert!(candidate.is_valid());
+        assert!(candidate.response_to_user);
+        assert_eq!(candidate.grounding, vec!["current_user_utterance"]);
+        assert_eq!(candidate.intent, "answer");
+        assert_eq!(candidate.activity, RealtimeActivityProfile::Focus);
+        assert_eq!(candidate.persona_digest, "a".repeat(64));
+    }
+
+    #[test]
+    fn unsolicited_cloud_caption_does_not_invent_grounding() {
+        let identity = RuntimeIdentity {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            backend: RealtimeBackendKind::CloudLive,
+            cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
+            persona_digest: "a".repeat(64),
+            activity_profile: RealtimeActivityProfile::Auto,
+        };
+        let candidate = assistant_caption_candidate(&identity, "Maybe.".to_owned(), false, false)
+            .expect("candidate");
+        assert!(candidate.is_valid());
+        assert!(!candidate.response_to_user);
+        assert!(candidate.grounding.is_empty());
     }
 }

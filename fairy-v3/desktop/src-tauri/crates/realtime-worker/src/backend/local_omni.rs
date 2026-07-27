@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
-use super::{BackendError, BackendEvent, LocalOmniLaunch, RealtimeBackend};
+use super::{
+    BackendError, BackendEvent, LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackend,
+    RealtimeCandidateDecision, RealtimeDialogueCandidate,
+};
 
 const CONTROL_LIMIT: usize = 256 * 1024;
 const CONTROL_PROTOCOL: u64 = 1;
@@ -121,7 +124,15 @@ enum RuntimeEvent {
         decision: String,
         text: String,
         confidence: f64,
-        grounding: Vec<serde_json::Value>,
+        grounding: Vec<String>,
+        #[serde(default)]
+        activity: Option<RealtimeActivityProfile>,
+        #[serde(default)]
+        intent: Option<String>,
+        #[serde(default)]
+        urgency: Option<f64>,
+        #[serde(default)]
+        needs_online_assistance: bool,
         backend_ready: bool,
     },
     Diagnostic {
@@ -139,6 +150,18 @@ enum RuntimeEvent {
         sequence: u64,
         reason: String,
     },
+}
+
+struct LocalDecisionProjection {
+    decision: String,
+    text: String,
+    confidence: f64,
+    grounding: Vec<String>,
+    activity: Option<RealtimeActivityProfile>,
+    intent: Option<String>,
+    urgency: Option<f64>,
+    needs_online_assistance: bool,
+    backend_ready: bool,
 }
 
 impl RuntimeEvent {
@@ -204,6 +227,8 @@ pub struct LocalOmniBackend {
     microphone_buffer: VecDeque<u8>,
     microphone_packets_since_commit: u32,
     stopped: bool,
+    activity_profile: RealtimeActivityProfile,
+    persona_digest: String,
 }
 
 impl LocalOmniBackend {
@@ -213,6 +238,8 @@ impl LocalOmniBackend {
         segment_id: String,
         context_epoch: u64,
         system_instruction: &str,
+        activity_profile: RealtimeActivityProfile,
+        persona_digest: String,
     ) -> Result<Self, BackendError> {
         validate_launch(&launch)?;
         let pipe_name = format!("fairy-omni-{}-{}", std::process::id(), monotonic_token());
@@ -269,6 +296,8 @@ impl LocalOmniBackend {
             microphone_buffer: VecDeque::with_capacity(MICROPHONE_PACKET_BYTES * 2),
             microphone_packets_since_commit: 0,
             stopped: false,
+            activity_profile,
+            persona_digest,
         };
         backend.send_hello()?;
         let ready = backend.recv_until(Instant::now() + Duration::from_secs(5), |event| {
@@ -512,23 +541,29 @@ impl RealtimeBackend for LocalOmniBackend {
                     text,
                     confidence,
                     grounding,
+                    activity,
+                    intent,
+                    urgency,
+                    needs_online_assistance,
                     backend_ready,
                     ..
                 } => {
-                    if !backend_ready
-                        || !confidence.is_finite()
-                        || !(0.0..=1.0).contains(&confidence)
-                    {
-                        return Err(BackendError::LocalProtocol);
-                    }
-                    if decision == "speak" && !text.trim().is_empty() {
-                        output.push(BackendEvent::PerceptionCandidate {
-                            public_summary: text.chars().take(2_000).collect(),
-                        });
-                    } else if decision != "listen" {
-                        return Err(BackendError::LocalProtocol);
-                    }
-                    drop(grounding);
+                    let candidate = project_local_decision(
+                        LocalDecisionProjection {
+                            decision,
+                            text,
+                            confidence,
+                            grounding,
+                            activity,
+                            intent,
+                            urgency,
+                            needs_online_assistance,
+                            backend_ready,
+                        },
+                        self.activity_profile,
+                        &self.persona_digest,
+                    )?;
+                    output.push(BackendEvent::PerceptionCandidate(candidate));
                 }
                 RuntimeEvent::Diagnostic { code, severity, .. } => {
                     if code.len() > 128 || severity.len() > 32 {
@@ -575,6 +610,46 @@ impl RealtimeBackend for LocalOmniBackend {
             thread::sleep(Duration::from_millis(20));
         }
     }
+}
+
+fn project_local_decision(
+    projection: LocalDecisionProjection,
+    default_activity: RealtimeActivityProfile,
+    persona_digest: &str,
+) -> Result<RealtimeDialogueCandidate, BackendError> {
+    if !projection.backend_ready
+        || !projection.confidence.is_finite()
+        || !(0.0..=1.0).contains(&projection.confidence)
+    {
+        return Err(BackendError::LocalProtocol);
+    }
+    let decision = match projection.decision.as_str() {
+        "listen" => RealtimeCandidateDecision::Listen,
+        "speak" => RealtimeCandidateDecision::Speak,
+        "request_assistance" => RealtimeCandidateDecision::RequestAssistance,
+        _ => return Err(BackendError::LocalProtocol),
+    };
+    let candidate = RealtimeDialogueCandidate {
+        decision,
+        activity: projection.activity.unwrap_or(default_activity),
+        confidence: projection.confidence,
+        intent: projection.intent.unwrap_or_else(|| match decision {
+            RealtimeCandidateDecision::Listen => "observe".to_owned(),
+            RealtimeCandidateDecision::Speak => "comment".to_owned(),
+            RealtimeCandidateDecision::RequestAssistance => "assist".to_owned(),
+        }),
+        grounding: projection.grounding,
+        text: projection.text,
+        urgency: projection.urgency.unwrap_or(0.0),
+        needs_online_assistance: projection.needs_online_assistance,
+        response_to_user: false,
+        stable: true,
+        persona_digest: persona_digest.to_owned(),
+    };
+    candidate
+        .is_valid()
+        .then_some(candidate)
+        .ok_or(BackendError::LocalProtocol)
 }
 
 impl Drop for LocalOmniBackend {
@@ -860,5 +935,57 @@ mod tests {
             "prompt": "not allowed"
         });
         assert!(serde_json::from_value::<RuntimeEvent>(value).is_err());
+    }
+
+    #[test]
+    fn local_decisions_preserve_structured_candidate_fields() {
+        let candidate = project_local_decision(
+            LocalDecisionProjection {
+                decision: "request_assistance".to_owned(),
+                text: "Check the current encounter.".to_owned(),
+                confidence: 0.82,
+                grounding: vec!["current_window: encounter changed".to_owned()],
+                activity: Some(RealtimeActivityProfile::Game),
+                intent: Some("assist".to_owned()),
+                urgency: Some(0.4),
+                needs_online_assistance: true,
+                backend_ready: true,
+            },
+            RealtimeActivityProfile::Auto,
+            &"a".repeat(64),
+        )
+        .expect("structured candidate");
+
+        assert_eq!(
+            candidate.decision,
+            RealtimeCandidateDecision::RequestAssistance
+        );
+        assert_eq!(candidate.activity, RealtimeActivityProfile::Game);
+        assert_eq!(candidate.intent, "assist");
+        assert_eq!(candidate.grounding.len(), 1);
+        assert_eq!(candidate.urgency, 0.4);
+        assert!(candidate.needs_online_assistance);
+    }
+
+    #[test]
+    fn local_speak_without_grounding_remains_a_candidate_for_the_director() {
+        let candidate = project_local_decision(
+            LocalDecisionProjection {
+                decision: "speak".to_owned(),
+                text: "A guess that the Director must reject.".to_owned(),
+                confidence: 0.7,
+                grounding: Vec::new(),
+                activity: None,
+                intent: None,
+                urgency: None,
+                needs_online_assistance: false,
+                backend_ready: true,
+            },
+            RealtimeActivityProfile::Focus,
+            &"a".repeat(64),
+        )
+        .expect("bounded candidate");
+        assert!(candidate.grounding.is_empty());
+        assert_eq!(candidate.activity, RealtimeActivityProfile::Focus);
     }
 }

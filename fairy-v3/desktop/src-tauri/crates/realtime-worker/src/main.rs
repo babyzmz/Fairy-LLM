@@ -127,6 +127,7 @@ fn main() {
                     credential: cloud_credential.map(|value| value.into_zeroizing()),
                     local_omni: local_omni.map(|launch| *launch),
                     persona: persona.expect("validated Persona"),
+                    activity_profile,
                     source_id,
                     microphone_enabled,
                     screen_enabled,
