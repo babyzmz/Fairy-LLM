@@ -198,3 +198,19 @@ core\.venv\Scripts\python.exe scripts\check-release-documents.py
 core\.venv\Scripts\python.exe scripts\check_release_bundle.py
 core\.venv\Scripts\python.exe scripts\test_release_bundle.py
 ```
+
+Run the final fail-closed release decision only with a dedicated evidence
+directory and bundle directory:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts\test-realtime-companion-beta-release.ps1 `
+  -EvidenceDirectory C:\FairyRelease\evidence `
+  -BundleDirectory C:\FairyRelease\bundle `
+  -OutputPath C:\FairyRelease\release-gate.json
+```
+
+The evidence schema is documented by
+`docs/release/realtime-companion-beta-release-evidence.example.json`. Missing
+four-hour, native WebView2, reference-GPU, installer, signing, or malware
+evidence produces a `blocked` report and a non-zero exit code.

@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "product": "Fairy",
+  "version": "0.2.0",
+  "phase_acceptance": {
+    "status": "blocked",
+    "observed_at": "2026-07-28T00:00:00Z",
+    "phase_0_through_7": false
+  },
+  "regression": {
+    "status": "blocked",
+    "observed_at": "2026-07-28T00:00:00Z",
+    "core": false,
+    "rust": false,
+    "typescript": false,
+    "vitest": false,
+    "playwright": false
+  },
+  "soak": {
+    "status": "blocked",
+    "observed_at": "2026-07-28T00:00:00Z",
+    "observed_duration_seconds": 0,
+    "context_rotations": 0,
+    "pause_resume_cycles": 0,
+    "window_switches": 0,
+    "backend": "local_mini_cpm_o45",
+    "terminal_session_status": "not_run",
+    "digest_count": 0,
+    "sidecar_recovery": false,
+    "second_failure_quarantined": false,
+    "process_cleanup_confirmed": false
+  },
+  "native": {
+    "status": "blocked",
+    "observed_at": "2026-07-28T00:00:00Z",
+    "proposal_authority": false,
+    "resource_projection": false,
+    "crash_recovery": false,
+    "quarantine": false,
+    "companion_reload": false,
+    "no_worker_preheat": false
+  },
+  "performance": {
+    "status": "blocked",
+    "observed_at": "2026-07-28T00:00:00Z",
+    "model_ready_progress": false,
+    "visual_p95_ms": 0,
+    "speech_to_text_p95_ms": 0,
+    "voice_start_p95_ms": 0,
+    "barge_in_p95_ms": 0,
+    "queues_bounded": false,
+    "latest_frame_only": false,
+    "median_gpu_frame_time_impact_percent": 0,
+    "game_one_percent_low_impact_percent": 0,
+    "no_game_or_desktop_crash": false
+  },
+  "privacy": {
+    "status": "blocked",
+    "observed_at": "2026-07-28T00:00:00Z",
+    "selected_window_only": false,
+    "sensitive_window_pause": false,
+    "cloud_scope_disclosed": false,
+    "local_scope_disclosed": false,
+    "pause_stops_frames": false,
+    "no_raw_media_on_disk": false,
+    "no_content_in_logs": false,
+    "telemetry_default_off": false
+  },
+  "installer": {
+    "status": "blocked",
+    "observed_at": "2026-07-28T00:00:00Z",
+    "install": false,
+    "start": false,
+    "upgrade": false,
+    "uninstall": false,
+    "user_data_preserved": false,
+    "cold_start_no_preheat": false,
+    "manifest_relative_path": "release-manifest.json"
+  },
+  "security": {
+    "status": "blocked",
+    "observed_at": "2026-07-28T00:00:00Z",
+    "malware_scan_passed": false,
+    "signed": false,
+    "signature_verified": false
+  },
+  "artifacts": [
+    {
+      "path": "Fairy_0.2.0_x64_en-US.msi",
+      "bytes": 0,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "path": "cab1.cab",
+      "bytes": 0,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "path": "release-manifest.json",
+      "bytes": 0,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}
