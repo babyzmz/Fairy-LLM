@@ -4,7 +4,8 @@
 
 - The main workspace does not render a persistent Game Companion launcher.
 - The Fairy context menu contains one `Game companion` action.
-- Selecting that action opens or focuses one dedicated `Fairy Game Companion` secondary window.
+- Selecting that action opens or focuses one dedicated `Fairy Realtime Companion` secondary
+  window.
 - Opening the Companion must not show, focus, or otherwise wake the main Fairy workspace.
 - Closing the Companion hides the secondary window so an active or recently completed session can
   be resumed without creating a duplicate window.
@@ -65,7 +66,7 @@
 - Rust: window authorization, Companion method allow list, and capture-scope tests
 - TypeScript build
 - Tauri development runtime, 2026-07-23:
-  - one `Fairy Game Companion` secondary window rendered without raising the main workspace;
+  - one `Fairy Realtime Companion` secondary window rendered without raising the main workspace;
   - the authorized game-window source list populated in the secondary surface;
   - the custom close action hid the window and removed it from the visible-window list;
   - only one Companion instance was observed;
