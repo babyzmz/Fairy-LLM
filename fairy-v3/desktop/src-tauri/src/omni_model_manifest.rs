@@ -89,10 +89,10 @@ impl OmniModelManifest {
         Ok(format!("{:x}", Sha256::digest(bytes)))
     }
 
-    fn validate(&self) -> Result<(), ManifestError> {
+    pub fn validate(&self) -> Result<(), ManifestError> {
         if self.schema_version != 1
             || self.model_id != MODEL_ID
-            || self.version.trim().is_empty()
+            || !valid_windows_component(&self.version)
             || !is_lower_hex(&self.model_revision, 40)
             || self.runtime_compatibility != "fairy-omni-runtime-v1"
             || self.license != "Apache-2.0"
