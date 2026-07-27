@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from fairy_core.commanding import EventVisibility
 from fairy_core.contracts.realtime import (
     GameMemorySaveInput,
     RealtimeProviderSelection,
@@ -156,6 +157,19 @@ class RealtimeApplication:
                 conversation_id=session.conversation_id,
                 speaker=request.speaker,
                 text=request.text,
+            )
+            unit_of_work.commands.append_domain_event(
+                event_type="realtime.transcript.appended",
+                visibility=EventVisibility.USER,
+                message="Realtime transcript entry appended",
+                payload={
+                    "session_id": str(session.id),
+                    "conversation_id": str(session.conversation_id),
+                    "entry_id": str(entry.id),
+                    "sequence": entry.sequence,
+                },
+                actor="realtime",
+                conversation_id=session.conversation_id,
             )
             unit_of_work.commit()
             return entry

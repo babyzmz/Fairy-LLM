@@ -12,6 +12,7 @@ export type WorkspaceInvalidationDomain =
   | "previews"
   | "projects"
   | "providers"
+  | "realtimeTranscript"
   | "tasks"
   | "traces"
   | "voice"
@@ -161,6 +162,10 @@ export function addWorkspaceEventInvalidation(
     addWorkspaceInvalidation(batch, ["permissions"], scope);
     return;
   }
+  if (type === "realtime.transcript.appended") {
+    addWorkspaceInvalidation(batch, ["realtimeTranscript"], scope);
+    return;
+  }
   if (type.startsWith("voice.") || type.startsWith("realtime.")) {
     addWorkspaceInvalidation(batch, ["voice"], scope);
     return;
@@ -195,6 +200,9 @@ export function workspaceQueryMatchesInvalidation(
   if (root !== "workspace") return false;
 
   if (batch.domains.has("messages") && ["messages", "project-messages"].includes(kind)) {
+    return scopeMatches(keyPart(queryKey, 2), batch.conversationIds);
+  }
+  if (batch.domains.has("realtimeTranscript") && kind === "realtime-transcript") {
     return scopeMatches(keyPart(queryKey, 2), batch.conversationIds);
   }
   if (batch.domains.has("tasks") && kind === "tasks") return true;

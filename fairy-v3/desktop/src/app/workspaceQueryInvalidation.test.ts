@@ -88,6 +88,20 @@ describe("workspace query invalidation", () => {
     expect(matches(batch, ["workspace", "browser-snapshot", "session-a", "tab-a", "revision-a"])).toBe(true);
   });
 
+  it("refreshes only the matching Conversation transcript for appended captions", () => {
+    const batch = createWorkspaceInvalidationBatch();
+    addWorkspaceEventInvalidation(batch, event("realtime.transcript.appended", {
+      conversation_id: "conversation-a",
+    }));
+
+    expect(matches(batch, ["workspace", "realtime-transcript", "conversation-a"])).toBe(true);
+    expect(matches(batch, ["workspace", "realtime-transcript", "conversation-b"])).toBe(false);
+    expect(matches(batch, ["workspace", "messages", "conversation-a"])).toBe(false);
+    expect(matches(batch, ["workspace", "tasks"])).toBe(false);
+    expect(matches(batch, ["settings", "category", "voice"])).toBe(false);
+    expect(matches(batch, ["workspace", "providers"])).toBe(false);
+  });
+
   it("coalesces multiple conversations without widening to unrelated queries", () => {
     const batch = createWorkspaceInvalidationBatch();
     addWorkspaceEventInvalidation(batch, event("message.created", {

@@ -198,6 +198,33 @@ def test_voice_transcript_append_and_list(tmp_path) -> None:
             ("user", "Where is the boss?"),
             ("assistant", "Behind the door."),
         ]
+        transcript_events = [
+            event
+            for event in service.invoke(
+                "events.list", {"cursor": 0, "limit": 100}
+            )["items"]
+            if event["event_type"] == "realtime.transcript.appended"
+        ]
+        assert [event["conversation_id"] for event in transcript_events] == [
+            conversation_id,
+            conversation_id,
+        ]
+        assert [event["payload"] for event in transcript_events] == [
+            {
+                "session_id": started["id"],
+                "conversation_id": conversation_id,
+                "entry_id": first["id"],
+                "sequence": 1,
+            },
+            {
+                "session_id": started["id"],
+                "conversation_id": conversation_id,
+                "entry_id": second["id"],
+                "sequence": 2,
+            },
+        ]
+        assert "Where is the boss?" not in str(transcript_events)
+        assert "Behind the door." not in str(transcript_events)
 
         # An unrelated conversation has no transcript.
         empty = service.invoke(
