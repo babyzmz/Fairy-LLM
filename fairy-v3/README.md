@@ -108,6 +108,36 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\test-all.ps1 -Requir
 Use `-SkipDocker` when an intentionally local-only gate is required. Static
 Preview itself does not require Docker or WSL.
 
+Realtime Companion has two separate long-session gates. The deterministic
+four-hour-equivalent state-machine scenario runs with the Rust workspace:
+
+```powershell
+cd desktop\src-tauri
+cargo test --test realtime_soak
+```
+
+The real wall-clock gate is intentionally not part of ordinary development or
+CI. It requires a Windows release executable, a dedicated Fairy data directory
+whose managed MiniCPM install is already `ready`, explicit Local runtime
+verification, and at least four hours. It never accepts Cloud fallback and
+writes only sanitized counters and public status codes:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts\test-realtime-companion-soak.ps1 `
+  -Executable C:\FairySoak\fairy.exe `
+  -DataDirectory C:\FairySoak\data `
+  -ConfirmDataDirectory `
+  -DurationHours 4 `
+  -OutputPath C:\FairySoak\evidence\realtime-soak.json
+```
+
+The operator verifies the Local model, starts Realtime Companion, and stops it
+after the duration prompt so Core can finalize the Session digest. The harness
+terminates its complete process tree in all paths. Missing eligible hardware,
+model/runtime readiness, a completed Session, or a terminal digest is a
+blocked/failed release gate rather than a synthetic pass.
+
 For local OpenRouter development, the checked-in preset exposes only the fixed
 Composer allowlist. Cross-model fallback is chosen per Auto Turn by Core and is
 never applied to a manual model selection. Start the Tauri application through
