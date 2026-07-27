@@ -79,7 +79,6 @@ pub mod omni_model_download;
 pub mod omni_model_manager;
 pub mod omni_model_manifest;
 pub mod omni_model_store;
-pub mod omni_runtime_manager;
 pub mod omni_runtime_protocol;
 pub mod omni_runtime_self_test;
 pub mod presence_backdrop;
@@ -100,6 +99,7 @@ pub mod realtime_context;
 pub mod realtime_coordinator;
 pub mod realtime_dialogue;
 pub mod realtime_resource_governor;
+pub mod realtime_sidecar_supervisor;
 pub mod realtime_worker;
 pub mod voice_worker;
 
@@ -635,9 +635,17 @@ async fn realtime_local_readiness_get(
 ) -> Result<LocalReadinessReport, String> {
     authorize_local_readiness_reader(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
-    state
+    let mut report = state
         .local_model
-        .readiness(input.profile, input.refresh_hardware)
+        .readiness(input.profile, input.refresh_hardware)?;
+    if state.realtime.sidecar_quarantined() {
+        report.runtime = local_readiness::OmniRuntimeReadiness::Failed;
+        report.runtime_error_code = Some("OMNI_RUNTIME_QUARANTINED".to_owned());
+        report.capability.local_beta_eligible = false;
+        report.capability.reason =
+            hardware_capabilities::LocalBetaReadinessReason::RuntimeQuarantined;
+    }
+    Ok(report)
 }
 
 #[tauri::command]
@@ -680,7 +688,12 @@ async fn omni_model_verify(
 ) -> Result<OmniModelInstallState, String> {
     authorize_local_model_mutation(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
-    state.local_model.start_verify(window.app_handle())
+    let result = state.local_model.start_verify(window.app_handle())?;
+    state
+        .realtime
+        .clear_sidecar_quarantine()
+        .map_err(|error| error.to_string())?;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -835,10 +848,14 @@ fn resolve_backend_for_state(
     );
     let (local_ready, local_reason) = if needs_local {
         let readiness = state.local_model.readiness(input.activity_profile, false)?;
-        (
-            readiness.capability.local_beta_eligible,
-            readiness.capability.reason,
-        )
+        if state.realtime.sidecar_quarantined() {
+            (false, LocalBetaReadinessReason::RuntimeQuarantined)
+        } else {
+            (
+                readiness.capability.local_beta_eligible,
+                readiness.capability.reason,
+            )
+        }
     } else {
         (false, LocalBetaReadinessReason::ModelMissing)
     };

@@ -33,6 +33,10 @@ use crate::realtime_dialogue::{RealtimeDialogueDecision, RealtimeDialogueDirecto
 use crate::realtime_resource_governor::{
     RealtimeResourceGovernor, RealtimeResourceSample, RealtimeResourceSnapshot,
 };
+use crate::realtime_sidecar_supervisor::{
+    RealtimeSidecarDecision, RealtimeSidecarSnapshot, RealtimeSidecarSupervisor,
+    RealtimeSidecarSupervisorError,
+};
 
 pub const REALTIME_WORKER_EVENT: &str = "fairy-realtime-event";
 const REALTIME_PROTOCOL: &str = "fairy-realtime-worker-v2";
@@ -42,6 +46,7 @@ const WORKER_STOP_GRACE: Duration = Duration::from_millis(80);
 pub struct RealtimeWorkerLaunch {
     pub program: PathBuf,
     pub log_path: PathBuf,
+    pub quarantine_path: PathBuf,
     pub local_omni: LocalOmniLaunch,
 }
 
@@ -145,6 +150,7 @@ pub struct RealtimeWorkerStatus {
     pub presence_projection: Option<RealtimePresenceProjection>,
     pub assistance: Vec<RealtimeAssistancePublicState>,
     pub resource: Option<RealtimeResourceSnapshot>,
+    pub sidecar: RealtimeSidecarSnapshot,
     #[serde(flatten)]
     pub usage: RealtimeWorkerUsage,
 }
@@ -186,6 +192,49 @@ struct WorkerGovernanceHandles {
     dialogue: Arc<Mutex<Option<RealtimeDialogueDirector>>>,
     context: Arc<Mutex<RealtimeContextAuthority>>,
     resource_governor: Arc<Mutex<Option<RealtimeResourceGovernor>>>,
+    sidecar_supervisor: Arc<Mutex<RealtimeSidecarSupervisor>>,
+    recovery: Arc<Mutex<Option<RealtimeRecoveryEnvelope>>>,
+    local_omni: LocalOmniLaunch,
+}
+
+#[derive(Clone)]
+struct RealtimeRecoveryEnvelope {
+    locale: String,
+    activity_profile: RealtimeActivityProfile,
+    interaction_intensity: RealtimeInteractionIntensity,
+    voice_output: RealtimeVoiceOutput,
+    source_id: Option<u64>,
+    microphone_enabled: bool,
+    screen_enabled: bool,
+    application_audio_enabled: bool,
+    online_assistance_enabled: bool,
+    persona_snapshot: Zeroizing<String>,
+}
+
+impl RealtimeRecoveryEnvelope {
+    fn from_start(
+        input: &RealtimeWorkerStartInput,
+        persona_snapshot: Zeroizing<String>,
+    ) -> Result<Self, RealtimeWorkerError> {
+        if persona_snapshot.len() > 64 * 1024
+            || input.locale.trim().is_empty()
+            || input.locale.len() > 64
+        {
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        Ok(Self {
+            locale: input.locale.clone(),
+            activity_profile: input.activity_profile,
+            interaction_intensity: input.interaction_intensity,
+            voice_output: input.voice_output,
+            source_id: input.source_id,
+            microphone_enabled: input.microphone_enabled,
+            screen_enabled: input.screen_enabled,
+            application_audio_enabled: input.application_audio_enabled,
+            online_assistance_enabled: input.online_assistance_enabled,
+            persona_snapshot,
+        })
+    }
 }
 
 enum DialogueGovernance {
@@ -204,10 +253,17 @@ pub struct RealtimeWorkerManager {
     dialogue: Arc<Mutex<Option<RealtimeDialogueDirector>>>,
     context: Arc<Mutex<RealtimeContextAuthority>>,
     resource_governor: Arc<Mutex<Option<RealtimeResourceGovernor>>>,
+    sidecar_supervisor: Arc<Mutex<RealtimeSidecarSupervisor>>,
+    recovery: Arc<Mutex<Option<RealtimeRecoveryEnvelope>>>,
 }
 
 impl RealtimeWorkerManager {
     pub fn new(launch: RealtimeWorkerLaunch, assistance: Arc<RealtimeAssistanceRouter>) -> Self {
+        let sidecar_supervisor = RealtimeSidecarSupervisor::load(
+            launch.quarantine_path.clone(),
+            launch.local_omni.model_version.clone(),
+            launch.local_omni.manifest_digest.clone(),
+        );
         Self {
             launch,
             assistance,
@@ -218,6 +274,8 @@ impl RealtimeWorkerManager {
             dialogue: Arc::new(Mutex::new(None)),
             context: Arc::new(Mutex::new(RealtimeContextAuthority::default())),
             resource_governor: Arc::new(Mutex::new(None)),
+            sidecar_supervisor: Arc::new(Mutex::new(sidecar_supervisor)),
+            recovery: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -258,6 +316,7 @@ impl RealtimeWorkerManager {
             running: guard.is_some(),
             assistance: self.assistance.snapshot(session_id.as_deref()),
             resource: self.resource_snapshot(),
+            sidecar: self.sidecar_snapshot(),
             session_id,
             segment_id: projection.as_ref().map(|value| value.0.clone()),
             context_epoch: projection.as_ref().map(|value| value.1),
@@ -325,6 +384,21 @@ impl RealtimeWorkerManager {
             .and_then(Value::as_str)
             .ok_or(RealtimeWorkerError::Protocol)?
             .to_owned();
+        if input.backend == RealtimeBackendKind::LocalMiniCpmO45 {
+            let mut supervisor = self
+                .sidecar_supervisor
+                .lock()
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            if supervisor.snapshot().quarantined {
+                return Err(RealtimeWorkerError::Unavailable);
+            }
+            if !continuation_approved {
+                supervisor.begin_session();
+            }
+        }
+        let recovery = (input.backend == RealtimeBackendKind::LocalMiniCpmO45)
+            .then(|| RealtimeRecoveryEnvelope::from_start(&input, persona_snapshot.clone()))
+            .transpose()?;
         let mut guard = self
             .process
             .lock()
@@ -402,6 +476,11 @@ impl RealtimeWorkerManager {
             .lock()
             .map_err(|_| RealtimeWorkerError::Protocol)?
             .clone();
+        let previous_recovery = self
+            .recovery
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?
+            .clone();
         *self
             .resource_governor
             .lock()
@@ -428,6 +507,10 @@ impl RealtimeWorkerManager {
             self.restore_resource_governor(previous_resource_governor);
             return Err(RealtimeWorkerError::Protocol);
         }
+        *self
+            .recovery
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)? = recovery;
         let mut process = match spawn_worker(
             &self.launch,
             app.clone(),
@@ -439,6 +522,9 @@ impl RealtimeWorkerManager {
                 dialogue: Arc::clone(&self.dialogue),
                 context: Arc::clone(&self.context),
                 resource_governor: Arc::clone(&self.resource_governor),
+                sidecar_supervisor: Arc::clone(&self.sidecar_supervisor),
+                recovery: Arc::clone(&self.recovery),
+                local_omni: self.launch.local_omni.clone(),
             },
         ) {
             Ok(process) => process,
@@ -447,6 +533,7 @@ impl RealtimeWorkerManager {
                 self.restore_dialogue(previous_dialogue);
                 self.restore_context(previous_context);
                 self.restore_resource_governor(previous_resource_governor);
+                self.restore_recovery(previous_recovery);
                 return Err(error);
             }
         };
@@ -459,6 +546,7 @@ impl RealtimeWorkerManager {
             self.restore_dialogue(previous_dialogue);
             self.restore_context(previous_context);
             self.restore_resource_governor(previous_resource_governor);
+            self.restore_recovery(previous_recovery);
             return Err(RealtimeWorkerError::Protocol);
         }
         let command = HostCommand::Start {
@@ -495,6 +583,7 @@ impl RealtimeWorkerManager {
             self.restore_dialogue(previous_dialogue);
             self.restore_context(previous_context);
             self.restore_resource_governor(previous_resource_governor);
+            self.restore_recovery(previous_recovery);
             return Err(RealtimeWorkerError::Protocol);
         }
         if input.backend == RealtimeBackendKind::LocalMiniCpmO45
@@ -516,6 +605,7 @@ impl RealtimeWorkerManager {
             self.restore_dialogue(previous_dialogue);
             self.restore_context(previous_context);
             self.restore_resource_governor(previous_resource_governor);
+            self.restore_recovery(previous_recovery);
             return Err(RealtimeWorkerError::Protocol);
         }
         if let Some(projection) = self.current_presence_projection() {
@@ -536,6 +626,7 @@ impl RealtimeWorkerManager {
             presence_projection: self.current_presence_projection(),
             assistance: self.assistance.snapshot(process.session_id.as_deref()),
             resource: self.resource_snapshot(),
+            sidecar: self.sidecar_snapshot(),
             usage: self.usage_snapshot(),
         };
         *guard = Some(process);
@@ -569,6 +660,7 @@ impl RealtimeWorkerManager {
                 presence_projection: None,
                 assistance: Vec::new(),
                 resource: None,
+                sidecar: self.sidecar_snapshot(),
                 usage: self.usage_snapshot(),
             });
         };
@@ -603,6 +695,7 @@ impl RealtimeWorkerManager {
                     presence_projection: None,
                     assistance: Vec::new(),
                     resource: None,
+                    sidecar: self.sidecar_snapshot(),
                     usage: self.usage_snapshot(),
                 });
             }
@@ -627,6 +720,7 @@ impl RealtimeWorkerManager {
             presence_projection: None,
             assistance: Vec::new(),
             resource: None,
+            sidecar: self.sidecar_snapshot(),
             usage: self.usage_snapshot(),
         })
     }
@@ -1078,6 +1172,30 @@ impl RealtimeWorkerManager {
             .and_then(|governor| governor.as_ref().map(RealtimeResourceGovernor::snapshot))
     }
 
+    fn sidecar_snapshot(&self) -> RealtimeSidecarSnapshot {
+        self.sidecar_supervisor
+            .lock()
+            .map(|supervisor| supervisor.snapshot())
+            .unwrap_or(RealtimeSidecarSnapshot {
+                restart_used: true,
+                quarantined: true,
+                context_interrupted: true,
+                failure_count: 2,
+                error_code: Some("SIDECAR_SUPERVISOR_UNAVAILABLE".to_owned()),
+            })
+    }
+
+    pub fn sidecar_quarantined(&self) -> bool {
+        self.sidecar_snapshot().quarantined
+    }
+
+    pub fn clear_sidecar_quarantine(&self) -> Result<(), RealtimeSidecarSupervisorError> {
+        self.sidecar_supervisor
+            .lock()
+            .map_err(|_| RealtimeSidecarSupervisorError::Store)?
+            .clear_for_explicit_verify()
+    }
+
     fn build_context_carryover(
         &self,
         current: &ContextEpochIdentity,
@@ -1122,6 +1240,9 @@ impl RealtimeWorkerManager {
         }
         if let Ok(mut governor) = self.resource_governor.lock() {
             *governor = None;
+        }
+        if let Ok(mut recovery) = self.recovery.lock() {
+            *recovery = None;
         }
     }
 
@@ -1176,6 +1297,12 @@ impl RealtimeWorkerManager {
     fn restore_resource_governor(&self, governor: Option<RealtimeResourceGovernor>) {
         if let Ok(mut current) = self.resource_governor.lock() {
             *current = governor;
+        }
+    }
+
+    fn restore_recovery(&self, envelope: Option<RealtimeRecoveryEnvelope>) {
+        if let Ok(mut recovery) = self.recovery.lock() {
+            *recovery = envelope;
         }
     }
 
@@ -1306,6 +1433,9 @@ fn spawn_worker(
         dialogue,
         context,
         resource_governor,
+        sidecar_supervisor,
+        recovery,
+        local_omni,
     } = governance;
     if !launch.program.is_file() {
         return Err(RealtimeWorkerError::Unavailable);
@@ -1365,6 +1495,20 @@ fn spawn_worker(
                         continue;
                     }
                     if !coordinator_allows_worker_event(&value, &coordinator) {
+                        continue;
+                    }
+                    if handle_local_sidecar_failure(
+                        &value,
+                        &app,
+                        &reader_input,
+                        &active_identity,
+                        &coordinator,
+                        &dialogue,
+                        &resource_governor,
+                        &sidecar_supervisor,
+                        &recovery,
+                        &local_omni,
+                    ) {
                         continue;
                     }
                     if let Ok(mut context) = context.lock() {
@@ -1436,6 +1580,30 @@ fn spawn_worker(
                                 .ok()
                                 .and_then(|active| active.clone());
                             if let Some(identity) = identity {
+                                if policy.level == RealtimeResourceLevel::DeviceRemoved {
+                                    if let Ok(mut supervisor) = sidecar_supervisor.lock() {
+                                        supervisor.quarantine("GPU_DEVICE_REMOVED");
+                                    }
+                                    let projection =
+                                        coordinator.lock().ok().and_then(|mut coordinator| {
+                                            let coordinator = coordinator.as_mut()?;
+                                            let _ = coordinator
+                                                .apply(RealtimeCoordinatorEvent::BackendFailed);
+                                            Some(coordinator.presence_projection())
+                                        });
+                                    if let Some(projection) = projection {
+                                        let _ = app.emit(
+                                            REALTIME_WORKER_EVENT,
+                                            presence_projection_payload(projection),
+                                        );
+                                    }
+                                    emit_sidecar_state(
+                                        &app,
+                                        &sidecar_supervisor,
+                                        "quarantined",
+                                        None,
+                                    );
+                                }
                                 let command = HostCommand::SetResourcePolicy {
                                     session_id: identity.session_id,
                                     segment_id: identity.segment_id,
@@ -1598,6 +1766,210 @@ fn spawn_worker(
             let _ = child.wait();
             Err(RealtimeWorkerError::Protocol)
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_local_sidecar_failure(
+    value: &Value,
+    app: &AppHandle,
+    input: &Arc<Mutex<ChildStdin>>,
+    active_identity: &Mutex<Option<ContextEpochIdentity>>,
+    coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
+    dialogue: &Mutex<Option<RealtimeDialogueDirector>>,
+    resource_governor: &Mutex<Option<RealtimeResourceGovernor>>,
+    sidecar_supervisor: &Mutex<RealtimeSidecarSupervisor>,
+    recovery: &Mutex<Option<RealtimeRecoveryEnvelope>>,
+    local_omni: &LocalOmniLaunch,
+) -> bool {
+    let Ok(WorkerEvent::LocalSidecarFailure {
+        session_id,
+        segment_id,
+        context_epoch,
+        error_code,
+        candidate_emitted,
+    }) = serde_json::from_value::<WorkerEvent>(value.clone())
+    else {
+        return false;
+    };
+
+    let failure_projection = {
+        let Ok(mut coordinator) = coordinator.lock() else {
+            return true;
+        };
+        let Some(coordinator) = coordinator.as_mut() else {
+            return true;
+        };
+        let identity = coordinator.active_identity();
+        if identity.session_id != session_id
+            || identity.segment_id != segment_id
+            || identity.epoch != context_epoch
+            || coordinator.backend() != RealtimeBackendKind::LocalMiniCpmO45
+            || coordinator
+                .apply(RealtimeCoordinatorEvent::BackendFailed)
+                .is_err()
+        {
+            return true;
+        }
+        coordinator.presence_projection()
+    };
+
+    let decision = sidecar_supervisor
+        .lock()
+        .map(|mut supervisor| supervisor.record_failure(&error_code, candidate_emitted))
+        .unwrap_or(RealtimeSidecarDecision::Quarantine);
+    if decision == RealtimeSidecarDecision::Quarantine {
+        let _ = app.emit(
+            REALTIME_WORKER_EVENT,
+            presence_projection_payload(failure_projection),
+        );
+        emit_sidecar_state(app, sidecar_supervisor, "quarantined", None);
+        return true;
+    }
+
+    let Some(envelope) = recovery.lock().ok().and_then(|value| value.clone()) else {
+        quarantine_recovery_failure(app, coordinator, sidecar_supervisor);
+        return true;
+    };
+    let persona_digest = serde_json::from_str::<Value>(&envelope.persona_snapshot)
+        .ok()
+        .and_then(|persona| {
+            persona
+                .get("persona_digest")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    let Some(persona_digest) = persona_digest else {
+        quarantine_recovery_failure(app, coordinator, sidecar_supervisor);
+        return true;
+    };
+    let next_segment_id = Uuid::new_v4().to_string();
+    let recovery_projection = {
+        let Ok(mut coordinator_guard) = coordinator.lock() else {
+            quarantine_recovery_failure(app, coordinator, sidecar_supervisor);
+            return true;
+        };
+        let Some(coordinator_state) = coordinator_guard.as_mut() else {
+            drop(coordinator_guard);
+            quarantine_recovery_failure(app, coordinator, sidecar_supervisor);
+            return true;
+        };
+        if coordinator_state
+            .apply(RealtimeCoordinatorEvent::RecoverLocalSegment {
+                segment_id: next_segment_id.clone(),
+                persona_digest,
+            })
+            .is_err()
+        {
+            drop(coordinator_guard);
+            quarantine_recovery_failure(app, coordinator, sidecar_supervisor);
+            return true;
+        }
+        coordinator_state.presence_projection()
+    };
+    let dialogue_ready = dialogue
+        .lock()
+        .ok()
+        .and_then(|mut dialogue| {
+            dialogue
+                .as_mut()
+                .map(|dialogue| dialogue.commit_backend_segment(next_segment_id.clone()))
+        })
+        .unwrap_or(false);
+    if !dialogue_ready {
+        quarantine_recovery_failure(app, coordinator, sidecar_supervisor);
+        return true;
+    }
+    if let Ok(mut active) = active_identity.lock() {
+        *active = Some(ContextEpochIdentity {
+            session_id: session_id.clone(),
+            segment_id: next_segment_id.clone(),
+            epoch: 1,
+        });
+    } else {
+        quarantine_recovery_failure(app, coordinator, sidecar_supervisor);
+        return true;
+    }
+    if let Ok(mut governor) = resource_governor.lock() {
+        *governor = Some(RealtimeResourceGovernor::new(0));
+    }
+    let command = HostCommand::RecoverLocal {
+        session_id,
+        current_segment_id: segment_id,
+        current_context_epoch: context_epoch,
+        next_segment_id: next_segment_id.clone(),
+        local_omni: Box::new(local_omni.clone()),
+        persona_snapshot: SecretString::from(envelope.persona_snapshot),
+        locale: envelope.locale,
+        activity_profile: envelope.activity_profile,
+        interaction_intensity: envelope.interaction_intensity,
+        voice_output: envelope.voice_output,
+        source_id: envelope.source_id,
+        microphone_enabled: envelope.microphone_enabled,
+        screen_enabled: envelope.screen_enabled,
+        application_audio_enabled: envelope.application_audio_enabled,
+        online_assistance_enabled: envelope.online_assistance_enabled,
+    };
+    if send_command(input, &command).is_err() {
+        quarantine_recovery_failure(app, coordinator, sidecar_supervisor);
+        return true;
+    }
+    let _ = app.emit(
+        REALTIME_WORKER_EVENT,
+        presence_projection_payload(recovery_projection),
+    );
+    emit_sidecar_state(app, sidecar_supervisor, "restarting", Some(next_segment_id));
+    true
+}
+
+fn quarantine_recovery_failure(
+    app: &AppHandle,
+    coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
+    sidecar_supervisor: &Mutex<RealtimeSidecarSupervisor>,
+) {
+    if let Ok(mut supervisor) = sidecar_supervisor.lock() {
+        supervisor.quarantine("LOCAL_SIDECAR_RECOVERY_FAILED");
+    }
+    let projection = coordinator.lock().ok().and_then(|mut coordinator| {
+        let coordinator = coordinator.as_mut()?;
+        if !coordinator.action_required() {
+            let _ = coordinator.apply(RealtimeCoordinatorEvent::BackendFailed);
+        }
+        Some(coordinator.presence_projection())
+    });
+    if let Some(projection) = projection {
+        let _ = app.emit(
+            REALTIME_WORKER_EVENT,
+            presence_projection_payload(projection),
+        );
+    }
+    emit_sidecar_state(app, sidecar_supervisor, "quarantined", None);
+}
+
+fn emit_sidecar_state(
+    app: &AppHandle,
+    sidecar_supervisor: &Mutex<RealtimeSidecarSupervisor>,
+    status: &'static str,
+    segment_id: Option<String>,
+) {
+    let snapshot = sidecar_supervisor
+        .lock()
+        .ok()
+        .map(|supervisor| supervisor.snapshot());
+    if let Some(snapshot) = snapshot {
+        let _ = app.emit(
+            REALTIME_WORKER_EVENT,
+            serde_json::json!({
+                "type": "sidecar_recovery",
+                "status": status,
+                "segment_id": segment_id,
+                "restart_used": snapshot.restart_used,
+                "quarantined": snapshot.quarantined,
+                "context_interrupted": snapshot.context_interrupted,
+                "failure_count": snapshot.failure_count,
+                "error_code": snapshot.error_code,
+            }),
+        );
     }
 }
 
@@ -2118,7 +2490,14 @@ fn coordinator_allows_worker_event(
     let event_type = value.get("type").and_then(Value::as_str);
     if matches!(
         event_type,
-        Some("ready" | "pong" | "worker_interrupted" | "context_rotated" | "segment_woken")
+        Some(
+            "ready"
+                | "pong"
+                | "worker_interrupted"
+                | "context_rotated"
+                | "segment_woken"
+                | "local_sidecar_failure"
+        )
     ) || (event_type == Some("session_state")
         && value.get("status").and_then(Value::as_str) == Some("failed"))
     {
@@ -2184,6 +2563,7 @@ pub fn development_realtime_launch(
     RealtimeWorkerLaunch {
         program: crate_root.join("target/debug/fairy-realtime-worker.exe"),
         log_path: data_dir.join("logs/realtime-worker.log"),
+        quarantine_path: data_dir.join("realtime/omni-quarantine.json"),
         local_omni: local_omni_launch(data_dir, resource_dir, manifest),
     }
 }
@@ -2196,6 +2576,7 @@ pub fn bundled_realtime_launch(
     RealtimeWorkerLaunch {
         program: resource_dir.join("runtime/realtime-worker/fairy-realtime-worker.exe"),
         log_path: data_dir.join("logs/realtime-worker.log"),
+        quarantine_path: data_dir.join("realtime/omni-quarantine.json"),
         local_omni: local_omni_launch(data_dir, resource_dir, manifest),
     }
 }

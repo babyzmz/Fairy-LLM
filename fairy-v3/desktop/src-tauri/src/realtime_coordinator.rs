@@ -80,6 +80,7 @@ pub enum RealtimeStandbyReason {
 pub enum BackendSegmentCreationReason {
     InitialResolution,
     UserApprovedContinuation,
+    AutomaticRecovery,
     StandbyWake,
 }
 
@@ -152,6 +153,10 @@ pub enum RealtimeCoordinatorEvent {
         segment_id: String,
         backend: RealtimeBackendKind,
         cloud_provider: Option<RealtimeCloudProviderKind>,
+        persona_digest: String,
+    },
+    RecoverLocalSegment {
+        segment_id: String,
         persona_digest: String,
     },
     SetPolicy {
@@ -323,6 +328,46 @@ impl RealtimeCoordinatorState {
                 self.action_required = false;
                 self.media_generation_enabled = true;
                 self.status = RealtimeCoordinatorStatus::Active;
+                self.local_unload_requested = false;
+                self.standby_reason = None;
+                self.set_authoritative_presence(RealtimePresenceState::Preparing, None)?;
+                Ok(())
+            }
+            RealtimeCoordinatorEvent::RecoverLocalSegment {
+                segment_id,
+                persona_digest,
+            } => {
+                self.require_active()?;
+                if self.backend != RealtimeBackendKind::LocalMiniCpmO45
+                    || !self.action_required
+                    || persona_digest != self.persona_digest
+                    || !valid_identifier(&segment_id)
+                    || segment_id == self.identity.segment_id
+                {
+                    return if persona_digest != self.persona_digest {
+                        Err(RealtimeCoordinatorError::PersonaMismatch)
+                    } else {
+                        Err(RealtimeCoordinatorError::InvalidTransition)
+                    };
+                }
+                self.identity.segment_id = segment_id;
+                self.identity.epoch = 1;
+                self.pending_context_rotation = None;
+                self.pending_cloud_wake = None;
+                self.segment = BackendSegmentState {
+                    segment_id: self.identity.segment_id.clone(),
+                    ordinal: self
+                        .segment
+                        .ordinal
+                        .checked_add(1)
+                        .ok_or(RealtimeCoordinatorError::InvalidTransition)?,
+                    backend: RealtimeBackendKind::LocalMiniCpmO45,
+                    cloud_provider: None,
+                    persona_digest,
+                    creation_reason: BackendSegmentCreationReason::AutomaticRecovery,
+                };
+                self.action_required = false;
+                self.media_generation_enabled = true;
                 self.local_unload_requested = false;
                 self.standby_reason = None;
                 self.set_authoritative_presence(RealtimePresenceState::Preparing, None)?;
@@ -1013,6 +1058,7 @@ fn worker_presence_input(
             None,
         )),
         WorkerEvent::Ready { .. }
+        | WorkerEvent::LocalSidecarFailure { .. }
         | WorkerEvent::ResourceSample { .. }
         | WorkerEvent::Usage { .. }
         | WorkerEvent::Diagnostic { .. }
@@ -1466,6 +1512,37 @@ mod tests {
         assert_eq!(
             state.active_segment().creation_reason,
             BackendSegmentCreationReason::UserApprovedContinuation
+        );
+    }
+
+    #[test]
+    fn local_backend_failure_allows_one_governed_recovery_segment() {
+        let mut request = start_request();
+        request.backend = RealtimeBackendKind::LocalMiniCpmO45;
+        request.cloud_provider = None;
+        let mut state = RealtimeCoordinatorState::start(request).expect("start");
+        state
+            .apply(RealtimeCoordinatorEvent::BackendFailed)
+            .expect("failure");
+        state
+            .apply(RealtimeCoordinatorEvent::RecoverLocalSegment {
+                segment_id: "segment-recovery".to_owned(),
+                persona_digest: "a".repeat(64),
+            })
+            .expect("automatic recovery");
+        assert!(!state.action_required());
+        assert_eq!(state.active_identity().epoch, 1);
+        assert_eq!(state.active_segment().ordinal, 2);
+        assert_eq!(
+            state.active_segment().creation_reason,
+            BackendSegmentCreationReason::AutomaticRecovery
+        );
+        assert_eq!(
+            state.apply(RealtimeCoordinatorEvent::RecoverLocalSegment {
+                segment_id: "segment-recovery-2".to_owned(),
+                persona_digest: "a".repeat(64),
+            }),
+            Err(RealtimeCoordinatorError::InvalidTransition)
         );
     }
 

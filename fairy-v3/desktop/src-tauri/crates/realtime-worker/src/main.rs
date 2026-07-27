@@ -118,7 +118,7 @@ fn main() {
                     );
                     continue;
                 }
-                let mut started = RealtimeRuntime::spawn(RuntimeLaunch {
+                let Some((started, writer)) = spawn_runtime(RuntimeLaunch {
                     session_id: session_id.clone(),
                     segment_id: segment_id.clone(),
                     context_epoch,
@@ -133,22 +133,110 @@ fn main() {
                     screen_enabled,
                     application_audio_enabled,
                     voice_output,
-                });
-                let Some(events) = started.take_events() else {
+                }) else {
                     return;
                 };
-                event_writer = Some(thread::spawn(move || {
-                    for event in events {
-                        if write_frame(&mut stdout().lock(), &event).is_err() {
-                            return;
-                        }
-                    }
-                }));
+                event_writer = Some(writer);
                 active_identity = Some(ActiveIdentity {
                     session_id,
                     segment_id,
                     context_epoch,
                     backend,
+                });
+                runtime = Some(started);
+            }
+            HostCommand::RecoverLocal {
+                session_id,
+                current_segment_id,
+                current_context_epoch,
+                next_segment_id,
+                local_omni,
+                persona_snapshot,
+                locale,
+                activity_profile,
+                interaction_intensity,
+                voice_output,
+                source_id,
+                microphone_enabled,
+                screen_enabled,
+                application_audio_enabled,
+                online_assistance_enabled,
+            } if active_identity.as_ref().is_some_and(|identity| {
+                identity.session_id == session_id
+                    && identity.segment_id == current_segment_id
+                    && identity.context_epoch == current_context_epoch
+                    && identity.backend == RealtimeBackendKind::LocalMiniCpmO45
+                    && !next_segment_id.trim().is_empty()
+                    && next_segment_id != current_segment_id
+                    && next_segment_id.len() <= 128
+            }) =>
+            {
+                let persona = validate_persona_snapshot(
+                    persona_snapshot.expose(),
+                    &locale,
+                    activity_profile,
+                    interaction_intensity,
+                );
+                let validation = validate_backend_start(&BackendStartRequest {
+                    session_id: session_id.clone(),
+                    segment_id: next_segment_id.clone(),
+                    context_epoch: 1,
+                    backend: RealtimeBackendKind::LocalMiniCpmO45,
+                    cloud_provider: None,
+                    cloud_credential_present: false,
+                    persona_snapshot_present: persona.is_ok(),
+                    activity_profile,
+                    interaction_intensity,
+                    voice_output,
+                    source_id,
+                    microphone_enabled,
+                    screen_enabled,
+                    application_audio_enabled,
+                    online_assistance_enabled,
+                });
+                if validation.is_err() || persona.is_err() {
+                    emit_recovery_failure(
+                        &session_id,
+                        &next_segment_id,
+                        "LOCAL_SIDECAR_RECOVERY_FAILED",
+                    );
+                    continue;
+                }
+                if let Some(active) = runtime.take() {
+                    drop(active);
+                }
+                if let Some(writer) = event_writer.take() {
+                    let _ = writer.join();
+                }
+                let Some((started, writer)) = spawn_runtime(RuntimeLaunch {
+                    session_id: session_id.clone(),
+                    segment_id: next_segment_id.clone(),
+                    context_epoch: 1,
+                    backend: RealtimeBackendKind::LocalMiniCpmO45,
+                    cloud_provider: None,
+                    credential: None,
+                    local_omni: Some(*local_omni),
+                    persona: persona.expect("validated recovery Persona"),
+                    activity_profile,
+                    source_id,
+                    microphone_enabled,
+                    screen_enabled,
+                    application_audio_enabled,
+                    voice_output,
+                }) else {
+                    emit_recovery_failure(
+                        &session_id,
+                        &next_segment_id,
+                        "LOCAL_SIDECAR_RECOVERY_FAILED",
+                    );
+                    continue;
+                };
+                event_writer = Some(writer);
+                active_identity = Some(ActiveIdentity {
+                    session_id,
+                    segment_id: next_segment_id,
+                    context_epoch: 1,
+                    backend: RealtimeBackendKind::LocalMiniCpmO45,
                 });
                 runtime = Some(started);
             }
@@ -359,6 +447,43 @@ fn main() {
             }
         }
     }
+}
+
+fn spawn_runtime(launch: RuntimeLaunch) -> Option<(RealtimeRuntime, thread::JoinHandle<()>)> {
+    let mut runtime = RealtimeRuntime::spawn(launch);
+    let events = runtime.take_events()?;
+    let writer = thread::Builder::new()
+        .name("fairy-realtime-events".to_owned())
+        .spawn(move || {
+            for event in events {
+                if write_frame(&mut stdout().lock(), &event).is_err() {
+                    return;
+                }
+            }
+        })
+        .ok()?;
+    Some((runtime, writer))
+}
+
+fn emit_recovery_failure(session_id: &str, segment_id: &str, error_code: &'static str) {
+    let _ = write_frame(
+        &mut stdout().lock(),
+        &WorkerEvent::LocalSidecarFailure {
+            session_id: session_id.to_owned(),
+            segment_id: segment_id.to_owned(),
+            context_epoch: 1,
+            error_code: error_code.to_owned(),
+            candidate_emitted: false,
+        },
+    );
+    emit_start_failure(
+        session_id,
+        segment_id,
+        1,
+        RealtimeBackendKind::LocalMiniCpmO45,
+        None,
+        "LOCAL_BACKEND_NOT_READY",
+    );
 }
 
 fn emit_start_failure(

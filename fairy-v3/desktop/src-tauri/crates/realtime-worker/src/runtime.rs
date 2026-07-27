@@ -6,10 +6,10 @@ use std::time::{Duration, Instant};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::backend::{
-    BackendCaptionSpeaker, BackendEvent, CloudBackendLaunch, CloudLiveBackend, LocalOmniBackend,
-    LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackend, RealtimeBackendKind,
-    RealtimeCandidateDecision, RealtimeCloudProviderKind, RealtimeDialogueCandidate,
-    RealtimeVoiceOutput,
+    BackendCaptionSpeaker, BackendError, BackendEvent, CloudBackendLaunch, CloudLiveBackend,
+    LocalOmniBackend, LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackend,
+    RealtimeBackendKind, RealtimeCandidateDecision, RealtimeCloudProviderKind,
+    RealtimeDialogueCandidate, RealtimeVoiceOutput,
 };
 use crate::frame_gate::{FrameGate, FrameGateDecision};
 use crate::media::{
@@ -170,6 +170,7 @@ fn run_session(
         persona_digest: persona.digest().to_owned(),
         activity_profile,
     };
+    let mut candidate_emitted = false;
     if !application_audio_scope_supported(identity.backend, application_audio_enabled) {
         emit_failed(&events, &identity, "APPLICATION_AUDIO_SCOPE_UNAVAILABLE");
         return;
@@ -231,12 +232,20 @@ fn run_session(
         match backend_receiver.recv_timeout(Duration::from_millis(5)) {
             Ok(Ok(backend)) => break backend,
             Ok(Err(error)) => {
-                emit_failed(&events, &identity, error.public_code());
+                emit_backend_failure(&events, &identity, &error, candidate_emitted);
                 return;
             }
             Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < backend_deadline => {}
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 cancelled.store(true, Ordering::Release);
+                if identity.backend == RealtimeBackendKind::LocalMiniCpmO45 {
+                    emit_sidecar_failure(
+                        &events,
+                        &identity,
+                        "LOCAL_SIDECAR_TIMEOUT",
+                        candidate_emitted,
+                    );
+                }
                 emit_failed(&events, &identity, "REALTIME_BACKEND_TIMEOUT");
                 return;
             }
@@ -348,7 +357,7 @@ fn run_session(
                 }
                 frame_gate.note_user_question(elapsed_ms(session_start));
                 if let Err(error) = active_backend.push_text(&text) {
-                    emit_failed(&events, &identity, error.public_code());
+                    emit_backend_failure(&events, &identity, &error, candidate_emitted);
                     return;
                 }
             }
@@ -361,7 +370,7 @@ fn run_session(
                 }
                 if let Err(error) = active_backend.push_assistance_result(&call_id, &public_summary)
                 {
-                    emit_failed(&events, &identity, error.public_code());
+                    emit_backend_failure(&events, &identity, &error, candidate_emitted);
                     return;
                 }
             }
@@ -411,13 +420,16 @@ fn run_session(
                     && carryover.next_context_epoch == next_context_epoch
                     && carryover.persona_digest == identity.persona_digest
                     && carryover.activity_profile == identity.activity_profile;
-                if !valid
-                    || active_backend
-                        .rotate_context(next_context_epoch, &reason, &public_summary)
-                        .is_err()
-                {
+                if !valid {
                     identity.context_epoch = next_context_epoch;
                     emit_failed(&events, &identity, "CONTEXT_ROTATION_FAILED");
+                    return;
+                }
+                if let Err(error) =
+                    active_backend.rotate_context(next_context_epoch, &reason, &public_summary)
+                {
+                    identity.context_epoch = next_context_epoch;
+                    emit_backend_failure(&events, &identity, &error, candidate_emitted);
                     return;
                 }
                 while microphone.try_recv().is_some() {}
@@ -447,7 +459,7 @@ fn run_session(
                     continue;
                 }
                 if let Err(error) = active_backend.pause() {
-                    emit_failed(&events, &identity, error.public_code());
+                    emit_backend_failure(&events, &identity, &error, candidate_emitted);
                     return;
                 }
                 standby = true;
@@ -487,14 +499,23 @@ fn run_session(
                     && carryover.persona_digest == identity.persona_digest
                     && carryover.activity_profile == identity.activity_profile;
                 let public_summary = carryover.public_summary();
-                if !valid_carryover
-                    || active_backend.resume().is_err()
-                    || active_backend
-                        .rotate_context(next_context_epoch, "standby_wake", &public_summary)
-                        .is_err()
-                {
+                if !valid_carryover {
                     identity.context_epoch = next_context_epoch;
                     emit_failed(&events, &identity, "CONTEXT_ROTATION_FAILED");
+                    return;
+                }
+                if let Err(error) = active_backend.resume() {
+                    identity.context_epoch = next_context_epoch;
+                    emit_backend_failure(&events, &identity, &error, candidate_emitted);
+                    return;
+                }
+                if let Err(error) = active_backend.rotate_context(
+                    next_context_epoch,
+                    "standby_wake",
+                    &public_summary,
+                ) {
+                    identity.context_epoch = next_context_epoch;
+                    emit_backend_failure(&events, &identity, &error, candidate_emitted);
                     return;
                 }
                 drain_runtime_media(
@@ -539,7 +560,7 @@ fn run_session(
                 if let Err(error) =
                     active_backend.rotate_context(1, "standby_wake", &public_summary)
                 {
-                    emit_failed(&events, &identity, error.public_code());
+                    emit_backend_failure(&events, &identity, &error, candidate_emitted);
                     return;
                 }
                 drain_runtime_media(
@@ -630,7 +651,7 @@ fn run_session(
                 frame_gate.note_audio_activity(elapsed_ms(session_start));
                 if let Err(error) = active_backend.push_application_audio(&bytes) {
                     bytes.zeroize();
-                    emit_failed(&events, &identity, error.public_code());
+                    emit_backend_failure(&events, &identity, &error, candidate_emitted);
                     return;
                 }
                 bytes.zeroize();
@@ -652,7 +673,7 @@ fn run_session(
             samples.zeroize();
             if let Err(error) = active_backend.push_microphone(&bytes) {
                 bytes.zeroize();
-                emit_failed(&events, &identity, error.public_code());
+                emit_backend_failure(&events, &identity, &error, candidate_emitted);
                 return;
             }
             bytes.zeroize();
@@ -668,7 +689,7 @@ fn run_session(
                     Ok(FrameGateDecision::Send { .. }) => {
                         if let Err(error) = active_backend.push_video(&frame.jpeg) {
                             frame.jpeg.zeroize();
-                            emit_failed(&events, &identity, error.public_code());
+                            emit_backend_failure(&events, &identity, &error, candidate_emitted);
                             return;
                         }
                         video_frame_count = video_frame_count.saturating_add(1);
@@ -686,7 +707,7 @@ fn run_session(
             Ok(Some(outputs)) => outputs,
             Ok(None) => Vec::new(),
             Err(error) => {
-                emit_failed(&events, &identity, error.public_code());
+                emit_backend_failure(&events, &identity, &error, candidate_emitted);
                 return;
             }
         };
@@ -702,6 +723,7 @@ fn run_session(
                         continue;
                     }
                     event_sequence = event_sequence.saturating_add(1);
+                    candidate_emitted = true;
                     let _ = events.send(WorkerEvent::PerceptionCandidate {
                         session_id: identity.session_id.clone(),
                         segment_id: identity.segment_id.clone(),
@@ -772,6 +794,7 @@ fn run_session(
                             {
                                 continue;
                             }
+                            candidate_emitted = true;
                             let _ = events.send(WorkerEvent::PerceptionCandidate {
                                 session_id: identity.session_id.clone(),
                                 segment_id: identity.segment_id.clone(),
@@ -1042,6 +1065,44 @@ fn emit_failed(
     });
 }
 
+fn emit_backend_failure(
+    events: &mpsc::Sender<WorkerEvent>,
+    identity: &RuntimeIdentity,
+    error: &BackendError,
+    candidate_emitted: bool,
+) {
+    if identity.backend == RealtimeBackendKind::LocalMiniCpmO45 {
+        let sidecar_code = match error {
+            BackendError::LocalUnavailable => Some("LOCAL_SIDECAR_START_FAILED"),
+            BackendError::LocalProtocol => Some("LOCAL_SIDECAR_PROTOCOL_DISCONNECTED"),
+            BackendError::LocalTimeout => Some("LOCAL_SIDECAR_TIMEOUT"),
+            BackendError::LocalIo(_) => Some("LOCAL_SIDECAR_PROCESS_EXIT"),
+            BackendError::Cloud(_)
+            | BackendError::DialogueProtocol
+            | BackendError::ApplicationAudioScopeUnavailable => None,
+        };
+        if let Some(code) = sidecar_code {
+            emit_sidecar_failure(events, identity, code, candidate_emitted);
+        }
+    }
+    emit_failed(events, identity, error.public_code());
+}
+
+fn emit_sidecar_failure(
+    events: &mpsc::Sender<WorkerEvent>,
+    identity: &RuntimeIdentity,
+    error_code: &'static str,
+    candidate_emitted: bool,
+) {
+    let _ = events.send(WorkerEvent::LocalSidecarFailure {
+        session_id: identity.session_id.clone(),
+        segment_id: identity.segment_id.clone(),
+        context_epoch: identity.context_epoch,
+        error_code: error_code.to_owned(),
+        candidate_emitted,
+    });
+}
+
 fn emit_cancelled(events: &mpsc::Sender<WorkerEvent>, identity: &RuntimeIdentity) {
     let _ = events.send(WorkerEvent::SessionState {
         session_id: identity.session_id.clone(),
@@ -1084,6 +1145,35 @@ mod tests {
     #[test]
     fn capture_rate_stays_inside_the_frozen_latest_frame_range() {
         assert!((10..=15).contains(&VIDEO_CAPTURE_FPS));
+    }
+
+    #[test]
+    fn local_backend_failure_emits_safe_sidecar_signal_before_terminal_state() {
+        let (events, received) = mpsc::channel();
+        let identity = RuntimeIdentity {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            backend: RealtimeBackendKind::LocalMiniCpmO45,
+            cloud_provider: None,
+            persona_digest: "a".repeat(64),
+            activity_profile: RealtimeActivityProfile::Focus,
+        };
+        emit_backend_failure(&events, &identity, &BackendError::LocalProtocol, true);
+        assert_eq!(
+            received.recv().expect("sidecar failure"),
+            WorkerEvent::LocalSidecarFailure {
+                session_id: "session-1".to_owned(),
+                segment_id: "segment-1".to_owned(),
+                context_epoch: 1,
+                error_code: "LOCAL_SIDECAR_PROTOCOL_DISCONNECTED".to_owned(),
+                candidate_emitted: true,
+            }
+        );
+        assert!(matches!(
+            received.recv().expect("terminal state"),
+            WorkerEvent::SessionState { status, .. } if status == "failed"
+        ));
     }
 
     #[test]

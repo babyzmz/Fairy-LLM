@@ -288,6 +288,23 @@ pub enum HostCommand {
         context_epoch: u64,
         policy: RealtimeResourcePolicy,
     },
+    RecoverLocal {
+        session_id: String,
+        current_segment_id: String,
+        current_context_epoch: u64,
+        next_segment_id: String,
+        local_omni: Box<LocalOmniLaunch>,
+        persona_snapshot: SecretString,
+        locale: String,
+        activity_profile: RealtimeActivityProfile,
+        interaction_intensity: RealtimeInteractionIntensity,
+        voice_output: RealtimeVoiceOutput,
+        source_id: Option<u64>,
+        microphone_enabled: bool,
+        screen_enabled: bool,
+        application_audio_enabled: bool,
+        online_assistance_enabled: bool,
+    },
     RotateContext {
         session_id: String,
         segment_id: String,
@@ -435,6 +452,13 @@ pub enum WorkerEvent {
         segment_id: String,
         context_epoch: u64,
         policy: RealtimeResourcePolicy,
+    },
+    LocalSidecarFailure {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        error_code: String,
+        candidate_emitted: bool,
     },
     ContextRotated {
         session_id: String,
@@ -637,6 +661,51 @@ mod tests {
     }
 
     #[test]
+    fn local_recovery_round_trips_without_credentials_and_redacts_persona() {
+        let command = HostCommand::RecoverLocal {
+            session_id: "session-1".to_owned(),
+            current_segment_id: "segment-1".to_owned(),
+            current_context_epoch: 1,
+            next_segment_id: "segment-2".to_owned(),
+            local_omni: Box::new(LocalOmniLaunch {
+                runtime_path: "C:/fairy/runtime.exe".into(),
+                manifest_path: "C:/fairy/manifest.json".into(),
+                model_root: "C:/fairy/model".into(),
+                manifest_digest: "b".repeat(64),
+                model_version: "model-v1".to_owned(),
+            }),
+            persona_snapshot: SecretString::from(valid_snapshot_json()),
+            locale: "zh-CN".to_owned(),
+            activity_profile: RealtimeActivityProfile::Focus,
+            interaction_intensity: RealtimeInteractionIntensity::Standard,
+            voice_output: RealtimeVoiceOutput::FairyVoice,
+            source_id: Some(42),
+            microphone_enabled: true,
+            screen_enabled: true,
+            application_audio_enabled: false,
+            online_assistance_enabled: true,
+        };
+        let debug = format!("{command:?}");
+        assert!(!debug.contains("persona-secret-marker"));
+        assert!(!debug.contains("credential"));
+
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &command).expect("write recovery");
+        let decoded: HostCommand = read_frame(&mut bytes.as_slice())
+            .expect("read recovery")
+            .expect("recovery frame");
+        assert!(matches!(
+            decoded,
+            HostCommand::RecoverLocal {
+                current_segment_id,
+                current_context_epoch: 1,
+                next_segment_id,
+                ..
+            } if current_segment_id == "segment-1" && next_segment_id == "segment-2"
+        ));
+    }
+
+    #[test]
     fn resource_policy_command_is_exact_and_round_trips() {
         let policy = RealtimeResourcePolicy::for_level(RealtimeResourceLevel::High);
         assert!(policy.is_valid());
@@ -813,6 +882,13 @@ mod tests {
                 segment_id: identity().1,
                 context_epoch: 1,
                 policy: RealtimeResourcePolicy::for_level(RealtimeResourceLevel::Pressure),
+            },
+            WorkerEvent::LocalSidecarFailure {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                error_code: "LOCAL_SIDECAR_PROCESS_EXIT".to_owned(),
+                candidate_emitted: true,
             },
             WorkerEvent::ContextRotated {
                 session_id: identity().0,
