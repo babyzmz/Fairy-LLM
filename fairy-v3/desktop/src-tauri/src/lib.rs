@@ -91,6 +91,7 @@ pub mod presence_window_policy;
 mod process_lifetime;
 pub mod provider_configuration;
 pub mod provider_credentials;
+pub mod realtime_activity;
 pub mod realtime_backend_resolver;
 pub mod realtime_coordinator;
 pub mod realtime_dialogue;

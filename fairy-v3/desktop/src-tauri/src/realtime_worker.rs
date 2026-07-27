@@ -706,7 +706,9 @@ fn spawn_worker(
                         let _ = app.emit(REALTIME_WORKER_EVENT, projection);
                     }
                     if value.get("type").and_then(Value::as_str) == Some("perception_candidate") {
-                        if let Some(projected) = govern_dialogue_candidate(&value, &dialogue) {
+                        if let Some(projected) =
+                            govern_dialogue_candidate(&value, &coordinator, &dialogue)
+                        {
                             let _ = app.emit(REALTIME_WORKER_EVENT, projected);
                         }
                         continue;
@@ -844,6 +846,7 @@ fn govern_fairy_speech_state(
 
 fn govern_dialogue_candidate(
     value: &Value,
+    coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
     dialogue: &Mutex<Option<RealtimeDialogueDirector>>,
 ) -> Option<Value> {
     let event = serde_json::from_value::<WorkerEvent>(value.clone()).ok()?;
@@ -857,11 +860,34 @@ fn govern_dialogue_candidate(
     else {
         return None;
     };
+    let (effective_activity, interaction_intensity, switched) = {
+        let mut coordinator = coordinator.lock().ok()?;
+        let coordinator = coordinator.as_mut()?;
+        if candidate.persona_digest != coordinator.persona_digest() || !candidate.is_valid() {
+            return None;
+        }
+        let observation = coordinator.observe_activity_candidate(sequence, &candidate)?;
+        (
+            observation.effective_activity,
+            coordinator.interaction_intensity(),
+            observation.switched,
+        )
+    };
     let mut director = dialogue.lock().ok()?;
-    let decision =
-        director
-            .as_mut()?
-            .evaluate(&session_id, &segment_id, context_epoch, sequence, candidate);
+    let director = director.as_mut()?;
+    if switched {
+        director.reset_epoch_policy();
+        return None;
+    }
+    let decision = director.evaluate_with_activity(
+        &session_id,
+        &segment_id,
+        context_epoch,
+        sequence,
+        candidate,
+        effective_activity,
+        interaction_intensity,
+    );
     match decision {
         RealtimeDialogueDecision::Speak(projection) => Some(serde_json::json!({
             "type": "public_caption",
@@ -1205,6 +1231,7 @@ mod tests {
     fn grounded_candidate_becomes_an_approved_assistant_caption() {
         let projected = govern_dialogue_candidate(
             &candidate_event(serde_json::json!(["current_user_utterance"])),
+            &coordinator(),
             &dialogue(),
         )
         .expect("approved projection");
@@ -1218,7 +1245,7 @@ mod tests {
     #[test]
     fn ungrounded_candidate_is_suppressed_without_reemitting_its_body() {
         let event = candidate_event(serde_json::json!([]));
-        assert!(govern_dialogue_candidate(&event, &dialogue()).is_none());
+        assert!(govern_dialogue_candidate(&event, &coordinator(), &dialogue()).is_none());
     }
 
     #[test]
@@ -1241,8 +1268,8 @@ mod tests {
         event["decision"] = serde_json::json!("request_assistance");
         event["intent"] = serde_json::json!("assist");
         event["needs_online_assistance"] = serde_json::json!(true);
-        let projected =
-            govern_dialogue_candidate(&event, &dialogue()).expect("assistance projection");
+        let projected = govern_dialogue_candidate(&event, &coordinator(), &dialogue())
+            .expect("assistance projection");
         assert_eq!(projected["type"], "assistance_request");
         assert_eq!(projected["needs_online_assistance"], true);
         assert!(projected.get("tool_name").is_none());

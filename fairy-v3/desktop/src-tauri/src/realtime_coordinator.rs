@@ -1,9 +1,11 @@
 use fairy_realtime_worker::{
     RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
-    RealtimeInteractionIntensity, WorkerEvent,
+    RealtimeDialogueCandidate, RealtimeInteractionIntensity, WorkerEvent,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::realtime_activity::{ActivityObservation, RealtimeActivityClassifier};
 
 const DEFAULT_PRESENCE_MAX_MINUTES: u16 = 240;
 
@@ -135,6 +137,7 @@ pub struct RealtimeCoordinatorState {
     backend: RealtimeBackendKind,
     segment: BackendSegmentState,
     activity_profile: RealtimeActivityProfile,
+    activity_classifier: RealtimeActivityClassifier,
     interaction_intensity: RealtimeInteractionIntensity,
     presence_max_minutes: u16,
     status: RealtimeCoordinatorStatus,
@@ -177,6 +180,7 @@ impl RealtimeCoordinatorState {
                 creation_reason: BackendSegmentCreationReason::InitialResolution,
             },
             activity_profile: request.activity_profile,
+            activity_classifier: RealtimeActivityClassifier::new(request.activity_profile),
             interaction_intensity: request.interaction_intensity,
             presence_max_minutes: if request.presence_max_minutes == 0 {
                 DEFAULT_PRESENCE_MAX_MINUTES
@@ -250,6 +254,7 @@ impl RealtimeCoordinatorState {
                     return Ok(());
                 }
                 self.activity_profile = profile;
+                self.activity_classifier = RealtimeActivityClassifier::new(profile);
                 self.rotate_context()
             }
             RealtimeCoordinatorEvent::PausePrivacy => {
@@ -313,6 +318,27 @@ impl RealtimeCoordinatorState {
 
     pub fn persona_digest(&self) -> &str {
         &self.persona_digest
+    }
+
+    pub fn requested_activity_profile(&self) -> RealtimeActivityProfile {
+        self.activity_profile
+    }
+
+    pub fn effective_activity(&self) -> RealtimeActivityProfile {
+        self.activity_classifier.effective_activity()
+    }
+
+    pub fn interaction_intensity(&self) -> RealtimeInteractionIntensity {
+        self.interaction_intensity
+    }
+
+    pub fn observe_activity_candidate(
+        &mut self,
+        sequence: u64,
+        candidate: &RealtimeDialogueCandidate,
+    ) -> Option<ActivityObservation> {
+        (self.status == RealtimeCoordinatorStatus::Active && !self.action_required)
+            .then(|| self.activity_classifier.observe(sequence, candidate))
     }
 
     pub fn media_generation_enabled(&self) -> bool {
@@ -419,6 +445,7 @@ impl RealtimeCoordinatorState {
             .epoch
             .checked_add(1)
             .ok_or(RealtimeCoordinatorError::EpochOverflow)?;
+        self.activity_classifier.reset_epoch();
         Ok(())
     }
 
@@ -679,6 +706,7 @@ fn valid_digest(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fairy_realtime_worker::RealtimeCandidateDecision;
 
     fn start_request() -> RealtimeCoordinatorStart {
         RealtimeCoordinatorStart {
@@ -690,6 +718,22 @@ mod tests {
             activity_profile: RealtimeActivityProfile::Auto,
             interaction_intensity: RealtimeInteractionIntensity::Standard,
             presence_max_minutes: 240,
+        }
+    }
+
+    fn activity_candidate(activity: RealtimeActivityProfile) -> RealtimeDialogueCandidate {
+        RealtimeDialogueCandidate {
+            decision: RealtimeCandidateDecision::Speak,
+            activity,
+            confidence: 0.9,
+            intent: "comment".to_owned(),
+            grounding: vec!["current_window: stable activity".to_owned()],
+            text: "Observed event.".to_owned(),
+            urgency: 0.2,
+            needs_online_assistance: false,
+            response_to_user: false,
+            stable: true,
+            persona_digest: "a".repeat(64),
         }
     }
 
@@ -706,6 +750,34 @@ mod tests {
         assert!(!state.accepts_result(&first.session_id, &first.segment_id, first.epoch));
         let active = state.active_identity();
         assert!(state.accepts_result(&active.session_id, &active.segment_id, active.epoch));
+    }
+
+    #[test]
+    fn coordinator_owns_requested_and_effective_auto_activity() {
+        let mut state = RealtimeCoordinatorState::start(start_request()).expect("start");
+        assert_eq!(
+            state.requested_activity_profile(),
+            RealtimeActivityProfile::Auto
+        );
+        assert_eq!(state.effective_activity(), RealtimeActivityProfile::Focus);
+        for sequence in 1..=2 {
+            let observation = state
+                .observe_activity_candidate(
+                    sequence,
+                    &activity_candidate(RealtimeActivityProfile::Game),
+                )
+                .expect("observation");
+            assert!(!observation.switched);
+        }
+        let observation = state
+            .observe_activity_candidate(3, &activity_candidate(RealtimeActivityProfile::Game))
+            .expect("observation");
+        assert!(observation.switched);
+        assert_eq!(state.effective_activity(), RealtimeActivityProfile::Game);
+        assert_eq!(
+            state.interaction_intensity(),
+            RealtimeInteractionIntensity::Standard
+        );
     }
 
     #[test]

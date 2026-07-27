@@ -1,9 +1,13 @@
+use std::time::Instant;
+
 use fairy_realtime_worker::{
     RealtimeActivityProfile, RealtimeCandidateDecision, RealtimeDialogueCandidate,
-    RealtimeVoiceOutput,
+    RealtimeInteractionIntensity, RealtimeVoiceOutput,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+
+use crate::realtime_activity::{ProactivePolicyRejection, RealtimeInteractionPolicy};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RealtimeEnvironmentGates {
@@ -57,6 +61,10 @@ pub enum RealtimeDialogueRejection {
     UserSpeaking,
     FairySpeaking,
     ImmediateDuplicate,
+    ActivityMismatch,
+    InsufficientProactiveValue,
+    ProactiveCooldown,
+    SemanticDuplicate,
     HighRiskHumour,
     UnobservedActionClaim,
 }
@@ -82,6 +90,8 @@ pub struct RealtimeDialogueDirector {
     environment: RealtimeEnvironmentGates,
     user_speaking: bool,
     fairy_speaking: bool,
+    interaction_policy: RealtimeInteractionPolicy,
+    started_at: Instant,
 }
 
 impl RealtimeDialogueDirector {
@@ -111,6 +121,8 @@ impl RealtimeDialogueDirector {
             environment: RealtimeEnvironmentGates::default(),
             user_speaking: false,
             fairy_speaking: false,
+            interaction_policy: RealtimeInteractionPolicy::default(),
+            started_at: Instant::now(),
         })
     }
 
@@ -121,6 +133,67 @@ impl RealtimeDialogueDirector {
         context_epoch: u64,
         sequence: u64,
         candidate: RealtimeDialogueCandidate,
+    ) -> RealtimeDialogueDecision {
+        let effective_activity = match candidate.activity {
+            RealtimeActivityProfile::Auto => RealtimeActivityProfile::Focus,
+            activity => activity,
+        };
+        let now_ms = self
+            .started_at
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        self.evaluate_with_policy(
+            session_id,
+            segment_id,
+            context_epoch,
+            sequence,
+            candidate,
+            effective_activity,
+            RealtimeInteractionIntensity::Standard,
+            now_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn evaluate_with_activity(
+        &mut self,
+        session_id: &str,
+        segment_id: &str,
+        context_epoch: u64,
+        sequence: u64,
+        candidate: RealtimeDialogueCandidate,
+        effective_activity: RealtimeActivityProfile,
+        interaction_intensity: RealtimeInteractionIntensity,
+    ) -> RealtimeDialogueDecision {
+        let now_ms = self
+            .started_at
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        self.evaluate_with_policy(
+            session_id,
+            segment_id,
+            context_epoch,
+            sequence,
+            candidate,
+            effective_activity,
+            interaction_intensity,
+            now_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn evaluate_with_policy(
+        &mut self,
+        session_id: &str,
+        segment_id: &str,
+        context_epoch: u64,
+        sequence: u64,
+        candidate: RealtimeDialogueCandidate,
+        effective_activity: RealtimeActivityProfile,
+        interaction_intensity: RealtimeInteractionIntensity,
+        now_ms: u64,
     ) -> RealtimeDialogueDecision {
         if session_id != self.session_id
             || segment_id != self.segment_id
@@ -172,6 +245,25 @@ impl RealtimeDialogueDirector {
             return RealtimeDialogueDecision::Suppress(
                 RealtimeDialogueRejection::ImmediateDuplicate,
             );
+        }
+        if let Err(rejection) = self.interaction_policy.evaluate(
+            &candidate,
+            effective_activity,
+            interaction_intensity,
+            now_ms,
+        ) {
+            return RealtimeDialogueDecision::Suppress(match rejection {
+                ProactivePolicyRejection::ActivityMismatch => {
+                    RealtimeDialogueRejection::ActivityMismatch
+                }
+                ProactivePolicyRejection::InsufficientValue => {
+                    RealtimeDialogueRejection::InsufficientProactiveValue
+                }
+                ProactivePolicyRejection::Cooldown => RealtimeDialogueRejection::ProactiveCooldown,
+                ProactivePolicyRejection::SemanticDuplicate => {
+                    RealtimeDialogueRejection::SemanticDuplicate
+                }
+            });
         }
         if let Some(digest) = stable_digest {
             self.last_stable_digest = Some(digest);
@@ -232,6 +324,13 @@ impl RealtimeDialogueDirector {
         self.speech_generation = self.speech_generation.saturating_add(1);
         self.fairy_speaking = false;
         self.speech_generation
+    }
+
+    pub fn reset_epoch_policy(&mut self) {
+        self.last_sequence = 0;
+        self.last_stable_digest = None;
+        self.interaction_policy.reset_epoch();
+        self.invalidate_speech();
     }
 
     pub const fn speech_generation(&self) -> u64 {
@@ -388,6 +487,14 @@ mod tests {
         }
     }
 
+    fn proactive(text: &str, intent: &str) -> RealtimeDialogueCandidate {
+        let mut candidate = candidate(text);
+        candidate.response_to_user = false;
+        candidate.grounding = vec!["current_window: grounded event".to_owned()];
+        candidate.intent = intent.to_owned();
+        candidate
+    }
+
     #[test]
     fn accepts_current_grounded_fairy_candidate() {
         let mut director = director();
@@ -540,6 +647,85 @@ mod tests {
         assert!(matches!(
             director.evaluate("session-1", "segment-1", 1, 2, assistance),
             RealtimeDialogueDecision::RequestAssistance(_)
+        ));
+    }
+
+    #[test]
+    fn proactive_profile_cooldown_and_semantic_dedup_are_native_policy() {
+        let mut director = director();
+        assert!(matches!(
+            director.evaluate_with_policy(
+                "session-1",
+                "segment-1",
+                1,
+                1,
+                proactive("Health low, step back.", "comment"),
+                RealtimeActivityProfile::Game,
+                RealtimeInteractionIntensity::Standard,
+                1_000,
+            ),
+            RealtimeDialogueDecision::Speak(_)
+        ));
+        assert_eq!(
+            director.evaluate_with_policy(
+                "session-1",
+                "segment-1",
+                1,
+                2,
+                proactive("A different event.", "comment"),
+                RealtimeActivityProfile::Game,
+                RealtimeInteractionIntensity::Standard,
+                20_000,
+            ),
+            RealtimeDialogueDecision::Suppress(RealtimeDialogueRejection::ProactiveCooldown)
+        );
+        assert_eq!(
+            director.evaluate_with_policy(
+                "session-1",
+                "segment-1",
+                1,
+                3,
+                proactive("Health is low; step back.", "comment"),
+                RealtimeActivityProfile::Game,
+                RealtimeInteractionIntensity::Standard,
+                50_000,
+            ),
+            RealtimeDialogueDecision::Suppress(RealtimeDialogueRejection::SemanticDuplicate)
+        );
+    }
+
+    #[test]
+    fn focus_and_quiet_proactive_value_gates_do_not_block_user_answers() {
+        let mut director = director();
+        let mut focus_comment = proactive("Ordinary work changed.", "comment");
+        focus_comment.activity = RealtimeActivityProfile::Focus;
+        assert_eq!(
+            director.evaluate_with_policy(
+                "session-1",
+                "segment-1",
+                1,
+                1,
+                focus_comment,
+                RealtimeActivityProfile::Focus,
+                RealtimeInteractionIntensity::Standard,
+                0,
+            ),
+            RealtimeDialogueDecision::Suppress(
+                RealtimeDialogueRejection::InsufficientProactiveValue
+            )
+        );
+        assert!(matches!(
+            director.evaluate_with_policy(
+                "session-1",
+                "segment-1",
+                1,
+                2,
+                candidate("Direct answer."),
+                RealtimeActivityProfile::Focus,
+                RealtimeInteractionIntensity::Quiet,
+                1,
+            ),
+            RealtimeDialogueDecision::Speak(_)
         ));
     }
 
