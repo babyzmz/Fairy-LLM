@@ -279,8 +279,8 @@ class CoreApplication(CoreContextMixin, CoreSupportMixin):
         try:
             with self._transaction() as (unit_of_work, _commands):
                 if workspace_type is WorkspaceType.CHAT_SCRATCH:
-                    scratch_conversation = (
-                        self.create_scratch_conversation_in_unit_of_work(unit_of_work)
+                    scratch_conversation = self.create_scratch_conversation_in_unit_of_work(
+                        unit_of_work
                     )
                     conversation = scratch_conversation
                 else:
