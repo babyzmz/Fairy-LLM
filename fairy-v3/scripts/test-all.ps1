@@ -86,6 +86,9 @@ Invoke-Step "Scripts: ruff format --check" $Root $Uv @(
     "--check",
     "--no-cache",
     "scripts/check_boundaries.py",
+    "scripts/check-release-documents.py",
+    "scripts/check_release_bundle.py",
+    "scripts/test_release_bundle.py",
     "scripts/release_performance.py"
 )
 Invoke-Step "Scripts: ruff check" $Root $Uv @(
@@ -96,11 +99,44 @@ Invoke-Step "Scripts: ruff check" $Root $Uv @(
     "check",
     "--no-cache",
     "scripts/check_boundaries.py",
+    "scripts/check-release-documents.py",
+    "scripts/check_release_bundle.py",
+    "scripts/test_release_bundle.py",
     "scripts/release_performance.py"
 )
 
 Invoke-Step "Boundaries: check_boundaries.py" $Root $Uv @(
     "run", "--project", "core", "python", "scripts/check_boundaries.py", "."
+)
+Invoke-Step "Release: disclosures" $Root $Uv @(
+    "run", "--project", "core", "python", "scripts/check-release-documents.py"
+)
+Invoke-Step "Release: bundle policy" $Root $Uv @(
+    "run", "--project", "core", "python", "scripts/check_release_bundle.py"
+)
+Invoke-Step "Release: bundle policy fixtures" $Root $Uv @(
+    "run", "--project", "core", "python", "scripts/test_release_bundle.py"
+)
+Invoke-Step "Release: Omni packaging policy" $Root "powershell" @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts/test-omni-release-policy.ps1"
+)
+Invoke-Step "Release: Voice license policy" $Root "powershell" @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts/test-voice-release-licenses.ps1"
+)
+Invoke-Step "Release: fail-closed evidence fixtures" $Root "powershell" @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "scripts/test-realtime-companion-beta-release-fixtures.ps1"
 )
 
 Invoke-Step "Sandbox runner: ruff format --check" $Root $Uv @(
