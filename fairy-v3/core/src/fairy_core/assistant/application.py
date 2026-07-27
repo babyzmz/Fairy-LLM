@@ -500,7 +500,9 @@ class AssistantApplication(
                                 None,
                                 error_code=tool_error_code,
                             )
-                    self._resume_after_tools(turn_id)
+                    cancellation.raise_if_cancelled()
+                    if not self._resume_after_tools(turn_id):
+                        return self._cancel_turn(turn_id, current_run)
                     current_run = None
                     continue
                 if round_text:

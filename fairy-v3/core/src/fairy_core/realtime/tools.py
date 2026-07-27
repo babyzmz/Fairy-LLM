@@ -5,6 +5,7 @@ from fairy_core.commanding import CommandRun
 from fairy_core.commanding.registry import SideEffect, ToolDefinition
 from fairy_core.domain.models import ScopeContract
 from fairy_core.persistence.unit_of_work import CoreUnitOfWorkFactory
+from fairy_core.providers import CancellationToken
 
 _BROWSER_INPUT_TOOLS = frozenset(
     {
@@ -75,6 +76,37 @@ class RealtimeAssistanceToolExecutor:
                 command_run=command_run,
             )
         return self._delegate.execute(definition, scope, arguments)
+
+    def execute_command_with_cancellation(
+        self,
+        definition: ToolDefinition,
+        scope: ScopeContract,
+        arguments: dict[str, object],
+        *,
+        command_run: CommandRun,
+        cancellation: CancellationToken,
+    ) -> ToolResult:
+        self._authorize(definition, scope)
+        execute = getattr(self._delegate, "execute_command_with_cancellation", None)
+        if callable(execute):
+            return execute(
+                definition,
+                scope,
+                arguments,
+                command_run=command_run,
+                cancellation=cancellation,
+            )
+        return self.execute_command(
+            definition,
+            scope,
+            arguments,
+            command_run=command_run,
+        )
+
+    def cancel_command(self, command_run: CommandRun) -> None:
+        cancel = getattr(self._delegate, "cancel_command", None)
+        if callable(cancel):
+            cancel(command_run)
 
     def _authorize(self, definition: ToolDefinition, scope: ScopeContract) -> None:
         with self._unit_of_work_factory() as unit_of_work:

@@ -6,6 +6,7 @@ from uuid import UUID
 from fairy_core.assistant.candidates import ToolCandidate
 from fairy_core.assistant.durable_context import durable_tool_context
 from fairy_core.assistant.models import (
+    AssistantTurnStatus,
     Message,
     MessageRole,
     MessageVisibility,
@@ -15,6 +16,7 @@ from fairy_core.assistant.models import (
 from fairy_core.assistant.tools import tool_message_content
 from fairy_core.assistant.turn_reader import require_task, require_turn
 from fairy_core.commanding import CommandRun, CommandStatus, EventVisibility
+from fairy_core.domain.errors import VersionConflictError
 from fairy_core.domain.models import TaskStatus
 from fairy_core.providers import ModelMessage, ModelToolCall
 
@@ -154,15 +156,25 @@ class AssistantToolContextMixin:
                 lease_fence=run.lease_fence,
             )
 
-    def _resume_after_tools(self, turn_id: UUID) -> None:
-        with self._unit_of_work_factory() as unit_of_work:
-            turn = require_turn(unit_of_work, turn_id)
-            expected_status = turn.status
-            expected_revision = turn.cancellation_revision
-            turn.resume()
-            unit_of_work.assistant.update_turn(
-                turn,
-                expected_status=expected_status,
-                expected_cancellation_revision=expected_revision,
-            )
-            unit_of_work.commit()
+    def _resume_after_tools(self, turn_id: UUID) -> bool:
+        try:
+            with self._unit_of_work_factory() as unit_of_work:
+                turn = require_turn(unit_of_work, turn_id)
+                if turn.status is AssistantTurnStatus.CANCELLED:
+                    return False
+                expected_status = turn.status
+                expected_revision = turn.cancellation_revision
+                turn.resume()
+                unit_of_work.assistant.update_turn(
+                    turn,
+                    expected_status=expected_status,
+                    expected_cancellation_revision=expected_revision,
+                )
+                unit_of_work.commit()
+            return True
+        except VersionConflictError:
+            with self._unit_of_work_factory() as unit_of_work:
+                persisted = require_turn(unit_of_work, turn_id)
+            if persisted.status is AssistantTurnStatus.CANCELLED:
+                return False
+            raise
