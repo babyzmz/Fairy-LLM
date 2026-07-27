@@ -8,6 +8,8 @@ from fairy_core.realtime.models import (
     GameMemoryDigest,
     RealtimeAssistance,
     RealtimeCaptionSpeaker,
+    RealtimeMemoryProposal,
+    RealtimeMemoryProposalStatus,
     RealtimeSession,
     RealtimeTranscriptEntry,
 )
@@ -50,9 +52,30 @@ class RealtimeRepository(Protocol):
         self, session_id: UUID, request_id: str
     ) -> CompanionSessionDigest | None: ...
 
+    def update_digest(
+        self, digest: CompanionSessionDigest, *, expected_revision: int
+    ) -> CompanionSessionDigest: ...
+
     def list_digests(
         self, *, session_id: UUID | None = None, limit: int = 50
     ) -> tuple[CompanionSessionDigest, ...]: ...
+
+    def add_memory_proposal(self, proposal: RealtimeMemoryProposal) -> RealtimeMemoryProposal: ...
+
+    def get_memory_proposal(self, proposal_id: UUID) -> RealtimeMemoryProposal | None: ...
+
+    def list_memory_proposals(
+        self,
+        *,
+        session_id: UUID | None = None,
+        digest_id: UUID | None = None,
+        status: RealtimeMemoryProposalStatus | None = None,
+        limit: int = 100,
+    ) -> tuple[RealtimeMemoryProposal, ...]: ...
+
+    def update_memory_proposal(
+        self, proposal: RealtimeMemoryProposal, *, expected_revision: int
+    ) -> RealtimeMemoryProposal: ...
 
     def add_memory(self, memory: GameMemoryDigest) -> GameMemoryDigest: ...
 

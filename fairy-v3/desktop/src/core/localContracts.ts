@@ -286,6 +286,57 @@ export interface CompanionSessionDigestPage {
   items: CompanionSessionDigest[];
 }
 
+export type RealtimeMemoryProposalKind =
+  | "game_progress"
+  | "next_goal"
+  | "explicit_preference"
+  | "inferred_fact";
+export type RealtimeMemoryProposalDecision = "auto_promote" | "requires_confirmation";
+export type RealtimeMemoryProposalStatus = "pending" | "promoted" | "rejected";
+
+export interface RealtimeMemoryProposalListInput {
+  session_id?: string | null;
+  digest_id?: string | null;
+  pending_only?: boolean;
+  limit?: number;
+}
+
+export interface RealtimeMemoryProposalActionInput {
+  proposal_id: string;
+  expected_revision: number;
+  user_confirmed: boolean;
+  idempotency_key: string;
+}
+
+export interface RealtimeMemoryProposal {
+  id: string;
+  digest_id: string;
+  session_id: string;
+  conversation_id: string;
+  kind: RealtimeMemoryProposalKind;
+  subject: string;
+  predicate: string;
+  value: unknown;
+  normalized_text: string;
+  target_namespace: "device_local" | "user_profile";
+  confidence: number;
+  sensitivity: "public" | "private" | "secret";
+  source_first_sequence: number;
+  source_last_sequence: number;
+  evidence_digest: string;
+  policy_decision: RealtimeMemoryProposalDecision;
+  policy_reason: string;
+  status: RealtimeMemoryProposalStatus;
+  claim_id: string | null;
+  created_at: string;
+  updated_at: string;
+  revision: number;
+}
+
+export interface RealtimeMemoryProposalPage {
+  items: RealtimeMemoryProposal[];
+}
+
 export type BrowserProfileKind = "persistent" | "ephemeral";
 export type BrowserSessionStatus =
   | "starting"

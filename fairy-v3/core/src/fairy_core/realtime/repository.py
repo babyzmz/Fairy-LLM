@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError
 
 from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictError
+from fairy_core.memory.models import MemoryNamespace, MemorySensitivity
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.realtime.models import (
     CompanionDigestActivity,
@@ -18,6 +20,10 @@ from fairy_core.realtime.models import (
     RealtimeAssistanceStatus,
     RealtimeCaptionSpeaker,
     RealtimeMemoryMode,
+    RealtimeMemoryProposal,
+    RealtimeMemoryProposalDecision,
+    RealtimeMemoryProposalKind,
+    RealtimeMemoryProposalStatus,
     RealtimeProvider,
     RealtimeSession,
     RealtimeSessionStatus,
@@ -28,6 +34,7 @@ from fairy_core.storage.schema import (
     companion_session_digests,
     game_memory_observations,
     realtime_assistance,
+    realtime_memory_proposals,
     realtime_sessions,
     realtime_transcript_entries,
 )
@@ -285,6 +292,136 @@ class SqlAlchemyRealtimeRepository:
         ).mappings()
         return tuple(_digest_from_row(row) for row in rows)
 
+    def update_digest(
+        self,
+        digest: CompanionSessionDigest,
+        *,
+        expected_revision: int,
+    ) -> CompanionSessionDigest:
+        values = _digest_values(self._tenant_id, digest)
+        values.pop("tenant_id")
+        values.pop("id")
+        changed = self._connection.execute(
+            update(companion_session_digests)
+            .where(
+                companion_session_digests.c.tenant_id == self._tenant_id,
+                companion_session_digests.c.id == str(digest.id),
+                companion_session_digests.c.revision == expected_revision,
+            )
+            .values(**values)
+        )
+        if changed.rowcount != 1:
+            raise VersionConflictError("companion digest revision changed")
+        return digest
+
+    def add_memory_proposal(
+        self,
+        proposal: RealtimeMemoryProposal,
+    ) -> RealtimeMemoryProposal:
+        try:
+            self._connection.execute(
+                insert(realtime_memory_proposals).values(
+                    **_proposal_values(self._tenant_id, proposal)
+                )
+            )
+        except IntegrityError as error:
+            existing = self._proposal_by_evidence(
+                proposal.digest_id,
+                proposal.kind,
+                proposal.evidence_digest,
+            )
+            if existing is not None and _same_proposal(existing, proposal):
+                return existing
+            raise IdempotencyConflictError(
+                "realtime memory proposal evidence is already in use"
+            ) from error
+        return proposal
+
+    def get_memory_proposal(
+        self,
+        proposal_id: UUID,
+    ) -> RealtimeMemoryProposal | None:
+        row = (
+            self._connection.execute(
+                select(realtime_memory_proposals).where(
+                    realtime_memory_proposals.c.tenant_id == self._tenant_id,
+                    realtime_memory_proposals.c.id == str(proposal_id),
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _proposal_from_row(row) if row is not None else None
+
+    def list_memory_proposals(
+        self,
+        *,
+        session_id: UUID | None = None,
+        digest_id: UUID | None = None,
+        status: RealtimeMemoryProposalStatus | None = None,
+        limit: int = 100,
+    ) -> tuple[RealtimeMemoryProposal, ...]:
+        if limit < 1 or limit > 500:
+            raise ValueError("realtime memory proposal limit must be between 1 and 500")
+        query = select(realtime_memory_proposals).where(
+            realtime_memory_proposals.c.tenant_id == self._tenant_id
+        )
+        if session_id is not None:
+            query = query.where(realtime_memory_proposals.c.session_id == str(session_id))
+        if digest_id is not None:
+            query = query.where(realtime_memory_proposals.c.digest_id == str(digest_id))
+        if status is not None:
+            query = query.where(realtime_memory_proposals.c.status == status.value)
+        rows = self._connection.execute(
+            query.order_by(
+                realtime_memory_proposals.c.created_at.desc(),
+                realtime_memory_proposals.c.id.desc(),
+            ).limit(limit)
+        ).mappings()
+        return tuple(_proposal_from_row(row) for row in rows)
+
+    def update_memory_proposal(
+        self,
+        proposal: RealtimeMemoryProposal,
+        *,
+        expected_revision: int,
+    ) -> RealtimeMemoryProposal:
+        values = _proposal_values(self._tenant_id, proposal)
+        values.pop("tenant_id")
+        values.pop("id")
+        changed = self._connection.execute(
+            update(realtime_memory_proposals)
+            .where(
+                realtime_memory_proposals.c.tenant_id == self._tenant_id,
+                realtime_memory_proposals.c.id == str(proposal.id),
+                realtime_memory_proposals.c.revision == expected_revision,
+            )
+            .values(**values)
+        )
+        if changed.rowcount != 1:
+            raise VersionConflictError("realtime memory proposal revision changed")
+        return proposal
+
+    def _proposal_by_evidence(
+        self,
+        digest_id: UUID,
+        kind: RealtimeMemoryProposalKind,
+        evidence_digest: str,
+    ) -> RealtimeMemoryProposal | None:
+        row = (
+            self._connection.execute(
+                select(realtime_memory_proposals).where(
+                    realtime_memory_proposals.c.tenant_id == self._tenant_id,
+                    realtime_memory_proposals.c.digest_id == str(digest_id),
+                    realtime_memory_proposals.c.kind == kind.value,
+                    realtime_memory_proposals.c.evidence_digest == evidence_digest,
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _proposal_from_row(row) if row is not None else None
+
     def add_memory(self, memory: GameMemoryDigest) -> GameMemoryDigest:
         self._connection.execute(
             insert(game_memory_observations).values(
@@ -515,6 +652,38 @@ def _digest_values(
     }
 
 
+def _proposal_values(
+    tenant_id: str,
+    proposal: RealtimeMemoryProposal,
+) -> dict[str, object]:
+    return {
+        "tenant_id": tenant_id,
+        "id": str(proposal.id),
+        "digest_id": str(proposal.digest_id),
+        "session_id": str(proposal.session_id),
+        "conversation_id": str(proposal.conversation_id),
+        "kind": proposal.kind.value,
+        "subject": proposal.subject,
+        "predicate": proposal.predicate,
+        "value": proposal.value,
+        "normalized_text": proposal.normalized_text,
+        "target_namespace": proposal.target_namespace.value,
+        "confidence": proposal.confidence,
+        "sensitivity": proposal.sensitivity.value,
+        "source_first_sequence": proposal.source_first_sequence,
+        "source_last_sequence": proposal.source_last_sequence,
+        "evidence_digest": proposal.evidence_digest,
+        "policy_decision": proposal.policy_decision.value,
+        "policy_reason": proposal.policy_reason,
+        "status": proposal.status.value,
+        "claim_id": str(proposal.claim_id) if proposal.claim_id is not None else None,
+        "decision_idempotency_key": proposal.decision_idempotency_key,
+        "created_at": proposal.created_at,
+        "updated_at": proposal.updated_at,
+        "revision": proposal.revision,
+    }
+
+
 def _same_session_request(left: RealtimeSession, right: RealtimeSession) -> bool:
     return (
         left.device_id,
@@ -640,6 +809,83 @@ def _digest_from_row(row: Mapping[str, object]) -> CompanionSessionDigest:
         proposal_ids=tuple(UUID(str(value)) for value in row["proposal_ids"]),  # type: ignore[union-attr]
         created_at=row["created_at"],  # type: ignore[arg-type]
         revision=int(row["revision"]),
+    )
+
+
+def _proposal_from_row(row: Mapping[str, object]) -> RealtimeMemoryProposal:
+    return RealtimeMemoryProposal(
+        id=UUID(str(row["id"])),
+        digest_id=UUID(str(row["digest_id"])),
+        session_id=UUID(str(row["session_id"])),
+        conversation_id=UUID(str(row["conversation_id"])),
+        kind=RealtimeMemoryProposalKind(str(row["kind"])),
+        subject=str(row["subject"]),
+        predicate=str(row["predicate"]),
+        _value_json=json.dumps(
+            row["value"],
+            ensure_ascii=True,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        normalized_text=str(row["normalized_text"]),
+        target_namespace=MemoryNamespace(str(row["target_namespace"])),
+        confidence=float(row["confidence"]),
+        sensitivity=MemorySensitivity(str(row["sensitivity"])),
+        source_first_sequence=int(row["source_first_sequence"]),
+        source_last_sequence=int(row["source_last_sequence"]),
+        evidence_digest=str(row["evidence_digest"]),
+        policy_decision=RealtimeMemoryProposalDecision(str(row["policy_decision"])),
+        policy_reason=str(row["policy_reason"]),
+        status=RealtimeMemoryProposalStatus(str(row["status"])),
+        claim_id=UUID(str(row["claim_id"])) if row["claim_id"] else None,
+        decision_idempotency_key=(
+            str(row["decision_idempotency_key"]) if row["decision_idempotency_key"] else None
+        ),
+        created_at=row["created_at"],  # type: ignore[arg-type]
+        updated_at=row["updated_at"],  # type: ignore[arg-type]
+        revision=int(row["revision"]),
+    )
+
+
+def _same_proposal(
+    left: RealtimeMemoryProposal,
+    right: RealtimeMemoryProposal,
+) -> bool:
+    return (
+        left.digest_id,
+        left.session_id,
+        left.conversation_id,
+        left.kind,
+        left.subject,
+        left.predicate,
+        left.value,
+        left.normalized_text,
+        left.target_namespace,
+        left.confidence,
+        left.sensitivity,
+        left.source_first_sequence,
+        left.source_last_sequence,
+        left.evidence_digest,
+        left.policy_decision,
+        left.policy_reason,
+    ) == (
+        right.digest_id,
+        right.session_id,
+        right.conversation_id,
+        right.kind,
+        right.subject,
+        right.predicate,
+        right.value,
+        right.normalized_text,
+        right.target_namespace,
+        right.confidence,
+        right.sensitivity,
+        right.source_first_sequence,
+        right.source_last_sequence,
+        right.evidence_digest,
+        right.policy_decision,
+        right.policy_reason,
     )
 
 

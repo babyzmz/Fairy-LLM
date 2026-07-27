@@ -469,8 +469,13 @@ class MemoryClaimRevision:
         normalized = normalized_text.strip()
         if not normalized:
             raise ValueError("normalized_text is required")
-        if not source_observation_ids or not source_event_ids:
-            raise ValueError("claim revision requires Observation and event provenance")
+        if not source_event_ids:
+            raise ValueError("claim revision requires event provenance")
+        if not source_observation_ids and authority not in {
+            MemoryAuthority.DETERMINISTIC_CORE,
+            MemoryAuthority.EXPLICIT_USER,
+        }:
+            raise ValueError("model and artifact claim revisions require Observation provenance")
         normalized_actor = actor.strip()
         if not normalized_actor:
             raise ValueError("memory actor is required")

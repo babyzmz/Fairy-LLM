@@ -31,6 +31,8 @@ from fairy_core.contracts.realtime import (
     RealtimeAssistanceCancelInput,
     RealtimeAssistanceGetInput,
     RealtimeAssistanceRequestInput,
+    RealtimeMemoryProposalActionInput,
+    RealtimeMemoryProposalListInput,
     RealtimeSessionIdInput,
     RealtimeSessionListInput,
     RealtimeSessionReportInput,
@@ -98,6 +100,9 @@ class RealtimeService:
                 "realtime.digests.create": self.create_digest,
                 "realtime.digests.get": self.get_digest,
                 "realtime.digests.list": self.list_digests,
+                "realtime.memory-proposals.accept": self.accept_memory_proposal,
+                "realtime.memory-proposals.list": self.list_memory_proposals,
+                "realtime.memory-proposals.reject": self.reject_memory_proposal,
                 "realtime.sessions.start": self.start,
                 "realtime.sessions.get": self.get,
                 "realtime.sessions.list": self.list,
@@ -427,6 +432,27 @@ class RealtimeService:
                 limit=validated.limit,
             )
         }
+
+    def list_memory_proposals(self, request: BaseModel):
+        validated = cast(RealtimeMemoryProposalListInput, request)
+        return {
+            "items": self._application.list_memory_proposals(
+                session_id=validated.session_id,
+                digest_id=validated.digest_id,
+                pending_only=validated.pending_only,
+                limit=validated.limit,
+            )
+        }
+
+    def accept_memory_proposal(self, request: BaseModel):
+        return self._application.accept_memory_proposal(
+            cast(RealtimeMemoryProposalActionInput, request)
+        )
+
+    def reject_memory_proposal(self, request: BaseModel):
+        return self._application.reject_memory_proposal(
+            cast(RealtimeMemoryProposalActionInput, request)
+        )
 
     def list_memories(self, request: BaseModel):
         validated = cast(GameMemoryListInput, request)

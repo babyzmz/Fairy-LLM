@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Float,
     ForeignKeyConstraint,
     Index,
     MetaData,
@@ -20,7 +21,7 @@ from fairy_core.persistence.tenant import TENANT_ID_LENGTH
 from fairy_core.storage.types import UTCDateTime
 
 
-def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table]:
+def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table, Table, Table]:
     sessions = Table(
         "core_realtime_sessions",
         metadata,
@@ -150,6 +151,85 @@ def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table, Tabl
         ),
         CheckConstraint("revision >= 1", name="ck_core_companion_session_digests_revision"),
     )
+    proposals = Table(
+        "core_realtime_memory_proposals",
+        metadata,
+        Column("tenant_id", String(TENANT_ID_LENGTH), primary_key=True),
+        Column("id", String(36), primary_key=True),
+        Column("digest_id", String(36), nullable=False),
+        Column("session_id", String(36), nullable=False),
+        Column("conversation_id", String(36), nullable=False),
+        Column("kind", String(32), nullable=False),
+        Column("subject", String(512), nullable=False),
+        Column("predicate", String(512), nullable=False),
+        Column("value", JSON, nullable=False),
+        Column("normalized_text", String(2_000), nullable=False),
+        Column("target_namespace", String(32), nullable=False),
+        Column("confidence", Float, nullable=False),
+        Column("sensitivity", String(16), nullable=False),
+        Column("source_first_sequence", BigInteger, nullable=False),
+        Column("source_last_sequence", BigInteger, nullable=False),
+        Column("evidence_digest", String(64), nullable=False),
+        Column("policy_decision", String(32), nullable=False),
+        Column("policy_reason", String(256), nullable=False),
+        Column("status", String(16), nullable=False),
+        Column("claim_id", String(36)),
+        Column("decision_idempotency_key", String(255)),
+        Column("created_at", UTCDateTime(), nullable=False),
+        Column("updated_at", UTCDateTime(), nullable=False),
+        Column("revision", BigInteger, nullable=False),
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_core_realtime_memory_proposals"),
+        UniqueConstraint(
+            "tenant_id",
+            "digest_id",
+            "kind",
+            "evidence_digest",
+            name="uq_core_realtime_memory_proposals_evidence",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "digest_id"],
+            ["core_companion_session_digests.tenant_id", "core_companion_session_digests.id"],
+            name="fk_core_realtime_memory_proposals_digest",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "session_id"],
+            ["core_realtime_sessions.tenant_id", "core_realtime_sessions.id"],
+            name="fk_core_realtime_memory_proposals_session",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["core_conversations.tenant_id", "core_conversations.id"],
+            name="fk_core_realtime_memory_proposals_conversation",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "kind IN ('game_progress', 'next_goal', 'explicit_preference', 'inferred_fact')",
+            name="ck_core_realtime_memory_proposals_kind",
+        ),
+        CheckConstraint(
+            "target_namespace IN ('device_local', 'user_profile')",
+            name="ck_core_realtime_memory_proposals_namespace",
+        ),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1",
+            name="ck_core_realtime_memory_proposals_confidence",
+        ),
+        CheckConstraint(
+            "source_first_sequence >= 1 AND source_last_sequence >= source_first_sequence",
+            name="ck_core_realtime_memory_proposals_source_range",
+        ),
+        CheckConstraint(
+            "policy_decision IN ('auto_promote', 'requires_confirmation')",
+            name="ck_core_realtime_memory_proposals_policy",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'promoted', 'rejected')",
+            name="ck_core_realtime_memory_proposals_status",
+        ),
+        CheckConstraint("revision >= 1", name="ck_core_realtime_memory_proposals_revision"),
+    )
     # Local-only, reviewable transcript of a voice session's stable public
     # captions. Raw audio, frames, VAD, partial captions, and hidden reasoning
     # are never stored here; see ADR 0018.
@@ -257,6 +337,13 @@ def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table, Tabl
         digests.c.created_at,
     )
     Index(
+        "ix_core_realtime_memory_proposals_session_status",
+        proposals.c.tenant_id,
+        proposals.c.session_id,
+        proposals.c.status,
+        proposals.c.created_at,
+    )
+    Index(
         "ix_core_realtime_transcript_conversation",
         transcript.c.tenant_id,
         transcript.c.conversation_id,
@@ -275,7 +362,7 @@ def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table, Tabl
         assistance.c.conversation_id,
         assistance.c.created_at,
     )
-    return sessions, memories, digests, transcript, assistance
+    return sessions, memories, digests, proposals, transcript, assistance
 
 
 __all__ = ["build_realtime_tables"]

@@ -579,6 +579,19 @@ describe("CoreClient", () => {
     });
     await client.realtime.digests.get(id);
     await client.realtime.digests.list({ session_id: id, limit: 20 });
+    await client.realtime.memoryProposals.list({ digest_id: id, pending_only: true });
+    await client.realtime.memoryProposals.accept({
+      proposal_id: id,
+      expected_revision: 1,
+      user_confirmed: true,
+      idempotency_key: "accept-proposal",
+    });
+    await client.realtime.memoryProposals.reject({
+      proposal_id: id,
+      expected_revision: 1,
+      user_confirmed: true,
+      idempotency_key: "reject-proposal",
+    });
 
     expect(transport.requests).toEqual([
       {
@@ -594,6 +607,28 @@ describe("CoreClient", () => {
       {
         method: "realtime.digests.list",
         params: { session_id: id, limit: 20 },
+      },
+      {
+        method: "realtime.memory-proposals.list",
+        params: { digest_id: id, pending_only: true },
+      },
+      {
+        method: "realtime.memory-proposals.accept",
+        params: {
+          proposal_id: id,
+          expected_revision: 1,
+          user_confirmed: true,
+          idempotency_key: "accept-proposal",
+        },
+      },
+      {
+        method: "realtime.memory-proposals.reject",
+        params: {
+          proposal_id: id,
+          expected_revision: 1,
+          user_confirmed: true,
+          idempotency_key: "reject-proposal",
+        },
       },
     ]);
   });

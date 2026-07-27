@@ -34,6 +34,10 @@ import type {
   RealtimeTranscriptEntry,
   RealtimeTranscriptListInput,
   RealtimeTranscriptPage,
+  RealtimeMemoryProposal,
+  RealtimeMemoryProposalActionInput,
+  RealtimeMemoryProposalListInput,
+  RealtimeMemoryProposalPage,
 } from "./localContracts";
 
 export type {
@@ -85,6 +89,13 @@ export type {
   RealtimeTranscriptEntry,
   RealtimeTranscriptListInput,
   RealtimeTranscriptPage,
+  RealtimeMemoryProposal,
+  RealtimeMemoryProposalActionInput,
+  RealtimeMemoryProposalDecision,
+  RealtimeMemoryProposalKind,
+  RealtimeMemoryProposalListInput,
+  RealtimeMemoryProposalPage,
+  RealtimeMemoryProposalStatus,
 } from "./localContracts";
 
 type Schemas = components["schemas"];
@@ -735,6 +746,18 @@ export interface CoreMethodMap {
   "realtime.digests.list": {
     params: CompanionDigestListInput;
     result: CompanionSessionDigestPage;
+  };
+  "realtime.memory-proposals.accept": {
+    params: RealtimeMemoryProposalActionInput;
+    result: RealtimeMemoryProposal;
+  };
+  "realtime.memory-proposals.list": {
+    params: RealtimeMemoryProposalListInput;
+    result: RealtimeMemoryProposalPage;
+  };
+  "realtime.memory-proposals.reject": {
+    params: RealtimeMemoryProposalActionInput;
+    result: RealtimeMemoryProposal;
   };
   "realtime.memories.save": { params: GameMemorySaveInput; result: GameMemoryDigest };
   "realtime.memories.list": { params: { limit?: number }; result: GameMemoryPage };

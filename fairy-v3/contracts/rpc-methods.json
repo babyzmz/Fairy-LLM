@@ -841,6 +841,24 @@
       "transport": "local_and_cloud"
     },
     {
+      "name": "realtime.memory-proposals.accept",
+      "request_model": "RealtimeMemoryProposalActionInput",
+      "response_model": "RealtimeMemoryProposalModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "realtime.memory-proposals.list",
+      "request_model": "RealtimeMemoryProposalListInput",
+      "response_model": "RealtimeMemoryProposalPageModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "realtime.memory-proposals.reject",
+      "request_model": "RealtimeMemoryProposalActionInput",
+      "response_model": "RealtimeMemoryProposalModel",
+      "transport": "local_only"
+    },
+    {
       "name": "realtime.persona.snapshot",
       "request_model": "RealtimePersonaSnapshotInput",
       "response_model": "RealtimePersonaSnapshotModel",

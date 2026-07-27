@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from sqlalchemy import inspect
@@ -222,7 +223,17 @@ def test_companion_digest_is_stable_only_idempotent_and_session_scoped(tmp_path)
         assert len(digest["source_digest"]) == 64
         assert digest["next_goal"] == "Finished the tutorial. Next goal is chapter one."
         assert digest["progress_summary"] == "Finished the tutorial. Next goal is chapter one."
-        assert digest["proposal_ids"] == []
+        assert len(digest["proposal_ids"]) == 2
+        proposals = service.invoke(
+            "realtime.memory-proposals.list",
+            {"digest_id": digest["id"]},
+        )["items"]
+        assert {item["kind"] for item in proposals} == {
+            "game_progress",
+            "next_goal",
+        }
+        assert {item["status"] for item in proposals} == {"promoted"}
+        assert all(item["claim_id"] for item in proposals)
         assert (
             service.invoke(
                 "realtime.digests.get",
@@ -258,6 +269,243 @@ def test_companion_digest_is_stable_only_idempotent_and_session_scoped(tmp_path)
         assert completed["status"] == "completed"
     finally:
         service.close()
+
+
+def test_realtime_memory_requires_confirmation_for_inference_and_blocks_secrets(
+    tmp_path,
+) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        started = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-memory-policy",
+                "provider": "auto",
+                "locale": "en-AU",
+                "microphone_consent": True,
+                "idempotency_key": "memory-policy-session",
+            },
+        )
+        for text in (
+            "I usually work late.",
+            "I feel more productive in quiet rooms.",
+            "Remember that I prefer concise answers.",
+            "Remember password=supersecretvalue.",
+        ):
+            service.invoke(
+                "realtime.transcript.append",
+                {
+                    "session_id": started["id"],
+                    "speaker": "user",
+                    "text": text,
+                },
+            )
+        active = service.invoke(
+            "realtime.sessions.report",
+            {
+                "session_id": started["id"],
+                "status": "active",
+                "expected_revision": started["revision"],
+            },
+        )
+        stopping = service.invoke(
+            "realtime.sessions.stop",
+            {
+                "session_id": started["id"],
+                "expected_revision": active["revision"],
+            },
+        )
+        service.invoke(
+            "realtime.sessions.report",
+            {
+                "session_id": started["id"],
+                "status": "completed",
+                "expected_revision": stopping["revision"],
+            },
+        )
+        digest = service.invoke(
+            "realtime.digests.create",
+            {
+                "session_id": started["id"],
+                "request_id": "memory-policy-digest",
+                "activity": "focus",
+            },
+        )
+        proposals = service.invoke(
+            "realtime.memory-proposals.list",
+            {"digest_id": digest["id"]},
+        )["items"]
+
+        assert len(proposals) == 3
+        explicit = next(item for item in proposals if item["kind"] == "explicit_preference")
+        pending = [item for item in proposals if item["kind"] == "inferred_fact"]
+        assert explicit["status"] == "promoted"
+        assert explicit["policy_decision"] == "auto_promote"
+        assert len(pending) == 2
+        assert {item["status"] for item in pending} == {"pending"}
+        assert all(item["policy_decision"] == "requires_confirmation" for item in pending)
+        assert all("supersecretvalue" not in item["normalized_text"] for item in proposals)
+
+        with pytest.raises(ValueError, match="explicit confirmation"):
+            service.invoke(
+                "realtime.memory-proposals.accept",
+                {
+                    "proposal_id": pending[0]["id"],
+                    "expected_revision": pending[0]["revision"],
+                    "user_confirmed": False,
+                    "idempotency_key": "accept-inferred",
+                },
+            )
+        accepted = service.invoke(
+            "realtime.memory-proposals.accept",
+            {
+                "proposal_id": pending[0]["id"],
+                "expected_revision": pending[0]["revision"],
+                "user_confirmed": True,
+                "idempotency_key": "accept-inferred",
+            },
+        )
+        replayed = service.invoke(
+            "realtime.memory-proposals.accept",
+            {
+                "proposal_id": pending[0]["id"],
+                "expected_revision": pending[0]["revision"],
+                "user_confirmed": True,
+                "idempotency_key": "accept-inferred",
+            },
+        )
+        assert replayed == accepted
+        assert accepted["status"] == "promoted"
+        assert accepted["claim_id"] is not None
+
+        rejected = service.invoke(
+            "realtime.memory-proposals.reject",
+            {
+                "proposal_id": pending[1]["id"],
+                "expected_revision": pending[1]["revision"],
+                "user_confirmed": True,
+                "idempotency_key": "reject-inferred",
+            },
+        )
+        assert rejected["status"] == "rejected"
+        assert rejected["claim_id"] is None
+        assert (
+            service.invoke(
+                "realtime.memory-proposals.list",
+                {"digest_id": digest["id"], "pending_only": True},
+            )["items"]
+            == []
+        )
+    finally:
+        service.close()
+
+    engine = create_sqlite_core_engine(tmp_path / "core.db")
+    factory = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
+    try:
+        with factory() as unit_of_work:
+            revisions = unit_of_work.memory.revisions_for_claim(UUID(accepted["claim_id"]))
+        assert revisions[-1].authority.value == "explicit_user"
+        assert revisions[-1].source_observation_ids == ()
+        assert len(revisions[-1].source_event_ids) == 1
+    finally:
+        engine.dispose()
+
+
+def test_realtime_memory_conflict_stays_pending_until_user_accepts(tmp_path) -> None:
+    service = build_local_service(tmp_path)
+
+    def create_goal(suffix: str, text: str) -> dict:
+        started = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-shared-goal",
+                "provider": "auto",
+                "locale": "en-AU",
+                "microphone_consent": True,
+                "idempotency_key": f"goal-session-{suffix}",
+            },
+        )
+        service.invoke(
+            "realtime.transcript.append",
+            {
+                "session_id": started["id"],
+                "speaker": "user",
+                "text": text,
+            },
+        )
+        active = service.invoke(
+            "realtime.sessions.report",
+            {
+                "session_id": started["id"],
+                "status": "active",
+                "expected_revision": started["revision"],
+            },
+        )
+        stopping = service.invoke(
+            "realtime.sessions.stop",
+            {
+                "session_id": started["id"],
+                "expected_revision": active["revision"],
+            },
+        )
+        service.invoke(
+            "realtime.sessions.report",
+            {
+                "session_id": started["id"],
+                "status": "completed",
+                "expected_revision": stopping["revision"],
+            },
+        )
+        digest = service.invoke(
+            "realtime.digests.create",
+            {
+                "session_id": started["id"],
+                "request_id": f"goal-digest-{suffix}",
+                "activity": "focus",
+            },
+        )
+        proposals = service.invoke(
+            "realtime.memory-proposals.list",
+            {"digest_id": digest["id"]},
+        )["items"]
+        return next(item for item in proposals if item["kind"] == "next_goal")
+
+    try:
+        first = create_goal("one", "Next goal is to finish chapter one.")
+        second = create_goal("two", "Next goal is to finish chapter two.")
+
+        assert first["status"] == "promoted"
+        assert second["status"] == "pending"
+        assert second["policy_decision"] == "requires_confirmation"
+        assert second["policy_reason"] == "existing_claim_conflict"
+
+        accepted = service.invoke(
+            "realtime.memory-proposals.accept",
+            {
+                "proposal_id": second["id"],
+                "expected_revision": second["revision"],
+                "user_confirmed": True,
+                "idempotency_key": "accept-new-goal",
+            },
+        )
+        assert accepted["status"] == "promoted"
+        assert accepted["claim_id"] == first["claim_id"]
+    finally:
+        service.close()
+
+    engine = create_sqlite_core_engine(tmp_path / "core.db")
+    local = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
+    other = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="other")
+    try:
+        with local() as unit_of_work:
+            revisions = unit_of_work.memory.revisions_for_claim(UUID(first["claim_id"]))
+            assert [revision.revision for revision in revisions] == [1, 2]
+            assert revisions[-1].normalized_text.endswith("chapter two.")
+            assert revisions[-1].authority.value == "explicit_user"
+        with other() as unit_of_work:
+            assert unit_of_work.realtime.get_memory_proposal(UUID(second["id"])) is None
+    finally:
+        engine.dispose()
 
 
 def test_companion_digest_requires_transcript_and_memory_policy(tmp_path) -> None:
@@ -316,6 +564,67 @@ def test_companion_digest_requires_transcript_and_memory_policy(tmp_path) -> Non
                     "request_id": "digest-empty",
                 },
             )
+
+        no_memory = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-core-memory-disabled",
+                "provider": "auto",
+                "locale": "en-AU",
+                "microphone_consent": True,
+                "idempotency_key": "core-memory-disabled-session",
+            },
+        )
+        service.invoke(
+            "realtime.transcript.append",
+            {
+                "session_id": no_memory["id"],
+                "speaker": "user",
+                "text": "Remember that I prefer concise answers.",
+            },
+        )
+        no_memory_active = service.invoke(
+            "realtime.sessions.report",
+            {
+                "session_id": no_memory["id"],
+                "status": "active",
+                "expected_revision": no_memory["revision"],
+            },
+        )
+        no_memory_stopping = service.invoke(
+            "realtime.sessions.stop",
+            {
+                "session_id": no_memory["id"],
+                "expected_revision": no_memory_active["revision"],
+            },
+        )
+        service.invoke(
+            "realtime.sessions.report",
+            {
+                "session_id": no_memory["id"],
+                "status": "completed",
+                "expected_revision": no_memory_stopping["revision"],
+            },
+        )
+        service.invoke(
+            "memory.settings.update",
+            {
+                "enabled": False,
+                "retention_days": 365,
+                "export_to_obsidian": False,
+                "sync_normalized_content": False,
+                "expected_revision": 0,
+                "idempotency_key": "disable-memory-for-digest",
+            },
+        )
+        digest = service.invoke(
+            "realtime.digests.create",
+            {
+                "session_id": no_memory["id"],
+                "request_id": "digest-with-core-memory-disabled",
+            },
+        )
+        assert digest["proposal_ids"] == []
     finally:
         service.close()
 

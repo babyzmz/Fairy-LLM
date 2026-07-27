@@ -70,6 +70,8 @@ import type {
   RealtimeSessionStopInput,
   RealtimeAssistanceCancelInput,
   RealtimeAssistanceGetInput,
+  RealtimeMemoryProposalActionInput,
+  RealtimeMemoryProposalListInput,
   RealtimePersonaSnapshotInput,
   RealtimeTranscriptAppendInput,
   RealtimeTranscriptListInput,
@@ -713,6 +715,14 @@ export class CoreClient {
         this.transport.call("realtime.digests.get", { digest_id: digestId }),
       list: (input: CompanionDigestListInput = {}) =>
         this.transport.call("realtime.digests.list", input),
+    },
+    memoryProposals: {
+      list: (input: RealtimeMemoryProposalListInput = {}) =>
+        this.transport.call("realtime.memory-proposals.list", input),
+      accept: (input: RealtimeMemoryProposalActionInput) =>
+        this.transport.call("realtime.memory-proposals.accept", input),
+      reject: (input: RealtimeMemoryProposalActionInput) =>
+        this.transport.call("realtime.memory-proposals.reject", input),
     },
     memories: {
       save: (input: GameMemorySaveInput) =>

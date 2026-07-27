@@ -11,6 +11,7 @@ from uuid import UUID
 
 from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.ids import new_id
+from fairy_core.memory.models import MemoryNamespace, MemorySensitivity
 
 
 class RealtimeProvider(StrEnum):
@@ -61,6 +62,24 @@ class CompanionDigestActivity(StrEnum):
     AUTO = "auto"
     GAME = "game"
     FOCUS = "focus"
+
+
+class RealtimeMemoryProposalKind(StrEnum):
+    GAME_PROGRESS = "game_progress"
+    NEXT_GOAL = "next_goal"
+    EXPLICIT_PREFERENCE = "explicit_preference"
+    INFERRED_FACT = "inferred_fact"
+
+
+class RealtimeMemoryProposalDecision(StrEnum):
+    AUTO_PROMOTE = "auto_promote"
+    REQUIRES_CONFIRMATION = "requires_confirmation"
+
+
+class RealtimeMemoryProposalStatus(StrEnum):
+    PENDING = "pending"
+    PROMOTED = "promoted"
+    REJECTED = "rejected"
 
 
 _SESSION_TRANSITIONS: Mapping[RealtimeSessionStatus, frozenset[RealtimeSessionStatus]] = (
@@ -501,6 +520,188 @@ class CompanionSessionDigest:
     def same_request(self, other: CompanionSessionDigest) -> bool:
         return self.request_fingerprint == other.request_fingerprint
 
+    def with_proposals(
+        self,
+        proposal_ids: tuple[UUID, ...],
+        *,
+        now: datetime | None = None,
+    ) -> CompanionSessionDigest:
+        del now
+        if len(proposal_ids) > 12 or len(set(proposal_ids)) != len(proposal_ids):
+            raise ValueError("companion digest supports at most 12 unique proposals")
+        if self.proposal_ids == proposal_ids:
+            return self
+        if self.proposal_ids:
+            raise InvalidTransitionError("companion digest proposals are immutable")
+        return replace(
+            self,
+            proposal_ids=tuple(proposal_ids),
+            revision=self.revision + 1,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RealtimeMemoryProposal:
+    id: UUID
+    digest_id: UUID
+    session_id: UUID
+    conversation_id: UUID
+    kind: RealtimeMemoryProposalKind
+    subject: str
+    predicate: str
+    _value_json: str
+    normalized_text: str
+    target_namespace: MemoryNamespace
+    confidence: float
+    sensitivity: MemorySensitivity
+    source_first_sequence: int
+    source_last_sequence: int
+    evidence_digest: str
+    policy_decision: RealtimeMemoryProposalDecision
+    policy_reason: str
+    status: RealtimeMemoryProposalStatus
+    claim_id: UUID | None
+    decision_idempotency_key: str | None
+    created_at: datetime
+    updated_at: datetime
+    revision: int
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        digest_id: UUID,
+        session_id: UUID,
+        conversation_id: UUID,
+        kind: RealtimeMemoryProposalKind,
+        subject: str,
+        predicate: str,
+        value: object,
+        normalized_text: str,
+        target_namespace: MemoryNamespace,
+        confidence: float,
+        sensitivity: MemorySensitivity,
+        source_sequence: int,
+        evidence_digest: str,
+        policy_decision: RealtimeMemoryProposalDecision,
+        policy_reason: str,
+        now: datetime | None = None,
+    ) -> RealtimeMemoryProposal:
+        if target_namespace not in {
+            MemoryNamespace.DEVICE_LOCAL,
+            MemoryNamespace.USER_PROFILE,
+        }:
+            raise ValueError("realtime memory supports only device-local or user-profile Claims")
+        if not 0 <= confidence <= 1:
+            raise ValueError("realtime memory confidence must be between 0 and 1")
+        if source_sequence < 1:
+            raise ValueError("realtime memory source sequence must be positive")
+        normalized_evidence = evidence_digest.strip().casefold()
+        if len(normalized_evidence) != 64 or any(
+            value not in "0123456789abcdef" for value in normalized_evidence
+        ):
+            raise ValueError("evidence_digest must be a lowercase sha256 digest")
+        try:
+            value_json = json.dumps(
+                value,
+                ensure_ascii=True,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError("realtime memory value must be valid JSON") from error
+        timestamp = (now or _now()).astimezone(UTC)
+        return cls(
+            id=new_id(),
+            digest_id=UUID(str(digest_id)),
+            session_id=UUID(str(session_id)),
+            conversation_id=UUID(str(conversation_id)),
+            kind=RealtimeMemoryProposalKind(kind),
+            subject=_clean_text(subject, name="subject", maximum=512),
+            predicate=_clean_text(predicate, name="predicate", maximum=512),
+            _value_json=value_json,
+            normalized_text=_clean_text(
+                normalized_text,
+                name="normalized_text",
+                maximum=2_000,
+            ),
+            target_namespace=target_namespace,
+            confidence=confidence,
+            sensitivity=sensitivity,
+            source_first_sequence=source_sequence,
+            source_last_sequence=source_sequence,
+            evidence_digest=normalized_evidence,
+            policy_decision=policy_decision,
+            policy_reason=_clean_text(
+                policy_reason,
+                name="policy_reason",
+                maximum=256,
+            ),
+            status=RealtimeMemoryProposalStatus.PENDING,
+            claim_id=None,
+            decision_idempotency_key=None,
+            created_at=timestamp,
+            updated_at=timestamp,
+            revision=1,
+        )
+
+    @property
+    def value(self) -> object:
+        return json.loads(self._value_json)
+
+    def promote(
+        self,
+        *,
+        claim_id: UUID,
+        decision_idempotency_key: str,
+        now: datetime | None = None,
+    ) -> RealtimeMemoryProposal:
+        normalized_key = _clean_text(
+            decision_idempotency_key,
+            name="decision_idempotency_key",
+            maximum=255,
+        )
+        if self.status is RealtimeMemoryProposalStatus.PROMOTED:
+            if self.claim_id == claim_id and self.decision_idempotency_key == normalized_key:
+                return self
+            raise InvalidTransitionError("realtime memory proposal is already promoted")
+        if self.status is not RealtimeMemoryProposalStatus.PENDING:
+            raise InvalidTransitionError("only pending realtime memory proposals can be promoted")
+        return replace(
+            self,
+            status=RealtimeMemoryProposalStatus.PROMOTED,
+            claim_id=UUID(str(claim_id)),
+            decision_idempotency_key=normalized_key,
+            updated_at=(now or _now()).astimezone(UTC),
+            revision=self.revision + 1,
+        )
+
+    def reject(
+        self,
+        *,
+        decision_idempotency_key: str,
+        now: datetime | None = None,
+    ) -> RealtimeMemoryProposal:
+        normalized_key = _clean_text(
+            decision_idempotency_key,
+            name="decision_idempotency_key",
+            maximum=255,
+        )
+        if self.status is RealtimeMemoryProposalStatus.REJECTED:
+            if self.decision_idempotency_key == normalized_key:
+                return self
+            raise InvalidTransitionError("realtime memory proposal is already rejected")
+        if self.status is not RealtimeMemoryProposalStatus.PENDING:
+            raise InvalidTransitionError("only pending realtime memory proposals can be rejected")
+        return replace(
+            self,
+            status=RealtimeMemoryProposalStatus.REJECTED,
+            decision_idempotency_key=normalized_key,
+            updated_at=(now or _now()).astimezone(UTC),
+            revision=self.revision + 1,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RealtimeTranscriptEntry:
@@ -805,6 +1006,10 @@ __all__ = [
     "RealtimeAssistanceStatus",
     "RealtimeCaptionSpeaker",
     "RealtimeMemoryMode",
+    "RealtimeMemoryProposal",
+    "RealtimeMemoryProposalDecision",
+    "RealtimeMemoryProposalKind",
+    "RealtimeMemoryProposalStatus",
     "RealtimeProvider",
     "RealtimeSession",
     "RealtimeSessionStatus",

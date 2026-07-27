@@ -9,6 +9,7 @@ from fairy_core.contracts.realtime import (
     CompanionDigestCreateInput,
     GameMemorySaveInput,
     RealtimeAssistanceRequestInput,
+    RealtimeMemoryProposalActionInput,
     RealtimeProviderSelection,
     RealtimeSessionReportInput,
     RealtimeSessionStartInput,
@@ -16,6 +17,11 @@ from fairy_core.contracts.realtime import (
 )
 from fairy_core.domain.errors import InvalidTransitionError, VersionConflictError
 from fairy_core.persistence.unit_of_work import CoreUnitOfWork, CoreUnitOfWorkFactory
+from fairy_core.realtime.memory import (
+    USER_MEMORY_ACTOR,
+    build_memory_proposals,
+    promote_memory_proposal,
+)
 from fairy_core.realtime.models import (
     CompanionDigestActivity,
     CompanionSessionDigest,
@@ -24,6 +30,9 @@ from fairy_core.realtime.models import (
     RealtimeAssistanceStatus,
     RealtimeCaptionSpeaker,
     RealtimeMemoryMode,
+    RealtimeMemoryProposal,
+    RealtimeMemoryProposalDecision,
+    RealtimeMemoryProposalStatus,
     RealtimeProvider,
     RealtimeSession,
     RealtimeSessionStatus,
@@ -351,6 +360,34 @@ class RealtimeApplication:
                     actor="realtime",
                     conversation_id=session.conversation_id,
                 )
+                proposal_ids: list = []
+                if unit_of_work.memory_settings.get().enabled:
+                    for proposal in build_memory_proposals(
+                        digest=saved,
+                        entries=entries,
+                        device_id=session.device_id,
+                        unit_of_work=unit_of_work,
+                    ):
+                        persisted = unit_of_work.realtime.add_memory_proposal(proposal)
+                        if (
+                            persisted.status is RealtimeMemoryProposalStatus.PENDING
+                            and persisted.policy_decision
+                            is RealtimeMemoryProposalDecision.AUTO_PROMOTE
+                        ):
+                            persisted = promote_memory_proposal(
+                                unit_of_work=unit_of_work,
+                                proposal=persisted,
+                                device_id=session.device_id,
+                                decision_idempotency_key=f"auto:{persisted.id}",
+                                explicit_user=False,
+                            )
+                        proposal_ids.append(persisted.id)
+                    if proposal_ids:
+                        updated = saved.with_proposals(tuple(proposal_ids))
+                        saved = unit_of_work.realtime.update_digest(
+                            updated,
+                            expected_revision=saved.revision,
+                        )
             unit_of_work.commit()
             return saved
 
@@ -390,6 +427,94 @@ class RealtimeApplication:
                 persisted.append(_project_game_memory(memory, session.conversation_id))
             persisted.sort(key=lambda value: (value.created_at, str(value.id)), reverse=True)
             return tuple(persisted[:limit])
+
+    def list_memory_proposals(
+        self,
+        *,
+        session_id=None,
+        digest_id=None,
+        pending_only: bool,
+        limit: int,
+    ) -> tuple[RealtimeMemoryProposal, ...]:
+        with self._unit_of_work_factory() as unit_of_work:
+            return unit_of_work.realtime.list_memory_proposals(
+                session_id=session_id,
+                digest_id=digest_id,
+                status=(RealtimeMemoryProposalStatus.PENDING if pending_only else None),
+                limit=limit,
+            )
+
+    def accept_memory_proposal(
+        self,
+        request: RealtimeMemoryProposalActionInput,
+    ) -> RealtimeMemoryProposal:
+        if not request.user_confirmed:
+            raise ValueError("realtime memory acceptance requires explicit confirmation")
+        with self._unit_of_work_factory() as unit_of_work:
+            if not unit_of_work.memory_settings.get().enabled:
+                raise RuntimeError("Memory is disabled by Core settings")
+            proposal = unit_of_work.realtime.get_memory_proposal(request.proposal_id)
+            if proposal is None:
+                raise KeyError(f"realtime memory proposal not found: {request.proposal_id}")
+            if (
+                proposal.status is RealtimeMemoryProposalStatus.PROMOTED
+                and proposal.decision_idempotency_key == request.idempotency_key
+            ):
+                return proposal
+            if proposal.revision != request.expected_revision:
+                raise VersionConflictError("realtime memory proposal revision changed")
+            session = unit_of_work.realtime.get_session(proposal.session_id)
+            if session is None:
+                raise KeyError(f"realtime session not found: {proposal.session_id}")
+            promoted = promote_memory_proposal(
+                unit_of_work=unit_of_work,
+                proposal=proposal,
+                device_id=session.device_id,
+                decision_idempotency_key=request.idempotency_key,
+                explicit_user=True,
+            )
+            unit_of_work.commit()
+            return promoted
+
+    def reject_memory_proposal(
+        self,
+        request: RealtimeMemoryProposalActionInput,
+    ) -> RealtimeMemoryProposal:
+        if not request.user_confirmed:
+            raise ValueError("realtime memory rejection requires explicit confirmation")
+        with self._unit_of_work_factory() as unit_of_work:
+            proposal = unit_of_work.realtime.get_memory_proposal(request.proposal_id)
+            if proposal is None:
+                raise KeyError(f"realtime memory proposal not found: {request.proposal_id}")
+            if (
+                proposal.status is RealtimeMemoryProposalStatus.REJECTED
+                and proposal.decision_idempotency_key == request.idempotency_key
+            ):
+                return proposal
+            if proposal.revision != request.expected_revision:
+                raise VersionConflictError("realtime memory proposal revision changed")
+            rejected = proposal.reject(
+                decision_idempotency_key=request.idempotency_key,
+            )
+            saved = unit_of_work.realtime.update_memory_proposal(
+                rejected,
+                expected_revision=proposal.revision,
+            )
+            unit_of_work.commands.append_domain_event(
+                event_type="realtime.memory.rejected",
+                visibility=EventVisibility.USER,
+                message="Realtime memory proposal rejected",
+                payload={
+                    "proposal_id": str(saved.id),
+                    "digest_id": str(saved.digest_id),
+                    "session_id": str(saved.session_id),
+                    "kind": saved.kind.value,
+                },
+                actor=USER_MEMORY_ACTOR,
+                conversation_id=saved.conversation_id,
+            )
+            unit_of_work.commit()
+            return saved
 
     def list_memories(self, *, limit: int) -> tuple[GameMemoryDigest, ...]:
         with self._unit_of_work_factory() as unit_of_work:

@@ -7,12 +7,16 @@ from uuid import UUID
 
 from pydantic import Field, model_validator
 
-from fairy_core.contracts.common import ContractModel
+from fairy_core.contracts.common import ContractModel, JsonValue
+from fairy_core.memory.models import MemoryNamespace, MemorySensitivity
 from fairy_core.realtime.models import (
     CompanionDigestActivity,
     RealtimeAssistanceStatus,
     RealtimeCaptionSpeaker,
     RealtimeMemoryMode,
+    RealtimeMemoryProposalDecision,
+    RealtimeMemoryProposalKind,
+    RealtimeMemoryProposalStatus,
     RealtimeProvider,
     RealtimeSessionStatus,
     RealtimeVoiceMode,
@@ -205,6 +209,49 @@ class CompanionSessionDigestPageModel(ContractModel):
     items: tuple[CompanionSessionDigestModel, ...]
 
 
+class RealtimeMemoryProposalListInput(ContractModel):
+    session_id: UUID | None = None
+    digest_id: UUID | None = None
+    pending_only: bool = False
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+class RealtimeMemoryProposalActionInput(ContractModel):
+    proposal_id: UUID
+    expected_revision: int = Field(ge=1)
+    user_confirmed: bool
+    idempotency_key: str = Field(min_length=1, max_length=255)
+
+
+class RealtimeMemoryProposalModel(ContractModel):
+    id: UUID
+    digest_id: UUID
+    session_id: UUID
+    conversation_id: UUID
+    kind: RealtimeMemoryProposalKind
+    subject: str
+    predicate: str
+    value: JsonValue
+    normalized_text: str
+    target_namespace: MemoryNamespace
+    confidence: float
+    sensitivity: MemorySensitivity
+    source_first_sequence: int
+    source_last_sequence: int
+    evidence_digest: str
+    policy_decision: RealtimeMemoryProposalDecision
+    policy_reason: str
+    status: RealtimeMemoryProposalStatus
+    claim_id: UUID | None
+    created_at: datetime
+    updated_at: datetime
+    revision: int
+
+
+class RealtimeMemoryProposalPageModel(ContractModel):
+    items: tuple[RealtimeMemoryProposalModel, ...]
+
+
 class GameMemorySaveInput(ContractModel):
     session_id: UUID
     game_title: str = Field(min_length=1, max_length=160)
@@ -290,6 +337,10 @@ __all__ = [
     "RealtimeAssistanceModel",
     "RealtimeAssistanceRequestInput",
     "RealtimeCaptionSpeaker",
+    "RealtimeMemoryProposalActionInput",
+    "RealtimeMemoryProposalListInput",
+    "RealtimeMemoryProposalModel",
+    "RealtimeMemoryProposalPageModel",
     "RealtimeProviderSelection",
     "RealtimeSessionIdInput",
     "RealtimeSessionListInput",
