@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
+from hashlib import sha256
 from types import MappingProxyType
 from uuid import UUID
 
@@ -47,6 +48,15 @@ class RealtimeSessionStatus(StrEnum):
     INTERRUPTED = "interrupted"
 
 
+class RealtimeAssistanceStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    AWAITING_APPROVAL = "awaiting_approval"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 _SESSION_TRANSITIONS: Mapping[RealtimeSessionStatus, frozenset[RealtimeSessionStatus]] = (
     MappingProxyType(
         {
@@ -76,6 +86,39 @@ _SESSION_TRANSITIONS: Mapping[RealtimeSessionStatus, frozenset[RealtimeSessionSt
             RealtimeSessionStatus.FAILED: frozenset(),
             RealtimeSessionStatus.CANCELLED: frozenset(),
             RealtimeSessionStatus.INTERRUPTED: frozenset(),
+        }
+    )
+)
+
+_ASSISTANCE_TRANSITIONS: Mapping[RealtimeAssistanceStatus, frozenset[RealtimeAssistanceStatus]] = (
+    MappingProxyType(
+        {
+            RealtimeAssistanceStatus.QUEUED: frozenset(
+                {
+                    RealtimeAssistanceStatus.RUNNING,
+                    RealtimeAssistanceStatus.FAILED,
+                    RealtimeAssistanceStatus.CANCELLED,
+                }
+            ),
+            RealtimeAssistanceStatus.RUNNING: frozenset(
+                {
+                    RealtimeAssistanceStatus.AWAITING_APPROVAL,
+                    RealtimeAssistanceStatus.COMPLETED,
+                    RealtimeAssistanceStatus.FAILED,
+                    RealtimeAssistanceStatus.CANCELLED,
+                }
+            ),
+            RealtimeAssistanceStatus.AWAITING_APPROVAL: frozenset(
+                {
+                    RealtimeAssistanceStatus.RUNNING,
+                    RealtimeAssistanceStatus.COMPLETED,
+                    RealtimeAssistanceStatus.FAILED,
+                    RealtimeAssistanceStatus.CANCELLED,
+                }
+            ),
+            RealtimeAssistanceStatus.COMPLETED: frozenset(),
+            RealtimeAssistanceStatus.FAILED: frozenset(),
+            RealtimeAssistanceStatus.CANCELLED: frozenset(),
         }
     )
 )
@@ -334,9 +377,7 @@ class RealtimeTranscriptEntry:
             raise ValueError("transcript sequence must be positive")
         normalized = " ".join(text.split())
         if not normalized or len(normalized) > _MAX_TRANSCRIPT_TEXT:
-            raise ValueError(
-                f"transcript text must contain 1 to {_MAX_TRANSCRIPT_TEXT} characters"
-            )
+            raise ValueError(f"transcript text must contain 1 to {_MAX_TRANSCRIPT_TEXT} characters")
         return cls(
             id=new_id(),
             session_id=session_id,
@@ -348,8 +389,245 @@ class RealtimeTranscriptEntry:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class RealtimeAssistanceCitation:
+    title: str
+    url: str
+
+    @classmethod
+    def create(cls, *, title: str, url: str) -> RealtimeAssistanceCitation:
+        return cls(
+            title=_clean_text(title, name="citation title", maximum=300),
+            url=_clean_text(url, name="citation url", maximum=4_096),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RealtimeAssistance:
+    id: UUID
+    session_id: UUID
+    conversation_id: UUID
+    request_id: str
+    request_fingerprint: str
+    segment_id: str
+    context_epoch: int
+    question: str
+    activity_profile: str
+    application_title: str | None
+    observed_facts: tuple[str, ...]
+    allow_network: bool
+    locale: str
+    status: RealtimeAssistanceStatus
+    task_id: UUID | None
+    turn_id: UUID | None
+    message_id: UUID | None
+    spoken_summary: str | None
+    display_markdown: str | None
+    citations: tuple[RealtimeAssistanceCitation, ...]
+    freshness: str | None
+    requires_user_confirmation: bool
+    error_code: str | None
+    created_at: datetime
+    updated_at: datetime
+    revision: int
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        session_id: UUID,
+        conversation_id: UUID,
+        request_id: str,
+        segment_id: str,
+        context_epoch: int,
+        question: str,
+        activity_profile: str,
+        application_title: str | None,
+        observed_facts: tuple[str, ...],
+        allow_network: bool,
+        locale: str,
+        now: datetime | None = None,
+    ) -> RealtimeAssistance:
+        if isinstance(context_epoch, bool) or context_epoch < 1:
+            raise ValueError("context_epoch must be positive")
+        if len(observed_facts) > 16:
+            raise ValueError("observed_facts supports at most 16 items")
+        normalized_session_id = UUID(str(session_id))
+        normalized_conversation_id = UUID(str(conversation_id))
+        normalized_request_id = _clean_text(request_id, name="request_id", maximum=128)
+        normalized_segment_id = _clean_text(segment_id, name="segment_id", maximum=128)
+        normalized_question = _clean_text(question, name="question", maximum=4_000)
+        normalized_activity = _clean_text(activity_profile, name="activity_profile", maximum=32)
+        normalized_application = (
+            _clean_text(application_title, name="application_title", maximum=128)
+            if application_title is not None
+            else None
+        )
+        normalized_facts = tuple(
+            _clean_text(value, name="observed_fact", maximum=300) for value in observed_facts
+        )
+        normalized_locale = _clean_text(locale, name="locale", maximum=32)
+        canonical = {
+            "session_id": str(normalized_session_id),
+            "conversation_id": str(normalized_conversation_id),
+            "request_id": normalized_request_id,
+            "segment_id": normalized_segment_id,
+            "context_epoch": context_epoch,
+            "question": normalized_question,
+            "activity_profile": normalized_activity,
+            "application_title": normalized_application,
+            "observed_facts": normalized_facts,
+            "allow_network": bool(allow_network),
+            "locale": normalized_locale,
+        }
+        fingerprint = sha256(
+            json.dumps(
+                canonical,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        timestamp = (now or _now()).astimezone(UTC)
+        return cls(
+            id=new_id(),
+            session_id=normalized_session_id,
+            conversation_id=normalized_conversation_id,
+            request_id=normalized_request_id,
+            segment_id=normalized_segment_id,
+            context_epoch=context_epoch,
+            question=normalized_question,
+            activity_profile=normalized_activity,
+            application_title=normalized_application,
+            observed_facts=normalized_facts,
+            allow_network=bool(allow_network),
+            locale=normalized_locale,
+            request_fingerprint=fingerprint,
+            status=RealtimeAssistanceStatus.QUEUED,
+            task_id=None,
+            turn_id=None,
+            message_id=None,
+            spoken_summary=None,
+            display_markdown=None,
+            citations=(),
+            freshness=None,
+            requires_user_confirmation=False,
+            error_code=None,
+            created_at=timestamp,
+            updated_at=timestamp,
+            revision=1,
+        )
+
+    def same_request(self, other: RealtimeAssistance) -> bool:
+        return self.request_fingerprint == other.request_fingerprint
+
+    def start(
+        self,
+        *,
+        task_id: UUID,
+        turn_id: UUID,
+        now: datetime | None = None,
+    ) -> RealtimeAssistance:
+        if self.task_id is not None or self.turn_id is not None:
+            if self.task_id == task_id and self.turn_id == turn_id:
+                return self
+            raise ValueError("Realtime Assistance execution is already linked")
+        return self._transition(
+            RealtimeAssistanceStatus.RUNNING,
+            task_id=task_id,
+            turn_id=turn_id,
+            now=now,
+        )
+
+    def await_approval(self, *, now: datetime | None = None) -> RealtimeAssistance:
+        return self._transition(
+            RealtimeAssistanceStatus.AWAITING_APPROVAL,
+            requires_user_confirmation=True,
+            now=now,
+        )
+
+    def resume(self, *, now: datetime | None = None) -> RealtimeAssistance:
+        return self._transition(
+            RealtimeAssistanceStatus.RUNNING,
+            requires_user_confirmation=False,
+            now=now,
+        )
+
+    def complete(
+        self,
+        *,
+        message_id: UUID,
+        spoken_summary: str,
+        display_markdown: str,
+        citations: tuple[RealtimeAssistanceCitation, ...] = (),
+        freshness: str | None = None,
+        now: datetime | None = None,
+    ) -> RealtimeAssistance:
+        if len(citations) > 32:
+            raise ValueError("Realtime Assistance supports at most 32 citations")
+        normalized_summary = _clean_text(spoken_summary, name="spoken_summary", maximum=320)
+        if not display_markdown.strip() or len(display_markdown) > 100_000:
+            raise ValueError("display_markdown must contain 1 to 100000 characters")
+        return self._transition(
+            RealtimeAssistanceStatus.COMPLETED,
+            message_id=message_id,
+            spoken_summary=normalized_summary,
+            display_markdown=display_markdown,
+            citations=citations,
+            freshness=(
+                _clean_text(freshness, name="freshness", maximum=128)
+                if freshness is not None
+                else None
+            ),
+            requires_user_confirmation=False,
+            now=now,
+        )
+
+    def fail(
+        self,
+        error_code: str,
+        *,
+        now: datetime | None = None,
+    ) -> RealtimeAssistance:
+        return self._transition(
+            RealtimeAssistanceStatus.FAILED,
+            error_code=_clean_text(error_code, name="error_code", maximum=128),
+            requires_user_confirmation=False,
+            now=now,
+        )
+
+    def cancel(self, *, now: datetime | None = None) -> RealtimeAssistance:
+        return self._transition(
+            RealtimeAssistanceStatus.CANCELLED,
+            requires_user_confirmation=False,
+            now=now,
+        )
+
+    def _transition(
+        self,
+        status: RealtimeAssistanceStatus,
+        *,
+        now: datetime | None = None,
+        **changes: object,
+    ) -> RealtimeAssistance:
+        if status not in _ASSISTANCE_TRANSITIONS[self.status]:
+            raise InvalidTransitionError(
+                f"cannot transition RealtimeAssistance from {self.status} to {status}"
+            )
+        return replace(
+            self,
+            status=status,
+            updated_at=(now or _now()).astimezone(UTC),
+            revision=self.revision + 1,
+            **changes,
+        )
+
+
 __all__ = [
     "GameMemoryDigest",
+    "RealtimeAssistance",
+    "RealtimeAssistanceCitation",
+    "RealtimeAssistanceStatus",
     "RealtimeCaptionSpeaker",
     "RealtimeMemoryMode",
     "RealtimeProvider",

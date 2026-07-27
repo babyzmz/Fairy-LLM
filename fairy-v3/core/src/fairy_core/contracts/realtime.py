@@ -2,18 +2,22 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import Field, model_validator
 
 from fairy_core.contracts.common import ContractModel
 from fairy_core.realtime.models import (
+    RealtimeAssistanceStatus,
     RealtimeCaptionSpeaker,
     RealtimeMemoryMode,
     RealtimeProvider,
     RealtimeSessionStatus,
     RealtimeVoiceMode,
 )
+
+BoundedObservedFact = Annotated[str, Field(min_length=1, max_length=300)]
 
 
 class RealtimeProviderSelection(StrEnum):
@@ -97,6 +101,65 @@ class RealtimeSessionPageModel(ContractModel):
     items: tuple[RealtimeSessionModel, ...]
 
 
+class RealtimeAssistanceRequestInput(ContractModel):
+    session_id: UUID
+    conversation_id: UUID
+    request_id: str = Field(min_length=1, max_length=128)
+    segment_id: str = Field(min_length=1, max_length=128)
+    context_epoch: int = Field(ge=1)
+    question: str = Field(min_length=1, max_length=4_000)
+    activity_profile: str = Field(min_length=1, max_length=32)
+    application_title: str | None = Field(default=None, min_length=1, max_length=128)
+    observed_facts: tuple[BoundedObservedFact, ...] = Field(
+        default_factory=tuple,
+        max_length=16,
+    )
+    allow_network: bool = False
+    locale: str = Field(default="zh-CN", min_length=2, max_length=32)
+
+
+class RealtimeAssistanceGetInput(ContractModel):
+    session_id: UUID
+    request_id: str = Field(min_length=1, max_length=128)
+
+
+class RealtimeAssistanceCancelInput(RealtimeAssistanceGetInput):
+    expected_revision: int = Field(ge=1)
+
+
+class RealtimeAssistanceCitationModel(ContractModel):
+    title: str = Field(min_length=1, max_length=300)
+    url: str = Field(min_length=1, max_length=4_096)
+
+
+class RealtimeAssistanceModel(ContractModel):
+    id: UUID
+    session_id: UUID
+    conversation_id: UUID
+    request_id: str
+    segment_id: str
+    context_epoch: int
+    question: str
+    activity_profile: str
+    application_title: str | None
+    observed_facts: tuple[str, ...]
+    allow_network: bool
+    locale: str
+    status: RealtimeAssistanceStatus
+    task_id: UUID | None
+    turn_id: UUID | None
+    message_id: UUID | None
+    spoken_summary: str | None
+    display_markdown: str | None
+    citations: tuple[RealtimeAssistanceCitationModel, ...]
+    freshness: str | None
+    requires_user_confirmation: bool
+    error_code: str | None
+    created_at: datetime
+    updated_at: datetime
+    revision: int
+
+
 class GameMemorySaveInput(ContractModel):
     session_id: UUID
     game_title: str = Field(min_length=1, max_length=160)
@@ -171,6 +234,11 @@ __all__ = [
     "GameMemoryListInput",
     "GameMemoryPageModel",
     "GameMemorySaveInput",
+    "RealtimeAssistanceCancelInput",
+    "RealtimeAssistanceCitationModel",
+    "RealtimeAssistanceGetInput",
+    "RealtimeAssistanceModel",
+    "RealtimeAssistanceRequestInput",
     "RealtimeCaptionSpeaker",
     "RealtimeProviderSelection",
     "RealtimeSessionIdInput",

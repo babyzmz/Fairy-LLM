@@ -8,6 +8,9 @@ from fairy_core.domain.errors import InvalidTransitionError
 from fairy_core.domain.ids import new_id
 from fairy_core.realtime.models import (
     GameMemoryDigest,
+    RealtimeAssistance,
+    RealtimeAssistanceCitation,
+    RealtimeAssistanceStatus,
     RealtimeCaptionSpeaker,
     RealtimeMemoryMode,
     RealtimeProvider,
@@ -163,4 +166,92 @@ def test_game_memory_digest_is_small_and_bounded() -> None:
             duration_seconds=10,
             activities=("a", "b", "c", "d", "e", "f"),
             progress_summary="progress",
+        )
+
+
+def test_realtime_assistance_normalizes_and_transitions_without_raw_context() -> None:
+    assistance = RealtimeAssistance.create(
+        session_id=new_id(),
+        conversation_id=new_id(),
+        request_id=" guide-1 ",
+        segment_id=" segment-1 ",
+        context_epoch=2,
+        question="  Where is the hidden boss? ",
+        activity_profile="game",
+        application_title="Test Game",
+        observed_facts=(" Map is open ", "Player asked for help"),
+        allow_network=True,
+        locale="en-AU",
+    )
+
+    assert assistance.status is RealtimeAssistanceStatus.QUEUED
+    assert assistance.question == "Where is the hidden boss?"
+    assert assistance.observed_facts == ("Map is open", "Player asked for help")
+    assert len(assistance.request_fingerprint) == 64
+
+    task_id = new_id()
+    turn_id = new_id()
+    running = assistance.start(task_id=task_id, turn_id=turn_id)
+    awaiting = running.await_approval()
+    resumed = awaiting.resume()
+    completed = resumed.complete(
+        message_id=new_id(),
+        spoken_summary="The boss is behind the eastern gate.",
+        display_markdown="The boss is behind the **eastern gate**.",
+        citations=(
+            RealtimeAssistanceCitation.create(
+                title="Official guide",
+                url="https://example.invalid/guide",
+            ),
+        ),
+        freshness="checked_at_request_time",
+    )
+
+    assert completed.status is RealtimeAssistanceStatus.COMPLETED
+    assert completed.task_id == task_id
+    assert completed.turn_id == turn_id
+    assert completed.requires_user_confirmation is False
+    assert completed.revision == 5
+    with pytest.raises(InvalidTransitionError):
+        completed.cancel()
+
+
+def test_realtime_assistance_request_fingerprint_detects_changed_input() -> None:
+    session_id = new_id()
+    conversation_id = new_id()
+    base = dict(
+        session_id=session_id,
+        conversation_id=conversation_id,
+        request_id="guide-1",
+        segment_id="segment-1",
+        context_epoch=1,
+        question="Where is the boss?",
+        activity_profile="game",
+        application_title="Test Game",
+        observed_facts=(),
+        allow_network=True,
+        locale="en-AU",
+    )
+    first = RealtimeAssistance.create(**base)
+    replay = RealtimeAssistance.create(**base)
+    changed = RealtimeAssistance.create(**{**base, "question": "Where is the chest?"})
+
+    assert first.same_request(replay)
+    assert not first.same_request(changed)
+
+
+def test_realtime_assistance_bounds_public_projection() -> None:
+    with pytest.raises(ValueError, match="at most 16"):
+        RealtimeAssistance.create(
+            session_id=new_id(),
+            conversation_id=new_id(),
+            request_id="guide-1",
+            segment_id="segment-1",
+            context_epoch=1,
+            question="Question",
+            activity_profile="game",
+            application_title=None,
+            observed_facts=tuple(f"fact-{index}" for index in range(17)),
+            allow_network=False,
+            locale="en-AU",
         )

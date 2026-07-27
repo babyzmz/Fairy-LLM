@@ -12,6 +12,7 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     String,
     Table,
+    Text,
     UniqueConstraint,
 )
 
@@ -19,7 +20,7 @@ from fairy_core.persistence.tenant import TENANT_ID_LENGTH
 from fairy_core.storage.types import UTCDateTime
 
 
-def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table]:
+def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table, Table]:
     sessions = Table(
         "core_realtime_sessions",
         metadata,
@@ -123,6 +124,63 @@ def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table]:
             ondelete="CASCADE",
         ),
     )
+    assistance = Table(
+        "core_realtime_assistance",
+        metadata,
+        Column("tenant_id", String(TENANT_ID_LENGTH), primary_key=True),
+        Column("id", String(36), primary_key=True),
+        Column("session_id", String(36), nullable=False),
+        Column("conversation_id", String(36), nullable=False),
+        Column("request_id", String(128), nullable=False),
+        Column("request_fingerprint", String(64), nullable=False),
+        Column("segment_id", String(128), nullable=False),
+        Column("context_epoch", BigInteger, nullable=False),
+        Column("question", String(4_000), nullable=False),
+        Column("activity_profile", String(32), nullable=False),
+        Column("application_title", String(128)),
+        Column("observed_facts", JSON, nullable=False),
+        Column("allow_network", Boolean, nullable=False),
+        Column("locale", String(32), nullable=False),
+        Column("status", String(32), nullable=False),
+        Column("task_id", String(36)),
+        Column("turn_id", String(36)),
+        Column("message_id", String(36)),
+        Column("spoken_summary", String(320)),
+        Column("display_markdown", Text),
+        Column("citations", JSON, nullable=False),
+        Column("freshness", String(128)),
+        Column("requires_user_confirmation", Boolean, nullable=False),
+        Column("error_code", String(128)),
+        Column("created_at", UTCDateTime(), nullable=False),
+        Column("updated_at", UTCDateTime(), nullable=False),
+        Column("revision", BigInteger, nullable=False),
+        PrimaryKeyConstraint("tenant_id", "id", name="pk_core_realtime_assistance"),
+        UniqueConstraint(
+            "tenant_id",
+            "session_id",
+            "request_id",
+            name="uq_core_realtime_assistance_request",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "session_id"],
+            ["core_realtime_sessions.tenant_id", "core_realtime_sessions.id"],
+            name="fk_core_realtime_assistance_session",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "conversation_id"],
+            ["core_conversations.tenant_id", "core_conversations.id"],
+            name="fk_core_realtime_assistance_conversation",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("context_epoch >= 1", name="ck_core_realtime_assistance_epoch"),
+        CheckConstraint("revision >= 1", name="ck_core_realtime_assistance_revision"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'awaiting_approval', 'completed', "
+            "'failed', 'cancelled')",
+            name="ck_core_realtime_assistance_status",
+        ),
+    )
     Index(
         "ix_core_realtime_sessions_tenant_started",
         sessions.c.tenant_id,
@@ -139,7 +197,20 @@ def build_realtime_tables(metadata: MetaData) -> tuple[Table, Table, Table]:
         transcript.c.conversation_id,
         transcript.c.created_at,
     )
-    return sessions, memories, transcript
+    Index(
+        "ix_core_realtime_assistance_session_status",
+        assistance.c.tenant_id,
+        assistance.c.session_id,
+        assistance.c.status,
+        assistance.c.created_at,
+    )
+    Index(
+        "ix_core_realtime_assistance_conversation",
+        assistance.c.tenant_id,
+        assistance.c.conversation_id,
+        assistance.c.created_at,
+    )
+    return sessions, memories, transcript, assistance
 
 
 __all__ = ["build_realtime_tables"]

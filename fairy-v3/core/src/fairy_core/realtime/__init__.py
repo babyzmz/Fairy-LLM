@@ -2,6 +2,9 @@
 
 from fairy_core.realtime.models import (
     GameMemoryDigest,
+    RealtimeAssistance,
+    RealtimeAssistanceCitation,
+    RealtimeAssistanceStatus,
     RealtimeMemoryMode,
     RealtimeProvider,
     RealtimeSession,
@@ -11,6 +14,9 @@ from fairy_core.realtime.models import (
 
 __all__ = [
     "GameMemoryDigest",
+    "RealtimeAssistance",
+    "RealtimeAssistanceCitation",
+    "RealtimeAssistanceStatus",
     "RealtimeMemoryMode",
     "RealtimeProvider",
     "RealtimeSession",

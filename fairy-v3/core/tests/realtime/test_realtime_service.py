@@ -6,8 +6,13 @@ from pathlib import Path
 import pytest
 from sqlalchemy import inspect
 
-from fairy_core.domain.errors import InvalidTransitionError, VersionConflictError
-from fairy_core.persistence import create_sqlite_core_engine
+from fairy_core.domain.errors import (
+    IdempotencyConflictError,
+    InvalidTransitionError,
+    VersionConflictError,
+)
+from fairy_core.persistence import SqlAlchemyUnitOfWorkFactory, create_sqlite_core_engine
+from fairy_core.realtime.models import RealtimeAssistance
 from fairy_core.realtime.repository import SqlAlchemyRealtimeRepository
 from fairy_core.transports.stdio import build_local_service
 from fairy_core.workspace.filesystem import FileSystemWorkspaceProvisioner
@@ -132,6 +137,101 @@ def test_realtime_session_and_game_memory_round_trip(tmp_path) -> None:
         service.close()
 
 
+def test_realtime_assistance_repository_is_idempotent_and_revision_fenced(tmp_path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        started = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-assistance",
+                "provider": "auto",
+                "locale": "en-AU",
+                "microphone_consent": True,
+                "screen_consent": True,
+                "idempotency_key": "assistance-session",
+            },
+        )
+    finally:
+        service.close()
+
+    engine = create_sqlite_core_engine(tmp_path / "core.db")
+    local = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="local")
+    other = SqlAlchemyUnitOfWorkFactory(engine, tenant_id="other")
+    request = RealtimeAssistance.create(
+        session_id=started["id"],
+        conversation_id=started["conversation_id"],
+        request_id="guide-1",
+        segment_id="segment-1",
+        context_epoch=1,
+        question="Where is the hidden boss?",
+        activity_profile="game",
+        application_title="Test Game",
+        observed_facts=("Map is open",),
+        allow_network=True,
+        locale="en-AU",
+    )
+    try:
+        with local() as unit_of_work:
+            saved = unit_of_work.realtime.add_assistance(request)
+            unit_of_work.commit()
+
+        with local() as unit_of_work:
+            replay = unit_of_work.realtime.add_assistance(
+                RealtimeAssistance.create(
+                    session_id=request.session_id,
+                    conversation_id=request.conversation_id,
+                    request_id=request.request_id,
+                    segment_id=request.segment_id,
+                    context_epoch=request.context_epoch,
+                    question=request.question,
+                    activity_profile=request.activity_profile,
+                    application_title=request.application_title,
+                    observed_facts=request.observed_facts,
+                    allow_network=request.allow_network,
+                    locale=request.locale,
+                )
+            )
+            assert replay.id == saved.id
+            assert (
+                unit_of_work.realtime.nonterminal_assistance_for_session(request.session_id).id
+                == saved.id
+            )
+
+            running = saved.start(task_id=saved.id, turn_id=request.session_id)
+            unit_of_work.realtime.update_assistance(
+                running,
+                expected_revision=saved.revision,
+            )
+            with pytest.raises(VersionConflictError):
+                unit_of_work.realtime.update_assistance(
+                    running,
+                    expected_revision=saved.revision,
+                )
+            unit_of_work.commit()
+
+        with local() as unit_of_work, pytest.raises(IdempotencyConflictError):
+            unit_of_work.realtime.add_assistance(
+                RealtimeAssistance.create(
+                    session_id=request.session_id,
+                    conversation_id=request.conversation_id,
+                    request_id=request.request_id,
+                    segment_id=request.segment_id,
+                    context_epoch=request.context_epoch,
+                    question="A different question",
+                    activity_profile=request.activity_profile,
+                    application_title=request.application_title,
+                    observed_facts=request.observed_facts,
+                    allow_network=request.allow_network,
+                    locale=request.locale,
+                )
+            )
+
+        with other() as unit_of_work:
+            assert unit_of_work.realtime.get_assistance(saved.id) is None
+    finally:
+        engine.dispose()
+
+
 def test_local_realtime_session_uses_the_pinned_audit_model(tmp_path) -> None:
     service = build_local_service(tmp_path)
     try:
@@ -149,10 +249,7 @@ def test_local_realtime_session_uses_the_pinned_audit_model(tmp_path) -> None:
             },
         )
         assert started["provider"] == "local_mini_cpm_o45"
-        assert (
-            started["model_id"]
-            == "openbmb/minicpm-o-4.5-fairy-beta@4.5-q4-502eec5"
-        )
+        assert started["model_id"] == "openbmb/minicpm-o-4.5-fairy-beta@4.5-q4-502eec5"
     finally:
         service.close()
 

@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fairy_core.realtime.models import (
     GameMemoryDigest,
+    RealtimeAssistance,
     RealtimeCaptionSpeaker,
     RealtimeSession,
     RealtimeTranscriptEntry,
@@ -23,6 +24,20 @@ class RealtimeRepository(Protocol):
     ) -> RealtimeSession: ...
 
     def list_sessions(self, *, limit: int = 50) -> tuple[RealtimeSession, ...]: ...
+
+    def add_assistance(self, assistance: RealtimeAssistance) -> RealtimeAssistance: ...
+
+    def get_assistance(self, assistance_id: UUID) -> RealtimeAssistance | None: ...
+
+    def get_assistance_by_request(
+        self, session_id: UUID, request_id: str
+    ) -> RealtimeAssistance | None: ...
+
+    def nonterminal_assistance_for_session(self, session_id: UUID) -> RealtimeAssistance | None: ...
+
+    def update_assistance(
+        self, assistance: RealtimeAssistance, *, expected_revision: int
+    ) -> RealtimeAssistance: ...
 
     def add_memory(self, memory: GameMemoryDigest) -> GameMemoryDigest: ...
 

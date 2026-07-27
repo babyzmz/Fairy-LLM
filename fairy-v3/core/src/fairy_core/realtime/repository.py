@@ -11,6 +11,9 @@ from fairy_core.domain.errors import IdempotencyConflictError, VersionConflictEr
 from fairy_core.persistence.tenant import normalize_tenant_id
 from fairy_core.realtime.models import (
     GameMemoryDigest,
+    RealtimeAssistance,
+    RealtimeAssistanceCitation,
+    RealtimeAssistanceStatus,
     RealtimeCaptionSpeaker,
     RealtimeMemoryMode,
     RealtimeProvider,
@@ -21,6 +24,7 @@ from fairy_core.realtime.models import (
 )
 from fairy_core.storage.schema import (
     game_memory_observations,
+    realtime_assistance,
     realtime_sessions,
     realtime_transcript_entries,
 )
@@ -100,6 +104,104 @@ class SqlAlchemyRealtimeRepository:
             .limit(limit)
         ).mappings()
         return tuple(_session_from_row(row) for row in rows)
+
+    def add_assistance(self, assistance: RealtimeAssistance) -> RealtimeAssistance:
+        try:
+            self._connection.execute(
+                insert(realtime_assistance).values(
+                    **_assistance_values(self._tenant_id, assistance)
+                )
+            )
+        except IntegrityError as error:
+            existing = self.get_assistance_by_request(
+                assistance.session_id,
+                assistance.request_id,
+            )
+            if existing is not None and existing.same_request(assistance):
+                return existing
+            raise IdempotencyConflictError(
+                "realtime assistance request id is already in use"
+            ) from error
+        return assistance
+
+    def get_assistance(self, assistance_id: UUID) -> RealtimeAssistance | None:
+        row = (
+            self._connection.execute(
+                select(realtime_assistance).where(
+                    realtime_assistance.c.tenant_id == self._tenant_id,
+                    realtime_assistance.c.id == str(assistance_id),
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _assistance_from_row(row) if row is not None else None
+
+    def get_assistance_by_request(
+        self,
+        session_id: UUID,
+        request_id: str,
+    ) -> RealtimeAssistance | None:
+        row = (
+            self._connection.execute(
+                select(realtime_assistance).where(
+                    realtime_assistance.c.tenant_id == self._tenant_id,
+                    realtime_assistance.c.session_id == str(session_id),
+                    realtime_assistance.c.request_id == request_id,
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _assistance_from_row(row) if row is not None else None
+
+    def nonterminal_assistance_for_session(
+        self,
+        session_id: UUID,
+    ) -> RealtimeAssistance | None:
+        row = (
+            self._connection.execute(
+                select(realtime_assistance)
+                .where(
+                    realtime_assistance.c.tenant_id == self._tenant_id,
+                    realtime_assistance.c.session_id == str(session_id),
+                    realtime_assistance.c.status.in_(
+                        (
+                            RealtimeAssistanceStatus.QUEUED.value,
+                            RealtimeAssistanceStatus.RUNNING.value,
+                            RealtimeAssistanceStatus.AWAITING_APPROVAL.value,
+                        )
+                    ),
+                )
+                .order_by(realtime_assistance.c.created_at, realtime_assistance.c.id)
+                .limit(1)
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _assistance_from_row(row) if row is not None else None
+
+    def update_assistance(
+        self,
+        assistance: RealtimeAssistance,
+        *,
+        expected_revision: int,
+    ) -> RealtimeAssistance:
+        values = _assistance_values(self._tenant_id, assistance)
+        values.pop("tenant_id")
+        values.pop("id")
+        changed = self._connection.execute(
+            update(realtime_assistance)
+            .where(
+                realtime_assistance.c.tenant_id == self._tenant_id,
+                realtime_assistance.c.id == str(assistance.id),
+                realtime_assistance.c.revision == expected_revision,
+            )
+            .values(**values)
+        )
+        if changed.rowcount != 1:
+            raise VersionConflictError("realtime assistance revision changed")
+        return assistance
 
     def add_memory(self, memory: GameMemoryDigest) -> GameMemoryDigest:
         self._connection.execute(
@@ -182,9 +284,7 @@ class SqlAlchemyRealtimeRepository:
                 last_error = error
                 continue
             return entry
-        raise IdempotencyConflictError(
-            "realtime transcript sequence contention"
-        ) from last_error
+        raise IdempotencyConflictError("realtime transcript sequence contention") from last_error
 
     def list_transcript_by_conversation(
         self, conversation_id: UUID, *, limit: int = 500
@@ -208,9 +308,7 @@ class SqlAlchemyRealtimeRepository:
 
     def _next_transcript_sequence(self, session_id: UUID) -> int:
         current = self._connection.execute(
-            select(
-                func.coalesce(func.max(realtime_transcript_entries.c.sequence), 0)
-            ).where(
+            select(func.coalesce(func.max(realtime_transcript_entries.c.sequence), 0)).where(
                 realtime_transcript_entries.c.tenant_id == self._tenant_id,
                 realtime_transcript_entries.c.session_id == str(session_id),
             )
@@ -242,6 +340,43 @@ def _session_values(tenant_id: str, session: RealtimeSession) -> dict[str, objec
         "started_at": session.started_at,
         "ended_at": session.ended_at,
         "revision": session.revision,
+    }
+
+
+def _assistance_values(
+    tenant_id: str,
+    assistance: RealtimeAssistance,
+) -> dict[str, object]:
+    return {
+        "tenant_id": tenant_id,
+        "id": str(assistance.id),
+        "session_id": str(assistance.session_id),
+        "conversation_id": str(assistance.conversation_id),
+        "request_id": assistance.request_id,
+        "request_fingerprint": assistance.request_fingerprint,
+        "segment_id": assistance.segment_id,
+        "context_epoch": assistance.context_epoch,
+        "question": assistance.question,
+        "activity_profile": assistance.activity_profile,
+        "application_title": assistance.application_title,
+        "observed_facts": list(assistance.observed_facts),
+        "allow_network": assistance.allow_network,
+        "locale": assistance.locale,
+        "status": assistance.status.value,
+        "task_id": str(assistance.task_id) if assistance.task_id is not None else None,
+        "turn_id": str(assistance.turn_id) if assistance.turn_id is not None else None,
+        "message_id": str(assistance.message_id) if assistance.message_id is not None else None,
+        "spoken_summary": assistance.spoken_summary,
+        "display_markdown": assistance.display_markdown,
+        "citations": [
+            {"title": citation.title, "url": citation.url} for citation in assistance.citations
+        ],
+        "freshness": assistance.freshness,
+        "requires_user_confirmation": assistance.requires_user_confirmation,
+        "error_code": assistance.error_code,
+        "created_at": assistance.created_at,
+        "updated_at": assistance.updated_at,
+        "revision": assistance.revision,
     }
 
 
@@ -291,6 +426,44 @@ def _session_from_row(row: Mapping[str, object]) -> RealtimeSession:
         last_error_code=str(row["last_error_code"]) if row["last_error_code"] else None,
         started_at=row["started_at"],  # type: ignore[arg-type]
         ended_at=row["ended_at"],  # type: ignore[arg-type]
+        revision=int(row["revision"]),
+    )
+
+
+def _assistance_from_row(row: Mapping[str, object]) -> RealtimeAssistance:
+    citations = row["citations"]
+    return RealtimeAssistance(
+        id=UUID(str(row["id"])),
+        session_id=UUID(str(row["session_id"])),
+        conversation_id=UUID(str(row["conversation_id"])),
+        request_id=str(row["request_id"]),
+        request_fingerprint=str(row["request_fingerprint"]),
+        segment_id=str(row["segment_id"]),
+        context_epoch=int(row["context_epoch"]),
+        question=str(row["question"]),
+        activity_profile=str(row["activity_profile"]),
+        application_title=(str(row["application_title"]) if row["application_title"] else None),
+        observed_facts=tuple(str(value) for value in row["observed_facts"]),  # type: ignore[union-attr]
+        allow_network=bool(row["allow_network"]),
+        locale=str(row["locale"]),
+        status=RealtimeAssistanceStatus(str(row["status"])),
+        task_id=UUID(str(row["task_id"])) if row["task_id"] else None,
+        turn_id=UUID(str(row["turn_id"])) if row["turn_id"] else None,
+        message_id=UUID(str(row["message_id"])) if row["message_id"] else None,
+        spoken_summary=(str(row["spoken_summary"]) if row["spoken_summary"] else None),
+        display_markdown=(str(row["display_markdown"]) if row["display_markdown"] else None),
+        citations=tuple(
+            RealtimeAssistanceCitation(
+                title=str(value["title"]),
+                url=str(value["url"]),
+            )
+            for value in citations  # type: ignore[union-attr]
+        ),
+        freshness=str(row["freshness"]) if row["freshness"] else None,
+        requires_user_confirmation=bool(row["requires_user_confirmation"]),
+        error_code=str(row["error_code"]) if row["error_code"] else None,
+        created_at=row["created_at"],  # type: ignore[arg-type]
+        updated_at=row["updated_at"],  # type: ignore[arg-type]
         revision=int(row["revision"]),
     )
 
