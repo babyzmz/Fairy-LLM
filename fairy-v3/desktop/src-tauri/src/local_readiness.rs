@@ -86,6 +86,7 @@ pub struct LocalReadinessService {
     self_test_runner: Box<dyn OmniRuntimeSelfTestRunner>,
     hardware_cache: Option<(Instant, HardwareProbeReport)>,
     self_test_evidence: Option<SelfTestEvidence>,
+    runtime_quarantined: bool,
 }
 
 impl LocalReadinessService {
@@ -127,6 +128,7 @@ impl LocalReadinessService {
             self_test_runner,
             hardware_cache: None,
             self_test_evidence: None,
+            runtime_quarantined: false,
         })
     }
 
@@ -154,7 +156,7 @@ impl LocalReadinessService {
         facts.model_verified = Some(model_verified);
         facts.runtime_installed = Some(runtime_installed);
         facts.runtime_self_test_passed = Some(self_test_passed);
-        facts.runtime_quarantined = Some(false);
+        facts.runtime_quarantined = Some(self.runtime_quarantined);
         facts.predicted_model_peak_bytes = if model_verified {
             Some(
                 predicted_peak.unwrap_or(
@@ -209,6 +211,7 @@ impl LocalReadinessService {
             ));
             return Err(error.into());
         }
+        self.runtime_quarantined = false;
         let model_root = self.store.version_dir(&self.manifest)?;
         let request = runtime_request(self.runtime_path.clone(), model_root, &self.manifest);
         match self.self_test_runner.run(&request) {
@@ -227,6 +230,13 @@ impl LocalReadinessService {
 
     pub fn invalidate_hardware_cache(&mut self) {
         self.hardware_cache = None;
+    }
+
+    pub fn mark_runtime_quarantined(&mut self) {
+        self.runtime_quarantined = true;
+        self.self_test_evidence = Some(SelfTestEvidence::Failed(
+            "OMNI_RUNTIME_QUARANTINED".to_owned(),
+        ));
     }
 
     fn hardware(&mut self, refresh: bool) -> (HardwareProbeReport, bool) {
@@ -278,6 +288,14 @@ impl LocalReadinessService {
             return (
                 OmniRuntimeReadiness::Missing,
                 Some("OMNI_RUNTIME_MISSING".to_owned()),
+                false,
+                None,
+            );
+        }
+        if self.runtime_quarantined {
+            return (
+                OmniRuntimeReadiness::Failed,
+                Some("OMNI_RUNTIME_QUARANTINED".to_owned()),
                 false,
                 None,
             );
@@ -336,6 +354,12 @@ pub fn runtime_error_code(error: &OmniRuntimeSelfTestError) -> &'static str {
         OmniRuntimeSelfTestError::ProtocolMismatch => "OMNI_PROTOCOL_MISMATCH",
         OmniRuntimeSelfTestError::DigestMismatch => "OMNI_MANIFEST_MISMATCH",
         OmniRuntimeSelfTestError::ModelVersionMismatch => "OMNI_MODEL_VERSION_MISMATCH",
+        OmniRuntimeSelfTestError::UpstreamRevisionMismatch => "OMNI_UPSTREAM_REVISION_MISMATCH",
+        OmniRuntimeSelfTestError::PatchSetMismatch => "OMNI_PATCH_SET_MISMATCH",
+        OmniRuntimeSelfTestError::BuildProfileMismatch => "OMNI_RUNTIME_NOT_PRODUCTION",
+        OmniRuntimeSelfTestError::CudaUnavailable => "OMNI_RUNTIME_CUDA_UNAVAILABLE",
+        OmniRuntimeSelfTestError::BackendNotReady => "OMNI_RUNTIME_BACKEND_NOT_READY",
+        OmniRuntimeSelfTestError::ModelProbeFailed => "OMNI_RUNTIME_MODEL_PROBE_FAILED",
         OmniRuntimeSelfTestError::Io(_) => "OMNI_SELF_TEST_IO_FAILED",
     }
 }
@@ -530,11 +554,17 @@ mod tests {
         fs::create_dir_all(runtime_path.parent().expect("runtime parent")).expect("runtime dir");
         fs::write(&runtime_path, b"fixture").expect("runtime presence");
         let self_test_report = OmniRuntimeSelfTestReport {
-            schema_version: 1,
+            schema_version: 2,
             runtime_compatibility: manifest.runtime_compatibility.clone(),
             manifest_digest: manifest.manifest_digest.clone(),
             model_version: manifest.version.clone(),
             predicted_model_peak_bytes: 9 * GIB,
+            upstream_runtime_revision: manifest.upstream_runtime_revision.clone(),
+            patch_set_digest: manifest.patch_set_digest.clone(),
+            build_profile: "production-cuda".to_owned(),
+            cuda_compiled: true,
+            backend_ready: true,
+            model_probe: "ready".to_owned(),
         };
         let mut service = LocalReadinessService::new(
             models.path(),
@@ -599,5 +629,56 @@ mod tests {
             report.capability.reason,
             LocalBetaReadinessReason::SelfTestFailed
         );
+    }
+
+    #[test]
+    fn quarantine_requires_explicit_verify_before_readiness_can_recover() {
+        let models = tempfile::tempdir().expect("models");
+        let runtime = tempfile::tempdir().expect("runtime");
+        let manifest = bundled_minicpm_o45_manifest().expect("manifest");
+        let state = write_shallow_model(models.path(), &manifest);
+        let runtime_path = runtime.path().join("omni").join("fairy-omni-runtime.exe");
+        fs::create_dir_all(runtime_path.parent().expect("runtime parent")).expect("runtime dir");
+        fs::write(&runtime_path, b"fixture").expect("runtime presence");
+        let self_test_report = OmniRuntimeSelfTestReport {
+            schema_version: 2,
+            runtime_compatibility: manifest.runtime_compatibility.clone(),
+            manifest_digest: manifest.manifest_digest.clone(),
+            model_version: manifest.version.clone(),
+            predicted_model_peak_bytes: 9 * GIB,
+            upstream_runtime_revision: manifest.upstream_runtime_revision.clone(),
+            patch_set_digest: manifest.patch_set_digest.clone(),
+            build_profile: "production-cuda".to_owned(),
+            cuda_compiled: true,
+            backend_ready: true,
+            model_probe: "ready".to_owned(),
+        };
+        let mut service = LocalReadinessService::new(
+            models.path(),
+            runtime.path(),
+            manifest,
+            Box::new(CountingProbe(Arc::new(AtomicUsize::new(0)))),
+            Box::new(FakeSelfTest {
+                result: Ok(self_test_report),
+            }),
+        )
+        .expect("service");
+
+        service.mark_runtime_quarantined();
+        let quarantined = service
+            .report(&state, RealtimeActivityProfile::Focus, false)
+            .expect("quarantined report");
+        assert_eq!(
+            quarantined.capability.reason,
+            LocalBetaReadinessReason::RuntimeQuarantined
+        );
+        assert!(!quarantined.capability.local_beta_eligible);
+
+        service.run_self_test(&state).expect("explicit verify");
+        let recovered = service
+            .report(&state, RealtimeActivityProfile::Focus, false)
+            .expect("recovered report");
+        assert_eq!(recovered.runtime, OmniRuntimeReadiness::Passed);
+        assert!(recovered.capability.local_beta_eligible);
     }
 }

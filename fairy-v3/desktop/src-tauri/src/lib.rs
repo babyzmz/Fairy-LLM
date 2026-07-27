@@ -73,6 +73,8 @@ pub mod omni_model_download;
 pub mod omni_model_manager;
 pub mod omni_model_manifest;
 pub mod omni_model_store;
+pub mod omni_runtime_manager;
+pub mod omni_runtime_protocol;
 pub mod omni_runtime_self_test;
 pub mod presence_backdrop;
 pub mod presence_coordinator;

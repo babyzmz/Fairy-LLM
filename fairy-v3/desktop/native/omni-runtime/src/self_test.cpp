@@ -174,8 +174,16 @@ json build_self_test_report(
         throw ProtocolError("predicted model peak is invalid");
     }
 
-    const auto backend = make_backend();
-    const auto backend_status = backend->status();
+    auto backend = make_backend();
+    auto backend_status = backend->status();
+    if (kBuildProfile == "production-cuda") {
+        BackendModelPaths paths{
+            model_root / manifest.at("files").at(0).at("path").get<std::string>(),
+            model_root / manifest.at("files").at(1).at("path").get<std::string>(),
+            model_root / manifest.at("files").at(2).at("path").get<std::string>(),
+        };
+        backend_status = backend->load(paths);
+    }
     const auto model_probe = kBuildProfile == "contract"
         ? std::string("not_run_contract")
         : backend_status.reason;

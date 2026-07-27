@@ -23,6 +23,8 @@ pub struct OmniRuntimeSelfTestRequest {
     pub expected_manifest_digest: String,
     pub expected_model_version: String,
     pub expected_runtime_compatibility: String,
+    pub expected_upstream_revision: String,
+    pub expected_patch_set_digest: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -33,6 +35,12 @@ pub struct OmniRuntimeSelfTestReport {
     pub manifest_digest: String,
     pub model_version: String,
     pub predicted_model_peak_bytes: u64,
+    pub upstream_runtime_revision: String,
+    pub patch_set_digest: String,
+    pub build_profile: String,
+    pub cuda_compiled: bool,
+    pub backend_ready: bool,
+    pub model_probe: String,
 }
 
 #[derive(Debug, Error)]
@@ -55,6 +63,18 @@ pub enum OmniRuntimeSelfTestError {
     DigestMismatch,
     #[error("the Omni runtime model version does not match")]
     ModelVersionMismatch,
+    #[error("the Omni runtime upstream revision does not match")]
+    UpstreamRevisionMismatch,
+    #[error("the Omni runtime patch set does not match")]
+    PatchSetMismatch,
+    #[error("the Omni runtime is not a production CUDA build")]
+    BuildProfileMismatch,
+    #[error("the Omni runtime was built without CUDA")]
+    CudaUnavailable,
+    #[error("the Omni runtime backend is not ready")]
+    BackendNotReady,
+    #[error("the Omni runtime model probe did not pass")]
+    ModelProbeFailed,
     #[error("the Omni runtime self-test failed to start or communicate: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -142,7 +162,7 @@ fn validate_process_result(
     }
     let report: OmniRuntimeSelfTestReport = serde_json::from_slice(&stdout.bytes)
         .map_err(|_| OmniRuntimeSelfTestError::InvalidResponse)?;
-    if report.schema_version != 1 || report.predicted_model_peak_bytes == 0 {
+    if report.schema_version != 2 || report.predicted_model_peak_bytes == 0 {
         return Err(OmniRuntimeSelfTestError::InvalidResponse);
     }
     if report.runtime_compatibility != request.expected_runtime_compatibility {
@@ -153,6 +173,24 @@ fn validate_process_result(
     }
     if report.model_version != request.expected_model_version {
         return Err(OmniRuntimeSelfTestError::ModelVersionMismatch);
+    }
+    if report.upstream_runtime_revision != request.expected_upstream_revision {
+        return Err(OmniRuntimeSelfTestError::UpstreamRevisionMismatch);
+    }
+    if report.patch_set_digest != request.expected_patch_set_digest {
+        return Err(OmniRuntimeSelfTestError::PatchSetMismatch);
+    }
+    if report.build_profile != "production-cuda" {
+        return Err(OmniRuntimeSelfTestError::BuildProfileMismatch);
+    }
+    if !report.cuda_compiled {
+        return Err(OmniRuntimeSelfTestError::CudaUnavailable);
+    }
+    if !report.backend_ready {
+        return Err(OmniRuntimeSelfTestError::BackendNotReady);
+    }
+    if report.model_probe != "ready" {
+        return Err(OmniRuntimeSelfTestError::ModelProbeFailed);
     }
     Ok(report)
 }
@@ -233,6 +271,8 @@ pub fn runtime_request(
         expected_manifest_digest: manifest.manifest_digest.clone(),
         expected_model_version: manifest.version.clone(),
         expected_runtime_compatibility: manifest.runtime_compatibility.clone(),
+        expected_upstream_revision: manifest.upstream_runtime_revision.clone(),
+        expected_patch_set_digest: manifest.patch_set_digest.clone(),
     }
 }
 
@@ -248,6 +288,8 @@ mod tests {
             expected_manifest_digest: "a".repeat(64),
             expected_model_version: "4.5".to_owned(),
             expected_runtime_compatibility: "fairy-omni-runtime-v1".to_owned(),
+            expected_upstream_revision: "b".repeat(40),
+            expected_patch_set_digest: "c".repeat(64),
         }
     }
 
@@ -279,11 +321,17 @@ mod tests {
 
     fn valid_output(request: &OmniRuntimeSelfTestRequest) -> Vec<u8> {
         serde_json::to_vec(&OmniRuntimeSelfTestReport {
-            schema_version: 1,
+            schema_version: 2,
             runtime_compatibility: request.expected_runtime_compatibility.clone(),
             manifest_digest: request.expected_manifest_digest.clone(),
             model_version: request.expected_model_version.clone(),
             predicted_model_peak_bytes: 10,
+            upstream_runtime_revision: request.expected_upstream_revision.clone(),
+            patch_set_digest: request.expected_patch_set_digest.clone(),
+            build_profile: "production-cuda".to_owned(),
+            cuda_compiled: true,
+            backend_ready: true,
+            model_probe: "ready".to_owned(),
         })
         .expect("response")
     }
@@ -327,31 +375,49 @@ mod tests {
         let cases = [
             (
                 OmniRuntimeSelfTestReport {
-                    schema_version: 1,
+                    schema_version: 2,
                     runtime_compatibility: "wrong".to_owned(),
                     manifest_digest: request.expected_manifest_digest.clone(),
                     model_version: request.expected_model_version.clone(),
                     predicted_model_peak_bytes: 10,
+                    upstream_runtime_revision: request.expected_upstream_revision.clone(),
+                    patch_set_digest: request.expected_patch_set_digest.clone(),
+                    build_profile: "production-cuda".to_owned(),
+                    cuda_compiled: true,
+                    backend_ready: true,
+                    model_probe: "ready".to_owned(),
                 },
                 "protocol",
             ),
             (
                 OmniRuntimeSelfTestReport {
-                    schema_version: 1,
+                    schema_version: 2,
                     runtime_compatibility: request.expected_runtime_compatibility.clone(),
                     manifest_digest: "b".repeat(64),
                     model_version: request.expected_model_version.clone(),
                     predicted_model_peak_bytes: 10,
+                    upstream_runtime_revision: request.expected_upstream_revision.clone(),
+                    patch_set_digest: request.expected_patch_set_digest.clone(),
+                    build_profile: "production-cuda".to_owned(),
+                    cuda_compiled: true,
+                    backend_ready: true,
+                    model_probe: "ready".to_owned(),
                 },
                 "digest",
             ),
             (
                 OmniRuntimeSelfTestReport {
-                    schema_version: 1,
+                    schema_version: 2,
                     runtime_compatibility: request.expected_runtime_compatibility.clone(),
                     manifest_digest: request.expected_manifest_digest.clone(),
                     model_version: "wrong".to_owned(),
                     predicted_model_peak_bytes: 10,
+                    upstream_runtime_revision: request.expected_upstream_revision.clone(),
+                    patch_set_digest: request.expected_patch_set_digest.clone(),
+                    build_profile: "production-cuda".to_owned(),
+                    cuda_compiled: true,
+                    backend_ready: true,
+                    model_probe: "ready".to_owned(),
                 },
                 "model",
             ),
@@ -369,6 +435,112 @@ mod tests {
                     OmniRuntimeSelfTestError::ProtocolMismatch => "protocol",
                     OmniRuntimeSelfTestError::DigestMismatch => "digest",
                     OmniRuntimeSelfTestError::ModelVersionMismatch => "model",
+                    _ => "other",
+                },
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn contract_cpu_and_unprobed_production_reports_fail_closed() {
+        let request = request();
+        let base: OmniRuntimeSelfTestReport =
+            serde_json::from_slice(&valid_output(&request)).expect("report");
+        let cases = [
+            (
+                OmniRuntimeSelfTestReport {
+                    build_profile: "contract".to_owned(),
+                    ..base.clone()
+                },
+                "profile",
+            ),
+            (
+                OmniRuntimeSelfTestReport {
+                    build_profile: "upstream-cpu".to_owned(),
+                    cuda_compiled: false,
+                    backend_ready: false,
+                    model_probe: "cpu_compatibility_only".to_owned(),
+                    ..base.clone()
+                },
+                "profile",
+            ),
+            (
+                OmniRuntimeSelfTestReport {
+                    cuda_compiled: false,
+                    ..base.clone()
+                },
+                "cuda",
+            ),
+            (
+                OmniRuntimeSelfTestReport {
+                    backend_ready: false,
+                    ..base.clone()
+                },
+                "backend",
+            ),
+            (
+                OmniRuntimeSelfTestReport {
+                    model_probe: "failed".to_owned(),
+                    ..base
+                },
+                "probe",
+            ),
+        ];
+        for (report, expected) in cases {
+            let error = validate_process_result(
+                success_status(),
+                output(serde_json::to_vec(&report).expect("json")),
+                output(Vec::new()),
+                &request,
+            )
+            .expect_err("report must fail closed");
+            assert_eq!(
+                match error {
+                    OmniRuntimeSelfTestError::BuildProfileMismatch => "profile",
+                    OmniRuntimeSelfTestError::CudaUnavailable => "cuda",
+                    OmniRuntimeSelfTestError::BackendNotReady => "backend",
+                    OmniRuntimeSelfTestError::ModelProbeFailed => "probe",
+                    _ => "other",
+                },
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn upstream_and_patch_identity_mismatches_are_distinct() {
+        let request = request();
+        let base: OmniRuntimeSelfTestReport =
+            serde_json::from_slice(&valid_output(&request)).expect("report");
+        let cases = [
+            (
+                OmniRuntimeSelfTestReport {
+                    upstream_runtime_revision: "d".repeat(40),
+                    ..base.clone()
+                },
+                "upstream",
+            ),
+            (
+                OmniRuntimeSelfTestReport {
+                    patch_set_digest: "e".repeat(64),
+                    ..base
+                },
+                "patch",
+            ),
+        ];
+        for (report, expected) in cases {
+            let error = validate_process_result(
+                success_status(),
+                output(serde_json::to_vec(&report).expect("json")),
+                output(Vec::new()),
+                &request,
+            )
+            .expect_err("identity must match");
+            assert_eq!(
+                match error {
+                    OmniRuntimeSelfTestError::UpstreamRevisionMismatch => "upstream",
+                    OmniRuntimeSelfTestError::PatchSetMismatch => "patch",
                     _ => "other",
                 },
                 expected
