@@ -151,6 +151,22 @@ describe("TauriCoreTransport", () => {
     );
   });
 
+  it("reports only bounded Fairy voice playback state through the host command", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    const transport = new TauriCoreTransport(invoke);
+    const input = {
+      session_id: "session-1",
+      segment_id: "segment-1",
+      context_epoch: 2,
+      speech_generation: 3,
+      speaking: true,
+    };
+
+    await expect(transport.realtimeWorkerSpeechState(input)).resolves.toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith("realtime_worker_speech_state", { input });
+    expect(invoke).not.toHaveBeenCalledWith("core_rpc", expect.anything());
+  });
+
   it("rejects malformed local Preview envelopes", async () => {
     const id = "0198f4de-0114-7000-8000-000000000001";
     const invoke = vi.fn().mockResolvedValue({

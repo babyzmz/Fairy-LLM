@@ -143,6 +143,9 @@ pub struct RealtimeCoordinatorState {
     presence_sequence: u64,
     presence_state: RealtimePresenceState,
     presence_level: Option<u8>,
+    background_presence_state: RealtimePresenceState,
+    background_presence_level: Option<u8>,
+    fairy_speech_active: bool,
 }
 
 impl RealtimeCoordinatorState {
@@ -186,6 +189,9 @@ impl RealtimeCoordinatorState {
             presence_sequence: 1,
             presence_state: RealtimePresenceState::Preparing,
             presence_level: None,
+            background_presence_state: RealtimePresenceState::Preparing,
+            background_presence_level: None,
+            fairy_speech_active: false,
         })
     }
 
@@ -235,7 +241,7 @@ impl RealtimeCoordinatorState {
                 };
                 self.action_required = false;
                 self.media_generation_enabled = true;
-                self.set_presence(RealtimePresenceState::Preparing, None)?;
+                self.set_authoritative_presence(RealtimePresenceState::Preparing, None)?;
                 Ok(())
             }
             RealtimeCoordinatorEvent::SetProfile { profile } => {
@@ -250,7 +256,7 @@ impl RealtimeCoordinatorState {
                 self.require_active()?;
                 self.status = RealtimeCoordinatorStatus::PrivacyPaused;
                 self.media_generation_enabled = false;
-                self.set_presence(RealtimePresenceState::PrivacyPaused, None)?;
+                self.set_authoritative_presence(RealtimePresenceState::PrivacyPaused, None)?;
                 Ok(())
             }
             RealtimeCoordinatorEvent::ResumePrivacy => {
@@ -260,7 +266,7 @@ impl RealtimeCoordinatorState {
                 self.rotate_context()?;
                 self.status = RealtimeCoordinatorStatus::Active;
                 self.media_generation_enabled = true;
-                self.set_presence(RealtimePresenceState::Standby, None)?;
+                self.set_authoritative_presence(RealtimePresenceState::Standby, None)?;
                 Ok(())
             }
             RealtimeCoordinatorEvent::ExtendPresence { additional_minutes } => {
@@ -276,14 +282,14 @@ impl RealtimeCoordinatorState {
             RealtimeCoordinatorEvent::End => {
                 self.status = RealtimeCoordinatorStatus::Ended;
                 self.media_generation_enabled = false;
-                self.set_presence(RealtimePresenceState::Idle, None)?;
+                self.set_authoritative_presence(RealtimePresenceState::Idle, None)?;
                 Ok(())
             }
             RealtimeCoordinatorEvent::BackendFailed => {
                 self.require_active()?;
                 self.action_required = true;
                 self.media_generation_enabled = false;
-                self.set_presence(RealtimePresenceState::Error, None)?;
+                self.set_authoritative_presence(RealtimePresenceState::Error, None)?;
                 Ok(())
             }
         }
@@ -341,7 +347,19 @@ impl RealtimeCoordinatorState {
         {
             return None;
         }
-        if !self.set_presence(state, level).ok()? {
+        self.background_presence_state = state;
+        self.background_presence_level = level;
+        if matches!(
+            state,
+            RealtimePresenceState::Idle
+                | RealtimePresenceState::Listening
+                | RealtimePresenceState::PrivacyPaused
+                | RealtimePresenceState::ResourceLimited
+                | RealtimePresenceState::Error
+        ) {
+            self.fairy_speech_active = false;
+        }
+        if self.fairy_speech_active || !self.set_presence(state, level).ok()? {
             return None;
         }
         Some(self.presence_projection())
@@ -351,9 +369,29 @@ impl RealtimeCoordinatorState {
         &mut self,
         state: RealtimePresenceState,
     ) -> Option<RealtimePresenceProjection> {
-        if self.status == RealtimeCoordinatorStatus::Ended
-            || !self.set_presence(state, None).ok()?
-        {
+        if self.status == RealtimeCoordinatorStatus::Ended {
+            return None;
+        }
+        if !self.set_authoritative_presence(state, None).ok()? {
+            return None;
+        }
+        Some(self.presence_projection())
+    }
+
+    pub fn project_fairy_speech(&mut self, speaking: bool) -> Option<RealtimePresenceProjection> {
+        if self.status == RealtimeCoordinatorStatus::Ended {
+            return None;
+        }
+        self.fairy_speech_active = speaking;
+        let (state, level) = if speaking {
+            (RealtimePresenceState::Speaking, None)
+        } else {
+            (
+                self.background_presence_state,
+                self.background_presence_level,
+            )
+        };
+        if !self.set_presence(state, level).ok()? {
             return None;
         }
         Some(self.presence_projection())
@@ -399,6 +437,17 @@ impl RealtimeCoordinatorState {
         self.presence_state = state;
         self.presence_level = level;
         Ok(true)
+    }
+
+    fn set_authoritative_presence(
+        &mut self,
+        state: RealtimePresenceState,
+        level: Option<u8>,
+    ) -> Result<bool, RealtimeCoordinatorError> {
+        self.background_presence_state = state;
+        self.background_presence_level = level;
+        self.fairy_speech_active = false;
+        self.set_presence(state, level)
     }
 }
 
@@ -849,5 +898,64 @@ mod tests {
                 .state,
             RealtimePresenceState::ResourceLimited
         );
+    }
+
+    #[test]
+    fn fairy_speech_overlays_and_restores_the_latest_worker_presence() {
+        let mut state = RealtimeCoordinatorState::start(start_request()).expect("start");
+        let thinking = WorkerEvent::Presence {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            state: "thinking".to_owned(),
+            level: None,
+        };
+        state
+            .project_worker_event(&thinking)
+            .expect("thinking projection");
+        assert_eq!(
+            state
+                .project_fairy_speech(true)
+                .expect("speaking projection")
+                .state,
+            RealtimePresenceState::Speaking
+        );
+
+        let searching = WorkerEvent::AssistanceRequest {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            request_id: "request-1".to_owned(),
+            public_intent: "Look up a public fact".to_owned(),
+        };
+        assert!(state.project_worker_event(&searching).is_none());
+        assert_eq!(
+            state.presence_projection().state,
+            RealtimePresenceState::Speaking
+        );
+        assert_eq!(
+            state
+                .project_fairy_speech(false)
+                .expect("restored projection")
+                .state,
+            RealtimePresenceState::Searching
+        );
+
+        state
+            .project_fairy_speech(true)
+            .expect("speaking projection");
+        let barge_in = WorkerEvent::BargeIn {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+        };
+        assert_eq!(
+            state
+                .project_worker_event(&barge_in)
+                .expect("barge-in projection")
+                .state,
+            RealtimePresenceState::Listening
+        );
+        assert!(state.project_fairy_speech(false).is_none());
     }
 }

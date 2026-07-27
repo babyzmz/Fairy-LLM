@@ -98,6 +98,15 @@ pub struct RealtimeWorkerSetInputInput {
     pub video: bool,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct RealtimeWorkerSpeechStateInput {
+    pub session_id: String,
+    pub segment_id: String,
+    pub context_epoch: u64,
+    pub speech_generation: u64,
+    pub speaking: bool,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct RealtimeWorkerStatus {
     pub running: bool,
@@ -481,6 +490,19 @@ impl RealtimeWorkerManager {
         )
     }
 
+    pub fn speech_state(
+        &self,
+        app: &AppHandle,
+        input: RealtimeWorkerSpeechStateInput,
+    ) -> Result<(), RealtimeWorkerError> {
+        if let Some(projection) =
+            govern_fairy_speech_state(&input, &self.coordinator, &self.dialogue)?
+        {
+            let _ = app.emit(REALTIME_WORKER_EVENT, projection);
+        }
+        Ok(())
+    }
+
     fn usage_snapshot(&self) -> RealtimeWorkerUsage {
         self.usage
             .lock()
@@ -788,6 +810,36 @@ fn presence_projection_payload(projection: RealtimePresenceProjection) -> Value 
         "level": projection.level,
         "persona_digest": projection.persona_digest,
     })
+}
+
+fn govern_fairy_speech_state(
+    input: &RealtimeWorkerSpeechStateInput,
+    coordinator: &Mutex<Option<RealtimeCoordinatorState>>,
+    dialogue: &Mutex<Option<RealtimeDialogueDirector>>,
+) -> Result<Option<Value>, RealtimeWorkerError> {
+    let director = dialogue.lock().map_err(|_| RealtimeWorkerError::Protocol)?;
+    let Some(director) = director.as_ref() else {
+        return Err(RealtimeWorkerError::Unavailable);
+    };
+    if input.speech_generation != director.speech_generation() {
+        return Ok(None);
+    }
+    let mut coordinator = coordinator
+        .lock()
+        .map_err(|_| RealtimeWorkerError::Protocol)?;
+    let Some(coordinator) = coordinator.as_mut() else {
+        return Err(RealtimeWorkerError::Unavailable);
+    };
+    let identity = coordinator.active_identity();
+    if input.session_id != identity.session_id
+        || input.segment_id != identity.segment_id
+        || input.context_epoch != identity.epoch
+    {
+        return Err(RealtimeWorkerError::Protocol);
+    }
+    Ok(coordinator
+        .project_fairy_speech(input.speaking)
+        .map(presence_projection_payload))
 }
 
 fn govern_dialogue_candidate(
@@ -1240,5 +1292,39 @@ mod tests {
         assert_eq!(projected["state"], "error");
         assert!(projected.get("error_code").is_none());
         assert!(projected.get("provider_payload").is_none());
+    }
+
+    #[test]
+    fn fairy_voice_reports_are_generation_and_identity_fenced() {
+        let coordinator = coordinator();
+        let dialogue = dialogue();
+        let speaking = RealtimeWorkerSpeechStateInput {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            speech_generation: 1,
+            speaking: true,
+        };
+        let projected = govern_fairy_speech_state(&speaking, &coordinator, &dialogue)
+            .expect("speech report")
+            .expect("projection");
+        assert_eq!(projected["state"], "speaking");
+
+        let stale = RealtimeWorkerSpeechStateInput {
+            speech_generation: 0,
+            ..speaking.clone()
+        };
+        assert!(govern_fairy_speech_state(&stale, &coordinator, &dialogue)
+            .expect("stale report")
+            .is_none());
+
+        let wrong_segment = RealtimeWorkerSpeechStateInput {
+            segment_id: "stale-segment".to_owned(),
+            ..speaking
+        };
+        assert!(matches!(
+            govern_fairy_speech_state(&wrong_segment, &coordinator, &dialogue),
+            Err(RealtimeWorkerError::Protocol)
+        ));
     }
 }

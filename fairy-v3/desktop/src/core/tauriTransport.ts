@@ -13,6 +13,7 @@ import type {
   RealtimeProviderCredentialInput,
   RealtimeProviderCredentialStatus,
   RealtimeWorkerSetInputInput,
+  RealtimeWorkerSpeechStateInput,
   RealtimeWorkerStartInput,
   RealtimeWorkerStatus,
   RealtimeWorkerToolResultInput,
@@ -147,6 +148,10 @@ export class TauriCoreTransport implements CoreTransport {
 
   realtimeWorkerSetInput(input: RealtimeWorkerSetInputInput): Promise<void> {
     return this.invoke("realtime_worker_set_input", { input });
+  }
+
+  realtimeWorkerSpeechState(input: RealtimeWorkerSpeechStateInput): Promise<void> {
+    return this.invoke("realtime_worker_speech_state", { input });
   }
 
   selectProjectFolder(): Promise<string | null> {

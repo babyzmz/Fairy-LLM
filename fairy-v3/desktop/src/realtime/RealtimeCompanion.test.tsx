@@ -666,24 +666,38 @@ describe("RealtimeCompanion", () => {
     await act(async () => eventListener?.({ payload: {
       type: "session_state", session_id: session("active", 2).id, status: "active",
     } }));
+    await act(async () => eventListener?.({
+      payload: presenceProjection("standby", 2),
+    }));
     await act(async () => eventListener?.({ payload: {
       type: "public_caption",
       session_id: session("active", 2).id,
+      segment_id: "segment-1",
+      context_epoch: 1,
       text: "Watch the next attack.",
       stable: true,
       speaker: "assistant",
+      speech_output: "fairy_voice",
+      speech_generation: 1,
+      persona_digest: "a".repeat(64),
     } }));
     await waitFor(() => expect(voiceMocks.startRealtimeVoice).toHaveBeenCalledOnce());
     await act(async () => eventListener?.({ payload: {
       type: "public_caption",
       session_id: session("active", 2).id,
+      segment_id: "segment-1",
+      context_epoch: 1,
       text: "This queued sentence must be discarded.",
       stable: true,
       speaker: "assistant",
+      speech_output: "fairy_voice",
+      speech_generation: 1,
+      persona_digest: "a".repeat(64),
     } }));
 
     await act(async () => eventListener?.({ payload: {
       type: "barge_in", session_id: session("active", 2).id,
+      segment_id: "segment-1", context_epoch: 1, speech_generation: 2,
     } }));
     await act(async () => eventListener?.({
       payload: presenceProjection("listening", 3),
@@ -696,7 +710,7 @@ describe("RealtimeCompanion", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(voiceMocks.startRealtimeVoice).toHaveBeenCalledOnce();
+    expect(voiceMocks.startRealtimeVoice).toHaveBeenCalledTimes(2);
   });
 
   it("shows non-conflict persistence failures and reloads the authoritative session", async () => {

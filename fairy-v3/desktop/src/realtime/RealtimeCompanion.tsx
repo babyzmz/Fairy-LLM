@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { LoaderCircle, Mic, MicOff, Monitor, Pause, Play, RotateCcw, Save, ShieldCheck, SlidersHorizontal, Square, Volume2, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   CoreClient,
@@ -12,13 +12,14 @@ import type {
 } from "../core/client";
 import type { InvokeFunction } from "../core/tauriTransport";
 import type { DesktopPreferences } from "../settings/client";
-import { startRealtimeVoice, type NativeVoicePlayback } from "../voice/nativeVoice";
+import { startRealtimeVoice } from "../voice/nativeVoice";
 import {
   isPresenceProjection,
   type RealtimePresenceProjection,
   type RealtimePresenceState,
 } from "./realtimePresence";
 import { useTranscriptPersistence } from "./useTranscriptPersistence";
+import { RealtimeSpeechPipeline } from "./realtimeSpeech";
 import "./realtime-companion.css";
 
 interface CaptureSurface {
@@ -31,9 +32,9 @@ interface CaptureSurface {
 
 type WorkerEvent =
   | { type: "session_state"; session_id: string; segment_id: string; context_epoch: number; status: string; backend: "local_mini_cpm_o45" | "cloud_live"; cloud_provider?: string | null; error_code?: string | null }
-  | { type: "public_caption"; session_id: string; segment_id: string; context_epoch: number; sequence: number; text: string; stable: boolean; speaker: "user" | "assistant" }
+  | { type: "public_caption"; session_id: string; segment_id: string; context_epoch: number; sequence: number; text: string; stable: boolean; speaker: "user" | "assistant"; speech_output?: "fairy_voice" | "provider_native_voice" | "text_only"; speech_generation?: number; persona_digest?: string }
   | ({ type: "presence_projection" } & RealtimePresenceProjection)
-  | { type: "barge_in"; session_id: string; segment_id: string; context_epoch: number }
+  | { type: "barge_in"; session_id: string; segment_id: string; context_epoch: number; speech_generation: number }
   | { type: "tool_request"; session_id: string; segment_id: string; context_epoch: number; call_id: string; tool_name: string; public_intent: string }
   | { type: "usage"; session_id: string; segment_id: string; context_epoch: number; audio_input_ms: number; audio_output_ms: number; video_frame_count: number; interruption_count: number; tool_call_count: number }
   | { type: "worker_interrupted"; error_code: string }
@@ -104,9 +105,6 @@ export function RealtimeCompanion({
   const [voiceWarning, setVoiceWarning] = useState<string | null>(null);
   const [memory, setMemory] = useState<MemoryDraft | null>(null);
   const startedAt = useRef(0);
-  const voiceQueue = useRef(Promise.resolve());
-  const voiceGeneration = useRef(0);
-  const activeVoice = useRef<NativeVoicePlayback | null>(null);
   const usage = useRef<RealtimeUsage>({ ...EMPTY_USAGE });
   const [liveUsage, setLiveUsage] = useState<RealtimeUsage>({ ...EMPTY_USAGE });
   const lastUserActivity = useRef(0);
@@ -154,12 +152,22 @@ export function RealtimeCompanion({
     setSession(value);
   }, []);
 
-  const stopFairyVoice = useCallback(() => {
-    voiceGeneration.current += 1;
-    activeVoice.current?.stop();
-    activeVoice.current = null;
-    voiceQueue.current = Promise.resolve();
-  }, []);
+  const fairySpeech = useMemo(
+    () => new RealtimeSpeechPipeline(
+      startRealtimeVoice,
+      async (identity, speaking) => {
+        await client.worker.speechState({ ...identity, speaking });
+        if (speaking) setVoiceWarning(null);
+      },
+      () => {
+        setVoiceWarning(
+          "Fairy voice playback stopped. The realtime session is still active.",
+        );
+      },
+    ),
+    [client.worker],
+  );
+  const stopFairyVoice = useCallback(() => fairySpeech.stop(), [fairySpeech]);
 
   useEffect(() => () => stopFairyVoice(), [stopFairyVoice]);
 
@@ -323,8 +331,19 @@ export function RealtimeCompanion({
         presenceProjectionRef.current = payload;
         setPresenceProjection(payload);
       } else if (payload.type === "barge_in") {
+        const activePresence = presenceProjectionRef.current;
+        if (
+          activePresence === null
+          || payload.segment_id !== activePresence.segment_id
+          || payload.context_epoch !== activePresence.context_epoch
+        ) return;
         lastUserActivity.current = Date.now();
-        stopFairyVoice();
+        fairySpeech.interrupt({
+          session_id: payload.session_id,
+          segment_id: payload.segment_id,
+          context_epoch: payload.context_epoch,
+          speech_generation: payload.speech_generation,
+        });
       } else if (payload.type === "public_caption") {
         if (payload.speaker === "user") lastUserActivity.current = Date.now();
         if (payload.stable) {
@@ -346,31 +365,22 @@ export function RealtimeCompanion({
           setDraftCaption(merged);
         }
         if (
-          payload.stable && payload.speaker === "assistant"
-          && preferences?.realtime_voice_output === "fairy_voice"
+          payload.speaker === "assistant"
+          && payload.speech_output === "fairy_voice"
+          && typeof payload.speech_generation === "number"
+          && typeof payload.persona_digest === "string"
+          && payload.persona_digest === presenceProjectionRef.current?.persona_digest
+          && payload.segment_id === presenceProjectionRef.current?.segment_id
+          && payload.context_epoch === presenceProjectionRef.current?.context_epoch
         ) {
-          const generation = voiceGeneration.current;
-          voiceQueue.current = voiceQueue.current
-            .catch(() => undefined)
-            .then(async () => {
-              if (generation !== voiceGeneration.current) return;
-              try {
-                const playback = await startRealtimeVoice(payload.text);
-                if (generation !== voiceGeneration.current) {
-                  playback.stop();
-                  return;
-                }
-                activeVoice.current = playback;
-                await playback.finished;
-                setVoiceWarning(null);
-              } catch {
-                if (generation === voiceGeneration.current) {
-                  setVoiceWarning("Fairy voice playback stopped. The realtime session is still active.");
-                }
-              } finally {
-                if (generation === voiceGeneration.current) activeVoice.current = null;
-              }
-            });
+          fairySpeech.push({
+            session_id: payload.session_id,
+            segment_id: payload.segment_id,
+            context_epoch: payload.context_epoch,
+            speech_generation: payload.speech_generation,
+            text: payload.text,
+            stable: payload.stable,
+          });
         }
       } else if (payload.type === "usage") {
         usage.current = {
@@ -397,9 +407,8 @@ export function RealtimeCompanion({
   }, [
     client.worker,
     enqueueTranscript,
-    preferences?.realtime_voice_output,
+    fairySpeech,
     report,
-    stopFairyVoice,
   ]);
 
   useEffect(() => {
