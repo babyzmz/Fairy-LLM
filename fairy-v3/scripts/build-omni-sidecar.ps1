@@ -2,7 +2,8 @@
 param(
     [ValidateSet("contract", "production")]
     [string]$Profile = "contract",
-    [string]$ModelRoot
+    [string]$ModelRoot,
+    [switch]$RequireModelProbe
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,19 +17,15 @@ $stageRoot = Join-Path $projectRoot "desktop\src-tauri\runtime\omni"
 $stageExecutable = Join-Path $stageRoot "fairy-omni-runtime.exe"
 $stageProfile = Join-Path $stageRoot "build-profile.txt"
 $nativeProfile = if ($Profile -eq "production") { "production-cuda" } else { "contract" }
-
-if ($Profile -eq "production") {
-    if ([string]::IsNullOrWhiteSpace($ModelRoot)) {
-        throw "Production Omni staging requires -ModelRoot with the verified three-file model."
-    }
-    $ModelRoot = [IO.Path]::GetFullPath($ModelRoot)
-    if (-not (Test-Path -LiteralPath $ModelRoot -PathType Container)) {
-        throw "The production Omni model root does not exist."
-    }
-}
-else {
-    $ModelRoot = $runtimeRoot
-}
+$policyScript = Join-Path $projectRoot "scripts\omni-release-policy.ps1"
+. $policyScript
+$probePolicy = Resolve-OmniReleaseProbe `
+    -Profile $Profile `
+    -ModelRoot $ModelRoot `
+    -RuntimeRoot $runtimeRoot `
+    -RequireModelProbe:$RequireModelProbe
+$ModelRoot = [string]$probePolicy.model_root
+$requireModelProbe = [bool]$probePolicy.require_model_probe
 
 $buildOutput = @(
     & powershell -NoProfile -ExecutionPolicy Bypass -File $buildScript `
@@ -68,10 +65,20 @@ if ([int]$report.schema_version -ne 2 -or
 }
 
 if ($Profile -eq "production") {
-    if (-not [bool]$report.cuda_compiled -or
+    if (-not [bool]$report.cuda_compiled) {
+        throw "The production Omni runtime was not compiled with CUDA."
+    }
+    if ($requireModelProbe -and (
         -not [bool]$report.backend_ready -or
-        [string]$report.model_probe -ne "ready") {
-        throw "The production Omni runtime did not pass CUDA and model probing."
+        [string]$report.model_probe -ne "ready"
+    )) {
+        throw "The production Omni runtime did not pass the required model probe."
+    }
+    if (-not $requireModelProbe -and (
+        [bool]$report.backend_ready -or
+        [string]$report.model_probe -ne "model_files_invalid"
+    )) {
+        throw "The model-free installer probe did not stay fail-closed."
     }
 }
 elseif ([bool]$report.cuda_compiled -or [bool]$report.backend_ready) {
@@ -101,4 +108,5 @@ finally {
     profile = $nativeProfile
     executable = $stageExecutable
     backend_ready = [bool]$report.backend_ready
+    model_probe_required = $requireModelProbe
 } | ConvertTo-Json -Compress
