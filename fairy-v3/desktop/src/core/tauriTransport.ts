@@ -133,6 +133,10 @@ export class TauriCoreTransport implements CoreTransport {
     return this.invoke("realtime_worker_start", { input });
   }
 
+  realtimeWorkerContinue(input: RealtimeWorkerStartInput): Promise<RealtimeWorkerStatus> {
+    return this.invoke("realtime_worker_continue", { input });
+  }
+
   realtimeWorkerStop(sessionId: string): Promise<RealtimeWorkerStatus> {
     return this.invoke("realtime_worker_stop", { input: { session_id: sessionId } });
   }

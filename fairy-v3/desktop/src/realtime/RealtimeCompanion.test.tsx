@@ -55,11 +55,27 @@ const session = (status: RealtimeSession["status"], revision: number): RealtimeS
 const workerStatus = (running: boolean): RealtimeWorkerStatus => ({
   running,
   session_id: running ? session("active", 2).id : null,
+  segment_id: running ? "segment-1" : null,
+  context_epoch: running ? 1 : null,
+  backend: running ? "cloud_live" : null,
+  cloud_provider: running ? "glm_realtime_flash" : null,
+  action_required: false,
   audio_input_ms: 1_250,
   audio_output_ms: 400,
   video_frame_count: 8,
   interruption_count: 1,
   tool_call_count: 0,
+});
+
+const backendPreview = async () => ({
+  schema_version: 1 as const,
+  resolution_token: "a".repeat(64),
+  available: true,
+  backend: "cloud_live" as const,
+  cloud_provider: "glm_realtime_flash" as const,
+  reason: null,
+  requires_cloud_upload_consent: true,
+  preference_revision: 1,
 });
 
 describe("RealtimeCompanion", () => {
@@ -110,6 +126,7 @@ describe("RealtimeCompanion", () => {
       },
       memories: { save: vi.fn() },
       worker: {
+        preview: vi.fn(backendPreview),
         status: vi.fn(async () => workerStatus(false)),
       },
     } as unknown as CoreClient["realtime"];
@@ -135,6 +152,7 @@ describe("RealtimeCompanion", () => {
       sessions: { list: vi.fn(async () => ({ items: [] })) },
       memories: { save: vi.fn() },
       worker: {
+        preview: vi.fn(backendPreview),
         status: vi.fn(async () => workerStatus(false)),
         start,
       },
@@ -158,6 +176,7 @@ describe("RealtimeCompanion", () => {
       sessions: { list: vi.fn(async () => ({ items: [] })) },
       memories: { save: vi.fn() },
       worker: {
+        preview: vi.fn(backendPreview),
         status: vi.fn(async () => workerStatus(false)),
         start,
       },
@@ -190,6 +209,7 @@ describe("RealtimeCompanion", () => {
       memories: { save: vi.fn() },
       transcript: { append, list: vi.fn(async () => ({ items: [] })) },
       worker: {
+        preview: vi.fn(backendPreview),
         status: vi.fn(async () => workerStatus(false)),
         start: vi.fn(async () => workerStatus(true)),
         stop: vi.fn(async () => workerStatus(false)),
@@ -253,6 +273,7 @@ describe("RealtimeCompanion", () => {
       memories: { save: vi.fn() },
       transcript: { append, list: vi.fn(async () => ({ items: [] })) },
       worker: {
+        preview: vi.fn(backendPreview),
         status: vi.fn(async () => workerStatus(false)),
         start: vi.fn(async () => workerStatus(true)),
         stop: vi.fn(),
@@ -304,6 +325,7 @@ describe("RealtimeCompanion", () => {
       },
       memories: { save: vi.fn() },
       worker: {
+        preview: vi.fn(backendPreview),
         status: vi.fn(async () => workerStatus(false)),
         start: vi.fn(async () => workerStatus(true)),
         stop: vi.fn(),
@@ -338,7 +360,10 @@ describe("RealtimeCompanion", () => {
     const client = {
       sessions: { list: vi.fn(async () => ({ items: [] })) },
       memories: { save: vi.fn() },
-      worker: { status: vi.fn(async () => workerStatus(false)) },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => workerStatus(false)),
+      },
     } as unknown as CoreClient["realtime"];
 
     render(<RealtimeCompanion client={client} openRequest={1} />);
@@ -359,6 +384,7 @@ describe("RealtimeCompanion", () => {
       },
       memories: { save: vi.fn() },
       worker: {
+        preview: vi.fn(backendPreview),
         status: vi.fn(async () => workerStatus(false)),
         start,
       },
@@ -371,8 +397,7 @@ describe("RealtimeCompanion", () => {
 
     await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({
       session_id: session("starting", 1).id,
-      segment_id: expect.any(String),
-      context_epoch: 1,
+      resolution_token: "a".repeat(64),
       backend: "cloud_live",
       cloud_provider: "glm_realtime_flash",
       activity_profile: "auto",
@@ -382,6 +407,8 @@ describe("RealtimeCompanion", () => {
       screen_enabled: true,
       application_audio_enabled: true,
       online_assistance_enabled: false,
+      cloud_microphone_upload_consent: true,
+      cloud_screen_upload_consent: true,
     })));
     const request = start.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
     expect(request).not.toHaveProperty("credential");
@@ -401,6 +428,7 @@ describe("RealtimeCompanion", () => {
       },
       memories: { save: vi.fn() },
       worker: {
+        preview: vi.fn(backendPreview),
         status: vi.fn(async () => workerStatus(false)),
         start: vi.fn(async () => workerStatus(true)),
         stop: vi.fn(async () => workerStatus(false)),
@@ -449,6 +477,7 @@ describe("RealtimeCompanion", () => {
       },
       memories: { save: vi.fn() },
       worker: {
+        preview: vi.fn(backendPreview),
         status: vi.fn(async () => workerStatus(false)),
         start: vi.fn(async () => workerStatus(true)),
         stop: vi.fn(async () => workerStatus(false)),
@@ -495,6 +524,7 @@ describe("RealtimeCompanion", () => {
       memories: { save: vi.fn() },
       transcript: { append: vi.fn(async () => ({})), list: vi.fn(async () => ({ items: [] })) },
       worker: {
+        preview: vi.fn(backendPreview),
         status: vi.fn(async () => workerStatus(false)),
         start: vi.fn(async () => workerStatus(true)),
         stop: vi.fn(),
@@ -557,6 +587,7 @@ describe("RealtimeCompanion", () => {
       },
       memories: { save: vi.fn() },
       worker: {
+        preview: vi.fn(backendPreview),
         status: vi.fn(async () => workerStatus(false)),
         start: vi.fn(async () => workerStatus(true)),
         stop: vi.fn(),

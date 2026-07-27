@@ -709,6 +709,26 @@ async fn realtime_worker_start(
     input: RealtimeWorkerStartInput,
 ) -> Result<RealtimeWorkerStatus, String> {
     authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    realtime_worker_start_segment(&app, &state, input, false).await
+}
+
+#[tauri::command]
+async fn realtime_worker_continue(
+    window: WebviewWindow,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+    input: RealtimeWorkerStartInput,
+) -> Result<RealtimeWorkerStatus, String> {
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    realtime_worker_start_segment(&app, &state, input, true).await
+}
+
+async fn realtime_worker_start_segment(
+    app: &tauri::AppHandle,
+    state: &DesktopState,
+    input: RealtimeWorkerStartInput,
+    continuation: bool,
+) -> Result<RealtimeWorkerStatus, String> {
     let preferences = DesktopPreferencesStore::new(&state.data_dir)
         .load()
         .map_err(|error| error.to_string())?;
@@ -718,7 +738,7 @@ async fn realtime_worker_start(
         cloud_microphone_upload_consent: input.cloud_microphone_upload_consent,
         cloud_screen_upload_consent: input.cloud_screen_upload_consent,
     };
-    let resolution = resolve_backend_for_state(&state, &preferences, resolution_input)?;
+    let resolution = resolve_backend_for_state(state, &preferences, resolution_input)?;
     if !resolution.available
         || resolution.resolution_token != input.resolution_token
         || resolution.backend != Some(input.backend)
@@ -738,7 +758,7 @@ async fn realtime_worker_start(
         };
     validate_realtime_activation(&preferences, &input, local_ready).map_err(str::to_owned)?;
     let persona_response = call_core(
-        &state,
+        state,
         json!({
             "jsonrpc": "2.0",
             "id": "realtime-persona-snapshot",
@@ -766,15 +786,18 @@ async fn realtime_worker_start(
         ),
         None => None,
     };
-    state
-        .realtime
-        .start(
-            &app,
-            input,
-            credential.map(zeroize::Zeroizing::new),
-            zeroize::Zeroizing::new(persona_snapshot),
-        )
-        .map_err(|error| error.to_string())
+    let credential = credential.map(zeroize::Zeroizing::new);
+    let persona_snapshot = zeroize::Zeroizing::new(persona_snapshot);
+    if continuation {
+        state
+            .realtime
+            .continue_session(app, input, credential, persona_snapshot)
+    } else {
+        state
+            .realtime
+            .start(app, input, credential, persona_snapshot)
+    }
+    .map_err(|error| error.to_string())
 }
 
 fn resolve_backend_for_state(
@@ -5237,6 +5260,7 @@ pub fn run() {
             omni_model_remove,
             realtime_worker_status,
             realtime_worker_start,
+            realtime_worker_continue,
             realtime_backend_resolution_preview,
             realtime_worker_stop,
             realtime_worker_tool_result,
@@ -5433,8 +5457,6 @@ mod realtime_activation_tests {
     fn cloud_input() -> RealtimeWorkerStartInput {
         RealtimeWorkerStartInput {
             session_id: "session-1".to_owned(),
-            segment_id: "segment-1".to_owned(),
-            context_epoch: 1,
             resolution_token: "a".repeat(64),
             locale: "en-AU".to_owned(),
             backend: RealtimeBackendKind::CloudLive,

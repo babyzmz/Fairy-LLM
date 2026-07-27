@@ -144,8 +144,6 @@ export type RealtimeWorkerProvider = "gemini_live" | "glm_realtime_flash" | "glm
 
 export interface RealtimeWorkerStartInput {
   session_id: string;
-  segment_id: string;
-  context_epoch: number;
   resolution_token: string;
   locale: string;
   backend: "local_mini_cpm_o45" | "cloud_live";
@@ -183,6 +181,11 @@ export interface RealtimeBackendResolution {
 export interface RealtimeWorkerStatus {
   running: boolean;
   session_id: string | null;
+  segment_id: string | null;
+  context_epoch: number | null;
+  backend: "local_mini_cpm_o45" | "cloud_live" | null;
+  cloud_provider: RealtimeWorkerProvider | null;
+  action_required: boolean;
   audio_input_ms: number;
   audio_output_ms: number;
   video_frame_count: number;
@@ -237,6 +240,7 @@ export interface CoreTransport {
     input: RealtimeBackendResolutionInput,
   ): Promise<RealtimeBackendResolution>;
   realtimeWorkerStart?(input: RealtimeWorkerStartInput): Promise<RealtimeWorkerStatus>;
+  realtimeWorkerContinue?(input: RealtimeWorkerStartInput): Promise<RealtimeWorkerStatus>;
   realtimeWorkerStop?(sessionId: string): Promise<RealtimeWorkerStatus>;
   realtimeWorkerToolResult?(input: RealtimeWorkerToolResultInput): Promise<void>;
   realtimeWorkerSetInput?(input: RealtimeWorkerSetInputInput): Promise<void>;
@@ -688,6 +692,12 @@ export class CoreClient {
       start: (input: RealtimeWorkerStartInput) => {
         if (!this.transport.realtimeWorkerStart) throw new Error("Realtime requires Fairy desktop");
         return this.transport.realtimeWorkerStart(input);
+      },
+      continue: (input: RealtimeWorkerStartInput) => {
+        if (!this.transport.realtimeWorkerContinue) {
+          throw new Error("Realtime requires Fairy desktop");
+        }
+        return this.transport.realtimeWorkerContinue(input);
       },
       stop: (sessionId: string) => {
         if (!this.transport.realtimeWorkerStop) throw new Error("Realtime requires Fairy desktop");

@@ -452,8 +452,6 @@ export function RealtimeCompanion({
       startedAt.current = Date.now();
       await client.worker.start({
         session_id: created.id,
-        segment_id: crypto.randomUUID(),
-        context_epoch: 1,
         resolution_token: resolution.resolution_token,
         locale: navigator.language || "zh-CN",
         backend: resolution.backend,

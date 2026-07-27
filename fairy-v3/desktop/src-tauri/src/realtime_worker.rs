@@ -16,9 +16,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
+use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::omni_model_manifest::OmniModelManifest;
+use crate::realtime_coordinator::{
+    ContextEpochIdentity, RealtimeCoordinatorEvent, RealtimeCoordinatorStart,
+    RealtimeCoordinatorState,
+};
 
 pub const REALTIME_WORKER_EVENT: &str = "fairy-realtime-event";
 const REALTIME_PROTOCOL: &str = "fairy-realtime-worker-v2";
@@ -48,8 +53,6 @@ impl RealtimeCredentialProvider for RealtimeCloudProviderKind {
 #[derive(Clone, Debug, Deserialize)]
 pub struct RealtimeWorkerStartInput {
     pub session_id: String,
-    pub segment_id: String,
-    pub context_epoch: u64,
     pub resolution_token: String,
     pub locale: String,
     pub backend: RealtimeBackendKind,
@@ -98,6 +101,11 @@ pub struct RealtimeWorkerSetInputInput {
 pub struct RealtimeWorkerStatus {
     pub running: bool,
     pub session_id: Option<String>,
+    pub segment_id: Option<String>,
+    pub context_epoch: Option<u64>,
+    pub backend: Option<RealtimeBackendKind>,
+    pub cloud_provider: Option<RealtimeCloudProviderKind>,
+    pub action_required: bool,
     #[serde(flatten)]
     pub usage: RealtimeWorkerUsage,
 }
@@ -135,6 +143,8 @@ pub struct RealtimeWorkerManager {
     launch: RealtimeWorkerLaunch,
     process: Mutex<Option<WorkerProcess>>,
     usage: Arc<Mutex<RealtimeWorkerUsage>>,
+    active_identity: Arc<Mutex<Option<ContextEpochIdentity>>>,
+    coordinator: Arc<Mutex<Option<RealtimeCoordinatorState>>>,
 }
 
 impl RealtimeWorkerManager {
@@ -143,6 +153,8 @@ impl RealtimeWorkerManager {
             launch,
             process: Mutex::new(None),
             usage: Arc::new(Mutex::new(RealtimeWorkerUsage::default())),
+            active_identity: Arc::new(Mutex::new(None)),
+            coordinator: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -150,12 +162,19 @@ impl RealtimeWorkerManager {
         let mut guard = self.process.lock().expect("realtime worker lock poisoned");
         if guard.as_mut().is_some_and(reap_finished_process) {
             *guard = None;
+            self.cleanup_finished_governance();
         }
+        let projection = self.governance_projection();
         RealtimeWorkerStatus {
             running: guard.is_some(),
             session_id: guard
                 .as_ref()
                 .and_then(|process| process.session_id.clone()),
+            segment_id: projection.as_ref().map(|value| value.0.clone()),
+            context_epoch: projection.as_ref().map(|value| value.1),
+            backend: projection.as_ref().map(|value| value.2),
+            cloud_provider: projection.as_ref().and_then(|value| value.3),
+            action_required: projection.is_some_and(|value| value.4),
             usage: self.usage_snapshot(),
         }
     }
@@ -167,15 +186,38 @@ impl RealtimeWorkerManager {
         credential: Option<Zeroizing<String>>,
         persona_snapshot: Zeroizing<String>,
     ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
+        self.start_segment(app, input, credential, persona_snapshot, false)
+    }
+
+    pub fn continue_session(
+        &self,
+        app: &AppHandle,
+        input: RealtimeWorkerStartInput,
+        credential: Option<Zeroizing<String>>,
+        persona_snapshot: Zeroizing<String>,
+    ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
+        self.start_segment(app, input, credential, persona_snapshot, true)
+    }
+
+    fn start_segment(
+        &self,
+        app: &AppHandle,
+        input: RealtimeWorkerStartInput,
+        credential: Option<Zeroizing<String>>,
+        persona_snapshot: Zeroizing<String>,
+        continuation_approved: bool,
+    ) -> Result<RealtimeWorkerStatus, RealtimeWorkerError> {
         validate_capture_scope(&input)?;
         if input.backend == RealtimeBackendKind::CloudLive && credential.is_none() {
             return Err(RealtimeWorkerError::Protocol);
         }
-        if persona_snapshot.trim().is_empty()
-            || serde_json::from_str::<Value>(&persona_snapshot).is_err()
-        {
-            return Err(RealtimeWorkerError::Protocol);
-        }
+        let persona: Value =
+            serde_json::from_str(&persona_snapshot).map_err(|_| RealtimeWorkerError::Protocol)?;
+        let persona_digest = persona
+            .get("persona_digest")
+            .and_then(Value::as_str)
+            .ok_or(RealtimeWorkerError::Protocol)?
+            .to_owned();
         let mut guard = self
             .process
             .lock()
@@ -189,11 +231,77 @@ impl RealtimeWorkerManager {
         if let Ok(mut usage) = self.usage.lock() {
             *usage = RealtimeWorkerUsage::default();
         }
-        let mut process = spawn_worker(&self.launch, app.clone(), Arc::clone(&self.usage))?;
+        let segment_id = Uuid::new_v4().to_string();
+        let existing = self
+            .coordinator
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?
+            .clone();
+        let previous_governance = existing.clone();
+        let coordinator = if let Some(mut coordinator) = existing {
+            if !continuation_approved
+                || !coordinator.action_required()
+                || coordinator.active_identity().session_id != input.session_id
+                || coordinator.persona_digest() != persona_digest
+            {
+                return Err(RealtimeWorkerError::Protocol);
+            }
+            coordinator
+                .apply(RealtimeCoordinatorEvent::UserApprovedBackendChange {
+                    segment_id: segment_id.clone(),
+                    backend: input.backend,
+                    cloud_provider: input.cloud_provider,
+                    persona_digest,
+                })
+                .map_err(|_| RealtimeWorkerError::Protocol)?;
+            coordinator
+        } else {
+            if continuation_approved {
+                return Err(RealtimeWorkerError::Protocol);
+            }
+            RealtimeCoordinatorState::start(RealtimeCoordinatorStart {
+                session_id: input.session_id.clone(),
+                segment_id: segment_id.clone(),
+                persona_digest,
+                backend: input.backend,
+                cloud_provider: input.cloud_provider,
+                activity_profile: input.activity_profile,
+                interaction_intensity: input.interaction_intensity,
+                presence_max_minutes: 0,
+            })
+            .map_err(|_| RealtimeWorkerError::Protocol)?
+        };
+        let identity = coordinator.active_identity().clone();
+        if let Ok(mut active) = self.active_identity.lock() {
+            *active = Some(identity.clone());
+        } else {
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        let mut process = match spawn_worker(
+            &self.launch,
+            app.clone(),
+            Arc::clone(&self.usage),
+            Arc::clone(&self.active_identity),
+            Arc::clone(&self.coordinator),
+        ) {
+            Ok(process) => process,
+            Err(error) => {
+                self.restore_governance(previous_governance);
+                return Err(error);
+            }
+        };
+        if let Ok(mut state) = self.coordinator.lock() {
+            *state = Some(coordinator);
+        } else {
+            let _ = process.child.kill();
+            let _ = process.child.wait();
+            self.restore_governance(previous_governance);
+            return Err(RealtimeWorkerError::Protocol);
+        }
         let command = HostCommand::Start {
             session_id: input.session_id.clone(),
-            segment_id: input.segment_id,
-            context_epoch: input.context_epoch,
+            segment_id,
+            context_epoch: identity.epoch,
             backend: input.backend,
             cloud_provider: input.cloud_provider,
             cloud_credential: credential.map(SecretString::from),
@@ -212,12 +320,18 @@ impl RealtimeWorkerManager {
         if send_command(&process.input, &command).is_err() {
             let _ = process.child.kill();
             let _ = process.child.wait();
+            self.restore_governance(previous_governance);
             return Err(RealtimeWorkerError::Protocol);
         }
         process.session_id = Some(input.session_id);
         let status = RealtimeWorkerStatus {
             running: true,
             session_id: process.session_id.clone(),
+            segment_id: Some(identity.segment_id),
+            context_epoch: Some(identity.epoch),
+            backend: Some(input.backend),
+            cloud_provider: input.cloud_provider,
+            action_required: false,
             usage: self.usage_snapshot(),
         };
         *guard = Some(process);
@@ -230,9 +344,15 @@ impl RealtimeWorkerManager {
             .lock()
             .map_err(|_| RealtimeWorkerError::Protocol)?;
         let Some(mut process) = guard.take() else {
+            self.finish_governance();
             return Ok(RealtimeWorkerStatus {
                 running: false,
                 session_id: None,
+                segment_id: None,
+                context_epoch: None,
+                backend: None,
+                cloud_provider: None,
+                action_required: false,
                 usage: self.usage_snapshot(),
             });
         };
@@ -250,9 +370,15 @@ impl RealtimeWorkerManager {
         let deadline = Instant::now() + WORKER_STOP_GRACE;
         while Instant::now() < deadline {
             if process.child.try_wait()?.is_some() {
+                self.finish_governance();
                 return Ok(RealtimeWorkerStatus {
                     running: false,
                     session_id: None,
+                    segment_id: None,
+                    context_epoch: None,
+                    backend: None,
+                    cloud_provider: None,
+                    action_required: false,
                     usage: self.usage_snapshot(),
                 });
             }
@@ -260,9 +386,15 @@ impl RealtimeWorkerManager {
         }
         let _ = process.child.kill();
         let _ = process.child.wait();
+        self.finish_governance();
         Ok(RealtimeWorkerStatus {
             running: false,
             session_id: None,
+            segment_id: None,
+            context_epoch: None,
+            backend: None,
+            cloud_provider: None,
+            action_required: false,
             usage: self.usage_snapshot(),
         })
     }
@@ -315,13 +447,75 @@ impl RealtimeWorkerManager {
             .map(|usage| usage.clone())
             .unwrap_or_default()
     }
+
+    fn finish_governance(&self) {
+        if let Ok(mut coordinator) = self.coordinator.lock() {
+            if let Some(state) = coordinator.as_mut() {
+                let _ = state.apply(RealtimeCoordinatorEvent::End);
+            }
+            *coordinator = None;
+        }
+        if let Ok(mut active) = self.active_identity.lock() {
+            *active = None;
+        }
+    }
+
+    fn restore_governance(&self, coordinator: Option<RealtimeCoordinatorState>) {
+        let identity = coordinator
+            .as_ref()
+            .map(|state| state.active_identity().clone());
+        if let Ok(mut state) = self.coordinator.lock() {
+            *state = coordinator;
+        }
+        if let Ok(mut active) = self.active_identity.lock() {
+            *active = identity;
+        }
+    }
+
+    fn cleanup_finished_governance(&self) {
+        let action_required = self
+            .coordinator
+            .lock()
+            .ok()
+            .and_then(|state| {
+                state
+                    .as_ref()
+                    .map(RealtimeCoordinatorState::action_required)
+            })
+            .unwrap_or(false);
+        if !action_required {
+            self.finish_governance();
+        }
+    }
+
+    fn governance_projection(
+        &self,
+    ) -> Option<(
+        String,
+        u64,
+        RealtimeBackendKind,
+        Option<RealtimeCloudProviderKind>,
+        bool,
+    )> {
+        self.coordinator.lock().ok().and_then(|state| {
+            state.as_ref().map(|state| {
+                (
+                    state.active_identity().segment_id.clone(),
+                    state.active_identity().epoch,
+                    state.active_segment().backend,
+                    state.active_segment().cloud_provider,
+                    state.action_required(),
+                )
+            })
+        })
+    }
 }
 
 fn validate_capture_scope(input: &RealtimeWorkerStartInput) -> Result<(), RealtimeWorkerError> {
     validate_backend_start(&BackendStartRequest {
         session_id: input.session_id.clone(),
-        segment_id: input.segment_id.clone(),
-        context_epoch: input.context_epoch,
+        segment_id: "tauri-pending-segment".to_owned(),
+        context_epoch: 1,
         backend: input.backend,
         cloud_provider: input.cloud_provider,
         cloud_credential_present: input.backend == RealtimeBackendKind::CloudLive,
@@ -348,6 +542,7 @@ impl Drop for RealtimeWorkerManager {
             }
             *guard = None;
         }
+        self.finish_governance();
     }
 }
 
@@ -355,6 +550,8 @@ fn spawn_worker(
     launch: &RealtimeWorkerLaunch,
     app: AppHandle,
     usage: Arc<Mutex<RealtimeWorkerUsage>>,
+    active_identity: Arc<Mutex<Option<ContextEpochIdentity>>>,
+    coordinator: Arc<Mutex<Option<RealtimeCoordinatorState>>>,
 ) -> Result<WorkerProcess, RealtimeWorkerError> {
     if !launch.program.is_file() {
         return Err(RealtimeWorkerError::Unavailable);
@@ -402,8 +599,21 @@ fn spawn_worker(
         loop {
             match read_frame::<Value>(&mut reader) {
                 Ok(Some(value)) => {
+                    if !worker_event_matches_active_identity(&value, &active_identity) {
+                        continue;
+                    }
                     if is_terminal_worker_event(&value) {
                         reader_terminal.store(true, Ordering::Release);
+                    }
+                    let backend_failed = value.get("type").and_then(Value::as_str)
+                        == Some("session_state")
+                        && value.get("status").and_then(Value::as_str) == Some("failed");
+                    if backend_failed {
+                        if let Ok(mut state) = coordinator.lock() {
+                            if let Some(state) = state.as_mut() {
+                                let _ = state.apply(RealtimeCoordinatorEvent::BackendFailed);
+                            }
+                        }
                     }
                     if value.get("type").and_then(Value::as_str) == Some("usage") {
                         if let Ok(next) =
@@ -445,6 +655,25 @@ fn spawn_worker(
             Err(RealtimeWorkerError::Protocol)
         }
     }
+}
+
+fn worker_event_matches_active_identity(
+    value: &Value,
+    active_identity: &Mutex<Option<ContextEpochIdentity>>,
+) -> bool {
+    let event_type = value.get("type").and_then(Value::as_str);
+    if matches!(event_type, Some("ready" | "pong" | "worker_interrupted")) {
+        return true;
+    }
+    let Ok(active) = active_identity.lock() else {
+        return false;
+    };
+    let Some(active) = active.as_ref() else {
+        return false;
+    };
+    value.get("session_id").and_then(Value::as_str) == Some(active.session_id.as_str())
+        && value.get("segment_id").and_then(Value::as_str) == Some(active.segment_id.as_str())
+        && value.get("context_epoch").and_then(Value::as_u64) == Some(active.epoch)
 }
 
 fn reap_finished_process(process: &mut WorkerProcess) -> bool {
@@ -563,8 +792,6 @@ mod tests {
     fn capture_and_process_audio_require_one_selected_window() {
         let mut input = RealtimeWorkerStartInput {
             session_id: "session-1".to_owned(),
-            segment_id: "segment-1".to_owned(),
-            context_epoch: 1,
             resolution_token: "a".repeat(64),
             locale: "en-AU".to_owned(),
             backend: RealtimeBackendKind::CloudLive,
@@ -613,5 +840,41 @@ mod tests {
             "session_id": "session-1",
             "state": "completed"
         })));
+    }
+
+    #[test]
+    fn worker_events_are_fenced_by_tauri_owned_segment_identity() {
+        let identity = Mutex::new(Some(ContextEpochIdentity {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            epoch: 2,
+        }));
+        assert!(worker_event_matches_active_identity(
+            &serde_json::json!({
+                "type": "presence",
+                "session_id": "session-1",
+                "segment_id": "segment-1",
+                "context_epoch": 2
+            }),
+            &identity,
+        ));
+        assert!(!worker_event_matches_active_identity(
+            &serde_json::json!({
+                "type": "public_caption",
+                "session_id": "session-1",
+                "segment_id": "stale-segment",
+                "context_epoch": 2
+            }),
+            &identity,
+        ));
+        assert!(!worker_event_matches_active_identity(
+            &serde_json::json!({
+                "type": "usage",
+                "session_id": "session-1",
+                "segment_id": "segment-1",
+                "context_epoch": 1
+            }),
+            &identity,
+        ));
     }
 }

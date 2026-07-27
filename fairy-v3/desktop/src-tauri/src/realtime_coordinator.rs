@@ -1,5 +1,6 @@
 use fairy_realtime_worker::{
-    RealtimeActivityProfile, RealtimeBackendKind, RealtimeInteractionIntensity,
+    RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
+    RealtimeInteractionIntensity,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -12,6 +13,7 @@ pub struct RealtimeCoordinatorStart {
     pub segment_id: String,
     pub persona_digest: String,
     pub backend: RealtimeBackendKind,
+    pub cloud_provider: Option<RealtimeCloudProviderKind>,
     pub activity_profile: RealtimeActivityProfile,
     pub interaction_intensity: RealtimeInteractionIntensity,
     pub presence_max_minutes: u16,
@@ -22,6 +24,23 @@ pub struct ContextEpochIdentity {
     pub session_id: String,
     pub segment_id: String,
     pub epoch: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendSegmentCreationReason {
+    InitialResolution,
+    UserApprovedContinuation,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BackendSegmentState {
+    pub segment_id: String,
+    pub ordinal: u32,
+    pub backend: RealtimeBackendKind,
+    pub cloud_provider: Option<RealtimeCloudProviderKind>,
+    pub persona_digest: String,
+    pub creation_reason: BackendSegmentCreationReason,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -42,6 +61,7 @@ pub enum RealtimeCoordinatorEvent {
     UserApprovedBackendChange {
         segment_id: String,
         backend: RealtimeBackendKind,
+        cloud_provider: Option<RealtimeCloudProviderKind>,
         persona_digest: String,
     },
     SetProfile {
@@ -53,6 +73,7 @@ pub enum RealtimeCoordinatorEvent {
         additional_minutes: u16,
     },
     End,
+    BackendFailed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
@@ -83,11 +104,13 @@ pub struct RealtimeCoordinatorState {
     identity: ContextEpochIdentity,
     persona_digest: String,
     backend: RealtimeBackendKind,
+    segment: BackendSegmentState,
     activity_profile: RealtimeActivityProfile,
     interaction_intensity: RealtimeInteractionIntensity,
     presence_max_minutes: u16,
     status: RealtimeCoordinatorStatus,
     media_generation_enabled: bool,
+    action_required: bool,
 }
 
 impl RealtimeCoordinatorState {
@@ -95,18 +118,29 @@ impl RealtimeCoordinatorState {
         if !valid_identifier(&request.session_id)
             || !valid_identifier(&request.segment_id)
             || !valid_digest(&request.persona_digest)
+            || !backend_provider_valid(request.backend, request.cloud_provider)
         {
             return Err(RealtimeCoordinatorError::InvalidStart);
         }
 
+        let segment_id = request.segment_id;
+        let persona_digest = request.persona_digest;
         Ok(Self {
             identity: ContextEpochIdentity {
                 session_id: request.session_id,
-                segment_id: request.segment_id,
+                segment_id: segment_id.clone(),
                 epoch: 1,
             },
-            persona_digest: request.persona_digest,
+            persona_digest: persona_digest.clone(),
             backend: request.backend,
+            segment: BackendSegmentState {
+                segment_id,
+                ordinal: 1,
+                backend: request.backend,
+                cloud_provider: request.cloud_provider,
+                persona_digest,
+                creation_reason: BackendSegmentCreationReason::InitialResolution,
+            },
             activity_profile: request.activity_profile,
             interaction_intensity: request.interaction_intensity,
             presence_max_minutes: if request.presence_max_minutes == 0 {
@@ -116,6 +150,7 @@ impl RealtimeCoordinatorState {
             },
             status: RealtimeCoordinatorStatus::Active,
             media_generation_enabled: true,
+            action_required: false,
         })
     }
 
@@ -135,6 +170,7 @@ impl RealtimeCoordinatorState {
             RealtimeCoordinatorEvent::UserApprovedBackendChange {
                 segment_id,
                 backend,
+                cloud_provider,
                 persona_digest,
             } => {
                 self.require_active()?;
@@ -144,9 +180,26 @@ impl RealtimeCoordinatorState {
                 if !valid_identifier(&segment_id) || segment_id == self.identity.segment_id {
                     return Err(RealtimeCoordinatorError::InvalidTransition);
                 }
+                if !backend_provider_valid(backend, cloud_provider) {
+                    return Err(RealtimeCoordinatorError::InvalidTransition);
+                }
                 self.identity.segment_id = segment_id;
                 self.identity.epoch = 1;
                 self.backend = backend;
+                self.segment = BackendSegmentState {
+                    segment_id: self.identity.segment_id.clone(),
+                    ordinal: self
+                        .segment
+                        .ordinal
+                        .checked_add(1)
+                        .ok_or(RealtimeCoordinatorError::InvalidTransition)?,
+                    backend,
+                    cloud_provider,
+                    persona_digest,
+                    creation_reason: BackendSegmentCreationReason::UserApprovedContinuation,
+                };
+                self.action_required = false;
+                self.media_generation_enabled = true;
                 Ok(())
             }
             RealtimeCoordinatorEvent::SetProfile { profile } => {
@@ -187,6 +240,12 @@ impl RealtimeCoordinatorState {
                 self.media_generation_enabled = false;
                 Ok(())
             }
+            RealtimeCoordinatorEvent::BackendFailed => {
+                self.require_active()?;
+                self.action_required = true;
+                self.media_generation_enabled = false;
+                Ok(())
+            }
         }
     }
 
@@ -196,6 +255,18 @@ impl RealtimeCoordinatorState {
 
     pub fn backend(&self) -> RealtimeBackendKind {
         self.backend
+    }
+
+    pub fn active_segment(&self) -> &BackendSegmentState {
+        &self.segment
+    }
+
+    pub fn action_required(&self) -> bool {
+        self.action_required
+    }
+
+    pub fn persona_digest(&self) -> &str {
+        &self.persona_digest
     }
 
     pub fn media_generation_enabled(&self) -> bool {
@@ -208,6 +279,7 @@ impl RealtimeCoordinatorState {
 
     pub fn accepts_result(&self, session_id: &str, segment_id: &str, epoch: u64) -> bool {
         self.status == RealtimeCoordinatorStatus::Active
+            && !self.action_required
             && self.identity.session_id == session_id
             && self.identity.segment_id == segment_id
             && self.identity.epoch == epoch
@@ -235,6 +307,16 @@ fn valid_identifier(value: &str) -> bool {
     !value.trim().is_empty()
 }
 
+fn backend_provider_valid(
+    backend: RealtimeBackendKind,
+    provider: Option<RealtimeCloudProviderKind>,
+) -> bool {
+    match backend {
+        RealtimeBackendKind::LocalMiniCpmO45 => provider.is_none(),
+        RealtimeBackendKind::CloudLive => provider.is_some(),
+    }
+}
+
 fn valid_digest(value: &str) -> bool {
     value.len() == 64
         && value
@@ -252,6 +334,7 @@ mod tests {
             segment_id: "segment-1".to_owned(),
             persona_digest: "a".repeat(64),
             backend: RealtimeBackendKind::CloudLive,
+            cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
             activity_profile: RealtimeActivityProfile::Auto,
             interaction_intensity: RealtimeInteractionIntensity::Standard,
             presence_max_minutes: 240,
@@ -280,6 +363,7 @@ mod tests {
             .apply(RealtimeCoordinatorEvent::UserApprovedBackendChange {
                 segment_id: "segment-2".to_owned(),
                 backend: RealtimeBackendKind::LocalMiniCpmO45,
+                cloud_provider: None,
                 persona_digest: "a".repeat(64),
             })
             .expect("backend change");
@@ -296,6 +380,7 @@ mod tests {
             state.apply(RealtimeCoordinatorEvent::UserApprovedBackendChange {
                 segment_id: "segment-2".to_owned(),
                 backend: RealtimeBackendKind::LocalMiniCpmO45,
+                cloud_provider: None,
                 persona_digest: "b".repeat(64),
             }),
             Err(RealtimeCoordinatorError::PersonaMismatch)
@@ -304,6 +389,7 @@ mod tests {
             state.apply(RealtimeCoordinatorEvent::UserApprovedBackendChange {
                 segment_id: "segment-1".to_owned(),
                 backend: RealtimeBackendKind::LocalMiniCpmO45,
+                cloud_provider: None,
                 persona_digest: "a".repeat(64),
             }),
             Err(RealtimeCoordinatorError::InvalidTransition)
@@ -357,5 +443,32 @@ mod tests {
             })
             .expect("extend");
         assert_eq!(state.presence_max_minutes(), 300);
+    }
+
+    #[test]
+    fn backend_failure_requires_an_explicit_new_segment() {
+        let mut state = RealtimeCoordinatorState::start(start_request()).expect("start");
+        let failed = state.active_identity().clone();
+        state
+            .apply(RealtimeCoordinatorEvent::BackendFailed)
+            .expect("failure");
+        assert!(state.action_required());
+        assert!(!state.media_generation_enabled());
+        assert!(!state.accepts_result(&failed.session_id, &failed.segment_id, failed.epoch));
+
+        state
+            .apply(RealtimeCoordinatorEvent::UserApprovedBackendChange {
+                segment_id: "segment-2".to_owned(),
+                backend: RealtimeBackendKind::LocalMiniCpmO45,
+                cloud_provider: None,
+                persona_digest: "a".repeat(64),
+            })
+            .expect("explicit continuation");
+        assert!(!state.action_required());
+        assert_eq!(state.active_segment().ordinal, 2);
+        assert_eq!(
+            state.active_segment().creation_reason,
+            BackendSegmentCreationReason::UserApprovedContinuation
+        );
     }
 }
