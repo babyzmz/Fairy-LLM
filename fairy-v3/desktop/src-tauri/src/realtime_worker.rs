@@ -50,6 +50,7 @@ pub struct RealtimeWorkerStartInput {
     pub session_id: String,
     pub segment_id: String,
     pub context_epoch: u64,
+    pub resolution_token: String,
     pub locale: String,
     pub backend: RealtimeBackendKind,
     pub cloud_provider: Option<RealtimeCloudProviderKind>,
@@ -61,6 +62,8 @@ pub struct RealtimeWorkerStartInput {
     pub screen_enabled: bool,
     pub application_audio_enabled: bool,
     pub online_assistance_enabled: bool,
+    pub cloud_microphone_upload_consent: bool,
+    pub cloud_screen_upload_consent: bool,
 }
 
 impl RealtimeWorkerStartInput {
@@ -562,6 +565,7 @@ mod tests {
             session_id: "session-1".to_owned(),
             segment_id: "segment-1".to_owned(),
             context_epoch: 1,
+            resolution_token: "a".repeat(64),
             locale: "en-AU".to_owned(),
             backend: RealtimeBackendKind::CloudLive,
             cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
@@ -573,6 +577,8 @@ mod tests {
             screen_enabled: true,
             application_audio_enabled: false,
             online_assistance_enabled: false,
+            cloud_microphone_upload_consent: true,
+            cloud_screen_upload_consent: true,
         };
         assert!(validate_capture_scope(&input).is_err());
 

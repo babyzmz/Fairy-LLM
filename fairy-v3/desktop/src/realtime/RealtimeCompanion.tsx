@@ -416,7 +416,19 @@ export function RealtimeCompanion({
     setMemory(null);
     try {
       const priorMinutes = await todaysRealtimeMinutes(client);
-      if (priorMinutes >= preferences.realtime_cloud_daily_limit_minutes) {
+      const resolution = await client.worker.preview({
+        activity_profile: preferences.realtime_activity_profile,
+        voice_output: preferences.realtime_voice_output,
+        cloud_microphone_upload_consent: microphoneConsent,
+        cloud_screen_upload_consent: screenConsent,
+      });
+      if (!resolution.available || resolution.backend === null) {
+        throw new Error(resolution.reason ?? "REALTIME_BACKEND_UNAVAILABLE");
+      }
+      if (
+        resolution.backend === "cloud_live"
+        && priorMinutes >= preferences.realtime_cloud_daily_limit_minutes
+      ) {
         setError(
           `Daily realtime limit reached (${preferences.realtime_cloud_daily_limit_minutes} min). Start a new session tomorrow to control provider cost.`,
         );
@@ -425,7 +437,9 @@ export function RealtimeCompanion({
       const created = await client.sessions.start({
         device_id: deviceId(),
         conversation_id: null,
-        provider: preferences.realtime_cloud_provider,
+        provider: resolution.backend === "local_mini_cpm_o45"
+          ? "local_mini_cpm_o45"
+          : preferences.realtime_cloud_provider,
         locale: navigator.language || "zh-CN",
         voice_mode: preferences.realtime_voice_output === "fairy_voice" ? "fairy" : "native",
         memory_mode: preferences.realtime_memory_enabled ? "progress_digest" : "none",
@@ -440,9 +454,10 @@ export function RealtimeCompanion({
         session_id: created.id,
         segment_id: crypto.randomUUID(),
         context_epoch: 1,
+        resolution_token: resolution.resolution_token,
         locale: navigator.language || "zh-CN",
-        backend: "cloud_live",
-        cloud_provider: preferences.realtime_cloud_provider,
+        backend: resolution.backend,
+        cloud_provider: resolution.cloud_provider,
         activity_profile: preferences.realtime_activity_profile,
         interaction_intensity: preferences.realtime_interaction_intensity,
         voice_output: preferences.realtime_voice_output,
@@ -451,6 +466,8 @@ export function RealtimeCompanion({
         screen_enabled: true,
         application_audio_enabled: applicationAudioConsent,
         online_assistance_enabled: preferences.realtime_online_assistance_enabled,
+        cloud_microphone_upload_consent: microphoneConsent,
+        cloud_screen_upload_consent: screenConsent,
       });
       setPresence("connecting");
     } catch (caught) {

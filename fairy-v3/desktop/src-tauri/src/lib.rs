@@ -47,6 +47,10 @@ use presence_renderer_supervisor::{
 use presence_startup::PresenceStartupGate;
 use provider_configuration::{openrouter_profiles_json, ProviderConfigurationStore};
 use provider_credentials::{CredentialReplacement, ProviderCredentialStore};
+use realtime_backend_resolver::{
+    map_cloud_provider, resolve_realtime_backend, RealtimeBackendResolution,
+    RealtimeBackendResolutionFacts, RealtimeBackendResolutionInput,
+};
 use realtime_worker::{
     bundled_realtime_launch, development_realtime_launch, RealtimeWorkerManager,
     RealtimeWorkerSetInputInput, RealtimeWorkerStartInput, RealtimeWorkerStatus,
@@ -87,6 +91,7 @@ pub mod presence_window_policy;
 mod process_lifetime;
 pub mod provider_configuration;
 pub mod provider_credentials;
+pub mod realtime_backend_resolver;
 pub mod realtime_coordinator;
 pub mod realtime_worker;
 pub mod voice_worker;
@@ -707,6 +712,20 @@ async fn realtime_worker_start(
     let preferences = DesktopPreferencesStore::new(&state.data_dir)
         .load()
         .map_err(|error| error.to_string())?;
+    let resolution_input = RealtimeBackendResolutionInput {
+        activity_profile: input.activity_profile,
+        voice_output: input.voice_output,
+        cloud_microphone_upload_consent: input.cloud_microphone_upload_consent,
+        cloud_screen_upload_consent: input.cloud_screen_upload_consent,
+    };
+    let resolution = resolve_backend_for_state(&state, &preferences, resolution_input)?;
+    if !resolution.available
+        || resolution.resolution_token != input.resolution_token
+        || resolution.backend != Some(input.backend)
+        || resolution.cloud_provider != input.cloud_provider
+    {
+        return Err("REALTIME_RESOLUTION_STALE".to_owned());
+    }
     let local_ready =
         if input.backend == fairy_realtime_worker::RealtimeBackendKind::LocalMiniCpmO45 {
             state
@@ -756,6 +775,66 @@ async fn realtime_worker_start(
             zeroize::Zeroizing::new(persona_snapshot),
         )
         .map_err(|error| error.to_string())
+}
+
+fn resolve_backend_for_state(
+    state: &DesktopState,
+    preferences: &DesktopPreferences,
+    input: RealtimeBackendResolutionInput,
+) -> Result<RealtimeBackendResolution, String> {
+    use desktop_preferences::RealtimeBackendPreference;
+    use hardware_capabilities::LocalBetaReadinessReason;
+
+    let needs_local = matches!(
+        preferences.realtime_backend,
+        RealtimeBackendPreference::Auto | RealtimeBackendPreference::LocalMiniCpmO45
+    );
+    let (local_ready, local_reason) = if needs_local {
+        let readiness = state.local_model.readiness(input.activity_profile, false)?;
+        (
+            readiness.capability.local_beta_eligible,
+            readiness.capability.reason,
+        )
+    } else {
+        (false, LocalBetaReadinessReason::ModelMissing)
+    };
+    let needs_cloud = preferences.realtime_backend == RealtimeBackendPreference::CloudLive
+        || preferences.realtime_allow_cloud_fallback;
+    let cloud_credential_ready = if needs_cloud {
+        let provider = match map_cloud_provider(preferences.realtime_cloud_provider) {
+            fairy_realtime_worker::RealtimeCloudProviderKind::GeminiLive => "gemini",
+            fairy_realtime_worker::RealtimeCloudProviderKind::GlmRealtimeFlash
+            | fairy_realtime_worker::RealtimeCloudProviderKind::GlmRealtimeAir => "zhipu",
+        };
+        ProviderCredentialStore::new(&state.data_dir)
+            .hint_for(provider)
+            .map_err(|error| error.to_string())?
+            .is_some()
+    } else {
+        false
+    };
+    Ok(resolve_realtime_backend(
+        preferences,
+        input,
+        RealtimeBackendResolutionFacts {
+            local_ready,
+            local_reason,
+            cloud_credential_ready,
+        },
+    ))
+}
+
+#[tauri::command]
+async fn realtime_backend_resolution_preview(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: RealtimeBackendResolutionInput,
+) -> Result<RealtimeBackendResolution, String> {
+    authorize_realtime_window(window.label()).map_err(|_| "Window is not authorized".to_owned())?;
+    let preferences = DesktopPreferencesStore::new(&state.data_dir)
+        .load()
+        .map_err(|error| error.to_string())?;
+    resolve_backend_for_state(&state, &preferences, input)
 }
 
 #[tauri::command]
@@ -5158,6 +5237,7 @@ pub fn run() {
             omni_model_remove,
             realtime_worker_status,
             realtime_worker_start,
+            realtime_backend_resolution_preview,
             realtime_worker_stop,
             realtime_worker_tool_result,
             realtime_worker_set_input,
@@ -5355,6 +5435,7 @@ mod realtime_activation_tests {
             session_id: "session-1".to_owned(),
             segment_id: "segment-1".to_owned(),
             context_epoch: 1,
+            resolution_token: "a".repeat(64),
             locale: "en-AU".to_owned(),
             backend: RealtimeBackendKind::CloudLive,
             cloud_provider: Some(RealtimeCloudProviderKind::GeminiLive),
@@ -5366,6 +5447,8 @@ mod realtime_activation_tests {
             screen_enabled: true,
             application_audio_enabled: false,
             online_assistance_enabled: false,
+            cloud_microphone_upload_consent: true,
+            cloud_screen_upload_consent: true,
         }
     }
 

@@ -146,6 +146,7 @@ export interface RealtimeWorkerStartInput {
   session_id: string;
   segment_id: string;
   context_epoch: number;
+  resolution_token: string;
   locale: string;
   backend: "local_mini_cpm_o45" | "cloud_live";
   cloud_provider: RealtimeWorkerProvider | null;
@@ -157,6 +158,26 @@ export interface RealtimeWorkerStartInput {
   screen_enabled: boolean;
   application_audio_enabled: boolean;
   online_assistance_enabled: boolean;
+  cloud_microphone_upload_consent: boolean;
+  cloud_screen_upload_consent: boolean;
+}
+
+export interface RealtimeBackendResolutionInput {
+  activity_profile: "auto" | "game" | "focus";
+  voice_output: "fairy_voice" | "provider_native_voice" | "text_only";
+  cloud_microphone_upload_consent: boolean;
+  cloud_screen_upload_consent: boolean;
+}
+
+export interface RealtimeBackendResolution {
+  schema_version: 1;
+  resolution_token: string;
+  available: boolean;
+  backend: "local_mini_cpm_o45" | "cloud_live" | null;
+  cloud_provider: RealtimeWorkerProvider | null;
+  reason: string | null;
+  requires_cloud_upload_consent: boolean;
+  preference_revision: number;
 }
 
 export interface RealtimeWorkerStatus {
@@ -212,6 +233,9 @@ export interface CoreTransport {
     provider: RealtimeCredentialProvider,
   ): Promise<RealtimeProviderCredentialStatus>;
   realtimeWorkerStatus?(): Promise<RealtimeWorkerStatus>;
+  realtimeBackendResolutionPreview?(
+    input: RealtimeBackendResolutionInput,
+  ): Promise<RealtimeBackendResolution>;
   realtimeWorkerStart?(input: RealtimeWorkerStartInput): Promise<RealtimeWorkerStatus>;
   realtimeWorkerStop?(sessionId: string): Promise<RealtimeWorkerStatus>;
   realtimeWorkerToolResult?(input: RealtimeWorkerToolResultInput): Promise<void>;
@@ -651,6 +675,12 @@ export class CoreClient {
         this.transport.call("realtime.transcript.list", input),
     },
     worker: {
+      preview: (input: RealtimeBackendResolutionInput) => {
+        if (!this.transport.realtimeBackendResolutionPreview) {
+          throw new Error("Realtime requires Fairy desktop");
+        }
+        return this.transport.realtimeBackendResolutionPreview(input);
+      },
       status: () => {
         if (!this.transport.realtimeWorkerStatus) throw new Error("Realtime requires Fairy desktop");
         return this.transport.realtimeWorkerStatus();

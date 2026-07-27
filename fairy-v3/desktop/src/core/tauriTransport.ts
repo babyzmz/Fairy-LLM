@@ -8,6 +8,8 @@ import type {
   OpenRouterConfigurationInput,
   OpenRouterConfigurationStatus,
   RealtimeCredentialProvider,
+  RealtimeBackendResolution,
+  RealtimeBackendResolutionInput,
   RealtimeProviderCredentialInput,
   RealtimeProviderCredentialStatus,
   RealtimeWorkerSetInputInput,
@@ -119,6 +121,12 @@ export class TauriCoreTransport implements CoreTransport {
 
   realtimeWorkerStatus(): Promise<RealtimeWorkerStatus> {
     return this.invoke("realtime_worker_status");
+  }
+
+  realtimeBackendResolutionPreview(
+    input: RealtimeBackendResolutionInput,
+  ): Promise<RealtimeBackendResolution> {
+    return this.invoke("realtime_backend_resolution_preview", { input });
   }
 
   realtimeWorkerStart(input: RealtimeWorkerStartInput): Promise<RealtimeWorkerStatus> {
