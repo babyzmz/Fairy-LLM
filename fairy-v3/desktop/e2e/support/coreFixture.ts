@@ -1474,6 +1474,102 @@ async function installCoreFixture(page: Page) {
         view: "workspace",
         settings_category: null as string | null,
       };
+      const localReadiness = () => {
+        const gib = 1_073_741_824;
+        const variant =
+          new URLSearchParams(window.location.search).get("localReadiness") ??
+          "runtime-missing";
+        const report = {
+          schema_version: 1,
+          profile: "auto",
+          hardware_cached: false,
+          hardware: {
+            schema_version: 1,
+            windows_supported: true,
+            architecture_x64: true,
+            avx2_available: true,
+            system_total_bytes: 32 * gib,
+            disk_available_bytes: 40 * gib,
+            adapter: {
+              name: "NVIDIA GeForce RTX 4090",
+              vendor: "nvidia",
+              vendor_id: 0x10de,
+              dedicated_vram_bytes: 24 * gib,
+              budget_bytes: 22 * gib,
+              current_usage_bytes: 2 * gib,
+              luid: "00000000:00000001",
+            },
+            cuda: {
+              available: true,
+              driver_api_version: 12_080,
+              driver_compatible: true,
+              device_count: 1,
+              matched_device_ordinal: 0,
+              adapter_luid_matches: true,
+              error_code: null as string | null,
+            },
+            error_code: null as string | null,
+          },
+          model: {
+            schema_version: 1,
+            sequence: 4,
+            phase: "runtime_missing",
+            model_version: "4.5-q4-502eec5",
+            manifest_digest: "a".repeat(64),
+            current_file: null as string | null,
+            received_bytes: 6_781_995_488,
+            total_bytes: 6_781_995_488,
+            error_code: "OMNI_RUNTIME_MISSING" as string | null,
+          },
+          model_shallow_present: true,
+          model_install_required_bytes: 5 * gib,
+          runtime: "missing",
+          runtime_error_code: "OMNI_RUNTIME_MISSING" as string | null,
+          capability: {
+            schema_version: 1,
+            static_eligible: true,
+            local_beta_eligible: false,
+            reason: "runtime_missing",
+            available_budget_bytes: 20 * gib,
+            required_budget_bytes: 15 * gib,
+            warnings: [] as string[],
+          },
+        };
+        if (variant === "unsupported") {
+          report.hardware.adapter.dedicated_vram_bytes = 12 * gib;
+          report.capability.static_eligible = false;
+          report.capability.reason = "vram_below16gb";
+        } else if (variant === "installable") {
+          report.model.phase = "not_installed";
+          report.model.received_bytes = 0;
+          report.model.error_code = null;
+          report.model_shallow_present = false;
+          report.model_install_required_bytes = report.model.total_bytes + 7 * gib;
+          report.capability.reason = "model_missing";
+        } else if (variant === "downloading") {
+          report.model.phase = "downloading";
+          report.model.current_file = "MiniCPM-o-4_5-Q4_K_M.gguf";
+          report.model.received_bytes = Math.round(report.model.total_bytes * 0.42);
+          report.model.error_code = null;
+          report.model_shallow_present = false;
+          report.capability.reason = "model_missing";
+        } else if (variant === "temporary") {
+          report.model.phase = "ready";
+          report.model.error_code = null;
+          report.runtime = "passed";
+          report.runtime_error_code = null;
+          report.capability.reason = "insufficient_free_vram";
+          report.capability.available_budget_bytes = 10 * gib;
+        } else if (variant === "ready") {
+          report.model.phase = "ready";
+          report.model.error_code = null;
+          report.runtime = "passed";
+          report.runtime_error_code = null;
+          report.capability.reason = "eligible";
+          report.capability.local_beta_eligible = true;
+        }
+        return report;
+      };
       const browserSession = (status: "active" | "stopped" = "active") => ({
         id: browserSessionId,
         project_id: id.project,
@@ -1630,6 +1726,28 @@ async function installCoreFixture(page: Page) {
               params: input as unknown as Record<string, unknown>,
             });
             return desktopPreferences;
+          }
+          if (command === "realtime_local_readiness_get") {
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: "realtime.local.readiness.get",
+              params: args.input as Record<string, unknown>,
+            });
+            return localReadiness();
+          }
+          if (command === "omni_model_status") {
+            return localReadiness().model;
+          }
+          if (
+            command === "omni_model_install_start" ||
+            command === "omni_model_install_cancel" ||
+            command === "omni_model_verify" ||
+            command === "omni_model_remove"
+          ) {
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: command,
+              params: (args.input ?? {}) as Record<string, unknown>,
+            });
+            return localReadiness().model;
           }
           if (command === "voice_session_start") {
             const input = args.input as Record<string, unknown>;
