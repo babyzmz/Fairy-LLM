@@ -787,6 +787,24 @@
       "transport": "local_and_cloud"
     },
     {
+      "name": "realtime.assistance.cancel",
+      "request_model": "RealtimeAssistanceCancelInput",
+      "response_model": "RealtimeAssistanceModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "realtime.assistance.get",
+      "request_model": "RealtimeAssistanceGetInput",
+      "response_model": "RealtimeAssistanceModel",
+      "transport": "local_only"
+    },
+    {
+      "name": "realtime.assistance.request",
+      "request_model": "RealtimeAssistanceRequestInput",
+      "response_model": "RealtimeAssistanceModel",
+      "transport": "local_only"
+    },
+    {
       "name": "realtime.memories.delete",
       "request_model": "GameMemoryIdInput",
       "response_model": "GameMemoryDeleteResult",

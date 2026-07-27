@@ -211,6 +211,40 @@ for (const viewport of [
   });
 }
 
+for (const viewport of [
+  { width: 880, height: 680 },
+  { width: 640, height: 700 },
+]) {
+  test(`Companion restores bounded Assistance at ${viewport.width}x${viewport.height}`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await page.goto(
+      "/?surface=companion&companionActive=active&companionAssistance=approval",
+    );
+
+    const assistance = page.getByLabel("Core assistance");
+    await expect(assistance).toContainText("Find the current raid route");
+    await expect(assistance).toContainText("Approval needed");
+    await expect(page.getByRole("button", { name: /approve/i })).toHaveCount(0);
+    await expect(page.getByText(/Full answer must not render/)).toHaveCount(0);
+    await expect(page.getByText(/https?:\/\//)).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth))
+      .toBeLessThanOrEqual(viewport.width);
+    await page.screenshot({
+      path: testInfo.outputPath(`realtime-assistance-${viewport.width}.png`),
+    });
+
+    await page.getByRole("button", { name: "Open main chat" }).click();
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await expect(assistance).toContainText("Cancelled");
+
+    const calls = await fixtureCalls(page);
+    expect(calls.some((call) => call.method === "open_realtime_main_chat")).toBe(true);
+    expect(calls.some((call) => call.method === "realtime.assistance.cancel")).toBe(true);
+  });
+}
+
 test("Companion applies policy and standby recovery through native commands", async ({
   page,
 }) => {

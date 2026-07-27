@@ -20,7 +20,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::omni_model_manifest::OmniModelManifest;
-use crate::realtime_assistance::RealtimeAssistanceRouter;
+use crate::realtime_assistance::{RealtimeAssistancePublicState, RealtimeAssistanceRouter};
 use crate::realtime_coordinator::{
     ContextEpochIdentity, ContextRotationReason, PendingContextRotation, RealtimeCoordinatorAction,
     RealtimeCoordinatorEvent, RealtimeCoordinatorStart, RealtimeCoordinatorState,
@@ -137,6 +137,7 @@ pub struct RealtimeWorkerStatus {
     pub cloud_provider: Option<RealtimeCloudProviderKind>,
     pub action_required: bool,
     pub presence_projection: Option<RealtimePresenceProjection>,
+    pub assistance: Vec<RealtimeAssistancePublicState>,
     #[serde(flatten)]
     pub usage: RealtimeWorkerUsage,
 }
@@ -214,11 +215,13 @@ impl RealtimeWorkerManager {
         }
         let projection = self.governance_projection();
         let presence_projection = self.current_presence_projection();
+        let session_id = guard
+            .as_ref()
+            .and_then(|process| process.session_id.clone());
         RealtimeWorkerStatus {
             running: guard.is_some(),
-            session_id: guard
-                .as_ref()
-                .and_then(|process| process.session_id.clone()),
+            assistance: self.assistance.snapshot(session_id.as_deref()),
+            session_id,
             segment_id: projection.as_ref().map(|value| value.0.clone()),
             context_epoch: projection.as_ref().map(|value| value.1),
             backend: projection.as_ref().map(|value| value.2),
@@ -438,6 +441,7 @@ impl RealtimeWorkerManager {
             cloud_provider: input.cloud_provider,
             action_required: false,
             presence_projection: self.current_presence_projection(),
+            assistance: self.assistance.snapshot(process.session_id.as_deref()),
             usage: self.usage_snapshot(),
         };
         *guard = Some(process);
@@ -466,6 +470,7 @@ impl RealtimeWorkerManager {
                 cloud_provider: None,
                 action_required: false,
                 presence_projection: None,
+                assistance: Vec::new(),
                 usage: self.usage_snapshot(),
             });
         };
@@ -495,6 +500,7 @@ impl RealtimeWorkerManager {
                     cloud_provider: None,
                     action_required: false,
                     presence_projection: None,
+                    assistance: Vec::new(),
                     usage: self.usage_snapshot(),
                 });
             }
@@ -514,6 +520,7 @@ impl RealtimeWorkerManager {
             cloud_provider: None,
             action_required: false,
             presence_projection: None,
+            assistance: Vec::new(),
             usage: self.usage_snapshot(),
         })
     }

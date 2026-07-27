@@ -62,6 +62,7 @@ const workerStatus = (running: boolean): RealtimeWorkerStatus => ({
   cloud_provider: running ? "glm_realtime_flash" : null,
   action_required: false,
   presence_projection: null,
+  assistance: [],
   audio_input_ms: 1_250,
   audio_output_ms: 400,
   video_frame_count: 8,
@@ -167,6 +168,7 @@ describe("RealtimeCompanion", () => {
         kind: "window", source_id: "42", label: "Test Game", width: 1280, height: 720,
       }];
       if (command === "provider_realtime_status") return { provider: "zhipu", configured: true };
+      if (command === "open_realtime_main_chat") return undefined;
       throw new Error(`unexpected invoke: ${command}`);
     });
   });
@@ -219,6 +221,110 @@ describe("RealtimeCompanion", () => {
     expect((screen.getByRole("button", { name: "Start Realtime" }) as HTMLButtonElement).disabled)
       .toBe(true);
     expect(start).not.toHaveBeenCalled();
+  });
+
+  it("restores bounded Assistance state and keeps approval in the main chat", async () => {
+    const linked = {
+      ...session("active", 2),
+      conversation_id: "01900000-0000-7000-8000-000000000099",
+    };
+    const runningAssistance = {
+      session_id: linked.id,
+      segment_id: "segment-1",
+      context_epoch: 1,
+      request_id: "request-1",
+      public_intent: "Find the current raid route",
+      status: "awaiting_approval" as const,
+      error_code: null,
+      public_summary: null,
+    };
+    const get = vi.fn(async () => ({
+      status: "awaiting_approval",
+      revision: 3,
+    }));
+    const cancel = vi.fn(async () => ({
+      status: "cancelled",
+      revision: 4,
+      error_code: null,
+      spoken_summary: null,
+    }));
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [linked] })),
+        get: vi.fn(async () => linked),
+      },
+      assistance: { get, cancel },
+      memories: { save: vi.fn() },
+      transcript: { append: vi.fn(), list: vi.fn(async () => ({ items: [] })) },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => ({
+          ...workerStatus(true),
+          assistance: [runningAssistance],
+        })),
+      },
+    } as unknown as CoreClient["realtime"];
+
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+
+    expect(await screen.findByText("Find the current raid route")).not.toBeNull();
+    expect(screen.getByText("Approval needed")).not.toBeNull();
+    expect(screen.getByText("Approval is waiting in the main Fairy workspace.")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: /approve/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open main chat" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_realtime_main_chat",
+      { input: { session_id: linked.id } },
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith({
+      session_id: linked.id,
+      request_id: "request-1",
+      expected_revision: 3,
+    }));
+    expect(await screen.findByText("Cancelled")).not.toBeNull();
+  });
+
+  it("renders only the bounded Assistance summary from live events", async () => {
+    const linked = {
+      ...session("active", 2),
+      conversation_id: "01900000-0000-7000-8000-000000000099",
+    };
+    const client = {
+      sessions: {
+        list: vi.fn(async () => ({ items: [linked] })),
+        get: vi.fn(async () => linked),
+      },
+      assistance: { get: vi.fn(), cancel: vi.fn() },
+      memories: { save: vi.fn() },
+      transcript: { append: vi.fn(), list: vi.fn(async () => ({ items: [] })) },
+      worker: {
+        preview: vi.fn(backendPreview),
+        status: vi.fn(async () => workerStatus(true)),
+      },
+    } as unknown as CoreClient["realtime"];
+    render(<RealtimeCompanion client={client} openRequest={1} />);
+    await screen.findByText("Listening for the conversation and game context…");
+
+    await act(async () => eventListener?.({ payload: {
+      type: "assistance_state",
+      session_id: linked.id,
+      segment_id: "segment-1",
+      context_epoch: 1,
+      request_id: "request-live",
+      public_intent: "Locate the next checkpoint",
+      status: "completed",
+      error_code: null,
+      public_summary: "The next checkpoint is east.",
+      display_markdown: "# Full answer must not render",
+      citations: [{ url: "https://private.invalid" }],
+    } }));
+
+    expect(screen.getByText("The next checkpoint is east.")).not.toBeNull();
+    expect(screen.queryByText("# Full answer must not render")).toBeNull();
+    expect(screen.queryByText("https://private.invalid")).toBeNull();
   });
 
   it("fails closed for Local Beta until a real readiness report exists", async () => {

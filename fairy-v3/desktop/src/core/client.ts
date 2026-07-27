@@ -66,6 +66,8 @@ import type {
   RealtimeSessionReportInput,
   RealtimeSessionStartInput,
   RealtimeSessionStopInput,
+  RealtimeAssistanceCancelInput,
+  RealtimeAssistanceGetInput,
   RealtimePersonaSnapshotInput,
   RealtimeTranscriptAppendInput,
   RealtimeTranscriptListInput,
@@ -187,6 +189,7 @@ export interface RealtimeWorkerStatus {
   cloud_provider: RealtimeWorkerProvider | null;
   action_required: boolean;
   presence_projection: import("../realtime/realtimePresence").RealtimePresenceProjection | null;
+  assistance: import("../realtime/realtimePresence").RealtimeAssistanceProjection[];
   audio_input_ms: number;
   audio_output_ms: number;
   video_frame_count: number;
@@ -694,6 +697,12 @@ export class CoreClient {
         this.transport.call("realtime.sessions.report", input),
       stop: (input: RealtimeSessionStopInput) =>
         this.transport.call("realtime.sessions.stop", input),
+    },
+    assistance: {
+      get: (input: RealtimeAssistanceGetInput) =>
+        this.transport.call("realtime.assistance.get", input),
+      cancel: (input: RealtimeAssistanceCancelInput) =>
+        this.transport.call("realtime.assistance.cancel", input),
     },
     memories: {
       save: (input: GameMemorySaveInput) =>

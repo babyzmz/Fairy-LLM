@@ -31,6 +31,35 @@ export interface RealtimePresenceProjection {
   duration_extension_required: boolean;
 }
 
+export type RealtimeAssistanceProjectionStatus =
+  | "pending"
+  | "queued"
+  | "running"
+  | "awaiting_approval"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface RealtimeAssistanceProjection {
+  session_id: string;
+  segment_id: string;
+  context_epoch: number;
+  request_id: string;
+  public_intent: string;
+  status: RealtimeAssistanceProjectionStatus;
+  error_code: string | null;
+  public_summary: string | null;
+}
+
+export type RealtimeAssistanceStateUpdate = Omit<
+  RealtimeAssistanceProjection,
+  "public_intent" | "public_summary"
+> & {
+  public_intent?: string;
+  public_summary?: string | null;
+};
+
 type RealtimePresenceMessage =
   | {
       kind: "realtime.presence.request";
@@ -80,6 +109,16 @@ const validCloudProviders = new Set([
   "glm_realtime_air",
 ]);
 const validStandbyReasons = new Set(["inactivity", "duration_limit"]);
+const validAssistanceStatuses = new Set<RealtimeAssistanceProjectionStatus>([
+  "pending",
+  "queued",
+  "running",
+  "awaiting_approval",
+  "paused",
+  "completed",
+  "failed",
+  "cancelled",
+]);
 
 export function createRealtimePresencePublisher(
   createPort: () => BroadcastPort | null = createBroadcastPort,
@@ -202,6 +241,111 @@ export function isPresenceProjection(
     )
     && typeof candidate.wake_available === "boolean"
     && typeof candidate.duration_extension_required === "boolean"
+  );
+}
+
+export function isRealtimeAssistanceProjection(
+  value: unknown,
+): value is RealtimeAssistanceProjection {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<RealtimeAssistanceProjection>;
+  return (
+    boundedText(candidate.session_id, 128)
+    && boundedText(candidate.segment_id, 128)
+    && Number.isSafeInteger(candidate.context_epoch)
+    && (candidate.context_epoch ?? 0) > 0
+    && boundedText(candidate.request_id, 128)
+    && boundedText(candidate.public_intent, 4_000)
+    && typeof candidate.status === "string"
+    && validAssistanceStatuses.has(candidate.status as RealtimeAssistanceProjectionStatus)
+    && (
+      candidate.error_code === null
+      || (
+        typeof candidate.error_code === "string"
+        && /^[A-Z][A-Z0-9_]{0,127}$/.test(candidate.error_code)
+      )
+    )
+    && (
+      candidate.public_summary === null
+      || boundedText(candidate.public_summary, 2_000)
+    )
+  );
+}
+
+export function isRealtimeAssistanceStateUpdate(
+  value: unknown,
+): value is RealtimeAssistanceStateUpdate {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<RealtimeAssistanceStateUpdate>;
+  return (
+    boundedText(candidate.session_id, 128)
+    && boundedText(candidate.segment_id, 128)
+    && Number.isSafeInteger(candidate.context_epoch)
+    && (candidate.context_epoch ?? 0) > 0
+    && boundedText(candidate.request_id, 128)
+    && typeof candidate.status === "string"
+    && validAssistanceStatuses.has(candidate.status as RealtimeAssistanceProjectionStatus)
+    && (
+      candidate.error_code === null
+      || (
+        typeof candidate.error_code === "string"
+        && /^[A-Z][A-Z0-9_]{0,127}$/.test(candidate.error_code)
+      )
+    )
+    && (
+      candidate.public_intent === undefined
+      || boundedText(candidate.public_intent, 4_000)
+    )
+    && (
+      candidate.public_summary === undefined
+      || candidate.public_summary === null
+      || boundedText(candidate.public_summary, 2_000)
+    )
+  );
+}
+
+export function applyRealtimeAssistanceStateUpdate(
+  current: RealtimeAssistanceProjection[],
+  update: RealtimeAssistanceStateUpdate,
+): RealtimeAssistanceProjection[] {
+  const previous = current.find(
+    (item) =>
+      item.session_id === update.session_id
+      && item.request_id === update.request_id,
+  );
+  if (previous === undefined && !isRealtimeAssistanceProjection(update)) {
+    return current;
+  }
+  return mergeRealtimeAssistanceProjection(current, {
+    ...(previous ?? update as RealtimeAssistanceProjection),
+    ...update,
+    public_intent: update.public_intent ?? previous?.public_intent ?? "",
+    public_summary: update.public_summary ?? previous?.public_summary ?? null,
+  });
+}
+
+export function mergeRealtimeAssistanceProjection(
+  current: RealtimeAssistanceProjection[],
+  next: RealtimeAssistanceProjection,
+): RealtimeAssistanceProjection[] {
+  const sameSession = current.filter((item) => item.session_id === next.session_id);
+  const previous = sameSession.find((item) => item.request_id === next.request_id);
+  const merged = {
+    ...next,
+    public_intent: next.public_intent || previous?.public_intent || "",
+    public_summary: next.public_summary ?? previous?.public_summary ?? null,
+  };
+  return [
+    ...sameSession.filter((item) => item.request_id !== next.request_id),
+    merged,
+  ].slice(-6);
+}
+
+function boundedText(value: unknown, maxChars: number): value is string {
+  return (
+    typeof value === "string"
+    && value.trim().length > 0
+    && [...value].length <= maxChars
   );
 }
 

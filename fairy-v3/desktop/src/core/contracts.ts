@@ -237,6 +237,58 @@ export type RealtimeSessionReportInput = Schemas["RealtimeSessionReportInput"];
 export type RealtimeSessionStopInput = Schemas["RealtimeSessionStopInput"];
 export type RealtimeSessionPage = Schemas["RealtimeSessionPageModel"];
 export type RealtimeSessionStatus = Schemas["RealtimeSessionStatus"];
+export type RealtimeAssistanceStatus =
+  | "queued"
+  | "running"
+  | "awaiting_approval"
+  | "completed"
+  | "failed"
+  | "cancelled";
+export interface RealtimeAssistance {
+  id: string;
+  session_id: string;
+  conversation_id: string;
+  request_id: string;
+  segment_id: string;
+  context_epoch: number;
+  question: string;
+  activity_profile: string;
+  application_title: string | null;
+  observed_facts: string[];
+  allow_network: boolean;
+  locale: string;
+  status: RealtimeAssistanceStatus;
+  task_id: string | null;
+  turn_id: string | null;
+  message_id: string | null;
+  spoken_summary: string | null;
+  display_markdown: string | null;
+  citations: Array<{ title: string; url: string }>;
+  freshness: string | null;
+  requires_user_confirmation: boolean;
+  error_code: string | null;
+  created_at: string;
+  updated_at: string;
+  revision: number;
+}
+export interface RealtimeAssistanceGetInput {
+  session_id: string;
+  request_id: string;
+}
+export interface RealtimeAssistanceRequestInput extends RealtimeAssistanceGetInput {
+  conversation_id: string;
+  segment_id: string;
+  context_epoch: number;
+  question: string;
+  activity_profile: string;
+  application_title?: string | null;
+  observed_facts?: string[];
+  allow_network?: boolean;
+  locale?: string;
+}
+export interface RealtimeAssistanceCancelInput extends RealtimeAssistanceGetInput {
+  expected_revision: number;
+}
 export type RealtimeActivityProfile = "auto" | "game" | "focus";
 export type RealtimeInteractionIntensity = "quiet" | "standard" | "active";
 export interface RealtimePersonaSnapshotInput {
@@ -649,6 +701,18 @@ export interface CoreMethodMap {
   "realtime.sessions.list": { params: { limit?: number }; result: RealtimeSessionPage };
   "realtime.sessions.report": { params: RealtimeSessionReportInput; result: RealtimeSession };
   "realtime.sessions.stop": { params: RealtimeSessionStopInput; result: RealtimeSession };
+  "realtime.assistance.get": {
+    params: RealtimeAssistanceGetInput;
+    result: RealtimeAssistance;
+  };
+  "realtime.assistance.request": {
+    params: RealtimeAssistanceRequestInput;
+    result: RealtimeAssistance;
+  };
+  "realtime.assistance.cancel": {
+    params: RealtimeAssistanceCancelInput;
+    result: RealtimeAssistance;
+  };
   "realtime.memories.save": { params: GameMemorySaveInput; result: GameMemoryDigest };
   "realtime.memories.list": { params: { limit?: number }; result: GameMemoryPage };
   "realtime.memories.delete": {

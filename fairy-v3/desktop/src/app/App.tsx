@@ -48,12 +48,23 @@ function Workspace({
   client,
   preferences,
   onOpenSettings,
+  navigationRequest,
 }: {
   client: AppProps["client"];
   preferences: DesktopPreferences | null;
   onOpenSettings(category?: SettingsCategoryId): Promise<void>;
+  navigationRequest: { sequence: number; conversationId: string | null };
 }) {
   const model = useWorkspaceModel(client);
+  const lastNavigationSequence = useRef(-1);
+  useEffect(() => {
+    if (
+      navigationRequest.conversationId === null
+      || navigationRequest.sequence <= lastNavigationSequence.current
+    ) return;
+    lastNavigationSequence.current = navigationRequest.sequence;
+    model.selectChatConversation(navigationRequest.conversationId);
+  }, [model, navigationRequest]);
   const [realtimePresence, setRealtimePresence] = useState<RealtimePresenceState>("idle");
   useEffect(
     () => subscribeRealtimePresence(
@@ -192,6 +203,10 @@ export function App({ client, settingsClient, mainViewHost }: AppProps) {
     category?: SettingsCategoryId;
   }>({ sequence: 0 });
   const [preferences, setPreferences] = useState<DesktopPreferences | null>(null);
+  const [workspaceNavigation, setWorkspaceNavigation] = useState({
+    sequence: 0,
+    conversationId: null as string | null,
+  });
   const focusReturnRef = useRef<HTMLElement | null>(null);
   const mainViewRef = useRef<MainView>("workspace");
   const lastNativeSequenceRef = useRef(-1);
@@ -232,6 +247,12 @@ export function App({ client, settingsClient, mainViewHost }: AppProps) {
       showSettings(request.settings_category ?? undefined, request.sequence);
     } else {
       showWorkspace();
+      if (request.conversation_id !== null) {
+        setWorkspaceNavigation({
+          sequence: request.sequence,
+          conversationId: request.conversation_id,
+        });
+      }
     }
   }, [showSettings, showWorkspace]);
 
@@ -350,6 +371,7 @@ export function App({ client, settingsClient, mainViewHost }: AppProps) {
           client={client}
           preferences={preferences}
           onOpenSettings={openSettings}
+          navigationRequest={workspaceNavigation}
         />
       </div>
       {settingsMounted && settingsClient !== undefined ? (

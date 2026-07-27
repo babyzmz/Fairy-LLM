@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createRealtimePresencePublisher,
+  applyRealtimeAssistanceStateUpdate,
+  isRealtimeAssistanceProjection,
+  mergeRealtimeAssistanceProjection,
   subscribeRealtimePresence,
+  type RealtimeAssistanceProjection,
   type RealtimePresenceProjection,
 } from "./realtimePresence";
 
@@ -101,5 +105,66 @@ describe("realtime presence channel", () => {
     ]);
     unsubscribe();
     currentPublisher.close();
+  });
+});
+
+describe("realtime assistance projection", () => {
+  const projection: RealtimeAssistanceProjection = {
+    session_id: "session-1",
+    segment_id: "segment-1",
+    context_epoch: 1,
+    request_id: "request-1",
+    public_intent: "Find the east gate",
+    status: "running",
+    error_code: null,
+    public_summary: null,
+  };
+
+  it("accepts only bounded public fields", () => {
+    expect(isRealtimeAssistanceProjection(projection)).toBe(true);
+    expect(isRealtimeAssistanceProjection({
+      ...projection,
+      public_summary: "x".repeat(2_001),
+    })).toBe(false);
+    expect(isRealtimeAssistanceProjection({
+      ...projection,
+      error_code: "unsafe detail",
+    })).toBe(false);
+  });
+
+  it("retains the safe summary when a later worker acknowledgement omits it", () => {
+    const complete = { ...projection, status: "completed" as const, public_summary: "Ready." };
+    expect(mergeRealtimeAssistanceProjection(
+      [complete],
+      { ...complete, public_summary: null },
+    )).toEqual([complete]);
+    expect(mergeRealtimeAssistanceProjection(
+      [complete],
+      { ...projection, session_id: "session-2", request_id: "request-2" },
+    )).toHaveLength(1);
+  });
+
+  it("applies a partial Worker acknowledgement only to an existing request", () => {
+    const current = { ...projection, status: "completed" as const, public_summary: "Ready." };
+    expect(applyRealtimeAssistanceStateUpdate([current], {
+      session_id: current.session_id,
+      segment_id: current.segment_id,
+      context_epoch: current.context_epoch,
+      request_id: current.request_id,
+      status: "failed",
+      error_code: "ASSISTANCE_RESULT_DELIVERY_FAILED",
+    })[0]).toMatchObject({
+      status: "failed",
+      public_intent: current.public_intent,
+      public_summary: "Ready.",
+    });
+    expect(applyRealtimeAssistanceStateUpdate([], {
+      session_id: current.session_id,
+      segment_id: current.segment_id,
+      context_epoch: current.context_epoch,
+      request_id: "unknown",
+      status: "failed",
+      error_code: "ASSISTANCE_RESULT_DELIVERY_FAILED",
+    })).toEqual([]);
   });
 });

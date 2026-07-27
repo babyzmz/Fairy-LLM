@@ -204,6 +204,7 @@ async function installCoreFixture(page: Page) {
       const timestamp = "2026-07-11T00:00:00Z";
       const fixtureParams = new URLSearchParams(window.location.search);
       const companionActive = fixtureParams.get("companionActive");
+      const companionAssistance = fixtureParams.get("companionAssistance");
       const companionSessionId = "0198f4de-0114-7000-8000-000000000030";
       let companionPresenceState:
         | "listening"
@@ -223,6 +224,8 @@ async function installCoreFixture(page: Page) {
       let companionInteractionIntensity: "quiet" | "standard" | "active" =
         "standard";
       let companionProjectionSequence = 7;
+      let companionAssistanceStatus =
+        companionAssistance === "approval" ? "awaiting_approval" : null;
       const initialTaskStatus =
         fixtureParams.get("taskStatus") === "previewing"
           ? "previewing"
@@ -1506,6 +1509,7 @@ async function installCoreFixture(page: Page) {
         sequence: 0,
         view: "workspace",
         settings_category: null as string | null,
+        conversation_id: null as string | null,
       };
       const localReadiness = () => {
         const gib = 1_073_741_824;
@@ -1629,7 +1633,7 @@ async function installCoreFixture(page: Page) {
       });
       const companionSession = {
         id: companionSessionId,
-        conversation_id: null,
+        conversation_id: id.scratchConversation,
         device_id: "0198f4de-0114-7000-8000-000000000031",
         provider: "glm_realtime_flash",
         model_id: "glm-realtime-flash",
@@ -1660,6 +1664,20 @@ async function installCoreFixture(page: Page) {
           cloud_provider:
             companionActive === null ? null : "glm_realtime_flash",
           action_required: false,
+          assistance: companionAssistanceStatus === null
+            ? []
+            : [{
+                session_id: companionSessionId,
+                segment_id: "segment-fixture-1",
+                context_epoch: 1,
+                request_id: "realtime-assistance-fixture-1",
+                public_intent: "Find the current raid route",
+                status: companionAssistanceStatus,
+                error_code: null,
+                public_summary: companionAssistanceStatus === "completed"
+                  ? "The route is ready in the main chat."
+                  : null,
+              }],
           presence_projection: companionActive === null
             ? null
             : {
@@ -1930,6 +1948,20 @@ async function installCoreFixture(page: Page) {
             return companionWorkerStatus();
           }
           if (command === "hide_companion_window") return null;
+          if (command === "open_realtime_main_chat") {
+            fixtureWindow.__FAIRY_FIXTURE_CALLS__.push({
+              method: command,
+              params: args.input as Record<string, unknown>,
+            });
+            mainViewRequest = {
+              schema_version: 1,
+              sequence: mainViewRequest.sequence + 1,
+              view: "workspace",
+              settings_category: null,
+              conversation_id: id.scratchConversation,
+            };
+            return null;
+          }
           if (command === "omni_model_status") {
             return localReadiness().model;
           }
@@ -1981,6 +2013,7 @@ async function installCoreFixture(page: Page) {
             const input = args.input as {
               view: "workspace" | "settings";
               settings_category: string | null;
+              conversation_id: string | null;
             };
             mainViewRequest = {
               schema_version: 1,
@@ -1988,6 +2021,8 @@ async function installCoreFixture(page: Page) {
               view: input.view,
               settings_category:
                 input.view === "settings" ? input.settings_category : null,
+              conversation_id:
+                input.view === "workspace" ? input.conversation_id : null,
             };
             return { ...mainViewRequest };
           }
@@ -2023,6 +2058,33 @@ async function installCoreFixture(page: Page) {
               id: request.id,
               result: {
                 items: companionActive === null ? [] : [companionSession],
+              },
+            };
+          }
+          if (request.method === "realtime.assistance.get") {
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                session_id: companionSessionId,
+                request_id: "realtime-assistance-fixture-1",
+                status: companionAssistanceStatus,
+                revision: 3,
+              },
+            };
+          }
+          if (request.method === "realtime.assistance.cancel") {
+            companionAssistanceStatus = "cancelled";
+            return {
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                session_id: companionSessionId,
+                request_id: "realtime-assistance-fixture-1",
+                status: "cancelled",
+                revision: 4,
+                error_code: null,
+                spoken_summary: null,
               },
             };
           }

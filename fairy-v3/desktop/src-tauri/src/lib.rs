@@ -12,6 +12,7 @@ use tauri::menu::{CheckMenuItem, MenuBuilder, MenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, FilePath};
+use uuid::Uuid;
 
 use ambient_dialogue_state::{
     AmbientDialogueLocalState, AmbientDialogueStateError, AmbientDialogueStateStore,
@@ -148,6 +149,7 @@ struct MainViewRequest {
     sequence: u64,
     view: MainView,
     settings_category: Option<SettingsCategoryId>,
+    conversation_id: Option<String>,
 }
 
 impl Default for MainViewRequest {
@@ -157,14 +159,17 @@ impl Default for MainViewRequest {
             sequence: 0,
             view: MainView::Workspace,
             settings_category: None,
+            conversation_id: None,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize)]
 struct MainViewNavigateInput {
     view: MainView,
     settings_category: Option<SettingsCategoryId>,
+    #[serde(default)]
+    conversation_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -425,6 +430,8 @@ pub fn companion_core_method_allowed(method: &str) -> bool {
             | "realtime.memories.save"
             | "realtime.memories.list"
             | "realtime.memories.delete"
+            | "realtime.assistance.get"
+            | "realtime.assistance.cancel"
             | "realtime.transcript.append"
     )
 }
@@ -2829,6 +2836,11 @@ fn update_main_view_request(
     } else {
         None
     };
+    request.conversation_id = if input.view == MainView::Workspace {
+        input.conversation_id
+    } else {
+        None
+    };
     Ok(request.clone())
 }
 
@@ -2883,6 +2895,48 @@ async fn hide_companion_window(window: WebviewWindow) -> Result<(), String> {
     authorize_companion_window(window.label())
         .map_err(|_| "Window is not authorized".to_owned())?;
     window.hide().map_err(|error| error.to_string())
+}
+
+#[derive(serde::Deserialize)]
+struct RealtimeMainChatInput {
+    session_id: String,
+}
+
+#[tauri::command]
+async fn open_realtime_main_chat(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+    input: RealtimeMainChatInput,
+) -> Result<(), String> {
+    authorize_companion_window(window.label())
+        .map_err(|_| "Window is not authorized".to_owned())?;
+    Uuid::parse_str(&input.session_id).map_err(|_| "Realtime session is invalid".to_owned())?;
+    let response = call_core(
+        state.inner(),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 90_001,
+            "method": "realtime.sessions.get",
+            "params": { "session_id": input.session_id },
+        }),
+    )
+    .await;
+    let conversation_id = response
+        .pointer("/result/conversation_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "The linked main chat is unavailable".to_owned())?;
+    Uuid::parse_str(conversation_id)
+        .map_err(|_| "The linked main chat is unavailable".to_owned())?;
+    request_main_view(
+        window.app_handle(),
+        state.inner(),
+        MainViewNavigateInput {
+            view: MainView::Workspace,
+            settings_category: None,
+            conversation_id: Some(conversation_id.to_owned()),
+        },
+    )
+    .map(|_| ())
 }
 
 #[tauri::command]
@@ -4155,6 +4209,7 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent)
                     MainViewNavigateInput {
                         view: MainView::Settings,
                         settings_category: None,
+                        conversation_id: None,
                     },
                 );
             }
@@ -4235,6 +4290,7 @@ async fn open_settings_window(
         MainViewNavigateInput {
             view: MainView::Settings,
             settings_category: category,
+            conversation_id: None,
         },
     )
     .map(|_| ())
@@ -5402,6 +5458,7 @@ pub fn run() {
             open_main_window,
             open_companion_window,
             hide_companion_window,
+            open_realtime_main_chat,
             open_settings_window,
             main_view_request_get,
             main_view_navigate,
@@ -5661,6 +5718,8 @@ mod companion_window_scope_tests {
             "realtime.memories.save",
             "realtime.memories.list",
             "realtime.memories.delete",
+            "realtime.assistance.get",
+            "realtime.assistance.cancel",
             "realtime.transcript.append",
         ] {
             assert!(companion_core_method_allowed(allowed), "{allowed}");
@@ -5672,6 +5731,7 @@ mod companion_window_scope_tests {
             "workspaces.files.list",
             "browser.sessions.start",
             "providers.list",
+            "realtime.assistance.request",
         ] {
             assert!(!companion_core_method_allowed(denied), "{denied}");
         }

@@ -34,6 +34,23 @@
 .realtime-session-policy select { width: 100%; min-width: 0; height: 30px; padding: 4px 7px; border: 1px solid #3a4743; background: #171d1b; color: #e4eeeb; }
 .realtime-session-policy select:disabled { opacity: .55; }
 .realtime-policy-help { margin: -4px 1px 0; color: #84908c; font-size: 11px; line-height: 1.45; }
+.realtime-assistance { display: grid; gap: 8px; }
+.realtime-assistance article { min-width: 0; display: grid; gap: 8px; padding: 11px 12px; border: 1px solid #33413d; border-left: 2px solid #67c9bd; background: #101614; }
+.realtime-assistance article[data-status="awaiting_approval"] { border-left-color: #d0aa61; }
+.realtime-assistance article[data-status="failed"],
+.realtime-assistance article[data-status="cancelled"] { border-left-color: #8f7771; }
+.realtime-assistance-heading { min-width: 0; display: flex; align-items: center; gap: 7px; color: #a8dcd5; }
+.realtime-assistance-heading strong { min-width: 0; flex: 1; font-size: 12px; }
+.realtime-assistance-heading span { flex: 0 0 auto; color: #8c9b97; font: 600 10px/1.2 monospace; text-transform: uppercase; }
+.realtime-assistance p,
+.realtime-assistance small { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.realtime-assistance p { color: #d8e3df; font-size: 12px; line-height: 1.45; }
+.realtime-assistance small { color: #8e9d98; font-size: 11px; line-height: 1.45; }
+.realtime-assistance-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.realtime-assistance-actions button { min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 9px; border: 1px solid #3b514b; background: #18231f; color: #cae4de; font-size: 11px; }
+.realtime-assistance-actions button:last-child:not(:first-child) { border-color: #574642; background: #241b19; color: #d6aaa3; }
+.realtime-assistance-actions button:hover:not(:disabled) { border-color: #63b3a8; background: #1e302b; }
+.realtime-assistance-actions button:disabled { opacity: .5; }
 .realtime-standby { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border-left: 2px solid #8ebcaf; background: #13201c; color: #bed2cc; font-size: 12px; }
 .realtime-standby button { flex: 0 0 auto; min-height: 30px; padding: 5px 10px; border: 1px solid #5fa99d; background: #1c3933; color: #d9f4ed; }
 .realtime-pulse { width: 10px; height: 10px; border-radius: 50%; background: #65cfc1; box-shadow: 0 0 0 5px #65cfc11c; animation: realtime-pulse 1.4s ease-in-out infinite; }
@@ -69,4 +86,5 @@
 @media (max-width: 430px) {
   .realtime-session-policy { grid-template-columns: minmax(0, 1fr); }
   .realtime-standby { align-items: stretch; flex-direction: column; }
+  .realtime-assistance-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
 }

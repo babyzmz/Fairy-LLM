@@ -417,6 +417,7 @@ describe("App", () => {
       sequence: 7,
       view: "settings" as const,
       settings_category: "models" as const,
+      conversation_id: null,
     };
     const mainViewHost: MainViewHost = {
       get: vi.fn(async () => request),
@@ -443,6 +444,35 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { name: "Models" })).toBeVisible();
     expect(screen.getByTestId("workspace-view")).toHaveAttribute("hidden");
+  });
+
+  it("opens the Realtime-linked scratch conversation from native navigation", async () => {
+    const request = {
+      schema_version: 1 as const,
+      sequence: 8,
+      view: "workspace" as const,
+      settings_category: null,
+      conversation_id: ID.scratchConversation,
+    };
+    const mainViewHost: MainViewHost = {
+      get: vi.fn(async () => request),
+      navigate: vi.fn(async () => request),
+      subscribe: vi.fn(async () => () => undefined),
+    };
+    const client = createClient(
+      async () => ({
+        status: "ok",
+        service: "fairy-core",
+        protocol: "core-service-v1",
+      }),
+      [project],
+      { scratch: true },
+    );
+
+    render(<App client={client} mainViewHost={mainViewHost} />);
+
+    expect(await screen.findByText("Scratch chat is durable")).toBeVisible();
+    expect(screen.getByTestId("workspace-view")).not.toHaveAttribute("hidden");
   });
 
   it("renders real create and import actions for an empty repository", async () => {

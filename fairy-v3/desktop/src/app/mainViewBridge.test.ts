@@ -11,6 +11,7 @@ describe("TauriMainViewHost", () => {
       sequence: 4,
       view: "settings",
       settings_category: "models",
+      conversation_id: null,
     };
     const invoke = vi.fn(async <T>() => request as T) as InvokeFunction;
     const host = new TauriMainViewHost(invoke, async () => () => undefined);
@@ -20,6 +21,7 @@ describe("TauriMainViewHost", () => {
       input: {
         view: "settings",
         settings_category: "models",
+        conversation_id: null,
       },
     });
   });
@@ -43,6 +45,7 @@ describe("TauriMainViewHost", () => {
       sequence: 9,
       view: "settings",
       settings_category: "pet",
+      conversation_id: null,
     };
     nativeListener?.(request);
 

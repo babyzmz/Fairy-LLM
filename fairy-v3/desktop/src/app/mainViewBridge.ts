@@ -8,6 +8,7 @@ export interface MainViewRequest {
   sequence: number;
   view: MainView;
   settings_category: SettingsCategoryId | null;
+  conversation_id: string | null;
 }
 
 export interface MainViewHost {
@@ -15,6 +16,7 @@ export interface MainViewHost {
   navigate(
     view: MainView,
     settingsCategory?: SettingsCategoryId,
+    conversationId?: string,
   ): Promise<MainViewRequest>;
   subscribe(listener: (request: MainViewRequest) => void): Promise<() => void>;
 }
@@ -36,11 +38,13 @@ export class TauriMainViewHost implements MainViewHost {
   navigate(
     view: MainView,
     settingsCategory?: SettingsCategoryId,
+    conversationId?: string,
   ): Promise<MainViewRequest> {
     return this.invoke("main_view_navigate", {
       input: {
         view,
         settings_category: settingsCategory ?? null,
+        conversation_id: conversationId ?? null,
       },
     });
   }

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { LoaderCircle, Mic, MicOff, Monitor, Pause, Play, RotateCcw, Save, ShieldCheck, SlidersHorizontal, Square, Volume2, X } from "lucide-react";
+import { LoaderCircle, MessageSquareText, Mic, MicOff, Monitor, Pause, Play, RotateCcw, Save, Search, ShieldCheck, SlidersHorizontal, Square, Volume2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
@@ -16,6 +16,11 @@ import type { DesktopPreferences } from "../settings/client";
 import { startRealtimeVoice } from "../voice/nativeVoice";
 import {
   isPresenceProjection,
+  isRealtimeAssistanceProjection,
+  applyRealtimeAssistanceStateUpdate,
+  isRealtimeAssistanceStateUpdate,
+  mergeRealtimeAssistanceProjection,
+  type RealtimeAssistanceProjection,
   type RealtimePresenceProjection,
   type RealtimePresenceState,
 } from "./realtimePresence";
@@ -37,6 +42,14 @@ type WorkerEvent =
   | ({ type: "presence_projection" } & RealtimePresenceProjection)
   | { type: "barge_in"; session_id: string; segment_id: string; context_epoch: number; speech_generation: number }
   | { type: "tool_request"; session_id: string; segment_id: string; context_epoch: number; call_id: string; tool_name: string; public_intent: string }
+  | ({ type: "assistance_state" } & Partial<RealtimeAssistanceProjection> & {
+      session_id: string;
+      segment_id: string;
+      context_epoch: number;
+      request_id: string;
+      status: RealtimeAssistanceProjection["status"];
+      error_code: string | null;
+    })
   | { type: "usage"; session_id: string; segment_id: string; context_epoch: number; audio_input_ms: number; audio_output_ms: number; video_frame_count: number; interruption_count: number; tool_call_count: number }
   | { type: "worker_interrupted"; error_code: string }
   | { type: "ready" | "pong" };
@@ -106,6 +119,8 @@ export function RealtimeCompanion({
   const [muted, setMuted] = useState(false);
   const [paused, setPaused] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [assistance, setAssistance] = useState<RealtimeAssistanceProjection[]>([]);
+  const [assistanceBusy, setAssistanceBusy] = useState<string | null>(null);
   const {
     enqueue: enqueueTranscript,
     reset: resetTranscriptPersistence,
@@ -128,6 +143,11 @@ export function RealtimeCompanion({
 
   const applyWorkerStatus = useCallback((status: RealtimeWorkerStatus) => {
     setActiveBackend(status.running ? status.backend : null);
+    setAssistance(
+      Array.isArray(status.assistance)
+        ? status.assistance.filter(isRealtimeAssistanceProjection).slice(-6)
+        : [],
+    );
     if (!isPresenceProjection(status.presence_projection)) return;
     presenceProjectionRef.current = status.presence_projection;
     setPresenceProjection(status.presence_projection);
@@ -162,6 +182,10 @@ export function RealtimeCompanion({
   }, [applyInput, applyWorkerStatus, busy, client.worker, muted, paused]);
 
   const updateSession = useCallback((value: RealtimeSession | null) => {
+    if (sessionRef.current?.id !== value?.id) {
+      setAssistance([]);
+      setAssistanceBusy(null);
+    }
     sessionRef.current = value;
     setSession(value);
   }, []);
@@ -471,6 +495,11 @@ export function RealtimeCompanion({
           tool_call_count: payload.tool_call_count,
         };
         setLiveUsage(usage.current);
+      } else if (
+        payload.type === "assistance_state"
+        && isRealtimeAssistanceStateUpdate(payload)
+      ) {
+        setAssistance((current) => applyRealtimeAssistanceStateUpdate(current, payload));
       } else if (payload.type === "tool_request") {
         void client.worker.toolResult({
           session_id: payload.session_id,
@@ -510,6 +539,8 @@ export function RealtimeCompanion({
     setMuted(false);
     setPaused(false);
     setControlsOpen(false);
+    setAssistance([]);
+    setAssistanceBusy(null);
     setMemory(null);
     presenceProjectionRef.current = null;
     setPresenceProjection(null);
@@ -574,6 +605,51 @@ export function RealtimeCompanion({
       setBusy(false);
     }
   };
+
+  const openAssistanceChat = useCallback(async () => {
+    const current = sessionRef.current;
+    if (current === null) return;
+    setAssistanceBusy("open");
+    try {
+      await hostInvoke("open_realtime_main_chat", {
+        input: { session_id: current.id },
+      });
+    } catch (caught) {
+      setError(messageOf(caught));
+    } finally {
+      setAssistanceBusy(null);
+    }
+  }, [hostInvoke]);
+
+  const cancelAssistance = useCallback(async (
+    projection: RealtimeAssistanceProjection,
+  ) => {
+    const current = sessionRef.current;
+    if (current === null || projection.session_id !== current.id) return;
+    setAssistanceBusy(projection.request_id);
+    try {
+      const latest = await client.assistance.get({
+        session_id: current.id,
+        request_id: projection.request_id,
+      });
+      if (assistanceTerminal(latest.status)) return;
+      const cancelled = await client.assistance.cancel({
+        session_id: current.id,
+        request_id: projection.request_id,
+        expected_revision: latest.revision,
+      });
+      setAssistance((items) => mergeRealtimeAssistanceProjection(items, {
+        ...projection,
+        status: cancelled.status === "cancelled" ? "cancelled" : projection.status,
+        error_code: cancelled.error_code,
+        public_summary: cancelled.spoken_summary ?? projection.public_summary,
+      }));
+    } catch (caught) {
+      setError(messageOf(caught));
+    } finally {
+      setAssistanceBusy(null);
+    }
+  }, [client.assistance]);
 
   const stop = async () => {
     const current = sessionRef.current;
@@ -770,6 +846,46 @@ export function RealtimeCompanion({
               <p className="realtime-policy-help">
                 {cooldownHelp(effectiveActivity, interactionIntensity)}
               </p>
+              {assistance.length > 0 ? (
+                <section className="realtime-assistance" aria-label="Core assistance">
+                  {assistance.slice(-3).map((item) => {
+                    const terminal = assistanceTerminal(item.status);
+                    return (
+                      <article key={item.request_id} data-status={item.status}>
+                        <div className="realtime-assistance-heading">
+                          <Search size={14} aria-hidden="true" />
+                          <strong>Core assistance</strong>
+                          <span>{assistanceStatusLabel(item.status)}</span>
+                        </div>
+                        <p>{item.public_intent}</p>
+                        {item.public_summary ? (
+                          <small>{item.public_summary}</small>
+                        ) : item.status === "awaiting_approval" ? (
+                          <small>Approval is waiting in the main Fairy workspace.</small>
+                        ) : null}
+                        <div className="realtime-assistance-actions">
+                          <button
+                            type="button"
+                            disabled={assistanceBusy !== null}
+                            onClick={() => void openAssistanceChat()}
+                          >
+                            <MessageSquareText size={13} /> Open main chat
+                          </button>
+                          {!terminal ? (
+                            <button
+                              type="button"
+                              disabled={assistanceBusy !== null}
+                              onClick={() => void cancelAssistance(item)}
+                            >
+                              Cancel
+                            </button>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </section>
+              ) : null}
               {presence === "standby" ? (
                 <div className="realtime-standby" role="status">
                   <span>{standbyMessage(presenceProjection?.standby_reason ?? null)}</span>
@@ -842,6 +958,30 @@ export function RealtimeCompanion({
 
 function isTerminal(status: RealtimeSessionStatus): boolean {
   return ["completed", "failed", "cancelled", "interrupted"].includes(status);
+}
+
+function assistanceTerminal(status: string): boolean {
+  return ["completed", "failed", "cancelled"].includes(status);
+}
+
+function assistanceStatusLabel(status: RealtimeAssistanceProjection["status"]): string {
+  switch (status) {
+    case "pending":
+    case "queued":
+      return "Queued";
+    case "running":
+      return "Searching";
+    case "awaiting_approval":
+      return "Approval needed";
+    case "paused":
+      return "Core paused";
+    case "completed":
+      return "Ready";
+    case "cancelled":
+      return "Cancelled";
+    case "failed":
+      return "Unavailable";
+  }
 }
 
 function formatUsageMinutes(totalMs: number): string {

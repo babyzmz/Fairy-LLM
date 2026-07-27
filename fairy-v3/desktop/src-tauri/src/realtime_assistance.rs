@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use fairy_core_bridge::{CoreBridge, CoreBridgeError};
 use fairy_realtime_worker::{write_frame, HostCommand};
+use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
@@ -153,10 +154,23 @@ struct RouterSession {
     worker: Arc<dyn AssistanceCommandSink>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct RealtimeAssistancePublicState {
+    pub session_id: String,
+    pub segment_id: String,
+    pub context_epoch: u64,
+    pub request_id: String,
+    pub public_intent: String,
+    pub status: String,
+    pub error_code: Option<String>,
+    pub public_summary: Option<String>,
+}
+
 pub struct RealtimeAssistanceRouter {
     core: Arc<dyn CoreAssistanceClient>,
     sessions: Mutex<HashMap<String, RouterSession>>,
     active_jobs: Mutex<HashSet<(String, String)>>,
+    projections: Mutex<HashMap<String, HashMap<String, RealtimeAssistancePublicState>>>,
 }
 
 impl RealtimeAssistanceRouter {
@@ -169,6 +183,7 @@ impl RealtimeAssistanceRouter {
             core,
             sessions: Mutex::new(HashMap::new()),
             active_jobs: Mutex::new(HashSet::new()),
+            projections: Mutex::new(HashMap::new()),
         }
     }
 
@@ -198,6 +213,15 @@ impl RealtimeAssistanceRouter {
         let Ok(mut sessions) = self.sessions.lock() else {
             return;
         };
+        for (other_id, session) in sessions.iter() {
+            if other_id != session_id {
+                session.cancel.store(true, Ordering::Release);
+            }
+        }
+        sessions.retain(|other_id, _| other_id == session_id);
+        if let Ok(mut projections) = self.projections.lock() {
+            projections.retain(|other_id, _| other_id == session_id);
+        }
         if let Some(current) = sessions.get_mut(session_id) {
             current.config = config;
             current.worker = worker;
@@ -219,6 +243,9 @@ impl RealtimeAssistanceRouter {
                 session.cancel.store(true, Ordering::Release);
             }
         }
+        if let Ok(mut projections) = self.projections.lock() {
+            projections.remove(session_id);
+        }
     }
 
     pub fn shutdown(&self) {
@@ -228,6 +255,24 @@ impl RealtimeAssistanceRouter {
             }
             sessions.clear();
         }
+        if let Ok(mut projections) = self.projections.lock() {
+            projections.clear();
+        }
+    }
+
+    pub fn snapshot(&self, session_id: Option<&str>) -> Vec<RealtimeAssistancePublicState> {
+        let Some(session_id) = session_id else {
+            return Vec::new();
+        };
+        let mut values = self
+            .projections
+            .lock()
+            .ok()
+            .and_then(|projections| projections.get(session_id).cloned())
+            .map(|states| states.into_values().collect::<Vec<_>>())
+            .unwrap_or_default();
+        values.sort_by(|left, right| left.request_id.cmp(&right.request_id));
+        values
     }
 
     pub fn route(self: &Arc<Self>, app: AppHandle, projection: Value) {
@@ -255,7 +300,7 @@ impl RealtimeAssistanceRouter {
         }
         drop(active_jobs);
 
-        emit_assistance_state(&events, &candidate, "pending", None, None);
+        self.emit_state(&events, &candidate, "pending", None, None);
         let router = Arc::clone(self);
         let job_candidate = candidate.clone();
         let job_key = key.clone();
@@ -272,14 +317,14 @@ impl RealtimeAssistanceRouter {
             if let Ok(mut active_jobs) = self.active_jobs.lock() {
                 active_jobs.remove(&key);
             }
-            emit_assistance_state(
+            self.emit_state(
                 &events,
                 &candidate,
                 "failed",
                 Some("ASSISTANCE_ROUTER_UNAVAILABLE"),
                 Some(PUBLIC_FAILURE_SUMMARY),
             );
-            self.deliver(&candidate, PUBLIC_FAILURE_SUMMARY, false);
+            let _ = self.deliver(&candidate, PUBLIC_FAILURE_SUMMARY, false);
         }
     }
 
@@ -330,7 +375,7 @@ impl RealtimeAssistanceRouter {
                     }
                     Err(CoreAssistanceError::Unavailable) => {
                         if !core_paused {
-                            emit_assistance_state(
+                            self.emit_state(
                                 events,
                                 candidate,
                                 "paused",
@@ -374,7 +419,7 @@ impl RealtimeAssistanceRouter {
                 }
                 Err(CoreAssistanceError::Unavailable) => {
                     if !core_paused {
-                        emit_assistance_state(
+                        self.emit_state(
                             events,
                             candidate,
                             "paused",
@@ -399,12 +444,12 @@ impl RealtimeAssistanceRouter {
             let error_code = assistance.get("error_code").and_then(Value::as_str);
             match status {
                 "queued" if error_code == Some("ASSISTANCE_CONVERSATION_BUSY") => {
-                    emit_assistance_state(events, candidate, "pending", error_code, None);
+                    self.emit_state(events, candidate, "pending", error_code, None);
                     submitted = false;
                     wait_or_cancel(&cancel, CORE_RETRY_DELAY);
                 }
                 "queued" | "running" | "awaiting_approval" => {
-                    emit_assistance_state(events, candidate, status, error_code, None);
+                    self.emit_state(events, candidate, status, error_code, None);
                     submitted = true;
                     wait_or_cancel(&cancel, CORE_POLL_DELAY);
                 }
@@ -414,12 +459,20 @@ impl RealtimeAssistanceRouter {
                         .and_then(Value::as_str)
                         .filter(|summary| !summary.trim().is_empty())
                         .unwrap_or("The answer is ready in the main chat.");
-                    emit_assistance_state(events, candidate, "completed", None, Some(summary));
-                    self.deliver(candidate, summary, true);
+                    self.emit_state(events, candidate, "completed", None, Some(summary));
+                    if !self.deliver(candidate, summary, true) {
+                        self.emit_state(
+                            events,
+                            candidate,
+                            "failed",
+                            Some("ASSISTANCE_WORKER_UNAVAILABLE"),
+                            Some("The answer is ready in the main chat."),
+                        );
+                    }
                     return;
                 }
                 "cancelled" => {
-                    emit_assistance_state(events, candidate, "cancelled", error_code, None);
+                    self.emit_state(events, candidate, "cancelled", error_code, None);
                     return;
                 }
                 _ => {
@@ -451,24 +504,65 @@ impl RealtimeAssistanceRouter {
         error_code: &str,
         summary: &str,
     ) {
-        emit_assistance_state(events, candidate, "failed", Some(error_code), Some(summary));
-        self.deliver(candidate, summary, false);
+        self.emit_state(events, candidate, "failed", Some(error_code), Some(summary));
+        let _ = self.deliver(candidate, summary, false);
     }
 
-    fn deliver(&self, candidate: &AssistanceCandidate, summary: &str, succeeded: bool) {
+    fn emit_state(
+        &self,
+        events: &Arc<dyn AssistanceEventSink>,
+        candidate: &AssistanceCandidate,
+        status: &str,
+        error_code: Option<&str>,
+        public_summary: Option<&str>,
+    ) {
+        let projection = RealtimeAssistancePublicState {
+            session_id: candidate.session_id.clone(),
+            segment_id: candidate.segment_id.clone(),
+            context_epoch: candidate.context_epoch,
+            request_id: candidate.request_id.clone(),
+            public_intent: candidate.question.clone(),
+            status: status.to_owned(),
+            error_code: error_code.map(str::to_owned),
+            public_summary: public_summary.map(|summary| summary.chars().take(2_000).collect()),
+        };
+        if let Ok(mut projections) = self.projections.lock() {
+            let session = projections.entry(candidate.session_id.clone()).or_default();
+            session.insert(candidate.request_id.clone(), projection.clone());
+            if session.len() > 16 {
+                let mut keys = session.keys().cloned().collect::<Vec<_>>();
+                keys.sort();
+                for key in keys.into_iter().take(session.len().saturating_sub(16)) {
+                    session.remove(&key);
+                }
+            }
+        }
+        events.emit(serde_json::to_value(projection).map_or_else(
+            |_| json!({ "type": "assistance_state" }),
+            |mut value| {
+                value["type"] = json!("assistance_state");
+                value
+            },
+        ));
+    }
+
+    fn deliver(&self, candidate: &AssistanceCandidate, summary: &str, succeeded: bool) -> bool {
         let worker = self.sessions.lock().ok().and_then(|sessions| {
             sessions
                 .get(&candidate.session_id)
                 .map(|session| Arc::clone(&session.worker))
         });
         if let Some(worker) = worker {
-            let _ = worker.send(&HostCommand::AssistanceResult {
-                session_id: candidate.session_id.clone(),
-                request_id: candidate.request_id.clone(),
-                public_summary: summary.chars().take(2_000).collect(),
-                succeeded,
-            });
+            return worker
+                .send(&HostCommand::AssistanceResult {
+                    session_id: candidate.session_id.clone(),
+                    request_id: candidate.request_id.clone(),
+                    public_summary: summary.chars().take(2_000).collect(),
+                    succeeded,
+                })
+                .is_ok();
         }
+        false
     }
 
     fn cancel_core(&self, candidate: &AssistanceCandidate, revision: Option<u64>) {
@@ -514,25 +608,6 @@ fn assistance_request(
             && config.online_assistance_enabled,
         "locale": config.locale,
     })
-}
-
-fn emit_assistance_state(
-    events: &Arc<dyn AssistanceEventSink>,
-    candidate: &AssistanceCandidate,
-    status: &str,
-    error_code: Option<&str>,
-    public_summary: Option<&str>,
-) {
-    events.emit(json!({
-        "type": "assistance_state",
-        "session_id": candidate.session_id,
-        "segment_id": candidate.segment_id,
-        "context_epoch": candidate.context_epoch,
-        "request_id": candidate.request_id,
-        "status": status,
-        "error_code": error_code,
-        "public_summary": public_summary,
-    }));
 }
 
 fn wait_or_cancel(cancel: &AtomicBool, duration: Duration) {
@@ -591,6 +666,14 @@ mod tests {
                 .expect("commands")
                 .push(serde_json::to_value(command).expect("serialize command"));
             Ok(())
+        }
+    }
+
+    struct FailingWorker;
+
+    impl AssistanceCommandSink for FailingWorker {
+        fn send(&self, _command: &HostCommand) -> Result<(), ()> {
+            Err(())
         }
     }
 
@@ -842,5 +925,44 @@ mod tests {
             .find(|(method, _)| method == "realtime.assistance.cancel")
             .expect("cancel call");
         assert_eq!(cancellation.1["expected_revision"], 7);
+    }
+
+    #[test]
+    fn worker_delivery_failure_does_not_discard_the_main_chat_answer() {
+        let core = Arc::new(FakeCore::with_responses(vec![
+            Ok(json!({ "conversation_id": "conversation-1" })),
+            Ok(json!({
+                "status": "completed",
+                "revision": 2,
+                "spoken_summary": "Answer ready.",
+            })),
+        ]));
+        let router = Arc::new(RealtimeAssistanceRouter::with_client(core));
+        router.attach_sink(
+            "session-1",
+            AssistanceSessionConfig {
+                locale: "en-AU".to_owned(),
+                online_assistance_enabled: true,
+            },
+            Arc::new(FailingWorker),
+        );
+        router.route_with_sink(candidate(), Arc::new(FakeEvents::default()));
+        for _ in 0..50 {
+            if router.active_jobs.lock().expect("jobs").is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let snapshot = router.snapshot(Some("session-1"));
+        assert_eq!(snapshot[0].status, "failed");
+        assert_eq!(
+            snapshot[0].error_code.as_deref(),
+            Some("ASSISTANCE_WORKER_UNAVAILABLE")
+        );
+        assert_eq!(
+            snapshot[0].public_summary.as_deref(),
+            Some("The answer is ready in the main chat.")
+        );
     }
 }
