@@ -136,6 +136,118 @@ export interface VoiceModelInstallResult {
   manifest_digest: string;
 }
 
+export type RealtimeActivityProfile = "auto" | "game" | "focus";
+export type GpuVendor = "nvidia" | "amd" | "intel" | "other";
+export type LocalBetaReadinessReason =
+  | "eligible"
+  | "model_missing"
+  | "runtime_missing"
+  | "unsupported_os"
+  | "unsupported_architecture"
+  | "unsupported_vendor"
+  | "vram_below16gb"
+  | "avx2_unavailable"
+  | "cuda_unavailable"
+  | "driver_incompatible"
+  | "adapter_mismatch"
+  | "insufficient_free_vram"
+  | "insufficient_disk"
+  | "model_verification_failed"
+  | "self_test_failed"
+  | "runtime_quarantined";
+
+export type OmniModelInstallPhase =
+  | "not_installed"
+  | "checking_space"
+  | "downloading"
+  | "cancelling"
+  | "partial"
+  | "verifying"
+  | "layout_check"
+  | "runtime_self_test"
+  | "ready"
+  | "corrupt"
+  | "runtime_missing"
+  | "self_test_failed";
+
+export interface HardwareAdapterReport {
+  name: string;
+  vendor: GpuVendor;
+  vendor_id: number;
+  dedicated_vram_bytes: number;
+  budget_bytes: number | null;
+  current_usage_bytes: number | null;
+  luid: string;
+}
+
+export interface CudaDriverReport {
+  available: boolean;
+  driver_api_version: number | null;
+  driver_compatible: boolean;
+  device_count: number;
+  matched_device_ordinal: number | null;
+  adapter_luid_matches: boolean;
+  error_code: string | null;
+}
+
+export interface HardwareProbeReport {
+  schema_version: number;
+  windows_supported: boolean;
+  architecture_x64: boolean;
+  avx2_available: boolean;
+  system_total_bytes: number | null;
+  disk_available_bytes: number | null;
+  adapter: HardwareAdapterReport | null;
+  cuda: CudaDriverReport;
+  error_code: string | null;
+}
+
+export interface OmniModelInstallState {
+  schema_version: number;
+  sequence: number;
+  phase: OmniModelInstallPhase;
+  model_version: string;
+  manifest_digest: string;
+  current_file: string | null;
+  received_bytes: number;
+  total_bytes: number;
+  error_code: string | null;
+}
+
+export interface HardwareCapabilityReport {
+  schema_version: number;
+  static_eligible: boolean;
+  local_beta_eligible: boolean;
+  reason: LocalBetaReadinessReason;
+  available_budget_bytes: number | null;
+  required_budget_bytes: number | null;
+  warnings: string[];
+}
+
+export interface LocalReadinessReport {
+  schema_version: number;
+  profile: RealtimeActivityProfile;
+  hardware: HardwareProbeReport;
+  hardware_cached: boolean;
+  model: OmniModelInstallState;
+  model_shallow_present: boolean;
+  model_install_required_bytes: number;
+  runtime: "missing" | "not_tested" | "passed" | "failed";
+  runtime_error_code: string | null;
+  capability: HardwareCapabilityReport;
+}
+
+export interface OmniModelProgressEvent {
+  schema_version: number;
+  event_sequence: number;
+  operation: "install" | "verify";
+  phase: OmniModelInstallPhase;
+  current_file: string | null;
+  received_bytes: number;
+  total_bytes: number;
+  error_code: string | null;
+}
+
 interface JsonRpcSuccess<T> {
   jsonrpc: "2.0";
   id: number;
@@ -298,6 +410,24 @@ export class SettingsClient {
   readonly voice = {
     health: () => this.invoke<VoiceWorkerHealth>("voice_worker_health"),
     installModel: () => this.invoke<VoiceModelInstallResult>("voice_model_install"),
+  };
+
+  readonly realtimeLocal = {
+    readiness: (profile: RealtimeActivityProfile, refreshHardware = false) =>
+      this.invoke<LocalReadinessReport>("realtime_local_readiness_get", {
+        input: {
+          profile,
+          refresh_hardware: refreshHardware,
+        },
+      }),
+    modelStatus: () => this.invoke<OmniModelInstallState>("omni_model_status"),
+    install: (profile: RealtimeActivityProfile) =>
+      this.invoke<OmniModelInstallState>("omni_model_install_start", {
+        input: { profile },
+      }),
+    cancel: () => this.invoke<OmniModelInstallState>("omni_model_install_cancel"),
+    verify: () => this.invoke<OmniModelInstallState>("omni_model_verify"),
+    remove: () => this.invoke<OmniModelInstallState>("omni_model_remove"),
   };
 
   readonly pet = {

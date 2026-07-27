@@ -67,6 +67,7 @@ import {
   type KnowledgePrivacyData,
 } from "./KnowledgePrivacyPanel";
 import { ProjectManagementPanel } from "./SettingsProjectManagement";
+import { RealtimeReadinessCard } from "./RealtimeReadinessCard";
 import { ExtensionsPanel } from "./SettingsExtensions";
 import {
   messageOf,
@@ -609,6 +610,7 @@ function SettingsCategorySkeleton({ id }: { id: SettingsCategoryId }) {
 
 function SettingsCategory(props: SettingsCategoryProps) {
   const { id, data, busy, updatePreferences, updateMemorySettings } = props;
+  const [localReady, setLocalReady] = useState(false);
   switch (id) {
     case "general": return <Category title="General" subtitle="Desktop behavior">
       <SettingSelect icon={<Languages size={17} />} label="Language" value={data.preferences.language} disabled={busy} onChange={(value) => void updatePreferences({ language: value as DesktopPreferences["language"] })} options={[{ value: "system", label: "System default" }, { value: "en", label: "English" }, { value: "zh-CN", label: "简体中文" }]} />
@@ -653,7 +655,13 @@ function SettingsCategory(props: SettingsCategoryProps) {
       </div>
       <h2 className="settings-section-title">Realtime companion Beta</h2>
       <SettingToggle label="Enable Realtime Beta" detail="Off by default. Starting a session still requires explicit microphone and screen consent." checked={data.preferences.realtime_beta_enabled} disabled={busy} onChange={(value) => void updatePreferences({ realtime_beta_enabled: value })} />
-      <SettingSelect icon={<Gamepad2 size={17} />} label="Backend" detail="Local Beta requires a supported NVIDIA GPU, verified model and runtime, and enough current GPU memory." value={data.preferences.realtime_backend} disabled={busy} onChange={(value) => void updatePreferences({ realtime_backend: value as DesktopPreferences["realtime_backend"] })} options={[{ value: "auto", label: "Auto" }, { value: "local_mini_cpm_o45", label: "Local MiniCPM-o 4.5 Beta" }, { value: "cloud_live", label: "Cloud Live" }]} />
+      <RealtimeReadinessCard
+        client={props.client}
+        profile={data.preferences.realtime_activity_profile}
+        disabled={busy}
+        onReadinessChange={setLocalReady}
+      />
+      <SettingSelect icon={<Gamepad2 size={17} />} label="Backend" detail="Local Beta is selectable only after the complete readiness report passes. Cloud Live remains available." value={data.preferences.realtime_backend} disabled={busy} onChange={(value) => void updatePreferences({ realtime_backend: value as DesktopPreferences["realtime_backend"] })} options={[{ value: "auto", label: "Auto" }, { value: "local_mini_cpm_o45", label: "Local MiniCPM-o 4.5 Beta", disabled: !localReady }, { value: "cloud_live", label: "Cloud Live" }]} />
       <SettingSelect icon={<MonitorCog size={17} />} label="Cloud provider" detail="Used only by Cloud Live or an approved cloud fallback" value={data.preferences.realtime_cloud_provider} disabled={busy} onChange={(value) => void updatePreferences({ realtime_cloud_provider: value as DesktopPreferences["realtime_cloud_provider"] })} options={[{ value: "gemini_live", label: "Gemini Live" }, { value: "glm_realtime_flash", label: "GLM Realtime Flash" }, { value: "glm_realtime_air", label: "GLM Realtime Air" }]} />
       <SettingSelect icon={<Gauge size={17} />} label="Activity profile" value={data.preferences.realtime_activity_profile} disabled={busy} onChange={(value) => void updatePreferences({ realtime_activity_profile: value as DesktopPreferences["realtime_activity_profile"] })} options={[{ value: "auto", label: "Auto" }, { value: "game", label: "Game" }, { value: "focus", label: "Focus" }]} />
       <SettingSelect icon={<SlidersHorizontal size={17} />} label="Interaction intensity" value={data.preferences.realtime_interaction_intensity} disabled={busy} onChange={(value) => void updatePreferences({ realtime_interaction_intensity: value as DesktopPreferences["realtime_interaction_intensity"] })} options={[{ value: "quiet", label: "Quiet" }, { value: "standard", label: "Standard" }, { value: "active", label: "Active" }]} />

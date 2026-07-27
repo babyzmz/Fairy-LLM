@@ -17,7 +17,11 @@ import type {
 import type { InvokeFunction } from "../core/tauriTransport";
 import type { PresenceRendererHealth } from "../presence/transport/rendererHealth";
 import { SettingsApp } from "./SettingsApp";
-import { SettingsClient, type DesktopPreferences } from "./client";
+import {
+  SettingsClient,
+  type DesktopPreferences,
+  type LocalReadinessReport,
+} from "./client";
 
 afterEach(() => {
   cleanup();
@@ -71,7 +75,7 @@ describe("SettingsApp", () => {
     expect(localStorage.getItem("fairy.workspace.developer")).toBe("true");
   });
 
-  it("shows the complete schema nine Realtime Beta controls without a readiness claim", async () => {
+  it("shows the complete schema nine Realtime Beta controls with fail-closed local readiness", async () => {
     const invoke = settingsInvoke();
     render(<SettingsApp client={new SettingsClient(invoke as unknown as InvokeFunction)} />);
     await screen.findByRole("heading", { name: "General" });
@@ -79,14 +83,17 @@ describe("SettingsApp", () => {
     await userEvent.click(screen.getByRole("button", { name: /Voice/ }));
 
     expect(screen.getByRole("heading", { name: "Realtime companion Beta" })).toBeVisible();
+    expect(await screen.findByRole("status", { name: "Local readiness status" }))
+      .toHaveTextContent("Runtime required");
     expect(screen.getByRole("checkbox", { name: /^Enable Realtime Beta/ })).not.toBeChecked();
     expect(screen.getByRole("combobox", { name: "Backend" })).toHaveValue("auto");
+    expect(screen.getByRole("option", { name: "Local MiniCPM-o 4.5 Beta" })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Cloud provider" })).toHaveValue("glm_realtime_flash");
     expect(screen.getByRole("combobox", { name: "Activity profile" })).toHaveValue("auto");
     expect(screen.getByRole("combobox", { name: "Interaction intensity" })).toHaveValue("standard");
     expect(screen.getByRole("combobox", { name: "Voice output" })).toHaveValue("fairy_voice");
     expect(screen.getByText(
-      "Local Beta requires a supported NVIDIA GPU, verified model and runtime, and enough current GPU memory.",
+      "Local Beta is selectable only after the complete readiness report passes. Cloud Live remains available.",
     )).toBeVisible();
     expect(screen.queryByText(/Local (is )?ready/i)).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /^Allow cloud fallback/ })).not.toBeChecked();
@@ -646,6 +653,7 @@ function settingsInvoke(options: {
   memoryProposals?: MemoryProposal[];
   obsidianHealth?: ObsidianConnectorHealth;
   rendererHealth?: PresenceRendererHealth | null;
+  localReadiness?: LocalReadinessReport;
 } = {}) {
   let preferences = defaultPreferences();
   let openRouterConfigured = true;
@@ -666,6 +674,9 @@ function settingsInvoke(options: {
     }
     if (command === "pet_renderer_get_health") {
       return options.rendererHealth ?? null;
+    }
+    if (command === "realtime_local_readiness_get") {
+      return options.localReadiness ?? localRuntimeMissingReadiness();
     }
     if (command === "settings_rpc") {
       const request = args?.request as { id: number; method: CoreMethodName; params: Record<string, unknown> };
@@ -688,6 +699,66 @@ function settingsInvoke(options: {
     }
     throw new Error(`Unexpected command: ${command}`);
   });
+}
+
+function localRuntimeMissingReadiness(): LocalReadinessReport {
+  const gib = 1_073_741_824;
+  return {
+    schema_version: 1,
+    profile: "auto",
+    hardware_cached: false,
+    hardware: {
+      schema_version: 1,
+      windows_supported: true,
+      architecture_x64: true,
+      avx2_available: true,
+      system_total_bytes: 32 * gib,
+      disk_available_bytes: 40 * gib,
+      adapter: {
+        name: "NVIDIA GeForce RTX 4090",
+        vendor: "nvidia",
+        vendor_id: 0x10de,
+        dedicated_vram_bytes: 24 * gib,
+        budget_bytes: 22 * gib,
+        current_usage_bytes: 2 * gib,
+        luid: "00000000:00000001",
+      },
+      cuda: {
+        available: true,
+        driver_api_version: 12_080,
+        driver_compatible: true,
+        device_count: 1,
+        matched_device_ordinal: 0,
+        adapter_luid_matches: true,
+        error_code: null,
+      },
+      error_code: null,
+    },
+    model: {
+      schema_version: 1,
+      sequence: 3,
+      phase: "runtime_missing",
+      model_version: "4.5-q4-502eec5",
+      manifest_digest: "a".repeat(64),
+      current_file: null,
+      received_bytes: 6_781_995_488,
+      total_bytes: 6_781_995_488,
+      error_code: "OMNI_RUNTIME_MISSING",
+    },
+    model_shallow_present: true,
+    model_install_required_bytes: 5 * gib,
+    runtime: "missing",
+    runtime_error_code: "OMNI_RUNTIME_MISSING",
+    capability: {
+      schema_version: 1,
+      static_eligible: true,
+      local_beta_eligible: false,
+      reason: "runtime_missing",
+      available_budget_bytes: 20 * gib,
+      required_budget_bytes: 14.5 * gib,
+      warnings: [],
+    },
+  };
 }
 
 function historyPage<T>(items: T[], params: Record<string, unknown>, requestedSize?: number) {
