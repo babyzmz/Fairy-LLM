@@ -141,10 +141,16 @@ pub fn evaluate_local_beta_readiness(
         LocalBetaReadinessReason::Eligible
     };
 
-    let static_eligible = matches!(
-        reason,
-        LocalBetaReadinessReason::Eligible | LocalBetaReadinessReason::InsufficientFreeVram
-    );
+    let static_eligible = facts.windows_supported == Some(true)
+        && facts.architecture_x64 == Some(true)
+        && facts.gpu_vendor == Some(GpuVendor::Nvidia)
+        && facts
+            .dedicated_vram_bytes
+            .is_some_and(|value| value >= MIN_DEDICATED_VRAM)
+        && facts.avx2_available == Some(true)
+        && facts.cuda_available == Some(true)
+        && facts.driver_compatible == Some(true)
+        && facts.adapter_luid_matches == Some(true);
     let warnings = if facts
         .system_total_bytes
         .is_some_and(|value| value < LOW_SYSTEM_MEMORY)
@@ -319,9 +325,11 @@ mod tests {
             ),
         ];
         for (facts, reason) in cases {
-            assert_eq!(
-                evaluate_local_beta_readiness(&facts, RealtimeActivityProfile::Auto).reason,
-                reason
+            let report = evaluate_local_beta_readiness(&facts, RealtimeActivityProfile::Auto);
+            assert_eq!(report.reason, reason);
+            assert!(
+                report.static_eligible,
+                "artifact/runtime state must not erase hardware eligibility"
             );
         }
     }
