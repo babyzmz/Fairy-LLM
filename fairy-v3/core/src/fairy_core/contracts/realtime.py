@@ -18,6 +18,7 @@ from fairy_core.realtime.models import (
 
 class RealtimeProviderSelection(StrEnum):
     AUTO = "auto"
+    LOCAL_MINI_CPM_O45 = RealtimeProvider.LOCAL_MINI_CPM_O45.value
     GEMINI_LIVE = RealtimeProvider.GEMINI_LIVE.value
     GLM_REALTIME_FLASH = RealtimeProvider.GLM_REALTIME_FLASH.value
     GLM_REALTIME_AIR = RealtimeProvider.GLM_REALTIME_AIR.value

@@ -6375,12 +6375,12 @@ export interface components {
          * RealtimeProvider
          * @enum {string}
          */
-        RealtimeProvider: "gemini_live" | "glm_realtime_flash" | "glm_realtime_air";
+        RealtimeProvider: "local_mini_cpm_o45" | "gemini_live" | "glm_realtime_flash" | "glm_realtime_air";
         /**
          * RealtimeProviderSelection
          * @enum {string}
          */
-        RealtimeProviderSelection: "auto" | "gemini_live" | "glm_realtime_flash" | "glm_realtime_air";
+        RealtimeProviderSelection: "auto" | "local_mini_cpm_o45" | "gemini_live" | "glm_realtime_flash" | "glm_realtime_air";
         /** RealtimeSessionModel */
         RealtimeSessionModel: {
             /** Audio Input Ms */

@@ -132,6 +132,31 @@ def test_realtime_session_and_game_memory_round_trip(tmp_path) -> None:
         service.close()
 
 
+def test_local_realtime_session_uses_the_pinned_audit_model(tmp_path) -> None:
+    service = build_local_service(tmp_path)
+    try:
+        started = service.invoke(
+            "realtime.sessions.start",
+            {
+                "device_id": "desktop-local",
+                "provider": "local_mini_cpm_o45",
+                "locale": "zh-CN",
+                "voice_mode": "fairy",
+                "microphone_consent": True,
+                "screen_consent": True,
+                "game_audio_consent": False,
+                "idempotency_key": "local-session-1",
+            },
+        )
+        assert started["provider"] == "local_mini_cpm_o45"
+        assert (
+            started["model_id"]
+            == "openbmb/minicpm-o-4.5-fairy-beta@4.5-q4-502eec5"
+        )
+    finally:
+        service.close()
+
+
 def test_voice_start_links_a_scratch_conversation(tmp_path) -> None:
     service = build_local_service(tmp_path)
     try:

@@ -13,6 +13,7 @@ from fairy_core.domain.ids import new_id
 
 
 class RealtimeProvider(StrEnum):
+    LOCAL_MINI_CPM_O45 = "local_mini_cpm_o45"
     GEMINI_LIVE = "gemini_live"
     GLM_REALTIME_FLASH = "glm_realtime_flash"
     GLM_REALTIME_AIR = "glm_realtime_air"

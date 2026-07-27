@@ -52,6 +52,22 @@ def test_starting_session_can_be_cancelled_before_provider_activation() -> None:
     assert cancelled.ended_at is not None
 
 
+def test_local_provider_is_a_stable_historical_audit_value() -> None:
+    session = RealtimeSession.create(
+        device_id="test-device",
+        idempotency_key="local-audit-1",
+        conversation_id=None,
+        provider=RealtimeProvider.LOCAL_MINI_CPM_O45,
+        model_id="openbmb/minicpm-o-4.5-fairy-beta@4.5-q4-502eec5",
+        voice_mode=RealtimeVoiceMode.FAIRY,
+        memory_mode=RealtimeMemoryMode.NONE,
+        microphone_consent=True,
+        screen_consent=True,
+        game_audio_consent=False,
+    )
+    assert session.provider.value == "local_mini_cpm_o45"
+
+
 def test_game_audio_requires_selected_window_consent() -> None:
     with pytest.raises(ValueError, match="selected game window"):
         RealtimeSession.create(

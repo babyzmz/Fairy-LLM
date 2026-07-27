@@ -20,6 +20,7 @@ from fairy_core.realtime.models import (
 )
 
 _MODEL_BY_PROVIDER = {
+    RealtimeProvider.LOCAL_MINI_CPM_O45: "openbmb/minicpm-o-4.5-fairy-beta@4.5-q4-502eec5",
     RealtimeProvider.GEMINI_LIVE: "gemini-3.1-flash-live-preview",
     RealtimeProvider.GLM_REALTIME_FLASH: "glm-realtime-flash",
     RealtimeProvider.GLM_REALTIME_AIR: "glm-realtime-air",
