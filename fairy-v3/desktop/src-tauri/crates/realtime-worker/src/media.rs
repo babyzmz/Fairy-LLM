@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -62,6 +62,8 @@ pub struct VideoFrame {
 pub struct VideoCapture {
     latest: Arc<Mutex<Option<Zeroizing<VideoFrameSecret>>>>,
     stopped: Arc<AtomicBool>,
+    overwritten_frames: Arc<AtomicU32>,
+    capture_failures: Arc<AtomicU32>,
     worker: Option<thread::JoinHandle<()>>,
 }
 
@@ -305,8 +307,12 @@ impl VideoCapture {
         ensure_window_exists(source_id)?;
         let latest: Arc<Mutex<Option<Zeroizing<VideoFrameSecret>>>> = Arc::new(Mutex::new(None));
         let stopped = Arc::new(AtomicBool::new(false));
+        let overwritten_frames = Arc::new(AtomicU32::new(0));
+        let capture_failures = Arc::new(AtomicU32::new(0));
         let thread_latest = Arc::clone(&latest);
         let thread_stopped = Arc::clone(&stopped);
+        let thread_overwritten_frames = Arc::clone(&overwritten_frames);
+        let thread_capture_failures = Arc::clone(&capture_failures);
         let worker = thread::Builder::new()
             .name("fairy-realtime-wgc".to_owned())
             .spawn(move || {
@@ -319,9 +325,12 @@ impl VideoCapture {
                         if let Ok(mut slot) = thread_latest.lock() {
                             if let Some(mut previous) = slot.take() {
                                 previous.zeroize();
+                                saturating_increment(&thread_overwritten_frames);
                             }
                             *slot = Some(Zeroizing::new(VideoFrameSecret(frame)));
                         }
+                    } else {
+                        saturating_increment(&thread_capture_failures);
                     }
                     if let Some(remaining) = interval.checked_sub(started.elapsed()) {
                         thread::sleep(remaining);
@@ -332,6 +341,8 @@ impl VideoCapture {
         Ok(Self {
             latest,
             stopped,
+            overwritten_frames,
+            capture_failures,
             worker: Some(worker),
         })
     }
@@ -342,6 +353,15 @@ impl VideoCapture {
             .ok()
             .and_then(|mut slot| slot.take())
             .map(|secret| secret.0.clone())
+    }
+
+    pub fn take_health_sample(&self) -> (u16, u8) {
+        let backlog = self.overwritten_frames.swap(0, Ordering::AcqRel);
+        let failures = self.capture_failures.swap(0, Ordering::AcqRel);
+        (
+            u16::try_from(backlog).unwrap_or(u16::MAX),
+            u8::try_from(failures).unwrap_or(u8::MAX),
+        )
     }
 }
 
@@ -367,6 +387,12 @@ fn send_audio_packet(sender: &mpsc::SyncSender<AudioPacket>, pcm16: Vec<i16>, sa
         pcm16,
         sample_rate,
         captured_at: Instant::now(),
+    });
+}
+
+fn saturating_increment(counter: &AtomicU32) {
+    let _ = counter.fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+        Some(value.saturating_add(1))
     });
 }
 

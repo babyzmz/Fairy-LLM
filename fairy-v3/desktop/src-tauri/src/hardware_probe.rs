@@ -42,6 +42,14 @@ pub struct HardwareProbeReport {
     pub error_code: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RealtimeGpuMemoryReport {
+    pub budget_bytes: Option<u64>,
+    pub current_usage_bytes: Option<u64>,
+    pub device_removed: bool,
+    pub error_code: Option<String>,
+}
+
 impl HardwareProbeReport {
     pub fn populate_capability_facts(&self, facts: &mut HardwareCapabilityFacts) {
         facts.windows_supported = Some(self.windows_supported);
@@ -86,6 +94,22 @@ pub fn probe_hardware(model_root: &Path) -> HardwareProbeReport {
             adapter: None,
             cuda: unavailable_cuda("CUDA_UNSUPPORTED_OS"),
             error_code: Some("LOCAL_BETA_UNSUPPORTED_OS".to_owned()),
+        }
+    }
+}
+
+pub fn sample_realtime_gpu_memory() -> RealtimeGpuMemoryReport {
+    #[cfg(target_os = "windows")]
+    {
+        windows::sample_realtime_gpu_memory()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        RealtimeGpuMemoryReport {
+            budget_bytes: None,
+            current_usage_bytes: None,
+            device_removed: false,
+            error_code: Some("DXGI_UNSUPPORTED_OS".to_owned()),
         }
     }
 }

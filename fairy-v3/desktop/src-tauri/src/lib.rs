@@ -99,6 +99,7 @@ pub mod realtime_backend_resolver;
 pub mod realtime_context;
 pub mod realtime_coordinator;
 pub mod realtime_dialogue;
+pub mod realtime_resource_governor;
 pub mod realtime_worker;
 pub mod voice_worker;
 

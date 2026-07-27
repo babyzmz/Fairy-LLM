@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use fairy_realtime_worker::{
     read_frame, validate_backend_start, write_frame, BackendStartRequest, HostCommand,
     LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
-    RealtimeContextCarryover, RealtimeInteractionIntensity, RealtimeVoiceOutput, SecretString,
-    WorkerEvent,
+    RealtimeContextCarryover, RealtimeInteractionIntensity, RealtimeResourceLevel,
+    RealtimeResourcePolicy, RealtimeVoiceOutput, SecretString, WorkerEvent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,6 +20,7 @@ use thiserror::Error;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+use crate::hardware_probe::sample_realtime_gpu_memory;
 use crate::omni_model_manifest::OmniModelManifest;
 use crate::realtime_assistance::{RealtimeAssistancePublicState, RealtimeAssistanceRouter};
 use crate::realtime_context::RealtimeContextAuthority;
@@ -29,6 +30,9 @@ use crate::realtime_coordinator::{
     RealtimePresenceProjection, RealtimePresenceState, RealtimeWakeTransition,
 };
 use crate::realtime_dialogue::{RealtimeDialogueDecision, RealtimeDialogueDirector};
+use crate::realtime_resource_governor::{
+    RealtimeResourceGovernor, RealtimeResourceSample, RealtimeResourceSnapshot,
+};
 
 pub const REALTIME_WORKER_EVENT: &str = "fairy-realtime-event";
 const REALTIME_PROTOCOL: &str = "fairy-realtime-worker-v2";
@@ -140,6 +144,7 @@ pub struct RealtimeWorkerStatus {
     pub action_required: bool,
     pub presence_projection: Option<RealtimePresenceProjection>,
     pub assistance: Vec<RealtimeAssistancePublicState>,
+    pub resource: Option<RealtimeResourceSnapshot>,
     #[serde(flatten)]
     pub usage: RealtimeWorkerUsage,
 }
@@ -180,6 +185,7 @@ struct WorkerGovernanceHandles {
     coordinator: Arc<Mutex<Option<RealtimeCoordinatorState>>>,
     dialogue: Arc<Mutex<Option<RealtimeDialogueDirector>>>,
     context: Arc<Mutex<RealtimeContextAuthority>>,
+    resource_governor: Arc<Mutex<Option<RealtimeResourceGovernor>>>,
 }
 
 enum DialogueGovernance {
@@ -197,6 +203,7 @@ pub struct RealtimeWorkerManager {
     coordinator: Arc<Mutex<Option<RealtimeCoordinatorState>>>,
     dialogue: Arc<Mutex<Option<RealtimeDialogueDirector>>>,
     context: Arc<Mutex<RealtimeContextAuthority>>,
+    resource_governor: Arc<Mutex<Option<RealtimeResourceGovernor>>>,
 }
 
 impl RealtimeWorkerManager {
@@ -210,6 +217,7 @@ impl RealtimeWorkerManager {
             coordinator: Arc::new(Mutex::new(None)),
             dialogue: Arc::new(Mutex::new(None)),
             context: Arc::new(Mutex::new(RealtimeContextAuthority::default())),
+            resource_governor: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -249,6 +257,7 @@ impl RealtimeWorkerManager {
         RealtimeWorkerStatus {
             running: guard.is_some(),
             assistance: self.assistance.snapshot(session_id.as_deref()),
+            resource: self.resource_snapshot(),
             session_id,
             segment_id: projection.as_ref().map(|value| value.0.clone()),
             context_epoch: projection.as_ref().map(|value| value.1),
@@ -388,6 +397,17 @@ impl RealtimeWorkerManager {
             .lock()
             .map_err(|_| RealtimeWorkerError::Protocol)?
             .clone();
+        let previous_resource_governor = self
+            .resource_governor
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)?
+            .clone();
+        *self
+            .resource_governor
+            .lock()
+            .map_err(|_| RealtimeWorkerError::Protocol)? = (input.backend
+            == RealtimeBackendKind::LocalMiniCpmO45)
+            .then(|| RealtimeResourceGovernor::new(0));
         self.context
             .lock()
             .map_err(|_| RealtimeWorkerError::Protocol)?
@@ -397,6 +417,7 @@ impl RealtimeWorkerManager {
             *dialogue = Some(director);
         } else {
             self.restore_context(previous_context);
+            self.restore_resource_governor(previous_resource_governor);
             return Err(RealtimeWorkerError::Protocol);
         }
         if let Ok(mut active) = self.active_identity.lock() {
@@ -404,6 +425,7 @@ impl RealtimeWorkerManager {
         } else {
             self.restore_dialogue(previous_dialogue);
             self.restore_context(previous_context);
+            self.restore_resource_governor(previous_resource_governor);
             return Err(RealtimeWorkerError::Protocol);
         }
         let mut process = match spawn_worker(
@@ -416,6 +438,7 @@ impl RealtimeWorkerManager {
                 coordinator: Arc::clone(&self.coordinator),
                 dialogue: Arc::clone(&self.dialogue),
                 context: Arc::clone(&self.context),
+                resource_governor: Arc::clone(&self.resource_governor),
             },
         ) {
             Ok(process) => process,
@@ -423,6 +446,7 @@ impl RealtimeWorkerManager {
                 self.restore_governance(previous_governance);
                 self.restore_dialogue(previous_dialogue);
                 self.restore_context(previous_context);
+                self.restore_resource_governor(previous_resource_governor);
                 return Err(error);
             }
         };
@@ -434,6 +458,7 @@ impl RealtimeWorkerManager {
             self.restore_governance(previous_governance);
             self.restore_dialogue(previous_dialogue);
             self.restore_context(previous_context);
+            self.restore_resource_governor(previous_resource_governor);
             return Err(RealtimeWorkerError::Protocol);
         }
         let command = HostCommand::Start {
@@ -469,6 +494,28 @@ impl RealtimeWorkerManager {
             self.restore_governance(previous_governance);
             self.restore_dialogue(previous_dialogue);
             self.restore_context(previous_context);
+            self.restore_resource_governor(previous_resource_governor);
+            return Err(RealtimeWorkerError::Protocol);
+        }
+        if input.backend == RealtimeBackendKind::LocalMiniCpmO45
+            && send_command(
+                &process.input,
+                &HostCommand::SetResourcePolicy {
+                    session_id: input.session_id.clone(),
+                    segment_id: identity.segment_id.clone(),
+                    context_epoch: identity.epoch,
+                    policy: RealtimeResourcePolicy::for_level(RealtimeResourceLevel::Normal),
+                },
+            )
+            .is_err()
+        {
+            self.assistance.end_session(&input.session_id);
+            let _ = process.child.kill();
+            let _ = process.child.wait();
+            self.restore_governance(previous_governance);
+            self.restore_dialogue(previous_dialogue);
+            self.restore_context(previous_context);
+            self.restore_resource_governor(previous_resource_governor);
             return Err(RealtimeWorkerError::Protocol);
         }
         if let Some(projection) = self.current_presence_projection() {
@@ -488,6 +535,7 @@ impl RealtimeWorkerManager {
             action_required: false,
             presence_projection: self.current_presence_projection(),
             assistance: self.assistance.snapshot(process.session_id.as_deref()),
+            resource: self.resource_snapshot(),
             usage: self.usage_snapshot(),
         };
         *guard = Some(process);
@@ -520,6 +568,7 @@ impl RealtimeWorkerManager {
                 action_required: false,
                 presence_projection: None,
                 assistance: Vec::new(),
+                resource: None,
                 usage: self.usage_snapshot(),
             });
         };
@@ -553,6 +602,7 @@ impl RealtimeWorkerManager {
                     action_required: false,
                     presence_projection: None,
                     assistance: Vec::new(),
+                    resource: None,
                     usage: self.usage_snapshot(),
                 });
             }
@@ -576,6 +626,7 @@ impl RealtimeWorkerManager {
             action_required: false,
             presence_projection: None,
             assistance: Vec::new(),
+            resource: None,
             usage: self.usage_snapshot(),
         })
     }
@@ -1020,6 +1071,13 @@ impl RealtimeWorkerManager {
             .unwrap_or_default()
     }
 
+    fn resource_snapshot(&self) -> Option<RealtimeResourceSnapshot> {
+        self.resource_governor
+            .lock()
+            .ok()
+            .and_then(|governor| governor.as_ref().map(RealtimeResourceGovernor::snapshot))
+    }
+
     fn build_context_carryover(
         &self,
         current: &ContextEpochIdentity,
@@ -1061,6 +1119,9 @@ impl RealtimeWorkerManager {
             if let Ok(mut context) = self.context.lock() {
                 context.end_session(&session_id);
             }
+        }
+        if let Ok(mut governor) = self.resource_governor.lock() {
+            *governor = None;
         }
     }
 
@@ -1109,6 +1170,12 @@ impl RealtimeWorkerManager {
     fn restore_context(&self, authority: RealtimeContextAuthority) {
         if let Ok(mut context) = self.context.lock() {
             *context = authority;
+        }
+    }
+
+    fn restore_resource_governor(&self, governor: Option<RealtimeResourceGovernor>) {
+        if let Ok(mut current) = self.resource_governor.lock() {
+            *current = governor;
         }
     }
 
@@ -1238,6 +1305,7 @@ fn spawn_worker(
         coordinator,
         dialogue,
         context,
+        resource_governor,
     } = governance;
     if !launch.program.is_file() {
         return Err(RealtimeWorkerError::Unavailable);
@@ -1355,6 +1423,41 @@ fn spawn_worker(
                                 let _ = app.emit(REALTIME_WORKER_EVENT, projection);
                             }
                         }
+                        continue;
+                    }
+                    if value.get("type").and_then(Value::as_str) == Some("resource_sample") {
+                        if let Some(policy) = resource_policy_for_sample(
+                            &value,
+                            &resource_governor,
+                            elapsed_ms(reader_started_at),
+                        ) {
+                            let identity = active_identity
+                                .lock()
+                                .ok()
+                                .and_then(|active| active.clone());
+                            if let Some(identity) = identity {
+                                let command = HostCommand::SetResourcePolicy {
+                                    session_id: identity.session_id,
+                                    segment_id: identity.segment_id,
+                                    context_epoch: identity.epoch,
+                                    policy,
+                                };
+                                if send_command(&reader_input, &command).is_err() {
+                                    let _ = app.emit(
+                                        REALTIME_WORKER_EVENT,
+                                        serde_json::json!({
+                                            "type": "resource_pressure",
+                                            "code": "RESOURCE_POLICY_UNAVAILABLE"
+                                        }),
+                                    );
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    if value.get("type").and_then(Value::as_str) == Some("resource_policy_applied")
+                        && !resource_policy_acknowledged(&value, &resource_governor)
+                    {
                         continue;
                     }
                     if let Some(projection) = govern_presence_event(&value, &coordinator) {
@@ -1663,6 +1766,59 @@ fn is_meaningful_worker_activity(value: &Value) -> bool {
 
 fn elapsed_ms(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn resource_policy_for_sample(
+    value: &Value,
+    governor: &Mutex<Option<RealtimeResourceGovernor>>,
+    now_ms: u64,
+) -> Option<RealtimeResourcePolicy> {
+    let event = serde_json::from_value::<WorkerEvent>(value.clone()).ok()?;
+    let WorkerEvent::ResourceSample {
+        allocation_failure_count,
+        inference_latency_ms,
+        capture_frame_backlog,
+        renderer_healthy,
+        target_changed,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    let memory = sample_realtime_gpu_memory();
+    let sample = RealtimeResourceSample {
+        budget_bytes: memory.budget_bytes,
+        current_usage_bytes: memory.current_usage_bytes,
+        allocation_failure_count,
+        inference_latency_ms,
+        capture_frame_backlog,
+        device_removed: memory.device_removed,
+        renderer_healthy,
+        target_changed,
+    };
+    governor
+        .lock()
+        .ok()?
+        .as_mut()?
+        .observe(sample, now_ms)
+        .ok()
+        .flatten()
+}
+
+fn resource_policy_acknowledged(
+    value: &Value,
+    governor: &Mutex<Option<RealtimeResourceGovernor>>,
+) -> bool {
+    let Ok(WorkerEvent::ResourcePolicyApplied { policy, .. }) =
+        serde_json::from_value::<WorkerEvent>(value.clone())
+    else {
+        return false;
+    };
+    governor
+        .lock()
+        .ok()
+        .and_then(|governor| governor.as_ref().map(RealtimeResourceGovernor::snapshot))
+        .is_some_and(|snapshot| snapshot.policy == policy)
 }
 
 fn commit_context_rotation_event(

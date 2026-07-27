@@ -2,6 +2,8 @@ use image::imageops::FilterType;
 use image::DynamicImage;
 use thiserror::Error;
 
+use crate::protocol::{RealtimeResourceLevel, RealtimeResourcePolicy};
+
 const SIGNATURE_WIDTH: u32 = 16;
 const SIGNATURE_HEIGHT: u32 = 16;
 const BASELINE_INTERVAL_MS: u64 = 1_000;
@@ -38,6 +40,8 @@ pub struct FrameGate {
     last_sent_at_ms: Option<u64>,
     last_sent_signature: Option<PerceptualSignature>,
     boost_until_ms: u64,
+    user_visual_until_ms: u64,
+    resource_policy: RealtimeResourcePolicy,
 }
 
 impl FrameGate {
@@ -48,10 +52,17 @@ impl FrameGate {
             last_sent_at_ms: None,
             last_sent_signature: None,
             boost_until_ms: 0,
+            user_visual_until_ms: 0,
+            resource_policy: RealtimeResourcePolicy::for_level(RealtimeResourceLevel::Normal),
         }
     }
 
     pub fn should_inspect(&self, now_ms: u64) -> bool {
+        if self.resource_policy.media_paused
+            || (self.resource_policy.user_initiated_only && now_ms >= self.user_visual_until_ms)
+        {
+            return false;
+        }
         self.last_inspected_at_ms
             .is_none_or(|last| now_ms.saturating_sub(last) >= self.current_interval_ms(now_ms))
     }
@@ -96,6 +107,22 @@ impl FrameGate {
 
     pub fn note_user_question(&mut self, now_ms: u64) {
         self.note_material_event(now_ms);
+        self.user_visual_until_ms = now_ms.saturating_add(BOOST_DURATION_MS);
+    }
+
+    pub fn apply_resource_policy(&mut self, policy: RealtimeResourcePolicy) -> bool {
+        if !policy.is_valid() || self.resource_policy == policy {
+            return false;
+        }
+        self.resource_policy = policy;
+        self.last_inspected_at_ms = None;
+        if policy.level != RealtimeResourceLevel::Normal {
+            self.boost_until_ms = 0;
+        }
+        if policy.media_paused {
+            self.user_visual_until_ms = 0;
+        }
+        true
     }
 
     pub fn reset(&mut self, context_epoch: u64) {
@@ -104,13 +131,16 @@ impl FrameGate {
         self.last_sent_at_ms = None;
         self.last_sent_signature = None;
         self.boost_until_ms = 0;
+        self.user_visual_until_ms = 0;
     }
 
     fn current_interval_ms(&self, now_ms: u64) -> u64 {
-        if self.is_boosted(now_ms) {
+        if self.resource_policy.level == RealtimeResourceLevel::Normal && self.is_boosted(now_ms) {
             BOOST_INTERVAL_MS
         } else {
-            BASELINE_INTERVAL_MS
+            self.resource_policy
+                .video_interval_ms
+                .max(BASELINE_INTERVAL_MS)
         }
     }
 
@@ -305,5 +335,36 @@ mod tests {
             Err(FrameGateError::Decode)
         );
         assert!(gate.should_inspect(0));
+    }
+
+    #[test]
+    fn resource_policy_changes_interval_and_disables_pressure_boosts() {
+        let mut gate = FrameGate::new(1);
+        let pressure = RealtimeResourcePolicy::for_level(RealtimeResourceLevel::Pressure);
+        assert!(gate.apply_resource_policy(pressure));
+        gate.inspect(&solid(50, 80), 0).expect("first");
+        gate.note_audio_activity(100);
+        assert!(!gate.should_inspect(1_999));
+        assert!(gate.should_inspect(2_000));
+    }
+
+    #[test]
+    fn high_requires_a_recent_user_question_and_critical_pauses_frames() {
+        let mut gate = FrameGate::new(1);
+        let high = RealtimeResourcePolicy::for_level(RealtimeResourceLevel::High);
+        assert!(gate.apply_resource_policy(high));
+        assert!(!gate.should_inspect(0));
+        gate.note_user_question(100);
+        assert!(gate.should_inspect(100));
+        gate.inspect(&solid(50, 80), 100).expect("first");
+        assert!(!gate.should_inspect(4_099));
+        assert!(gate.should_inspect(4_100));
+
+        assert!(
+            gate.apply_resource_policy(RealtimeResourcePolicy::for_level(
+                RealtimeResourceLevel::Critical
+            ))
+        );
+        assert!(!gate.should_inspect(10_000));
     }
 }

@@ -222,6 +222,23 @@ fn main() {
                     active.command(RuntimeCommand::SetProfile { activity_profile });
                 }
             }
+            HostCommand::SetResourcePolicy {
+                session_id,
+                segment_id,
+                context_epoch,
+                policy,
+            } if active_identity.as_ref().is_some_and(|identity| {
+                identity.session_id == session_id
+                    && identity.segment_id == segment_id
+                    && identity.context_epoch == context_epoch
+                    && identity.backend == RealtimeBackendKind::LocalMiniCpmO45
+                    && policy.is_valid()
+            }) =>
+            {
+                if let Some(active) = runtime.as_ref() {
+                    active.command(RuntimeCommand::SetResourcePolicy { policy });
+                }
+            }
             HostCommand::Pause { session_id }
                 if active_identity
                     .as_ref()

@@ -16,6 +16,79 @@ const MAX_CONTEXT_GOAL_CHARS: usize = 500;
 const MAX_CONTEXT_MEMORY_CHARS: usize = 300;
 const MAX_CONTEXT_MEMORIES: usize = 8;
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RealtimeResourceLevel {
+    Normal,
+    Pressure,
+    High,
+    Critical,
+    DeviceRemoved,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RealtimeResourcePolicy {
+    pub level: RealtimeResourceLevel,
+    pub video_interval_ms: u64,
+    pub background_analysis_allowed: bool,
+    pub user_initiated_only: bool,
+    pub media_paused: bool,
+}
+
+impl RealtimeResourcePolicy {
+    pub const fn for_level(level: RealtimeResourceLevel) -> Self {
+        match level {
+            RealtimeResourceLevel::Normal => Self {
+                level,
+                video_interval_ms: 1_000,
+                background_analysis_allowed: true,
+                user_initiated_only: false,
+                media_paused: false,
+            },
+            RealtimeResourceLevel::Pressure => Self {
+                level,
+                video_interval_ms: 2_000,
+                background_analysis_allowed: false,
+                user_initiated_only: false,
+                media_paused: false,
+            },
+            RealtimeResourceLevel::High => Self {
+                level,
+                video_interval_ms: 4_000,
+                background_analysis_allowed: false,
+                user_initiated_only: true,
+                media_paused: false,
+            },
+            RealtimeResourceLevel::Critical | RealtimeResourceLevel::DeviceRemoved => Self {
+                level,
+                video_interval_ms: 0,
+                background_analysis_allowed: false,
+                user_initiated_only: true,
+                media_paused: true,
+            },
+        }
+    }
+
+    pub const fn is_valid(self) -> bool {
+        let expected = Self::for_level(self.level);
+        self.video_interval_ms == expected.video_interval_ms
+            && self.background_analysis_allowed == expected.background_analysis_allowed
+            && self.user_initiated_only == expected.user_initiated_only
+            && self.media_paused == expected.media_paused
+    }
+
+    pub const fn public_code(self) -> &'static str {
+        match self.level {
+            RealtimeResourceLevel::Normal => "GPU_RESOURCE_NORMAL",
+            RealtimeResourceLevel::Pressure => "GPU_RESOURCE_PRESSURE",
+            RealtimeResourceLevel::High => "GPU_RESOURCE_HIGH",
+            RealtimeResourceLevel::Critical => "GPU_RESOURCE_CRITICAL",
+            RealtimeResourceLevel::DeviceRemoved => "GPU_DEVICE_REMOVED",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RealtimeContextCarryover {
@@ -209,6 +282,12 @@ pub enum HostCommand {
         activity_profile: RealtimeActivityProfile,
         interaction_intensity: RealtimeInteractionIntensity,
     },
+    SetResourcePolicy {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        policy: RealtimeResourcePolicy,
+    },
     RotateContext {
         session_id: String,
         segment_id: String,
@@ -340,6 +419,22 @@ pub enum WorkerEvent {
         segment_id: String,
         context_epoch: u64,
         code: String,
+    },
+    ResourceSample {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        allocation_failure_count: u8,
+        inference_latency_ms: u32,
+        capture_frame_backlog: u16,
+        renderer_healthy: bool,
+        target_changed: bool,
+    },
+    ResourcePolicyApplied {
+        session_id: String,
+        segment_id: String,
+        context_epoch: u64,
+        policy: RealtimeResourcePolicy,
     },
     ContextRotated {
         session_id: String,
@@ -542,6 +637,34 @@ mod tests {
     }
 
     #[test]
+    fn resource_policy_command_is_exact_and_round_trips() {
+        let policy = RealtimeResourcePolicy::for_level(RealtimeResourceLevel::High);
+        assert!(policy.is_valid());
+        let command = HostCommand::SetResourcePolicy {
+            session_id: "session-1".to_owned(),
+            segment_id: "segment-1".to_owned(),
+            context_epoch: 1,
+            policy,
+        };
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &command).expect("write policy");
+        let decoded: HostCommand = read_frame(&mut bytes.as_slice())
+            .expect("read policy")
+            .expect("policy frame");
+        assert!(matches!(
+            decoded,
+            HostCommand::SetResourcePolicy {
+                policy: decoded_policy,
+                ..
+            } if decoded_policy == policy
+        ));
+
+        let mut invalid = policy;
+        invalid.video_interval_ms = 1;
+        assert!(!invalid.is_valid());
+    }
+
+    #[test]
     fn cloud_wake_command_carries_only_host_owned_segment_identity() {
         let command = HostCommand::WakeSegment {
             session_id: "session-1".to_owned(),
@@ -674,6 +797,22 @@ mod tests {
                 segment_id: identity().1,
                 context_epoch: 1,
                 code: "GPU_BUDGET_LOW".to_owned(),
+            },
+            WorkerEvent::ResourceSample {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                allocation_failure_count: 0,
+                inference_latency_ms: 25,
+                capture_frame_backlog: 0,
+                renderer_healthy: true,
+                target_changed: false,
+            },
+            WorkerEvent::ResourcePolicyApplied {
+                session_id: identity().0,
+                segment_id: identity().1,
+                context_epoch: 1,
+                policy: RealtimeResourcePolicy::for_level(RealtimeResourceLevel::Pressure),
             },
             WorkerEvent::ContextRotated {
                 session_id: identity().0,

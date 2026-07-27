@@ -13,7 +13,10 @@ use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 
-use super::{unavailable_cuda, CudaDriverReport, HardwareAdapterReport, HardwareProbeReport};
+use super::{
+    unavailable_cuda, CudaDriverReport, HardwareAdapterReport, HardwareProbeReport,
+    RealtimeGpuMemoryReport,
+};
 use crate::hardware_capabilities::GpuVendor;
 
 const NVIDIA_VENDOR_ID: u32 = 0x10de;
@@ -63,6 +66,34 @@ pub(super) fn probe(model_root: &Path) -> HardwareProbeReport {
         adapter,
         cuda,
         error_code: adapter_error,
+    }
+}
+
+pub(super) fn sample_realtime_gpu_memory() -> RealtimeGpuMemoryReport {
+    match enumerate_adapters() {
+        Ok(candidates) => {
+            let Some(adapter) = select_adapter(&candidates) else {
+                return RealtimeGpuMemoryReport {
+                    budget_bytes: None,
+                    current_usage_bytes: None,
+                    device_removed: true,
+                    error_code: Some("DXGI_ADAPTER_REMOVED".to_owned()),
+                };
+            };
+            let complete = adapter.budget_bytes.is_some() && adapter.current_usage_bytes.is_some();
+            RealtimeGpuMemoryReport {
+                budget_bytes: adapter.budget_bytes,
+                current_usage_bytes: adapter.current_usage_bytes,
+                device_removed: !complete,
+                error_code: (!complete).then(|| "DXGI_MEMORY_ACCESS_LOST".to_owned()),
+            }
+        }
+        Err(code) => RealtimeGpuMemoryReport {
+            budget_bytes: None,
+            current_usage_bytes: None,
+            device_removed: true,
+            error_code: Some(code.to_owned()),
+        },
     }
 }
 

@@ -1,6 +1,6 @@
 use fairy_realtime_worker::{
     RealtimeActivityProfile, RealtimeBackendKind, RealtimeCloudProviderKind,
-    RealtimeDialogueCandidate, RealtimeInteractionIntensity, WorkerEvent,
+    RealtimeDialogueCandidate, RealtimeInteractionIntensity, RealtimeResourceLevel, WorkerEvent,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -962,6 +962,28 @@ fn worker_presence_input(
             RealtimePresenceState::ResourceLimited,
             None,
         )),
+        WorkerEvent::ResourcePolicyApplied {
+            session_id,
+            segment_id,
+            context_epoch,
+            policy,
+        } => Some((
+            session_id,
+            segment_id,
+            *context_epoch,
+            if policy.level == RealtimeResourceLevel::Normal {
+                RealtimePresenceState::Observing
+            } else {
+                RealtimePresenceState::ResourceLimited
+            },
+            match policy.level {
+                RealtimeResourceLevel::Normal => None,
+                RealtimeResourceLevel::Pressure => Some(1),
+                RealtimeResourceLevel::High => Some(2),
+                RealtimeResourceLevel::Critical => Some(3),
+                RealtimeResourceLevel::DeviceRemoved => Some(4),
+            },
+        )),
         WorkerEvent::ContextRotated {
             session_id,
             segment_id,
@@ -991,6 +1013,7 @@ fn worker_presence_input(
             None,
         )),
         WorkerEvent::Ready { .. }
+        | WorkerEvent::ResourceSample { .. }
         | WorkerEvent::Usage { .. }
         | WorkerEvent::Diagnostic { .. }
         | WorkerEvent::Pong => None,
@@ -1520,6 +1543,38 @@ mod tests {
                 .state,
             RealtimePresenceState::ResourceLimited
         );
+    }
+
+    #[test]
+    fn resource_policy_ack_projects_bounded_pressure_and_recovery_levels() {
+        let mut state = RealtimeCoordinatorState::start(local_start_request()).expect("start");
+        let identity = state.active_identity().clone();
+        let high = WorkerEvent::ResourcePolicyApplied {
+            session_id: identity.session_id.clone(),
+            segment_id: identity.segment_id.clone(),
+            context_epoch: identity.epoch,
+            policy: fairy_realtime_worker::RealtimeResourcePolicy::for_level(
+                RealtimeResourceLevel::High,
+            ),
+        };
+        let projection = state.project_worker_event(&high).expect("high projection");
+        assert_eq!(projection.state, RealtimePresenceState::ResourceLimited);
+        assert_eq!(projection.level, Some(2));
+        assert!(state.media_generation_enabled());
+
+        let recovered = WorkerEvent::ResourcePolicyApplied {
+            session_id: identity.session_id,
+            segment_id: identity.segment_id,
+            context_epoch: identity.epoch,
+            policy: fairy_realtime_worker::RealtimeResourcePolicy::for_level(
+                RealtimeResourceLevel::Normal,
+            ),
+        };
+        let projection = state
+            .project_worker_event(&recovered)
+            .expect("normal projection");
+        assert_eq!(projection.state, RealtimePresenceState::Observing);
+        assert_eq!(projection.level, None);
     }
 
     #[test]

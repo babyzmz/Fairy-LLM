@@ -15,7 +15,9 @@ use crate::frame_gate::{FrameGate, FrameGateDecision};
 use crate::media::{
     resample_pcm16, AudioPlayback, MicrophoneCapture, ProcessLoopbackCapture, VideoCapture,
 };
-use crate::protocol::{RealtimeContextCarryover, WorkerEvent};
+use crate::protocol::{
+    RealtimeContextCarryover, RealtimeResourceLevel, RealtimeResourcePolicy, WorkerEvent,
+};
 use crate::ValidatedRealtimePersona;
 
 // Absolute worker-side ceiling as defense in depth above the Coordinator-owned
@@ -71,6 +73,9 @@ pub enum RuntimeCommand {
     },
     SetProfile {
         activity_profile: RealtimeActivityProfile,
+    },
+    SetResourcePolicy {
+        policy: RealtimeResourcePolicy,
     },
     RotateContext {
         next_context_epoch: u64,
@@ -313,6 +318,7 @@ fn run_session(
     let session_start = Instant::now();
     let mut frame_gate = FrameGate::new(identity.context_epoch);
     let mut last_usage_sent = Instant::now();
+    let mut last_resource_sample_sent = Instant::now();
     // User input gates remain separate from native standby ownership.
     let mut microphone_enabled = initial_microphone_enabled;
     let mut video_enabled = screen_enabled;
@@ -324,6 +330,9 @@ fn run_session(
     let mut tool_call_count = 0_u64;
     let mut event_sequence = 0_u64;
     let mut current_user_utterance = false;
+    let mut resource_policy = RealtimeResourcePolicy::for_level(RealtimeResourceLevel::Normal);
+    let mut max_inference_latency_ms = 0_u32;
+    let mut frame_processing_failures = 0_u8;
     loop {
         if cancelled.load(Ordering::Acquire) {
             break;
@@ -568,11 +577,47 @@ fn run_session(
                 }
                 identity.activity_profile = activity_profile;
             }
+            Ok(RuntimeCommand::SetResourcePolicy { policy }) => {
+                if identity.backend != RealtimeBackendKind::LocalMiniCpmO45 || !policy.is_valid() {
+                    emit_failed(&events, &identity, "REALTIME_PROTOCOL_ERROR");
+                    return;
+                }
+                resource_policy = policy;
+                let _ = frame_gate.apply_resource_policy(policy);
+                if policy.media_paused {
+                    drain_runtime_media(
+                        &microphone,
+                        game_audio.as_mut(),
+                        video.as_ref(),
+                        playback.as_ref(),
+                    );
+                    current_user_utterance = false;
+                }
+                let _ = events.send(WorkerEvent::ResourcePolicyApplied {
+                    session_id: identity.session_id.clone(),
+                    segment_id: identity.segment_id.clone(),
+                    context_epoch: identity.context_epoch,
+                    policy,
+                });
+                if policy.level == RealtimeResourceLevel::DeviceRemoved {
+                    let _ = events.send(WorkerEvent::ResourcePressure {
+                        session_id: identity.session_id.clone(),
+                        segment_id: identity.segment_id.clone(),
+                        context_epoch: identity.context_epoch,
+                        code: policy.public_code().to_owned(),
+                    });
+                    emit_failed(&events, &identity, policy.public_code());
+                    return;
+                }
+            }
             Err(mpsc::TryRecvError::Empty) => {}
         }
         if let Some(capture) = game_audio.as_mut() {
             while let Some(packet) = capture.try_recv() {
-                if standby || (!microphone_enabled && !video_enabled) {
+                if standby
+                    || resource_policy.media_paused
+                    || (!microphone_enabled && !video_enabled)
+                {
                     drop(packet);
                     continue;
                 }
@@ -592,7 +637,7 @@ fn run_session(
             }
         }
         while let Some(packet) = microphone.try_recv() {
-            if standby || !microphone_enabled {
+            if standby || resource_policy.media_paused || !microphone_enabled {
                 // Muted or paused: drain and discard without sending. Dropping the
                 // packet zeroizes its samples.
                 drop(packet);
@@ -613,7 +658,11 @@ fn run_session(
             bytes.zeroize();
         }
         let now_ms = elapsed_ms(session_start);
-        if !standby && video_enabled && frame_gate.should_inspect(now_ms) {
+        if resource_policy.media_paused {
+            if let Some(mut frame) = video.as_ref().and_then(VideoCapture::take_latest) {
+                frame.jpeg.zeroize();
+            }
+        } else if !standby && video_enabled && frame_gate.should_inspect(now_ms) {
             if let Some(mut frame) = video.as_ref().and_then(VideoCapture::take_latest) {
                 match frame_gate.inspect(&frame.jpeg, now_ms) {
                     Ok(FrameGateDecision::Send { .. }) => {
@@ -624,11 +673,15 @@ fn run_session(
                         }
                         video_frame_count = video_frame_count.saturating_add(1);
                     }
-                    Ok(FrameGateDecision::SuppressStatic) | Err(_) => {}
+                    Ok(FrameGateDecision::SuppressStatic) => {}
+                    Err(_) => {
+                        frame_processing_failures = frame_processing_failures.saturating_add(1);
+                    }
                 }
                 frame.jpeg.zeroize();
             }
         }
+        let poll_started = Instant::now();
         let outputs = match (!standby).then(|| active_backend.poll()).transpose() {
             Ok(Some(outputs)) => outputs,
             Ok(None) => Vec::new(),
@@ -637,10 +690,17 @@ fn run_session(
                 return;
             }
         };
+        max_inference_latency_ms = max_inference_latency_ms
+            .max(u32::try_from(poll_started.elapsed().as_millis()).unwrap_or(u32::MAX));
         for output in outputs {
             match output {
                 BackendEvent::Ready => {}
                 BackendEvent::PerceptionCandidate(candidate) => {
+                    if !resource_policy.background_analysis_allowed
+                        && !candidate_is_user_initiated(&candidate)
+                    {
+                        continue;
+                    }
                     event_sequence = event_sequence.saturating_add(1);
                     let _ = events.send(WorkerEvent::PerceptionCandidate {
                         session_id: identity.session_id.clone(),
@@ -707,6 +767,11 @@ fn run_session(
                                     return;
                                 }
                             };
+                            if !resource_policy.background_analysis_allowed
+                                && !candidate_is_user_initiated(&candidate)
+                            {
+                                continue;
+                            }
                             let _ = events.send(WorkerEvent::PerceptionCandidate {
                                 session_id: identity.session_id.clone(),
                                 segment_id: identity.segment_id.clone(),
@@ -769,6 +834,28 @@ fn run_session(
                     return;
                 }
             }
+        }
+        if identity.backend == RealtimeBackendKind::LocalMiniCpmO45
+            && last_resource_sample_sent.elapsed() >= Duration::from_secs(1)
+        {
+            let (capture_frame_backlog, capture_failures) = video
+                .as_ref()
+                .map(VideoCapture::take_health_sample)
+                .unwrap_or((0, 0));
+            let _ = events.send(WorkerEvent::ResourceSample {
+                session_id: identity.session_id.clone(),
+                segment_id: identity.segment_id.clone(),
+                context_epoch: identity.context_epoch,
+                allocation_failure_count: frame_processing_failures
+                    .saturating_add(capture_failures),
+                inference_latency_ms: max_inference_latency_ms,
+                capture_frame_backlog,
+                renderer_healthy: true,
+                target_changed: false,
+            });
+            frame_processing_failures = 0;
+            max_inference_latency_ms = 0;
+            last_resource_sample_sent = Instant::now();
         }
         if last_usage_sent.elapsed() >= Duration::from_secs(5) {
             emit_usage(
@@ -849,6 +936,14 @@ fn valid_rotation_reason(reason: &str) -> bool {
     )
 }
 
+fn candidate_is_user_initiated(candidate: &RealtimeDialogueCandidate) -> bool {
+    candidate.response_to_user
+        || candidate
+            .grounding
+            .iter()
+            .any(|grounding| grounding == "current_user_utterance")
+}
+
 fn assistant_caption_candidate(
     identity: &RuntimeIdentity,
     text: String,
@@ -900,6 +995,7 @@ fn startup_cancel_requested(
             | Ok(RuntimeCommand::AssistanceResult { .. })
             | Ok(RuntimeCommand::SetInput { .. })
             | Ok(RuntimeCommand::SetProfile { .. })
+            | Ok(RuntimeCommand::SetResourcePolicy { .. })
             | Ok(RuntimeCommand::RotateContext { .. })
             | Ok(RuntimeCommand::Pause)
             | Ok(RuntimeCommand::Resume { .. })
