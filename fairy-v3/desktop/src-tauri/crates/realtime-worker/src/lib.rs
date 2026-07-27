@@ -5,6 +5,7 @@ mod persona;
 mod protocol;
 mod provider;
 mod runtime;
+mod runtime_events;
 mod session;
 mod transport;
 

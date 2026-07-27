@@ -6,10 +6,10 @@ use std::time::{Duration, Instant};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::backend::{
-    BackendCaptionSpeaker, BackendError, BackendEvent, CloudBackendLaunch, CloudLiveBackend,
-    LocalOmniBackend, LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackend,
-    RealtimeBackendKind, RealtimeCandidateDecision, RealtimeCloudProviderKind,
-    RealtimeDialogueCandidate, RealtimeVoiceOutput,
+    BackendCaptionSpeaker, BackendEvent, CloudBackendLaunch, CloudLiveBackend, LocalOmniBackend,
+    LocalOmniLaunch, RealtimeActivityProfile, RealtimeBackend, RealtimeBackendKind,
+    RealtimeCandidateDecision, RealtimeCloudProviderKind, RealtimeDialogueCandidate,
+    RealtimeVoiceOutput,
 };
 use crate::frame_gate::{FrameGate, FrameGateDecision};
 use crate::media::{
@@ -17,6 +17,9 @@ use crate::media::{
 };
 use crate::protocol::{
     RealtimeContextCarryover, RealtimeResourceLevel, RealtimeResourcePolicy, WorkerEvent,
+};
+use crate::runtime_events::{
+    emit_backend_failure, emit_cancelled, emit_failed, emit_sidecar_failure, emit_usage,
 };
 use crate::ValidatedRealtimePersona;
 
@@ -43,14 +46,14 @@ pub struct RuntimeLaunch {
 }
 
 #[derive(Clone, Debug)]
-struct RuntimeIdentity {
-    session_id: String,
-    segment_id: String,
-    context_epoch: u64,
-    backend: RealtimeBackendKind,
-    cloud_provider: Option<RealtimeCloudProviderKind>,
-    persona_digest: String,
-    activity_profile: RealtimeActivityProfile,
+pub(super) struct RuntimeIdentity {
+    pub(super) session_id: String,
+    pub(super) segment_id: String,
+    pub(super) context_epoch: u64,
+    pub(super) backend: RealtimeBackendKind,
+    pub(super) cloud_provider: Option<RealtimeCloudProviderKind>,
+    pub(super) persona_digest: String,
+    pub(super) activity_profile: RealtimeActivityProfile,
 }
 
 pub enum RuntimeCommand {
@@ -1028,93 +1031,6 @@ fn startup_cancel_requested(
     }
 }
 
-fn emit_usage(
-    events: &mpsc::Sender<WorkerEvent>,
-    identity: &RuntimeIdentity,
-    audio_input_samples: u64,
-    audio_output_samples: u64,
-    video_frame_count: u64,
-    interruption_count: u64,
-    tool_call_count: u64,
-) {
-    let _ = events.send(WorkerEvent::Usage {
-        session_id: identity.session_id.clone(),
-        segment_id: identity.segment_id.clone(),
-        context_epoch: identity.context_epoch,
-        audio_input_ms: audio_input_samples.saturating_mul(1_000) / 16_000,
-        audio_output_ms: audio_output_samples.saturating_mul(1_000) / 24_000,
-        video_frame_count,
-        interruption_count,
-        tool_call_count,
-    });
-}
-
-fn emit_failed(
-    events: &mpsc::Sender<WorkerEvent>,
-    identity: &RuntimeIdentity,
-    error_code: &'static str,
-) {
-    let _ = events.send(WorkerEvent::SessionState {
-        session_id: identity.session_id.clone(),
-        segment_id: identity.segment_id.clone(),
-        context_epoch: identity.context_epoch,
-        status: "failed".to_owned(),
-        backend: identity.backend,
-        cloud_provider: identity.cloud_provider,
-        error_code: Some(error_code.to_owned()),
-    });
-}
-
-fn emit_backend_failure(
-    events: &mpsc::Sender<WorkerEvent>,
-    identity: &RuntimeIdentity,
-    error: &BackendError,
-    candidate_emitted: bool,
-) {
-    if identity.backend == RealtimeBackendKind::LocalMiniCpmO45 {
-        let sidecar_code = match error {
-            BackendError::LocalUnavailable => Some("LOCAL_SIDECAR_START_FAILED"),
-            BackendError::LocalProtocol => Some("LOCAL_SIDECAR_PROTOCOL_DISCONNECTED"),
-            BackendError::LocalTimeout => Some("LOCAL_SIDECAR_TIMEOUT"),
-            BackendError::LocalIo(_) => Some("LOCAL_SIDECAR_PROCESS_EXIT"),
-            BackendError::Cloud(_)
-            | BackendError::DialogueProtocol
-            | BackendError::ApplicationAudioScopeUnavailable => None,
-        };
-        if let Some(code) = sidecar_code {
-            emit_sidecar_failure(events, identity, code, candidate_emitted);
-        }
-    }
-    emit_failed(events, identity, error.public_code());
-}
-
-fn emit_sidecar_failure(
-    events: &mpsc::Sender<WorkerEvent>,
-    identity: &RuntimeIdentity,
-    error_code: &'static str,
-    candidate_emitted: bool,
-) {
-    let _ = events.send(WorkerEvent::LocalSidecarFailure {
-        session_id: identity.session_id.clone(),
-        segment_id: identity.segment_id.clone(),
-        context_epoch: identity.context_epoch,
-        error_code: error_code.to_owned(),
-        candidate_emitted,
-    });
-}
-
-fn emit_cancelled(events: &mpsc::Sender<WorkerEvent>, identity: &RuntimeIdentity) {
-    let _ = events.send(WorkerEvent::SessionState {
-        session_id: identity.session_id.clone(),
-        segment_id: identity.segment_id.clone(),
-        context_epoch: identity.context_epoch,
-        status: "cancelled".to_owned(),
-        backend: identity.backend,
-        cloud_provider: identity.cloud_provider,
-        error_code: None,
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1159,7 +1075,12 @@ mod tests {
             persona_digest: "a".repeat(64),
             activity_profile: RealtimeActivityProfile::Focus,
         };
-        emit_backend_failure(&events, &identity, &BackendError::LocalProtocol, true);
+        emit_backend_failure(
+            &events,
+            &identity,
+            &crate::backend::BackendError::LocalProtocol,
+            true,
+        );
         assert_eq!(
             received.recv().expect("sidecar failure"),
             WorkerEvent::LocalSidecarFailure {
