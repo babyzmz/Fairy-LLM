@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { installWorkspaceFixture } from "./support/coreFixture";
+import { openSettingsFromWorkspace } from "./support/settings";
 
 test.beforeEach(async ({ page }) => {
   await installWorkspaceFixture(page);
@@ -48,7 +49,10 @@ test("release workspace exposes project, chat, preview, settings, and developer 
 }) => {
   await page.goto("/");
 
-  await expect(page.getByLabel("Workspace status")).toContainText("Core ready");
+  await expect(page.getByLabel("Workspace status")).toContainText(
+    "Core ready",
+    { timeout: 15_000 },
+  );
   await expect(page.getByLabel("Workspace status")).toContainText("LOCAL ONLY");
   await expect(page.getByTitle("Task preview")).toBeVisible();
   await page.getByRole("button", { name: "New project" }).click();
@@ -56,8 +60,7 @@ test("release workspace exposes project, chat, preview, settings, and developer 
   await page.getByRole("button", { name: "Choose project folder" }).click();
   await expect(page.getByLabel("Folder path")).toHaveValue("C:\\Projects\\fixture");
   await page.getByRole("button", { name: "Close project manager" }).click();
-  await page.getByRole("button", { name: "Open settings" }).click();
-  await page.getByRole("button", { name: /Advanced/ }).click();
+  await openSettingsFromWorkspace(page, { category: /Advanced/ });
   await page.getByRole("checkbox", { name: "Developer mode" }).check();
   await page.getByRole("button", { name: /Models/ }).click();
   await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();

@@ -8,6 +8,15 @@ export async function openInternalSettings(
   } = {},
 ) {
   await page.goto(options.path ?? "/");
+  await openSettingsFromWorkspace(page, options);
+}
+
+export async function openSettingsFromWorkspace(
+  page: Page,
+  options: {
+    category?: RegExp | string;
+  } = {},
+) {
   await page.getByRole("button", { name: "Open settings" }).click();
   const settings = page.getByRole("main", { name: "Fairy settings" });
   await expect(
